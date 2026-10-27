@@ -248,6 +248,29 @@ describe("runExtension — offline subcommands", () => {
     expect(readFileSync(out, "utf8")).toBe("existing\n");
   });
 
+  test("key revoke reaches runExtensionKey with RAW args (a --reason that looks like a flag)", async () => {
+    const keyFile = join(tempRoot(), "publisher-key");
+    writeFileSync(
+      keyFile,
+      `${Buffer.alloc(32, 5).toString("base64")}
+`,
+    );
+    const out = join(tempRoot(), "revoke.json");
+    await runExtension([
+      "key",
+      "revoke",
+      "--key",
+      keyFile,
+      "--publisher",
+      "acme",
+      "--reason",
+      "--compromised",
+      "--out",
+      out,
+    ]);
+    expect(JSON.parse(readFileSync(out, "utf8")).reason).toBe("--compromised");
+  });
+
   test("sign with no extension dir exits 2 with the usage line", async () => {
     await expect(runExtension(["sign"])).rejects.toThrow("process.exit(2)");
     expect(stderr()).toBe("usage: nimbus extension sign <ext-dir> [--key <path>]\n");

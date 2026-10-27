@@ -46,7 +46,7 @@ const REGISTRY: StatementSource = {
 let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
 });
 afterEach(() => db.close());
 
@@ -113,7 +113,9 @@ describe("blocksFor", () => {
 
   test("a publisher's own revocation blocks its key", async () => {
     record(REGISTRY, await revoke(PUB_KEY, PUB_SEED));
-    expect(blocksFor(db, subject({ source: null }))[0]?.issuer).toBe("publisher");
+    // Carried by the "community" registry, so it counts for code installed from it (and only it).
+    expect(blocksFor(db, subject())[0]?.issuer).toBe("publisher");
+    expect(blocksFor(db, subject({ source: null }))).toEqual([]);
   });
 
   test("a registry revocation reaches only its own source at its own root", async () => {

@@ -49,7 +49,7 @@ let fetchCalls: number;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-instreg-"));
   regDir = join(tmp, "registry");
   extensionsDir = join(tmp, "extensions");

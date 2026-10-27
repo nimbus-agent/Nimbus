@@ -23,13 +23,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  admitPublisherStatements,
   codeUnitCompare,
   publicKeyFromSeed,
+  publisherAfterPublish,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryIndex,
+  type StatementAdmission,
   signIndex,
+  trustStatementId,
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
@@ -43,8 +47,10 @@ import {
   PAGES_REF,
   readCandidate,
   readConfigAt,
+  readStatementFiles,
   readVerifiedIndex,
   splitExtensionDir,
+  statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
 import { commitSite, pushCommit, type SiteFile } from "./site-commit.ts";
@@ -113,6 +119,8 @@ interface Attempt {
   /** The commit to push, or `undefined` when `gh-pages` already holds this site. */
   commit: string | undefined;
   added: Added[];
+  /** Ids of the publisher statements this run admitted into the index. */
+  statements: string[];
   skipped: Skipped[];
   sequence: number;
 }
@@ -209,10 +217,12 @@ async function attemptSign(
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
   const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
 
+  // Statements first: a rotation and the first version signed by the new key land together.
+  const skipped: Skipped[] = [];
+  const admission = admitStatements(git, index, mainRef, cwd, skipped);
   const extensions: Record<string, RegistryExtensionEntry> = { ...index.extensions };
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added: Added[] = [];
-  const skipped: Skipped[] = [];
   const files: SiteFile[] = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
@@ -230,7 +240,7 @@ async function attemptSign(
       let v: Awaited<ReturnType<typeof validatePublish>>;
       try {
         // Against the signed bindings plus this run's additions, so two new dirs cannot disagree.
-        v = await deps.validate(candidate, { ...index, extensions }, config.config, work); // NOSONAR S9382: sequential by design - each version is validated against the bindings this run already added, so two new dirs cannot disagree
+        v = await deps.validate(candidate, { ...admission.index, extensions }, config.config, work); // NOSONAR S9382: sequential by design - each version is validated against the bindings this run already added, so two new dirs cannot disagree
       } catch (e) {
         if (!(e instanceof RegistryError)) throw e;
         skipped.push({ dir, reason: e.message });
@@ -239,7 +249,7 @@ async function attemptSign(
       const base = `extensions/${v.id}/${v.version}`;
       const existing = extensions[v.id];
       extensions[v.id] = {
-        publisher: existing?.publisher ?? v.publisher,
+        publisher: publisherAfterPublish(existing, v.publisher),
         versions: {
           ...existing?.versions,
           [v.version]: {
@@ -265,11 +275,13 @@ async function attemptSign(
     rmSync(work, { recursive: true, force: true });
   }
 
+  const statements = admission.admitted.map(trustStatementId);
   let sequence = index.sequence;
-  if (added.length > 0) {
+  if (added.length > 0 || statements.length > 0) {
     // Carry every field this action does not manage (e.g. `packs`) through: rebuilding the index
-    // from a fixed field list would drop them under a signature that still verifies.
-    const { signature: _previousSignature, ...carried } = index;
+    // from a fixed field list would drop them under a signature that still verifies. The admitted
+    // index carries the statements, old and new.
+    const { signature: _previousSignature, ...carried } = admission.index;
     const signed = await deps.sign(
       {
         ...carried,
@@ -288,12 +300,46 @@ async function attemptSign(
       bytes: new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}\n`),
     });
   }
-  const message =
-    added.length > 0
-      ? `Sign ${added.map(versionRef).join(", ")} (sequence ${String(sequence)})`
-      : `Copy ${CONFIG_FILE} from ${opts.defaultBranch}`;
   const parent = git.commitOf(PAGES_REF, { cwd });
-  return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
+  const message = commitMessage(added, statements, sequence, opts.defaultBranch);
+  return {
+    commit: commitSite(parent, files, message, cwd),
+    added,
+    statements,
+    skipped,
+    sequence,
+  };
+}
+
+/** The `statements/` files on `ref` admitted into `index`; refused files land in `skipped`. */
+function admitStatements(
+  git: typeof gitTree,
+  index: RegistryIndex,
+  ref: string,
+  cwd: string,
+  skipped: Skipped[],
+): StatementAdmission<RegistryIndex> {
+  const files = readStatementFiles(git, ref, cwd);
+  for (const f of files.skipped) skipped.push({ dir: f.path, reason: f.reason });
+  const admission = admitPublisherStatements(index, files.values);
+  for (const s of admission.skipped) skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  return admission;
+}
+
+function commitMessage(
+  added: readonly Added[],
+  statements: readonly string[],
+  sequence: number,
+  defaultBranch: string,
+): string {
+  if (added.length === 0 && statements.length === 0) {
+    return `Copy ${CONFIG_FILE} from ${defaultBranch}`;
+  }
+  const parts = [
+    ...added.map(versionRef),
+    ...statements.map((id) => `statement ${id.slice(0, 12)}`),
+  ];
+  return `Sign ${parts.join(", ")} (sequence ${String(sequence)})`;
 }
 
 /** `<id>@<version>`. */
@@ -304,16 +350,17 @@ function versionRef(x: { id: string; version: string }): string {
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
-  if (a.added.length === 0) {
+  if (a.added.length === 0 && a.statements.length === 0) {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
     for (const x of a.added) lines.push(`- ${code(versionRef(x))} (${x.channel})`);
+    for (const id of a.statements) lines.push(`- statement ${code(id)}`);
   }
   if (a.skipped.length > 0) {
     lines.push(
       "",
-      "**Skipped** (not signed; fix the directory and it is signed on a later run):",
+      "**Skipped** (not signed; fix the directory or statement file and it is signed on a later run):",
       "",
     );
     for (const s of a.skipped) lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
@@ -322,7 +369,7 @@ function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   io.summary(lines.join("\n"));
   io.log(
     pushed
-      ? `signed ${String(a.added.length)} version(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}`
+      ? `signed ${String(a.added.length)} version(s) and ${String(a.statements.length)} statement(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}`
       : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`,
   );
 }

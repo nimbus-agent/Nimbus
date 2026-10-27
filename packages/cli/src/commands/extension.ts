@@ -25,6 +25,7 @@ import {
 } from "../lib/secret-input.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
+import { runExtensionKey } from "./extension-key.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import {
@@ -882,15 +883,20 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--no-pr]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
- * Subcommands that need no gateway. `publish` gets the RAW args: `stripFlags` drops `--channel` and
- * its value, which would silently publish a beta as stable.
+ * Subcommands that need no gateway. `publish` and `key` get the RAW args: `stripFlags` drops
+ * `--channel` and its value, which would silently publish a beta as stable, and a `--reason` text.
  */
 async function runExtensionOffline(sub: string, args: string[]): Promise<boolean> {
   if (sub === "publish") {
     const code = await runExtensionPublish(args.slice(1));
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  if (sub === "key") {
+    const code = await runExtensionKey(args.slice(1));
     if (code !== 0) process.exit(code);
     return true;
   }

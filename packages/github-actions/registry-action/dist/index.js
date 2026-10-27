@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:a74c4df9afcb698c421ec58da05966c0acd57ececdd0b4ad3120153d6dac4254
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:726f37db4c399f652cbd1ee40d428d47baee1bd31dd71d75ebc3e62aaa0e1615
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5174,10 +5174,220 @@ function privateKeyFromSeed(seed) {
 }
 
 // ../../registry-format/src/trust-statement.ts
+import { createHash as createHash2, sign } from "node:crypto";
 var import_tweetnacl = __toESM(require_nacl_fast(), 1);
+var TRUST_STATEMENT_KINDS = [
+  "key.revoke",
+  "extension.takedown",
+  "key.rotate",
+  "publisher.verified"
+];
+var MAX_STATEMENT_REASON_CHARS = 500;
+var MAX_TAKEDOWN_VERSIONS = 100;
+var MAX_VERIFIED_KEYS = 10;
+var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
+var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+var GITHUB_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
+function invalid(detail) {
+  return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
+}
+function asObject(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw invalid("a statement must be an object");
+  }
+  return value;
+}
+function str(o, key) {
+  const v = o[key];
+  if (typeof v !== "string" || v === "")
+    throw invalid(`${key} must be a non-empty string`);
+  return v;
+}
+function matching(o, key, re) {
+  const v = str(o, key);
+  if (!re.test(v))
+    throw invalid(`${key} is malformed`);
+  return v;
+}
+function timestamp(o, key) {
+  const v = str(o, key);
+  if (Number.isNaN(Date.parse(v)))
+    throw invalid(`${key} is not a timestamp`);
+  return v;
+}
+function publisherId(o) {
+  const v = str(o, "publisherId");
+  if (v.length > 64 || !PUBLISHER_ID_RE.test(v))
+    throw invalid("publisherId is malformed");
+  return v;
+}
+function reason(o) {
+  const v = str(o, "reason");
+  if ([...v].length > MAX_STATEMENT_REASON_CHARS) {
+    throw invalid(`reason exceeds ${String(MAX_STATEMENT_REASON_CHARS)} characters`);
+  }
+  return v;
+}
+function versions(o) {
+  const v = o["versions"];
+  if (v === "*")
+    return v;
+  if (!Array.isArray(v) || v.length === 0) {
+    throw invalid('versions must be "*" or a non-empty list');
+  }
+  if (v.length > MAX_TAKEDOWN_VERSIONS) {
+    throw invalid(`versions lists more than ${String(MAX_TAKEDOWN_VERSIONS)} entries`);
+  }
+  const seen = new Set;
+  for (const item of v) {
+    if (typeof item !== "string" || !isValidSemver(item))
+      throw invalid("versions has a non-semver entry");
+    if (seen.has(item))
+      throw invalid("versions has a duplicate entry");
+    seen.add(item);
+  }
+  return v;
+}
+function verifiedKeys(o) {
+  const v = o["keys"];
+  if (!Array.isArray(v) || v.length === 0 || v.length > MAX_VERIFIED_KEYS) {
+    throw invalid(`keys must list 1 to ${String(MAX_VERIFIED_KEYS)} keys`);
+  }
+  const seen = new Set;
+  for (const k of v) {
+    if (typeof k !== "string" || !KEY_RE.test(k))
+      throw invalid("keys has a malformed key");
+    if (seen.has(k))
+      throw invalid("keys has a duplicate key");
+    seen.add(k);
+  }
+  return v;
+}
+function isKnownStatementKind(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw))
+    return false;
+  const kind = raw["kind"];
+  return typeof kind === "string" && TRUST_STATEMENT_KINDS.includes(kind);
+}
+function parseTrustStatement(raw) {
+  const o = asObject(raw);
+  if (!isKnownStatementKind(o))
+    throw invalid("kind is not known");
+  const base = {
+    ...o,
+    issuedAt: timestamp(o, "issuedAt"),
+    signerKey: matching(o, "signerKey", KEY_RE),
+    signature: matching(o, "signature", SIGNATURE_RE2)
+  };
+  switch (o["kind"]) {
+    case "key.revoke":
+      return {
+        ...base,
+        kind: "key.revoke",
+        publisherId: publisherId(o),
+        keyFingerprint: matching(o, "keyFingerprint", FINGERPRINT_RE),
+        reason: reason(o)
+      };
+    case "extension.takedown": {
+      const extensionId = str(o, "extensionId");
+      try {
+        assertSafeExtensionId(extensionId);
+      } catch (e) {
+        throw invalid(`extensionId is not safe: ${e.message}`);
+      }
+      return {
+        ...base,
+        kind: "extension.takedown",
+        extensionId,
+        publisherId: publisherId(o),
+        versions: versions(o),
+        reason: reason(o)
+      };
+    }
+    case "key.rotate": {
+      const fromKey = matching(o, "fromKey", KEY_RE);
+      const toKey = matching(o, "toKey", KEY_RE);
+      if (fromKey === toKey)
+        throw invalid("fromKey and toKey are the same key");
+      return { ...base, kind: "key.rotate", publisherId: publisherId(o), fromKey, toKey };
+    }
+    case "publisher.verified":
+      return {
+        ...base,
+        kind: "publisher.verified",
+        publisherId: publisherId(o),
+        keys: verifiedKeys(o),
+        github: matching(o, "github", GITHUB_HANDLE_RE),
+        verifiedAt: timestamp(o, "verifiedAt")
+      };
+  }
+}
+function trustStatementSigningBytes(s) {
+  const { signature: _omitted, ...rest } = s;
+  return new TextEncoder().encode(canonicalize(rest));
+}
+function trustStatementId(s) {
+  return createHash2("sha256").update(canonicalize(s)).digest("hex");
+}
+function signatureVerifies(s) {
+  try {
+    return import_tweetnacl.default.sign.detached.verify(trustStatementSigningBytes(s), new Uint8Array(Buffer.from(s.signature, "base64")), new Uint8Array(Buffer.from(s.signerKey, "base64")));
+  } catch {
+    return false;
+  }
+}
+function verifyTrustStatement(s, opts) {
+  if (!signatureVerifies(s))
+    return null;
+  const root = opts.nimbusRootKey !== undefined && s.signerKey === opts.nimbusRootKey ? "nimbus" : opts.registryRootKey !== undefined && s.signerKey === opts.registryRootKey ? "registry" : null;
+  switch (s.kind) {
+    case "key.revoke":
+      if (publisherKeyFingerprint(s.signerKey) === s.keyFingerprint)
+        return "publisher";
+      return root;
+    case "extension.takedown":
+      return root;
+    case "publisher.verified":
+      return root === "nimbus" ? "nimbus" : null;
+    case "key.rotate":
+      return s.signerKey === s.fromKey ? "publisher" : null;
+  }
+}
 
 // ../../registry-format/src/trust-feed.ts
 var MAX_TRUST_FEED_BYTES = 8 * 1024 * 1024;
+var MAX_STATEMENTS_PER_DOCUMENT = 1e4;
+function hasStringKind(entry) {
+  return entry !== null && typeof entry === "object" && !Array.isArray(entry) && typeof entry["kind"] === "string";
+}
+function readStatementList(raw) {
+  if (raw === undefined)
+    return { statements: [], dropped: 0, unknownKinds: 0 };
+  if (!Array.isArray(raw))
+    return { statements: [], dropped: 1, unknownKinds: 0 };
+  const statements = [];
+  let dropped = Math.max(0, raw.length - MAX_STATEMENTS_PER_DOCUMENT);
+  let unknownKinds = 0;
+  for (const entry of raw.slice(0, MAX_STATEMENTS_PER_DOCUMENT)) {
+    if (!hasStringKind(entry)) {
+      dropped++;
+      continue;
+    }
+    if (!isKnownStatementKind(entry)) {
+      unknownKinds++;
+      continue;
+    }
+    try {
+      statements.push(parseTrustStatement(entry));
+    } catch (err) {
+      if (!(err instanceof RegistryError))
+        throw err;
+      dropped++;
+    }
+  }
+  return { statements, dropped, unknownKinds };
+}
 
 // ../../registry-format/src/index-format.ts
 function decodeBase642(s) {
@@ -5185,44 +5395,44 @@ function decodeBase642(s) {
 }
 var MAX_INDEX_BYTES = 8 * 1024 * 1024;
 var HEX64_RE = /^[0-9a-f]{64}$/;
-var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
-var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
-function invalid(detail) {
+var KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE3 = /^[A-Za-z0-9+/]{86}==$/;
+function invalid2(detail) {
   return new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
 }
-function asObject(value, what) {
+function asObject2(value, what) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw invalid(`${what} must be an object`);
+    throw invalid2(`${what} must be an object`);
   }
   return value;
 }
 function requireKeys(o, keys, what) {
   for (const k of keys) {
     if (!(k in o))
-      throw invalid(`${what} is missing key: ${k}`);
+      throw invalid2(`${what} is missing key: ${k}`);
   }
 }
-function str(o, key, what) {
+function str2(o, key, what) {
   const v = o[key];
   if (typeof v !== "string" || v === "")
-    throw invalid(`${what}.${key} must be a non-empty string`);
+    throw invalid2(`${what}.${key} must be a non-empty string`);
   return v;
 }
-function matching(o, key, re, what) {
-  const v = str(o, key, what);
+function matching2(o, key, re, what) {
+  const v = str2(o, key, what);
   if (!re.test(v))
-    throw invalid(`${what}.${key} is malformed`);
+    throw invalid2(`${what}.${key} is malformed`);
   return v;
 }
 function isoTimestamp(o, key, what) {
-  const v = str(o, key, what);
+  const v = str2(o, key, what);
   if (Number.isNaN(Date.parse(v)))
-    throw invalid(`${what}.${key} is not a timestamp`);
+    throw invalid2(`${what}.${key} is not a timestamp`);
   return v;
 }
 function parseVersionEntry(raw, id, version) {
   const what = `extensions.${id}.versions.${version}`;
-  const o = asObject(raw, what);
+  const o = asObject2(raw, what);
   requireKeys(o, [
     "channel",
     "name",
@@ -5236,28 +5446,28 @@ function parseVersionEntry(raw, id, version) {
   ], what);
   const channel = o["channel"];
   if (channel !== "stable" && channel !== "beta")
-    throw invalid(`${what}.channel is not known`);
+    throw invalid2(`${what}.channel is not known`);
   const base = `extensions/${id}/${version}`;
-  const manifest = str(o, "manifest", what);
+  const manifest = str2(o, "manifest", what);
   if (manifest !== `${base}/manifest.json`)
-    throw invalid(`${what}.manifest is not canonical`);
-  const pkg = str(o, "package", what);
+    throw invalid2(`${what}.manifest is not canonical`);
+  const pkg = str2(o, "package", what);
   if (pkg !== `${base}/package.tgz`)
-    throw invalid(`${what}.package is not canonical`);
+    throw invalid2(`${what}.package is not canonical`);
   const size = o["packageSizeBytes"];
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
-    throw invalid(`${what}.packageSizeBytes must be a positive integer`);
+    throw invalid2(`${what}.packageSizeBytes must be a positive integer`);
   }
   return {
     ...o,
     channel,
-    name: str(o, "name", what),
+    name: str2(o, "name", what),
     manifest,
-    manifestSha256: matching(o, "manifestSha256", HEX64_RE, what),
+    manifestSha256: matching2(o, "manifestSha256", HEX64_RE, what),
     package: pkg,
-    packageSha256: matching(o, "packageSha256", HEX64_RE, what),
+    packageSha256: matching2(o, "packageSha256", HEX64_RE, what),
     packageSizeBytes: size,
-    entryHash: matching(o, "entryHash", HEX64_RE, what),
+    entryHash: matching2(o, "entryHash", HEX64_RE, what),
     publishedAt: isoTimestamp(o, "publishedAt", what)
   };
 }
@@ -5265,27 +5475,27 @@ function parseExtensionEntry(raw, id) {
   try {
     assertSafeExtensionId(id);
   } catch (e) {
-    throw invalid(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
+    throw invalid2(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
   }
   const what = `extensions.${id}`;
-  const o = asObject(raw, what);
+  const o = asObject2(raw, what);
   requireKeys(o, ["publisher", "versions"], what);
-  const p = asObject(o["publisher"], `${what}.publisher`);
+  const p = asObject2(o["publisher"], `${what}.publisher`);
   requireKeys(p, ["id", "key"], `${what}.publisher`);
-  const pid = str(p, "id", `${what}.publisher`);
+  const pid = str2(p, "id", `${what}.publisher`);
   if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
-    throw invalid(`${what}.publisher.id is malformed`);
+    throw invalid2(`${what}.publisher.id is malformed`);
   }
-  const key = matching(p, "key", KEY_RE, `${what}.publisher`);
-  const versionsRaw = asObject(o["versions"], `${what}.versions`);
+  const key = matching2(p, "key", KEY_RE2, `${what}.publisher`);
+  const versionsRaw = asObject2(o["versions"], `${what}.versions`);
   const versions = {};
   for (const [version, entry] of Object.entries(versionsRaw)) {
     if (!isValidSemver(version))
-      throw invalid(`${what} has a non-semver version: ${version}`);
+      throw invalid2(`${what} has a non-semver version: ${version}`);
     versions[version] = parseVersionEntry(entry, id, version);
   }
   if (Object.keys(versions).length === 0)
-    throw invalid(`${what} has no versions`);
+    throw invalid2(`${what} has no versions`);
   return { ...o, publisher: { ...p, id: pid, key }, versions };
 }
 function parseRegistryIndex(bytes) {
@@ -5296,7 +5506,7 @@ function parseRegistryIndex(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid("index.json is not valid UTF-8");
+    throw invalid2("index.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -5304,17 +5514,17 @@ function parseRegistryIndex(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid("index.json is not valid JSON");
+    throw invalid2("index.json is not valid JSON");
   }
-  const o = asObject(raw, "index");
+  const o = asObject2(raw, "index");
   requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
   if (o["format"] !== 1)
-    throw invalid("unsupported index format");
+    throw invalid2("unsupported index format");
   const sequence = o["sequence"];
   if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid("index.sequence must be a positive integer");
+    throw invalid2("index.sequence must be a positive integer");
   }
-  const extensionsRaw = asObject(o["extensions"], "index.extensions");
+  const extensionsRaw = asObject2(o["extensions"], "index.extensions");
   const extensions = {};
   for (const [id, entry] of Object.entries(extensionsRaw)) {
     extensions[id] = parseExtensionEntry(entry, id);
@@ -5322,11 +5532,11 @@ function parseRegistryIndex(bytes) {
   return {
     ...o,
     format: 1,
-    rootKey: matching(o, "rootKey", KEY_RE, "index"),
+    rootKey: matching2(o, "rootKey", KEY_RE2, "index"),
     sequence,
     generatedAt: isoTimestamp(o, "generatedAt", "index"),
     extensions,
-    signature: matching(o, "signature", SIGNATURE_RE2, "index")
+    signature: matching2(o, "signature", SIGNATURE_RE3, "index")
   };
 }
 function registryIndexSigningBytes(index) {
@@ -5357,7 +5567,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
   await verifyRegistryIndexSelf(index);
 }
 // ../../registry-format/src/inspect.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
@@ -8680,12 +8890,330 @@ async function inspectPackage(tgz, work) {
   return {
     manifestBytes,
     manifest: m,
-    entryHash: createHash2("sha256").update(entryBytes).digest("hex"),
+    entryHash: createHash3("sha256").update(entryBytes).digest("hex"),
     files: files.toSorted(codeUnitCompare)
   };
 }
+// ../../registry-format/src/rotation-graph.ts
+function walk(start, next, allow) {
+  const seen = new Set;
+  const queue = [start];
+  while (queue.length > 0) {
+    const node = queue.shift();
+    for (const n of next(node)) {
+      if (seen.has(n) || n === start || !allow(n))
+        continue;
+      seen.add(n);
+      queue.push(n);
+    }
+  }
+  return seen;
+}
+function adjacency(edges, reverse) {
+  const out = new Map;
+  for (const e of edges) {
+    const [a, b] = reverse ? [e.to, e.from] : [e.from, e.to];
+    const list = out.get(a) ?? [];
+    list.push(b);
+    out.set(a, list);
+  }
+  return out;
+}
+function ancestorsOf(edges, fp) {
+  const back = adjacency(edges, true);
+  return walk(fp, (n) => back.get(n) ?? [], () => true);
+}
+function successorsOf(edges, fp, usable) {
+  if (!usable(fp))
+    return { reachable: new Set, terminal: new Set };
+  const fwd = adjacency(edges, false);
+  const reachable = walk(fp, (n) => fwd.get(n) ?? [], usable);
+  const terminal = new Set;
+  for (const n of reachable) {
+    const onward = (fwd.get(n) ?? []).filter((m) => usable(m) && m !== n);
+    if (onward.length === 0)
+      terminal.add(n);
+  }
+  return { reachable, terminal };
+}
+
+// ../../registry-format/src/publisher-statements.ts
+var MAX_REGISTRY_STATEMENTS = 1000;
+var MAX_ROTATIONS_PER_PUBLISHER = 20;
+var MAX_STATEMENTS_PER_PUBLISHER = 50;
+function publisherAfterPublish(existing, signer) {
+  return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
+}
+function indexedPublisherStatements(index) {
+  return readStatementList(index.statements).statements.filter((s) => (s.kind === "key.rotate" || s.kind === "key.revoke") && verifyTrustStatement(s, {}) === "publisher");
+}
+function boundKeys(index, publisherId) {
+  const out = new Set;
+  for (const e of Object.values(index.extensions)) {
+    if (e.publisher.id === publisherId)
+      out.add(e.publisher.key);
+  }
+  return out;
+}
+var rotationsOf = (list) => list.filter((s) => s.kind === "key.rotate");
+var edgesOf = (rotations) => rotations.map((r) => ({
+  from: publisherKeyFingerprint(r.fromKey),
+  to: publisherKeyFingerprint(r.toKey)
+}));
+var signingKey = (s) => s.kind === "key.rotate" ? s.fromKey : s.signerKey;
+function stateOf(index, publisherId, list = indexedPublisherStatements(index)) {
+  const mine = list.filter((s) => s.publisherId === publisherId);
+  return {
+    bound: boundKeys(index, publisherId),
+    rotations: rotationsOf(mine),
+    revokedFps: new Set(mine.filter((s) => s.kind === "key.revoke").map((s) => s.keyFingerprint))
+  };
+}
+function revokedIn(state, fp) {
+  if (state.revokedFps.has(fp))
+    return true;
+  for (const a of ancestorsOf(edgesOf(state.rotations), fp)) {
+    if (state.revokedFps.has(a))
+      return true;
+  }
+  return false;
+}
+function currentOf(state) {
+  const keyByFp = new Map;
+  for (const k of state.bound)
+    keyByFp.set(publisherKeyFingerprint(k), k);
+  for (const r of state.rotations) {
+    keyByFp.set(publisherKeyFingerprint(r.fromKey), r.fromKey);
+    keyByFp.set(publisherKeyFingerprint(r.toKey), r.toKey);
+  }
+  const edges = edgesOf(state.rotations);
+  const usable = (fp) => !state.revokedFps.has(fp);
+  const rotatedAway = new Set(edges.map((e) => e.from));
+  const current = new Set;
+  for (const k of state.bound) {
+    const fp = publisherKeyFingerprint(k);
+    if (!usable(fp))
+      continue;
+    const { reachable } = successorsOf(edges, fp, usable);
+    for (const n of [fp, ...reachable]) {
+      if (!rotatedAway.has(n))
+        current.add(keyByFp.get(n));
+    }
+  }
+  return current;
+}
+function publisherKeyStanding(index, publisherId, key) {
+  const state = stateOf(index, publisherId);
+  const current = [...currentOf(state)].sort(codeUnitCompare);
+  const refuse = (reason) => ({
+    ok: false,
+    reason,
+    current
+  });
+  if (revokedIn(state, publisherKeyFingerprint(key)))
+    return refuse("revoked");
+  if (state.bound.size === 0)
+    return { ok: true };
+  if (current.length === 1 && current[0] === key)
+    return { ok: true };
+  if (current.length > 1)
+    return refuse("fork");
+  const known = new Set([...state.bound, ...state.rotations.map((r) => r.fromKey)]);
+  if (known.has(key))
+    return refuse("superseded");
+  const looped = current.length === 0 && [...state.bound].some((k) => !state.revokedFps.has(publisherKeyFingerprint(k)));
+  return refuse(looped ? "fork" : "unrelated");
+}
+function structural(index, raw, skip) {
+  let s;
+  try {
+    s = parseTrustStatement(raw);
+  } catch (e) {
+    skip(undefined, `not a valid statement: ${e.message}`);
+    return;
+  }
+  const id = trustStatementId(s);
+  if (s.kind !== "key.rotate" && s.kind !== "key.revoke") {
+    skip(id, `${s.kind} is signed by a root key, not a publisher; a registry admits only key.rotate and key.revoke here`);
+    return;
+  }
+  if (verifyTrustStatement(s, {}) !== "publisher") {
+    skip(id, `${s.kind} is not signed by the key it concerns`);
+    return;
+  }
+  if (boundKeys(index, s.publisherId).size === 0) {
+    skip(id, `publisher ${s.publisherId} has no extension in this index`);
+    return;
+  }
+  return { id, s };
+}
+function reachOf(bound, rotations) {
+  const reach = new Set(bound);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const r of rotations) {
+      if (reach.has(r.fromKey) && !reach.has(r.toKey)) {
+        reach.add(r.toKey);
+        grew = true;
+      }
+    }
+  }
+  return reach;
+}
+function hasRoom(budget, id, publisherId, skip) {
+  if (budget.total >= MAX_REGISTRY_STATEMENTS) {
+    skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
+    return false;
+  }
+  if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
+    skip(id, `publisher ${publisherId} is at its statement cap (${String(MAX_STATEMENTS_PER_PUBLISHER)})`);
+    return false;
+  }
+  return true;
+}
+function spend(budget) {
+  budget.total++;
+  budget.publisher++;
+}
+function forks(pending, admitted) {
+  const targets = new Map;
+  const add = (from, to) => {
+    const set = targets.get(from) ?? new Set;
+    set.add(to);
+    targets.set(from, set);
+  };
+  for (const r of admitted)
+    add(r.fromKey, r.toKey);
+  for (const p of pending)
+    if (p.s.kind === "key.rotate")
+      add(p.s.fromKey, p.s.toKey);
+  const out = new Set;
+  for (const p of pending) {
+    if (p.s.kind === "key.rotate" && (targets.get(p.s.fromKey)?.size ?? 0) > 1)
+      out.add(p.id);
+  }
+  return out;
+}
+var fromRevoked = (run, r) => revokedIn(run.state, publisherKeyFingerprint(r.fromKey));
+function admitRevocationRound(run, reach) {
+  let progressed = false;
+  for (const [id, p] of run.revocations) {
+    const r = p.s;
+    if (!reach.has(r.signerKey))
+      continue;
+    run.revocations.delete(id);
+    if (run.state.revokedFps.has(r.keyFingerprint)) {
+      run.skip(id, `redundant: key ${r.keyFingerprint} is already revoked`);
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip))
+      continue;
+    run.state.revokedFps.add(r.keyFingerprint);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+function admitRotationRound(run, reach) {
+  let progressed = false;
+  const reachedNow = new Set;
+  for (const [id, p] of run.rotations) {
+    const r = p.s;
+    if (!reach.has(r.fromKey) || fromRevoked(run, r))
+      continue;
+    run.rotations.delete(id);
+    if (reach.has(r.toKey) || reachedNow.has(r.toKey)) {
+      run.skip(id, `key ${publisherKeyFingerprint(r.toKey)} is already reached: a loop or a repeat`);
+      continue;
+    }
+    if (run.state.rotations.length >= MAX_ROTATIONS_PER_PUBLISHER) {
+      run.skip(id, `publisher ${r.publisherId} is at its rotation cap (${String(MAX_ROTATIONS_PER_PUBLISHER)})`);
+      continue;
+    }
+    if (!hasRoom(run.budget, id, r.publisherId, run.skip))
+      continue;
+    run.state.rotations.push(r);
+    reachedNow.add(r.toKey);
+    spend(run.budget);
+    run.admitted.push(p);
+    progressed = true;
+  }
+  return progressed;
+}
+function leftoverReason(run, p, publisherId) {
+  if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
+    return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
+  }
+  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index (directly or through an admitted rotation)`;
+}
+function admitForPublisher(publisherId, mine, state, budget, skip) {
+  const pendingRotations = mine.filter((p) => p.s.kind === "key.rotate");
+  const forked = forks(pendingRotations, state.rotations);
+  for (const p of pendingRotations) {
+    if (!forked.has(p.id))
+      continue;
+    const from = publisherKeyFingerprint(p.s.fromKey);
+    skip(p.id, `fork: key ${from} already rotates, or is asked to rotate, to a different key`);
+  }
+  const run = {
+    state,
+    budget,
+    skip,
+    revocations: new Map(mine.filter((p) => p.s.kind === "key.revoke").map((p) => [p.id, p])),
+    rotations: new Map(pendingRotations.filter((p) => !forked.has(p.id)).map((p) => [p.id, p])),
+    admitted: []
+  };
+  let progressed = true;
+  while (progressed) {
+    const reach = reachOf(state.bound, state.rotations);
+    const revoked = admitRevocationRound(run, reach);
+    const rotated = admitRotationRound(run, reach);
+    progressed = revoked || rotated;
+  }
+  for (const p of [...run.revocations.values(), ...run.rotations.values()]) {
+    skip(p.id, leftoverReason(run, p, publisherId));
+  }
+  return run.admitted;
+}
+function newCandidates(index, raws, existingIds, skip) {
+  const byId = new Map;
+  for (const raw of raws) {
+    const p = structural(index, raw, skip);
+    if (p !== undefined && !existingIds.has(p.id))
+      byId.set(p.id, p);
+  }
+  return [...byId.values()].sort((a, b) => codeUnitCompare(a.id, b.id));
+}
+function admitPublisherStatements(index, candidates) {
+  const existingRaw = Array.isArray(index.statements) ? [...index.statements] : [];
+  const indexed = indexedPublisherStatements(index);
+  const existingIds = new Set(readStatementList(index.statements).statements.map(trustStatementId));
+  const skippedAll = [];
+  const skip = (id, reason) => {
+    skippedAll.push({ id, reason });
+  };
+  const fresh = newCandidates(index, candidates, existingIds, skip);
+  const total = { value: existingRaw.length };
+  const admitted = [];
+  const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
+  for (const publisherId of publishers) {
+    const state = stateOf(index, publisherId, indexed);
+    const mine = fresh.filter((p) => p.s.publisherId === publisherId);
+    const already = indexed.filter((x) => x.publisherId === publisherId).length;
+    const budget = { total: total.value, publisher: already };
+    admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
+    total.value = budget.total;
+  }
+  return {
+    index: admitted.length === 0 ? index : { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
+    admitted: admitted.map((p) => p.s),
+    skipped: skippedAll
+  };
+}
 // ../../registry-format/src/sign.ts
-import { createPublicKey, sign, verify } from "node:crypto";
+import { createPublicKey, sign as sign2, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
@@ -8694,19 +9222,19 @@ var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
   return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned;
-    const sig = sign(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
+    const sig = sign2(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
     resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
 // ../../registry-format/src/validate-publish.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 var import_semver5 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
-var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+var FINGERPRINT_RE2 = /^[0-9a-f]{32}$/;
 var DIST_PREFIX = "dist/";
 function decodeJsonObject(bytes, what, fail) {
   let raw;
@@ -8765,7 +9293,7 @@ function parsePublishRequest(bytes) {
   if (channel !== "stable" && channel !== "beta") {
     throw requestInvalid(`${what}.channel must be "stable" or "beta"`);
   }
-  if (typeof publisherFingerprint !== "string" || !FINGERPRINT_RE.test(publisherFingerprint)) {
+  if (typeof publisherFingerprint !== "string" || !FINGERPRINT_RE2.test(publisherFingerprint)) {
     throw requestInvalid(`${what}.publisherFingerprint must be 32 lowercase hex characters`);
   }
   return { id, version, channel, publisherFingerprint };
@@ -8829,6 +9357,36 @@ function indexedServiceIds(signed) {
   }
   return out;
 }
+function assertCurrentPublisherKey(publisher, signed) {
+  const standing = publisherKeyStanding(signed, publisher.id, publisher.key);
+  if (standing.ok)
+    return;
+  const fp = publisherKeyFingerprint(publisher.key);
+  const current = standing.current.map(publisherKeyFingerprint).join(", ");
+  if (standing.current.length === 0 && standing.reason !== "revoked") {
+    throw keyConflict(`publisher ${publisher.id} has no current key in this registry (its key chain ends in a revoked key, or loops); no key can publish until the registry maintainer resolves it`);
+  }
+  switch (standing.reason) {
+    case "revoked":
+      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_REVOKED", `publisher ${publisher.id}'s key ${fp} is revoked in this registry (itself or a key it was rotated from)`);
+    case "superseded":
+      throw keyConflict(`publisher ${publisher.id}'s key ${fp} is superseded by ${current}; sign with the current key`);
+    case "fork":
+      throw keyConflict(`publisher ${publisher.id}'s key rotations fork or loop (current keys: ${current || "none"}); no key can publish until the registry maintainer resolves it`);
+    case "unrelated": {
+      const bound = Object.entries(signed.extensions).filter(([, e]) => e.publisher.id === publisher.id).map(([id]) => id).sort(codeUnitCompare).join(", ");
+      throw keyConflict(`publisher ${publisher.id} is bound to key ${current || "(revoked)"} by indexed extension ${bound}; this manifest is signed by ${fp}, which no key.rotate in the index reaches — include the key.rotate statement with --statement`);
+    }
+  }
+}
+function assertKeyMoveOnStable(id, publisher, channel, signed) {
+  const existing = Object.hasOwn(signed.extensions, id) ? signed.extensions[id] : undefined;
+  if (existing === undefined || existing.publisher.key === publisher.key || channel === "stable") {
+    return;
+  }
+  throw keyConflict(`${id} is bound to key ${publisherKeyFingerprint(existing.publisher.key)}; publish the first version under key ${publisherKeyFingerprint(publisher.key)} on the stable channel, or default installs of the newest stable version would break`);
+}
+var keyConflict = (detail) => new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
 function assertRegistryState(m, publisher, serviceId, signed) {
   const existing = Object.hasOwn(signed.extensions, m.id) ? signed.extensions[m.id] : undefined;
   if (existing === undefined) {
@@ -8838,15 +9396,11 @@ function assertRegistryState(m, publisher, serviceId, signed) {
       throw new RegistryError("ERR_REGISTRY_SERVICE_ID_COLLISION", `service id ${serviceId} of new id ${m.id} collides with ${hit} of indexed id ${String(indexed.get(hit))}`);
     }
   }
-  for (const [id, entry] of Object.entries(signed.extensions)) {
-    if (entry.publisher.id === publisher.id && entry.publisher.key !== publisher.key) {
-      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `publisher ${publisher.id} is bound to a different key by indexed extension ${id}`);
-    }
+  if (existing !== undefined && existing.publisher.id !== publisher.id) {
+    throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id}`);
   }
+  assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    if (existing.publisher.id !== publisher.id || existing.publisher.key !== publisher.key) {
-      throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id} with a different key`);
-    }
     const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver5.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
@@ -8882,7 +9436,7 @@ function assertFileSet(m, files) {
     throw fileSetInvalid(`package must hold ${PACKAGE_MANIFEST_FILE} and the entry ${entry}`);
   }
 }
-var sha256Hex = (b) => createHash3("sha256").update(b).digest("hex");
+var sha256Hex = (b) => createHash4("sha256").update(b).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
@@ -8899,6 +9453,7 @@ async function validatePublish(c, signed, config, work) {
   }
   const serviceId = deriveExtensionServiceId(m.id);
   const newId = assertRegistryState(m, publisher, serviceId, signed);
+  assertKeyMoveOnStable(m.id, publisher, req.channel, signed);
   if (c.packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
@@ -9109,6 +9664,7 @@ var PAGES_BRANCH = "gh-pages";
 var PAGES_REF = `origin/${PAGES_BRANCH}`;
 var INDEX_FILE = "index.json";
 var CONFIG_FILE = "nimbus-registry.json";
+var STATEMENTS_DIR = "statements/";
 var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
 function hasFile(git, ref, path, cwd) {
   return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
@@ -9146,6 +9702,52 @@ function readCandidate(git, ref, dir, cwd) {
     publishRequestBytes: read("publish-request.json")
   };
 }
+var MAX_STATEMENT_FILE_BYTES = 16 * 1024;
+var STATEMENT_FILE_RE = /^statements\/([0-9a-f]{64})\.json$/;
+function readStatementFile(git, ref, e, cwd) {
+  const m = STATEMENT_FILE_RE.exec(e.path);
+  if (m === null)
+    return { reason: "must be statements/<64 lowercase hex statement id>.json" };
+  if (e.mode !== git.REGULAR_FILE_MODE)
+    return { reason: `git mode ${e.mode} is not a regular file` };
+  const bytes = git.readBlob(ref, e.path, { cwd });
+  if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES) {
+    return { reason: `exceeds ${String(MAX_STATEMENT_FILE_BYTES)} bytes` };
+  }
+  let value;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return { reason: "is not valid UTF-8 JSON" };
+  }
+  let id;
+  try {
+    id = trustStatementId(parseTrustStatement(value));
+  } catch (e) {
+    return { reason: `is not a valid trust statement: ${e.message}` };
+  }
+  if (id !== m[1])
+    return { reason: "is not named by its statement id" };
+  return { value };
+}
+function readStatementFiles(git, ref, cwd, only) {
+  const out = { values: [], skipped: [] };
+  for (const e of git.listTreeEntries(ref, STATEMENTS_DIR, { cwd })) {
+    if (e.path === `${STATEMENTS_DIR}.gitkeep` || only !== undefined && !only.has(e.path)) {
+      continue;
+    }
+    const r = readStatementFile(git, ref, e, cwd);
+    if ("reason" in r) {
+      out.skipped.push({ path: e.path, reason: r.reason });
+    } else {
+      out.values.push(r.value);
+    }
+  }
+  return out;
+}
+function statementPath(id) {
+  return id === undefined ? STATEMENTS_DIR : `${STATEMENTS_DIR}${id}.json`;
+}
 
 // src/report.ts
 var GHA_IO = {
@@ -9169,43 +9771,88 @@ function code(s) {
 var SHARED = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir };
 var CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
 var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
-function assertSinglePublish(changes) {
+var STATEMENT_RE = /^statements\/[0-9a-f]{64}\.json$/;
+function assertPublishShape(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");
   const offending = [];
   const dirs = new Set;
+  const statements = new Set;
+  let dirFiles = 0;
   for (const c of changes) {
     const m = FILE_RE.exec(c.path);
-    if (c.status !== "A" || m?.[1] === undefined) {
+    if (c.status === "A" && STATEMENT_RE.test(c.path)) {
+      statements.add(c.path);
+    } else if (c.status !== "A" || m?.[1] === undefined) {
       offending.push(`${c.status} ${c.path}`);
     } else {
       dirs.add(m[1]);
+      dirFiles++;
     }
   }
   if (offending.length > 0) {
-    throw new Error("a publish pull request may only add manifest.json, package.tgz and publish-request.json " + `under one extensions/<id>/<version>/; it also changes: ${offending.join(", ")}`);
+    throw new Error("a publish pull request may only add manifest.json, package.tgz and publish-request.json " + "under one extensions/<id>/<version>/, and statements/<statement id>.json files; " + `it also changes: ${offending.join(", ")}`);
   }
-  if (dirs.size !== 1) {
+  if (dirs.size > 1) {
     throw new Error(`a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort(codeUnitCompare).join(", ")}`);
   }
   const [dir] = dirs;
-  const coords = dir === undefined ? undefined : splitExtensionDir(dir);
-  if (coords === undefined || changes.length !== CANDIDATE_FILES.length) {
-    throw new Error(`${String(dir)}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
+  if (dir === undefined)
+    return { dir: undefined, statements };
+  const coords = splitExtensionDir(dir);
+  if (coords === undefined || dirFiles !== CANDIDATE_FILES.length) {
+    throw new Error(`${dir}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
   }
-  return coords;
+  return { dir: coords, statements };
+}
+function admitPullRequestStatements(git, signed, baseRef, added, cwd) {
+  const index = admitPublisherStatements(signed, readStatementFiles(git, `origin/${baseRef}`, cwd).values).index;
+  if (added.size === 0)
+    return { index, admitted: [] };
+  const files = readStatementFiles(git, "HEAD", cwd, added);
+  const admission = admitPublisherStatements(index, files.values);
+  const problems = [
+    ...files.skipped.map((f) => `${f.path} ${f.reason}`),
+    ...admission.skipped.map((x) => `${statementPath(x.id)}: ${x.reason}`)
+  ];
+  if (problems.length > 0) {
+    throw new Error(`the registry would not admit these statements: ${problems.join("; ")}`);
+  }
+  return { index: admission.index, admitted: admission.admitted };
 }
 function effectiveConfig(git, baseRef, cwd) {
   return effectiveRegistryConfig(readConfigAt(git, PAGES_REF, cwd)?.config, readConfigAt(git, `origin/${baseRef}`, cwd)?.config);
 }
 var listOf = (items) => items.length === 0 ? "none" : items.map(code).join(", ");
-function checkSummary(v) {
+function statementSubject(s) {
+  if (s.kind === "key.rotate") {
+    return `${code(publisherKeyFingerprint(s.fromKey))} -> ${code(publisherKeyFingerprint(s.toKey))}`;
+  }
+  if (s.kind === "key.revoke")
+    return `key ${code(s.keyFingerprint)}, reason ${code(s.reason)}`;
+  return "";
+}
+function statementLines(admitted) {
+  if (admitted.length === 0)
+    return [];
+  const lines = ["**Publisher statements**", ""];
+  for (const s of admitted) {
+    lines.push(`- ${code(s.kind)} for ${code(s.publisherId)}: ${statementSubject(s)} (${code(trustStatementId(s))})`);
+  }
+  lines.push("");
+  return lines;
+}
+function statementOnlySummary(admitted) {
+  return ["## Registry statements", "", ...statementLines(admitted)].join(`
+`);
+}
+function checkSummary(v, admitted = []) {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
   return lines.join(`
 `);
 }
@@ -9221,13 +9868,19 @@ async function runCheck(opts, deps = SHARED) {
     cwd,
     deepen: [opts.baseRef]
   });
-  const dir = assertSinglePublish(git.diffTree(mergeBase, "HEAD", { cwd }));
-  const candidate = readCandidate(git, "HEAD", dir, cwd);
+  const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
+  if (shape.dir === undefined) {
+    deps.io.summary(statementOnlySummary(admitted.admitted));
+    deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);
+    return;
+  }
+  const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
   const config = effectiveConfig(git, opts.baseRef, cwd);
   const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-check-"));
   try {
-    const verdict = await deps.validate(candidate, index, config, work);
-    deps.io.summary(checkSummary(verdict));
+    const verdict = await deps.validate(candidate, admitted.index, config, work);
+    deps.io.summary(checkSummary(verdict, admitted.admitted));
     deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
   } finally {
     rmSync2(work, { recursive: true, force: true });
@@ -9235,7 +9888,7 @@ async function runCheck(opts, deps = SHARED) {
 }
 
 // src/sign.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
@@ -9334,7 +9987,7 @@ function extensionDirs(git, ref, cwd) {
   }
   return { dirs, paths };
 }
-var sha256Hex2 = (b) => createHash4("sha256").update(b).digest("hex");
+var sha256Hex2 = (b) => createHash5("sha256").update(b).digest("hex");
 function assertSignedIntact(git, index, ref, paths, cwd) {
   const problems = [];
   const signedDirs = new Set;
@@ -9380,10 +10033,11 @@ async function attemptSign(opts, seed, rootKey, deps) {
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
   const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const skipped = [];
+  const admission = admitStatements(git, index, mainRef, cwd, skipped);
   const extensions = { ...index.extensions };
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
-  const skipped = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync4(join5(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
@@ -9400,7 +10054,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
       const candidate = readCandidate(git, mainRef, coords, cwd);
       let v;
       try {
-        v = await deps.validate(candidate, { ...index, extensions }, config.config, work);
+        v = await deps.validate(candidate, { ...admission.index, extensions }, config.config, work);
       } catch (e) {
         if (!(e instanceof RegistryError))
           throw e;
@@ -9410,7 +10064,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
       const base = `extensions/${v.id}/${v.version}`;
       const existing = extensions[v.id];
       extensions[v.id] = {
-        publisher: existing?.publisher ?? v.publisher,
+        publisher: publisherAfterPublish(existing, v.publisher),
         versions: {
           ...existing?.versions,
           [v.version]: {
@@ -9432,9 +10086,10 @@ async function attemptSign(opts, seed, rootKey, deps) {
   } finally {
     rmSync4(work, { recursive: true, force: true });
   }
+  const statements = admission.admitted.map(trustStatementId);
   let sequence = index.sequence;
-  if (added.length > 0) {
-    const { signature: _previousSignature, ...carried } = index;
+  if (added.length > 0 || statements.length > 0) {
+    const { signature: _previousSignature, ...carried } = admission.index;
     const signed = await deps.sign({
       ...carried,
       format: 1,
@@ -9450,9 +10105,34 @@ async function attemptSign(opts, seed, rootKey, deps) {
 `)
     });
   }
-  const message = added.length > 0 ? `Sign ${added.map(versionRef).join(", ")} (sequence ${String(sequence)})` : `Copy ${CONFIG_FILE} from ${opts.defaultBranch}`;
   const parent = git.commitOf(PAGES_REF, { cwd });
-  return { commit: commitSite(parent, files, message, cwd), added, skipped, sequence };
+  const message = commitMessage(added, statements, sequence, opts.defaultBranch);
+  return {
+    commit: commitSite(parent, files, message, cwd),
+    added,
+    statements,
+    skipped,
+    sequence
+  };
+}
+function admitStatements(git, index, ref, cwd, skipped) {
+  const files = readStatementFiles(git, ref, cwd);
+  for (const f of files.skipped)
+    skipped.push({ dir: f.path, reason: f.reason });
+  const admission = admitPublisherStatements(index, files.values);
+  for (const s of admission.skipped)
+    skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  return admission;
+}
+function commitMessage(added, statements, sequence, defaultBranch) {
+  if (added.length === 0 && statements.length === 0) {
+    return `Copy ${CONFIG_FILE} from ${defaultBranch}`;
+  }
+  const parts = [
+    ...added.map(versionRef),
+    ...statements.map((id) => `statement ${id.slice(0, 12)}`)
+  ];
+  return `Sign ${parts.join(", ")} (sequence ${String(sequence)})`;
 }
 function versionRef(x) {
   return `${x.id}@${x.version}`;
@@ -9460,22 +10140,24 @@ function versionRef(x) {
 function report(io, a, pushed) {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
-  if (a.added.length === 0) {
+  if (a.added.length === 0 && a.statements.length === 0) {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
     for (const x of a.added)
       lines.push(`- ${code(versionRef(x))} (${x.channel})`);
+    for (const id of a.statements)
+      lines.push(`- statement ${code(id)}`);
   }
   if (a.skipped.length > 0) {
-    lines.push("", "**Skipped** (not signed; fix the directory and it is signed on a later run):", "");
+    lines.push("", "**Skipped** (not signed; fix the directory or statement file and it is signed on a later run):", "");
     for (const s of a.skipped)
       lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
   }
   lines.push("", pushed ? `Pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.");
   io.summary(lines.join(`
 `));
-  io.log(pushed ? `signed ${String(a.added.length)} version(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
+  io.log(pushed ? `signed ${String(a.added.length)} version(s) and ${String(a.statements.length)} statement(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
 }
 function warnSkipped(io, a) {
   for (const s of a.skipped)

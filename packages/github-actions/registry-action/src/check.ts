@@ -5,17 +5,23 @@
  *
  * Order: the signed `gh-pages` index is verified against its own root key first (the validator
  * trusts the index it is handed); then the path rule over the pull request's diff from the merge
- * base; then `validatePublish` over the committed bytes; then the reviewer's job summary.
+ * base; then the publisher statements the pull request adds, through the same admission `sign`
+ * runs (any statement it would skip fails the check); then `validatePublish` over the committed
+ * bytes against the index with those statements admitted; then the reviewer's job summary.
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  admitPublisherStatements,
   codeUnitCompare,
   effectiveRegistryConfig,
   type PublishVerdict,
   publisherKeyFingerprint,
   type RegistryConfig,
+  type RegistryIndex,
+  type TrustStatement,
+  trustStatementId,
   validatePublish,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
@@ -25,8 +31,10 @@ import {
   PAGES_REF,
   readCandidate,
   readConfigAt,
+  readStatementFiles,
   readVerifiedIndex,
   splitExtensionDir,
+  statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
 
@@ -51,44 +59,87 @@ const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO,
 
 const CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
 const FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
+const STATEMENT_RE = /^statements\/[0-9a-f]{64}\.json$/;
+
+/** What a pull request adds: at most one version directory, and any statement files. */
+interface PullRequestShape {
+  dir: { id: string; version: string } | undefined;
+  statements: Set<string>;
+}
 
 /**
- * The path rule: the diff only ADDS the three files of exactly one new `extensions/<id>/<version>/`.
- * Returns that directory's coordinates; anything else — a deletion or edit anywhere, a workflow,
- * `nimbus-registry.json`, `index.json`, another extension's files, a second version — refuses.
+ * The path rule: the diff only ADDS the three files of at most one new
+ * `extensions/<id>/<version>/`, plus any `statements/<statement id>.json` files (a statement-only
+ * pull request — a revocation, say — is valid). Anything else — a deletion or edit anywhere, a
+ * workflow, `nimbus-registry.json`, `index.json`, another extension's files, a second version —
+ * refuses.
  */
-function assertSinglePublish(changes: readonly gitTree.TreeChange[]): {
-  id: string;
-  version: string;
-} {
+function assertPublishShape(changes: readonly gitTree.TreeChange[]): PullRequestShape {
   if (changes.length === 0) throw new Error("the pull request changes no files");
   const offending: string[] = [];
   const dirs = new Set<string>();
+  const statements = new Set<string>();
+  let dirFiles = 0;
   for (const c of changes) {
     const m = FILE_RE.exec(c.path);
-    if (c.status !== "A" || m?.[1] === undefined) {
+    if (c.status === "A" && STATEMENT_RE.test(c.path)) {
+      statements.add(c.path);
+    } else if (c.status !== "A" || m?.[1] === undefined) {
       offending.push(`${c.status} ${c.path}`);
     } else {
       dirs.add(m[1]);
+      dirFiles++;
     }
   }
   if (offending.length > 0) {
     throw new Error(
       "a publish pull request may only add manifest.json, package.tgz and publish-request.json " +
-        `under one extensions/<id>/<version>/; it also changes: ${offending.join(", ")}`,
+        "under one extensions/<id>/<version>/, and statements/<statement id>.json files; " +
+        `it also changes: ${offending.join(", ")}`,
     );
   }
-  if (dirs.size !== 1) {
+  if (dirs.size > 1) {
     throw new Error(
       `a publish pull request adds exactly one extensions/<id>/<version>/; this one adds ${[...dirs].sort(codeUnitCompare).join(", ")}`,
     );
   }
   const [dir] = dirs;
-  const coords = dir === undefined ? undefined : splitExtensionDir(dir);
-  if (coords === undefined || changes.length !== CANDIDATE_FILES.length) {
-    throw new Error(`${String(dir)}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
+  if (dir === undefined) return { dir: undefined, statements };
+  const coords = splitExtensionDir(dir);
+  if (coords === undefined || dirFiles !== CANDIDATE_FILES.length) {
+    throw new Error(`${dir}/ must add all of ${CANDIDATE_FILES.join(", ")}`);
   }
-  return coords;
+  return { dir: coords, statements };
+}
+
+/**
+ * The pull request's statement files admitted into `index` exactly as `sign` would admit them. The
+ * base branch's statement files go in first, as `sign` will see them merged there (one already in
+ * the index is a no-op; one `sign` would skip is ignored here — it is not this pull request's). A
+ * file of THIS pull request that `sign` would skip fails the check: the reviewer aid should be loud.
+ */
+function admitPullRequestStatements(
+  git: typeof gitTree,
+  signed: RegistryIndex,
+  baseRef: string,
+  added: ReadonlySet<string>,
+  cwd: string,
+): { index: RegistryIndex; admitted: TrustStatement[] } {
+  const index = admitPublisherStatements(
+    signed,
+    readStatementFiles(git, `origin/${baseRef}`, cwd).values,
+  ).index;
+  if (added.size === 0) return { index, admitted: [] };
+  const files = readStatementFiles(git, "HEAD", cwd, added);
+  const admission = admitPublisherStatements(index, files.values);
+  const problems = [
+    ...files.skipped.map((f) => `${f.path} ${f.reason}`),
+    ...admission.skipped.map((x) => `${statementPath(x.id)}: ${x.reason}`),
+  ];
+  if (problems.length > 0) {
+    throw new Error(`the registry would not admit these statements: ${problems.join("; ")}`);
+  }
+  return { index: admission.index, admitted: admission.admitted };
 }
 
 /** The rules the sign job will apply (`effectiveRegistryConfig`): the stricter of the two copies. */
@@ -102,8 +153,35 @@ function effectiveConfig(git: typeof gitTree, baseRef: string, cwd: string): Reg
 const listOf = (items: readonly string[]): string =>
   items.length === 0 ? "none" : items.map(code).join(", ");
 
+/** What a statement concerns, for the reviewer: the fingerprints, and a revocation's reason. */
+function statementSubject(s: TrustStatement): string {
+  if (s.kind === "key.rotate") {
+    return `${code(publisherKeyFingerprint(s.fromKey))} -> ${code(publisherKeyFingerprint(s.toKey))}`;
+  }
+  if (s.kind === "key.revoke") return `key ${code(s.keyFingerprint)}, reason ${code(s.reason)}`;
+  return "";
+}
+
+/** One reviewer line per admitted statement: kind, publisher and the fingerprints it concerns. */
+function statementLines(admitted: readonly TrustStatement[]): string[] {
+  if (admitted.length === 0) return [];
+  const lines = ["**Publisher statements**", ""];
+  for (const s of admitted) {
+    lines.push(
+      `- ${code(s.kind)} for ${code(s.publisherId)}: ${statementSubject(s)} (${code(trustStatementId(s))})`,
+    );
+  }
+  lines.push("");
+  return lines;
+}
+
+/** The reviewer's job summary for a statement-only pull request. */
+function statementOnlySummary(admitted: readonly TrustStatement[]): string {
+  return ["## Registry statements", "", ...statementLines(admitted)].join("\n");
+}
+
 /** The reviewer's job summary for an accepted publish. */
-function checkSummary(v: PublishVerdict): string {
+function checkSummary(v: PublishVerdict, admitted: readonly TrustStatement[] = []): string {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
@@ -121,6 +199,7 @@ function checkSummary(v: PublishVerdict): string {
     `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`,
     `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`,
     "",
+    ...statementLines(admitted),
     "**Declared permissions**",
     "",
     `- Network hosts: ${listOf(v.permissions.network)}`,
@@ -147,14 +226,20 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
     cwd,
     deepen: [opts.baseRef],
   });
-  const dir = assertSinglePublish(git.diffTree(mergeBase, "HEAD", { cwd }));
-  const candidate = readCandidate(git, "HEAD", dir, cwd);
+  const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
+  if (shape.dir === undefined) {
+    deps.io.summary(statementOnlySummary(admitted.admitted));
+    deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);
+    return;
+  }
+  const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
   const config = effectiveConfig(git, opts.baseRef, cwd);
 
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-check-"));
   try {
-    const verdict = await deps.validate(candidate, index, config, work);
-    deps.io.summary(checkSummary(verdict));
+    const verdict = await deps.validate(candidate, admitted.index, config, work);
+    deps.io.summary(checkSummary(verdict, admitted.admitted));
     deps.io.log(
       `check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`,
     );

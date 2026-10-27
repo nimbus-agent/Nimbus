@@ -89,7 +89,7 @@ const verified = (publisherId: string, keys: string[], s = NIMBUS_SEED, signer =
 let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
 });
 afterEach(() => db.close());
 

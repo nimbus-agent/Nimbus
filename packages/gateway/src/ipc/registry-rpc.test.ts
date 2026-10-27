@@ -48,7 +48,7 @@ let tmp: string;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-rpc-"));
   writeFileSync(join(tmp, "index.json"), JSON.stringify(signedIndex(3)));
 });

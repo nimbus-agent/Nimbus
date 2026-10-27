@@ -3,12 +3,19 @@
 First-party GitHub Action run by a Nimbus extension registry repository (the repository
 `nimbus registry maintain init <dir> --github` creates). One action, two modes:
 
-- **`check`** — on a publish pull request: the reviewer aid. Validates the one new
-  `extensions/<id>/<version>/` against the signed index on `gh-pages` and writes a job summary for
-  the reviewer. A green check is not the security boundary.
+- **`check`** — on a publish pull request: the reviewer aid. Admits the pull request's
+  `statements/<statement id>.json` files (publisher-signed `key.rotate` / `key.revoke`) exactly as
+  `sign` will, failing on any it would skip, then validates the new `extensions/<id>/<version>/`
+  (if any: a statement-only pull request is valid) against the signed index on `gh-pages` with
+  those statements admitted, and writes a job summary for the reviewer. A green check is not the
+  security boundary.
 - **`sign`** — on a push to the default branch, behind the `registry-signing` environment's
-  required approval: the content boundary. Re-validates every unsigned extension version, signs
-  the index with the registry root key and pushes the site to `gh-pages`.
+  required approval: the content boundary. Admits every `statements/` file it can (skipping and
+  naming the rest; a statement once in the index is never removed), re-validates every unsigned
+  extension version against the result, moves an extension's entry to its publisher's rotated key
+  when a version signed by that key is added, signs the index with the registry root key and
+  pushes the site to `gh-pages`. A run that admits only statements still re-signs, so a
+  revocation reaches clients.
 
 Both modes read the registry from the git tree, never the working directory: an entry under
 `extensions/` that is not a regular `100644` file (a symlink or a submodule above all) is refused.

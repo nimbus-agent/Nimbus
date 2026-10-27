@@ -91,6 +91,7 @@ import { TOOL_CALL_LOG_V29_SCHEMA_SQL } from "../tool-call-log-v29-sql.ts";
 import { TOOL_CALL_PARAMS_V42_SQL } from "../tool-call-params-v42-sql.ts";
 import { TRIBAL_CLUSTERS_V39_SQL } from "../tribal-clusters-v39-sql.ts";
 import { TRUST_LAYER_V76_SQL } from "../trust-layer-v76-sql.ts";
+import { TRUST_STATEMENT_SOURCE_V77_SQL } from "../trust-statement-source-v77-sql.ts";
 import {
   UNIFIED_ITEM_V3_MIGRATE_FROM_LEGACY_SQL,
   UNIFIED_ITEM_V3_SCHEMA_SQL,
@@ -694,6 +695,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     76,
     "trust layer: statements, feed state, index hash floors, verifying-key fingerprint, run-grant acknowledgements",
     TRUST_LAYER_V76_SQL,
+  ),
+  simpleStep(
+    76,
+    77,
+    "trust_statement_source: every source a trust statement arrived from (publisher statements scoped to their registry)",
+    TRUST_STATEMENT_SOURCE_V77_SQL,
   ),
 ];
 

@@ -27,7 +27,7 @@ let db: Database;
 let vault: MockVault;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   vault = new MockVault();
 });
 afterEach(() => db.close());

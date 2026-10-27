@@ -12,6 +12,7 @@ import { publisherKeyFingerprint } from "./fingerprint.ts";
 import type { RegistryExtensionEntry, RegistryIndex } from "./index-format.ts";
 import { packExtensionDir } from "./pack.ts";
 import { emptyIndex, publicKeyFromSeed, signIndex } from "./sign.ts";
+import { signTrustStatement, type TrustStatement } from "./trust-statement.ts";
 import {
   effectiveRegistryConfig,
   type PublishCandidate,
@@ -191,9 +192,43 @@ function entryFor(
 
 async function indexOf(
   extensions: Record<string, RegistryExtensionEntry> = {},
+  statements?: TrustStatement[],
 ): Promise<RegistryIndex> {
   const rootKey = Buffer.from(publicKeyFromSeed(ROOT_SEED)).toString("base64");
-  return signIndex({ ...emptyIndex(rootKey), extensions }, ROOT_SEED);
+  const base = { ...emptyIndex(rootKey), extensions };
+  return signIndex(statements === undefined ? base : { ...base, statements }, ROOT_SEED);
+}
+
+const ISSUED = "2026-10-26T12:00:00Z";
+
+function rotateKey(fromSeed: Uint8Array, toKey: string): Promise<TrustStatement> {
+  const fromKey = Buffer.from(publicKeyFromSeed(fromSeed)).toString("base64");
+  return signTrustStatement(
+    {
+      kind: "key.rotate",
+      issuedAt: ISSUED,
+      signerKey: fromKey,
+      publisherId: "acme",
+      fromKey,
+      toKey,
+    },
+    fromSeed,
+  );
+}
+
+function revokeKey(seed: Uint8Array, publisherId = "acme"): Promise<TrustStatement> {
+  const key = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
+  return signTrustStatement(
+    {
+      kind: "key.revoke",
+      issuedAt: ISSUED,
+      signerKey: key,
+      publisherId,
+      keyFingerprint: publisherKeyFingerprint(key),
+      reason: "leaked",
+    },
+    seed,
+  );
 }
 
 async function refusal(p: Promise<unknown>): Promise<RegistryError> {
@@ -539,6 +574,157 @@ describe("validatePublish", () => {
       "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
       "beta-corp",
     );
+  });
+
+  describe("rule 9 follows the publisher's key rotations", () => {
+    test("a version signed by the key a rotation reaches is accepted", async () => {
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      const v = await validatePublish(await candidate(), signed, NS, work);
+      expect(v.publisher.key).toBe(KEY);
+      expect(v.newId).toBe(false);
+    });
+
+    test("a new extension of a publisher whose sibling is still bound to the old key is accepted", async () => {
+      const signed = await indexOf(
+        { "acme/other": entryFor("acme/other", "acme", OTHER_KEY, ["1.0.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      expect((await validatePublish(await candidate(), signed, NS, work)).newId).toBe(true);
+    });
+
+    test("after a rotation, a publish still signed by the old key is refused as superseded", async () => {
+      const signed = await indexOf(
+        {
+          "acme/echo": entryFor("acme/echo", "acme", KEY, ["0.9.0"]),
+          "acme/other": entryFor("acme/other", "acme", OTHER_KEY, ["1.0.0"]),
+        },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      const manifest = await signedManifest({
+        seed: OTHER_SEED,
+        id: "acme/other",
+        version: "1.1.0",
+      });
+      await expectRefused(
+        validatePublish(
+          await candidate({
+            manifest,
+            dirId: "acme/other",
+            dirVersion: "1.1.0",
+            req: request({
+              id: "acme/other",
+              version: "1.1.0",
+              publisherFingerprint: publisherKeyFingerprint(OTHER_KEY),
+            }),
+          }),
+          signed,
+          NS,
+          work,
+        ),
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        `superseded by ${publisherKeyFingerprint(KEY)}`,
+      );
+    });
+
+    test("an unrelated key is refused with the --statement hint", async () => {
+      const signed = await indexOf({
+        "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]),
+      });
+      await expectRefused(
+        validatePublish(await candidate(), signed, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        "--statement",
+      );
+    });
+
+    test("a fork refuses both keys", async () => {
+      const third = Buffer.from(publicKeyFromSeed(new Uint8Array(32).fill(11))).toString("base64");
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY), await rotateKey(OTHER_SEED, third)],
+      );
+      await expectRefused(
+        validatePublish(await candidate(), signed, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        "fork",
+      );
+    });
+
+    test("a revoked key is refused, for a known and for a new publisher", async () => {
+      const known = await indexOf({ "acme/echo": entryFor("acme/echo", "acme", KEY, ["0.9.0"]) }, [
+        await revokeKey(SEED),
+      ]);
+      await expectRefused(
+        validatePublish(await candidate(), known, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_REVOKED",
+        publisherKeyFingerprint(KEY),
+      );
+      const fresh = await indexOf({}, [await revokeKey(SEED)]);
+      await expectRefused(
+        validatePublish(await candidate(), fresh, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_REVOKED",
+        publisherKeyFingerprint(KEY),
+      );
+    });
+
+    test("the first version under a rotated key must be stable, so default installs keep working", async () => {
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      await expectRefused(
+        validatePublish(await candidate({ req: request({ channel: "beta" }) }), signed, NS, work),
+        "ERR_REGISTRY_PUBLISHER_KEY_CONFLICT",
+        "stable",
+      );
+    });
+
+    test("a new extension under a rotated key may start on beta", async () => {
+      const signed = await indexOf(
+        { "acme/other": entryFor("acme/other", "acme", OTHER_KEY, ["1.0.0"]) },
+        [await rotateKey(OTHER_SEED, KEY)],
+      );
+      const v = await validatePublish(
+        await candidate({ req: request({ channel: "beta" }) }),
+        signed,
+        NS,
+        work,
+      );
+      expect(v.channel).toBe("beta");
+    });
+
+    test("a chain that ends in a revoked key says so, instead of naming an empty current key", async () => {
+      const signed = await indexOf(
+        { "acme/echo": entryFor("acme/echo", "acme", OTHER_KEY, ["0.9.0"]) },
+        [await rotateKey(OTHER_SEED, KEY), await revokeKey(SEED)],
+      );
+      const third = new Uint8Array(32).fill(11);
+      const thirdKey = Buffer.from(publicKeyFromSeed(third)).toString("base64");
+      const manifest = await signedManifest({ seed: third });
+      const e = await refusal(
+        validatePublish(
+          await candidate({
+            manifest,
+            req: request({ publisherFingerprint: publisherKeyFingerprint(thirdKey) }),
+          }),
+          signed,
+          NS,
+          work,
+        ),
+      );
+      expect(e.code).toBe("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT");
+      expect(e.detail).toContain("has no current key");
+      expect(e.detail).not.toContain("superseded by ;");
+    });
+
+    test("a brand-new publisher with no statements is accepted", async () => {
+      expect((await validatePublish(await candidate(), await indexOf(), NS, work)).newId).toBe(
+        true,
+      );
+    });
   });
 
   // Rule 10

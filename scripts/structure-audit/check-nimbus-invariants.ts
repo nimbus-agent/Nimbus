@@ -2030,19 +2030,21 @@ export function checkRunGrantWriters(files: readonly FileEntry[]): Violation[] {
 }
 
 // ---- D37 (the trust store) -----------------------------------------------------------------------
-// `trust_statement` and `trust_feed_state` are named only by the trust store and their V76 DDL: what
-// may enter the store (authority, admission, the per-registry cap) and the feed's anti-rollback
-// floor are decided there, so no other code may write a statement or move the floor around them.
+// `trust_statement`, `trust_feed_state` and `trust_statement_source` (V77) are named only by the trust
+// store and their DDL: what may enter the store (authority, admission, the per-registry cap), the
+// sources a statement counts for, and the feed's anti-rollback floor are decided there, so no other
+// code may write a statement or move the floor around them.
 // Same shape and same stated bound as D33(b): a dynamically composed identifier evades a text scan,
 // and capability confinement (only the store holds queries against the tables) is the real defense.
 // Tied to no invariant in trust layer PR 2a; PR 2b's enforcement invariant binds it.
 const D37_TRUST_TABLES_RE = new RegExp(
-  `${sqlTableReferenceRe("trust_statement").source}|${sqlTableReferenceRe("trust_feed_state").source}`,
+  `${sqlTableReferenceRe("trust_statement").source}|${sqlTableReferenceRe("trust_feed_state").source}|${sqlTableReferenceRe("trust_statement_source").source}`,
   "g",
 );
 const D37_TRUST_TABLES_ALLOWED: readonly string[] = [
   "packages/gateway/src/extensions/trust/trust-store.ts",
   "packages/gateway/src/index/trust-layer-v76-sql.ts",
+  "packages/gateway/src/index/trust-statement-source-v77-sql.ts",
 ];
 
 export function checkTrustTableConfinement(files: readonly FileEntry[]): Violation[] {

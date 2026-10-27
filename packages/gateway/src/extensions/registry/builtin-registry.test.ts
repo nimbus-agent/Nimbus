@@ -39,7 +39,7 @@ let builtin: BuiltinRegistryConfig;
 
 beforeEach(async () => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-builtin-reg-"));
   builtinDir = join(tmp, "official");
 });

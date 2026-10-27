@@ -8428,6 +8428,111 @@ describe("I48 — revoked or taken-down extension code is never installed, updat
   });
 });
 
+describe("I48 — a publisher statement from a registry counts only for that registry's extensions (trust layer PR 3b)", () => {
+  // The hostile-registry attack: a third-party registry lists a victim's publisher id under its own
+  // key S and carries `rotate S -> victim key` plus `revoke S`, both self-signed by S. Through the real
+  // store and the real block evaluator, that must not block the victim's code installed from another
+  // registry, while the same statements in the Nimbus feed still apply everywhere.
+  test("a planted rotation + revocation blocks nothing outside the registry that carried it", async () => {
+    const nacl = (await import("tweetnacl")).default;
+    const { publisherKeyFingerprint, signTrustStatement } = await import(
+      "@nimbus-dev/registry-format"
+    );
+    const { recordTrustStatements } = await import("./extensions/trust/trust-store.ts");
+    const { blocksFor } = await import("./extensions/trust/trust-blocks.ts");
+    const pair = (n: number) => {
+      const seed = new Uint8Array(32).fill(n);
+      const key = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+      return { seed, key, fp: publisherKeyFingerprint(key) };
+    };
+    const attacker = pair(201);
+    const victim = pair(202);
+    const root = pair(203);
+    const nimbus = pair(204);
+    const issuedAt = "2026-10-27T12:00:00Z";
+    const rotation = await signTrustStatement(
+      {
+        kind: "key.rotate",
+        issuedAt,
+        signerKey: attacker.key,
+        publisherId: "victim",
+        fromKey: attacker.key,
+        toKey: victim.key,
+      },
+      attacker.seed,
+    );
+    const revocation = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt,
+        signerKey: attacker.key,
+        publisherId: "victim",
+        keyFingerprint: attacker.fp,
+        reason: "planted",
+      },
+      attacker.seed,
+    );
+    const db = new Database(":memory:");
+    try {
+      LocalIndex.ensureSchema(db);
+      recordTrustStatements(
+        db,
+        [rotation, revocation],
+        {
+          kind: "registry",
+          name: "hostile",
+          rootKey: root.key,
+          rootFingerprint: root.fp,
+          listedPublisherKeys: new Map([["victim", new Set([attacker.key, victim.key])]]),
+        },
+        1,
+      );
+      const subject = (source: { registry: string; rootFingerprint: string } | null) => ({
+        extensionId: "victim/tool",
+        version: "1.0.0",
+        publisherId: "victim",
+        keyFingerprint: victim.fp,
+        source,
+      });
+      expect(
+        blocksFor(db, subject({ registry: "trusted", rootFingerprint: "a".repeat(32) })),
+      ).toEqual([]);
+      expect(blocksFor(db, subject(null))).toEqual([]);
+      expect(
+        blocksFor(db, subject({ registry: "hostile", rootFingerprint: root.fp })),
+      ).toHaveLength(1);
+      recordTrustStatements(
+        db,
+        [rotation, revocation],
+        { kind: "feed", nimbusRootKey: nimbus.key },
+        2,
+      );
+      expect(
+        blocksFor(db, subject({ registry: "trusted", rootFingerprint: "a".repeat(32) })),
+      ).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("source pin: publisher rows and rotation edges go through publisherStatementInScope", () => {
+    const src = readFileSync(
+      join(import.meta.dir, "extensions", "trust", "trust-blocks.ts"),
+      "utf8",
+    );
+    expect(src).toContain(
+      'if (row.signerRole === "publisher") return publisherStatementInScope(row.sources, s.source);',
+    );
+    expect(src).toContain("ancestorsOf(rotationEdgesFor(db, s.publisherId, s.source), fp)");
+    const keys = readFileSync(
+      join(import.meta.dir, "extensions", "trust", "trust-keys.ts"),
+      "utf8",
+    );
+    expect(keys).toContain("rotationEdgesFor(db, ctx.publisherId, ctx.source)");
+    expect(keys).not.toContain("readRotationEdges");
+  });
+});
+
 describe("I44/I48 — publisher key rotation (trust layer PR 3a)", () => {
   // Real stored statements, a real local-folder registry and the real installer; nothing spawns.
   const roots: string[] = [];

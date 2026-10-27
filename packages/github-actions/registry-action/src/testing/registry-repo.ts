@@ -20,6 +20,9 @@ import {
   publisherKeyFingerprint,
   type RegistryIndex,
   signIndex,
+  signTrustStatement,
+  type TrustStatement,
+  trustStatementId,
 } from "../../../../registry-format/src/index.ts";
 
 export const ROOT_SEED = new Uint8Array(32).fill(3);
@@ -287,4 +290,55 @@ export function originIndex(repo: RegistryRepo): RegistryIndex {
 
 export function originHead(repo: RegistryRepo, branch: string): string {
   return git(repo.origin, "rev-parse", branch).trim();
+}
+
+const STATEMENT_ISSUED = "2026-10-26T12:00:00Z";
+
+/** A `key.rotate` from `fromSeed`'s key to `toSeed`'s, signed by the old key. */
+export function makeRotation(
+  fromSeed: Uint8Array,
+  toSeed: Uint8Array,
+  publisherId = "acme",
+): Promise<TrustStatement> {
+  const fromKey = b64(publicKeyFromSeed(fromSeed));
+  return signTrustStatement(
+    {
+      kind: "key.rotate",
+      issuedAt: STATEMENT_ISSUED,
+      signerKey: fromKey,
+      publisherId,
+      fromKey,
+      toKey: b64(publicKeyFromSeed(toSeed)),
+    },
+    fromSeed,
+  );
+}
+
+/** A `key.revoke` of `seed`'s key, signed by that key. */
+export function makeRevocation(seed: Uint8Array, publisherId = "acme"): Promise<TrustStatement> {
+  const key = b64(publicKeyFromSeed(seed));
+  return signTrustStatement(
+    {
+      kind: "key.revoke",
+      issuedAt: STATEMENT_ISSUED,
+      signerKey: key,
+      publisherId,
+      keyFingerprint: publisherKeyFingerprint(key),
+      reason: "leaked",
+    },
+    seed,
+  );
+}
+
+/** Writes `s` as `statements/<id>.json` (or under `name`); returns the path. */
+export function writeStatement(root: string, s: unknown, name?: string): string {
+  const id = name ?? trustStatementId(s as TrustStatement);
+  const rel = `statements/${id}.json`;
+  write(
+    root,
+    rel,
+    `${JSON.stringify(s, null, 2)}
+`,
+  );
+  return rel;
 }

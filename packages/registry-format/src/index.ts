@@ -65,6 +65,18 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export {
+  admitPublisherStatements,
+  currentPublisherKeys,
+  isPublisherKeyRevoked,
+  MAX_REGISTRY_STATEMENTS,
+  MAX_ROTATIONS_PER_PUBLISHER,
+  type PublisherKeyStanding,
+  publisherAfterPublish,
+  publisherKeyStanding,
+  type StatementAdmission,
+  type StatementIndex,
+} from "./publisher-statements.ts";
+export {
   CONNECTOR_ID_SHAPE_RE,
   MAX_ROLE_PACK_CONNECTORS,
   MAX_ROLE_PACK_MEMBERS,
@@ -76,6 +88,7 @@ export {
   type RolePackManifest,
   rolePackDigest,
 } from "./role-pack.ts";
+export { ancestorsOf, type RotationEdge, successorsOf } from "./rotation-graph.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

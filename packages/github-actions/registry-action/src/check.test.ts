@@ -25,12 +25,16 @@ import {
   git,
   makeExtension,
   makeRegistryRepo,
+  makeRevocation,
+  makeRotation,
   OTHER_SEED,
+  PUBLISHER_SEED,
   pushMaintainer,
   type RegistryRepo,
   ROOT_KEY_INPUT,
   write,
   writePublish,
+  writeStatement,
 } from "./testing/registry-repo.ts";
 
 // Each test copies real repositories and spawns git dozens of times.
@@ -292,6 +296,88 @@ describe("runCheck", () => {
     await expect(runCheck({ workspace: repo.workspace, baseRef: "" }, deps())).rejects.toThrow(
       /GITHUB_BASE_REF\) is empty/,
     );
+  });
+});
+
+describe("publisher statements in a pull request", () => {
+  async function signedEcho(): Promise<void> {
+    writePublish(repo.maintainer, await makeExtension(scratch));
+    pushMaintainer(repo, "main", "merge");
+    await signMain();
+  }
+
+  test("a rotation plus the first version under the new key passes in one pull request", async () => {
+    await signedEcho();
+    const rotation = await makeRotation(PUBLISHER_SEED, OTHER_SEED);
+    const next = await makeExtension(scratch, { version: "1.1.0", seed: OTHER_SEED });
+    openPr((ws) => {
+      writeStatement(ws, rotation);
+      writePublish(ws, next);
+    });
+    summaries = [];
+    await run();
+    const md = summaries[0] ?? "";
+    expect(md).toContain("`acme/echo@1.1.0`");
+    expect(md).toContain("key.rotate");
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.1.0");
+  });
+
+  test("the same publish without its rotation is refused with the --statement hint", async () => {
+    await signedEcho();
+    const next = await makeExtension(scratch, { version: "1.1.0", seed: OTHER_SEED });
+    openPr((ws) => writePublish(ws, next));
+    await expect(run()).rejects.toThrow(/--statement/);
+  });
+
+  test("a statement-only pull request (a revocation) passes without validating a package", async () => {
+    await signedEcho();
+    const revocation = await makeRevocation(PUBLISHER_SEED);
+    openPr((ws) => writeStatement(ws, revocation));
+    summaries = [];
+    validated = 0;
+    await run();
+    expect(validated).toBe(0);
+    expect(summaries[0]).toContain("key.revoke");
+    expect(logs.join("\n")).toContain("check passed: 1 statement");
+  });
+
+  test("a statement the registry would skip fails the check loudly", async () => {
+    await signedEcho();
+    const stranger = await makeRotation(new Uint8Array(32).fill(13), OTHER_SEED);
+    openPr((ws) => writeStatement(ws, stranger));
+    await expect(run()).rejects.toThrow(/not bound to publisher acme/);
+  });
+
+  test("a statement file not named by its statement id is refused", async () => {
+    await signedEcho();
+    const revocation = await makeRevocation(PUBLISHER_SEED);
+    openPr((ws) => writeStatement(ws, revocation, "b".repeat(64)));
+    await expect(run()).rejects.toThrow(/is not named by its statement id/);
+  });
+
+  test("a rotation merged on the base branch but not signed yet counts, as it will for sign", async () => {
+    await signedEcho();
+    writeStatement(repo.maintainer, await makeRotation(PUBLISHER_SEED, OTHER_SEED));
+    pushMaintainer(repo, "main", "merge rotation, not signed yet");
+    const next = await makeExtension(scratch, { version: "1.1.0", seed: OTHER_SEED });
+    openPr((ws) => writePublish(ws, next));
+    await run();
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.1.0");
+  });
+
+  test("a rotation that forks one merged on the base branch fails, as sign would refuse it", async () => {
+    await signedEcho();
+    writeStatement(repo.maintainer, await makeRotation(PUBLISHER_SEED, OTHER_SEED));
+    pushMaintainer(repo, "main", "merge rotation, not signed yet");
+    const fork = await makeRotation(PUBLISHER_SEED, new Uint8Array(32).fill(17));
+    openPr((ws) => writeStatement(ws, fork));
+    await expect(run()).rejects.toThrow(/fork/);
+  });
+
+  test("any other file under statements/ is still refused by the path rule", async () => {
+    await signedEcho();
+    openPr((ws) => write(ws, "statements/notes.txt", "hi"));
+    await expect(run()).rejects.toThrow(/statements\/notes\.txt/);
   });
 });
 
