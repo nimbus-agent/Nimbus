@@ -126,6 +126,11 @@ jobs:
       - name: Action bundle drift (registry-action dist is a fresh build)
         run: bun run audit:action-dist
 
+      # The baked trust feed and snapshot (trust layer PR 5): offline only. The live comparison
+      # runs daily in release-channel-drift.yml.
+      - name: Trust snapshot audit (baked snapshot verifies against the baked root)
+        run: bun run audit:trust-snapshot
+
       - name: Status-drift audit (docs invariant/schema vs code)
         run: bun run audit:status-drift
 

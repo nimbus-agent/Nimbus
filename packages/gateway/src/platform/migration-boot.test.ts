@@ -4,7 +4,12 @@ import { join } from "node:path";
 
 import { CONTINUITY_TABLE } from "../extensions/continuity/continuity-table.ts";
 import { BUILTIN_REGISTRY } from "../extensions/registry/builtin-registry.ts";
-import { resolveMigrationComposition, startMigrationBootEvaluation } from "./migration-boot.ts";
+import { BUILTIN_TRUST_FEED, BUILTIN_TRUST_SNAPSHOT } from "../extensions/trust/trust-feed.ts";
+import {
+  resolveMigrationComposition,
+  resolveTrustComposition,
+  startMigrationBootEvaluation,
+} from "./migration-boot.ts";
 
 const FIXTURE_BUILTIN = { url: "/fixture/registry", rootKey: "AAAA" };
 const FIXTURE_ENTRY = {
@@ -179,5 +184,27 @@ describe("boot evaluation", () => {
     );
     await expect(p).resolves.toBeUndefined();
     expect(JSON.stringify(warnings)).toContain("boom");
+  });
+});
+
+describe("resolveTrustComposition", () => {
+  test("absent options mean the baked trust feed and snapshot", () => {
+    expect(resolveTrustComposition(undefined)).toEqual({
+      feed: BUILTIN_TRUST_FEED,
+      snapshot: BUILTIN_TRUST_SNAPSHOT,
+    });
+    expect(resolveTrustComposition({ trust: {} })).toEqual(resolveTrustComposition(undefined));
+  });
+
+  test("null means none, and a fixture replaces the baked value", () => {
+    expect(resolveTrustComposition({ trust: { feed: null, snapshot: null } })).toEqual({
+      feed: null,
+      snapshot: null,
+    });
+    const feed = { url: "https://example.test/feed/", rootKey: "k" };
+    expect(resolveTrustComposition({ trust: { feed, snapshot: "{}" } })).toEqual({
+      feed,
+      snapshot: "{}",
+    });
   });
 });

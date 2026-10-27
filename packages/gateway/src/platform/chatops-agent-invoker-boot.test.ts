@@ -129,7 +129,8 @@ describe("FIX 1 (boot-level): the ChatOps agent invoker carries the real federat
       const identity = await loadOrCreateFederationIdentity(vault);
       captured = [];
 
-      services = await assemblePlatformServices(paths, vault);
+      // No trust feed: a unit test must not reach the real one.
+      services = await assemblePlatformServices(paths, vault, { trust: { feed: null } });
 
       expect(services.chatops).toBeDefined();
       // Proves the wiring actually ran during THIS boot (not merely that the extracted function

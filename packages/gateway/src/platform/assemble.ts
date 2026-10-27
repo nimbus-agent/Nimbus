@@ -408,6 +408,7 @@ import {
   type AssembleCompositionOptions,
   createMigrationEngineForBoot,
   resolveMigrationComposition,
+  resolveTrustComposition,
   startMigrationBootEvaluation,
 } from "./migration-boot.ts";
 import {
@@ -3588,6 +3589,8 @@ export async function assemblePlatformServices(
   const assemblyStartedMs = performance.now();
   // ONE value for every consumer that binds through the continuity table or the built-in registry.
   const migration = resolveMigrationComposition(composition);
+  // The baked trust feed and snapshot, unless a test runner passed its own (or none).
+  const trustComposition = resolveTrustComposition(composition);
   const sidecarStops: Array<() => void> = [];
   await ensurePlatformDirectories(paths);
   // Pin the profile BEFORE the first config read: every `…FromConfigDir` loader below goes
@@ -3946,7 +3949,14 @@ export async function assemblePlatformServices(
   const onTrustRecorded = (ids: readonly string[]): void => void trustEnforcer.onRecorded(ids);
   // Record each installed extension's verifying key and apply the baked trust snapshot BEFORE the
   // gate opens. Never throws, so the gate below still always resolves.
-  await prepareTrustAtBoot({ db, vault, logger: syncLogger, onTrustRecorded });
+  await prepareTrustAtBoot({
+    db,
+    vault,
+    logger: syncLogger,
+    onTrustRecorded,
+    trustFeed: trustComposition.feed,
+    snapshot: trustComposition.snapshot,
+  });
   try {
     await verifyExtensionsBestEffort(
       db,
@@ -4029,6 +4039,7 @@ export async function assemblePlatformServices(
     registryFetch,
     logger: syncLogger,
     sidecarStops,
+    trustFeed: trustComposition.feed,
   });
   const autoUpdateRuntime = maybeStartAutoUpdateRuntime({
     db,

@@ -12,7 +12,9 @@ import { encodeBase64 } from "../../util/base64.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
 import type { RegistryFetchDeps } from "../registry/registry-fetch.ts";
+import { BUILTIN_TRUST_FEED, BUILTIN_TRUST_SNAPSHOT, TRUST_FEED_NAME } from "./trust-feed.ts";
 import { prepareTrustAtBoot, startTrustFeedForBoot } from "./trust-feed-boot.ts";
+import { readFeedFloor } from "./trust-store.ts";
 
 const ROOT_KEY = Buffer.from(
   nacl.sign.keyPair.fromSeed(Uint8Array.from({ length: 32 }, (_, i) => i + 3)).publicKey,
@@ -51,10 +53,28 @@ const registryFetch = (): Omit<RegistryFetchDeps, "db"> => ({
 });
 
 describe("prepareTrustAtBoot", () => {
-  test("with the baked defaults (no feed in this build) it does nothing and logs nothing", async () => {
+  test("with the baked defaults it applies the baked snapshot (no network) and logs nothing", async () => {
     const log = recordingLogger();
     await prepareTrustAtBoot({ db, vault: new MockVault(), logger: log.logger });
+    const baked = JSON.parse(BUILTIN_TRUST_SNAPSHOT ?? "null") as { sequence: number };
+    const floor = readFeedFloor(db, TRUST_FEED_NAME);
+    expect(floor?.lastSequence).toBe(baked.sequence);
+    // A snapshot is not a fetch: `trust status` must not report the feed as fetched.
+    expect(floor?.lastFetchedAt ?? null).toBeNull();
     expect(log.info).toEqual([]);
+    expect(log.warn).toEqual([]);
+  });
+
+  test("with no feed and no snapshot it does nothing", async () => {
+    const log = recordingLogger();
+    await prepareTrustAtBoot({
+      db,
+      vault: new MockVault(),
+      logger: log.logger,
+      trustFeed: null,
+      snapshot: null,
+    });
+    expect(readFeedFloor(db, TRUST_FEED_NAME)).toBeUndefined();
     expect(log.warn).toEqual([]);
   });
 
@@ -157,6 +177,25 @@ describe("startTrustFeedForBoot", () => {
     expect(stops).toEqual([]);
   });
 
+  test("by default the handle follows the baked feed and its timer is registered", () => {
+    const stops: Array<() => void> = [];
+    const handle = startTrustFeedForBoot({
+      db,
+      configDir: dir,
+      demoRooted: false,
+      registryFetch: registryFetch(),
+      logger: recordingLogger().logger,
+      sidecarStops: stops,
+    });
+    try {
+      expect(handle?.config).toEqual(BUILTIN_TRUST_FEED);
+      expect(stops).toHaveLength(1);
+    } finally {
+      // Stopped before the first refresh is due: this test never reaches the network.
+      for (const stop of stops) stop();
+    }
+  });
+
   test("with no feed configured the handle answers but no timer starts", async () => {
     const stops: Array<() => void> = [];
     const handle = startTrustFeedForBoot({
@@ -166,6 +205,7 @@ describe("startTrustFeedForBoot", () => {
       registryFetch: registryFetch(),
       logger: recordingLogger().logger,
       sidecarStops: stops,
+      trustFeed: null,
     });
     expect(handle?.config).toBeNull();
     expect(handle?.intervalHours).toBe(1);

@@ -3,9 +3,11 @@
  * revocations, extension takedowns and publisher verifications, fetched on a timer, plus a snapshot
  * of it baked into each release for offline installs.
  *
- * This build bakes NEITHER: `BUILTIN_TRUST_FEED` and `BUILTIN_TRUST_SNAPSHOT` are `null` until the
- * Nimbus trust repository and root key exist (trust layer PR 5), exactly as `BUILTIN_REGISTRY` was
- * `null` before the first extension-unbundling release baked it. With no feed configured nothing is fetched and no
+ * Both are baked (trust layer PR 5): the feed is `nimbus-agent/nimbus-trust`, served by GitHub Pages
+ * and signed in that repository's protected `trust-signing` environment, and the snapshot is its
+ * `trust.json` as served when `bun run trust:refresh-snapshot` last ran (`trust-snapshot.ts`, verified
+ * by `bun run audit:trust-snapshot`). Both stay typed `| null`: tests and the E2E runner inject their
+ * own (or none) through the boot composition, and with no feed configured nothing is fetched and no
  * egress row is written.
  *
  * Fetching reuses `fetchRegistryBytes` under the reserved name `nimbus-trust`: air gap refuses, and
@@ -25,6 +27,7 @@ import {
 
 import { fetchRegistryBytes, type RegistryFetchDeps } from "../registry/registry-fetch.ts";
 import { TRUST_FEED_REGISTRY_NAME } from "../registry/registry-store.ts";
+import { BAKED_TRUST_SNAPSHOT } from "./trust-snapshot.ts";
 import {
   type RecordOutcome,
   readFeedFloor,
@@ -43,11 +46,19 @@ export interface TrustFeedConfig {
   readonly rootKey: string;
 }
 
-/** The trust feed this release follows. `null` until trust layer PR 5 bakes it. */
-export const BUILTIN_TRUST_FEED: TrustFeedConfig | null = null;
+/**
+ * The trust feed this release follows (trust layer PR 5). The URL keeps its trailing slash, as
+ * `BUILTIN_REGISTRY`'s does. The root key's fingerprint is `2a4f4e3d803f239da2cdd04fe41e6feb`; it is
+ * separate from the official registry's root, so one leak cannot compromise both. Never read from
+ * the environment, a config file or an IPC parameter.
+ */
+export const BUILTIN_TRUST_FEED: TrustFeedConfig | null = {
+  url: "https://nimbus-agent.github.io/nimbus-trust/",
+  rootKey: "4mmB1juQtm6dygsXcKlwlBxwW+urkMWQebUJptd6ppY=",
+};
 
-/** A complete signed `trust.json` baked into the release. `null` until trust layer PR 5. */
-export const BUILTIN_TRUST_SNAPSHOT: string | null = null;
+/** The complete signed `trust.json` baked into the release: the offline floor applied at boot. */
+export const BUILTIN_TRUST_SNAPSHOT: string | null = BAKED_TRUST_SNAPSHOT;
 
 export type TrustFeedResult =
   | { status: "accepted"; sequence: number; recorded: RecordOutcome; verified: number }
