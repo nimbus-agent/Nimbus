@@ -12,12 +12,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  parseTrustStatement,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   signIndex,
   signTrustStatement,
   trustStatementId,
   verifyIndexSignature,
+  verifyTrustStatement,
 } from "@nimbus-dev/registry-format";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../lib/extension-signing.ts";
 import { readIndexFile } from "../lib/registry-index.ts";
@@ -369,5 +371,176 @@ describe("registry maintain package caps", () => {
     expect(await runRegistryMaintain(["add", dir, tgz, "--key", key], io)).toBe(2);
     expect(err.join("")).toContain("200 MiB");
     expect(rootListing(dir)).toEqual([]);
+  });
+});
+
+describe("registry maintain revoke-key / takedown / set-report-url (trust layer PR 4a)", () => {
+  const PUB_SEED = new Uint8Array(32).fill(51);
+  const fpOf = (seed: Uint8Array): string =>
+    publisherKeyFingerprint(encodeBase64(publicKeyFromSeed(seed)));
+
+  async function registryWithExtension() {
+    const { dir, key } = await init();
+    await runRegistryMaintain(
+      ["add", dir, await makeExtension("a", { seed: PUB_SEED }), "--key", key],
+      io,
+    );
+    return { dir, key };
+  }
+
+  test("revoke-key signs a registry-root revocation into the index and re-signs it", async () => {
+    const { dir, key } = await registryWithExtension();
+    const code = await runRegistryMaintain(
+      [
+        "revoke-key",
+        dir,
+        fpOf(PUB_SEED),
+        "--publisher",
+        "example",
+        "--reason",
+        "leaked",
+        "--key",
+        key,
+      ],
+      io,
+    );
+    expect(code).toBe(0);
+    const index = readIndexFile(join(dir, "index.json"));
+    expect(verifyIndexSignature(index)).toBe(true);
+    const [s] = (index.statements as unknown[]) ?? [];
+    expect(s).toMatchObject({
+      kind: "key.revoke",
+      keyFingerprint: fpOf(PUB_SEED),
+      reason: "leaked",
+    });
+    expect(verifyTrustStatement(parseTrustStatement(s), { registryRootKey: index.rootKey })).toBe(
+      "registry",
+    );
+  });
+
+  test("running it again is a no-op that says the block is already there", async () => {
+    const { dir, key } = await registryWithExtension();
+    const args = [
+      "revoke-key",
+      dir,
+      fpOf(PUB_SEED),
+      "--publisher",
+      "example",
+      "--reason",
+      "leaked",
+      "--key",
+      key,
+    ];
+    await runRegistryMaintain(args, io);
+    const sequence = readIndexFile(join(dir, "index.json")).sequence;
+    out.length = 0;
+    expect(await runRegistryMaintain(args, io)).toBe(0);
+    expect(out.join("")).toContain("already");
+    expect(readIndexFile(join(dir, "index.json")).sequence).toBe(sequence);
+  });
+
+  test("takedown takes the publisher the index binds; an unindexed id needs --publisher", async () => {
+    const { dir, key } = await registryWithExtension();
+    expect(
+      await runRegistryMaintain(
+        ["takedown", dir, "com.example.tool@1.0.0", "--reason", "malware", "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    const [s] = (readIndexFile(join(dir, "index.json")).statements as unknown[]) ?? [];
+    expect(s).toMatchObject({
+      kind: "extension.takedown",
+      extensionId: "com.example.tool",
+      publisherId: "example",
+      versions: ["1.0.0"],
+    });
+    err.length = 0;
+    expect(
+      await runRegistryMaintain(
+        ["takedown", dir, "gone.tool", "--reason", "malware", "--key", key],
+        io,
+      ),
+    ).toBe(2);
+    expect(err.join("")).toContain("--publisher");
+  });
+
+  test("--github writes a request file into the clone and touches no index", async () => {
+    const clone = join(tmp, "clone");
+    mkdirSync(clone, { recursive: true });
+    const code = await runRegistryMaintain(
+      ["takedown", "--github", clone, "com.example.tool", "--reason", "malware"],
+      io,
+    );
+    expect(code).toBe(0);
+    const files = readdirSync(join(clone, "trust-requests"));
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^takedown-com\.example\.tool-[0-9a-f]{8}\.json$/);
+    expect(JSON.parse(readFileSync(join(clone, "trust-requests", files[0] ?? ""), "utf8"))).toEqual(
+      {
+        kind: "extension.takedown",
+        extensionId: "com.example.tool",
+        versions: "*",
+        reason: "malware",
+      },
+    );
+    expect(out.join("")).toContain("pull request");
+    // The identical request again: already requested, nothing written.
+    out.length = 0;
+    expect(
+      await runRegistryMaintain(
+        ["takedown", "--github", clone, "com.example.tool", "--reason", "malware"],
+        io,
+      ),
+    ).toBe(0);
+    expect(out.join("")).toContain("already requested");
+    expect(readdirSync(join(clone, "trust-requests"))).toHaveLength(1);
+    // A different block for the same id (another version) gets its own file.
+    expect(
+      await runRegistryMaintain(
+        ["takedown", "--github", clone, "com.example.tool@1.1.0", "--reason", "malware"],
+        io,
+      ),
+    ).toBe(0);
+    expect(readdirSync(join(clone, "trust-requests"))).toHaveLength(2);
+  });
+
+  test("--github names a request for a long extension id within the 64-character limit", async () => {
+    const clone = join(tmp, "clone");
+    mkdirSync(clone, { recursive: true });
+    const longId = `com.example.${"a".repeat(60)}`;
+    expect(
+      await runRegistryMaintain(
+        ["takedown", "--github", clone, longId, "--reason", "malware", "--publisher", "acme"],
+        io,
+      ),
+    ).toBe(0);
+    const files = readdirSync(join(clone, "trust-requests"));
+    expect(files).toHaveLength(1);
+    expect((files[0] ?? "").replace(/\.json$/, "").length).toBeLessThanOrEqual(64);
+  });
+
+  test("set-report-url sets an https report URL; init --report-url too; http is refused", async () => {
+    const { dir, key } = await init();
+    expect(
+      await runRegistryMaintain(
+        ["set-report-url", dir, "https://example.com/report", "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    expect(readIndexFile(join(dir, "index.json")).reportUrl).toBe("https://example.com/report");
+    expect(
+      await runRegistryMaintain(
+        ["set-report-url", dir, "http://example.com/report", "--key", key],
+        io,
+      ),
+    ).toBe(2);
+    const second = join(tmp, "reg2");
+    expect(
+      await runRegistryMaintain(
+        ["init", second, "--key", join(tmp, "reg2-key"), "--report-url", "https://example.com/r2"],
+        io,
+      ),
+    ).toBe(0);
+    expect(readIndexFile(join(second, "index.json")).reportUrl).toBe("https://example.com/r2");
   });
 });

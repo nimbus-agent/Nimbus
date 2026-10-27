@@ -24,6 +24,7 @@ import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
   admitPublisherStatements,
+  alreadyCarried,
   codeUnitCompare,
   publicKeyFromSeed,
   publisherAfterPublish,
@@ -31,8 +32,11 @@ import {
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryIndex,
+  readRegistryReportUrl,
   type StatementAdmission,
   signIndex,
+  signRegistryRequest,
+  type TrustStatement,
   trustStatementId,
   validatePublish,
   verifyRegistryIndexPinned,
@@ -47,6 +51,7 @@ import {
   PAGES_REF,
   readCandidate,
   readConfigAt,
+  readRequestFiles,
   readStatementFiles,
   readVerifiedIndex,
   splitExtensionDir,
@@ -63,6 +68,8 @@ export interface SignOptions {
   rootKey: string;
   /** The default branch; asked of `origin` when absent. */
   defaultBranch?: string;
+  /** `<owner>/<repo>` (`GITHUB_REPOSITORY`): sets the index's report URL when it has none. */
+  repository?: string;
 }
 
 /** What `sign` reads, judges, signs and reports with; injectable for tests. */
@@ -275,16 +282,27 @@ async function attemptSign(
     rmSync(work, { recursive: true, force: true });
   }
 
-  const statements = admission.admitted.map(trustStatementId);
+  // After the extension loop, so a takedown may target an id this very run adds.
+  const requested = await signRequests(
+    git,
+    { ...admission.index, extensions },
+    { ref: mainRef, cwd, seed, issuedAt: publishedAt },
+    skipped,
+  );
+  const reportUrl = reportUrlFor(index, opts.repository);
+  const statements = [...admission.admitted, ...requested].map(trustStatementId);
   let sequence = index.sequence;
-  if (added.length > 0 || statements.length > 0) {
+  if (added.length > 0 || statements.length > 0 || reportUrl !== undefined) {
     // Carry every field this action does not manage (e.g. `packs`) through: rebuilding the index
     // from a fixed field list would drop them under a signature that still verifies. The admitted
     // index carries the statements, old and new.
     const { signature: _previousSignature, ...carried } = admission.index;
+    const priorStatements = Array.isArray(carried.statements) ? carried.statements : [];
     const signed = await deps.sign(
       {
         ...carried,
+        ...(requested.length > 0 && { statements: [...priorStatements, ...requested] }),
+        ...(reportUrl !== undefined && { reportUrl }),
         format: 1,
         sequence: index.sequence + 1,
         generatedAt: new Date().toISOString(),
@@ -309,6 +327,44 @@ async function attemptSign(
     skipped,
     sequence,
   };
+}
+
+/**
+ * Signs each maintainer request on `ref` whose block the index does not already carry (by meaning,
+ * against statements verifying under the index's own root), with the registry root seed. Invalid
+ * requests land in `skipped`; a request signed earlier, or a renamed copy of one, adds nothing.
+ */
+async function signRequests(
+  git: typeof gitTree,
+  index: RegistryIndex,
+  at: { ref: string; cwd: string; seed: Uint8Array; issuedAt: string },
+  skipped: Skipped[],
+): Promise<TrustStatement[]> {
+  const files = readRequestFiles(git, at.ref, at.cwd);
+  for (const f of files.skipped) skipped.push({ dir: f.path, reason: f.reason });
+  const signed: TrustStatement[] = [];
+  let current: RegistryIndex = index;
+  for (const f of [...files.requests].sort((a, b) => codeUnitCompare(a.name, b.name))) {
+    if (alreadyCarried(current, f.request)) continue;
+    try {
+      // NOSONAR S9382: sequential by design - each request is checked against the ones signed before it
+      const s = await signRegistryRequest(f.request, current, at.seed, at.issuedAt);
+      signed.push(s);
+      const prior = Array.isArray(current.statements) ? current.statements : [];
+      current = { ...current, statements: [...prior, s] };
+    } catch (e) {
+      if (!(e instanceof RegistryError)) throw e;
+      skipped.push({ dir: f.path, reason: e.message });
+    }
+  }
+  return signed;
+}
+
+/** The report URL to set: this repository's issue form, only when the index has none yet. */
+function reportUrlFor(index: RegistryIndex, repository: string | undefined): string | undefined {
+  if (repository === undefined || readRegistryReportUrl(index) !== undefined) return undefined;
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/.test(repository)) return undefined;
+  return `https://github.com/${repository}/issues/new`;
 }
 
 /** The `statements/` files on `ref` admitted into `index`; refused files land in `skipped`. */

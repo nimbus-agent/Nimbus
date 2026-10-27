@@ -324,12 +324,17 @@ export function readRegistryStatements(index: RegistryIndex): StatementsRead {
   return readStatementList(index.statements);
 }
 
-/** The index's report URL when it is a parseable `https:` URL, else `undefined`. */
+/**
+ * The index's report URL when it is a parseable `https:` URL, else `undefined` — NORMALISED
+ * (`URL#href`), so a control character a hostile index put in the path comes back percent-encoded
+ * and can never reach a terminal raw.
+ */
 export function readRegistryReportUrl(index: RegistryIndex): string | undefined {
   const v = index.reportUrl;
   if (typeof v !== "string") return undefined;
   try {
-    return new URL(v).protocol === "https:" ? v : undefined;
+    const url = new URL(v);
+    return url.protocol === "https:" ? url.href : undefined;
   } catch {
     return undefined;
   }

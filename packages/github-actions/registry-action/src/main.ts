@@ -36,14 +36,21 @@ export function maskSecret(
 /**
  * What `sign` runs with. The `default-branch` input is passed on when set; empty (an older
  * workflow, or none given) leaves `sign` to ask origin's HEAD, which is gh-pages when that branch
- * was pushed first to an empty repository.
+ * was pushed first to an empty repository. `repository` (`GITHUB_REPOSITORY`) is passed on when
+ * set; the caller reads it, so this stays a pure function of its arguments.
  */
 export function signOptions(
   workspace: string,
   rootKey: string,
   defaultBranch: string,
+  repository: string | undefined,
 ): SignOptions {
-  return { workspace, rootKey, ...(defaultBranch !== "" && { defaultBranch }) };
+  return {
+    workspace,
+    rootKey,
+    ...(defaultBranch !== "" && { defaultBranch }),
+    ...(repository !== undefined && repository !== "" && { repository }),
+  };
 }
 
 function workspace(): string {
@@ -60,7 +67,14 @@ export async function main(): Promise<void> {
       maskSecret(rootKey);
       // Every git child inherits this process's environment: the key must not ride along.
       delete process.env[inputEnvName("root-key")];
-      await runSign(signOptions(workspace(), rootKey, getInput("default-branch")));
+      await runSign(
+        signOptions(
+          workspace(),
+          rootKey,
+          getInput("default-branch"),
+          process.env["GITHUB_REPOSITORY"],
+        ),
+      );
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

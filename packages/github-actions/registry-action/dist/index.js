@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:726f37db4c399f652cbd1ee40d428d47baee1bd31dd71d75ebc3e62aaa0e1615
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:f0a768c39af67df12ed6628f3df334a2167de34d7332586068ce9bd8e5522109
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5330,6 +5330,13 @@ function trustStatementSigningBytes(s) {
 function trustStatementId(s) {
   return createHash2("sha256").update(canonicalize(s)).digest("hex");
 }
+function signTrustStatement(s, seed) {
+  return new Promise((resolve) => {
+    const { signature: _omitted, ...rest } = s;
+    const sig = sign(null, trustStatementSigningBytes(rest), privateKeyFromSeed(seed));
+    resolve({ ...rest, signature: sig.toString("base64") });
+  });
+}
 function signatureVerifies(s) {
   try {
     return import_tweetnacl.default.sign.detached.verify(trustStatementSigningBytes(s), new Uint8Array(Buffer.from(s.signature, "base64")), new Uint8Array(Buffer.from(s.signerKey, "base64")));
@@ -5538,6 +5545,17 @@ function parseRegistryIndex(bytes) {
     extensions,
     signature: matching2(o, "signature", SIGNATURE_RE3, "index")
   };
+}
+function readRegistryReportUrl(index) {
+  const v = index.reportUrl;
+  if (typeof v !== "string")
+    return;
+  try {
+    const url = new URL(v);
+    return url.protocol === "https:" ? url.href : undefined;
+  } catch {
+    return;
+  }
 }
 function registryIndexSigningBytes(index) {
   const { signature: _omitted, ...rest } = index;
@@ -9226,6 +9244,124 @@ function signIndex(unsigned, privkey) {
     resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
+
+// ../../registry-format/src/registry-requests.ts
+var REQUEST_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+var REVOKE_KEYS = ["kind", "publisherId", "keyFingerprint", "reason"];
+var TAKEDOWN_KEYS = ["kind", "extensionId", "publisherId", "versions", "reason"];
+var TAKEDOWN_REQUIRED = ["kind", "extensionId", "versions", "reason"];
+var PLACEHOLDER_KEY = `${"A".repeat(43)}=`;
+var PLACEHOLDER_SIGNATURE = `${"A".repeat(86)}==`;
+var PLACEHOLDER_PUBLISHER = "placeholder";
+function invalid3(detail) {
+  return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
+}
+function exactKeys(o, allowed, required) {
+  for (const k of Object.keys(o)) {
+    if (!allowed.includes(k))
+      throw invalid3(`a request has an unknown key: ${k}`);
+  }
+  for (const k of required) {
+    if (!Object.hasOwn(o, k))
+      throw invalid3(`a request is missing key: ${k}`);
+  }
+}
+function parseRegistryRequest(raw) {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalid3("a request must be an object");
+  }
+  const o = raw;
+  const signer = {
+    issuedAt: "2026-01-01T00:00:00Z",
+    signerKey: PLACEHOLDER_KEY,
+    signature: PLACEHOLDER_SIGNATURE
+  };
+  if (o["kind"] === "key.revoke") {
+    exactKeys(o, REVOKE_KEYS, REVOKE_KEYS);
+    const s = parseTrustStatement({ ...o, ...signer });
+    return {
+      kind: "key.revoke",
+      publisherId: s.publisherId,
+      keyFingerprint: s.keyFingerprint,
+      reason: s.reason
+    };
+  }
+  if (o["kind"] === "extension.takedown") {
+    exactKeys(o, TAKEDOWN_KEYS, TAKEDOWN_REQUIRED);
+    const explicit = o["publisherId"];
+    const s = parseTrustStatement({
+      ...o,
+      publisherId: explicit === undefined ? PLACEHOLDER_PUBLISHER : explicit,
+      ...signer
+    });
+    return {
+      kind: "extension.takedown",
+      extensionId: s.extensionId,
+      ...explicit === undefined ? {} : { publisherId: s.publisherId },
+      versions: s.versions,
+      reason: s.reason
+    };
+  }
+  throw invalid3("a request's kind must be key.revoke or extension.takedown");
+}
+function takedownPublisher(req, index) {
+  const entry = Object.hasOwn(index.extensions, req.extensionId) ? index.extensions[req.extensionId] : undefined;
+  if (entry !== undefined) {
+    if (req.publisherId !== undefined && req.publisherId !== entry.publisher.id) {
+      throw invalid3(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
+    }
+    return entry.publisher.id;
+  }
+  if (req.publisherId === undefined) {
+    throw invalid3(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
+  }
+  return req.publisherId;
+}
+function assertRequestSignable(req, index) {
+  if (req.kind === "extension.takedown") {
+    takedownPublisher(req, index);
+    return;
+  }
+  if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
+    throw invalid3("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+  }
+}
+async function signRegistryRequest(req, index, rootSeed, issuedAt) {
+  const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
+  if (signerKey !== index.rootKey) {
+    throw invalid3(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
+  }
+  assertRequestSignable(req, index);
+  if (req.kind === "key.revoke") {
+    return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
+  }
+  const { publisherId: _explicit, ...rest } = req;
+  return signTrustStatement({ ...rest, publisherId: takedownPublisher(req, index), issuedAt, signerKey }, rootSeed);
+}
+function covers(have, want) {
+  if (have === "*")
+    return true;
+  if (want === "*")
+    return false;
+  return want.every((v) => have.includes(v));
+}
+function sameBlock(s, req, index) {
+  if (req.kind === "key.revoke") {
+    return s.kind === "key.revoke" && s.publisherId === req.publisherId && s.keyFingerprint === req.keyFingerprint;
+  }
+  if (s.kind !== "extension.takedown" || s.extensionId !== req.extensionId)
+    return false;
+  let publisher;
+  try {
+    publisher = takedownPublisher(req, index);
+  } catch {
+    return false;
+  }
+  return s.publisherId === publisher && covers(s.versions, req.versions);
+}
+function alreadyCarried(index, req) {
+  return readStatementList(index.statements).statements.some((s) => verifyTrustStatement(s, { registryRootKey: index.rootKey }) === "registry" && s.signerKey === index.rootKey && sameBlock(s, req, index));
+}
 // ../../registry-format/src/validate-publish.ts
 import { createHash as createHash4 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -9665,6 +9801,7 @@ var PAGES_REF = `origin/${PAGES_BRANCH}`;
 var INDEX_FILE = "index.json";
 var CONFIG_FILE = "nimbus-registry.json";
 var STATEMENTS_DIR = "statements/";
+var REQUESTS_DIR = "trust-requests/";
 var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
 function hasFile(git, ref, path, cwd) {
   return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
@@ -9747,6 +9884,36 @@ function readStatementFiles(git, ref, cwd, only) {
 }
 function statementPath(id) {
   return id === undefined ? STATEMENTS_DIR : `${STATEMENTS_DIR}${id}.json`;
+}
+function readRequestFiles(git, ref, cwd, only) {
+  const requests = [];
+  const skipped = [];
+  for (const e of git.listTreeEntries(ref, REQUESTS_DIR, { cwd })) {
+    if (e.path === `${REQUESTS_DIR}.gitkeep` || only !== undefined && !only.has(e.path))
+      continue;
+    const name = /^trust-requests\/(.+)\.json$/.exec(e.path)?.[1];
+    if (name === undefined || !REQUEST_NAME_RE.test(name)) {
+      skipped.push({
+        path: e.path,
+        reason: "must be trust-requests/<name>.json (lowercase letters, digits, . _ -)"
+      });
+      continue;
+    }
+    if (e.mode !== git.REGULAR_FILE_MODE) {
+      skipped.push({ path: e.path, reason: `git mode ${e.mode} is not a regular file` });
+      continue;
+    }
+    const bytes = git.readBlob(ref, e.path, { cwd });
+    try {
+      if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES)
+        throw new Error("too large");
+      const value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+      requests.push({ path: e.path, name, request: parseRegistryRequest(value) });
+    } catch (err) {
+      skipped.push({ path: e.path, reason: `is not a valid request: ${err.message}` });
+    }
+  }
+  return { requests, skipped };
 }
 
 // src/report.ts
@@ -9856,6 +10023,42 @@ function checkSummary(v, admitted = []) {
   return lines.join(`
 `);
 }
+function requestLine(f) {
+  const r = f.request;
+  if (r.kind === "key.revoke") {
+    return `- ${code(f.path)}: revoke publisher ${code(r.publisherId)}'s key ${code(r.keyFingerprint)} — ${code(r.reason)}`;
+  }
+  const versions = r.versions === "*" ? "every version" : r.versions.map(code).join(", ");
+  const publisher = r.publisherId === undefined ? "" : ` (publisher ${code(r.publisherId)})`;
+  return `- ${code(f.path)}: take down ${code(r.extensionId)}${publisher}, ${versions} — ${code(r.reason)}`;
+}
+function checkRequestPullRequest(git, index, changes, cwd, io) {
+  const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
+  if (offending.length > 0) {
+    throw new Error(`a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`);
+  }
+  const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
+  for (const f of files.requests) {
+    try {
+      assertRequestSignable(f.request, index);
+    } catch (e) {
+      files.skipped.push({ path: f.path, reason: e.message });
+    }
+  }
+  if (files.skipped.length > 0) {
+    throw new Error(`invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`);
+  }
+  io.summary([
+    "## Registry maintainer request",
+    "",
+    "> [!CAUTION]",
+    "> **MAINTAINER REQUEST — merge only if you, a maintainer of this registry, intend this block.** On merge the sign job signs it with the registry root key, and every client that installed from this registry applies it.",
+    "",
+    ...files.requests.map(requestLine)
+  ].join(`
+`));
+  io.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
+}
 async function runCheck(opts, deps = SHARED) {
   const { git } = deps;
   const cwd = opts.workspace;
@@ -9868,7 +10071,12 @@ async function runCheck(opts, deps = SHARED) {
     cwd,
     deepen: [opts.baseRef]
   });
-  const shape = assertPublishShape(git.diffTree(mergeBase, "HEAD", { cwd }));
+  const changes = git.diffTree(mergeBase, "HEAD", { cwd });
+  if (changes.some((c) => c.path.startsWith(REQUESTS_DIR))) {
+    checkRequestPullRequest(git, index, changes, cwd, deps.io);
+    return;
+  }
+  const shape = assertPublishShape(changes);
   const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
   if (shape.dir === undefined) {
     deps.io.summary(statementOnlySummary(admitted.admitted));
@@ -10086,12 +10294,17 @@ async function attemptSign(opts, seed, rootKey, deps) {
   } finally {
     rmSync4(work, { recursive: true, force: true });
   }
-  const statements = admission.admitted.map(trustStatementId);
+  const requested = await signRequests(git, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
+  const reportUrl = reportUrlFor(index, opts.repository);
+  const statements = [...admission.admitted, ...requested].map(trustStatementId);
   let sequence = index.sequence;
-  if (added.length > 0 || statements.length > 0) {
+  if (added.length > 0 || statements.length > 0 || reportUrl !== undefined) {
     const { signature: _previousSignature, ...carried } = admission.index;
+    const priorStatements = Array.isArray(carried.statements) ? carried.statements : [];
     const signed = await deps.sign({
       ...carried,
+      ...requested.length > 0 && { statements: [...priorStatements, ...requested] },
+      ...reportUrl !== undefined && { reportUrl },
       format: 1,
       sequence: index.sequence + 1,
       generatedAt: new Date().toISOString(),
@@ -10114,6 +10327,35 @@ async function attemptSign(opts, seed, rootKey, deps) {
     skipped,
     sequence
   };
+}
+async function signRequests(git, index, at, skipped) {
+  const files = readRequestFiles(git, at.ref, at.cwd);
+  for (const f of files.skipped)
+    skipped.push({ dir: f.path, reason: f.reason });
+  const signed = [];
+  let current = index;
+  for (const f of [...files.requests].sort((a, b) => codeUnitCompare(a.name, b.name))) {
+    if (alreadyCarried(current, f.request))
+      continue;
+    try {
+      const s = await signRegistryRequest(f.request, current, at.seed, at.issuedAt);
+      signed.push(s);
+      const prior = Array.isArray(current.statements) ? current.statements : [];
+      current = { ...current, statements: [...prior, s] };
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      skipped.push({ dir: f.path, reason: e.message });
+    }
+  }
+  return signed;
+}
+function reportUrlFor(index, repository) {
+  if (repository === undefined || readRegistryReportUrl(index) !== undefined)
+    return;
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/.test(repository))
+    return;
+  return `https://github.com/${repository}/issues/new`;
 }
 function admitStatements(git, index, ref, cwd, skipped) {
   const files = readStatementFiles(git, ref, cwd);
@@ -10220,8 +10462,13 @@ function maskSecret(secret, write = (s) => process.stdout.write(s)) {
 `);
   }
 }
-function signOptions(workspace, rootKey, defaultBranch) {
-  return { workspace, rootKey, ...defaultBranch !== "" && { defaultBranch } };
+function signOptions(workspace, rootKey, defaultBranch, repository) {
+  return {
+    workspace,
+    rootKey,
+    ...defaultBranch !== "" && { defaultBranch },
+    ...repository !== undefined && repository !== "" && { repository }
+  };
 }
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
@@ -10235,7 +10482,7 @@ async function main() {
       const rootKey = requireInput("root-key");
       maskSecret(rootKey);
       delete process.env[inputEnvName("root-key")];
-      await runSign(signOptions(workspace(), rootKey, getInput("default-branch")));
+      await runSign(signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]));
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

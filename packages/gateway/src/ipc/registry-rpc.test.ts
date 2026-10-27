@@ -316,6 +316,7 @@ function makeRegistry(
   dir: string,
   extensions: Record<string, { publisherId: string; versions: FixtureVersion[] }>,
   sequence = 3,
+  extra: Record<string, unknown> = {},
 ): void {
   const entries: RegistryIndex["extensions"] = {};
   const built: Record<string, unknown> = {};
@@ -353,6 +354,7 @@ function makeRegistry(
     sequence,
     generatedAt: "2026-10-18T12:00:00Z",
     extensions: entries,
+    ...extra,
   };
   const sig = nacl.sign.detached(registryIndexSigningBytes(base), KEYPAIR.secretKey);
   writeFileSync(join(dir, "index.json"), JSON.stringify({ ...base, signature: encodeBase64(sig) }));
@@ -468,6 +470,26 @@ describe("registry.search and registry.info", () => {
     expect(after.value.results[0]?.verifiedPublisher).toBeNull();
   });
 
+  test("info returns the registry's report URL, or none (trust layer PR 4a)", async () => {
+    const ext = {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable" as const, name: "Tool" }],
+      },
+    };
+    makeRegistry(tmp, ext, 3, { reportUrl: "https://github.com/acme/registry/issues/new" });
+    pin("main", tmp);
+    const info = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { reportUrl: unknown };
+    };
+    expect(info.value.reportUrl).toBe("https://github.com/acme/registry/issues/new");
+    makeRegistry(tmp, ext, 4, { reportUrl: "javascript:alert(1)" });
+    const bad = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { reportUrl: unknown };
+    };
+    expect(bad.value.reportUrl).toBeNull();
+  });
+
   test("search marks an extension whose newest offered version is taken down (I48)", async () => {
     makeRegistry(tmp, {
       "acme.tool": {
@@ -577,6 +599,7 @@ describe("registry.search and registry.info", () => {
       publisherId: "acme",
       publisherFingerprint: FINGERPRINT,
       verifiedPublisher: null,
+      reportUrl: null,
       versions: [
         {
           version: "1.1.0",
@@ -618,6 +641,13 @@ describe("registry.search and registry.info", () => {
     await expect(call("registry.info", { id: "acme.tool", registry: "main" })).rejects.toThrow(
       "ERR_REGISTRY_HASH_MISMATCH",
     );
+    // `reportOnly` reads the signed index alone, so the extension can still be reported.
+    const report = (await call("registry.info", {
+      id: "acme.tool",
+      registry: "main",
+      reportOnly: true,
+    })) as { value: Record<string, unknown> };
+    expect(report.value).toEqual({ registry: "main", id: "acme.tool", reportUrl: null });
   });
 
   test("info for an id no registry carries is ERR_REGISTRY_NOT_FOUND", async () => {
@@ -857,6 +887,39 @@ describe("the reserved built-in registry name", () => {
       value: { name: "official", rootFingerprint: FINGERPRINT },
     });
     expect(g.asked).toHaveLength(1);
+  });
+
+  test("info on a built-in extension falls back to the baked report URL; never for another registry", async () => {
+    const ext = {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable" as const, name: "Tool" }],
+      },
+    };
+    makeRegistry(tmp, ext);
+    const baked = "https://github.com/nimbus-agent/nimbus-mcp-servers/issues/new";
+    const withReport = fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY, reportUrl: baked } });
+    const info = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "nimbus-official", reportOnly: true },
+      { fetch: withReport },
+    )) as { value: Record<string, unknown> };
+    expect(info.value).toEqual({ registry: "nimbus-official", id: "acme.tool", reportUrl: baked });
+    // A built-in config that names no report URL yields none.
+    const none = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "nimbus-official", reportOnly: true },
+      { fetch: builtinBag() },
+    )) as { value: { reportUrl: unknown } };
+    expect(none.value.reportUrl).toBeNull();
+    // The same index under an owner registry never borrows the official destination.
+    pin("main", tmp);
+    const owner = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "main", reportOnly: true },
+      { fetch: withReport },
+    )) as { value: { reportUrl: unknown } };
+    expect(owner.value.reportUrl).toBeNull();
   });
 
   test("registry list does not show the builtin", async () => {

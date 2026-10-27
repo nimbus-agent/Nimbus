@@ -342,3 +342,10 @@ export function writeStatement(root: string, s: unknown, name?: string): string 
   );
   return rel;
 }
+
+/** Writes a maintainer request as `trust-requests/<name>.json`; returns the path. */
+export function writeRequest(root: string, name: string, request: unknown): string {
+  const rel = `trust-requests/${name}.json`;
+  write(root, rel, `${JSON.stringify(request, null, 2)}\n`);
+  return rel;
+}

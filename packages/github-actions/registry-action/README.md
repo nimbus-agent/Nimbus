@@ -15,7 +15,10 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   extension version against the result, moves an extension's entry to its publisher's rotated key
   when a version signed by that key is added, signs the index with the registry root key and
   pushes the site to `gh-pages`. A run that admits only statements still re-signs, so a
-  revocation reaches clients.
+  revocation reaches clients. It also signs each maintainer request under `trust-requests/`
+  (an unsigned `key.revoke` / `extension.takedown`) with the root key, once per block, and sets the
+  index's `reportUrl` to this repository's issue form when it has none. `check` admits a
+  request-only pull request under a `MAINTAINER REQUEST` banner.
 
 Both modes read the registry from the git tree, never the working directory: an entry under
 `extensions/` that is not a regular `100644` file (a symlink or a submodule above all) is refused.

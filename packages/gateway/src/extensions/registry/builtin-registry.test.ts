@@ -340,6 +340,7 @@ describe("the built-in official registry", () => {
     expect(BUILTIN_REGISTRY).toEqual({
       url: "https://nimbus-agent.github.io/nimbus-mcp-servers/",
       rootKey: "tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=",
+      reportUrl: "https://github.com/nimbus-agent/nimbus-mcp-servers/issues/new",
     });
     expect(publisherKeyFingerprint(BUILTIN_REGISTRY?.rootKey ?? "")).toBe(
       "6fb9beb2cf6bdc748c72c03b30b83a9a",

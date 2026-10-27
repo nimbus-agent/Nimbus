@@ -30,7 +30,7 @@ describe("maskSecret", () => {
 
 describe("signOptions", () => {
   test("passes the default-branch input on", () => {
-    expect(signOptions("/ws", "k", "trunk")).toEqual({
+    expect(signOptions("/ws", "k", "trunk", undefined)).toEqual({
       workspace: "/ws",
       rootKey: "k",
       defaultBranch: "trunk",
@@ -38,7 +38,16 @@ describe("signOptions", () => {
   });
 
   test("an empty input leaves sign to ask origin", () => {
-    expect(signOptions("/ws", "k", "")).toEqual({ workspace: "/ws", rootKey: "k" });
+    expect(signOptions("/ws", "k", "", undefined)).toEqual({ workspace: "/ws", rootKey: "k" });
+  });
+
+  test("passes the repository on when set, and not when empty", () => {
+    expect(signOptions("/ws", "k", "", "acme/registry")).toEqual({
+      workspace: "/ws",
+      rootKey: "k",
+      repository: "acme/registry",
+    });
+    expect(signOptions("/ws", "k", "", "")).toEqual({ workspace: "/ws", rootKey: "k" });
   });
 });
 

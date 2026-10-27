@@ -20,10 +20,12 @@ import { join } from "node:path";
 import {
   currentPublisherKeys,
   publicKeyFromSeed,
+  publisherKeyFingerprint,
   signIndex,
   trustStatementId,
   validatePublish,
   verifyRegistryIndexPinned,
+  verifyTrustStatement,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
@@ -49,6 +51,7 @@ import {
   syncMaintainer,
   write,
   writePublish,
+  writeRequest,
   writeStatement,
 } from "./testing/registry-repo.ts";
 
@@ -550,4 +553,102 @@ describe("the root-key input", () => {
       if (raw !== "") expect(err?.message).not.toContain(raw);
     },
   );
+});
+
+describe("maintainer requests and the report URL (trust layer PR 4a)", () => {
+  const PUBLISHER_FP = publisherKeyFingerprint(b64(publicKeyFromSeed(PUBLISHER_SEED)));
+  const revoke = {
+    kind: "key.revoke",
+    publisherId: "acme",
+    keyFingerprint: PUBLISHER_FP,
+    reason: "leaked",
+  };
+
+  async function mergeRequest(name: string, request: unknown): Promise<string> {
+    syncMaintainer(repo, "main");
+    const rel = writeRequest(repo.maintainer, name, request);
+    pushMaintainer(repo, "main", "merge request");
+    return rel;
+  }
+
+  test("a merged revocation request is signed by the root once — re-runs and renamed copies add nothing", async () => {
+    await mergePublish();
+    await sign();
+    await mergeRequest("revoke-acme", revoke);
+    await sign();
+    const index = originIndex(repo);
+    expect(index.sequence).toBe(3);
+    const statements = (index.statements as Array<Record<string, unknown>>) ?? [];
+    expect(statements).toHaveLength(1);
+    expect(statements[0]).toMatchObject({
+      kind: "key.revoke",
+      keyFingerprint: PUBLISHER_FP,
+      signerKey: ROOT_PUBLIC_KEY,
+    });
+    expect(verifyTrustStatement(statements[0] as never, { registryRootKey: ROOT_PUBLIC_KEY })).toBe(
+      "registry",
+    );
+    const head = originHead(repo, "gh-pages");
+    await sign();
+    await mergeRequest("revoke-acme-again", { ...revoke, reason: "still leaked" });
+    await sign();
+    expect(originHead(repo, "gh-pages")).toBe(head);
+  });
+
+  test("deleting the request file later never removes the signed block", async () => {
+    await mergePublish();
+    await sign();
+    const rel = await mergeRequest("revoke-acme", revoke);
+    await sign();
+    syncMaintainer(repo, "main");
+    rmSync(join(repo.maintainer, ...rel.split("/")));
+    writePublish(repo.maintainer, await makeExtension(scratch, { version: "1.1.0" }));
+    pushMaintainer(repo, "main", "delete request");
+    await sign();
+    expect((originIndex(repo).statements as unknown[]) ?? []).toHaveLength(1);
+  });
+
+  test("a takedown of an extension published in the same merge is signed with its publisher", async () => {
+    syncMaintainer(repo, "main");
+    writePublish(repo.maintainer, await makeExtension(scratch));
+    writeRequest(repo.maintainer, "takedown-echo", {
+      kind: "extension.takedown",
+      extensionId: "acme/echo",
+      versions: "*",
+      reason: "malware",
+    });
+    pushMaintainer(repo, "main", "publish + takedown");
+    await sign();
+    const [s] = (originIndex(repo).statements as Array<Record<string, unknown>>) ?? [];
+    expect(s).toMatchObject({
+      kind: "extension.takedown",
+      extensionId: "acme/echo",
+      publisherId: "acme",
+    });
+  });
+
+  test("an invalid request warns and signs nothing", async () => {
+    await mergePublish();
+    await sign();
+    const head = originHead(repo, "gh-pages");
+    const rel = await mergeRequest("bad", { kind: "key.revoke", publisherId: "acme" });
+    await sign();
+    expect(originHead(repo, "gh-pages")).toBe(head);
+    expect(warnings.join("\n")).toContain(rel);
+  });
+
+  test("the report URL is set from the repository once and never overwritten", async () => {
+    await mergePublish();
+    await runSign(
+      { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT, repository: "acme/registry" },
+      deps(),
+    );
+    expect(originIndex(repo).reportUrl).toBe("https://github.com/acme/registry/issues/new");
+    await mergePublish({ version: "1.1.0" });
+    await runSign(
+      { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT, repository: "other/repo" },
+      deps(),
+    );
+    expect(originIndex(repo).reportUrl).toBe("https://github.com/acme/registry/issues/new");
+  });
 });
