@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793088406191,
+  "lastUpdate": 1793112817361,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "86dde526bf56c363916cf116f1ece208e973233a",
-          "message": "chore: release main (#1135)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.27.0</summary>\n\n##\n[1.27.0](https://github.com/nimbus-agent/Nimbus/compare/v1.26.1...v1.27.0)\n(2026-08-09)\n\n\n### Features\n\n* **gateway:** pre-mortem theme extraction pass (V53, PR A of 2)\n([#1134](https://github.com/nimbus-agent/Nimbus/issues/1134))\n([cd1d9c2](https://github.com/nimbus-agent/Nimbus/commit/cd1d9c2e4c25e656af7db81b4de486a939139b69))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-10T06:03:44+03:00",
-          "tree_id": "6d3f16e4dadda8eb876816011979a26f5dbf70eb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/86dde526bf56c363916cf116f1ece208e973233a"
-        },
-        "date": 1786331722121,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.94084590000347,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.81520289999605,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.50741934999823,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9c6741245dffb6882e99f20d11cbae3b64de1e0d",
+          "message": "feat(trust): registry maintainers revoke keys and take extensions down; nimbus extension report (#1796)\n\nTrust layer PR 4a (Phase 9.5 project 3). Registry maintainers can block,\nusers can report, and local-path installs no longer carry the badge.\n\nThe spec's PR 4 (maintainer tooling, report and provenance) is split\ninto three parts:\n- **4a** (this PR): registry-root blocks, report, and the owner's\nlocal-badge ruling.\n- **4b:** `nimbus trust maintain *` and the snapshot audit.\n- **4c:** provenance.\n\n## What changes\n\n- **`nimbus registry maintain revoke-key | takedown`** signs a block FOR\nTHAT REGISTRY with its root key. The gateway already scopes\nregistry-signed blocks to extensions installed from that registry under\nits root (I48), so nothing reaches beyond it.\n  - **Local-folder registry:** signs at once and re-signs the index.\n- **GitHub registry:** `--github <clone>` writes\n`trust-requests/<name>.json` for a pull request. The registry's sign\njob, the only holder of the root key, signs it on merge behind the\n`registry-signing` approval. **The root key never leaves CI.**\n- **Once per block, by meaning:** a request is signed only if no\nstatement in the index, verifying under the index's own root, already\ncarries the same kind and subject with covering versions. A re-run, a\nrenamed copy or a deleted file never adds or removes anything (R1).\n- **One rule for check and sign (`assertRequestSignable`):** a request\nthat passes review can always be signed. A takedown whose publisher the\nindex can't supply is refused, as is a revocation of the root's own key.\n- **Takedowns** bind to the publisher the index binds to the id. For an\nid the index no longer carries, the maintainer names the publisher with\n`--publisher`.\n- **`check`** admits a request-only pull request under a `MAINTAINER\nREQUEST` banner. It fails an invalid or unsignable request, and one\nmixed with anything else. Merging and approving the signing run are the\nauthority, as for publishes.\n- **Request files** are named `<subject>-<hash8>`, so a second block for\nthe same id gets its own file and an identical one reads as \"already\nrequested\".\n- **Report URL.** The sign job sets the index's `reportUrl` to the\nrepository's issue form when it has none. `registry maintain\nset-report-url` and `init --report-url` set it for a local registry.\n`registry.info` returns the resolved registry's URL, normalised; the\nbuilt-in registry's is baked.\n- **`nimbus extension report <id>`** reports on the extension's OWN\nsource registry, so a third-party extension is never reported to Nimbus.\n- **Pre-fill:** a GitHub issue form gets public metadata only, and the\nregistry's local name, never its URL.\n- **Opening:** the URL is printed, and opens only after an explicit yes\non a terminal.\n- **Opener:** a new CLI `open-url.ts` refuses anything that isn't\n`https:` before starting a process, and resolves only once the launcher\nhas started.\n  - **Stated bound:** the query string reaches github.com when opened.\n- **Local-path installs never carry the verified-publisher badge**\n(owner ruling 2026-10-27, R6 amended). Their manifest signature does not\nbind the code; registry installs are bound by the index hashes.\n- **Fixed along the way:** `extension.list` / `extension.info` never\nreturned the manifest's publisher. So the CLI showed every extension as\n`(unsigned)` in production, and PR 3c's installed-copy badge line could\nnever print. Test fixtures had been supplying a field the gateway never\nsends. Both now return the hash-checked manifest's publisher id and\npublic key.\n\nNo migration, no new invariant, no new IPC method, no allowlist change.\n\n## Review\n\n- **Plan:** Antigravity reviewed it. Most findings were applied; the\nrest were declined with reasons, recorded in the plan.\n- **Final whole-branch review:** a fresh reviewer found 0 Critical and 2\nImportant, both fixed with tests that failed first:\n  - the missing publisher, above;\n- a raw report URL that could carry terminal control characters, now\nnormalised.\n\nThree of its six Minors were re-graded by effect and fixed: request file\nnames collided; a request could pass review and then never be signable;\na revocation of the root's own key was re-signed on every run. The other\nthree are deferred: a commit message when only `reportUrl` changes,\ncomparing the root fingerprint in `report`, and an idempotent\n`set-report-url`.\n- **Bounds stated:**\n- `report` needs the extension to still be listed by its source\nregistry.\n  - A sign retry re-reads the default branch (pre-existing).\n\n## Verification\n\n- `bun run preflight:fast`: all gates green.\n- registry-format 422, registry action 113, `cli/src` 4748,\n`gateway/src` all green on re-run, `gateway/test` 3134 plus the\ncapture-sink e2e green on re-run (5/5).\n- The 5 local `scripts` failures are the `ps1` tests, which need `pwsh`\non PATH (environment; also on main).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus extension report <id>` to display a registry’s reporting\ndestination and, after confirmation, open it. Supported GitHub issue\nforms include public extension details.\n* Registry maintainers can request publisher-key revocations and\nextension takedowns. Signing workflows can approve these requests;\nblocks apply to copies installed from that registry.\n  * Registries can provide a report destination for extensions.\n* **Bug Fixes**\n  * Local-path installs no longer display a verified-publisher badge.\n  * Report destinations are normalized and restricted to HTTPS.\n* **Documentation**\n* Updated CLI, registry-hosting, and trust-layer documentation with\nreporting and blocking details.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T14:42:30Z",
+          "tree_id": "b5211bbcc507821d4c8af24633ba2c9192a1e338",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9c6741245dffb6882e99f20d11cbae3b64de1e0d"
+        },
+        "date": 1793112812419,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.17037954999904,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 267.95103624999757,
             "unit": "ms"
           }
         ]
