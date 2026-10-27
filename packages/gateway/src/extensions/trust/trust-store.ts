@@ -388,12 +388,23 @@ export function readPublisherRevocations(
   }));
 }
 
+/** The CURRENT Nimbus verification of a publisher (spec R7): handle, date and listed key fingerprints. */
+export type CurrentVerification = {
+  keyFingerprints: Set<string>;
+  github: string;
+  verifiedAt: string;
+};
+
 /**
- * The key fingerprints the CURRENT Nimbus verification of `publisherId` lists (spec R7), or `null`
- * when there is none. More than one stored entry (which `replaceCurrentVerifications` never leaves)
- * is treated as none: vouching must be unambiguous.
+ * The one current `publisher.verified` entry for `publisherId`, or `null`: none, more than one
+ * (which `replaceCurrentVerifications` never leaves — vouching must be unambiguous), or a stored row
+ * that no longer parses (fail toward "unverified", never toward a badge). Parsing re-applies the
+ * format's rules, so the handle is a valid GitHub handle by construction.
  */
-export function readCurrentVerifiedKeys(db: Database, publisherId: string): Set<string> | null {
+export function readCurrentVerification(
+  db: Database,
+  publisherId: string,
+): CurrentVerification | null {
   const rows = db
     .query(
       `SELECT statement_json FROM trust_statement
@@ -405,10 +416,19 @@ export function readCurrentVerifiedKeys(db: Database, publisherId: string): Set<
   try {
     const v = parseTrustStatement(JSON.parse(only.statement_json));
     if (v.kind !== "publisher.verified") return null;
-    return new Set(v.keys.map((k) => publisherKeyFingerprint(k)));
+    return {
+      keyFingerprints: new Set(v.keys.map((k) => publisherKeyFingerprint(k))),
+      github: v.github,
+      verifiedAt: v.verifiedAt,
+    };
   } catch {
     return null;
   }
+}
+
+/** The key fingerprints the current verification lists, or `null` (see `readCurrentVerification`). */
+export function readCurrentVerifiedKeys(db: Database, publisherId: string): Set<string> | null {
+  return readCurrentVerification(db, publisherId)?.keyFingerprints ?? null;
 }
 
 export type FeedFloor = {
