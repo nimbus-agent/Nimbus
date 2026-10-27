@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793118541765,
+  "lastUpdate": 1793124815062,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "34601b24b98026e61f3785965cf38b38b1d414f6",
-          "message": "feat(automation): add incident_opened and deploy_failed watcher conditions (#1138)\n\n## Why\n\nThe watcher engine evaluated exactly one condition type, `alert_fired`,\nand that condition matched `item.type = 'alert'` — an item type **no\nconnector in this repository indexes**. A user could create a watcher,\narm it, and it would never fire, with nothing anywhere saying so.\n`watcher.create` compounded it by accepting any string as\n`conditionType`, so a watcher the engine could never evaluate was\naccepted silently.\n\nThis came out of planning `nimbus pre-mortem` PR B, which proposes\nwatchers off the back of a brief. Proposing a watcher that cannot fire,\nand printing the command to arm it, would have shipped a claim the\nengine could not honour.\n\n## What changed\n\n- **`automation/watcher-condition-kinds.ts` (new)** — one table mapping\neach condition type to the `item.type` it observes plus an optional\nconstant SQL predicate. Both the engine and `watcher.create` read it, so\n\"which conditions can actually fire\" has one answer.\n- **`automation/watcher-engine.ts`** — `evaluateOneWatcher` builds its\nquery from the table instead of hardcoding `alert_fired` / `type =\n'alert'`. The service filter, the `since` window, the `LIMIT 5` and the\ngraph-predicate block are untouched; `type = 'alert'` became a bound\n`type = ?`.\n- **`ipc/automation-rpc.ts`** — `watcher.create` rejects a condition\ntype absent from the table with `-32602`. Membership check only: no\nvalidation of `condition_json`, of service existence, or of whether\nanything matches today, because a watcher is a forward-looking\nsubscription.\n- **`ui/src/pages/Watchers.tsx`** — the Create Watcher dialog offered\n`graph` / `schedule` / `metric`, none of which the engine has ever been\nable to evaluate, so every watcher it created was already inert. It now\noffers the three real condition types, with the graph predicate as an\northogonal option rather than a fake fourth condition type, and its\ncondition JSON default is `{ \"filter\": {} }` (a bare `{}` makes the\nengine return `null`).\n\n| `condition_type` | Fires on | Coverage |\n| --- | --- | --- |\n| `alert_fired` | item of type `alert` | **cannot fire today** — nothing\nindexes `alert`. Pre-existing state, recorded rather than quietly fixed\n|\n| `incident_opened` | item of type `incident` with `metadata.status =\n'triggered'` | PagerDuty. Narrowed to `triggered` because the sync\nfetches all statuses and stamps `modified_at` from `updated_at`, so\nacknowledging or resolving would otherwise fire a condition named\n\"opened\" |\n| `deploy_failed` | item of type `deployment` with `metadata.conclusion\n= 'failure'` | CI-annotated deploys only — Vercel records its outcome\nunder `metadata.state`, Prefect indexes deployment *definitions* with no\noutcome |\n\n## Two details worth the reviewer's attention\n\n**`json_valid(metadata)` in the predicates is load-bearing, not\ndefensive noise.** SQLite's `json_extract` *raises* `malformed JSON` on\na non-JSON TEXT value — `NULL` is safe, but the empty string and plain\ntext are not. The predicate runs inside a loop over every enabled\nwatcher with nothing catching, so one bad row would abort evaluation for\nthe whole machine. No current writer can produce such a row (both\n`item.metadata` writers stringify), so this guards a future one. A\nregression test force-corrupts a row and was verified to fail without\nthe guard.\n\n**The predicate is in SQL rather than a TypeScript filter after the\nquery.** The query ends in `LIMIT 5`; post-filtering would let five\nsuccessful deployments hide a failed sixth on a busy service.\n\n## Coverage limits, documented in `docs/architecture.md`\n\nEvery limit below was verified against the connectors, not assumed:\n\n- A watcher only sees items whose `modified_at` is newer than its\n`last_checked_at`, and that timestamp advances for *every* enabled\nwatcher on *every* successful sync, regardless of service filter — so a\nlate-indexed item can fall outside the window.\n- `deploy_failed` reads `item.modified_at`, which\n`deployment/annotate.ts` binds from `started_at_ms` and overwrites on\nthe finishing POST, so a long deploy can record its failure with a\nstart-time stamp.\n- `deploy_failed`'s `item.service` is the annotate provider slug\n(`github-actions`, `gitlab`, …), not a syncable service id, so a\nservice-filtered watcher of that kind is only reachable via startup\ncatch-up. Unfiltered watchers work normally.\n- `incident_opened` never fires for an incident indexed without a status\n— the sync writes `null` when the API omits the field. Fail-closed, and\nstated rather than discovered later.\n\n## Not in scope\n\nIndexing `item.type = 'alert'` so `alert_fired` can fire; teaching\n`deploy_failed` about Vercel's `metadata.state`; reconciling the\nannotate provider and syncable-service vocabularies; and a\n`watcher.listConditionTypes` IPC read that would remove the UI's\nduplicated list (a drift test guards it instead).\n\n## Testing\n\nGateway automation + `automation-rpc` suites and the UI `Watchers` suite\nall pass. Full `preflight` is green except `audit:coverage-floor`, which\nfails on this Windows machine for two files this branch does not touch\n(`platform/linux.ts`, `ipc/server/socket-listeners.ts`) —\n`exclusions.ts` documents `platform/linux.ts` as deliberately non-exempt\nbecause it is the *active* arm on a Linux runner, which is why that gate\nis CI-Linux-authoritative. This branch's own files measure 100.0/100.0,\n95.4/94.8 and 92.9/81.6 (line/branch) against the 85/80 floor.\n\nGroundwork for `nimbus pre-mortem` PR B2; design and plan documents for\nit are included.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-10T17:16:06Z",
-          "tree_id": "90985a7abf4b9d583afc502ab6d4fbe7d0f8501c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/34601b24b98026e61f3785965cf38b38b1d414f6"
-        },
-        "date": 1786382843229,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.3693087500007,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.1887982500033,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 159.66389374999815,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ae231c70b2e3938ace3b944de69ffab948800f3a",
+          "message": "fix(deps): qs 6.16.1 (GHSA-6pq8-jhm2-2vcw) (#1802)\n\nDependency audit went red repo-wide on a newly published advisory,\nGHSA-6pq8-jhm2-2vcw (moderate): `qs` >= 6.7.0, <= 6.16.0 throws an\nuncaught TypeError in `qs.stringify` with `arrayFormat: 'comma'` on\narray elements carrying a non-callable own `toString`, a DoS. The repo\npins `qs` through the root `overrides` at 6.16.0, reached via\nexpress/body-parser and typed-rest-client.\n\nThis moves the override to 6.16.1, the first patched version. No other\nchange.\n\n## Verification\n\n- `bun install --force`, as overrides need, resolves `qs@6.16.1` in\n`bun.lock`.\n- `audit:advisories` OK, `audit:override-drift` OK, `audit:js-licenses`\nOK, `bun run preflight:fast` green.\n\nIt unblocks the required `Dependency audit` check on every open PR,\nincluding #1801.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T17:57:45Z",
+          "tree_id": "d2e807b53411a5f072479a00e2a9c1b8088b3294",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ae231c70b2e3938ace3b944de69ffab948800f3a"
+        },
+        "date": 1793124810110,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 262.5761215500021,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 261.80057035000425,
             "unit": "ms"
           }
         ]
