@@ -527,7 +527,7 @@ function buildInstallApprovalRequest(
 }
 
 /**
- * The verified publisher (R6) to show in the install prompt. The I16 check of the installed copy
+ * The verified publisher (R6) to show in the install prompt — for a registry install only. The I16 check of the installed copy
  * runs only after approval, so the badge is asked only once the source manifest's signature has
  * been verified here with the key it declares — never on a claim alone.
  */
@@ -537,7 +537,9 @@ async function installPromptBadge(
   manifestText: string,
 ): Promise<VerifiedPublisher | null> {
   const publisher = manifest.publisher;
-  if (publisher === undefined) return null;
+  // R6 as amended 2026-10-27: a local-path install's manifest signature does not bind its entry
+  // file (a registry install's index hashes do), so only a registry install is ever badged.
+  if (publisher === undefined || options.sourceRegistry === undefined) return null;
   try {
     const raw = JSON.parse(manifestText) as Record<string, unknown>;
     await verifyManifestSignature(raw, decodeBase64(publisher.key));

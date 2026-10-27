@@ -563,6 +563,8 @@ function trustBlocksOf(db: Database, row: ExtensionRow): TrustBlock[] {
  */
 function verifiedPublisherOf(db: Database, row: ExtensionRow): VerifiedPublisher | null {
   if (preT2DisabledIds().includes(row.id) || signatureDisabledRegistry.has(row.id)) return null;
+  // R6 as amended 2026-10-27: a local-path copy's manifest signature does not bind its entry file.
+  if (row.source_registry == null) return null;
   try {
     if (!verifyOneExtensionStrict(row)) return null;
     return verifiedPublisherFor(db, blockSubjectForInstalled(row, readVerifiedManifest(row)));

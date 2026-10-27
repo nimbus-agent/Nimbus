@@ -569,6 +569,11 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
     db.run("UPDATE extension SET manifest_hash = ? WHERE id = 'rpc.run'", [
       createHash("sha256").update(readFileSync(manifestPath)).digest("hex"),
     ]);
+    // A registry-installed copy (R6 as amended 2026-10-27: a local-path copy never carries the badge).
+    db.run(
+      "UPDATE extension SET source_registry = 'main', source_root_fingerprint = ? WHERE id = 'rpc.run'",
+      ["c".repeat(32)],
+    );
     expect((await listed(db))[0]?.verifiedPublisher).toBeNull();
     const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 15);
     const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
@@ -593,6 +598,15 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
       db,
     })) as { value: { extension: { verifiedPublisher: unknown } } };
     expect(info.value.extension.verifiedPublisher).toEqual(badge);
+    // The same copy recorded as a local-path install shows no badge.
+    db.run(
+      "UPDATE extension SET source_registry = NULL, source_root_fingerprint = NULL WHERE id = 'rpc.run'",
+    );
+    expect((await listed(db))[0]?.verifiedPublisher).toBeNull();
+    db.run(
+      "UPDATE extension SET source_registry = 'main', source_root_fingerprint = ? WHERE id = 'rpc.run'",
+      ["c".repeat(32)],
+    );
     // A copy that no longer matches its installed hashes (a tampered entry file, which a boot pass
     // disables for the hash without ever marking the signature registry) never carries the badge.
     const entry = join(installPath, "dist", "index.js");

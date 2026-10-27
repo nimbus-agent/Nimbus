@@ -1660,7 +1660,11 @@ describe("the install prompt states whether the publisher is verified (R6, trust
     replaceCurrentVerifications(db, [vouch], nimbusKey, 1);
   }
 
-  async function askedFor(prefix: string, opts: { vouch: boolean; forge?: boolean }) {
+  // `registry: false` is a local-path install: never a badge (R6 as amended 2026-10-27).
+  async function askedFor(
+    prefix: string,
+    opts: { vouch: boolean; forge?: boolean; registry?: boolean },
+  ) {
     const { extensionsDir, src, db } = createExtensionInstallFixture(prefix, "src");
     const { privkey, pubkey } = generateEd25519Keypair();
     await writeSignedSource({ sourceDir: src, id: "test-ext-badge", privkey, pubkey });
@@ -1678,6 +1682,7 @@ describe("the install prompt states whether the publisher is verified (R6, trust
       sourcePath: src,
       vault: new MockVault(),
       publisherKey: pubkey,
+      ...(opts.registry !== false && { sourceRegistry: "main", rootFingerprint: "c".repeat(32) }),
       approve: async (r) => {
         asked.push(r);
         return false;
@@ -1685,6 +1690,12 @@ describe("the install prompt states whether the publisher is verified (R6, trust
     }).catch(() => {});
     return asked[0];
   }
+
+  test("a LOCAL-path install never carries the badge, even for a vouched key whose signature verifies", async () => {
+    const r = await askedFor("nimbus-install-local-nobadge-", { vouch: true, registry: false });
+    expect(r?.verifiedPublisher).toBeNull();
+    expect(r?.publisherBadge).toBe("Unverified publisher");
+  });
 
   test("a signature that verifies with a vouched key gets the badge in the prompt", async () => {
     const r = await askedFor("nimbus-install-badge-", { vouch: true });
