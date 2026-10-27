@@ -36,7 +36,7 @@ const CTX: KeyContext = { publisherId: "acme", source: null };
 let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
 });
 afterEach(() => db.close());
 

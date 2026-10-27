@@ -13,7 +13,7 @@ const DAY = 86_400_000;
 let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
 });
 afterEach(() => db.close());
 

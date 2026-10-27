@@ -11,8 +11,8 @@
 import type { Database } from "bun:sqlite";
 import { successorsOf } from "@nimbus-dev/registry-format";
 
-import { type BlockSubject, blocksFor } from "./trust-blocks.ts";
-import { readCurrentVerifiedKeys, readRotationEdges } from "./trust-store.ts";
+import { type BlockSubject, blocksFor, rotationEdgesFor } from "./trust-blocks.ts";
+import { readCurrentVerifiedKeys } from "./trust-store.ts";
 
 export type KeyContext = { readonly publisherId: string; readonly source: BlockSubject["source"] };
 
@@ -38,7 +38,7 @@ function viaRotation(
   trusted: readonly string[],
   candidate: string,
 ): Continuity {
-  const edges = readRotationEdges(db, ctx.publisherId);
+  const edges = rotationEdgesFor(db, ctx.publisherId, ctx.source);
   const revoked = new Map<string, boolean>();
   const usable = (fp: string): boolean => {
     let r = revoked.get(fp);

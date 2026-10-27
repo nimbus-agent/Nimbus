@@ -40,7 +40,7 @@ let asked: ExtensionInstallApprovalRequest[];
 
 beforeEach(async () => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-instreg-split-"));
   extensionsDir = join(tmp, "extensions");
   stage = join(tmp, "stage");

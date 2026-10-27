@@ -2,7 +2,7 @@
 
 **Version:** 1.0
 **Runtime:** Bun v1.2+ / TypeScript 7.x (strict)
-**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I47; schema V76.
+**Status + dated delivery log:** see [`CHANGELOG.md`](./CHANGELOG.md) (canonical) and [`roadmap.md`](./roadmap.md) (phases + acceptance criteria). Current invariants I1–I47; schema V77.
 
 > **Authoring references for AI-assisted contributors:** the [`.claude/commands/nimbus-*.md`](../.claude/commands/) skill files are the load-bearing how-to references for every subsystem in this document. Treat this architecture doc as the *what + where* and the skills as the *how*. Pair them when adding new code:
 >
@@ -2153,12 +2153,12 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PRs 2a–3b of 5 (marketplace trust layer, Phase 9.5 project 3; schema V76 from PR 1; invariant I48 with static D37).**
+**PRs 2a–3b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
 The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
 publisher verifications, PR 2a), refuses revoked or taken-down code at install, update and spawn (PR 2b), and follows a
 publisher's key rotations (PR 3a); a registry admits publishers' own rotations and revocations into its signed index (PR 3b).
 
-**Store** (`extensions/trust/trust-store.ts`, the only code naming `trust_statement` and `trust_feed_state`, D37). A statement
+**Store** (`extensions/trust/trust-store.ts`, the only code naming `trust_statement`, `trust_statement_source` and `trust_feed_state`, D37). A statement
 is stored once, keyed by the SHA-256 of its signed bytes (the first source is kept). Authority comes from
 `verifyTrustStatement` against the root of the document that CARRIED it: the Nimbus trust root for the feed and its baked
 snapshot (`nimbus`), the registry's pinned root for a registry index (`registry`, stored with that registry's name and root
@@ -2168,7 +2168,10 @@ while every block is a monotonic union no later document removes. A publisher-si
 when that registry's index lists the publisher with the key it concerns (for a rotation, either end) or an installed extension
 was verified with it — "listed" meaning an entry's key closed in both directions over the index's own publisher-signed
 rotations (PR 3b), so a revocation of a publisher's OLD key still lands after the registry moved the entry to the rotated key, and at most 1,000 such rows per registry; the registry's own root-signed blocks are never capped, so
-filling the cap cannot suppress a later revocation.
+filling the cap cannot suppress a later revocation. Every source a statement arrives from is recorded (`trust_statement_source`,
+V77, PR 3b): a publisher-signed statement counts only for code installed from a registry whose index carried it, or everywhere
+once the feed or snapshot carried it; a second registry carrying a known statement widens it and is reported like a new
+statement.
 
 **Sources.** (1) Every PINNED, verified registry index (`fetchVerifiedIndex` ingests its `statements` after the floor write;
 `registry add`'s unpinned fetch stores nothing; a store failure never fails the fetch). (2) The trust feed
@@ -2194,8 +2197,10 @@ days old or was never fetched.
 **Blocks (I48, PR 2b).** `extensions/trust/trust-blocks.ts` turns stored statements into the blocks applying to one subject:
 extension id, version, publisher id, the fingerprint of the key that verified (or would verify) the code, and its source
 registry with that registry's root fingerprint. A `key.revoke` matches publisher id + key; an `extension.takedown` matches
-extension id + publisher id + version (or `"*"`). Statements signed by Nimbus or by the revoked key apply everywhere; one
-signed by a registry root applies only to code sourced from that registry under that root. Unsigned code is never matched,
+extension id + publisher id + version (or `"*"`). Statements signed by Nimbus apply everywhere; one signed by a registry root
+applies only to code sourced from that registry under that root; one signed by the revoked key itself (and every `key.rotate`,
+for R4 taint and continuity alike) counts only for code installed from a registry that carried it, or everywhere once the feed
+did (owner ruling 2026-10-27, PR 3b — a hostile registry could otherwise plant `rotate S -> victim key` plus `revoke S`). Unsigned code is never matched,
 and a stored row that no longer parses still blocks. The doors, each refusing `ERR_EXTENSION_KEY_REVOKED` (reported first)
 or `ERR_EXTENSION_TAKEN_DOWN`:
 

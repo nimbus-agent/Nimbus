@@ -16,7 +16,7 @@ let db: Database;
 let root: string;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   root = mkdtempSync(join(tmpdir(), "nimbus-keyfp-"));
 });
 afterEach(() => {

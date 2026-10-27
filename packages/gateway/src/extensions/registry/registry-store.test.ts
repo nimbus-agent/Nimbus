@@ -15,7 +15,7 @@ import {
 
 function freshDb(): Database {
   const db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   return db;
 }
 

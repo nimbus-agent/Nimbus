@@ -14,7 +14,7 @@ const CONFIG = { url: "https://trust.example/", rootKey: "k" };
 let db: Database;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
 });
 afterEach(() => db.close());
 

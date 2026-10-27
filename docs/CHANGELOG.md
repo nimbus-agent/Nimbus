@@ -18,8 +18,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
-- **2026-10-26 — Marketplace trust layer PR 3b of 5: publisher key statements through a registry (no migration, no new
-  invariant; one gateway change: registry-statement admission follows rotations).** A publisher signs a rotation or a revocation with `nimbus extension key
+- **2026-10-26 — Marketplace trust layer PR 3b of 5: publisher key statements through a registry (schema V77, no new
+  invariant; I48's scope amended).** A publisher signs a rotation or a revocation with `nimbus extension key
   rotate|revoke` and sends it with the next publish (`nimbus extension publish --statement <file>`, repeatable; `registry
   maintain add --statement` for a local-folder registry). The pull request adds `statements/<statement id>.json`. The registry
   action's `check` and `sign` admit it into the signed index by one shared rule, `admitPublisherStatements` in
@@ -29,7 +29,11 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   fixed point over admitted rotations only, refuses loops, and caps each publisher at 50 statements; `check` admits the base
   branch's unsigned statements first, as `sign` will. A key that rotated away stays superseded even if its successor is
   revoked, and the first version under a new key of an existing extension must be stable. On clients, a registry's listed
-  publisher keys are now closed over its rotations, so a revocation of an old key still lands after the entry moved. `validatePublish` now accepts the
+  publisher keys are now closed over its rotations, so a revocation of an old key still lands after the entry moved.
+  **Owner ruling 2026-10-27:** a publisher-signed statement (self-revocation, rotation) that arrives in a registry's index
+  now counts only for extensions installed from that registry, or everywhere once the Nimbus feed carries it, so a hostile
+  third-party registry can no longer plant `rotate S -> victim key` plus `revoke S` and block a victim's extensions installed
+  from elsewhere (schema **V77**, `trust_statement_source`, static D37 widened; I48's scope paragraph amended). `validatePublish` now accepts the
   publisher's CURRENT key, the one every bound key leads to through rotations, and refuses a superseded, forked, unrelated or
   revoked key (`ERR_REGISTRY_PUBLISHER_KEY_REVOKED`, new). A version signed by the new key moves the extension's index entry to
   that key, so a rotation and the first version under the new key land in ONE pull request. The rotation-graph walk moved from

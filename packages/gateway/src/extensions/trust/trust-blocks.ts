@@ -83,12 +83,41 @@ export function sanitiseReason(reason: string): string {
   return flat.length > MAX_REASON_CHARS ? `${flat.slice(0, MAX_REASON_CHARS - 1)}…` : flat;
 }
 
+/**
+ * Whether a PUBLISHER-signed statement that arrived from `sources` counts for code installed from
+ * `source`: everywhere once the Nimbus trust feed or its snapshot carried it; otherwise only for code
+ * installed from a registry whose index carried it (a hostile third-party registry can then affect
+ * only its own extensions, which it already controls). Bound, stated: matched by registry NAME, so
+ * a registry removed and re-added under the same name with a different root keeps the statements
+ * the old one carried — they are self-signed by the key they concern, so this widens scope, never
+ * forges authority.
+ */
+export function publisherStatementInScope(
+  sources: readonly string[],
+  source: BlockSubject["source"],
+): boolean {
+  if (sources.includes("feed") || sources.includes("snapshot")) return true;
+  return source !== null && sources.includes(`registry:${source.registry}`);
+}
+
 export function inScope(row: BlockCandidateRow, s: Pick<BlockSubject, "source">): boolean {
-  if (row.signerRole !== "registry") return true;
+  if (row.signerRole === "nimbus") return true;
+  if (row.signerRole === "publisher") return publisherStatementInScope(row.sources, s.source);
   return (
     s.source !== null &&
     row.scopeRegistry === s.source.registry &&
     row.scopeRootFingerprint === s.source.rootFingerprint
+  );
+}
+
+/** The publisher's stored rotations that count for code installed from `source`. */
+export function rotationEdgesFor(
+  db: Database,
+  publisherId: string,
+  source: BlockSubject["source"],
+): Array<{ from: string; to: string; statementId: string }> {
+  return readRotationEdges(db, publisherId).filter((e) =>
+    publisherStatementInScope(e.sources, source),
   );
 }
 
@@ -166,7 +195,7 @@ export function taintBlocks(db: Database, s: BlockSubject): TrustBlock[] {
   const fp = s.keyFingerprint;
   if (s.publisherId === null || fp === null) return [];
   if (readCurrentVerifiedKeys(db, s.publisherId)?.has(fp) === true) return [];
-  const ancestors = ancestorsOf(readRotationEdges(db, s.publisherId), fp);
+  const ancestors = ancestorsOf(rotationEdgesFor(db, s.publisherId, s.source), fp);
   if (ancestors.size === 0) return [];
   const out: TrustBlock[] = [];
   for (const row of readPublisherRevocations(db, s.publisherId)) {

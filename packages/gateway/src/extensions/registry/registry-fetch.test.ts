@@ -53,7 +53,7 @@ let server: ReturnType<typeof Bun.serve> | undefined;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-regfetch-"));
 });
 

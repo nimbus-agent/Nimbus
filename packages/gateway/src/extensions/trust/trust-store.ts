@@ -1,6 +1,6 @@
 /**
- * The trust store (marketplace trust layer): the ONLY code that names `trust_statement` and
- * `trust_feed_state` (static rule D37). It records statements that arrive in the Nimbus trust feed,
+ * The trust store (marketplace trust layer): the ONLY code that names `trust_statement`,
+ * `trust_statement_source` and `trust_feed_state` (static rule D37). It records statements that arrive in the Nimbus trust feed,
  * its baked snapshot, or a verified registry index, and the trust feed's anti-rollback floor.
  *
  * What may be stored is decided here, not by the caller:
@@ -14,6 +14,11 @@
  *   PUBLISHER-signed rows only: a registry's own root-signed blocks are never capped, so filling the
  *   cap can never suppress a later revocation or takedown (each document is already bounded by
  *   `MAX_STATEMENTS_PER_DOCUMENT` at read time);
+ * - every source a statement arrives from is recorded (`trust_statement_source`, V77): a
+ *   publisher-signed statement counts only for extensions installed from a registry whose index
+ *   carried it, or everywhere once the Nimbus feed or snapshot carried it (`trust-blocks.ts`
+ *   `inScope`). A second registry carrying an already-stored statement widens it, and that is
+ *   reported like a new statement, since it may newly block;
  * - `publisher.verified` never enters through `recordTrustStatements`: verification is the feed's
  *   CURRENT state (`replaceCurrentVerifications`), while every block is a monotonic union — no later
  *   document removes one.
@@ -46,7 +51,10 @@ export type RecordOutcome = {
   alreadyKnown: number;
   refused: number;
   capped: number;
-  /** The ids of the statements this call stored for the first time (what may newly block, I48). */
+  /**
+   * The ids of the statements this call stored for the first time, or recorded from a NEW source
+   * (both may newly block, I48).
+   */
   insertedIds: string[];
 };
 
@@ -90,10 +98,34 @@ function storedPublisherCount(db: Database, source: string): number {
   return (
     db
       .query(
-        "SELECT COUNT(*) AS n FROM trust_statement WHERE source = ? AND signer_role = 'publisher'",
+        `SELECT COUNT(*) AS n FROM trust_statement_source src
+           JOIN trust_statement st ON st.statement_id = src.statement_id
+          WHERE src.source = ? AND st.signer_role = 'publisher'`,
       )
       .get(source) as { n: number }
   ).n;
+}
+
+/** True when `id` already arrived from the Nimbus feed or its snapshot (it applies everywhere). */
+function hasGlobalSource(db: Database, id: string): boolean {
+  return (
+    db
+      .query(
+        "SELECT 1 FROM trust_statement_source WHERE statement_id = ? AND source IN ('feed', 'snapshot')",
+      )
+      .get(id) !== null
+  );
+}
+
+/** Records that `id` arrived from `source`; true when this source is new for it. */
+function addSource(db: Database, id: string, source: string, now: number): boolean {
+  return (
+    dbRun(
+      db,
+      "INSERT OR IGNORE INTO trust_statement_source (statement_id, source, first_seen_at) VALUES (?, ?, ?)",
+      [id, source, now],
+    ).changes > 0
+  );
 }
 
 function subjectColumns(s: TrustStatement): {
@@ -153,8 +185,10 @@ function insertStatement(
 }
 
 /**
- * Records the statements a document carried. Idempotent by statement id (the first source is
- * kept). Never throws on DATA: every statement lands in exactly one of the four counts.
+ * Records the statements a document carried, and that this document's source carried them.
+ * Idempotent by (statement id, source). Never throws on DATA: every statement lands in exactly one
+ * of the four counts; a known statement from a new source counts as `alreadyKnown` but its id is
+ * reported in `insertedIds`.
  */
 export function recordTrustStatements(
   db: Database,
@@ -186,13 +220,19 @@ export function recordTrustStatements(
         out.capped++;
         continue;
       }
-      if (insertStatement(db, s, role, source, now)) {
+      const id = trustStatementId(s);
+      const isNew = insertStatement(db, s, role, source, now);
+      // Only a publisher-signed statement is scoped by its sources (nimbus: everywhere; registry
+      // root: its own scope columns), and only one not yet global gains reach from a new source.
+      const wasGlobal = !isNew && role === "publisher" && hasGlobalSource(db, id);
+      const newSource = addSource(db, id, column, now);
+      if (newSource && role === "publisher") storedPublisher++;
+      if (isNew) {
         out.inserted++;
-        out.insertedIds.push(trustStatementId(s));
-        if (role === "publisher") storedPublisher++;
       } else {
         out.alreadyKnown++;
       }
+      if (isNew || (newSource && role === "publisher" && !wasGlobal)) out.insertedIds.push(id);
     }
   })();
   return out;
@@ -233,7 +273,17 @@ export type BlockCandidateRow = {
   scopeRegistry: string | null;
   scopeRootFingerprint: string | null;
   statementJson: string;
+  /** Every source it arrived from: `feed`, `snapshot` or `registry:<name>`. */
+  sources: readonly string[];
 };
+
+const SOURCE_SEPARATOR = "\u001f";
+
+/** Selects a row's sources as one `SOURCE_SEPARATOR`-joined string (its first source at least). */
+const SOURCES_SQL = `COALESCE((SELECT group_concat(src.source, char(31)) FROM trust_statement_source src
+                                WHERE src.statement_id = st.statement_id), st.source) AS sources`;
+
+const splitSources = (joined: string): string[] => joined.split(SOURCE_SEPARATOR);
 
 /**
  * Every stored revocation of `(publisherId, keyFingerprint)` and takedown of
@@ -245,8 +295,9 @@ export function readBlockCandidates(
 ): BlockCandidateRow[] {
   const rows = db
     .query(
-      `SELECT statement_id, kind, signer_role, scope_registry, scope_root_fingerprint, statement_json
-         FROM trust_statement
+      `SELECT statement_id, kind, signer_role, scope_registry, scope_root_fingerprint, statement_json,
+              ${SOURCES_SQL}
+         FROM trust_statement st
         WHERE publisher_id = ?
           AND ((kind = 'key.revoke' AND key_fingerprint = ?)
             OR (kind = 'extension.takedown' AND extension_id = ?))`,
@@ -258,6 +309,7 @@ export function readBlockCandidates(
     scope_registry: string | null;
     scope_root_fingerprint: string | null;
     statement_json: string;
+    sources: string;
   }>;
   return rows.map((r) => ({
     statementId: r.statement_id,
@@ -266,18 +318,23 @@ export function readBlockCandidates(
     scopeRegistry: r.scope_registry,
     scopeRootFingerprint: r.scope_root_fingerprint,
     statementJson: r.statement_json,
+    sources: splitSources(r.sources),
   }));
 }
 
-/** Every stored `key.rotate` of `publisherId`: an edge from one key fingerprint to the next. */
+/**
+ * Every stored `key.rotate` of `publisherId`: an edge from one key fingerprint to the next, with the
+ * sources it arrived from. Scope is NOT applied here (`trust-blocks.ts` `rotationEdgesFor`).
+ */
 export function readRotationEdges(
   db: Database,
   publisherId: string,
-): Array<{ from: string; to: string; statementId: string }> {
+): Array<{ from: string; to: string; statementId: string; sources: readonly string[] }> {
   return (
     db
       .query(
-        `SELECT statement_id, key_fingerprint, to_key_fingerprint FROM trust_statement
+        `SELECT statement_id, key_fingerprint, to_key_fingerprint, ${SOURCES_SQL}
+           FROM trust_statement st
           WHERE kind = 'key.rotate' AND publisher_id = ?
             AND key_fingerprint IS NOT NULL AND to_key_fingerprint IS NOT NULL
           ORDER BY statement_id`,
@@ -286,11 +343,13 @@ export function readRotationEdges(
       statement_id: string;
       key_fingerprint: string;
       to_key_fingerprint: string;
+      sources: string;
     }>
   ).map((r) => ({
     from: r.key_fingerprint,
     to: r.to_key_fingerprint,
     statementId: r.statement_id,
+    sources: splitSources(r.sources),
   }));
 }
 
@@ -303,8 +362,8 @@ export function readPublisherRevocations(
     db
       .query(
         `SELECT statement_id, signer_role, scope_registry, scope_root_fingerprint, statement_json,
-                key_fingerprint
-           FROM trust_statement
+                key_fingerprint, ${SOURCES_SQL}
+           FROM trust_statement st
           WHERE kind = 'key.revoke' AND publisher_id = ? AND key_fingerprint IS NOT NULL
           ORDER BY statement_id`,
       )
@@ -315,6 +374,7 @@ export function readPublisherRevocations(
       scope_root_fingerprint: string | null;
       statement_json: string;
       key_fingerprint: string;
+      sources: string;
     }>
   ).map((r) => ({
     statementId: r.statement_id,
@@ -324,6 +384,7 @@ export function readPublisherRevocations(
     scopeRootFingerprint: r.scope_root_fingerprint,
     statementJson: r.statement_json,
     keyFingerprint: r.key_fingerprint,
+    sources: splitSources(r.sources),
   }));
 }
 

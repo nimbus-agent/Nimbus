@@ -22,7 +22,7 @@ let db: Database;
 let dir: string;
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   dir = mkdtempSync(join(tmpdir(), "nimbus-trust-boot-"));
 });
 afterEach(() => {

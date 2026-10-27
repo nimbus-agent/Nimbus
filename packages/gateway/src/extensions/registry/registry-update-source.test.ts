@@ -34,7 +34,7 @@ let failing: Set<string>;
 
 beforeEach(() => {
   db = new Database(":memory:");
-  runIndexedSchemaMigrations(db, 76);
+  runIndexedSchemaMigrations(db, 77);
   tmp = mkdtempSync(join(tmpdir(), "nimbus-regupd-"));
   vault = new MockVault();
   served.clear();
