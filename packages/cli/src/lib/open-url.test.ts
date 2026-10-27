@@ -55,6 +55,19 @@ describe("openHttpsUrl", () => {
     }
   });
 
+  test("on Windows, finds rundll32 under windir when SystemRoot is unset, else C:\\Windows", async () => {
+    const windir = host("win32");
+    await openHttpsUrl(URL_OK, { ...windir.h, env: { windir: String.raw`D:\Win` } });
+    expect(windir.calls[0]?.cmd).toBe(String.raw`D:\Win\System32\rundll32.exe`);
+    const neither = host("win32");
+    await openHttpsUrl(URL_OK, { ...neither.h, env: {} });
+    expect(neither.calls[0]?.cmd).toBe(String.raw`C:\Windows\System32\rundll32.exe`);
+  });
+
+  test("the default host still refuses a non-https URL before any process starts", async () => {
+    await expect(openHttpsUrl("http://example.com")).rejects.toThrow("https");
+  });
+
   test("a launcher that fails to start rejects (it is not reported as opened)", async () => {
     const { h } = host("linux", "error");
     await expect(openHttpsUrl(URL_OK, h)).rejects.toThrow("ENOENT");

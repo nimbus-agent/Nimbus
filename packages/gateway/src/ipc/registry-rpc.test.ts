@@ -889,6 +889,39 @@ describe("the reserved built-in registry name", () => {
     expect(g.asked).toHaveLength(1);
   });
 
+  test("info on a built-in extension falls back to the baked report URL; never for another registry", async () => {
+    const ext = {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable" as const, name: "Tool" }],
+      },
+    };
+    makeRegistry(tmp, ext);
+    const baked = "https://github.com/nimbus-agent/nimbus-mcp-servers/issues/new";
+    const withReport = fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY, reportUrl: baked } });
+    const info = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "nimbus-official", reportOnly: true },
+      { fetch: withReport },
+    )) as { value: Record<string, unknown> };
+    expect(info.value).toEqual({ registry: "nimbus-official", id: "acme.tool", reportUrl: baked });
+    // A built-in config that names no report URL yields none.
+    const none = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "nimbus-official", reportOnly: true },
+      { fetch: builtinBag() },
+    )) as { value: { reportUrl: unknown } };
+    expect(none.value.reportUrl).toBeNull();
+    // The same index under an owner registry never borrows the official destination.
+    pin("main", tmp);
+    const owner = (await call(
+      "registry.info",
+      { id: "acme.tool", registry: "main", reportOnly: true },
+      { fetch: withReport },
+    )) as { value: { reportUrl: unknown } };
+    expect(owner.value.reportUrl).toBeNull();
+  });
+
   test("registry list does not show the builtin", async () => {
     const empty = await call("registry.list", {}, { fetch: builtinBag() });
     expect(empty).toEqual({ kind: "hit", value: { registries: [] } });
