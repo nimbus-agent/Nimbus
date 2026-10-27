@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:7b4900f46de914b5d90b5329e7920e423ef519a91466d7e81cb526dd48210bab
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:f0a768c39af67df12ed6628f3df334a2167de34d7332586068ce9bd8e5522109
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -10462,8 +10462,7 @@ function maskSecret(secret, write = (s) => process.stdout.write(s)) {
 `);
   }
 }
-function signOptions(workspace, rootKey, defaultBranch) {
-  const repository = process.env["GITHUB_REPOSITORY"];
+function signOptions(workspace, rootKey, defaultBranch, repository) {
   return {
     workspace,
     rootKey,
@@ -10483,7 +10482,7 @@ async function main() {
       const rootKey = requireInput("root-key");
       maskSecret(rootKey);
       delete process.env[inputEnvName("root-key")];
-      await runSign(signOptions(workspace(), rootKey, getInput("default-branch")));
+      await runSign(signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]));
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
