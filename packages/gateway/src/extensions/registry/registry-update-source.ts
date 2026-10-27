@@ -168,6 +168,7 @@ async function detectOne(
     permissionDiff: diffPermissions(row.manifest.permissions, m.permissions),
     verificationStatus,
     publisherKeyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+    publisherId: entry.publisher.id,
     ...(decision?.change == null
       ? {}
       : {

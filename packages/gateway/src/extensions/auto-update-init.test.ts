@@ -623,3 +623,50 @@ describe("withUpdateAppliedHook", () => {
     expect(seen).toEqual(["performed", "hook:x.ext"]);
   });
 });
+
+describe("auto-update-init: verifiedPublisherOf (trust layer PR 3c)", () => {
+  it("answers R6 from the trust store with the update's own key and source registry", async () => {
+    const { signTrustStatement, publisherKeyFingerprint } = await import(
+      "@nimbus-dev/registry-format"
+    );
+    const nacl = (await import("tweetnacl")).default;
+    const { replaceCurrentVerifications } = await import("./trust/trust-store.ts");
+    const root = mkdtempSync(join(tmpdir(), "nimbus-au-init-badge-"));
+    try {
+      const db = freshDb();
+      const { deps } = createAutoUpdateRuntime(
+        baseOpts(db, join(root, "extensions"), join(root, "data")),
+      );
+      const pubKey = Buffer.from(new Uint8Array(32).fill(9)).toString("base64");
+      const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 33);
+      const nimbusKey = Buffer.from(nacl.sign.keyPair.fromSeed(seed).publicKey).toString("base64");
+      const cached = {
+        publisherId: "acme",
+        publisherKeyFingerprint: publisherKeyFingerprint(pubKey),
+        sourceRegistry: "main",
+        rootFingerprint: "c".repeat(32),
+      } as Parameters<NonNullable<typeof deps.verifiedPublisherOf>>[0];
+      expect(deps.verifiedPublisherOf?.(cached)).toBeNull();
+      const vouch = await signTrustStatement(
+        {
+          kind: "publisher.verified",
+          issuedAt: "2026-10-27T12:00:00Z",
+          signerKey: nimbusKey,
+          publisherId: "acme",
+          keys: [pubKey],
+          github: "acme-dev",
+          verifiedAt: "2026-10-20T00:00:00Z",
+        },
+        seed,
+      );
+      replaceCurrentVerifications(db, [vouch], nimbusKey, 1);
+      expect(deps.verifiedPublisherOf?.(cached)).toEqual({
+        github: "acme-dev",
+        verifiedAt: "2026-10-20T00:00:00Z",
+      });
+      db.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

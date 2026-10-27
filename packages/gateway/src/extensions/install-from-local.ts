@@ -39,7 +39,12 @@ import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { assertNotBlocked } from "./trust/trust-blocks.ts";
-import { verifyManifestSignature } from "./verify-signature.ts";
+import {
+  publisherBadgeText,
+  type VerifiedPublisher,
+  verifiedPublisherFor,
+} from "./trust/verified-publisher.ts";
+import { decodeBase64, verifyManifestSignature } from "./verify-signature.ts";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -308,6 +313,13 @@ export type ExtensionInstallApprovalRequest = {
     readonly via: string;
   };
   readonly publisherChangeNote?: string;
+  /**
+   * R6: whether the current Nimbus verification lists the publisher's key — computed only for a
+   * manifest whose signature verifies with the key it declares, so a forged manifest claiming a
+   * verified publisher's key is shown as unverified. `publisherBadge` is the one sentence to show.
+   */
+  readonly verifiedPublisher?: VerifiedPublisher | null;
+  readonly publisherBadge?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
@@ -488,7 +500,8 @@ function buildInstallApprovalRequest(
   manifest: ExtensionManifest,
   plan: { nodes: readonly ResolvedNode[] },
   sourcePath: string,
-  source?: { sourceRegistry?: string; rootFingerprint?: string },
+  source: { sourceRegistry?: string; rootFingerprint?: string } | undefined,
+  badge: VerifiedPublisher | null,
 ): ExtensionInstallApprovalRequest {
   const others = plan.nodes
     .filter((n) => n.newlyInstalled && n.id !== manifest.id)
@@ -508,7 +521,37 @@ function buildInstallApprovalRequest(
     installs: [{ id: manifest.id, version: manifest.version }, ...others],
     ...(source?.sourceRegistry !== undefined && { sourceRegistry: source.sourceRegistry }),
     ...(source?.rootFingerprint !== undefined && { rootFingerprint: source.rootFingerprint }),
+    verifiedPublisher: badge,
+    publisherBadge: publisherBadgeText(badge),
   };
+}
+
+/**
+ * The verified publisher (R6) to show in the install prompt. The I16 check of the installed copy
+ * runs only after approval, so the badge is asked only once the source manifest's signature has
+ * been verified here with the key it declares — never on a claim alone.
+ */
+async function installPromptBadge(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+  manifestText: string,
+): Promise<VerifiedPublisher | null> {
+  const publisher = manifest.publisher;
+  if (publisher === undefined) return null;
+  try {
+    const raw = JSON.parse(manifestText) as Record<string, unknown>;
+    await verifyManifestSignature(raw, decodeBase64(publisher.key));
+  } catch {
+    return null;
+  }
+  return verifiedPublisherFor(options.db, {
+    publisherId: publisher.id,
+    keyFingerprint: publisherKeyFingerprint(publisher.key),
+    source:
+      options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
+        ? { registry: options.sourceRegistry, rootFingerprint: options.rootFingerprint }
+        : null,
+  });
 }
 
 function recordPlanInstallAndAudit(
@@ -619,15 +662,22 @@ function archiveInstallOptions(
 async function requireInstallApproval(
   options: InstallFromLocalOptions,
   manifest: ExtensionManifest,
+  manifestText: string,
   plan: { nodes: readonly ResolvedNode[] },
   sourceResolved: string,
 ): Promise<void> {
   if (options.approve === undefined) return;
   const approved = await options.approve(
-    buildInstallApprovalRequest(manifest, plan, options.displaySourcePath ?? sourceResolved, {
-      ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
-      ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
-    }),
+    buildInstallApprovalRequest(
+      manifest,
+      plan,
+      options.displaySourcePath ?? sourceResolved,
+      {
+        ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+        ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
+      },
+      await installPromptBadge(options, manifest, manifestText),
+    ),
   );
   if (!approved) {
     throw new ExtensionInstallNotApprovedError(manifest.id);
@@ -685,7 +735,13 @@ export async function installExtensionFromLocalDirectory(
         ? { registry: options.sourceRegistry, rootFingerprint: options.rootFingerprint }
         : null,
   });
-  await requireInstallApproval(options, manifest, plan, sourceResolved);
+  await requireInstallApproval(
+    options,
+    manifest,
+    manifestBytes.toString("utf8"),
+    plan,
+    sourceResolved,
+  );
 
   await installPlanNodes(options, plan, sourceResolved, manifest);
 
