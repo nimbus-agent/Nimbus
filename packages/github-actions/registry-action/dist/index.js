@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:f0a768c39af67df12ed6628f3df334a2167de34d7332586068ce9bd8e5522109
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:41289763d35db3488d4ae75dbcbfe549ea70c1363a8816cb486a9fa8ae8c2082
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5158,6 +5158,7 @@ var ALLOWED_KEYS = new Set([
 ]);
 
 // ../../registry-format/src/trust-feed.ts
+import { createHash as createHash3, sign as sign2 } from "node:crypto";
 var import_tweetnacl2 = __toESM(require_nacl_fast(), 1);
 
 // ../../registry-format/src/ed25519-seed.ts
@@ -5365,6 +5366,11 @@ function verifyTrustStatement(s, opts) {
 // ../../registry-format/src/trust-feed.ts
 var MAX_TRUST_FEED_BYTES = 8 * 1024 * 1024;
 var MAX_STATEMENTS_PER_DOCUMENT = 1e4;
+var KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE3 = /^[A-Za-z0-9+/]{86}==$/;
+function invalid2(detail) {
+  return new RegistryError("ERR_TRUST_FEED_INVALID", detail);
+}
 function hasStringKind(entry) {
   return entry !== null && typeof entry === "object" && !Array.isArray(entry) && typeof entry["kind"] === "string";
 }
@@ -5395,6 +5401,100 @@ function readStatementList(raw) {
   }
   return { statements, dropped, unknownKinds };
 }
+function parseTrustFeed(bytes) {
+  if (bytes.byteLength > MAX_TRUST_FEED_BYTES) {
+    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `trust.json exceeds ${String(MAX_TRUST_FEED_BYTES)} bytes`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw invalid2("trust.json is not valid UTF-8");
+  }
+  if (text.startsWith("\uFEFF"))
+    text = text.slice(1);
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw invalid2("trust.json is not valid JSON");
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalid2("trust.json must be an object");
+  }
+  const o = raw;
+  for (const k of ["format", "rootKey", "sequence", "generatedAt", "statements", "signature"]) {
+    if (!(k in o))
+      throw invalid2(`trust.json is missing key: ${k}`);
+  }
+  if (o["format"] !== 1)
+    throw invalid2("unsupported trust feed format");
+  const sequence = o["sequence"];
+  if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
+    throw invalid2("sequence must be a positive integer");
+  }
+  const rootKey = o["rootKey"];
+  if (typeof rootKey !== "string" || !KEY_RE2.test(rootKey))
+    throw invalid2("rootKey is malformed");
+  const signature = o["signature"];
+  if (typeof signature !== "string" || !SIGNATURE_RE3.test(signature)) {
+    throw invalid2("signature is malformed");
+  }
+  const generatedAt = o["generatedAt"];
+  if (typeof generatedAt !== "string" || Number.isNaN(Date.parse(generatedAt))) {
+    throw invalid2("generatedAt is not a timestamp");
+  }
+  return {
+    ...o,
+    format: 1,
+    rootKey,
+    sequence,
+    generatedAt,
+    statements: o["statements"],
+    signature
+  };
+}
+function readTrustFeedStatements(feed) {
+  const read = readStatementList(feed.statements);
+  const verified = new Set;
+  for (const s of read.statements) {
+    if (s.kind !== "publisher.verified")
+      continue;
+    if (verified.has(s.publisherId)) {
+      throw invalid2(`two publisher.verified entries for "${s.publisherId}"`);
+    }
+    verified.add(s.publisherId);
+  }
+  return read;
+}
+function trustFeedSigningBytes(feed) {
+  const { signature: _omitted, ...rest } = feed;
+  return new TextEncoder().encode(canonicalize(rest));
+}
+function verifyTrustFeedPinned(feed, pinnedRootKey) {
+  return new Promise((resolve) => {
+    if (feed.rootKey !== pinnedRootKey) {
+      throw new RegistryError("ERR_TRUST_FEED_ROOT_KEY_CHANGED", "trust feed root key differs from the pinned key");
+    }
+    let ok;
+    try {
+      ok = import_tweetnacl2.default.sign.detached.verify(trustFeedSigningBytes(feed), new Uint8Array(Buffer.from(feed.signature, "base64")), new Uint8Array(Buffer.from(feed.rootKey, "base64")));
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      throw new RegistryError("ERR_TRUST_FEED_SIGNATURE_INVALID", "trust feed signature does not verify");
+    }
+    resolve();
+  });
+}
+function signTrustFeed(unsigned, seed) {
+  return new Promise((resolve) => {
+    const { signature: _omitted, ...rest } = unsigned;
+    const sig = sign2(null, trustFeedSigningBytes(rest), privateKeyFromSeed(seed));
+    resolve({ ...rest, signature: sig.toString("base64") });
+  });
+}
 
 // ../../registry-format/src/index-format.ts
 function decodeBase642(s) {
@@ -5402,39 +5502,39 @@ function decodeBase642(s) {
 }
 var MAX_INDEX_BYTES = 8 * 1024 * 1024;
 var HEX64_RE = /^[0-9a-f]{64}$/;
-var KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
-var SIGNATURE_RE3 = /^[A-Za-z0-9+/]{86}==$/;
-function invalid2(detail) {
+var KEY_RE3 = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE4 = /^[A-Za-z0-9+/]{86}==$/;
+function invalid3(detail) {
   return new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
 }
 function asObject2(value, what) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw invalid2(`${what} must be an object`);
+    throw invalid3(`${what} must be an object`);
   }
   return value;
 }
 function requireKeys(o, keys, what) {
   for (const k of keys) {
     if (!(k in o))
-      throw invalid2(`${what} is missing key: ${k}`);
+      throw invalid3(`${what} is missing key: ${k}`);
   }
 }
 function str2(o, key, what) {
   const v = o[key];
   if (typeof v !== "string" || v === "")
-    throw invalid2(`${what}.${key} must be a non-empty string`);
+    throw invalid3(`${what}.${key} must be a non-empty string`);
   return v;
 }
 function matching2(o, key, re, what) {
   const v = str2(o, key, what);
   if (!re.test(v))
-    throw invalid2(`${what}.${key} is malformed`);
+    throw invalid3(`${what}.${key} is malformed`);
   return v;
 }
 function isoTimestamp(o, key, what) {
   const v = str2(o, key, what);
   if (Number.isNaN(Date.parse(v)))
-    throw invalid2(`${what}.${key} is not a timestamp`);
+    throw invalid3(`${what}.${key} is not a timestamp`);
   return v;
 }
 function parseVersionEntry(raw, id, version) {
@@ -5453,17 +5553,17 @@ function parseVersionEntry(raw, id, version) {
   ], what);
   const channel = o["channel"];
   if (channel !== "stable" && channel !== "beta")
-    throw invalid2(`${what}.channel is not known`);
+    throw invalid3(`${what}.channel is not known`);
   const base = `extensions/${id}/${version}`;
   const manifest = str2(o, "manifest", what);
   if (manifest !== `${base}/manifest.json`)
-    throw invalid2(`${what}.manifest is not canonical`);
+    throw invalid3(`${what}.manifest is not canonical`);
   const pkg = str2(o, "package", what);
   if (pkg !== `${base}/package.tgz`)
-    throw invalid2(`${what}.package is not canonical`);
+    throw invalid3(`${what}.package is not canonical`);
   const size = o["packageSizeBytes"];
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
-    throw invalid2(`${what}.packageSizeBytes must be a positive integer`);
+    throw invalid3(`${what}.packageSizeBytes must be a positive integer`);
   }
   return {
     ...o,
@@ -5482,7 +5582,7 @@ function parseExtensionEntry(raw, id) {
   try {
     assertSafeExtensionId(id);
   } catch (e) {
-    throw invalid2(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
+    throw invalid3(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
   }
   const what = `extensions.${id}`;
   const o = asObject2(raw, what);
@@ -5491,18 +5591,18 @@ function parseExtensionEntry(raw, id) {
   requireKeys(p, ["id", "key"], `${what}.publisher`);
   const pid = str2(p, "id", `${what}.publisher`);
   if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
-    throw invalid2(`${what}.publisher.id is malformed`);
+    throw invalid3(`${what}.publisher.id is malformed`);
   }
-  const key = matching2(p, "key", KEY_RE2, `${what}.publisher`);
+  const key = matching2(p, "key", KEY_RE3, `${what}.publisher`);
   const versionsRaw = asObject2(o["versions"], `${what}.versions`);
   const versions = {};
   for (const [version, entry] of Object.entries(versionsRaw)) {
     if (!isValidSemver(version))
-      throw invalid2(`${what} has a non-semver version: ${version}`);
+      throw invalid3(`${what} has a non-semver version: ${version}`);
     versions[version] = parseVersionEntry(entry, id, version);
   }
   if (Object.keys(versions).length === 0)
-    throw invalid2(`${what} has no versions`);
+    throw invalid3(`${what} has no versions`);
   return { ...o, publisher: { ...p, id: pid, key }, versions };
 }
 function parseRegistryIndex(bytes) {
@@ -5513,7 +5613,7 @@ function parseRegistryIndex(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid2("index.json is not valid UTF-8");
+    throw invalid3("index.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -5521,15 +5621,15 @@ function parseRegistryIndex(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid2("index.json is not valid JSON");
+    throw invalid3("index.json is not valid JSON");
   }
   const o = asObject2(raw, "index");
   requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
   if (o["format"] !== 1)
-    throw invalid2("unsupported index format");
+    throw invalid3("unsupported index format");
   const sequence = o["sequence"];
   if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid2("index.sequence must be a positive integer");
+    throw invalid3("index.sequence must be a positive integer");
   }
   const extensionsRaw = asObject2(o["extensions"], "index.extensions");
   const extensions = {};
@@ -5539,11 +5639,11 @@ function parseRegistryIndex(bytes) {
   return {
     ...o,
     format: 1,
-    rootKey: matching2(o, "rootKey", KEY_RE2, "index"),
+    rootKey: matching2(o, "rootKey", KEY_RE3, "index"),
     sequence,
     generatedAt: isoTimestamp(o, "generatedAt", "index"),
     extensions,
-    signature: matching2(o, "signature", SIGNATURE_RE3, "index")
+    signature: matching2(o, "signature", SIGNATURE_RE4, "index")
   };
 }
 function readRegistryReportUrl(index) {
@@ -5585,7 +5685,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
   await verifyRegistryIndexSelf(index);
 }
 // ../../registry-format/src/inspect.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
@@ -8908,7 +9008,7 @@ async function inspectPackage(tgz, work) {
   return {
     manifestBytes,
     manifest: m,
-    entryHash: createHash3("sha256").update(entryBytes).digest("hex"),
+    entryHash: createHash4("sha256").update(entryBytes).digest("hex"),
     files: files.toSorted(codeUnitCompare)
   };
 }
@@ -8979,10 +9079,10 @@ var edgesOf = (rotations) => rotations.map((r) => ({
   to: publisherKeyFingerprint(r.toKey)
 }));
 var signingKey = (s) => s.kind === "key.rotate" ? s.fromKey : s.signerKey;
-function stateOf(index, publisherId, list = indexedPublisherStatements(index)) {
+function stateOf(index, publisherId, list = indexedPublisherStatements(index), bound = boundKeys(index, publisherId)) {
   const mine = list.filter((s) => s.publisherId === publisherId);
   return {
-    bound: boundKeys(index, publisherId),
+    bound: new Set(bound),
     rotations: rotationsOf(mine),
     revokedFps: new Set(mine.filter((s) => s.kind === "key.revoke").map((s) => s.keyFingerprint))
   };
@@ -9042,7 +9142,15 @@ function publisherKeyStanding(index, publisherId, key) {
   const looped = current.length === 0 && [...state.bound].some((k) => !state.revokedFps.has(publisherKeyFingerprint(k)));
   return refuse(looped ? "fork" : "unrelated");
 }
-function structural(index, raw, skip) {
+function admitterOf(index, opts) {
+  return {
+    bound: opts.boundKeys ?? ((publisherId) => boundKeys(index, publisherId)),
+    cap: opts.maxStatements ?? MAX_REGISTRY_STATEMENTS,
+    where: opts.where ?? "this index",
+    unbound: opts.unbound ?? ((publisherId) => `publisher ${publisherId} has no extension in this index`)
+  };
+}
+function structural(at, raw, skip) {
   let s;
   try {
     s = parseTrustStatement(raw);
@@ -9059,8 +9167,8 @@ function structural(index, raw, skip) {
     skip(id, `${s.kind} is not signed by the key it concerns`);
     return;
   }
-  if (boundKeys(index, s.publisherId).size === 0) {
-    skip(id, `publisher ${s.publisherId} has no extension in this index`);
+  if (at.bound(s.publisherId).size === 0) {
+    skip(id, at.unbound(s.publisherId));
     return;
   }
   return { id, s };
@@ -9080,8 +9188,8 @@ function reachOf(bound, rotations) {
   return reach;
 }
 function hasRoom(budget, id, publisherId, skip) {
-  if (budget.total >= MAX_REGISTRY_STATEMENTS) {
-    skip(id, `the index is at its statement cap (${String(MAX_REGISTRY_STATEMENTS)})`);
+  if (budget.total >= budget.cap) {
+    skip(id, `${budget.where} is at its statement cap (${String(budget.cap)})`);
     return false;
   }
   if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
@@ -9164,7 +9272,7 @@ function leftoverReason(run, p, publisherId) {
   if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
     return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
   }
-  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in this index (directly or through an admitted rotation)`;
+  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in ${run.budget.where} (directly or through an admitted rotation)`;
 }
 function admitForPublisher(publisherId, mine, state, budget, skip) {
   const pendingRotations = mine.filter((p) => p.s.kind === "key.rotate");
@@ -9195,16 +9303,17 @@ function admitForPublisher(publisherId, mine, state, budget, skip) {
   }
   return run.admitted;
 }
-function newCandidates(index, raws, existingIds, skip) {
+function newCandidates(at, raws, existingIds, skip) {
   const byId = new Map;
   for (const raw of raws) {
-    const p = structural(index, raw, skip);
+    const p = structural(at, raw, skip);
     if (p !== undefined && !existingIds.has(p.id))
       byId.set(p.id, p);
   }
   return [...byId.values()].sort((a, b) => codeUnitCompare(a.id, b.id));
 }
-function admitPublisherStatements(index, candidates) {
+function admitPublisherStatements(index, candidates, opts = {}) {
+  const at = admitterOf(index, opts);
   const existingRaw = Array.isArray(index.statements) ? [...index.statements] : [];
   const indexed = indexedPublisherStatements(index);
   const existingIds = new Set(readStatementList(index.statements).statements.map(trustStatementId));
@@ -9212,15 +9321,20 @@ function admitPublisherStatements(index, candidates) {
   const skip = (id, reason) => {
     skippedAll.push({ id, reason });
   };
-  const fresh = newCandidates(index, candidates, existingIds, skip);
+  const fresh = newCandidates(at, candidates, existingIds, skip);
   const total = { value: existingRaw.length };
   const admitted = [];
   const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
   for (const publisherId of publishers) {
-    const state = stateOf(index, publisherId, indexed);
+    const state = stateOf(index, publisherId, indexed, new Set(at.bound(publisherId)));
     const mine = fresh.filter((p) => p.s.publisherId === publisherId);
     const already = indexed.filter((x) => x.publisherId === publisherId).length;
-    const budget = { total: total.value, publisher: already };
+    const budget = {
+      total: total.value,
+      publisher: already,
+      cap: at.cap,
+      where: at.where
+    };
     admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
     total.value = budget.total;
   }
@@ -9231,7 +9345,7 @@ function admitPublisherStatements(index, candidates) {
   };
 }
 // ../../registry-format/src/sign.ts
-import { createPublicKey, sign as sign2, verify } from "node:crypto";
+import { createPublicKey, sign as sign3, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
@@ -9240,7 +9354,7 @@ var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
   return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned;
-    const sig = sign2(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
+    const sig = sign3(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
     resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
@@ -9253,22 +9367,22 @@ var TAKEDOWN_REQUIRED = ["kind", "extensionId", "versions", "reason"];
 var PLACEHOLDER_KEY = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE = `${"A".repeat(86)}==`;
 var PLACEHOLDER_PUBLISHER = "placeholder";
-function invalid3(detail) {
+function invalid4(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
 function exactKeys(o, allowed, required) {
   for (const k of Object.keys(o)) {
     if (!allowed.includes(k))
-      throw invalid3(`a request has an unknown key: ${k}`);
+      throw invalid4(`a request has an unknown key: ${k}`);
   }
   for (const k of required) {
     if (!Object.hasOwn(o, k))
-      throw invalid3(`a request is missing key: ${k}`);
+      throw invalid4(`a request is missing key: ${k}`);
   }
 }
 function parseRegistryRequest(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid3("a request must be an object");
+    throw invalid4("a request must be an object");
   }
   const o = raw;
   const signer = {
@@ -9302,18 +9416,18 @@ function parseRegistryRequest(raw) {
       reason: s.reason
     };
   }
-  throw invalid3("a request's kind must be key.revoke or extension.takedown");
+  throw invalid4("a request's kind must be key.revoke or extension.takedown");
 }
 function takedownPublisher(req, index) {
   const entry = Object.hasOwn(index.extensions, req.extensionId) ? index.extensions[req.extensionId] : undefined;
   if (entry !== undefined) {
     if (req.publisherId !== undefined && req.publisherId !== entry.publisher.id) {
-      throw invalid3(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
+      throw invalid4(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
     }
     return entry.publisher.id;
   }
   if (req.publisherId === undefined) {
-    throw invalid3(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
+    throw invalid4(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
   }
   return req.publisherId;
 }
@@ -9323,13 +9437,13 @@ function assertRequestSignable(req, index) {
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
-    throw invalid3("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+    throw invalid4("a registry cannot revoke its own root key this way; re-initialise the registry instead");
   }
 }
 async function signRegistryRequest(req, index, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== index.rootKey) {
-    throw invalid3(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
+    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
   }
   assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
@@ -9359,11 +9473,250 @@ function sameBlock(s, req, index) {
   }
   return s.publisherId === publisher && covers(s.versions, req.versions);
 }
-function alreadyCarried(index, req) {
-  return readStatementList(index.statements).statements.some((s) => verifyTrustStatement(s, { registryRootKey: index.rootKey }) === "registry" && s.signerKey === index.rootKey && sameBlock(s, req, index));
+function alreadyCarried(index, req, role = "registry") {
+  const roots = role === "nimbus" ? { nimbusRootKey: index.rootKey } : { registryRootKey: index.rootKey };
+  return readStatementList(index.statements).statements.some((s) => verifyTrustStatement(s, roots) === role && s.signerKey === index.rootKey && sameBlock(s, req, index));
+}
+async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
+  const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
+  if (signerKey !== feedRootKey) {
+    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
+  }
+  assertFeedRequestSignable(req, feedRootKey);
+  return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
+}
+function assertFeedRequestSignable(req, feedRootKey) {
+  if (req.kind === "extension.takedown") {
+    if (req.publisherId === undefined) {
+      throw invalid4(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
+    }
+    return;
+  }
+  if (req.keyFingerprint === publisherKeyFingerprint(feedRootKey)) {
+    throw invalid4("the trust feed cannot revoke its own root key");
+  }
+}
+// ../../registry-format/src/trust-feed-build.ts
+var TRUST_FEED_FILE = "trust.json";
+var FEED_CONFIG_FILE = "nimbus-trust.json";
+var FEED_PUBLISHERS_DIR = "publishers/";
+var FEED_REQUESTS_DIR = "requests/";
+var FEED_STATEMENTS_DIR = "statements/";
+var PLACEHOLDER_KEY2 = `${"A".repeat(43)}=`;
+var PLACEHOLDER_SIGNATURE2 = `${"A".repeat(86)}==`;
+var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
+function invalid5(detail) {
+  return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
+}
+var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function baseName(path, dir) {
+  if (!path.startsWith(dir) || !path.endsWith(".json"))
+    return;
+  const name = path.slice(dir.length, -".json".length);
+  return name === "" || name.includes("/") ? undefined : name;
+}
+function parseFeedConfig(raw) {
+  if (!isObject(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+    throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
+  }
+  return { format: 1 };
+}
+function parsePublisherFile(path, raw) {
+  if (!isObject(raw))
+    throw invalid5("a publisher file must be an object");
+  for (const k of Object.keys(raw)) {
+    if (!PUBLISHER_FILE_KEYS.includes(k)) {
+      throw invalid5(`a publisher file has an unknown key: ${k}`);
+    }
+  }
+  const s = parseTrustStatement({
+    kind: "publisher.verified",
+    ...raw,
+    verifiedAt: "2026-01-01T00:00:00Z",
+    issuedAt: "2026-01-01T00:00:00Z",
+    signerKey: PLACEHOLDER_KEY2,
+    signature: PLACEHOLDER_SIGNATURE2
+  });
+  if (baseName(path, FEED_PUBLISHERS_DIR) !== s.publisherId) {
+    throw invalid5(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
+  }
+  return { publisherId: s.publisherId, keys: [...s.keys].sort(codeUnitCompare), github: s.github };
+}
+function carriedEntries(prev) {
+  if (!Array.isArray(prev.statements))
+    return [];
+  return prev.statements.filter((e) => !(isObject(e) && e["kind"] === "publisher.verified"));
+}
+function previousVerified(prev) {
+  const out = new Map;
+  for (const s of readTrustFeedStatements(prev).statements) {
+    if (s.kind !== "publisher.verified")
+      continue;
+    if (verifyTrustStatement(s, { nimbusRootKey: prev.rootKey }) !== "nimbus")
+      continue;
+    out.set(s.publisherId, s);
+  }
+  return out;
+}
+var sameEntry = (s, e) => s.github === e.github && s.keys.length === e.keys.length && [...s.keys].sort(codeUnitCompare).every((k, i) => k === e.keys[i]);
+function requestCovers(a, b) {
+  if (a.kind === "key.revoke" || b.kind === "key.revoke") {
+    return a.kind === "key.revoke" && b.kind === "key.revoke" && a.publisherId === b.publisherId && a.keyFingerprint === b.keyFingerprint;
+  }
+  if (a.extensionId !== b.extensionId || a.publisherId !== b.publisherId)
+    return false;
+  if (a.versions === "*")
+    return true;
+  return b.versions !== "*" && b.versions.every((v) => a.versions.includes(v));
+}
+function planRequests(prev, carried, files, skipped) {
+  const doc = { extensions: {}, statements: carried, rootKey: prev.rootKey };
+  const blocks = [];
+  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
+    const name = baseName(f.path, FEED_REQUESTS_DIR);
+    if (name === undefined || !REQUEST_NAME_RE.test(name)) {
+      skipped.push({
+        path: f.path,
+        reason: `a request file must be ${FEED_REQUESTS_DIR}<name>.json`
+      });
+      continue;
+    }
+    let request;
+    try {
+      request = parseRegistryRequest(f.raw);
+      assertFeedRequestSignable(request, prev.rootKey);
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      skipped.push({ path: f.path, reason: e.message });
+      continue;
+    }
+    if (alreadyCarried(doc, request, "nimbus"))
+      continue;
+    if (blocks.some((b) => requestCovers(b.request, request)))
+      continue;
+    blocks.push({ path: f.path, request });
+  }
+  return blocks;
+}
+function planPublishers(prevVerified, files, skipped) {
+  const next = new Map;
+  const verified = [];
+  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
+    let entry;
+    try {
+      entry = parsePublisherFile(f.path, f.raw);
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      skipped.push({ path: f.path, reason: e.message });
+      continue;
+    }
+    next.set(entry.publisherId, entry);
+    const before = prevVerified.get(entry.publisherId);
+    if (before === undefined)
+      verified.push({ ...entry, change: "added" });
+    else if (!sameEntry(before, entry))
+      verified.push({ ...entry, change: "changed" });
+  }
+  const unverified = [...prevVerified.keys()].filter((id) => !next.has(id)).sort(codeUnitCompare);
+  return { next, verified, unverified };
+}
+function planStatements(carried, verifiedKeys, files, skipped) {
+  const pathById = new Map;
+  const candidates = [];
+  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
+    try {
+      const s = parseTrustStatement(f.raw);
+      pathById.set(trustStatementId(s), f.path);
+      candidates.push(s);
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      skipped.push({ path: f.path, reason: `not a valid statement: ${e.message}` });
+    }
+  }
+  const admission = admitPublisherStatements({ extensions: {}, statements: carried }, candidates, {
+    boundKeys: (publisherId) => new Set(verifiedKeys.get(publisherId)?.keys ?? []),
+    maxStatements: MAX_STATEMENTS_PER_DOCUMENT,
+    where: "the trust feed",
+    unbound: (publisherId) => `publisher ${publisherId} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`
+  });
+  for (const s of admission.skipped) {
+    const path = pathById.get(s.id ?? "") ?? FEED_STATEMENTS_DIR;
+    skipped.push({ path, reason: s.reason });
+  }
+  return admission.admitted;
+}
+function planTrustFeed(prev, source) {
+  const skipped = [];
+  const carried = carriedEntries(prev);
+  const blocks = planRequests(prev, carried, source.requests, skipped);
+  const pubs = planPublishers(previousVerified(prev), source.publishers, skipped);
+  const admitted = planStatements(carried, pubs.next, source.statements, skipped);
+  const changed = blocks.length > 0 || pubs.verified.length > 0 || pubs.unverified.length > 0 || admitted.length > 0;
+  return {
+    status: changed ? "changed" : "unchanged",
+    blocks,
+    verified: pubs.verified,
+    unverified: pubs.unverified,
+    admitted,
+    skipped
+  };
+}
+async function verifiedStatements(prev, source, seed, at) {
+  const before = previousVerified(prev);
+  const { next } = planPublishers(before, source.publishers, []);
+  const out = [];
+  for (const id of [...next.keys()].sort(codeUnitCompare)) {
+    const entry = next.get(id);
+    const kept = before.get(id);
+    if (kept !== undefined && sameEntry(kept, entry)) {
+      out.push(kept);
+      continue;
+    }
+    out.push(await signTrustStatement({
+      kind: "publisher.verified",
+      publisherId: entry.publisherId,
+      keys: [...entry.keys],
+      github: entry.github,
+      verifiedAt: at,
+      issuedAt: at,
+      signerKey: prev.rootKey
+    }, seed));
+  }
+  return out;
+}
+async function buildTrustFeed(prev, source, seed, at) {
+  const signer = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
+  if (signer !== prev.rootKey) {
+    throw new RegistryError("ERR_TRUST_FEED_ROOT_KEY_CHANGED", `the key given (fingerprint ${publisherKeyFingerprint(signer)}) is not the trust feed's root key (${publisherKeyFingerprint(prev.rootKey)})`);
+  }
+  const plan = planTrustFeed(prev, source);
+  if (plan.status === "unchanged")
+    return { plan, feed: undefined };
+  const blocks = [];
+  for (const b of plan.blocks) {
+    blocks.push(await signFeedRequest(b.request, prev.rootKey, seed, at));
+  }
+  const statements = [
+    ...carriedEntries(prev),
+    ...blocks,
+    ...await verifiedStatements(prev, source, seed, at),
+    ...plan.admitted
+  ];
+  if (statements.length > MAX_STATEMENTS_PER_DOCUMENT) {
+    throw new RegistryError("ERR_TRUST_FEED_INVALID", `the next feed would carry ${String(statements.length)} statements; the cap is ${String(MAX_STATEMENTS_PER_DOCUMENT)}`);
+  }
+  const { signature: _previous, ...carried } = prev;
+  const feed = await signTrustFeed({ ...carried, format: 1, sequence: prev.sequence + 1, generatedAt: at, statements }, seed);
+  const reparsed = parseTrustFeed(new TextEncoder().encode(JSON.stringify(feed)));
+  readTrustFeedStatements(reparsed);
+  await verifyTrustFeedPinned(reparsed, prev.rootKey);
+  return { plan, feed };
 }
 // ../../registry-format/src/validate-publish.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
 var import_semver5 = __toESM(require_semver2(), 1);
@@ -9572,7 +9925,7 @@ function assertFileSet(m, files) {
     throw fileSetInvalid(`package must hold ${PACKAGE_MANIFEST_FILE} and the entry ${entry}`);
   }
 }
-var sha256Hex = (b) => createHash4("sha256").update(b).digest("hex");
+var sha256Hex = (b) => createHash5("sha256").update(b).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
@@ -10096,7 +10449,7 @@ async function runCheck(opts, deps = SHARED) {
 }
 
 // src/sign.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
@@ -10195,7 +10548,7 @@ function extensionDirs(git, ref, cwd) {
   }
   return { dirs, paths };
 }
-var sha256Hex2 = (b) => createHash5("sha256").update(b).digest("hex");
+var sha256Hex2 = (b) => createHash6("sha256").update(b).digest("hex");
 function assertSignedIntact(git, index, ref, paths, cwd) {
   const problems = [];
   const signedDirs = new Set;
@@ -10440,11 +10793,230 @@ async function runSign(opts, deps = SHARED2) {
   }
 }
 
+// src/trust-state.ts
+var MAX_SOURCE_FILE_BYTES = 16 * 1024;
+var FEED_SOURCE_DIRS = [FEED_PUBLISHERS_DIR, FEED_REQUESTS_DIR, FEED_STATEMENTS_DIR];
+var FEED_NOT_INITIALISED = "gh-pages has no trust.json: initialise the feed with `nimbus trust maintain init --github` and push its site first";
+function hasFile2(git, ref, path, cwd) {
+  return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
+}
+async function readVerifiedFeed(git, cwd) {
+  if (!hasFile2(git, PAGES_REF, TRUST_FEED_FILE, cwd))
+    throw new Error(FEED_NOT_INITIALISED);
+  const feed = parseTrustFeed(git.readBlob(PAGES_REF, TRUST_FEED_FILE, { cwd }));
+  await verifyTrustFeedPinned(feed, feed.rootKey);
+  return feed;
+}
+function assertFeedConfig(git, ref, cwd) {
+  if (!hasFile2(git, ref, FEED_CONFIG_FILE, cwd)) {
+    throw new Error(`${ref} has no ${FEED_CONFIG_FILE}: this is not a trust feed repository`);
+  }
+  let raw;
+  try {
+    raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(git.readBlob(ref, FEED_CONFIG_FILE, { cwd })));
+  } catch {
+    throw new Error(`${FEED_CONFIG_FILE} on ${ref} is not valid UTF-8 JSON`);
+  }
+  parseFeedConfig(raw);
+}
+function readSourceFile(git, ref, e, cwd) {
+  if (e.mode !== git.REGULAR_FILE_MODE) {
+    return { path: e.path, reason: `git mode ${e.mode} is not a regular file` };
+  }
+  const bytes = git.readBlob(ref, e.path, { cwd });
+  if (bytes.byteLength > MAX_SOURCE_FILE_BYTES) {
+    return { path: e.path, reason: `exceeds ${String(MAX_SOURCE_FILE_BYTES)} bytes` };
+  }
+  try {
+    return {
+      path: e.path,
+      raw: JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes))
+    };
+  } catch {
+    return { path: e.path, reason: "is not valid UTF-8 JSON" };
+  }
+}
+function readFeedSourceAt(git, ref, cwd) {
+  const skipped = [];
+  const read = (dir) => {
+    const out = [];
+    for (const e of git.listTreeEntries(ref, dir, { cwd })) {
+      if (e.path === `${dir}.gitkeep`)
+        continue;
+      const r = readSourceFile(git, ref, e, cwd);
+      if ("reason" in r)
+        skipped.push(r);
+      else
+        out.push(r);
+    }
+    return out;
+  };
+  return {
+    source: {
+      publishers: read(FEED_PUBLISHERS_DIR),
+      requests: read(FEED_REQUESTS_DIR),
+      statements: read(FEED_STATEMENTS_DIR)
+    },
+    skipped
+  };
+}
+
+// src/trust-summary.ts
+function blockLine(b) {
+  const r = b.request;
+  if (r.kind === "key.revoke") {
+    return `- **revoke** key ${code(r.keyFingerprint)} of publisher ${code(r.publisherId)} — ${code(r.reason)} (${code(b.path)})`;
+  }
+  const versions = r.versions === "*" ? "all versions" : r.versions.join(", ");
+  return `- **take down** ${code(r.extensionId)} (${code(versions)}) of publisher ${code(r.publisherId ?? "?")} — ${code(r.reason)} (${code(b.path)})`;
+}
+function planLines(plan, skipped) {
+  const lines = [];
+  for (const b of plan.blocks)
+    lines.push(blockLine(b));
+  for (const v of plan.verified) {
+    lines.push(`- **verify** publisher ${code(v.publisherId)} as GitHub ${code(`@${v.github}`)} (${v.change}), keys ${v.keys.map((k) => code(publisherKeyFingerprint(k))).join(", ")}`);
+  }
+  for (const id of plan.unverified)
+    lines.push(`- **un-verify** publisher ${code(id)}`);
+  for (const s of plan.admitted) {
+    lines.push(`- **carry** ${code(s.kind)} of publisher ${code(s.publisherId)} (${code(trustStatementId(s))})`);
+  }
+  if (lines.length === 0)
+    lines.push("Nothing to sign.");
+  const skips = [...skipped, ...plan.skipped];
+  if (skips.length > 0) {
+    lines.push("", "**Skipped** (not signed):", "");
+    for (const s of skips)
+      lines.push(`- ${code(s.path)}: ${code(s.reason)}`);
+  }
+  return lines;
+}
+
+// src/trust-check.ts
+var SHARED3 = { git: exports_git_tree, io: GHA_IO };
+function assertSourceOnly(changes) {
+  if (changes.length === 0)
+    throw new Error("the pull request changes no files");
+  const offending = changes.filter((c) => !FEED_SOURCE_DIRS.some((d) => c.path.startsWith(d)));
+  if (offending.length > 0) {
+    throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
+  }
+}
+async function runTrustCheck(opts, deps = SHARED3) {
+  const { git } = deps;
+  const cwd = opts.workspace;
+  if (opts.baseRef === "") {
+    throw new Error("trust-check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
+  }
+  git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
+  const prev = await readVerifiedFeed(git, cwd);
+  assertFeedConfig(git, `origin/${opts.baseRef}`, cwd);
+  const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
+    cwd,
+    deepen: [opts.baseRef]
+  });
+  const changes = git.diffTree(mergeBase, "HEAD", { cwd });
+  assertSourceOnly(changes);
+  const { source, skipped } = readFeedSourceAt(git, "HEAD", cwd);
+  const plan = planTrustFeed(prev, source);
+  const touched = new Set(changes.filter((c) => c.status !== "D").map((c) => c.path));
+  const bad = [...skipped, ...plan.skipped].filter((s) => touched.has(s.path));
+  deps.io.summary([
+    "## Trust feed change",
+    "",
+    "> [!CAUTION]",
+    "> **NIMBUS TRUST FEED — merging this changes what every Nimbus install trusts.** On merge the trust-sign job signs the result with the Nimbus trust root key, after the `trust-signing` approval. Check each line below against what you intend.",
+    "",
+    ...planLines(plan, skipped)
+  ].join(`
+`));
+  if (bad.length > 0) {
+    throw new Error(`the trust feed would not sign: ${bad.map((s) => `${code(s.path)}: ${s.reason}`).join("; ")}`);
+  }
+  deps.io.log(`trust-check passed: ${plan.status}`);
+}
+
+// src/trust-sign.ts
+var SHARED4 = { git: exports_git_tree, io: GHA_IO };
+var MAX_ATTEMPTS2 = 3;
+var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
+function parseRootKey2(raw) {
+  const s = raw.trim();
+  if (!ROOT_KEY_RE2.test(s)) {
+    throw new Error('input "root-key" is not a trust root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus trust maintain init` writes it');
+  }
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
+async function attemptSign2(opts, seed, rootKey, git) {
+  const cwd = opts.workspace;
+  const mainRef = `origin/${opts.defaultBranch}`;
+  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const prev = await readVerifiedFeed(git, cwd);
+  if (prev.rootKey !== rootKey) {
+    throw new Error(`refusing to sign: the root-key input (public key fingerprint ${publisherKeyFingerprint(rootKey)}) is not this feed's root key (fingerprint ${publisherKeyFingerprint(prev.rootKey)})`);
+  }
+  assertFeedConfig(git, mainRef, cwd);
+  const { source, skipped } = readFeedSourceAt(git, mainRef, cwd);
+  const at = git.commitTime(mainRef, { cwd });
+  const { plan, feed } = await buildTrustFeed(prev, source, seed, at);
+  if (feed === undefined) {
+    return { commit: undefined, plan, skipped, sequence: prev.sequence };
+  }
+  const bytes = new TextEncoder().encode(`${JSON.stringify(feed, null, 2)}
+`);
+  const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: TRUST_FEED_FILE, bytes }], `Sign trust feed sequence ${String(feed.sequence)}`, cwd);
+  return { commit, plan, skipped, sequence: feed.sequence };
+}
+function report2(io, a, pushed) {
+  for (const s of [...a.skipped, ...a.plan.skipped]) {
+    io.annotate("warning", `skipped ${s.path}: ${s.reason}`);
+  }
+  const head = pushed ? `Signed trust feed sequence ${String(a.sequence)}; pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.";
+  io.summary(["## Trust feed sign", "", head, "", ...planLines(a.plan, a.skipped)].join(`
+`));
+  io.log(pushed ? `signed trust feed sequence ${String(a.sequence)}` : "nothing to sign; no commit");
+}
+async function signLoop2(opts, seed, deps) {
+  const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
+  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
+  for (let attempt = 1;attempt <= MAX_ATTEMPTS2; attempt++) {
+    const a = await attemptSign2({ ...opts, defaultBranch }, seed, rootKey, deps.git);
+    if (a.commit === undefined) {
+      report2(deps.io, a, false);
+      return;
+    }
+    await deps.beforePush?.(attempt);
+    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
+      report2(deps.io, a, true);
+      return;
+    }
+    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+  }
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
+}
+async function runTrustSign(opts, deps = SHARED4) {
+  const seed = parseRootKey2(opts.rootKey);
+  try {
+    await signLoop2(opts, seed, deps);
+  } finally {
+    seed.fill(0);
+  }
+}
+
 // src/main.ts
+var MODES = ["check", "sign", "trust-check", "trust-sign"];
 function parseMode(raw) {
-  if (raw === "check" || raw === "sign")
-    return raw;
-  throw new Error(`input "mode" must be "check" or "sign"; got ${JSON.stringify(raw)}`);
+  const mode = MODES.find((m) => m === raw);
+  if (mode !== undefined)
+    return mode;
+  throw new Error(`input "mode" must be "check", "sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
+}
+function takeRootKey() {
+  const rootKey = requireInput("root-key");
+  maskSecret(rootKey);
+  delete process.env[inputEnvName("root-key")];
+  return rootKey;
 }
 function requireInput(name) {
   const v = getInput(name);
@@ -10476,12 +11048,21 @@ function workspace() {
 async function main() {
   try {
     const mode = parseMode(getInput("mode"));
+    const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef: process.env["GITHUB_BASE_REF"] ?? "" });
+      await runCheck({ workspace: workspace(), baseRef });
+    } else if (mode === "trust-check") {
+      await runTrustCheck({ workspace: workspace(), baseRef });
+    } else if (mode === "trust-sign") {
+      const rootKey = takeRootKey();
+      const defaultBranch = getInput("default-branch");
+      await runTrustSign({
+        workspace: workspace(),
+        rootKey,
+        ...defaultBranch !== "" && { defaultBranch }
+      });
     } else {
-      const rootKey = requireInput("root-key");
-      maskSecret(rootKey);
-      delete process.env[inputEnvName("root-key")];
+      const rootKey = takeRootKey();
       await runSign(signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]));
     }
   } catch (err) {
