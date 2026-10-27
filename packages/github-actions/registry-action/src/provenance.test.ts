@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
+  type ExecFileLike,
   type GhRun,
   ghProvenance,
   ghRunOf,
   type ProvenanceDeps,
+  resolveGh,
+  runGhAt,
   verifyNeverThrowing,
   verifyProvenance,
 } from "./provenance.ts";
@@ -78,8 +81,9 @@ describe("ghRunOf", () => {
 
 describe("verifyNeverThrowing", () => {
   test("a throwing verifier, or an unwritable path, is a reason, never a rejection", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-prov-"));
     const at = {
-      pkgPath: join(tmpdir(), `nimbus-prov-${String(process.pid)}.tgz`),
+      pkgPath: join(dir, "pkg.tgz"),
       packageBytes: new Uint8Array([1]),
       repository: "cli/cli",
       verifiedAt: AT,
@@ -95,6 +99,53 @@ describe("verifyNeverThrowing", () => {
     );
     expect(r.ok).toBe(false);
     expect(r.ok ? "" : r.reason).toStartWith("verification failed:");
+    // Exclusive create: a file already at the path is never written through.
+    const again = await verifyNeverThrowing(
+      () => Promise.resolve({ ok: false, reason: "unreached" }),
+      at,
+    );
+    expect(again.ok ? "" : again.reason).toContain("EEXIST");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("runGhAt", () => {
+  test("no gh is ENOENT without starting anything; a found gh is called with argv and options", async () => {
+    expect(await runGhAt(undefined)(["x"], {}, 1)).toEqual({
+      code: null,
+      stdout: "",
+      stderr: "",
+      error: { code: "ENOENT" },
+    });
+    const seen: unknown[] = [];
+    const exec: ExecFileLike = (file, args, opts, done) => {
+      seen.push({ file, args, opts });
+      done(null, "out", "");
+    };
+    const r = await runGhAt("/usr/bin/gh", exec)(["attestation"], { GH_TOKEN: "t" }, 60_000);
+    expect(r).toEqual({ code: 0, stdout: "out", stderr: "" });
+    expect(seen).toEqual([
+      {
+        file: "/usr/bin/gh",
+        args: ["attestation"],
+        opts: {
+          env: { GH_TOKEN: "t" },
+          timeout: 60_000,
+          maxBuffer: 16 * 1024 * 1024,
+          windowsHide: true,
+        },
+      },
+    ]);
+  });
+});
+
+describe("resolveGh", () => {
+  test("gh is taken from a fixed install location, never from PATH", () => {
+    expect(resolveGh("linux", (p) => p === "/usr/local/bin/gh")).toBe("/usr/local/bin/gh");
+    expect(resolveGh("darwin", (p) => p === "/opt/homebrew/bin/gh")).toBe("/opt/homebrew/bin/gh");
+    expect(resolveGh("win32", () => true)).toBe(String.raw`C:\Program Files\GitHub CLI\gh.exe`);
+    expect(resolveGh("linux", () => false)).toBeUndefined();
+    expect(resolveGh("aix", () => true)).toBeUndefined();
   });
 });
 

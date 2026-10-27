@@ -305,6 +305,7 @@ async function attemptSign(
         continue;
       }
       const base = `extensions/${v.id}/${v.version}`;
+      // NOSONAR S9382: sequential by design - one gh call at a time, inside the same sequential loop as validate
       const provenance = await provenanceFor(
         v,
         candidate.packageBytes,

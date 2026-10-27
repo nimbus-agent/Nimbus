@@ -112,11 +112,7 @@ function fromEntry(
   const cert = isObject(signature) ? signature["certificate"] : undefined;
   if (!isObject(cert)) return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
-  if (
-    source === undefined ||
-    source.rest !== "" ||
-    !sameRepository(source.repository, repository)
-  ) {
+  if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
     return { ok: false, reason: `the attestation was not built from ${repository}` };
   }
   const commit = cert["sourceRepositoryDigest"];

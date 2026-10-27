@@ -10,7 +10,7 @@
  * (a timeout, a spawn error, an exit without "no attestations found") is retried once.
  */
 import { execFile } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import {
   provenanceFromGhVerify,
   type VersionProvenance,
@@ -65,15 +65,56 @@ export function ghRunOf(
   };
 }
 
+/**
+ * Where GitHub's runner images (and the gh installers) put `gh`. It is run from one of these fixed
+ * paths, never looked up on `PATH`, which a step earlier in the job could have prepended to. A
+ * runner with `gh` anywhere else records no provenance ("gh is not installed"), which is optional.
+ */
+const GH_PATHS: Readonly<Record<string, readonly string[]>> = {
+  linux: ["/usr/bin/gh", "/usr/local/bin/gh", "/home/linuxbrew/.linuxbrew/bin/gh"],
+  darwin: ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"],
+  win32: [String.raw`C:\Program Files\GitHub CLI\gh.exe`],
+};
+
+/** The first fixed `gh` location that exists on `platform`, or `undefined`. */
+export function resolveGh(
+  platform: string,
+  exists: (path: string) => boolean = existsSync,
+): string | undefined {
+  return (GH_PATHS[platform] ?? []).find((p) => exists(p));
+}
+
+/** The `execFile` shape `runGhAt` calls; injected so a test never starts a process. */
+export type ExecFileLike = (
+  file: string,
+  args: string[],
+  opts: { env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number; windowsHide: boolean },
+  done: (
+    err: { code?: unknown; killed?: boolean } | null,
+    stdout: unknown,
+    stderr: unknown,
+  ) => void,
+) => unknown;
+
+/** A `RunGh` for the `gh` at `gh` (`undefined`: not installed, reported as `ENOENT`). */
+export function runGhAt(gh: string | undefined, exec: ExecFileLike = execFile): RunGh {
+  return (args, env, timeoutMs) =>
+    new Promise((resolve) => {
+      if (gh === undefined) {
+        resolve({ code: null, stdout: "", stderr: "", error: { code: "ENOENT" } });
+        return;
+      }
+      exec(
+        gh,
+        [...args],
+        { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
+        (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)),
+      );
+    });
+}
+
 export const runGh: RunGh = (args, env, timeoutMs) =>
-  new Promise((resolve) => {
-    execFile(
-      "gh",
-      [...args],
-      { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
-      (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)),
-    );
-  });
+  runGhAt(resolveGh(process.platform))(args, env, timeoutMs);
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes
 const CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
@@ -149,7 +190,9 @@ export async function verifyNeverThrowing(
   at: { pkgPath: string; packageBytes: Uint8Array; repository: string; verifiedAt: string },
 ): Promise<ProvenanceResult> {
   try {
-    writeFileSync(at.pkgPath, at.packageBytes);
+    // Exclusive create: the path is inside the caller's own mkdtemp directory, and nothing that
+    // appeared there first (a planted file or link) is ever written through.
+    writeFileSync(at.pkgPath, at.packageBytes, { flag: "wx" });
     return await verify(at.pkgPath, at.repository, at.verifiedAt);
   } catch (e) {
     return {

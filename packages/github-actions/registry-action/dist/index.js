@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:21f8931d2b7370dadc0f4b9929443202c9af92a7908f4a8025e3a0c6b8d1ac38
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:d60b6d0d8aadcf6fa87b520523118dcbf18793d2bdf3c98f66ba0138b1b15d9f
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9059,7 +9059,7 @@ function fromEntry(entry, repository, verifiedAt) {
   if (!isObject(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
-  if (source === undefined || source.rest !== "" || !sameRepository(source.repository, repository)) {
+  if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
     return { ok: false, reason: `the attestation was not built from ${repository}` };
   }
   const commit = cert["sourceRepositoryDigest"];
@@ -10243,7 +10243,7 @@ function remoteDefaultBranch(opts) {
 
 // src/provenance.ts
 import { execFile } from "node:child_process";
-import { writeFileSync as writeFileSync2 } from "node:fs";
+import { existsSync, writeFileSync as writeFileSync2 } from "node:fs";
 var TIMEOUT_MS = 60000;
 var RETRY_DELAY_MS = 5000;
 function ghRunOf(err, stdout, stderr) {
@@ -10260,9 +10260,24 @@ function ghRunOf(err, stdout, stderr) {
     }
   };
 }
-var runGh = (args, env, timeoutMs) => new Promise((resolve) => {
-  execFile("gh", [...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)));
-});
+var GH_PATHS = {
+  linux: ["/usr/bin/gh", "/usr/local/bin/gh", "/home/linuxbrew/.linuxbrew/bin/gh"],
+  darwin: ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"],
+  win32: [String.raw`C:\Program Files\GitHub CLI\gh.exe`]
+};
+function resolveGh(platform, exists = existsSync) {
+  return (GH_PATHS[platform] ?? []).find((p) => exists(p));
+}
+function runGhAt(gh, exec = execFile) {
+  return (args, env, timeoutMs) => new Promise((resolve) => {
+    if (gh === undefined) {
+      resolve({ code: null, stdout: "", stderr: "", error: { code: "ENOENT" } });
+      return;
+    }
+    exec(gh, [...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)));
+  });
+}
+var runGh = (args, env, timeoutMs) => runGhAt(resolveGh(process.platform))(args, env, timeoutMs);
 var CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
 function firstLine(s) {
   const line = s.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
@@ -10307,7 +10322,7 @@ async function verifyProvenance(pkgPath, repository, verifiedAt, deps) {
 }
 async function verifyNeverThrowing(verify, at) {
   try {
-    writeFileSync2(at.pkgPath, at.packageBytes);
+    writeFileSync2(at.pkgPath, at.packageBytes, { flag: "wx" });
     return await verify(at.pkgPath, at.repository, at.verifiedAt);
   } catch (e) {
     return {
@@ -10554,7 +10569,7 @@ function provenanceLine(v, r) {
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
-  if (r === undefined || !r.ok) {
+  if (!r?.ok) {
     return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
   }
   const p = r.provenance;

@@ -202,7 +202,7 @@ function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): str
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
-  if (r === undefined || !r.ok) {
+  if (!r?.ok) {
     return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
   }
   const p = r.provenance;
