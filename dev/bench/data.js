@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793087196272,
+  "lastUpdate": 1793088406191,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "cd1d9c2e4c25e656af7db81b4de486a939139b69",
-          "message": "feat(gateway): pre-mortem theme extraction pass (V53, PR A of 2) (#1134)\n\n## Summary\n\nPR A of two for `nimbus pre-mortem` (Spine S1). This lands the\n**substrate only**: schema V53 plus a\ndebounced background pass that mines recurring \"blocker themes\" per\nservice from closed Jira epics.\n\n**There is no user-facing command in this PR.** `nimbus pre-mortem`, the\nagent, the cohort selection\nand the brief are all PR B. A reader finding V53 tables and a background\npass should not go looking\nfor a CLI that does not exist yet.\n\n**The pass is Jira-only, and cannot currently be otherwise.** Discovery\nkeys on\n`metadata.issue_type = 'Epic'`, which only `jira-sync.ts` writes.\n`linear-sync.ts` never writes\n`issue_type`, and — the deeper reason — **no `linear:project` items are\nindexed at all**, so there is\nno Linear epic-shaped row to mine. The design spec originally claimed a\nnon-null `project_id` would\nmake a Linear candidate; that was wrong twice over (it would have\ntreated every Linear issue in a\nproject as an epic, and there is nothing to match anyway). Supporting\nLinear needs a connector\nchange. This matters because the upstream workstream is *named* \"Jira +\nLinear\".\n\nA further limit, now documented: `parent_key` is populated only on\n**team-managed** Jira projects.\nClassic company-managed projects express epic membership through a\nper-instance custom field this\nconnector deliberately does not chase, so the pass yields nothing there.\n\n### What ships\n\n- **Schema V53** — `premortem_theme`, `premortem_theme_evidence`,\n`premortem_pass_state`,\n`premortem_watcher_proposal`. The last is written only by PR B; the\ntable lands here because\n  schema must precede its reader.\n- **`packages/gateway/src/premortem/`** — discover, extract (local LLM),\nreconcile, resuming from a\n**composite `(modified_at, id)` watermark** checkpointed per batch. The\ntie-break is load-bearing:\na bulk import stamps thousands of rows with one `modified_at`, so `>`\nalone would skip every row\n  after the first in that group while `>=` would re-scan them forever.\n- **`[premortem]` config**, construction gated on `enabled`.\n- **`premortem.refresh`** — no parameters, no `rebuild` counterpart,\nLAN-forbidden, and deliberately\n  not renderer-exposed. Tauri `ALLOWED_METHODS` stays at 104.\n\n### Design rules worth knowing\n\n- **A theme's `service` is the AFFECTED service** — a repo full name\nsuch as `acme/billing-api`,\nderived through the graph — never the connector (`jira`). PR B reads\nthemes back by that key.\n- **Confidence comes from the evidence count, never the model.**\n`ExtractedTheme` has no confidence\nfield to parse. The ceiling is 0.86, asymptotic, with a stated reason:\nno connector indexes ticket\ncomments, so a blocker argued out entirely in a comment thread is\ninvisible to this pass.\n- **No model means no themes, and no keyword fallback.** The `glossary`\nsnippet fallback works\nbecause it already has the term; here *discovery* is the task, so there\nis nothing to look up. A\nkeyword list would be hand-maintained, English-only, and would fabricate\na theme from one\n  incidental mention.\n- **Demote, never delete.** A theme row is the durable record of\nextraction budget already spent.\n\n### The bug this PR nearly shipped\n\nThe whole-branch review caught a Critical that no per-task review could\nsee, because it was an\ninteraction between three individually-correct decisions.\n\n`createDecisionLlm` is always constructed, but `complete()` returns\n`null` when no **local** provider\nexists. `extractThemes` collapsed that into an empty list —\nindistinguishable from \"the model found\nnothing\" — and the pass advanced the watermark regardless. With\n`enabled: true` by default, a user\nupgrading without Ollama would have consumed their entire closed-epic\nbacklog, written zero themes,\nand marked those epics mined **permanently**. There is no `rebuild`\nverb; recovery would have been\nmanual SQL.\n\nReproduced before fixing, and re-verified after. `extractThemes` now\nreturns a discriminated outcome\nand the watermark advances only for a batch whose model call actually\nran:\n\n| Case | Watermark | Rationale |\n|---|---|---|\n| `use_llm = false` | held | nothing was attempted |\n| No local model (adapter returns `null`) | held | the real no-Ollama\ncase |\n| Model throws | held | transient, must be retried |\n| Model ran, output unparseable | **advances** | else a persistently bad\nmodel loops forever |\n\nThe reconcile sweep runs on every path, including when extraction is\ndisabled — with its own\nregression test, since the obvious implementation (skip constructing the\nrefresher) would have\nsilently stopped pruning forever.\n\nTwo related fixes came from the same review. The prompt was uncapped at\nup to 20 bodies of 16 KiB\neach against Ollama's 4096-token default, which truncates from the\n*front* and so deleted the\ninstructions; bodies are now capped, the batch is 4, and the\ninstructions sit after the sources so\ntruncation degrades data rather than intent. And\n`affectedServicesForEpic` was an unindexed full\nscan of `item` per epic, 20 back-to-back with no yield; it is now one\nbatched query.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Test improvement\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome)\n- [x] All existing tests pass — full `bun run test:ci` green, run\nunpiped so the exit code is the\n      suite's own rather than the pipe's\n- [x] New behaviour is covered by tests\n- [x] No `any` — model output is `unknown`, narrowed explicitly\n- [x] No credentials, tokens, or secret values in logs, IPC, config or\nfixtures\n- [x] Platform-specific code behind `PlatformServices` — n/a, none added\n- [x] The HITL consent gate has not been weakened — untouched; this PR\nadds no action type\n- [x] Does not touch `docs/README.md`\n\nInvariants specifically respected: **I14/D12** (every SQLite write via\n`dbRun`; `audit:invariants`\ngreen), **I9** (bound parameters only, including the variable-length `IN\n(...)`), **I11** (epic\nbodies reach the model only inside `wrapToolOutput`, verified at runtime\nrather than by inspection),\n**I5** (`premortem.refresh` LAN-forbidden), **I7** (`ALLOWED_METHODS`\nunchanged at 104).\n\n## Coverage\n\nNeither `engine/` nor `vault/` was modified. New source lives under\n`packages/gateway/src/premortem/`\nand is covered by 72 tests in that directory alone.\n`audit:coverage-floor` on CI remains\nauthoritative — I did not run `--update-baseline`, which would bank any\nviolation as the new floor.\n\n## Testing\n\n- `bun run preflight:fast` — PASSED, all 29 gates.\n- `bun run test:ci` — exit 0, zero failures.\n- Behaviour verified by runtime probe rather than by reading the code,\nat four points: a theme lands\nunder `acme/billing-api` and **not** `jira`; `occurred_at` is `NULL` and\nnot `0` when an epic has\nno resolved date; `checkLanMethodAllowed` throws for `premortem.refresh`\nwhile `agents.catchup`\nstays allowed; and the emitted prompt genuinely carries the\n`<tool_output>` envelope.\n\n## Notes for Reviewers\n\n- **Start with the loop in `premortem-pass.ts`.** The watermark rules\nare the heart of this PR, and\n  the table above is the specification.\n- **`graph_entity.id` is a sha256, not an `item.id`.**\n`epic-services.ts` joins through\n`graph_entity` on `type` plus `external_id` for that reason. An earlier\nrevision compared the two\ndirectly and returned nothing for every real epic while six tests passed\n— the fixtures had minted\nentity ids as raw strings. Fixtures here now go through the real\n`upsertGraphEntity`.\n- **`themeId` hashes length-prefixed, colon-terminated components.** Two\ncollision classes were found\nand closed at that site; the comment records both, including the\nconcrete counter-examples.\n- The design spec and its two review rounds are in\n`docs/superpowers/specs/`, and the implementation\nplan in `docs/superpowers/plans/`, both carrying inline corrections\nwhere execution proved them\n  wrong.\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-09T19:47:20Z",
-          "tree_id": "9004c81560fef87d1f44cb25c044c2690d1da118",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/cd1d9c2e4c25e656af7db81b4de486a939139b69"
-        },
-        "date": 1786305532605,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.85335485000144,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.57603245000536,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 266.625872300001,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c3360b67538f9a18b882d28dbfd234ae8008952c",
+          "message": "feat(trust): show a verified-publisher badge everywhere an extension's publisher appears (R6) (#1794)\n\nTrust layer PR 3c of 5 (Phase 9.5 project 3): the verified-publisher\nbadge, spec R6.\n\nWherever Nimbus shows an extension with publisher data, it now says\n**`Verified publisher: @handle (verified <date>)`** or **`Unverified\npublisher`**. The badge appears exactly when both hold:\n- the CURRENT Nimbus `publisher.verified` entry lists the key that\nverified (or, for a registry entry, would verify) the code;\n- that key is not revoked here, scoped exactly as I48's blocks are.\n\nNothing is refused on the badge.\n\n## Surfaces\n\n| Where | What |\n|---|---|\n| `registry.search` / `nimbus extension search` | `verifiedPublisher`; a\n**Verified** column (`✓ @handle`) |\n| `registry.info` / `extension info --registry/--remote` |\n`verifiedPublisher`; a `Verified publisher: …` line |\n| `extension.list` / `extension.info` | `verifiedPublisher`; a `✓\n@handle` marker after the publisher id; an info line |\n| install prompt (`extension.install`) | `verifiedPublisher` +\n`publisherBadge`. The CLI shows it through the consent Details. The\ndesktop gets a new install preview: badge and notes first, then every\nother field |\n| update listing and `extension.autoUpdate` prompt | `verifiedPublisher`\n(+ `publisherBadge` in the prompt). CLI `✓ @handle`; desktop\nPendingUpdates and the update preview |\n\n## Design\n\n- **One decider:** `extensions/trust/verified-publisher.ts`\n`verifiedPublisherFor`. Every surface asks it with the subject it\nalready passes to `blocksFor`, so the badge and the blocks never\ndisagree about which key and which registry are meant.\n- **Never cached (R7):** the update badge is computed when the list is\nserved and when the prompt is built. Only `publisherId` (identity) is\nstored on the cached update. A withdrawn verification or a later\nrevocation removes the badge at once.\n- **Signature first:** there is never a badge for code whose signature\ndid not verify.\n  - **Updates:** none unless `verificationStatus === \"verified\"`.\n- **Installed copies:** none unless the copy still matches its installed\nhashes.\n- **Install prompt:** shown only after the SOURCE manifest's signature\nverifies with the key it declares. The copy's I16 check runs after\napproval, so without this a forged manifest claiming a verified\npublisher's key would show a badge. A test proves it, and fails when the\ncheck is removed.\n- **Misleading labels removed.**\n- `publisherStatus` means \"the signature verified\" but was rendered as\n**\"publisher: verified\"** (green) on the desktop and as a bare token in\nthe CLI. The field stays for clients. Everything now labels the\nsignature from `verificationStatus`: `signature verified`, `signature\nfailed`, or no chip on a key conflict.\n- The CLI's `(unverified)`, meaning \"declares no publisher\", is now\n`(unsigned)`.\n  - \"verified\"/\"unverified publisher\" now only ever means the badge.\n- **Found along the way:** the desktop update preview rendered a fixed\nset of fields, so PR 3a's `publisherChangeNote` (and the run-grant note)\nnever reached the desktop prompt. Both are shown now. The update prompt\npayload also carries `verificationStatus`.\n- **No migration, no new IPC method, no allowlist change, no new\ninvariant.** R6 is a display rule; its anti-goal (\"a badge that lies\")\nis pinned by tests.\n\n**This release bakes no trust feed (PR 5), so production shows every\npublisher as unverified** until a feed is configured.\n\n## Review\n\n- **Plan:** Antigravity reviewed it. 8 findings were applied and 4\ndeclined with reasons. The record is in the plan on the plan branch.\n- **Final whole-branch review:** a fresh reviewer found 0 Critical, 1\nImportant and 5 Minor.\n- The Important one is fixed, with a test that failed first: the\ninstalled-copy badge relied on the per-boot signature registry, which a\nrestart clears and which a hash-only boot failure never marks. It now\nalso requires `verifyOneExtensionStrict`.\n  - The Minors are deferred (wording and consistency).\n- **For the owner, pre-existing (I16 design), made louder by the\nbadge:** for a LOCAL-path install the manifest signature does not bind\nthe entry file (registry installs are bound by the index hashes). A\ngenuine signed manifest copied beside different code shows that\npublisher's badge. Decide whether local-path installs should carry the\nbadge at all.\n\n## Verification\n\n- `bun run preflight:fast`: all gates green.\n- registry-format 410 pass, `cli/src` 4734 pass, `gateway/src` 21338\npass, UI vitest 1205 pass. `packages/gateway/test` was still running\nwhen this was opened.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T10:00:17+02:00",
+          "tree_id": "e3ee5d83339835d58991fe8c0754b5194bdb7a1c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c3360b67538f9a18b882d28dbfd234ae8008952c"
+        },
+        "date": 1793088401806,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 193.11752520000044,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 183.50741934999823,
             "unit": "ms"
           }
         ]
