@@ -250,6 +250,7 @@ function planStatements(
   verifiedKeys: ReadonlyMap<string, PublisherEntry>,
   files: readonly FeedSourceFile[],
   skipped: FeedSkip[],
+  reserved: number,
 ): TrustStatement[] {
   const pathById = new Map<string, string>();
   const candidates: TrustStatement[] = [];
@@ -265,7 +266,8 @@ function planStatements(
   }
   const admission = admitPublisherStatements({ extensions: {}, statements: carried }, candidates, {
     boundKeys: (publisherId) => new Set(verifiedKeys.get(publisherId)?.keys ?? []),
-    maxStatements: MAX_STATEMENTS_PER_DOCUMENT,
+    // The feed's cap covers this run's blocks and verified entries too, so plan and build agree.
+    maxStatements: MAX_STATEMENTS_PER_DOCUMENT - reserved,
     where: "the trust feed",
     unbound: (publisherId) =>
       `publisher ${publisherId} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`,
@@ -284,7 +286,8 @@ export function planTrustFeed(prev: TrustFeed, source: FeedSource): FeedPlan {
   const carried = carriedEntries(prev);
   const blocks = planRequests(prev, carried, source.requests, skipped);
   const pubs = planPublishers(previousVerified(prev), source.publishers, skipped);
-  const admitted = planStatements(carried, pubs.next, source.statements, skipped);
+  const reserved = blocks.length + pubs.next.size;
+  const admitted = planStatements(carried, pubs.next, source.statements, skipped, reserved);
   const changed =
     blocks.length > 0 ||
     pubs.verified.length > 0 ||

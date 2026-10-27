@@ -160,6 +160,11 @@ describe("source commands", () => {
     expect((await run(["unverify-publisher", feed, "acme"])).code).toBe(0);
     expect(existsSync(join(feed, "publishers", "acme.json"))).toBe(false);
     expect((await run(["unverify-publisher", feed, "acme"])).err).toContain("is not verified");
+    // A traversal never reaches rmSync: the marker one level up survives.
+    expect((await run(["unverify-publisher", feed, "../nimbus-trust"])).err).toContain(
+      "is not a publisher id",
+    );
+    expect(existsSync(join(feed, "nimbus-trust.json"))).toBe(true);
   });
 
   test("verify-publisher refuses a bad key, a bad handle and missing flags", async () => {

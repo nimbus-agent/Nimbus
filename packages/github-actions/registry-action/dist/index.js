@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:41289763d35db3488d4ae75dbcbfe549ea70c1363a8816cb486a9fa8ae8c2082
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:e18f9aeab82ba9f337562ff83f0353aa3b32b41b223ea24551b9eac0507c4b6d
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9622,7 +9622,7 @@ function planPublishers(prevVerified, files, skipped) {
   const unverified = [...prevVerified.keys()].filter((id) => !next.has(id)).sort(codeUnitCompare);
   return { next, verified, unverified };
 }
-function planStatements(carried, verifiedKeys, files, skipped) {
+function planStatements(carried, verifiedKeys, files, skipped, reserved) {
   const pathById = new Map;
   const candidates = [];
   for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
@@ -9638,7 +9638,7 @@ function planStatements(carried, verifiedKeys, files, skipped) {
   }
   const admission = admitPublisherStatements({ extensions: {}, statements: carried }, candidates, {
     boundKeys: (publisherId) => new Set(verifiedKeys.get(publisherId)?.keys ?? []),
-    maxStatements: MAX_STATEMENTS_PER_DOCUMENT,
+    maxStatements: MAX_STATEMENTS_PER_DOCUMENT - reserved,
     where: "the trust feed",
     unbound: (publisherId) => `publisher ${publisherId} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`
   });
@@ -9653,7 +9653,8 @@ function planTrustFeed(prev, source) {
   const carried = carriedEntries(prev);
   const blocks = planRequests(prev, carried, source.requests, skipped);
   const pubs = planPublishers(previousVerified(prev), source.publishers, skipped);
-  const admitted = planStatements(carried, pubs.next, source.statements, skipped);
+  const reserved = blocks.length + pubs.next.size;
+  const admitted = planStatements(carried, pubs.next, source.statements, skipped, reserved);
   const changed = blocks.length > 0 || pubs.verified.length > 0 || pubs.unverified.length > 0 || admitted.length > 0;
   return {
     status: changed ? "changed" : "unchanged",

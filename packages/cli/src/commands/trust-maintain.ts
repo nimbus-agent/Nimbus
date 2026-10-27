@@ -28,6 +28,7 @@ import {
   type FeedSkip,
   type FeedSource,
   type FeedSourceFile,
+  PUBLISHER_ID_RE,
   PUBLISHER_KEY_RE,
   parsePublisherFile,
   parseTrustFeed,
@@ -275,6 +276,10 @@ async function maintainUnverify(args: string[], env: TrustMaintainEnv): Promise<
   const dir = requireDir(rawDir, "unverify-publisher");
   if (publisherId === undefined || p.positional.length !== 2) {
     throw new MaintainError("unverify-publisher needs <dir> <publisherId>");
+  }
+  // Validated before it becomes a path: `../x` must never reach rmSync.
+  if (!PUBLISHER_ID_RE.test(publisherId)) {
+    throw new MaintainError(`${publisherId} is not a publisher id`);
   }
   const path = join(dir, FEED_PUBLISHERS_DIR, `${publisherId}.json`);
   if (!existsSync(path)) throw new MaintainError(`${publisherId} is not verified in ${dir}`);
