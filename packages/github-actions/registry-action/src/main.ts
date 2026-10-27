@@ -69,6 +69,17 @@ export function signOptions(
   };
 }
 
+/**
+ * The optional `github-token` input (provenance: `gh attestation verify` fetches with it), masked
+ * and dropped from the environment like the root key; empty means no provenance is verified.
+ */
+function takeGithubToken(): string {
+  const token = getInput("github-token");
+  if (token !== "") maskSecret(token);
+  delete process.env[inputEnvName("github-token")];
+  return token;
+}
+
 function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -78,7 +89,7 @@ export async function main(): Promise<void> {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef });
+      await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {
@@ -91,14 +102,16 @@ export async function main(): Promise<void> {
       });
     } else {
       const rootKey = takeRootKey();
-      await runSign(
-        signOptions(
+      const githubToken = takeGithubToken();
+      await runSign({
+        ...signOptions(
           workspace(),
           rootKey,
           getInput("default-branch"),
           process.env["GITHUB_REPOSITORY"],
         ),
-      );
+        githubToken,
+      });
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

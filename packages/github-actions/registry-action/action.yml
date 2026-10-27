@@ -22,6 +22,11 @@ inputs:
     required: false
     default: ""
 
+  github-token:
+    description: "check and sign: the token `gh attestation verify` fetches a version's build provenance with (the workflow passes the job's github.token). Empty means no provenance is verified; nothing is refused either way."
+    required: false
+    default: ""
+
 runs:
   using: "node24"
   main: "dist/index.js"

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:e18f9aeab82ba9f337562ff83f0353aa3b32b41b223ea24551b9eac0507c4b6d
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:cb4187e150c58796ac40dade35afa9f879cf1957d1e87db5de4304e14b4436c1
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4231,7 +4231,7 @@ function emitAnnotation(level, message) {
 }
 
 // src/check.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync2 } from "node:fs";
+import { mkdtempSync as mkdtempSync2, rmSync as rmSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join as join3 } from "node:path";
 
@@ -9012,6 +9012,95 @@ async function inspectPackage(tgz, work) {
     files: files.toSorted(codeUnitCompare)
   };
 }
+// ../../registry-format/src/provenance.ts
+var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
+var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
+var SLSA_V1 = "https://slsa.dev/provenance/v1";
+var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+function readManifestRepository(rawManifest) {
+  if (!isObject(rawManifest))
+    return;
+  const v = rawManifest["repository"];
+  return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
+}
+var sameRepository = (a, b) => a.toLowerCase() === b.toLowerCase();
+function githubPath(uri) {
+  if (typeof uri !== "string")
+    return;
+  let url;
+  try {
+    url = new URL(uri);
+  } catch {
+    return;
+  }
+  if (url.protocol !== "https:" || url.hostname !== "github.com" || url.search !== "") {
+    return;
+  }
+  const segments = url.pathname.split("/").slice(1);
+  const [owner, repo, ...rest] = segments;
+  if (owner === undefined || repo === undefined)
+    return;
+  const repository = `${owner}/${repo}`;
+  if (!REPOSITORY_RE.test(repository))
+    return;
+  return { repository, rest: rest.join("/") };
+}
+function fromEntry(entry, repository, verifiedAt) {
+  if (!isObject(entry))
+    return { ok: false, reason: "an attestation entry is not an object" };
+  const result = entry["verificationResult"];
+  const statement = isObject(result) ? result["statement"] : undefined;
+  if (!isObject(statement) || statement["predicateType"] !== SLSA_V1) {
+    return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
+  }
+  const signature = isObject(result) ? result["signature"] : undefined;
+  const cert = isObject(signature) ? signature["certificate"] : undefined;
+  if (!isObject(cert))
+    return { ok: false, reason: "the attestation carries no certificate" };
+  const source = githubPath(cert["sourceRepositoryURI"]);
+  if (source === undefined || source.rest !== "" || !sameRepository(source.repository, repository)) {
+    return { ok: false, reason: `the attestation was not built from ${repository}` };
+  }
+  const commit = cert["sourceRepositoryDigest"];
+  if (typeof commit !== "string" || !COMMIT_RE.test(commit)) {
+    return { ok: false, reason: "the attestation names no source commit" };
+  }
+  const config = githubPath(cert["buildConfigURI"]);
+  if (config === undefined || !sameRepository(config.repository, repository)) {
+    return { ok: false, reason: `the attestation's workflow is not in ${repository}` };
+  }
+  const workflow = config.rest;
+  if (!WORKFLOW_RE.test(workflow)) {
+    return { ok: false, reason: "the attestation's workflow path is not recognisable" };
+  }
+  const runner = cert["runnerEnvironment"] === "github-hosted" ? "github-hosted" : "self-hosted";
+  return {
+    ok: true,
+    provenance: {
+      sourceRepository: source.repository,
+      commit,
+      workflow,
+      runner,
+      verifiedAt
+    }
+  };
+}
+function provenanceFromGhVerify(output, repository, verifiedAt) {
+  if (!REPOSITORY_RE.test(repository))
+    return { ok: false, reason: "malformed repository" };
+  if (!Array.isArray(output) || output.length === 0) {
+    return { ok: false, reason: "gh returned no attestations" };
+  }
+  let last = { ok: false, reason: "no attestation qualified" };
+  for (const entry of output) {
+    const r = fromEntry(entry, repository, verifiedAt);
+    if (r.ok)
+      return r;
+    last = r;
+  }
+  return last;
+}
 // ../../registry-format/src/rotation-graph.ts
 function walk(start, next, allow) {
   const seen = new Set;
@@ -9508,7 +9597,7 @@ var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
 function invalid5(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -9516,13 +9605,13 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject2(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject(raw))
+  if (!isObject2(raw))
     throw invalid5("a publisher file must be an object");
   for (const k of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k)) {
@@ -9545,7 +9634,7 @@ function parsePublisherFile(path, raw) {
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject2(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -9930,6 +10019,7 @@ var sha256Hex = (b) => createHash5("sha256").update(b).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
+  const repository = readManifestRepository(raw);
   assertCoordinates(c, m, req);
   const publisher = await assertSigned(m, raw);
   if (req.publisherFingerprint !== publisherKeyFingerprint(publisher.key)) {
@@ -9974,7 +10064,8 @@ async function validatePublish(c, signed, config, work) {
       packageSha256: sha256Hex(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
-      permissions: m.permissions
+      permissions: m.permissions,
+      ...repository !== undefined && { repository }
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -10149,6 +10240,85 @@ function remoteDefaultBranch(opts) {
   return m[1];
 }
 
+// src/provenance.ts
+import { execFile } from "node:child_process";
+var TIMEOUT_MS = 60000;
+var RETRY_DELAY_MS = 5000;
+function ghRunOf(err, stdout, stderr) {
+  const out = { stdout: String(stdout), stderr: String(stderr) };
+  if (err === null)
+    return { code: 0, ...out };
+  const exitCode = typeof err.code === "number" ? err.code : null;
+  return {
+    code: exitCode,
+    ...out,
+    error: {
+      ...typeof err.code === "string" && { code: err.code },
+      ...err.killed === true && { killed: true }
+    }
+  };
+}
+var runGh = (args, env, timeoutMs) => new Promise((resolve) => {
+  execFile("gh", [...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)));
+});
+var CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+function firstLine(s) {
+  const line = s.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+  return line.replace(CONTROL_CHARS, " ").trim().slice(0, 200);
+}
+function classify(r) {
+  if (r.error?.code === "ENOENT") {
+    return { definitive: true, reason: "the gh CLI is not installed on this runner" };
+  }
+  if (r.error?.killed === true) {
+    return { definitive: false, reason: "gh attestation verify timed out" };
+  }
+  const line = firstLine(r.stderr);
+  if (/no attestations found/i.test(r.stderr)) {
+    return { definitive: true, reason: "no attestation found for the package" };
+  }
+  return {
+    definitive: r.code !== null,
+    reason: line === "" ? `gh exited ${String(r.code)}` : `gh: ${line}`
+  };
+}
+async function attempt(pkgPath, repository, verifiedAt, deps) {
+  const env = { ...process.env, GH_TOKEN: deps.token };
+  const r = await deps.run(["attestation", "verify", pkgPath, "--repo", repository, "--format", "json"], env, TIMEOUT_MS);
+  if (r.code !== 0 || r.error !== undefined) {
+    const c = classify(r);
+    return { ok: false, reason: c.reason, retry: !c.definitive };
+  }
+  let output;
+  try {
+    output = JSON.parse(r.stdout);
+  } catch {
+    return { ok: false, reason: "gh printed output that is not JSON" };
+  }
+  return provenanceFromGhVerify(output, repository, verifiedAt);
+}
+async function verifyProvenance(pkgPath, repository, verifiedAt, deps) {
+  if (deps.token === "")
+    return { ok: false, reason: "no GitHub token to fetch attestations with" };
+  const first = await attempt(pkgPath, repository, verifiedAt, deps);
+  if (first.ok || first.retry !== true)
+    return strip(first);
+  await deps.sleep(RETRY_DELAY_MS);
+  return strip(await attempt(pkgPath, repository, verifiedAt, deps));
+}
+function ghProvenance(token) {
+  return (pkgPath, repository, verifiedAt) => verifyProvenance(pkgPath, repository, verifiedAt, {
+    run: runGh,
+    token,
+    sleep: (ms) => new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    })
+  });
+}
+function strip(r) {
+  return r.ok ? { ok: true, provenance: r.provenance } : { ok: false, reason: r.reason };
+}
+
 // src/registry-state.ts
 var PAGES_BRANCH = "gh-pages";
 var PAGES_REF = `origin/${PAGES_BRANCH}`;
@@ -10279,9 +10449,9 @@ var GHA_IO = {
 `);
   }
 };
-var CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
+var CONTROL_CHARS2 = /[\x00-\x1f\x7f]/g;
 function code(s) {
-  const flat = s.replace(CONTROL_CHARS, " ");
+  const flat = s.replace(CONTROL_CHARS2, " ");
   const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longest + 1);
   const pad = longest > 0 ? " " : "";
@@ -10367,13 +10537,23 @@ function statementOnlySummary(admitted) {
   return ["## Registry statements", "", ...statementLines(admitted)].join(`
 `);
 }
-function checkSummary(v, admitted = []) {
+function provenanceLine(v, r) {
+  if (v.repository === undefined) {
+    return "- **Provenance:** none (the manifest declares no `repository`)";
+  }
+  if (r === undefined || !r.ok) {
+    return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
+  }
+  const p = r.provenance;
+  return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
+}
+function checkSummary(v, admitted = [], provenance) {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
   return lines.join(`
 `);
 }
@@ -10413,6 +10593,14 @@ function checkRequestPullRequest(git, index, changes, cwd, io) {
 `));
   io.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
 }
+async function checkProvenance(v, packageBytes, work, opts, deps) {
+  if (v.repository === undefined)
+    return;
+  const pkgPath = join3(work, "provenance-check.tgz");
+  writeFileSync2(pkgPath, packageBytes);
+  const verify = deps.provenance ?? ghProvenance(opts.githubToken ?? "");
+  return verify(pkgPath, v.repository, new Date().toISOString());
+}
 async function runCheck(opts, deps = SHARED) {
   const { git } = deps;
   const cwd = opts.workspace;
@@ -10442,7 +10630,8 @@ async function runCheck(opts, deps = SHARED) {
   const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-check-"));
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
-    deps.io.summary(checkSummary(verdict, admitted.admitted));
+    const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance));
     deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
   } finally {
     rmSync2(work, { recursive: true, force: true });
@@ -10451,7 +10640,7 @@ async function runCheck(opts, deps = SHARED) {
 
 // src/sign.ts
 import { createHash as createHash6 } from "node:crypto";
-import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
 import { join as join5 } from "node:path";
 
@@ -10576,7 +10765,22 @@ function assertSignedIntact(git, index, ref, paths, cwd) {
 function sameFileSet(names) {
   return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
 }
-async function attemptSign(opts, seed, rootKey, deps) {
+async function provenanceFor(v, packageBytes, at, deps, memo) {
+  if (v.repository === undefined)
+    return;
+  let r = memo.get(v.packageSha256);
+  if (r === undefined) {
+    const pkgPath = join5(at.work, `provenance-${v.packageSha256}.tgz`);
+    writeFileSync3(pkgPath, packageBytes);
+    r = await deps.verify(pkgPath, v.repository, at.verifiedAt);
+    memo.set(v.packageSha256, r);
+    if (!r.ok) {
+      deps.io.annotate("warning", `no provenance for ${v.id}@${v.version} (repository ${v.repository}): ${r.reason}; signed without it`);
+    }
+  }
+  return r.ok ? r.provenance : undefined;
+}
+async function attemptSign(opts, seed, rootKey, deps, memo) {
   const { git } = deps;
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
@@ -10624,6 +10828,7 @@ async function attemptSign(opts, seed, rootKey, deps) {
         continue;
       }
       const base = `extensions/${v.id}/${v.version}`;
+      const provenance = await provenanceFor(v, candidate.packageBytes, { work, verifiedAt: publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, memo);
       const existing = extensions[v.id];
       extensions[v.id] = {
         publisher: publisherAfterPublish(existing, v.publisher),
@@ -10638,7 +10843,8 @@ async function attemptSign(opts, seed, rootKey, deps) {
             packageSha256: v.packageSha256,
             packageSizeBytes: v.packageSizeBytes,
             entryHash: v.entryHash,
-            publishedAt
+            publishedAt,
+            ...provenance !== undefined && { provenance }
           }
         }
       };
@@ -10763,9 +10969,10 @@ async function signLoop(opts, seed, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   let last;
+  const memo = new Map;
   try {
     for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
-      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
+      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps, memo);
       if (last.commit === undefined) {
         report(deps.io, last, false);
         return;
@@ -11043,6 +11250,13 @@ function signOptions(workspace, rootKey, defaultBranch, repository) {
     ...repository !== undefined && repository !== "" && { repository }
   };
 }
+function takeGithubToken() {
+  const token = getInput("github-token");
+  if (token !== "")
+    maskSecret(token);
+  delete process.env[inputEnvName("github-token")];
+  return token;
+}
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -11051,7 +11265,7 @@ async function main() {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef });
+      await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {
@@ -11064,7 +11278,11 @@ async function main() {
       });
     } else {
       const rootKey = takeRootKey();
-      await runSign(signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]));
+      const githubToken = takeGithubToken();
+      await runSign({
+        ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
+        githubToken
+      });
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

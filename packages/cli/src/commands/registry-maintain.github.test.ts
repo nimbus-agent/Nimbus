@@ -203,7 +203,8 @@ describe("registry maintain init --github", () => {
     expect(checkoutStep(doc, "check").with?.["fetch-depth"]).toBe(0);
     expect(checkoutStep(doc, "check").with?.["persist-credentials"]).toBe(false);
     const action = steps(doc, "check").find((s) => s.uses?.startsWith(REGISTRY_ACTION_PATH));
-    expect(action?.with).toEqual({ mode: "check" });
+    // Read-only token: lets the summary say whether the version's build provenance verifies.
+    expect(action?.with).toEqual({ mode: "check", "github-token": `\${{ github.token }}` });
   });
 
   test("the sign workflow: push to main + dispatch, environment, write, serialised, keeps credentials", async () => {
@@ -224,6 +225,7 @@ describe("registry maintain init --github", () => {
       mode: "sign",
       "default-branch": "main",
       "root-key": `\${{ secrets.${ROOT_KEY_SECRET} }}`,
+      "github-token": `\${{ github.token }}`,
     });
   });
 
