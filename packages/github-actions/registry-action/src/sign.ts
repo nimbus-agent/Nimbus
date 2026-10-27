@@ -38,10 +38,17 @@ import {
   signRegistryRequest,
   type TrustStatement,
   trustStatementId,
+  type VersionProvenance,
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
+import {
+  ghProvenance,
+  type ProvenanceResult,
+  type VerifyPackage,
+  verifyNeverThrowing,
+} from "./provenance.ts";
 import {
   CANDIDATE_FILES,
   CONFIG_FILE,
@@ -70,6 +77,8 @@ export interface SignOptions {
   defaultBranch?: string;
   /** `<owner>/<repo>` (`GITHUB_REPOSITORY`): sets the index's report URL when it has none. */
   repository?: string;
+  /** The `github-token` input: what `gh attestation verify` fetches attestations with. */
+  githubToken?: string;
 }
 
 /** What `sign` reads, judges, signs and reports with; injectable for tests. */
@@ -82,6 +91,11 @@ export interface SignDeps {
   tmpdir: () => string;
   /** Called between building the commit and pushing it; tests race a concurrent push here. */
   beforePush?: (attempt: number) => void | Promise<void>;
+  /**
+   * Verifies a package's build provenance (`gh attestation verify`); the default runs `gh` with the
+   * `github-token` input. Never throws: a failure is a reason.
+   */
+  provenance?: VerifyPackage;
 }
 
 const SHARED: SignDeps = {
@@ -191,12 +205,49 @@ function sameFileSet(names: ReadonlySet<string>): boolean {
   return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
 }
 
+/** Provenance results by package digest: a push-race retry never asks `gh` twice. */
+type ProvenanceMemo = Map<string, ProvenanceResult>;
+
+/**
+ * The provenance to record for a version this run adds (spec G8): only when its manifest declares
+ * a repository, verified over the very package bytes the entry hashes. Never blocks: a failure is
+ * one warning and no `provenance`.
+ */
+async function provenanceFor(
+  v: { id: string; version: string; repository?: string; packageSha256: string },
+  packageBytes: Uint8Array,
+  at: { work: string; verifiedAt: string },
+  deps: { io: ActionIo; verify: VerifyPackage },
+  memo: ProvenanceMemo,
+): Promise<VersionProvenance | undefined> {
+  if (v.repository === undefined) return undefined;
+  let r = memo.get(v.packageSha256);
+  if (r === undefined) {
+    r = await verifyNeverThrowing(deps.verify, {
+      pkgPath: join(at.work, `provenance-${v.packageSha256}.tgz`),
+      packageBytes,
+      repository: v.repository,
+      verifiedAt: at.verifiedAt,
+    });
+    memo.set(v.packageSha256, r);
+    if (!r.ok) {
+      deps.io.annotate(
+        "warning",
+        `no provenance for ${v.id}@${v.version} (repository ${v.repository}): ${r.reason}; signed without it`,
+      );
+    }
+  }
+  // A memo hit from an earlier attempt is re-stamped with THIS attempt's commit time.
+  return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
+}
+
 /** One attempt, from a fresh fetch to a commit ready to push. Throws on any refusal. */
 async function attemptSign(
   opts: SignOptions & { defaultBranch: string },
   seed: Uint8Array,
   rootKey: string,
   deps: SignDeps,
+  memo: ProvenanceMemo,
 ): Promise<Attempt> {
   const { git } = deps;
   const cwd = opts.workspace;
@@ -254,6 +305,14 @@ async function attemptSign(
         continue;
       }
       const base = `extensions/${v.id}/${v.version}`;
+      // NOSONAR S9382: sequential by design - one gh call at a time, inside the same sequential loop as validate
+      const provenance = await provenanceFor(
+        v,
+        candidate.packageBytes,
+        { work, verifiedAt: publishedAt },
+        { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") },
+        memo,
+      );
       const existing = extensions[v.id];
       extensions[v.id] = {
         publisher: publisherAfterPublish(existing, v.publisher),
@@ -269,6 +328,8 @@ async function attemptSign(
             packageSizeBytes: v.packageSizeBytes,
             entryHash: v.entryHash,
             publishedAt,
+            // The entry is built from fixed fields, so provenance is added here explicitly.
+            ...(provenance !== undefined && { provenance }),
           },
         },
       };
@@ -438,9 +499,10 @@ async function signLoop(opts: SignOptions, seed: Uint8Array, deps: SignDeps): Pr
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   let last: Attempt | undefined;
+  const memo: ProvenanceMemo = new Map();
   try {
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps);
+      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps, memo);
       if (last.commit === undefined) {
         report(deps.io, last, false);
         return;

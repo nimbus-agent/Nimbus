@@ -65,6 +65,16 @@ export {
   validateAndNormalizePermissions,
 } from "./permissions-validator.ts";
 export {
+  type ProvenanceRunner,
+  provenanceFromGhVerify,
+  provenanceMatching,
+  provenanceNote,
+  REPOSITORY_RE,
+  readManifestRepository,
+  readVersionProvenance,
+  type VersionProvenance,
+} from "./provenance.ts";
+export {
   type AdmissionOptions,
   admitPublisherStatements,
   currentPublisherKeys,

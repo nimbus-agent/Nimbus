@@ -149,6 +149,8 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
           verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
           publisherBadge: "Verified publisher: @acme-dev (verified 2026-10-20)",
           trustFeedNote: "The trust feed was last updated 3 days ago.",
+          provenanceNote:
+            "Provenance verified by main: built from acme/tool at cccccccccccc by release.yml",
         }}
         action="extension.install"
       />,
@@ -158,6 +160,11 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       "Verified publisher: @acme-dev (verified 2026-10-20)",
     );
     expect(screen.getByText("The trust feed was last updated 3 days ago.")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Provenance verified by main: built from acme/tool at cccccccccccc by release.yml",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText("acme.tool")).toBeInTheDocument();
     expect(screen.getByText("main")).toBeInTheDocument();
     // The badge fields are rendered as the badge, not repeated as raw rows.

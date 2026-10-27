@@ -55,6 +55,8 @@ nimbus extension publish . --registry-repo <owner>/<repo>
 
 A registry hosted on GitHub runs its own CI over your pull request: a **Registry check** job validates it for the reviewer, and after the merge a maintainer approves the **Registry sign** run in the registry's `registry-signing` environment, which signs your version into the published index (see [`docs/registry-hosting.md`](../registry-hosting.md)). A folder registry has no CI; its maintainer adds accepted packages with `nimbus registry maintain add`.
 
+**Build provenance (optional).** Add `"repository": "<owner>/<repo>"` to `nimbus.extension.json` (before `sign`), and publish from a GitHub Actions workflow in that repository that attests the exact package it publishes: run `nimbus extension publish . --registry-repo <owner>/<repo> --clone <path> --no-pr`, then `actions/attest-build-provenance` with `subject-path: <path>/extensions/<id>/<version>/package.tgz` (the job needs `id-token: write` and `attestations: write`), then open the pull request. When the registry signs the version it verifies that attestation and users see "Provenance verified by <registry>: built from <owner>/<repo> at <commit> by <workflow>". Without it nothing is refused; the version simply carries no provenance.
+
 Extension ids a registry accepts are narrower than ids the gateway installs: every `/` segment must start with a letter or digit, hold only letters, digits, `.`, `_` and `-`, and not end in `.` or `.lock`. `nimbus scaffold extension` only produces such ids.
 
 ## 7. CI for your extension repo

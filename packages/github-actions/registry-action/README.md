@@ -40,6 +40,7 @@ All four modes read the repository from the git tree, never the working director
 | --- | --- | --- |
 | `mode` | yes | `check`, `sign`, `trust-check` or `trust-sign`. Anything else fails. |
 | `default-branch` | no (`sign`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
+| `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 
 ## Building

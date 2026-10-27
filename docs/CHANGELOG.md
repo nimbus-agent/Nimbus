@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-27 — Marketplace trust layer PR 4c: registry-verified build provenance (no migration, no new invariant).** A
+  publisher declares `repository` (`owner/repo`) in the signed manifest and attests the published `package.tgz` with
+  `actions/attest-build-provenance`. The registry's sign job then runs `gh attestation verify` over the exact bytes it
+  hashes and records `provenance` (repository, commit, top-level workflow, runner) in the signed version entry; `check`
+  shows the result to the reviewer. Optional throughout: a missing or failed attestation, a missing `gh` or token, or a
+  malformed `repository` is a warning, never a refusal. `nimbus extension info` and the registry install prompt (CLI and
+  desktop) show "Provenance verified by <registry>: built from … at … by …" only when the publisher-signed manifest
+  names the same repository. The registry workflows `init --github` writes now pass `github-token: ${{ github.token }}`;
+  an existing registry adds that line to both workflows to record provenance. Bound: verified by the registry's CI at sign
+  time, vouched for by the registry root — not re-verified by clients.
+
 - **2026-10-27 — Marketplace trust layer PR 4b: `nimbus trust maintain` runs the Nimbus trust feed (no migration, no new
   invariant, no gateway change).** The feed's default branch holds its source — `publishers/<id>.json` (verified publishers),
   `requests/` (Nimbus-root revocations and takedowns) and `statements/` (a verified publisher's own signed statements) — and

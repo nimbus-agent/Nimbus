@@ -1893,10 +1893,11 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–4b** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+- **The trust layer, PRs 1–4c** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
   stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
   rotate keys, a registry carries their rotations and revocations, the verified-publisher badge is shown, registry
-  maintainers can block, users can report, and Nimbus can run its trust feed.
+  maintainers can block, users can report, Nimbus can run its trust feed, and a registry can vouch for a
+  version's build provenance.
 - **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
   their own, so they are described where they act: [§ Layered config](#layered-config),
   [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
@@ -2154,7 +2155,7 @@ I44. `registry search` reads the owner's registries only, so it does not include
 
 ### Trust layer
 
-**PRs 2a–4b of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
+**PRs 2a–4c of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
 The gateway accepts and stores trust statements (publisher-key revocations, extension takedowns, key rotations and Nimbus
 publisher verifications, PR 2a), refuses revoked or taken-down code at install, update and spawn (PR 2b), and follows a
 publisher's key rotations (PR 3a); a registry admits publishers' own rotations and revocations into its signed index (PR 3b).
@@ -2304,6 +2305,23 @@ removes the entry rather than signing one with no keys, which every shipped clie
 bound: whoever can merge into the feed's default branch and approve the signing run decides what every install
 trusts; `verify-publisher` records the owner's GitHub identity check, it does not perform one. The snapshot refresh
 and its audit land with the bake (PR 5).
+
+**Provenance (PR 4c).** Optional and never blocking (spec G8). A publisher declares `repository` (`owner/repo`) in the
+signed manifest and attests the `package.tgz` they publish with `actions/attest-build-provenance`. When the registry's
+sign job adds that version, it runs `gh attestation verify <the package bytes it hashes> --repo <repository>` (argv only,
+60 s deadline, one retry for a non-definitive failure, `GH_TOKEN` from the `github-token` input in gh's environment
+only) and, through `registry-format`'s `provenanceFromGhVerify`, records a `provenance` object in the version entry:
+the first SLSA v1 attestation whose certificate's `sourceRepositoryURI` path is exactly `/<owner>/<repo>` (segments
+compared, so `owner/repo-x` never matches), with its commit, the top-level workflow from `buildConfigURI` (a reusable
+workflow signs from elsewhere, so `buildSignerURI` is not used) and the runner kind. Recorded once, with the version:
+any failure is a warning and the version is signed without it. Verification is the registry CI's, never the gateway's
+(no online Sigstore in the gateway); the registry root's signature over the index vouches for it like every other
+field. Clients read it with the never-throwing `readVersionProvenance` and show it — `registry.info` for the newest
+version (the one whose manifest it fetches), the registry install prompt as `provenanceNote` — only when the
+hash-checked, publisher-signed manifest names the same repository (`provenanceMatching`). A malformed `repository` is
+absent, never a manifest error. Installed copies do not carry it. Stated bound: provenance is what the registry's CI
+checked against GitHub's attestation service at sign time, not a client-side re-verification; a version signed while
+that service was unreachable carries none for good.
 
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of

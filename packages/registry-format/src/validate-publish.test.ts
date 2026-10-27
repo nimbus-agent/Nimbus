@@ -326,6 +326,28 @@ describe("validatePublish", () => {
     expect(readdirSync(work)).toEqual([]);
   });
 
+  test("a declared repository rides the verdict; a malformed one is absent, never a refusal", async () => {
+    const declared = await signedManifest({ extra: { repository: "acme/echo" } });
+    const v = await validatePublish(
+      await candidate({ manifest: declared }),
+      await indexOf(),
+      NS,
+      work,
+    );
+    expect(v.repository).toBe("acme/echo");
+    const malformed = await signedManifest({
+      extra: { repository: "https://github.com/acme/echo.git" },
+    });
+    const w = await validatePublish(
+      await candidate({ manifest: malformed }),
+      await indexOf(),
+      NS,
+      work,
+    );
+    expect(w.repository).toBeUndefined();
+    expect("repository" in w).toBe(false);
+  });
+
   test("a new version of an indexed id by the same publisher is not a new id", async () => {
     const signed = await indexOf({ "acme/echo": entryFor("acme/echo", "acme", KEY, ["0.9.0"]) });
     const v = await validatePublish(

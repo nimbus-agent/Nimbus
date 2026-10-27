@@ -124,6 +124,42 @@ describe("installFromRegistry", () => {
     expect(fetchCalls).toBe(0);
   });
 
+  test("the prompt shows the registry's provenance only when the signed manifest names its repository (PR 4c)", async () => {
+    const provenance = {
+      sourceRepository: "example/tool",
+      commit: "c".repeat(40),
+      workflow: ".github/workflows/release.yml@refs/tags/v1.0.0",
+      runner: "github-hosted" as const,
+      verifiedAt: "2026-10-01T00:00:00Z",
+    };
+    const withProvenance = (): void => {
+      const path = join(regDir, "index.json");
+      const index = JSON.parse(readFileSync(path, "utf8")) as {
+        extensions: Record<string, { versions: Record<string, Record<string, unknown>> }>;
+      };
+      const v = index.extensions[ID]?.versions["1.0.0"] as Record<string, unknown>;
+      v["provenance"] = provenance;
+      resignIndex(path, index as unknown as Record<string, unknown>);
+    };
+    await setup([{ version: "1.0.0" }], { manifestExtra: { repository: "example/tool" } });
+    withProvenance();
+    await installFromRegistry(deps(), { id: ID });
+    expect(asked[0]?.provenance).toEqual(provenance);
+    expect(asked[0]?.provenanceNote).toBe(
+      "Provenance verified by main: built from example/tool at cccccccccccc by .github/workflows/release.yml@refs/tags/v1.0.0",
+    );
+    // The same recorded provenance under a manifest naming another repository: not shown.
+    resetInstalled();
+    rmSync(regDir, { recursive: true, force: true });
+    db.run("DELETE FROM extension_registry");
+    asked = [];
+    await setup([{ version: "1.0.0" }], { manifestExtra: { repository: "evil/tool" } });
+    withProvenance();
+    await installFromRegistry(deps(), { id: ID });
+    expect(asked[0]?.provenance).toBeUndefined();
+    expect(asked[0]?.provenanceNote).toBeUndefined();
+  });
+
   test("prompt payload carries sourceRegistry and rootFingerprint, never a *Key field", async () => {
     await setup([{ version: "1.0.0" }]);
     await installFromRegistry(deps(), { id: ID });

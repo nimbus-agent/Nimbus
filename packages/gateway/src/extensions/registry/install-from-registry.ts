@@ -17,10 +17,14 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
+  provenanceMatching,
+  provenanceNote,
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
   type RegistryVersionEntry,
+  readManifestRepository,
+  type VersionProvenance,
 } from "@nimbus-dev/registry-format";
 import { deleteExtensionById, listExtensions } from "../../automation/extension-store.ts";
 import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
@@ -147,6 +151,11 @@ export interface VerifiedRegistryPackage {
   readonly rootFingerprint: string;
   /** A move from the publisher's trusted keys to this one, and what vouched for it; else null. */
   readonly publisherChange: { readonly change: KeyChange; readonly via: KeyVia } | null;
+  /**
+   * The build provenance the registry recorded for this version (trust layer PR 4c), only when the
+   * hash-checked, signature-verified manifest names the same repository; else null.
+   */
+  readonly provenance: VersionProvenance | null;
 }
 
 /** `intoDir` must be absent or an empty directory: a staged package is never merged into another tree. */
@@ -273,6 +282,9 @@ export async function fetchVerifiedRegistryPackage(
       rootFingerprint,
       publisherChange:
         decision.change === null ? null : { change: decision.change, via: decision.via },
+      provenance:
+        provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
+        null,
     };
   } catch (e) {
     try {
@@ -307,6 +319,17 @@ function withKeyChange(
     });
 }
 
+/** The approver, showing the version's registry-verified build provenance when there is one. */
+function withProvenance(
+  approve: ExtensionInstallApprover,
+  provenance: VersionProvenance | null,
+  registry: string,
+): ExtensionInstallApprover {
+  if (provenance === null) return approve;
+  return (request) =>
+    approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
+}
+
 export async function installVerifiedRegistryPackage(
   deps: InstallFromRegistryDeps,
   pkg: VerifiedRegistryPackage,
@@ -331,7 +354,11 @@ export async function installVerifiedRegistryPackage(
       publisherKey: decodeBase64(pkg.publisherKey),
       sourceRegistry: reg.name,
       rootFingerprint,
-      approve: withKeyChange(deps.approve, pkg.publisherChange),
+      approve: withProvenance(
+        withKeyChange(deps.approve, pkg.publisherChange),
+        pkg.provenance,
+        pkg.reg.name,
+      ),
     });
   } catch (e) {
     if (

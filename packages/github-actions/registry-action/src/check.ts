@@ -27,6 +27,12 @@ import {
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import {
+  ghProvenance,
+  type ProvenanceResult,
+  type VerifyPackage,
+  verifyNeverThrowing,
+} from "./provenance.ts";
+import {
   CANDIDATE_FILES,
   PAGES_BRANCH,
   PAGES_REF,
@@ -48,6 +54,8 @@ export interface CheckOptions {
   workspace: string;
   /** The pull request's base branch (`GITHUB_BASE_REF`). */
   baseRef: string;
+  /** The `github-token` input: what `gh attestation verify` fetches attestations with. */
+  githubToken?: string;
 }
 
 /** What `check` reads the registry with, judges it by and reports to; injectable for tests. */
@@ -57,6 +65,8 @@ export interface CheckDeps {
   io: ActionIo;
   /** Where the validator's scratch directory goes. */
   tmpdir: () => string;
+  /** Verifies the version's build provenance for the summary; the default runs `gh`. */
+  provenance?: VerifyPackage;
 }
 
 const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO, tmpdir: osTmpdir };
@@ -184,8 +194,27 @@ function statementOnlySummary(admitted: readonly TrustStatement[]): string {
   return ["## Registry statements", "", ...statementLines(admitted)].join("\n");
 }
 
+/** The summary line for the version's build provenance; informational, never a failure. */
+function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): string {
+  if (v.repositoryIgnored === true) {
+    return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
+  }
+  if (v.repository === undefined) {
+    return "- **Provenance:** none (the manifest declares no `repository`)";
+  }
+  if (!r?.ok) {
+    return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
+  }
+  const p = r.provenance;
+  return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
+}
+
 /** The reviewer's job summary for an accepted publish. */
-function checkSummary(v: PublishVerdict, admitted: readonly TrustStatement[] = []): string {
+function checkSummary(
+  v: PublishVerdict,
+  admitted: readonly TrustStatement[] = [],
+  provenance?: ProvenanceResult,
+): string {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
@@ -202,6 +231,7 @@ function checkSummary(v: PublishVerdict, admitted: readonly TrustStatement[] = [
     `- **Name:** ${code(v.name)}`,
     `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`,
     `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`,
+    provenanceLine(v, provenance),
     "",
     ...statementLines(admitted),
     "**Declared permissions**",
@@ -272,6 +302,23 @@ function checkRequestPullRequest(
   io.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
 }
 
+/** What `sign` would record for this version, for the reviewer; `undefined` without a repository. */
+async function checkProvenance(
+  v: PublishVerdict,
+  packageBytes: Uint8Array,
+  work: string,
+  opts: CheckOptions,
+  deps: CheckDeps,
+): Promise<ProvenanceResult | undefined> {
+  if (v.repository === undefined) return undefined;
+  return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
+    pkgPath: join(work, "provenance-check.tgz"),
+    packageBytes,
+    repository: v.repository,
+    verifiedAt: new Date().toISOString(),
+  });
+}
+
 /** Run the `check` mode. Throws (failing the step) on any refusal. */
 export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Promise<void> {
   const { git } = deps;
@@ -304,7 +351,8 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-check-"));
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
-    deps.io.summary(checkSummary(verdict, admitted.admitted));
+    const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance));
     deps.io.log(
       `check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`,
     );

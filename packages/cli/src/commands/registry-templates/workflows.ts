@@ -66,6 +66,8 @@ jobs:
         uses: ${actionUses(pin)}
         with:
           mode: check
+          # Read-only: lets the summary show whether the new version's build provenance verifies.
+          github-token: \${{ github.token }}
 `;
 }
 
@@ -111,5 +113,7 @@ jobs:
           # empty repository, and a run reading it would sign nothing.
           default-branch: ${JSON.stringify(defaultBranch)}
           root-key: \${{ secrets.${ROOT_KEY_SECRET} }}
+          # Lets the sign job verify a version's build provenance (gh attestation verify).
+          github-token: \${{ github.token }}
 `;
 }

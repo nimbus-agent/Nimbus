@@ -95,6 +95,8 @@ export interface ExtensionOpts {
   network?: string[];
   /** Replace the manifest's signature with garbage. */
   badSignature?: boolean;
+  /** The manifest's `repository` (build provenance). */
+  repository?: string;
 }
 
 /** The three files a publish adds for one extension version. */
@@ -137,6 +139,7 @@ async function buildExtension(scratch: string, o: ExtensionOpts): Promise<Publis
     entry: "dist/index.js",
     permissions: { network: o.network ?? ["api.example.com"], filesystem: { read: [], write: [] } },
     publisher: { id: o.publisherId ?? "acme", key },
+    ...(o.repository !== undefined && { repository: o.repository }),
   };
   // See the module comment: the same canonical-bytes signature as the SDK's flat signManifest.
   const signed = (await signIndex(

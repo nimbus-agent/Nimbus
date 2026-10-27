@@ -1,10 +1,12 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
+  provenanceMatching,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryVersionEntry,
+  readManifestRepository,
   readRegistryReportUrl,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
@@ -498,7 +500,13 @@ async function handleInfo(
       `the manifest of ${id}@${newest[0]} does not match the hash the index signed`,
     );
   }
-  const { manifest } = parseExtensionManifestForRegistry(new TextDecoder().decode(bytes));
+  const text = new TextDecoder().decode(bytes);
+  const { manifest } = parseExtensionManifestForRegistry(text);
+  // Provenance (trust layer PR 4c): the newest version only — the one whose manifest was just
+  // fetched and hash-checked — and only when that publisher-signed manifest names the same
+  // repository the registry verified the build from.
+  const provenance =
+    provenanceMatching(newest[1], readManifestRepository(JSON.parse(text) as unknown)) ?? null;
   return {
     kind: "hit",
     value: {
@@ -507,6 +515,7 @@ async function handleInfo(
       publisherId: entry.publisher.id,
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
       reportUrl: reportUrlOf(found, o),
+      provenance,
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

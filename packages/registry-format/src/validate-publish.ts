@@ -37,6 +37,7 @@ import {
 } from "./manifest.ts";
 import { isPackageFile, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 import type { SandboxPermissions } from "./permissions-validator.ts";
+import { readManifestRepository } from "./provenance.ts";
 import { publisherKeyStanding } from "./publisher-statements.ts";
 
 /** `nimbus-registry.json`: the registry's own rules. */
@@ -72,6 +73,10 @@ export interface PublishVerdict {
   newId: boolean;
   /** The manifest's declared sandbox permissions, as the gateway parses them. */
   permissions: SandboxPermissions;
+  /** The manifest's well-formed `repository` (`owner/repo`), when it declares one (provenance). */
+  repository?: string;
+  /** True when the manifest declares a `repository` that is not `owner/repo` (ignored, not refused). */
+  repositoryIgnored?: true;
 }
 
 interface PublishRequest {
@@ -428,6 +433,8 @@ export async function validatePublish(
 ): Promise<PublishVerdict> {
   const req = parsePublishRequest(c.publishRequestBytes); // 1
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes); // 2
+  // Optional and never a refusal: a malformed value is simply absent (provenance never blocks).
+  const repository = readManifestRepository(raw);
   assertCoordinates(c, m, req); // 3
   const publisher = await assertSigned(m, raw); // 4
   if (req.publisherFingerprint !== publisherKeyFingerprint(publisher.key)) {
@@ -487,6 +494,9 @@ export async function validatePublish(
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
       permissions: m.permissions,
+      ...(repository !== undefined && { repository }),
+      ...(repository === undefined &&
+        raw["repository"] !== undefined && { repositoryIgnored: true }),
     };
   } finally {
     rmSync(scratch, { recursive: true, force: true });

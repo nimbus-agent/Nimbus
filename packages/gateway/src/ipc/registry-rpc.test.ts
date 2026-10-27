@@ -309,6 +309,10 @@ type FixtureVersion = {
   channel: "stable" | "beta";
   name: string;
   manifestOverride?: string;
+  /** The manifest's `repository` (provenance). */
+  repository?: string;
+  /** The version entry's `provenance`, as a registry's sign job records it. */
+  provenance?: unknown;
 };
 
 /** A local registry directory with a root-signed index and one manifest per version. */
@@ -330,6 +334,7 @@ function makeRegistry(
         version: v.version,
         entry: "dist/index.js",
         permissions: { network: ["api.example.com"] },
+        ...(v.repository !== undefined && { repository: v.repository }),
       });
       mkdirSync(join(dir, base), { recursive: true });
       writeFileSync(join(dir, base, "manifest.json"), v.manifestOverride ?? manifest);
@@ -343,6 +348,7 @@ function makeRegistry(
         packageSizeBytes: 1234,
         entryHash: "b".repeat(64),
         publishedAt: "2026-10-01T00:00:00Z",
+        ...(v.provenance !== undefined && { provenance: v.provenance }),
       };
     }
     built[id] = { publisher: { id: ext.publisherId, key: ROOT_KEY }, versions };
@@ -490,6 +496,43 @@ describe("registry.search and registry.info", () => {
     expect(bad.value.reportUrl).toBeNull();
   });
 
+  test("info shows the newest version's provenance only when its manifest names the same repository (PR 4c)", async () => {
+    const provenance = {
+      sourceRepository: "acme/tool",
+      commit: "c".repeat(40),
+      workflow: ".github/workflows/release.yml@refs/tags/v1.0.0",
+      runner: "github-hosted" as const,
+      verifiedAt: "2026-10-01T00:00:00Z",
+    };
+    const info = async (versions: FixtureVersion[], sequence: number) => {
+      makeRegistry(tmp, { "acme.tool": { publisherId: "acme", versions } }, sequence);
+      const r = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+        value: { provenance: unknown };
+      };
+      return r.value.provenance;
+    };
+    pin("main", tmp);
+    const v = { version: "1.0.0", channel: "stable" as const, name: "Tool" };
+    expect(await info([{ ...v, repository: "acme/tool", provenance }], 3)).toEqual(provenance);
+    // The registry recorded it, but the publisher-signed manifest names another repository, or none.
+    expect(await info([{ ...v, repository: "evil/tool", provenance }], 4)).toBeNull();
+    expect(await info([{ ...v, provenance }], 5)).toBeNull();
+    // Malformed provenance in the signed index is no provenance, never a refusal.
+    expect(
+      await info([{ ...v, repository: "acme/tool", provenance: { commit: "x" } }], 6),
+    ).toBeNull();
+    // Only the newest version: an older version's provenance is not shown.
+    expect(
+      await info(
+        [
+          { ...v, repository: "acme/tool", provenance },
+          { version: "1.1.0", channel: "stable", name: "Tool", repository: "acme/tool" },
+        ],
+        7,
+      ),
+    ).toBeNull();
+  });
+
   test("search marks an extension whose newest offered version is taken down (I48)", async () => {
     makeRegistry(tmp, {
       "acme.tool": {
@@ -600,6 +643,7 @@ describe("registry.search and registry.info", () => {
       publisherFingerprint: FINGERPRINT,
       verifiedPublisher: null,
       reportUrl: null,
+      provenance: null,
       versions: [
         {
           version: "1.1.0",
