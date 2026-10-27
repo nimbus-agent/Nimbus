@@ -156,9 +156,21 @@ paths = [
 #    ordinary source files that must stay scanned. ANCHORED, like entry 8, so
 #    a longer secret that merely contains a key is still reported. The private
 #    halves never enter this repository.
+#
+# 10. The Nimbus trust feed's PUBLIC Ed25519 root key, by VALUE
+#    (`4mmB1juQ…ppY=`, fingerprint 2a4f4e3d…), baked into
+#    `extensions/trust/trust-feed.ts` as `BUILTIN_TRUST_FEED.rootKey` and
+#    carried inside the snapshot `extensions/trust/trust-snapshot.ts`. Public
+#    by design: it is the `rootKey` of the signed trust.json served at
+#    https://nimbus-agent.github.io/nimbus-trust/, and the gateway must
+#    compile it in to verify that feed. Same shape and rationale as entry 9
+#    (anchored, by value, the files stay scanned). The private half is held
+#    only in that repository's protected `trust-signing` environment secret
+#    and an offline backup; it never enters this repository.
 regexes = [
   '''sk_live_never_echoed_9f8e7d''',
   '''^api_key=sk_live_123$''',
   '''^tBHSfVjFZzyMoSVR69FbZfMyUstbLdUcfGwHKIaY/qA=$''',
   '''^wrUu5uyn3aS2efQOEAUd1eC6H3uqX/RwzIEqQHvAZ9A=$''',
+  '''^4mmB1juQtm6dygsXcKlwlBxwW\+urkMWQebUJptd6ppY=$''',
 ]
