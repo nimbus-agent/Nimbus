@@ -30,10 +30,11 @@ class Exit extends Error {
   }
 }
 
-function harness(answers: Record<string, unknown>) {
+function harness(answers: Record<string, unknown>, maintainCode = 0) {
   const out: string[] = [];
   const err: string[] = [];
   const calls: string[] = [];
+  const maintained: string[][] = [];
   const client = {
     connect: () => Promise.resolve(),
     disconnect: () => Promise.resolve(),
@@ -44,14 +45,29 @@ function harness(answers: Record<string, unknown>) {
   } as unknown as IPCClient;
   const deps: TrustCmdDeps = {
     withGateway: (fn) => fn(client),
+    maintain: (args) => {
+      maintained.push(args);
+      return Promise.resolve(maintainCode);
+    },
     stdout: (s) => void out.push(s),
     stderr: (s) => void err.push(s),
     exit: (code) => {
       throw new Exit(code);
     },
   };
-  return { deps, out, err, calls };
+  return { deps, out, err, calls, maintained };
 }
+
+describe("runTrust maintain", () => {
+  test("hands maintain's args over without touching the gateway; a failing code exits with it", async () => {
+    const ok = harness({});
+    await runTrust(["maintain", "plan", "./feed"], ok.deps);
+    expect(ok.maintained).toEqual([["plan", "./feed"]]);
+    expect(ok.calls).toEqual([]);
+    const bad = harness({}, 2);
+    await expect(runTrust(["maintain"], bad.deps)).rejects.toMatchObject({ code: 2 });
+  });
+});
 
 describe("formatTrustStatus", () => {
   test("no feed configured says so and still reports stored statements", () => {

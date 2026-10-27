@@ -271,7 +271,8 @@ function planStatements(
       `publisher ${publisherId} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`,
   });
   for (const s of admission.skipped) {
-    const path = (s.id === undefined ? undefined : pathById.get(s.id)) ?? FEED_STATEMENTS_DIR;
+    // Every candidate was parsed above, so its id is known; the fallback is for the impossible case.
+    const path = pathById.get(s.id ?? "") ?? FEED_STATEMENTS_DIR;
     skipped.push({ path, reason: s.reason });
   }
   return admission.admitted;

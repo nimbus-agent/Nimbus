@@ -338,6 +338,87 @@ describe("planTrustFeed / buildTrustFeed", () => {
     await verifyTrustFeedPinned(reparsed, ROOT_KEY);
   });
 
+  test("within one run, a request covers only the same kind and subject", async () => {
+    const plan = planTrustFeed(
+      await initFeed(),
+      source({
+        requests: [
+          revokeReq("a-revoke"),
+          takedownReq("*", "b-all"),
+          takedownReq(["1.0.0"], "c-narrow"),
+          file("requests/d-other.json", {
+            kind: "extension.takedown",
+            extensionId: "acme/other",
+            publisherId: "acme",
+            versions: "*",
+            reason: "x",
+          }),
+        ],
+      }),
+    );
+    // The narrow takedown is covered by the wider one before it; the other id and the revoke are not.
+    expect(plan.blocks.map((b) => b.path)).toEqual([
+      "requests/a-revoke.json",
+      "requests/b-all.json",
+      "requests/d-other.json",
+    ]);
+    const widening = planTrustFeed(
+      await initFeed(),
+      source({ requests: [takedownReq(["1.0.0"], "a"), takedownReq("*", "b")] }),
+    );
+    expect(widening.blocks).toHaveLength(2);
+  });
+
+  test("files outside their directory or not .json are skipped", async () => {
+    const plan = planTrustFeed(
+      await initFeed(),
+      source({
+        requests: [file("requests/x.txt", {}), file("elsewhere/revoke.json", {})],
+      }),
+    );
+    expect(plan.skipped.map((s) => s.path)).toEqual(["elsewhere/revoke.json", "requests/x.txt"]);
+  });
+
+  test("a prev whose statements are not a list carries nothing; a verified entry by another key is dropped", async () => {
+    const notList = await signTrustFeed(
+      { ...emptyTrustFeed(ROOT_KEY, T0), statements: "x" },
+      ROOT_SEED,
+    );
+    expect(statementsOf(await build(notList, source({ requests: [revokeReq()] })))).toHaveLength(1);
+    const forged = await signTrustStatement(
+      {
+        kind: "publisher.verified",
+        publisherId: "acme",
+        keys: [STRANGER_KEY],
+        github: "evil",
+        verifiedAt: T0,
+        issuedAt: T0,
+        signerKey: keyOf(OTHER_SEED),
+      },
+      OTHER_SEED,
+    );
+    const prev = await signTrustFeed(
+      { ...emptyTrustFeed(ROOT_KEY, T0), statements: [forged] },
+      ROOT_SEED,
+    );
+    // Not Nimbus-signed, so it is not a current entry: the file makes it "added", and it is replaced.
+    const plan = planTrustFeed(prev, source({ publishers: [acme()] }));
+    expect(plan.verified[0]?.change).toBe("added");
+    const next = await build(prev, source({ publishers: [acme()] }));
+    expect(statementsOf(next).map((s) => (s as { github?: string }).github)).toEqual(["acme-dev"]);
+  });
+
+  test("a feed past the statement cap is refused", async () => {
+    const filler = Array.from({ length: 10_000 }, (_, i) => ({ kind: "later.kind", n: i }));
+    const prev = await signTrustFeed(
+      { ...emptyTrustFeed(ROOT_KEY, T0), statements: filler },
+      ROOT_SEED,
+    );
+    await expect(
+      buildTrustFeed(prev, source({ requests: [revokeReq()] }), ROOT_SEED, T1),
+    ).rejects.toMatchObject({ code: "ERR_TRUST_FEED_INVALID" });
+  });
+
   test("a seed that is not the feed root is refused", async () => {
     await expect(
       buildTrustFeed(await initFeed(), source({ requests: [revokeReq()] }), OTHER_SEED, T1),

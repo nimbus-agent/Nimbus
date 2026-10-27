@@ -7,7 +7,7 @@
 
 /** `actions/checkout`, pinned to the SHA this repository's own workflows use. */
 export const CHECKOUT_ACTION = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1";
-const CHECKOUT_VERSION = "v7.0.1";
+export const CHECKOUT_VERSION = "v7.0.1";
 
 /** The registry action, referenced by path in the Nimbus repository. */
 export const REGISTRY_ACTION_PATH = "nimbus-agent/Nimbus/packages/github-actions/registry-action";
@@ -26,7 +26,7 @@ export interface ActionPin {
   version: string;
 }
 
-function actionUses(pin: ActionPin): string {
+export function actionUses(pin: ActionPin): string {
   return `${REGISTRY_ACTION_PATH}@${pin.commit} # v${pin.version}`;
 }
 
