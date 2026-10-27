@@ -14,6 +14,7 @@ import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
   admitPublisherStatements,
+  assertRequestSignable,
   codeUnitCompare,
   effectiveRegistryConfig,
   type PublishVerdict,
@@ -233,6 +234,7 @@ function requestLine(f: RequestFile): string {
  */
 function checkRequestPullRequest(
   git: typeof gitTree,
+  index: RegistryIndex,
   changes: readonly gitTree.TreeChange[],
   cwd: string,
   io: ActionIo,
@@ -244,6 +246,14 @@ function checkRequestPullRequest(
     );
   }
   const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
+  // The sign job's own rule: a request that passes review must be signable (it can never be removed).
+  for (const f of files.requests) {
+    try {
+      assertRequestSignable(f.request, index);
+    } catch (e) {
+      files.skipped.push({ path: f.path, reason: (e as Error).message });
+    }
+  }
   if (files.skipped.length > 0) {
     throw new Error(
       `invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`,
@@ -278,7 +288,7 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
   });
   const changes = git.diffTree(mergeBase, "HEAD", { cwd });
   if (changes.some((c) => c.path.startsWith(REQUESTS_DIR))) {
-    checkRequestPullRequest(git, changes, cwd, deps.io);
+    checkRequestPullRequest(git, index, changes, cwd, deps.io);
     return;
   }
   const shape = assertPublishShape(changes);

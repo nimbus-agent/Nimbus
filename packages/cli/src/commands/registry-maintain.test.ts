@@ -473,7 +473,8 @@ describe("registry maintain revoke-key / takedown / set-report-url (trust layer 
     );
     expect(code).toBe(0);
     const files = readdirSync(join(clone, "trust-requests"));
-    expect(files).toEqual(["takedown-com.example.tool.json"]);
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^takedown-com\.example\.tool-[0-9a-f]{8}\.json$/);
     expect(JSON.parse(readFileSync(join(clone, "trust-requests", files[0] ?? ""), "utf8"))).toEqual(
       {
         kind: "extension.takedown",
@@ -483,14 +484,24 @@ describe("registry maintain revoke-key / takedown / set-report-url (trust layer 
       },
     );
     expect(out.join("")).toContain("pull request");
-    err.length = 0;
+    // The identical request again: already requested, nothing written.
+    out.length = 0;
     expect(
       await runRegistryMaintain(
-        ["takedown", "--github", clone, "com.example.tool", "--reason", "again"],
+        ["takedown", "--github", clone, "com.example.tool", "--reason", "malware"],
         io,
       ),
-    ).toBe(2);
-    expect(err.join("")).toContain("exists");
+    ).toBe(0);
+    expect(out.join("")).toContain("already requested");
+    expect(readdirSync(join(clone, "trust-requests"))).toHaveLength(1);
+    // A different block for the same id (another version) gets its own file.
+    expect(
+      await runRegistryMaintain(
+        ["takedown", "--github", clone, "com.example.tool@1.1.0", "--reason", "malware"],
+        io,
+      ),
+    ).toBe(0);
+    expect(readdirSync(join(clone, "trust-requests"))).toHaveLength(2);
   });
 
   test("set-report-url sets an https report URL; init --report-url too; http is refused", async () => {

@@ -78,6 +78,7 @@ export {
 } from "./publisher-statements.ts";
 export {
   alreadyCarried,
+  assertRequestSignable,
   parseRegistryRequest,
   REQUEST_NAME_RE,
   type RegistryRequest,

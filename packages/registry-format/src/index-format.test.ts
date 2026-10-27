@@ -483,6 +483,15 @@ describe("trust-layer fields on a registry index", () => {
     expect(readRegistryReportUrl(parsed)).toBe(good);
   });
 
+  test("the reportUrl comes back normalised: no control character from a hostile index survives", () => {
+    const hostile = "https://evil.example/a[2J]8;;xb";
+    const parsed = parseRegistryIndex(enc(sign({ ...unsigned, reportUrl: hostile })));
+    const out = readRegistryReportUrl(parsed) ?? "";
+    expect(out.startsWith("https://evil.example/")).toBe(true);
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
+    expect(out).not.toMatch(/[ -]/);
+  });
+
   test("an index carrying statements still parses, self-verifies and yields the valid ones", async () => {
     const revoke = await signTrustStatement(
       {

@@ -5,6 +5,7 @@ import { publisherKeyFingerprint } from "./fingerprint.ts";
 import type { RegistryExtensionEntry, RegistryIndex } from "./index-format.ts";
 import {
   alreadyCarried,
+  assertRequestSignable,
   parseRegistryRequest,
   type RegistryRequest,
   signRegistryRequest,
@@ -182,5 +183,40 @@ describe("alreadyCarried (once per block, by meaning)", () => {
     const real = await signRegistryRequest(revoke, INDEX, ROOT_SEED, ISSUED);
     const tampered = { ...real, signerKey: ROOT_KEY, reason: "edited after signing" };
     expect(alreadyCarried({ ...INDEX, statements: [forged, tampered] }, revoke)).toBe(false);
+  });
+});
+
+describe("assertRequestSignable (one rule for check and sign)", () => {
+  test("a revocation of the registry root's own key is refused (it would never read as carried)", () => {
+    const own: RegistryRequest = {
+      kind: "key.revoke",
+      publisherId: "acme",
+      keyFingerprint: publisherKeyFingerprint(ROOT_KEY),
+      reason: "x",
+    };
+    expect(() => assertRequestSignable(own, INDEX)).toThrow("root key");
+    expect(() => assertRequestSignable(revoke, INDEX)).not.toThrow();
+  });
+
+  test("a takedown the sign job would refuse is refused here too", () => {
+    const req: RegistryRequest = {
+      kind: "extension.takedown",
+      extensionId: "gone/tool",
+      versions: "*",
+      reason: "r",
+    };
+    expect(() => assertRequestSignable(req, INDEX)).toThrow("--publisher");
+    expect(() =>
+      assertRequestSignable(
+        {
+          kind: "extension.takedown",
+          extensionId: "acme/tool",
+          publisherId: "evil",
+          versions: "*",
+          reason: "r",
+        },
+        INDEX,
+      ),
+    ).toThrow("acme");
   });
 });

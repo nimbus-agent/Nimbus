@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:413f974902a6fb115726b7d43b17af1f14d45d6a196bb8750a6c9a7a781481d0
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:7b4900f46de914b5d90b5329e7920e423ef519a91466d7e81cb526dd48210bab
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5551,7 +5551,8 @@ function readRegistryReportUrl(index) {
   if (typeof v !== "string")
     return;
   try {
-    return new URL(v).protocol === "https:" ? v : undefined;
+    const url = new URL(v);
+    return url.protocol === "https:" ? url.href : undefined;
   } catch {
     return;
   }
@@ -9316,11 +9317,21 @@ function takedownPublisher(req, index) {
   }
   return req.publisherId;
 }
+function assertRequestSignable(req, index) {
+  if (req.kind === "extension.takedown") {
+    takedownPublisher(req, index);
+    return;
+  }
+  if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
+    throw invalid3("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+  }
+}
 async function signRegistryRequest(req, index, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== index.rootKey) {
     throw invalid3(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
   }
+  assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
     return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
   }
@@ -10021,12 +10032,19 @@ function requestLine(f) {
   const publisher = r.publisherId === undefined ? "" : ` (publisher ${code(r.publisherId)})`;
   return `- ${code(f.path)}: take down ${code(r.extensionId)}${publisher}, ${versions} — ${code(r.reason)}`;
 }
-function checkRequestPullRequest(git, changes, cwd, io) {
+function checkRequestPullRequest(git, index, changes, cwd, io) {
   const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
   if (offending.length > 0) {
     throw new Error(`a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`);
   }
   const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
+  for (const f of files.requests) {
+    try {
+      assertRequestSignable(f.request, index);
+    } catch (e) {
+      files.skipped.push({ path: f.path, reason: e.message });
+    }
+  }
   if (files.skipped.length > 0) {
     throw new Error(`invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`);
   }
@@ -10055,7 +10073,7 @@ async function runCheck(opts, deps = SHARED) {
   });
   const changes = git.diffTree(mergeBase, "HEAD", { cwd });
   if (changes.some((c) => c.path.startsWith(REQUESTS_DIR))) {
-    checkRequestPullRequest(git, changes, cwd, deps.io);
+    checkRequestPullRequest(git, index, changes, cwd, deps.io);
     return;
   }
   const shape = assertPublishShape(changes);

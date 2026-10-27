@@ -395,6 +395,8 @@ describe("maintainer requests in a pull request (trust layer PR 4a)", () => {
   const takedown = {
     kind: "extension.takedown",
     extensionId: "acme/echo",
+    // Not indexed in this fresh registry, so the takedown names its publisher.
+    publisherId: "acme",
     versions: "*",
     reason: "malware",
   };
@@ -412,6 +414,18 @@ describe("maintainer requests in a pull request (trust layer PR 4a)", () => {
   test("an invalid request fails the check", async () => {
     openPr((ws) => writeRequest(ws, "bad", { kind: "key.revoke" }));
     await expect(run()).rejects.toThrow(/trust-requests\/bad\.json/);
+  });
+
+  test("a request the sign job could never sign fails the check (it could not be removed later)", async () => {
+    openPr((ws) =>
+      writeRequest(ws, "takedown-gone", {
+        kind: "extension.takedown",
+        extensionId: "gone/tool",
+        versions: "*",
+        reason: "malware",
+      }),
+    );
+    await expect(run()).rejects.toThrow(/--publisher/);
   });
 
   test("a request mixed with an extension directory fails the check", async () => {

@@ -573,6 +573,20 @@ function verifiedPublisherOf(db: Database, row: ExtensionRow): VerifiedPublisher
   }
 }
 
+/**
+ * The publisher the copy's hash-checked manifest declares (id and PUBLIC key), for display: the CLI
+ * renders the id, a short key and the badge from it. Absent for an unsigned copy, or one whose
+ * manifest no longer reads.
+ */
+function publisherOf(row: ExtensionRow): { publisher?: { id: string; key: string } } {
+  try {
+    const p = readVerifiedManifest(row).publisher;
+    return p === undefined ? {} : { publisher: { id: p.id, key: p.key } };
+  } catch {
+    return {};
+  }
+}
+
 function decorateExtensionList(
   db: Database,
   rows: readonly ExtensionRow[],
@@ -585,6 +599,7 @@ function decorateExtensionList(
     const run = {
       ...extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id), trustBlocksOf(db, r)),
       verifiedPublisher: verifiedPublisherOf(db, r),
+      ...publisherOf(r),
     };
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
@@ -637,6 +652,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
       trustBlocksOf(ctx.db, row),
     ),
     verifiedPublisher: verifiedPublisherOf(ctx.db, row),
+    ...publisherOf(row),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {

@@ -133,6 +133,28 @@ function takedownPublisher(
 }
 
 /**
+ * Throws when the sign job could never sign `req` against `index`: a takedown whose publisher the
+ * index contradicts or cannot supply (and none is named), or a revocation of the registry root's own
+ * key — which verifies as publisher-signed, so it would never read as carried and would be signed
+ * again on every run. The registry action's `check` applies the same rule, so a request that passes
+ * review can always be signed.
+ */
+export function assertRequestSignable(
+  req: RegistryRequest,
+  index: Pick<RegistryIndex, "extensions" | "rootKey">,
+): void {
+  if (req.kind === "extension.takedown") {
+    takedownPublisher(req, index);
+    return;
+  }
+  if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
+    throw invalid(
+      "a registry cannot revoke its own root key this way; re-initialise the registry instead",
+    );
+  }
+}
+
+/**
  * Signs `req` with the registry root seed. Refuses a seed that is not `index.rootKey`'s: clients
  * only honour a registry-signed statement under the root they pinned.
  */
@@ -148,6 +170,7 @@ export async function signRegistryRequest(
       `the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`,
     );
   }
+  assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
     return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
   }

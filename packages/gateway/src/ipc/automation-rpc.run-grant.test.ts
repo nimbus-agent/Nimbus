@@ -99,6 +99,7 @@ type ListItem = {
   runState: string;
   runGrant: { serviceId: string } | null;
   verifiedPublisher?: unknown;
+  publisher?: unknown;
 };
 
 async function listed(db: Database): Promise<ListItem[]> {
@@ -575,6 +576,8 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
       ["c".repeat(32)],
     );
     expect((await listed(db))[0]?.verifiedPublisher).toBeNull();
+    // The verified manifest's publisher reaches the CLI (it renders the id, the key and the badge).
+    expect((await listed(db))[0]?.publisher).toEqual({ id: "acme", key: publisherKey });
     const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 15);
     const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
     const vouch = await signTrustStatement(
@@ -598,6 +601,10 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
       db,
     })) as { value: { extension: { verifiedPublisher: unknown } } };
     expect(info.value.extension.verifiedPublisher).toEqual(badge);
+    expect((info.value.extension as { publisher?: unknown }).publisher).toEqual({
+      id: "acme",
+      key: publisherKey,
+    });
     // The same copy recorded as a local-path install shows no badge.
     db.run(
       "UPDATE extension SET source_registry = NULL, source_root_fingerprint = NULL WHERE id = 'rpc.run'",

@@ -3,6 +3,7 @@
  * registry folder (spec § 9). Pure CLI: no gateway, no network, no Vault. The root key is a file
  * holding base64 of the 32-byte Ed25519 seed (the format `nimbus extension keygen` writes).
  */
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   closeSync,
@@ -587,18 +588,29 @@ function requestFrom(
  * `registry-signing` environment's approval. No git command runs here.
  */
 function writeRequestFile(clone: string, req: RegistryRequest, io: MaintainIo): void {
-  const name =
+  const text = `${JSON.stringify(req, null, 2)}\n`;
+  // The subject plus a short hash of the request: a second block for the same id (another version)
+  // gets its own file, and the identical request maps to the same name.
+  const hash = createHash("sha256").update(text).digest("hex").slice(0, 8);
+  const subject =
     req.kind === "key.revoke"
       ? `revoke-${req.keyFingerprint.slice(0, 12)}`
       : `takedown-${slugOf(req.extensionId)}`;
+  const name = `${subject}-${hash}`;
   if (!REQUEST_NAME_RE.test(name))
     throw new MaintainError(`cannot name a request file for ${name}`);
   const path = join(clone, "trust-requests", `${name}.json`);
   if (existsSync(path)) {
-    throw new MaintainError(`${path} exists; a request for this subject is already waiting`);
+    if (readFileSync(path, "utf8") === text) {
+      io.stdout(`${path} already requested; nothing written\n`);
+      return;
+    }
+    throw new MaintainError(
+      `${path} exists with different content; remove it or choose another clone`,
+    );
   }
   mkdirSync(join(clone, "trust-requests"), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(req, null, 2)}\n`);
+  writeFileSync(path, text);
   io.stdout(
     `wrote ${path}\n` +
       "Commit it on a branch and open a pull request against the registry. On merge, the sign workflow signs it with the registry root key (after the registry-signing approval) and every client that installed from this registry applies it.\n",
