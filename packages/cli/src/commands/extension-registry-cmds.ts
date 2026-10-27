@@ -3,6 +3,7 @@
  * registry lookups (spec § 8.5). Both are gateway-backed: the gateway fetches and verifies each
  * registry's index; this file only formats.
  */
+import { provenanceNote, readVersionProvenance } from "@nimbus-dev/registry-format";
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
   type VerifiedPublisherCli,
@@ -46,7 +47,18 @@ interface RemoteInfo {
   publisherId: string;
   publisherFingerprint: string;
   verifiedPublisher?: VerifiedPublisherCli | null;
+  /** The newest version's registry-verified build provenance (trust layer PR 4c), or null. */
+  provenance?: unknown;
   versions: InfoVersion[];
+}
+
+/**
+ * The newest version's provenance, re-read through the format's own shape check: "verified by
+ * <registry>: built from …", or "none".
+ */
+function provenanceLine(out: RemoteInfo): string {
+  const p = readVersionProvenance({ provenance: out.provenance });
+  return p === undefined ? "Provenance: none" : provenanceNote(p, out.registry);
 }
 
 export const EXTENSION_SEARCH_USAGE = "Usage: nimbus extension search <query> [--json]\n";
@@ -146,6 +158,7 @@ export async function runExtensionInfoRemote(
   deps.stdout(`Publisher: ${out.publisherId}\n`);
   deps.stdout(`  key fingerprint: ${out.publisherFingerprint}\n`);
   deps.stdout(`  ${verifiedPublisherLine(out.verifiedPublisher)}\n`);
+  deps.stdout(`${provenanceLine(out)}\n`);
   deps.stdout("Versions:\n");
   for (const v of out.versions) {
     deps.stdout(`  ${v.version}  ${v.channel}  ${v.publishedAt}  ${v.packageSizeBytes} bytes\n`);

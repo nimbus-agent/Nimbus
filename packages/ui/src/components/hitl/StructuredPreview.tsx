@@ -155,7 +155,12 @@ export function readPublisherBadge(details: Record<string, unknown>): PublisherB
 }
 
 /** Owner-relevant notes the gateway attaches to a prompt; each is shown as its own line. */
-const NOTE_FIELDS: readonly string[] = ["publisherChangeNote", "runGrantNote", "trustFeedNote"];
+const NOTE_FIELDS: readonly string[] = [
+  "publisherChangeNote",
+  "runGrantNote",
+  "trustFeedNote",
+  "provenanceNote",
+];
 
 function readNotes(details: Record<string, unknown>): string[] {
   return NOTE_FIELDS.map((k) => readStringField(details, k)).filter(

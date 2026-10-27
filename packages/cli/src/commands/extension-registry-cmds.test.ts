@@ -140,6 +140,34 @@ describe("nimbus extension info --remote", () => {
     expect(h.stdout()).toContain("f".repeat(32));
     expect(h.stdout()).toContain("api.example.com");
     expect(h.stdout()).toContain("Unverified publisher");
+    expect(h.stdout()).toContain("Provenance: none");
+  });
+
+  test("names the newest version's registry-verified provenance; a malformed one is none (PR 4c)", async () => {
+    const answer = (provenance: unknown) => () => ({
+      registry: "main",
+      id: "acme.tool",
+      publisherId: "acme",
+      publisherFingerprint: "f".repeat(32),
+      provenance,
+      versions: [],
+    });
+    const good = harness(
+      answer({
+        sourceRepository: "acme/tool",
+        commit: "c".repeat(40),
+        workflow: ".github/workflows/release.yml@refs/tags/v1.0.0",
+        runner: "self-hosted",
+        verifiedAt: "2026-10-01T00:00:00Z",
+      }),
+    );
+    await runExtensionInfoRemote("acme.tool", "main", false, good.deps);
+    expect(good.stdout()).toContain(
+      "Provenance verified by main: built from acme/tool at cccccccccccc by .github/workflows/release.yml@refs/tags/v1.0.0 on a self-hosted runner",
+    );
+    const bad = harness(answer({ sourceRepository: "acme/tool" }));
+    await runExtensionInfoRemote("acme.tool", "main", false, bad.deps);
+    expect(bad.stdout()).toContain("Provenance: none");
   });
 
   test("names a verified publisher and its verification date (R6)", async () => {
