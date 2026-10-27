@@ -57,6 +57,15 @@ keys and a rotation back to a key already reached are refused, and each publishe
 50 statements. The first version under a new key must be on the stable channel. A statement once
 signed into the index is never removed.
 
+## Blocking an extension or a publisher key (maintainers)
+
+\`nimbus registry maintain revoke-key --github <clone> <fingerprint> --publisher <id> --reason <text>\`
+or \`nimbus registry maintain takedown --github <clone> <id>[@<version>] --reason <text>\` writes a
+request under \`trust-requests/\`. Merging its pull request and approving the signing run sign it with
+the root key: every client that installed from this registry then refuses that code until its owner
+re-approves it. Anyone can propose such a pull request; the check marks it **MAINTAINER REQUEST**.
+Blocks are permanent.
+
 ## Approving a signing run
 
 After a merge to \`${main}\`, the **Registry sign** workflow waits for approval in the

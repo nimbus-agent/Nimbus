@@ -1893,9 +1893,10 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–3c of 5** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+- **The trust layer, PRs 1–4a** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
   stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
-  rotate keys, a registry carries their rotations and revocations, and the verified-publisher badge is shown.
+  rotate keys, a registry carries their rotations and revocations, the verified-publisher badge is shown, registry
+  maintainers can block, and users can report.
 - **Role packs, 5 of 5** (2026-10-22 → 2026-10-26). They are config layers rather than an S3 subsystem of
   their own, so they are described where they act: [§ Layered config](#layered-config),
   [§ Source kinds](#source-kinds-decisions-and-glossary-inputs) and the desktop notes in
@@ -2270,6 +2271,21 @@ never stored on the cached update, and none unless the update's signature verifi
 it. The old `publisherStatus` field (it means "the signature verified") is kept for clients but no longer rendered as
 "publisher: verified" anywhere: the CLI and the desktop label the signature from `verificationStatus`, and an extension
 with no publisher is "(unsigned)". This build bakes no feed (PR 5), so production shows every publisher as unverified.
+
+**Registry maintainers and reports (PR 4a).** `registry-format`'s `registry-requests.ts` defines a maintainer request — a
+`key.revoke` or `extension.takedown`'s subject and reason, unsigned — and `signRegistryRequest`, which signs it with the
+registry ROOT (a takedown takes the publisher the index binds to the id, or an explicit one for an id the index no longer
+carries). A block is signed into an index once by meaning (`alreadyCarried`: same kind and subject, against statements that
+verify under the index's own root), so a re-run or a renamed request adds nothing. A local-folder registry signs at once
+(`registry maintain revoke-key|takedown`); a GitHub registry commits `trust-requests/<name>.json` and its sign job — the
+only holder of the root key — signs it on merge, behind the `registry-signing` approval, after the extension loop so a
+takedown may target an id the same merge adds. Merging and approving are the authority; the check banners a request PR
+`MAINTAINER REQUEST`. The gateway already scopes registry-signed blocks to that registry's extensions under its root
+(I48). The sign job also sets the index's `reportUrl` to the repository's issue form when it has none, and
+`registry.info` returns the resolved registry's report URL (the built-in registry's is baked), which `nimbus extension
+report` uses for the extension's own source registry only — pre-filling public metadata, opening an `https:` URL only
+after a yes on a terminal. Per the owner's 2026-10-27 amendment to R6, a local-path install never carries the
+verified-publisher badge: its manifest signature does not bind its entry file.
 
 **When a block lands.** Every recording path (a verified registry index, the feed, the boot snapshot) hands the ids it newly
 stored to `RegistryFetchDeps.onTrustRecorded`. `extensions/trust/trust-block-enforcer.ts` then stops the running client of

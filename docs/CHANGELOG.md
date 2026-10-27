@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-27 — Marketplace trust layer PR 4a: registry maintainers block, users report, local installs carry no badge (no
+  migration, no new invariant).** `nimbus registry maintain revoke-key` / `takedown` sign a block for that registry with its
+  root key — at once for a local-folder registry; for a GitHub registry, `--github <clone>` writes `trust-requests/<name>.json`
+  and the registry's sign job signs it on merge behind the `registry-signing` approval (the root key never leaves CI). A block
+  is signed once by meaning, never twice, and is permanent; clients already scope registry-signed blocks to that registry's
+  extensions (I48). `set-report-url` / `init --report-url` set where users report; a GitHub registry gets its issue form
+  automatically. `nimbus extension report <id>` opens a pre-filled issue on the extension's own source registry: public
+  metadata only, the registry's name never its URL, an `https:` URL opened only after a yes on a terminal. And, per the
+  owner's 2026-10-27 amendment to R6, a local-path install never shows the verified-publisher badge: its manifest signature
+  does not bind its code.
+
 - **2026-10-27 — Marketplace trust layer PR 3c of 5: the verified-publisher badge (spec R6; no migration, no new invariant,
   no new IPC method).** Wherever Nimbus shows an extension with publisher data it says `Verified publisher: @handle
   (verified <date>)` exactly when the current Nimbus verification lists the key that verified (or would verify) the code
