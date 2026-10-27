@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.8.0](https://github.com/nimbus-agent/Nimbus/compare/v10.7.0...v10.8.0) (2026-10-27)
+
+
+### Features
+
+* **trust:** the release bakes the Nimbus trust feed and a verified snapshot of it ([#1803](https://github.com/nimbus-agent/Nimbus/issues/1803)) ([47b4f6c](https://github.com/nimbus-agent/Nimbus/commit/47b4f6c93fa048c71d7f6e1d89f618b2a7cf92ca))
+
+
+### Bug Fixes
+
+* **deps:** @modelcontextprotocol/node 2.1.1 (GHSA-f897-62hf-6gxq) ([#1804](https://github.com/nimbus-agent/Nimbus/issues/1804)) ([19cdfe7](https://github.com/nimbus-agent/Nimbus/commit/19cdfe7a81ad0fce55c0a4e7708f0a47147aa062))
+
 ## [10.7.0](https://github.com/nimbus-agent/Nimbus/compare/v10.6.0...v10.7.0) (2026-10-27)
 
 
