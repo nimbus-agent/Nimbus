@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793112817361,
+  "lastUpdate": 1793118541765,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "824b5b31f84f1881c755a0dc16f0cc9f85e6ad42",
-          "message": "ci(release): treat a created-or-updated release PR as a healthy run (#1136)\n\n## Summary\n\nThe release-please guard fails healthy releases. It fired on #1134 →\nv1.27.0 even though release-please had done exactly the right thing, and\nits own error advice would have made things worse.\n\n## What happened\n\nTimeline from the run, to the second:\n\n| time | event |\n|---|---|\n| 19:47:21 | #1134 squash-merged to `main` (`feat(gateway): …`) |\n| 19:47:44 | release-please runs, reports `commits: 2` |\n| 19:47:55 | release-please **creates release PR #1135**, labelled\n`autorelease: pending` |\n| 19:47:59 | the guard runs, queries `gh pr list --label \"autorelease:\npending\"`, gets **0**, fails the job |\n\nNothing was wrong. #1135 existed, carried the right label, bumped 1.26.1\n→ 1.27.0, and listed the feat commit. GitHub's PR-list index simply had\nnot caught up **four seconds** after the write.\n\n## Why the guard missed it\n\nOf the three signals it consulted, two come straight back from the\naction and one is a fresh API read:\n\n```\nreleases_created   ← action output      (false here: a PR was opened, not a release)\nreconciled         ← recovery step      (false here: nothing to recover)\npending            ← gh pr list         (0 here: the read raced the write)\n```\n\nThe one signal that would have been decisive was never consulted:\n**`prs_created`**. Per the pinned action's own README (`45996ed1` /\nv5.0.0):\n\n> `prs_created` — `true` if any pull request was created **or updated**\n\nIt is the action's own return value for the PR it just opened, so it\ncannot race with itself. And \"or updated\" matters as much as \"created\":\na `feat` merged while a release PR is already open produces an *update*,\nwhich also leaves `releases_created` false.\n\n## The fix\n\nAdd `prs_created` as a healthy signal, ordered so action-supplied\noutputs are all consulted **before** the one that re-queries the API:\n\n```\nreleases_created  →  prs_created  →  reconciled  →  pending (gh pr list)\n```\n\nThe label query stays, but last. It is still the only signal that can\nsee a release PR left open by an **earlier** run, which no output of\n*this* run reports.\n\n## The error advice was also actively dangerous\n\nOn failure the guard said:\n\n> Most likely it could not PARSE one of them… Unstick with a\n`Release-As: X.Y.Z` trailer\n\nBoth halves were wrong here. Its own log showed `commits: 2` and no\n`commit could not be parsed` line, so nothing was skipped. And following\nthat advice with #1135 already pending would have cut a **second**\nversion on top of it — and per `CLAUDE.md`, release tags are immutable,\nso that is not undoable, only superseded.\n\nThe message now tells the reader to check whether a release PR exists\n**first**, says plainly that the guard is wrong if one does, and warns\nnever to add the trailer while a release PR is pending.\n\n## Type of Change\n\n- [x] CI / tooling\n- [x] Bug fix (non-breaking change that fixes an issue)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome)\n- [x] All existing tests pass\n- [x] New behaviour is covered by tests — n/a; this is a workflow-only\nchange with no test harness for GitHub Actions in this repo. Validated\nas described under Testing.\n- [x] No `any` types introduced — n/a\n- [x] No credentials, tokens, or secret values in logs, IPC, config or\nfixtures — the new `PRS_CREATED` env carries a boolean from a step\noutput\n- [x] Platform-specific code behind `PlatformServices` — n/a\n- [x] The HITL consent gate has not been weakened — untouched\n- [x] Does not touch `docs/README.md`\n\n## Testing\n\n- `bun run preflight:fast` — PASSED, all 29 gates.\n- `bun run audit:workflow-lint` — OK, 24 workflows and 181 bash bodies\nparsed, so the edited shell body is syntactically valid.\n- `bun run audit:action-sha-pins` — clean; no action reference changed.\n- YAML re-parsed independently to confirm the job structure is intact.\n- `prs_created` verified against the **pinned SHA's** own README rather\nthan assumed from a newer version — the action declares outputs\ndynamically via `core.setOutput`, so there is no `outputs:` block in\n`action.yml` to check.\n\n## Notes for Reviewers\n\n- This is deliberately additive: no existing healthy condition was\nremoved, so the change can only turn red runs green, never the reverse.\n- The ordering is the substantive part, not just style. Any future\nsignal that comes back from the action belongs **above** the `gh pr\nlist` call, for the same reason `prs_created` does.\n- Worth knowing when reading the guard: `releases_created` and\n`prs_created` are near-mutually-exclusive in practice — release-please\neither opens/updates a release PR (`prs_created`) or, when that PR\nmerges, cuts the release (`releases_created`). A guard that checks only\nthe second is blind to the entire first half of every release cycle.",
-          "timestamp": "2026-08-10T06:27:28+03:00",
-          "tree_id": "0ffb9105c9805dec1ce3e9494230b64508c5f538",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/824b5b31f84f1881c755a0dc16f0cc9f85e6ad42"
-        },
-        "date": 1786333134441,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.56260850000217,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.7772349499992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 267.95103624999757,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "001b8eb9c09696605f9060f878a481ca94737009",
+          "message": "feat(trust): nimbus trust maintain builds and signs the Nimbus trust feed (#1799)\n\nTrust layer PR 4b, Phase 9.5 project 3. Nimbus can now run the trust\nfeed the gateway already consumes: verify and un-verify publishers,\nrevoke a key or take an extension down everywhere, carry a verified\npublisher's own statements, and sign `trust.json`. That is offline from\na local folder, or from a GitHub repository whose sign job alone holds\nthe Nimbus trust root key. After this PR the owner can do spec § 12\nsteps 1–3.\n\nSplit change: the snapshot refresh script and its audit move from 4b to\n**PR 5** (the bake). Both read the live feed, which does not exist yet,\nand where the baked snapshot lives on disk is PR 5's call.\n\n## What changes\n\n- **The feed's source.** The feed repository's default branch holds\nsource, never a signed document:\n- `publishers/<publisherId>.json`: one per verified publisher, `{\npublisherId, keys, github }`. This is the current verification state;\nremoving the file un-verifies.\n- `requests/<name>.json`: a `key.revoke` or `extension.takedown` to sign\nwith the Nimbus root. A takedown must name its publisher.\n- `statements/<id>.json`: a verified publisher's own signed rotation or\nrevocation.\n- **One builder, `buildTrustFeed`, in `registry-format`.** `nimbus trust\nmaintain sign` and the registry action's new `trust-sign` mode both run\nit, so they cannot disagree; `planTrustFeed` is the keyless dry run\nbehind `trust maintain plan` and `trust-check`. Its rules:\n- **Blocks are a union:** every raw entry of the previous feed that is\nnot `publisher.verified` is carried verbatim, including kinds this\nversion does not know and entries it cannot parse. No deleted file and\nno older tool's re-sign removes a block.\n- **A request is signed once by meaning:** `alreadyCarried` gains a\n`nimbus` role. A renamed copy, a re-run or a request covered by a wider\ntakedown adds nothing.\n- **Stable verified entries:** an unchanged publisher file keeps its\nsigned statement byte for byte, and keys are sorted so file order never\nmatters.\n- **Publisher statements need a Nimbus-verified key:** they go through\nthe registries' own `admitPublisherStatements`, which gains options for\nbound keys, cap and wording, with the publisher's verified keys as bound\nkeys. A feed-carried statement applies everywhere, so a stranger's key\ncannot plant `rotate S→victim` + `revoke S`.\n- **Un-verify removes the entry.** The spec's suggested \"verified with\nno keys\" is refused by the statement format, so every shipped client\nwould drop it as malformed.\n- **`nimbus trust maintain`:** `init [--github]`, `verify-publisher`,\n`unverify-publisher`, `revoke-key`, `takedown` with `--publisher`\nrequired, `add-statement`, `plan`, `sign`. Source commands only write\nsource files, so they work on a local folder and on a clone of the\nGitHub feed alike. The helpers shared with `registry maintain` moved to\n`cli/src/lib/maintain-shared.ts` with no behaviour change.\n- **Registry action, two new modes:**\n- `trust-sign`, behind the `trust-signing` environment: refuses unless\n`gh-pages:trust.json` verifies against its own root, the input key IS\nthat root, and `nimbus-trust.json` is valid. It builds, commits\n`trust.json` to `gh-pages`, pushes, and retries a lost race. The key is\nmasked, dropped from the environment and zeroed.\n- `trust-check`: refuses a pull request touching anything outside the\nthree source folders, workflows included, or adding a file the feed\nwould not sign. It summarises the merged result under a `NIMBUS TRUST\nFEED` banner.\n  - `init --github` writes both workflows, pinned by SHA.\n- **Stated bounds:** whoever can merge into the feed's default branch\nand approve the signing run decides what every install trusts.\n`verify-publisher` records the owner's GitHub identity check; it does\nnot perform one. A publisher file that fails to parse is skipped, so\nthat publisher reads as un-verified on the next sign; this only ever\nremoves a badge, never a block, and `trust-check` fails a pull request\nthat introduces such a file.\n\nNo migration, no new invariant, no gateway change, no IPC or allowlist\nchange. The release still bakes no feed.\n\n## Review\n\n- **Plan:** Antigravity reviewed it and found 11 problems; all 11 were\nchecked against the code and applied, e.g. carry prev's entries raw, a\ndedicated `signFeedRequest`, assemble statements from\n`admission.admitted` so verified entries are never duplicated, and fetch\n`gh-pages` in both modes.\n- **Whole branch:** a fresh reviewer confirmed all six security\nproperties hold, with 0 Critical and 0 Important. Two Minors are fixed\nwith tests: `unverify-publisher` now validates the id before building a\npath, and plan and build now agree on the statement cap.\n\n## Verification\n\n- `bun run preflight:fast`: green.\n- registry-format 443 pass; `trust-maintain` + `trust-cmd` + builder\ntests 34 pass; registry action trust modes 12 + summary 3 + main 14\npass. Two tests were red-proved by mutation (blocks carried raw;\nverified-key admission), and the check path rule likewise.\n- `cli/src`: all green except 10 Yoga/Ink \"unhandled error between\ntests\", identical on the 4a baseline.\n- `gateway/src` + `scripts`: green; parallel-run timeouts re-ran green\nserially, and the 5 `ps1` tests need `pwsh` on PATH, as on main.\n- Istanbul coverage of the new files: builder 93% branch,\n`trust-maintain` 87%, `maintain-shared` 91%; action `trust-*` files at\nor above the floor.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added offline trust-feed maintenance commands to initialize a feed,\nmanage publisher records and requests, preview changes, and sign\nupdates.\n* Added trust-feed review and signing modes for repository workflows,\nincluding pull-request checks and approved signing on the default\nbranch.\n* Feed updates retain existing blocks and unchanged verified entries;\nrepeated requests are deduplicated, and unchanged feeds are not signed.\n* **Documentation**\n* Expanded CLI, workflow, and architecture guidance for maintaining\ntrust feeds and configuring signing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-27T16:23:08Z",
+          "tree_id": "39a2ff959d53b8545f5640aeede0fa6aae5f0170",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/001b8eb9c09696605f9060f878a481ca94737009"
+        },
+        "date": 1793118538133,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 160.2722105999983,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 159.66389374999815,
             "unit": "ms"
           }
         ]
