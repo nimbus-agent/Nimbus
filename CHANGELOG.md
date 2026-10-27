@@ -2,6 +2,21 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.7.0](https://github.com/nimbus-agent/Nimbus/compare/v10.6.0...v10.7.0) (2026-10-27)
+
+
+### Features
+
+* **trust:** a registry vouches for a version's build provenance ([#1801](https://github.com/nimbus-agent/Nimbus/issues/1801)) ([1313e3d](https://github.com/nimbus-agent/Nimbus/commit/1313e3def340cdcac65b6b9fa8cdd0e525bb9edd))
+* **trust:** nimbus trust maintain builds and signs the Nimbus trust feed ([#1799](https://github.com/nimbus-agent/Nimbus/issues/1799)) ([001b8eb](https://github.com/nimbus-agent/Nimbus/commit/001b8eb9c09696605f9060f878a481ca94737009))
+* **trust:** registry maintainers revoke keys and take extensions down; nimbus extension report ([#1796](https://github.com/nimbus-agent/Nimbus/issues/1796)) ([9c67412](https://github.com/nimbus-agent/Nimbus/commit/9c6741245dffb6882e99f20d11cbae3b64de1e0d))
+* **trust:** show a verified-publisher badge everywhere an extension's publisher appears (R6) ([#1794](https://github.com/nimbus-agent/Nimbus/issues/1794)) ([c3360b6](https://github.com/nimbus-agent/Nimbus/commit/c3360b67538f9a18b882d28dbfd234ae8008952c))
+
+
+### Bug Fixes
+
+* **deps:** qs 6.16.1 (GHSA-6pq8-jhm2-2vcw) ([#1802](https://github.com/nimbus-agent/Nimbus/issues/1802)) ([ae231c7](https://github.com/nimbus-agent/Nimbus/commit/ae231c70b2e3938ace3b944de69ffab948800f3a))
+
 ## [10.6.0](https://github.com/nimbus-agent/Nimbus/compare/v10.5.0...v10.6.0) (2026-10-27)
 
 
