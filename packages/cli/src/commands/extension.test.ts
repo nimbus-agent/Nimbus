@@ -171,7 +171,7 @@ describe("runExtensionList", () => {
     expect(out.stdout).toContain("1.0.0");
     expect(out.stdout).toContain("c.d");
     expect(out.stdout).toContain("disabled");
-    expect(out.stdout).toContain("(unverified)");
+    expect(out.stdout).toContain("(unsigned)");
     expect(out.stdout).toContain("e.f@3.0.0 [needs-reinstall]");
   });
 
@@ -1031,16 +1031,34 @@ describe("formatExtensionListTable (T2 PR 2)", () => {
     expect(formatted).toMatch(/ID\s+Version\s+Publisher\s+Status/);
     expect(formatted).toContain("ext-a");
     expect(formatted).toContain("pub-a");
-    expect(formatted).toContain("(unverified)");
+    expect(formatted).toContain("(unsigned)");
   });
 
-  test("(unverified) is wrapped in ANSI dim-yellow on TTY with NO_COLOR unset", () => {
+  test("a verified publisher is marked after its id (R6)", () => {
+    const formatted = formatExtensionListTable(
+      [
+        {
+          id: "ext-a",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: "AAA" },
+          verifiedPublisher: { github: "pub-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+        },
+        { id: "ext-c", version: "1.0.0", enabled: 1, publisher: { id: "pub-c", key: "CCC" } },
+      ],
+      { isTty: false, noColor: true },
+    );
+    expect(formatted).toContain("pub-a ✓ @pub-dev");
+    expect(formatted).not.toContain("pub-c ✓");
+  });
+
+  test("(unsigned) is wrapped in ANSI dim-yellow on TTY with NO_COLOR unset", () => {
     const formatted = formatExtensionListTable([{ id: "ext-b", version: "0.5.1", enabled: 1 }], {
       isTty: true,
       noColor: false,
     });
     const ESC = String.fromCodePoint(27);
-    expect(formatted).toMatch(new RegExp(String.raw`${ESC}\[2;33m\(unverified\)\s*${ESC}\[0m`));
+    expect(formatted).toMatch(new RegExp(String.raw`${ESC}\[2;33m\(unsigned\)\s*${ESC}\[0m`));
   });
 
   test("NO_COLOR=1 (noColor=true) disables ANSI codes even on TTY", () => {
@@ -1081,7 +1099,7 @@ describe("formatExtensionListTable — signature-disabled is distinguishable (I1
   });
 
   test("the publisher column is NOT the signal — an unsigned row is not signature-disabled", () => {
-    // `(unverified)` means "this manifest declares no publisher", which is the normal state of
+    // `(unsigned)` means "this manifest declares no publisher", which is the normal state of
     // every unsigned extension and says nothing about verification having FAILED. Conflating the
     // two would mark most of a healthy install red.
     const formatted = formatExtensionListTable(
@@ -1091,7 +1109,7 @@ describe("formatExtensionListTable — signature-disabled is distinguishable (I1
         noColor: true,
       },
     );
-    expect(formatted).toContain("(unverified)");
+    expect(formatted).toContain("(unsigned)");
     expect(formatted).not.toContain("disabled (signature)");
   });
 
@@ -1150,9 +1168,9 @@ describe("formatExtensionInfoHuman (T2 PR 2)", () => {
     expect(formatted).toContain("AAAAAAAAAAAAAAAA…");
   });
 
-  test("shows (unverified) for unsigned extensions", () => {
+  test("shows (unsigned) for unsigned extensions", () => {
     const formatted = formatExtensionInfoHuman({ id: "ext-b", version: "0.5.1" });
-    expect(formatted).toMatch(/Publisher:\s+\(unverified\)/);
+    expect(formatted).toMatch(/Publisher:\s+\(unsigned\)/);
   });
 });
 
@@ -1183,13 +1201,13 @@ describe("runExtensionInfo publisher (T2 PR 2)", () => {
     expect(out.stdout).not.toContain(fullKey);
   });
 
-  test("human output shows (unverified) when publisher absent", async () => {
+  test("human output shows (unsigned) when publisher absent", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext-b", version: "0.5.1", enabled: 1 } },
       { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
     ]);
     await runExtensionInfo(client, ["ext-b"], ["info", "ext-b"]);
-    expect(out.stdout).toMatch(/Publisher:\s+\(unverified\)/);
+    expect(out.stdout).toMatch(/Publisher:\s+\(unsigned\)/);
   });
 
   test("a signature-disabled extension says WHY next to Enabled: no", async () => {
@@ -1419,7 +1437,7 @@ describe("runExtensionList — additional branches", () => {
     expect(out.stdout).toContain("my.ext");
   });
 
-  test("table row with publisher set renders publisher id (not unverified)", async () => {
+  test("table row with publisher set renders publisher id (not (unsigned))", async () => {
     const { client } = createMockIpcClient([
       {
         extensions: [
@@ -1429,7 +1447,7 @@ describe("runExtensionList — additional branches", () => {
     ]);
     await runExtensionList(client, ["list"]);
     expect(out.stdout).toContain("acme");
-    expect(out.stdout).not.toContain("(unverified)");
+    expect(out.stdout).not.toContain("(unsigned)");
   });
 });
 
@@ -1456,7 +1474,7 @@ describe("formatExtensionListTable — boolean enabled", () => {
 });
 
 // ---------------------------------------------------------------------------
-// runExtensionInfo — publisher with no key string (unverified branch in print)
+// runExtensionInfo — publisher with no key string (the unsigned branch in print)
 // ---------------------------------------------------------------------------
 describe("runExtensionInfo — publisher without key", () => {
   beforeEach(() => {
@@ -1466,7 +1484,7 @@ describe("runExtensionInfo — publisher without key", () => {
     clearFixture();
   });
 
-  test("shows (unverified) when publisher exists but key is not a string", async () => {
+  test("shows (unsigned) when publisher exists but key is not a string", async () => {
     const { client } = createMockIpcClient([
       {
         extension: {
@@ -1479,7 +1497,24 @@ describe("runExtensionInfo — publisher without key", () => {
       { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
     ]);
     await runExtensionInfo(client, ["ext-nokey"], ["info", "ext-nokey"]);
-    expect(out.stdout).toContain("Publisher: (unverified)");
+    expect(out.stdout).toContain("Publisher: (unsigned)");
+  });
+
+  test("a signed extension states whether its publisher is verified (R6)", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext-v",
+          version: "1.0.0",
+          enabled: 1,
+          publisher: { id: "pub-a", key: "A".repeat(43) + "=" },
+          verifiedPublisher: { github: "pub-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext-v"], ["info", "ext-v"]);
+    expect(out.stdout).toContain("Verified publisher: @pub-dev (verified 2026-10-20)");
   });
 });
 
@@ -1609,8 +1644,35 @@ describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
       writeStderr: () => {},
     });
     expect(stdoutChunks.join("")).toBe(
-      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tunverified\tpublisher_key_conflict\tpublisher key changed\n",
+      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tpublisher key changed\n",
     );
+  });
+
+  test("a row labels the SIGNATURE, and names a verified publisher when there is one (R6)", async () => {
+    const stdoutChunks: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        {
+          ...makeUpdate(),
+          verifiedPublisher: { github: "acme-dev", verifiedAt: "2026-10-20T00:00:00Z" },
+        },
+        makeUpdate({
+          id: "ext-b",
+          verificationStatus: "signature_failed",
+          publisherStatus: "unverified",
+        }),
+      ],
+      writeStdout: (s) => stdoutChunks.push(s),
+      writeStderr: () => {},
+    });
+    const out = stdoutChunks.join("");
+    expect(out).toContain(
+      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature verified\t✓ @acme-dev\n",
+    );
+    expect(out).toContain("ext-b\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature failed\n");
+    expect(out).not.toContain("publisher: verified");
+    expect(out).not.toMatch(/\tverified\t/);
   });
 
   test("--json flag prints JSON array", async () => {

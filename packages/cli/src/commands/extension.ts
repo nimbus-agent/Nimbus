@@ -23,6 +23,12 @@ import {
   readSecretValue,
   type SecretInputIo,
 } from "../lib/secret-input.ts";
+import {
+  signatureLabel,
+  type VerifiedPublisherCli,
+  verifiedPublisherCell,
+  verifiedPublisherLine,
+} from "../lib/verified-publisher-text.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { stripControl } from "./captures-format.ts";
 import { runExtensionKey } from "./extension-key.ts";
@@ -83,6 +89,8 @@ type ExtensionListEntry = {
   source_registry?: string | null;
   /** I48: revocations and takedowns the run grant has not acknowledged. */
   blockedBy?: TrustBlockView[];
+  /** R6: Nimbus verified the publisher and vouches for the key that verified this copy. */
+  verifiedPublisher?: VerifiedPublisherCli | null;
 };
 
 export type TrustBlockView = {
@@ -126,17 +134,26 @@ export interface ExtensionListTableRow {
   /**
    * The gateway hard-disabled this extension because its Ed25519 manifest signature did not
    * verify at startup (I16). Deliberately NOT derived from `publisher === undefined`: that is
-   * the `(unverified)` badge, which means "declares no publisher" — the normal state of every
+   * the `(unsigned)` badge, which means "declares no publisher" — the normal state of every
    * unsigned extension, and a different fact entirely.
    */
   signatureDisabled?: boolean;
   runState?: string;
   /** The registry the extension was installed from; absent for a local-path install. */
   sourceRegistry?: string;
+  /** R6: marked after the publisher id when Nimbus verified the publisher. */
+  verifiedPublisher?: VerifiedPublisherCli | null;
 }
 
 /** One definition, read by the renderer and by the colour rule below. */
 const SIGNATURE_DISABLED_STATUS = "disabled (signature)";
+
+/** The Publisher cell: the id, with `✓ @handle` when Nimbus verified it (R6); `(unsigned)` without one. */
+function publisherCell(r: ExtensionListTableRow): string {
+  if (r.publisher === undefined) return "(unsigned)";
+  const mark = verifiedPublisherCell(r.verifiedPublisher);
+  return mark === "-" ? r.publisher.id : `${r.publisher.id} ${mark}`;
+}
 
 export function formatExtensionListTable(
   rows: readonly ExtensionListTableRow[],
@@ -155,12 +172,7 @@ export function formatExtensionListTable(
     } else {
       status = r.signatureDisabled === true ? SIGNATURE_DISABLED_STATUS : "disabled";
     }
-    const cells = [
-      r.id,
-      r.version,
-      r.publisher === undefined ? "(unverified)" : r.publisher.id,
-      status,
-    ];
+    const cells = [r.id, r.version, publisherCell(r), status];
     if (showRun) cells.push(r.runState ?? "-");
     if (showSource) cells.push(r.sourceRegistry === undefined ? "-" : `from ${r.sourceRegistry}`);
     return cells;
@@ -172,8 +184,8 @@ export function formatExtensionListTable(
   const renderCell = (s: string, w: number, col: number): string => {
     const padded = pad(s, w);
     if (!opts.isTty || opts.noColor) return padded;
-    if (col === 2 && s === "(unverified)") return `\x1b[2;33m${padded}\x1b[0m`;
-    // Bold red, one step louder than `(unverified)`'s dim yellow: an unsigned extension is a
+    if (col === 2 && s === "(unsigned)") return `\x1b[2;33m${padded}\x1b[0m`;
+    // Bold red, one step louder than `(unsigned)`'s dim yellow: an unsigned extension is a
     // normal state, a FAILED signature check is an integrity failure the user should look at.
     if (col === 3 && s === SIGNATURE_DISABLED_STATUS) return `\x1b[1;31m${padded}\x1b[0m`;
     return padded;
@@ -244,6 +256,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     if (r.signature_disabled === true) base.signatureDisabled = true;
     if (r.runState !== undefined) base.runState = r.runState;
     if (typeof r.source_registry === "string") base.sourceRegistry = r.source_registry;
+    if (r.verifiedPublisher != null) base.verifiedPublisher = r.verifiedPublisher;
     return base;
   });
   const table = formatExtensionListTable(tableRows, { isTty, noColor });
@@ -283,7 +296,7 @@ export function formatExtensionInfoHuman(info: {
 }): string {
   const lines: string[] = [`ID:        ${info.id}`, `Version:   ${info.version}`];
   if (info.publisher === undefined) {
-    lines.push(`Publisher: (unverified)`);
+    lines.push(`Publisher: (unsigned)`);
   } else {
     const shortKey = `${info.publisher.key.slice(0, 16)}…`;
     lines.push(`Publisher: ${info.publisher.id}`, `  key:     ${shortKey}`);
@@ -310,8 +323,9 @@ function printExtensionInfoPublisher(e: ExtensionListEntry): void {
     const shortKey = `${e.publisher.key.slice(0, 16)}…`;
     console.log(`Publisher: ${e.publisher.id}`);
     console.log(`  key:     ${shortKey}`);
+    console.log(`  ${verifiedPublisherLine(e.verifiedPublisher)}`);
   } else {
-    console.log("Publisher: (unverified)");
+    console.log("Publisher: (unsigned)");
   }
 }
 
@@ -1048,10 +1062,13 @@ export interface AvailableUpdateCli {
   readonly fromVersion: string;
   readonly toVersion: string;
   readonly channel: "stable" | "beta";
+  /** Whether the signature verified (NOT a verified publisher); rendered from `verificationStatus`. */
   readonly publisherStatus: "verified" | "unverified";
   readonly verificationStatus: "verified" | "signature_failed" | "publisher_key_conflict";
   /** The registry the extension was installed from — the only one its updates come from. */
   readonly sourceRegistry: string;
+  /** R6, computed by the gateway when it served the list. Absent from an older gateway. */
+  readonly verifiedPublisher?: VerifiedPublisherCli | null;
 }
 
 export interface UpdateApplyResultCli {
@@ -1073,10 +1090,19 @@ export interface RunExtensionUpdateOpts {
   writeStderr: (s: string) => void;
 }
 
+/**
+ * One update per line. The status column is about the SIGNATURE (`signature verified` /
+ * `signature failed`), or `publisher key changed` when the key conflict stopped the check; a
+ * verified publisher is a separate `✓ @handle` column. `--json` keeps the raw fields.
+ */
 function formatUpdateRow(u: AvailableUpdateCli): string {
-  const keyChanged =
-    u.verificationStatus === "publisher_key_conflict" ? "\tpublisher key changed" : "";
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${u.publisherStatus}\t${u.verificationStatus}${keyChanged}`;
+  const status =
+    u.verificationStatus === "publisher_key_conflict"
+      ? "publisher key changed"
+      : signatureLabel(u.verificationStatus);
+  const mark = verifiedPublisherCell(u.verifiedPublisher);
+  const verified = mark === "-" ? "" : `\t${mark}`;
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}`;
 }
 
 async function listExtensionUpdates(
