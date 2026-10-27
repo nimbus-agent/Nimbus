@@ -596,9 +596,12 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
     // A copy that no longer matches its installed hashes (a tampered entry file, which a boot pass
     // disables for the hash without ever marking the signature registry) never carries the badge.
     const entry = join(installPath, "dist", "index.js");
-    writeFileSync(entry, `${readFileSync(entry, "utf8")}
+    writeFileSync(
+      entry,
+      `${readFileSync(entry, "utf8")}
 // tampered
-`);
+`,
+    );
     expect((await listed(db))[0]?.verifiedPublisher).toBeNull();
   });
 });
