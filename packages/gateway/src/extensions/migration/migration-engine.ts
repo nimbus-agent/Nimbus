@@ -1011,6 +1011,8 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
       entryHash: sha256File(entryPath),
       // The migration's key decision ran in `refuseVaultKeyConflict`; it has no prompt to show it in.
       publisherChange: null,
+      // Migration accepts with one prompt of its own (I46); it shows no per-version provenance.
+      provenance: null,
       reg: builtinRegistryRow(db, reg),
       rootFingerprint,
     };

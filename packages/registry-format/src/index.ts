@@ -68,6 +68,7 @@ export {
   type ProvenanceRunner,
   provenanceFromGhVerify,
   provenanceMatching,
+  provenanceNote,
   REPOSITORY_RE,
   readManifestRepository,
   readVersionProvenance,

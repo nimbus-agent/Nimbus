@@ -169,3 +169,9 @@ export function provenanceFromGhVerify(
   }
   return last;
 }
+
+/** The one sentence a client shows for a version's provenance, naming the registry that vouched. */
+export function provenanceNote(p: VersionProvenance, registry: string): string {
+  const runner = p.runner === "self-hosted" ? " on a self-hosted runner" : "";
+  return `Provenance verified by ${registry}: built from ${p.sourceRepository} at ${p.commit.slice(0, 12)} by ${p.workflow}${runner}`;
+}

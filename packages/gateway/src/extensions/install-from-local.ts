@@ -15,7 +15,11 @@ import {
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 
-import { assertSafeExtensionId, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  assertSafeExtensionId,
+  publisherKeyFingerprint,
+  type VersionProvenance,
+} from "@nimbus-dev/registry-format";
 
 import {
   insertExtensionRow,
@@ -320,6 +324,12 @@ export type ExtensionInstallApprovalRequest = {
    */
   readonly verifiedPublisher?: VerifiedPublisher | null;
   readonly publisherBadge?: string;
+  /**
+   * A registry install only: the build provenance the registry verified for this version (trust
+   * layer PR 4c), and the one sentence to show; absent when there is none.
+   */
+  readonly provenance?: VersionProvenance;
+  readonly provenanceNote?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
