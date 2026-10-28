@@ -3125,6 +3125,7 @@ describe("runExtensionInstall — the post-install walk", () => {
     ]);
     const fresh: CountingClient[] = [];
     const timeouts: number[] = [];
+    const asked: string[] = [];
     await runExtensionInstall(
       install.client,
       ["install", "com.example.tool"],
@@ -3140,12 +3141,16 @@ describe("runExtensionInstall — the post-install walk", () => {
           fresh.push(c);
           return c.client;
         },
-        confirm: async () => {
+        confirm: async (q) => {
+          asked.push(q);
+          // The one opening question; each package's own decision is its gateway prompt.
+          if (q === "Approve the 2 new packages to run now? [y/N] ") return true;
           throw new Error("no walk question for an approval");
         },
       },
     );
     expect(install.calls.map((c) => c.method)).toEqual(["registry.install"]);
+    expect(asked).toEqual(["Approve the 2 new packages to run now? [y/N] "]);
     expect(fresh).toHaveLength(2);
     expect(fresh.map((c) => c.calls)).toEqual([
       [{ method: "extension.approveRun", params: { id: "com.example.dep", modelAccess: false } }],
@@ -3164,8 +3169,34 @@ describe("runExtensionInstall — the post-install walk", () => {
       makeClient: () => {
         throw new Error("socket gone");
       },
+      confirm: async () => true,
     });
-    expect(out.stdout).toContain("  new.ext: not approved (socket gone)");
+    // Not a denial: the walk says it could not ask, and stops.
+    expect(out.stdout).toContain("  new.ext: could not ask (socket gone)");
+    expect(out.stdout).not.toContain("not approved");
+  });
+
+  test("a no to the opening question approves nothing and opens no client", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    const made: string[] = [];
+    const asked: string[] = [];
+    await runExtensionInstall(install.client, ["install", "."], ["."], {
+      socketPath: "/sock",
+      makeClient: (p) => {
+        made.push(p);
+        return countingClient([]).client;
+      },
+      confirm: async (q) => {
+        asked.push(q);
+        return false;
+      },
+    });
+    expect(asked).toEqual(["Approve new.ext to run now? [y/N] "]);
+    expect(made).toEqual([]);
+    expect(out.stdout).toContain(
+      "Not approved now; approve later with: nimbus extension approve new.ext",
+    );
   });
 
   test("without walk deps an attended install only prints", async () => {

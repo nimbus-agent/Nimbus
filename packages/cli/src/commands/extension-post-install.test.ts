@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import {
   type PostInstallIo,
   parseFixCommand,
+  RUN_NOT_APPROVED_CODE,
   runConnectFix,
   runPostInstallWalk,
 } from "./extension-post-install.ts";
@@ -17,8 +18,12 @@ type Event =
 function fakeIo(
   opts: {
     attended?: boolean;
-    answer?: boolean;
+    /** One answer for every question, or one per question. */
+    answer?: boolean | ((question: string) => boolean);
+    /** The owner answers no to these packages' `extension.run` prompts. */
     failApprove?: ReadonlySet<string>;
+    /** These packages' approvals cannot be asked at all (a transport failure). */
+    brokenApprove?: ReadonlySet<string>;
     connect?: PostInstallIo["connect"];
   } = {},
 ): { io: PostInstallIo; events: Event[] } {
@@ -27,11 +32,15 @@ function fakeIo(
     attended: opts.attended ?? true,
     confirm: async (question) => {
       events.push({ kind: "confirm", question });
-      return opts.answer ?? true;
+      const a = opts.answer ?? true;
+      return typeof a === "function" ? a(question) : a;
     },
     approve: async (id) => {
       events.push({ kind: "approve", id });
-      if (opts.failApprove?.has(id) === true) throw new Error("consent denied");
+      if (opts.failApprove?.has(id) === true) {
+        throw new Error(`${RUN_NOT_APPROVED_CODE}: running ${id} was not approved`);
+      }
+      if (opts.brokenApprove?.has(id) === true) throw new Error("socket gone");
     },
     connect:
       opts.connect ??
@@ -65,18 +74,78 @@ describe("runPostInstallWalk", () => {
     expect(events).toEqual([]);
   });
 
-  test("approves every package in order without a walk question of its own", async () => {
+  test("asks once first, then a yes approves every package in order", async () => {
     const { io, events } = fakeIo();
     await runPostInstallWalk(io, ["dep.a", "dep.b", "root"], []);
-    expect(events.filter((e) => e.kind === "approve").map((e) => e.id)).toEqual([
-      "dep.a",
-      "dep.b",
-      "root",
+    expect(events).toEqual([
+      { kind: "confirm", question: "Approve the 3 new packages to run now? [y/N] " },
+      { kind: "log", line: "Approve each package to run (you can decline any):" },
+      { kind: "approve", id: "dep.a" },
+      { kind: "approve", id: "dep.b" },
+      { kind: "approve", id: "root" },
     ]);
-    expect(events.some((e) => e.kind === "confirm")).toBe(false);
-    expect(events[0]).toEqual({
+  });
+
+  test("one package is named in the opening question", async () => {
+    const { io, events } = fakeIo({ answer: false });
+    await runPostInstallWalk(io, ["root"], []);
+    expect(events[0]).toEqual({ kind: "confirm", question: "Approve root to run now? [y/N] " });
+  });
+
+  test("a no to the opening question approves nothing, logs the commands once, and still connects", async () => {
+    const { io, events } = fakeIo({ answer: (q) => !q.startsWith("Approve ") });
+    const github = { ...bundled("github", true), requiredBy: ["other.ext"] };
+    await runPostInstallWalk(io, ["dep.a", "root"], [github]);
+    expect(events).toEqual([
+      { kind: "confirm", question: "Approve the 2 new packages to run now? [y/N] " },
+      {
+        kind: "log",
+        line: "Not approved now; approve later with: nimbus extension approve dep.a && nimbus extension approve root",
+      },
+      { kind: "confirm", question: "This needs github. Connect now? [y/N] " },
+      { kind: "connect", connector: "github", approved: [] },
+    ]);
+  });
+
+  test("a no to the opening question counts every package as not approved for the connect phase", async () => {
+    const { io, events } = fakeIo({ answer: (q) => !q.startsWith("Approve ") });
+    const github = { ...bundled("github", true), requiredBy: ["dep.a", "root"] };
+    await runPostInstallWalk(io, ["dep.a", "root"], [github]);
+    expect(events.some((e) => e.kind === "approve" || e.kind === "connect")).toBe(false);
+    expect(events).toContainEqual({
       kind: "log",
-      line: "Approve each package to run (you can decline any):",
+      line: "  github: skipped — dep.a, root not approved",
+    });
+  });
+
+  test("an approval that cannot be asked stops the walk: no further approvals, no connect phase", async () => {
+    const { io, events } = fakeIo({ brokenApprove: new Set(["dep.a"]) });
+    await runPostInstallWalk(io, ["dep.a", "root"], [bundled("github", true)]);
+    expect(events).toEqual([
+      { kind: "confirm", question: "Approve the 2 new packages to run now? [y/N] " },
+      { kind: "log", line: "Approve each package to run (you can decline any):" },
+      { kind: "approve", id: "dep.a" },
+      { kind: "log", line: "  dep.a: could not ask (socket gone)" },
+    ]);
+  });
+
+  test("a connector is skipped when every package that requires it was declined", async () => {
+    const { io, events } = fakeIo({ failApprove: new Set(["dep.a", "root"]) });
+    const github = { ...bundled("github", true), requiredBy: ["dep.a", "root"] };
+    const slack = { ...bundled("slack", true), requiredBy: ["dep.a", "kept.ext"] };
+    await runPostInstallWalk(io, ["dep.a", "root"], [github, slack]);
+    expect(events).toContainEqual({
+      kind: "log",
+      line: "  github: skipped — dep.a, root not approved",
+    });
+    expect(events).not.toContainEqual({
+      kind: "confirm",
+      question: "This needs github. Connect now? [y/N] ",
+    });
+    // One requiring package still runs, so slack is still offered.
+    expect(events).toContainEqual({
+      kind: "confirm",
+      question: "This needs slack. Connect now? [y/N] ",
     });
   });
 
@@ -88,7 +157,7 @@ describe("runPostInstallWalk", () => {
       "dep.b",
       "root",
     ]);
-    expect(events).toContainEqual({ kind: "log", line: "  dep.b: not approved (consent denied)" });
+    expect(events).toContainEqual({ kind: "log", line: "  dep.b: not approved" });
     expect(events).toContainEqual({
       kind: "connect",
       connector: "github",
@@ -109,6 +178,7 @@ describe("runPostInstallWalk", () => {
       ],
     );
     expect(events).toEqual([
+      { kind: "confirm", question: "Approve root to run now? [y/N] " },
       { kind: "log", line: "Approve each package to run (you can decline any):" },
       { kind: "approve", id: "root" },
       { kind: "confirm", question: "This needs github. Connect now? [y/N] " },
@@ -118,8 +188,9 @@ describe("runPostInstallWalk", () => {
   });
 
   test("a no to the connect question connects nothing", async () => {
-    const { io, events } = fakeIo({ answer: false });
+    const { io, events } = fakeIo({ answer: (q) => q.startsWith("Approve ") });
     await runPostInstallWalk(io, ["root"], [bundled("github", true)]);
+    expect(events).toContainEqual({ kind: "approve", id: "root" });
     expect(events.some((e) => e.kind === "connect")).toBe(false);
   });
 
@@ -245,9 +316,10 @@ describe("runPostInstallWalk — a declined package", () => {
     };
     await runPostInstallWalk(io, ["nimbus.readwise", "root"], [owned, bundled("github", true)]);
     expect(events).toEqual([
+      { kind: "confirm", question: "Approve the 2 new packages to run now? [y/N] " },
       { kind: "log", line: "Approve each package to run (you can decline any):" },
       { kind: "approve", id: "nimbus.readwise" },
-      { kind: "log", line: "  nimbus.readwise: not approved (consent denied)" },
+      { kind: "log", line: "  nimbus.readwise: not approved" },
       { kind: "approve", id: "root" },
       { kind: "log", line: "  readwise: skipped — nimbus.readwise was not approved" },
       { kind: "confirm", question: "This needs github. Connect now? [y/N] " },

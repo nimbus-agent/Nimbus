@@ -2,12 +2,14 @@
  * The walk after an ATTENDED `nimbus extension install`: approve each newly installed package to
  * run, then offer to connect each connector it still needs.
  *
- * The walk never approves anything itself. Every approval is the existing `extension approve`
+ * The walk is OFFERED: one question first ("Approve … to run now?"); a no skips every approval. The
+ * walk never approves anything itself. On a yes, every approval is the existing `extension approve`
  * command, whose `extension.run` consent prompt is answered by the person at the terminal, so the
- * owner is asked once per package — the prompt IS the question. The walk only runs when the
+ * owner is asked once per package — that prompt IS the decision. The walk only runs when the
  * install was attended (stdin and stdout are terminals and there was no `--yes`); unattended, the
- * printed commands stand on their own. Nothing here can make the install fail: every action's
- * failure is logged and the walk moves on.
+ * printed commands stand on their own. Nothing here can make the install fail: a declined approval
+ * or a failed connect is logged and the walk moves on; an approval that could not be ASKED (not a
+ * denial) is logged and stops the walk.
  */
 import { stripControl } from "./captures-format.ts";
 import type { RequirementStatusView } from "./extension-requirements-format.ts";
@@ -29,6 +31,69 @@ function messageOf(e: unknown): string {
   return stripControl(e instanceof Error ? e.message : String(e));
 }
 
+/**
+ * The gateway's refusal code when the owner answers no to an `extension.run` prompt (or lets it
+ * time out). It leads the error message (`ExtensionRunGrantError`), which is all a client sees; the
+ * CLI does not import gateway source, so it matches the code by text.
+ */
+export const RUN_NOT_APPROVED_CODE = "ERR_EXTENSION_RUN_NOT_APPROVED";
+
+function isApprovalDenied(e: unknown): boolean {
+  return (e instanceof Error ? e.message : String(e)).includes(RUN_NOT_APPROVED_CODE);
+}
+
+function approveNowQuestion(toApprove: readonly string[]): string {
+  const [only] = toApprove;
+  return toApprove.length === 1 && only !== undefined
+    ? `Approve ${stripControl(only)} to run now? [y/N] `
+    : `Approve the ${toApprove.length} new packages to run now? [y/N] `;
+}
+
+/**
+ * The approvals phase: one up-front question, then (on a yes) each package's own `extension.run`
+ * prompt. Returns `false` when the walk must stop: a prompt could not be asked at all (the gateway
+ * went away, say), which is not the owner declining.
+ */
+async function approvalsPhase(
+  io: PostInstallIo,
+  toApprove: readonly string[],
+  approved: Set<string>,
+  declined: Set<string>,
+): Promise<boolean> {
+  if (toApprove.length === 0) return true;
+  let walk: boolean;
+  try {
+    walk = await io.confirm(approveNowQuestion(toApprove));
+  } catch (e) {
+    io.log(`Could not ask (${messageOf(e)}); approve later with: ${approveCommands(toApprove)}`);
+    return false;
+  }
+  if (!walk) {
+    for (const id of toApprove) declined.add(id);
+    io.log(`Not approved now; approve later with: ${approveCommands(toApprove)}`);
+    return true;
+  }
+  io.log("Approve each package to run (you can decline any):");
+  for (const id of toApprove) {
+    try {
+      await io.approve(id);
+      approved.add(id);
+    } catch (e) {
+      if (!isApprovalDenied(e)) {
+        io.log(`  ${stripControl(id)}: could not ask (${messageOf(e)})`);
+        return false;
+      }
+      declined.add(id);
+      io.log(`  ${stripControl(id)}: not approved`);
+    }
+  }
+  return true;
+}
+
+function approveCommands(ids: readonly string[]): string {
+  return ids.map((id) => `nimbus extension approve ${stripControl(id)}`).join(" && ");
+}
+
 export async function runPostInstallWalk(
   io: PostInstallIo,
   toApprove: readonly string[],
@@ -38,23 +103,19 @@ export async function runPostInstallWalk(
   // Approvals first: a continuity owner's credential set needs its run grant.
   const approved = new Set<string>();
   const declined = new Set<string>();
-  if (toApprove.length > 0) {
-    io.log("Approve each package to run (you can decline any):");
-    for (const id of toApprove) {
-      try {
-        await io.approve(id);
-        approved.add(id);
-      } catch (e) {
-        declined.add(id);
-        io.log(`  ${stripControl(id)}: not approved (${messageOf(e)})`);
-      }
-    }
-  }
+  if (!(await approvalsPhase(io, toApprove, approved, declined))) return;
   for (const req of requirements) {
     if (req.state !== "not_connected") continue;
     const connector = stripControl(req.connector);
     if (!req.interactive) {
       io.log(`  ${connector}: connect it with: ${req.fix.map(stripControl).join(" && ")}`);
+      continue;
+    }
+    // Nothing that needs this connector will run: asking to connect it now only adds prompts.
+    if (req.requiredBy.length > 0 && req.requiredBy.every((id) => declined.has(id))) {
+      io.log(
+        `  ${connector}: skipped — ${req.requiredBy.map(stripControl).join(", ")} not approved`,
+      );
       continue;
     }
     // A fix that would approve a package the owner just declined would raise the same prompt

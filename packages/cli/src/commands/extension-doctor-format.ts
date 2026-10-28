@@ -33,25 +33,32 @@ function blockedLines(extensions: readonly unknown[]): string[] {
   });
 }
 
-/** One `[warn]` per requirement an installed extension has that is not connected, or never synced. */
-function requirementWarnLines(extensions: readonly unknown[]): string[] {
-  return extensions.flatMap((e: unknown) => {
+/**
+ * One `[warn]` per requirement an installed extension has that is not connected, or never synced.
+ * Only `not_connected` is unmet (spec § 5.4): `unmet` says whether any line raises the exit code.
+ */
+function requirementWarnLines(extensions: readonly unknown[]): { lines: string[]; unmet: boolean } {
+  let unmet = false;
+  const lines = extensions.flatMap((e: unknown) => {
     if (!isRecord(e) || typeof e["id"] !== "string") return [];
     const id = stripControl(e["id"]);
     return parseRequirementStatuses(e["requires"])
       .filter((r) => r.state === "not_connected" || r.state === "configured_never_synced")
-      .map(
-        (r) =>
-          `[warn] Extensions: ${id} needs ${stripControl(r.connector)} — run: ${r.fix.map(stripControl).join(" && ")}`,
-      );
+      .map((r) => {
+        if (r.state === "not_connected") unmet = true;
+        return `[warn] Extensions: ${id} needs ${stripControl(r.connector)} — run: ${r.fix.map(stripControl).join(" && ")}`;
+      });
   });
+  return { lines, unmet };
 }
 
 /**
  * `nimbus doctor`'s extensions line, from an `extension.list` response: one `[warn]` naming the
  * installed extensions that have no run approval or an approval for older code, so an upgrade that
  * left them unapproved is visible rather than silent. Silent when there are none, and when the
- * gateway reports the extension runtime off — approving one would be refused then. An older gateway
+ * gateway reports the extension runtime off — approving one would be refused then. Blocked
+ * extensions and connector-requirement warnings are reported whether or not the runtime is on; of
+ * the requirement warnings only `not_connected` raises the exit code. An older gateway
  * that does not report `runtimeEnabled` is treated as having it on. Throws on a malformed response;
  * the caller turns that into a `[warn]`.
  */
@@ -59,9 +66,13 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
   if (!isRecord(raw) || !Array.isArray(raw["extensions"])) {
     throw new Error("malformed extension.list response from the gateway");
   }
-  const blocked = [...blockedLines(raw["extensions"]), ...requirementWarnLines(raw["extensions"])];
+  const blockedOnly = blockedLines(raw["extensions"]);
+  const needs = requirementWarnLines(raw["extensions"]);
+  const blocked = [...blockedOnly, ...needs.lines];
+  // A never-synced requirement warns but is not unmet; a blocked extension or an unconnected one is.
+  const baseExit = blockedOnly.length > 0 || needs.unmet ? 1 : 0;
   if (raw["runtimeEnabled"] === false) {
-    return { lines: blocked, exit: blocked.length === 0 ? 0 : 1 };
+    return { lines: blocked, exit: baseExit };
   }
   const flagged = raw["extensions"].flatMap((e: unknown) =>
     isRecord(e) &&
@@ -71,7 +82,7 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
       ? [{ id: stripControl(e["id"]), hadModelAccess: grantHadModelAccess(e["runGrant"]) }]
       : [],
   );
-  if (flagged.length === 0) return { lines: blocked, exit: blocked.length === 0 ? 0 : 1 };
+  if (flagged.length === 0) return { lines: blocked, exit: baseExit };
   const ids = flagged.map((f) => f.id);
   // Every approval states the whole grant, so a bare `approve <id>` after an update would turn
   // model access off; name the extensions that need `--model` again.

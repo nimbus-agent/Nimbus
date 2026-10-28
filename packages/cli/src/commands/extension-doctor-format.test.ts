@@ -39,6 +39,35 @@ describe("doctorExtensionsLines — connector requirements", () => {
     });
   });
 
+  test("a never-synced requirement warns but does not raise the exit code", () => {
+    expect(
+      doctorExtensionsLines(
+        withReqs([req("slack", "configured_never_synced", ["nimbus connector sync slack"])]),
+      ),
+    ).toEqual({
+      lines: ["[warn] Extensions: acme.tool needs slack — run: nimbus connector sync slack"],
+      exit: 0,
+    });
+  });
+
+  test("with the runtime off, requirement warnings still show; only not_connected raises the exit", () => {
+    const off = (requires: unknown[]) => ({ ...withReqs(requires), runtimeEnabled: false });
+    const synced = doctorExtensionsLines(
+      off([req("slack", "configured_never_synced", ["nimbus connector sync slack"])]),
+    );
+    expect(synced).toEqual({
+      lines: ["[warn] Extensions: acme.tool needs slack — run: nimbus connector sync slack"],
+      exit: 0,
+    });
+    const unmet = doctorExtensionsLines(
+      off([req("github", "not_connected", ["nimbus connector auth github"])]),
+    );
+    expect(unmet.exit).toBe(1);
+    expect(unmet.lines).toEqual([
+      "[warn] Extensions: acme.tool needs github — run: nimbus connector auth github",
+    ]);
+  });
+
   test("several fix commands are joined with &&", () => {
     expect(doctorExtensionsLines(withReqs([req("rw", "not_connected", ["a", "b"])])).lines).toEqual(
       ["[warn] Extensions: acme.tool needs rw — run: a && b"],

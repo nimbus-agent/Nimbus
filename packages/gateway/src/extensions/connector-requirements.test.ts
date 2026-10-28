@@ -297,6 +297,7 @@ describe("connectorRequirementStatuses", () => {
     );
     expect(s?.state).toBe("not_connected");
     expect(s?.fix).toEqual([`nimbus extension enable ${EXT}`]);
+    expect(s?.interactive).toBe(false);
   });
 
   test("a grant for other code is stale: never met, the fix re-approves first", async () => {

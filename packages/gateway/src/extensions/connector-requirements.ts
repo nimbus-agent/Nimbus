@@ -198,6 +198,8 @@ async function ownedStatus(
       ...base,
       state: "not_connected",
       fix: [`nimbus extension enable ${owner.extensionId}`],
+      // The walk does not run `enable`; it prints it for the owner to run.
+      interactive: false,
     };
   }
   if (grant === null || runState === "grant_stale") {
