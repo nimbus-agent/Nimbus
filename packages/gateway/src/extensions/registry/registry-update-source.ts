@@ -9,6 +9,7 @@ import type { Database } from "bun:sqlite";
 import {
   publisherKeyFingerprint,
   type RegistryChannel,
+  RegistryError,
   type RegistryVersionEntry,
 } from "@nimbus-dev/registry-format";
 import type { NimbusVault } from "../../vault/index.ts";
@@ -48,6 +49,13 @@ export interface RegistryUpdateSourceDeps {
 export interface CollectedRegistryUpdates {
   updates: AvailableUpdate[];
   errors: Array<{ registry: string; error: string }>;
+  /**
+   * Updates not offered because this gateway cannot honour the new manifest yet
+   * (`ERR_EXTENSION_MANIFEST_UNSUPPORTED`). Kept apart from `errors` on purpose: an `errors` entry
+   * marks the registry as transiently failing, which keeps every cached offer from it, and this
+   * refusal does not go away on the next tick.
+   */
+  refused: Array<{ registry: string; id: string; error: string }>;
   /** Each update's NEW `dependsOn` (absent when it declares none), for the daemon's conflict check. */
   dependsOn: ReadonlyMap<string, Readonly<Record<string, string>>>;
 }
@@ -150,9 +158,14 @@ async function detectOne(
     );
   }
   const m = fetched.manifest;
-  // Detection: an update to a shape this gateway cannot honour yet is not offered. The throw is
-  // recorded in `errors` with the id and the reason by the caller.
-  assertManifestSupported(m);
+  // Detection: an update to a shape this gateway cannot honour yet is not offered.
+  try {
+    assertManifestSupported(m);
+  } catch (e) {
+    if (!(e instanceof RegistryError) || e.code !== "ERR_EXTENSION_MANIFEST_UNSUPPORTED") throw e;
+    out.refused.push({ registry: reg.name, id: row.id, error: e.message });
+    return;
+  }
   out.updates.push({
     id: row.id,
     displayName: m.name ?? row.manifest.name ?? row.id,
@@ -196,6 +209,7 @@ export async function collectRegistryUpdates(
   const out = {
     updates: [] as AvailableUpdate[],
     errors: [] as Array<{ registry: string; error: string }>,
+    refused: [] as Array<{ registry: string; id: string; error: string }>,
     dependsOn: new Map<string, Readonly<Record<string, string>>>(),
   };
   for (const [name, group] of groupByRegistry(rows)) {

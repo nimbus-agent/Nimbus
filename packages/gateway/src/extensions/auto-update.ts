@@ -149,7 +149,7 @@ export class ExtensionAutoUpdater {
     const rows = registryRows(installed);
     const collected: CollectedRegistryUpdates =
       rows.length === 0
-        ? { updates: [], errors: [], dependsOn: new Map() }
+        ? { updates: [], errors: [], refused: [], dependsOn: new Map() }
         : await this.opts.collect(rows, this.abort.signal);
     for (const found of collected.updates) {
       try {

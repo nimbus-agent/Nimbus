@@ -77,7 +77,7 @@ function collected(
   updates: AvailableUpdate[],
   dependsOn: Record<string, Record<string, string>> = {},
 ): CollectedRegistryUpdates {
-  return { updates, errors: [], dependsOn: new Map(Object.entries(dependsOn)) };
+  return { updates, errors: [], refused: [], dependsOn: new Map(Object.entries(dependsOn)) };
 }
 
 function daemon(over: Partial<ExtensionAutoUpdaterOpts>): {
@@ -204,6 +204,7 @@ describe("ExtensionAutoUpdater: an offer lasts only while its source registry of
       {
         updates: [],
         errors: [{ registry: "main", error: "ERR_REGISTRY_UNREACHABLE" }],
+        refused: [],
         dependsOn: new Map(),
       },
     ]);
@@ -212,10 +213,32 @@ describe("ExtensionAutoUpdater: an offer lasts only while its source registry of
     expect(t.cache.get("com.a")?.toVersion).toBe("1.2.0");
   });
 
+  it("a refused update in the same registry does not keep an offer that registry stopped making", async () => {
+    const t = ticking([
+      collected([update("com.a")]),
+      {
+        updates: [],
+        errors: [],
+        refused: [
+          { registry: "main", id: "com.b", error: "ERR_EXTENSION_MANIFEST_UNSUPPORTED: …" },
+        ],
+        dependsOn: new Map(),
+      },
+    ]);
+    await t.daemon.pollOnce();
+    await t.daemon.pollOnce();
+    expect(t.cache.get("com.a")).toBeUndefined();
+  });
+
   it("an error from ANOTHER registry does not keep an offer its own registry stopped making", async () => {
     const t = ticking([
       collected([update("com.a")]),
-      { updates: [], errors: [{ registry: "other", error: "down" }], dependsOn: new Map() },
+      {
+        updates: [],
+        errors: [{ registry: "other", error: "down" }],
+        refused: [],
+        dependsOn: new Map(),
+      },
     ]);
     await t.daemon.pollOnce();
     await t.daemon.pollOnce();

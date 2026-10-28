@@ -19,7 +19,7 @@ function updater(overrides: Partial<ExtensionAutoUpdaterOpts>): {
   const u = new ExtensionAutoUpdater({
     cache,
     listInstalled: async () => [],
-    collect: async () => ({ updates: [], errors: [], dependsOn: new Map() }),
+    collect: async () => ({ updates: [], errors: [], refused: [], dependsOn: new Map() }),
     appendAudit: async () => {},
     intervalHours: 2,
     now: () => 1_000,
