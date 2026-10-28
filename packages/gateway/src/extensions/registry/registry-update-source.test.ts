@@ -11,9 +11,9 @@ import { writePublisherKey, writePublisherKeyFor } from "../publisher-keys.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {
-  buildTestRegistry,
+  buildMultiExtensionRegistry,
+  type buildTestRegistry,
   PUBLISHER_SEED,
-  resignIndex,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
@@ -46,22 +46,14 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-/** One registry folder carrying several extensions (the fixture builds one id per call). */
+/** One registry folder carrying several extensions. */
 async function buildRegistry(
   name: string,
   exts: Record<string, TestVersion[]>,
   extra: Partial<Parameters<typeof buildTestRegistry>[1]> = {},
 ): Promise<string> {
   const dir = join(tmp, name);
-  const merged: Record<string, unknown> = {};
-  let index: Record<string, unknown> = {};
-  for (const [id, versions] of Object.entries(exts)) {
-    const built = await buildTestRegistry(dir, { id, versions, ...extra });
-    rootKey = built.rootKey;
-    index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as Record<string, unknown>;
-    Object.assign(merged, index["extensions"] as Record<string, unknown>);
-  }
-  resignIndex(join(dir, "index.json"), { ...index, extensions: merged });
+  rootKey = (await buildMultiExtensionRegistry(dir, exts, extra)).rootKey;
   return dir;
 }
 

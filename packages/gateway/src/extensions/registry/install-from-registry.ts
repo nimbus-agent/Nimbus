@@ -22,6 +22,7 @@ import {
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
+  type RegistryIndex,
   type RegistryVersionEntry,
   readManifestRepository,
   type VersionProvenance,
@@ -157,6 +158,11 @@ export interface VerifiedRegistryPackage {
    * hash-checked, signature-verified manifest names the same repository; else null.
    */
   readonly provenance: VersionProvenance | null;
+  /**
+   * The verified index the fetch resolved the package from, so a dependency resolver over the same
+   * registry need not read it again. Optional: a package built elsewhere (a test fake) has none.
+   */
+  readonly index?: RegistryIndex;
 }
 
 /** `intoDir` must be absent or an empty directory: a staged package is never merged into another tree. */
@@ -200,7 +206,7 @@ export async function fetchVerifiedRegistryPackage(
   }
   assertEmptyStagingDir(intoDir);
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
-  const { reg, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
+  const { reg, index, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
   const rootFingerprint = publisherKeyFingerprint(reg.rootKey);
   // I48: refused BEFORE any manifest or package request, and before the owner is asked anything.
   const subjectAt = (version: string): BlockSubject => ({
@@ -219,16 +225,8 @@ export async function fetchVerifiedRegistryPackage(
   assertNotBlocked(deps.db, subjectAt(version));
 
   const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, req.id, version, vEntry);
-  const packageBytes = await fetchRegistryBytes(fetchDeps, reg, vEntry.package, {
-    method: "registry.package",
-    extensionId: req.id,
-    version,
-    maxBytes: MAX_TARBALL_BYTES,
-  });
   // Hashes first: nothing is verified or extracted from bytes the index did not sign.
-  if (!sha256HexEqualConstantTime(sha256Hex(packageBytes), vEntry.packageSha256)) {
-    throw registryHashMismatch("package", req.id, version);
-  }
+  const packageBytes = await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry);
   const { manifest } = fetched;
   await verifyRegistryManifestSignature(fetched, req.id, version);
   // Refused with the right code before the package is extracted; the local install door
@@ -245,6 +243,65 @@ export async function fetchVerifiedRegistryPackage(
   });
   if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
 
+  const { sourceRoot } = await extractVerifiedPackage(
+    packageBytes,
+    req.id,
+    version,
+    vEntry,
+    manifest,
+    intoDir,
+  );
+  return {
+    id: req.id,
+    version,
+    sourceRoot,
+    manifest,
+    publisherKey: entry.publisher.key,
+    entryHash: vEntry.entryHash,
+    reg,
+    rootFingerprint,
+    publisherChange:
+      decision.change === null ? null : { change: decision.change, via: decision.via },
+    provenance:
+      provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
+      null,
+    index,
+  };
+}
+
+/** One ledgered `registry.package` fetch, refused unless its bytes are the ones the index signed. */
+async function fetchHashedPackage(
+  fetchDeps: RegistryFetchDeps,
+  reg: RegistryRow,
+  id: string,
+  version: string,
+  vEntry: RegistryVersionEntry,
+): Promise<Uint8Array> {
+  const packageBytes = await fetchRegistryBytes(fetchDeps, reg, vEntry.package, {
+    method: "registry.package",
+    extensionId: id,
+    version,
+    maxBytes: MAX_TARBALL_BYTES,
+  });
+  if (!sha256HexEqualConstantTime(sha256Hex(packageBytes), vEntry.packageSha256)) {
+    throw registryHashMismatch("package", id, version);
+  }
+  return packageBytes;
+}
+
+/**
+ * Extracts hash-checked package bytes into `intoDir` and checks the extracted tree against the
+ * index: the packaged manifest is the very one the index signed, and the entry file is the one it
+ * listed. On any failure the archive and the extracted tree are removed again.
+ */
+async function extractVerifiedPackage(
+  packageBytes: Uint8Array,
+  id: string,
+  version: string,
+  vEntry: RegistryVersionEntry,
+  manifest: ExtensionManifest,
+  intoDir: string,
+): Promise<{ sourceRoot: string }> {
   const archivePath = join(intoDir, "package.tgz");
   const extractDir = join(intoDir, "pkg");
   try {
@@ -255,7 +312,7 @@ export async function fetchVerifiedRegistryPackage(
     } catch (e) {
       throw new RegistryError(
         "ERR_REGISTRY_EXTRACT_FAILED",
-        `the package of ${req.id}@${version} could not be extracted: ${e instanceof Error ? e.message : String(e)}`,
+        `the package of ${id}@${version} could not be extracted: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
     // The package must carry the very manifest the index signed.
@@ -264,7 +321,7 @@ export async function fetchVerifiedRegistryPackage(
       inPackage === undefined ||
       !sha256HexEqualConstantTime(sha256Hex(readFileSync(inPackage)), vEntry.manifestSha256)
     ) {
-      throw registryHashMismatch("packaged manifest", req.id, version);
+      throw registryHashMismatch("packaged manifest", id, version);
     }
     // The entry file must be the one the index listed BEFORE the owner is asked anything.
     const entryPath = resolve(sourceRoot, extensionEntryRelPath(manifest));
@@ -273,23 +330,9 @@ export async function fetchVerifiedRegistryPackage(
       !existsSync(entryPath) ||
       !sha256HexEqualConstantTime(sha256Hex(readFileSync(entryPath)), vEntry.entryHash)
     ) {
-      throw registryHashMismatch("entry file", req.id, version);
+      throw registryHashMismatch("entry file", id, version);
     }
-    return {
-      id: req.id,
-      version,
-      sourceRoot,
-      manifest,
-      publisherKey: entry.publisher.key,
-      entryHash: vEntry.entryHash,
-      reg,
-      rootFingerprint,
-      publisherChange:
-        decision.change === null ? null : { change: decision.change, via: decision.via },
-      provenance:
-        provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
-        null,
-    };
+    return { sourceRoot };
   } catch (e) {
     try {
       rmSync(archivePath, { force: true });
@@ -299,6 +342,27 @@ export async function fetchVerifiedRegistryPackage(
     }
     throw e;
   }
+}
+
+/**
+ * Spec § 8.6 step 5 for a package whose `manifest` is ALREADY hash-checked and I16-verified
+ * against `vEntry` (a dependency verified in phase 1): one ledgered package fetch, its
+ * `packageSha256`, extraction into `intoDir` (absent or empty), the packaged-manifest hash and the
+ * entry hash. Nothing is installed. The root install runs the same two halves with its own
+ * signature and Vault checks between them, so a root and a dependency are staged by the same code.
+ */
+export async function stageVerifiedPackage(
+  fetchDeps: RegistryFetchDeps,
+  reg: RegistryRow,
+  id: string,
+  version: string,
+  vEntry: RegistryVersionEntry,
+  manifest: ExtensionManifest,
+  intoDir: string,
+): Promise<{ sourceRoot: string }> {
+  assertEmptyStagingDir(intoDir);
+  const packageBytes = await fetchHashedPackage(fetchDeps, reg, id, version, vEntry);
+  return extractVerifiedPackage(packageBytes, id, version, vEntry, manifest, intoDir);
 }
 
 /**
