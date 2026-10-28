@@ -288,6 +288,7 @@ async function handleInstall(
         publisher: installed.publisher,
         installPath: installed.installPath,
         treeDigest: installed.treeDigest,
+        dependencies: installed.dependencies,
       },
     };
   } catch (e) {
