@@ -46,9 +46,9 @@ describe("renderInstallPlan", () => {
     expect(renderInstallPlan(plan, planPermissionsUnion(plan))).toBe(
       [
         "This install adds 2 packages:",
-        "  com.example.dep@1.2.0 (com.example.tool needs ^1.0.0) — registry main (https://r.example/) — publisher acme (6fb9…), verified",
+        "  com.example.dep@1.2.0 (com.example.tool needs ^1.0.0) — registry main (https://r.example/) — publisher acme (6fb9a1c2d3e4f506…), verified",
         "    network: api.example.com · read: none · write: none",
-        "  com.example.tool@1.0.0 — registry main (https://r.example/) — publisher acme (6fb9…), unverified",
+        "  com.example.tool@1.0.0 — registry main (https://r.example/) — publisher acme (6fb9a1c2d3e4f506…), unverified",
         "    network: none · read: none · write: none",
         "Already installed and reused: com.example.base@2.0.0 (registry main)",
         "All packages together: network: api.example.com · read: none · write: none",

@@ -94,7 +94,8 @@ function registryText(p: PlannedPackage): string {
 
 function publisherText(p: PlannedPackage): string {
   if (p.publisher === null) return "unsigned";
-  const fp = `${oneLine(p.publisher.fingerprint.slice(0, 4))}…`;
+  // 16 characters, as the CLI's `shortKey` shows a publisher key: 4 is too few to compare by eye.
+  const fp = `${oneLine(p.publisher.fingerprint.slice(0, 16))}…`;
   const verified = p.publisherBadge === undefined ? "unverified" : "verified";
   return `publisher ${oneLine(p.publisher.id)} (${fp}), ${verified}`;
 }
