@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793188538030,
+  "lastUpdate": 1793224630401,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "26560e97026a61addc1c42c29d4c86dc6c89c272",
-          "message": "chore: release main (#1150)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>1.29.0</summary>\n\n##\n[1.29.0](https://github.com/nimbus-agent/Nimbus/compare/v1.28.0...v1.29.0)\n(2026-08-11)\n\n\n### Features\n\n* **agents:** nimbus pre-mortem, with a service-scoped incident watcher\ncondition ([#1146](https://github.com/nimbus-agent/Nimbus/issues/1146))\n([58e93fd](https://github.com/nimbus-agent/Nimbus/commit/58e93fd3e9e245c0ad17a3c8a3c51df815afda7a))\n\n\n### Bug Fixes\n\n* **connectors:** report only what was actually verified in connector\nauth and targeted fetch\n([#1141](https://github.com/nimbus-agent/Nimbus/issues/1141))\n([902cd42](https://github.com/nimbus-agent/Nimbus/commit/902cd4291f9fb5278e56e59a9c1ecebbb293b33c))\n* **gateway:** log why the process exits instead of dying silently\n([#1140](https://github.com/nimbus-agent/Nimbus/issues/1140))\n([322ea68](https://github.com/nimbus-agent/Nimbus/commit/322ea683266d97a96aaa05e182b6208365ad5dbe))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-11T16:18:32Z",
-          "tree_id": "3b210ad90af39e2b691923f1c610b6c8f24e23ae",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/26560e97026a61addc1c42c29d4c86dc6c89c272"
-        },
-        "date": 1786465813400,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.1683008000018,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.27591515000097,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 266.5559805500012,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ac07b0260a73575c201c2cd25b731de23708a8ec",
+          "message": "feat(extensions): registry installs fetch their dependencies from the right registry, in one approved plan (#1810)\n\nPR 2 of 5 of Phase 9.5 project 4, extension dependencies and starter\npacks. PR 1, #1806, shipped the manifest format.\n\n## What changes for a user\n\n`nimbus extension install <id>` from a registry now fetches the\ndependencies the package needs and installs them together with it:\n\n- **Where a dependency comes from.** A bare range comes from the\ndependent's own registry. The object form `{ range, registry }` comes\nfrom a registry you have already added, matched by canonical URL, or\nfrom `nimbus-official`. A registry you have not added is refused with\nthe `nimbus registry add <name> <url>` command to run. There is no\nfall-through to another registry.\n- **What is checked, and when.** Each dependency's versions and manifest\nare read through I44's verified chain before you are asked: the pinned\nroot key, the verified index, the manifest hash and the I16 signature.\nTaken-down versions are skipped and publisher-key conflicts are refused.\nPackages are downloaded only after you approve.\n- **One approval for the whole plan.** It lists every package with its\nregistry URL, publisher fingerprint and permissions, which dependency\nneeds it, and the union of all permissions. A dependency already\ninstalled from the same registry is reused and listed as such; it is not\nfetched again.\n- **All or nothing.** If any step after approval fails, every row,\ndependency edge and install directory the plan created is removed. A\nrollback step that itself fails is reported on the error.\n- **What is not rolled back.** Publisher keys verified during the plan\nstay in the Vault, by design. The root's registry source is recorded\nafter the plan install returns.\n- **One id per plan.** A dependency installed from a local folder or\nanother registry does not satisfy a registry dependency. It is refused\nwith `ERR_DEPENDENCY_SOURCE_MISMATCH`, and the message names `nimbus\nextension remove <id>`.\n- **CLI output.** The CLI prints each dependency it added, then the\n`nimbus extension approve …` commands to run. Nothing runs until each\npackage is approved, as before.\n\nLocal-folder installs are unchanged: they resolve only against installed\ncopies, from any source, and fetch nothing. **Migrations are unchanged\ntoo:** a connector migration installs exactly one package and fetches no\ndependency, and an I44 source pin holds that.\n\n## Internals\n\n- **V78.** Adds `extension_dependency.depends_on_registry` and\n`extension.installed_as_dependency`.\n- **Solver** (`dependency-graph.ts`). Every node carries a `SourceKey`,\nthe registry name plus its root fingerprint. A pinned id is never\nre-chosen at a second version.\n- **`registry/dependency-registry.ts`** resolves which registry a\ndependency names.\n- **`registry/registry-dependency-fetcher.ts`.** Phase 1 reads verified\nindexes and manifests, lazily: a package with no dependencies makes no\nrequest. Phase 2 stages each dependency's package through the shared\n`registry/registry-package-stage.ts`.\n- **Plan installer** in `install-from-local.ts`. Every package's entry\nhash, the root's included, is now checked inside the plan, so a root\nmismatch also undoes its dependencies.\n- **Approval prompt.** `extension.install` gains optional `plan`,\n`planPermissions` and `planText`. The executor prints `planText` after\nDetails and keeps it out of the audit and display payloads, as\n`pack.install` does with `promptText`.\n- **New codes:** `ERR_DEPENDENCY_SOURCE_MISMATCH`,\n`ERR_DEPENDENCY_REGISTRY_NOT_ADDED` and\n`ERR_DEPENDENCY_REGISTRY_KEY_MISMATCH`. The registry action dist was\nrebuilt.\n- **I44 amended, under the triple rule.** The statement,\n`SECURITY-INVARIANTS.md` and three new behavioural tests in the I44\nblock are each red-proved. New source pins cover two facts: only\n`install-from-registry.ts` creates a dependency resolver, and the\nmigration installs installed-only.\n\n## Not in this PR\n\n- Connector-requirement status and the post-install \"Connect now?\" and\napprove-each-member walk are PR 3.\n- Starter packs in the gateway and orphan removal are PR 4. That PR also\nflips `installed_as_dependency` back to 0 on an explicit install.\n- Updates that add dependencies are PR 5. Auto-update still checks\ninstalled copies only and drops a dependency's `registry`, so PR 5 must\npass full specs.\n\n## Known follow-ups, not blocking\n\nThese came from the review notes:\n\n- An already-installed official dependency is still refused under\n`enforce_air_gap`. This fails closed.\n- An owner registry that is unreachable under air gap is reported as\noffline rather than with the air-gap reason.\n- `rollbackFailures` are attached to the error but not logged.\n- The diamond and air-gap cases are tested at the solver and resolver\nlevel only, not end to end.\n- One existing test from 10-18, \"the nimbus-reg temp dir is gone…\",\nstill scans the global `tmpdir()`, so it could flake under `--parallel`.\n\n## Verification\n\n- `bun run preflight:fast` passed.\n- **Focused suites:** `packages/gateway/src/extensions`,\n`security-invariants.test.ts`, `engine`, `ipc` and the CLI extension\ntests: 5572 pass, 0 fail.\n- **Full `--parallel` suite on Windows:** 32122 pass. The failures were\nall environmental:\n  - `pwsh` is not on PATH;\n  - TUI files failed to load `yoga-layout`;\n- the sandbox helper had not been built in a fresh worktree; those files\npass once it is built;\n  - a few files passed when run serially.\n- The whole parallel suite was not re-run after the helper build, so CI\nis the first clean full run.\n\n## Review focus\n\n- Reuse of an installed same-registry dependency.\n- Diamonds.\n- Post-approval staging failure.\n- The built-in registry under air gap.\n- The consent fields shown unredacted.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Registry installs now resolve and install required dependencies,\nincluding dependencies from explicitly selected registries that have\nbeen added.\n* Review the complete install plan and approve it once before any\npackages are installed. The CLI lists each dependency’s version and\nregistry.\n* Installed dependencies are reused only when they come from the\nexpected registry.\n* **Bug Fixes**\n* If an installation fails, packages and records created by that install\nplan are rolled back.\n* Connector migrations now require dependencies to be already installed;\nthey do not fetch dependencies.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-28T21:45:46Z",
+          "tree_id": "e88c15423728306bf723c977d8cb906f50cf6177",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ac07b0260a73575c201c2cd25b731de23708a8ec"
+        },
+        "date": 1793224626240,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 273.7636301500024,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 274.3663902000051,
             "unit": "ms"
           }
         ]
