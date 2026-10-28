@@ -480,6 +480,44 @@ describe("runExtensionInstall — path versus registry id", () => {
     expect(calls.map((c) => c.method)).toEqual(["registry.install"]);
   });
 
+  test("prints each dependency and one approve hint", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      {
+        id: "com.example.tool",
+        version: "2.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        dependencies: [{ id: "com.example.dep", version: "1.2.0", registry: "main" }],
+      },
+    ]);
+    await runExtensionInstall(client, ["install", "com.example.tool"], ["com.example.tool"]);
+    expect(out.stdout).toContain(
+      "  + com.example.dep@1.2.0 from registry main (installed as a dependency)",
+    );
+    expect(out.stdout).toContain(
+      "Nothing runs until you approve it: nimbus extension approve com.example.dep && nimbus extension approve com.example.tool",
+    );
+  });
+
+  test("prints the single approve hint with no dependencies", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      {
+        id: "com.example.tool",
+        version: "2.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        dependencies: [],
+      },
+    ]);
+    await runExtensionInstall(client, ["install", "com.example.tool"], ["com.example.tool"]);
+    expect(out.stdout).toContain(
+      "Nothing runs until you approve it: nimbus extension approve com.example.tool",
+    );
+    expect(out.stdout).not.toContain("installed as a dependency");
+  });
+
   test("--yes is refused for a registry install, before any call", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
     const { client, calls } = createMockIpcClient([]);

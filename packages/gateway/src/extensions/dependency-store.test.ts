@@ -20,8 +20,8 @@ describe("dependency-store", () => {
       "com.example.foo",
       "1.0.0",
       [
-        { id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" },
-        { id: "com.shared.crypto", range: "^2.0.0", resolvedVersion: "2.4.1" },
+        { id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null },
+        { id: "com.shared.crypto", range: "^2.0.0", resolvedVersion: "2.4.1", registry: null },
       ],
       1_700_000_000_000,
     );
@@ -39,14 +39,14 @@ describe("dependency-store", () => {
       db,
       "com.example.foo",
       "1.0.0",
-      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
       1,
     );
     recordInstall(
       db,
       "com.example.bar",
       "2.0.0",
-      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0", registry: null }],
       2,
     );
     const rev = reverseDeps(db, "com.shared.utils");
@@ -62,14 +62,14 @@ describe("dependency-store", () => {
       db,
       "com.example.foo",
       "1.0.0",
-      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
       1,
     );
     recordInstall(
       db,
       "com.example.bar",
       "2.0.0",
-      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0", registry: null }],
       2,
     );
     clearDeps(db, "com.example.foo");
@@ -82,18 +82,54 @@ describe("dependency-store", () => {
       db,
       "com.example.foo",
       "1.0.0",
-      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
       1,
     );
     recordInstall(
       db,
       "com.example.foo",
       "1.0.0",
-      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.utils", range: "^1.2.0", resolvedVersion: "1.5.0", registry: null }],
       2,
     );
     const fwd = forwardDeps(db, "com.example.foo");
     expect(fwd).toHaveLength(1);
     expect(fwd[0]?.range).toBe("^1.2.0");
+  });
+
+  it("recordInstall stores each edge's registry", () => {
+    runIndexedSchemaMigrations(db, 78);
+    recordInstall(
+      db,
+      "a",
+      "1.0.0",
+      [{ id: "b", range: "^1", resolvedVersion: "1.0.0", registry: "main" }],
+      1,
+    );
+    expect(forwardDeps(db, "a")).toEqual([{ id: "b", range: "^1", registry: "main" }]);
+  });
+
+  it("a local edge stores NULL", () => {
+    runIndexedSchemaMigrations(db, 78);
+    recordInstall(
+      db,
+      "a",
+      "1.0.0",
+      [{ id: "b", range: "^1", resolvedVersion: "1.0.0", registry: null }],
+      1,
+    );
+    expect(forwardDeps(db, "a")).toEqual([{ id: "b", range: "^1", registry: null }]);
+  });
+
+  it("below V78 recordInstall still writes the edge", () => {
+    runIndexedSchemaMigrations(db, 77);
+    recordInstall(
+      db,
+      "a",
+      "1.0.0",
+      [{ id: "b", range: "^1", resolvedVersion: "1.0.0", registry: "main" }],
+      1,
+    );
+    expect(forwardDeps(db, "a")).toEqual([{ id: "b", range: "^1", registry: null }]);
   });
 });

@@ -5,46 +5,38 @@
  * `installExtensionFromLocalDirectory`) BEFORE a byte lands in the install tree.
  */
 import type { Database } from "bun:sqlite";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import {
   provenanceMatching,
   provenanceNote,
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
+  type RegistryIndex,
   type RegistryVersionEntry,
   readManifestRepository,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
-import { deleteExtensionById, listExtensions } from "../../automation/extension-store.ts";
-import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
+import { listExtensions } from "../../automation/extension-store.ts";
 import type { NimbusVault } from "../../vault/index.ts";
-import { MAX_TARBALL_BYTES } from "../auto-update-apply.ts";
-import { clearDeps } from "../dependency-store.ts";
+import { registryNameOf } from "../dependency-types.ts";
 import {
+  type ExtensionInstallApprovalRequest,
   type ExtensionInstallApprover,
   ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
+  rollbackFailuresOf,
 } from "../install-from-local.ts";
 import {
-  type ExtensionManifest,
-  extensionEntryRelPath,
-  resolveExtensionManifestPath,
-} from "../manifest.ts";
+  type PlannedPackage,
+  planPermissionsUnion,
+  renderInstallPlan,
+} from "../install-plan-text.ts";
+import type { ExtensionManifest } from "../manifest.ts";
 import { assertManifestSupported } from "../manifest-support.ts";
-import { extractPackage } from "../package-extract.ts";
-import { isStrictlyInside } from "../path-containment.ts";
 import {
   type KeyChange,
   type KeyVia,
@@ -59,13 +51,14 @@ import {
   TrustBlockError,
 } from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
-import { fetchRegistryBytes, type RegistryFetchDeps } from "./registry-fetch.ts";
+import { createRegistryDependencyResolver } from "./registry-dependency-fetcher.ts";
+import type { RegistryFetchDeps } from "./registry-fetch.ts";
+import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import {
-  fetchRegistryManifest,
-  registryHashMismatch,
-  sha256Hex,
-  verifyRegistryManifestSignature,
-} from "./registry-manifest.ts";
+  assertEmptyStagingDir,
+  extractVerifiedPackage,
+  fetchHashedPackage,
+} from "./registry-package-stage.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
 import { type RegistryRow, setExtensionSource } from "./registry-store.ts";
 
@@ -77,6 +70,8 @@ export interface InstallFromRegistryDeps {
   vault: NimbusVault;
   fetch: Omit<RegistryFetchDeps, "db">;
   approve: ExtensionInstallApprover;
+  /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
+  planStagingRoot?: string;
 }
 
 export interface InstallFromRegistryRequest {
@@ -131,6 +126,8 @@ export type RegistryInstallResult = InstallExtensionFromLocalResult & {
   sourceRegistry: string;
   rootFingerprint: string;
   publisher: { id: string; fingerprint: string };
+  /** The dependencies this install added (newly installed, in install order), each with its registry. */
+  dependencies: readonly { id: string; version: string; registry: string }[];
 };
 
 /**
@@ -157,17 +154,11 @@ export interface VerifiedRegistryPackage {
    * hash-checked, signature-verified manifest names the same repository; else null.
    */
   readonly provenance: VersionProvenance | null;
-}
-
-/** `intoDir` must be absent or an empty directory: a staged package is never merged into another tree. */
-function assertEmptyStagingDir(intoDir: string): void {
-  if (existsSync(intoDir) && readdirSync(intoDir).length > 0) {
-    throw new RegistryError(
-      "ERR_REGISTRY_EXTRACT_FAILED",
-      `the staging directory ${intoDir} is not empty; refusing to merge a package into it`,
-    );
-  }
-  mkdirSync(intoDir, { recursive: true });
+  /**
+   * The verified index the fetch resolved the package from, so a dependency resolver over the same
+   * registry need not read it again. Optional: a package built elsewhere (a test fake) has none.
+   */
+  readonly index?: RegistryIndex;
 }
 
 /**
@@ -200,7 +191,7 @@ export async function fetchVerifiedRegistryPackage(
   }
   assertEmptyStagingDir(intoDir);
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
-  const { reg, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
+  const { reg, index, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
   const rootFingerprint = publisherKeyFingerprint(reg.rootKey);
   // I48: refused BEFORE any manifest or package request, and before the owner is asked anything.
   const subjectAt = (version: string): BlockSubject => ({
@@ -219,16 +210,8 @@ export async function fetchVerifiedRegistryPackage(
   assertNotBlocked(deps.db, subjectAt(version));
 
   const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, req.id, version, vEntry);
-  const packageBytes = await fetchRegistryBytes(fetchDeps, reg, vEntry.package, {
-    method: "registry.package",
-    extensionId: req.id,
-    version,
-    maxBytes: MAX_TARBALL_BYTES,
-  });
   // Hashes first: nothing is verified or extracted from bytes the index did not sign.
-  if (!sha256HexEqualConstantTime(sha256Hex(packageBytes), vEntry.packageSha256)) {
-    throw registryHashMismatch("package", req.id, version);
-  }
+  const packageBytes = await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry);
   const { manifest } = fetched;
   await verifyRegistryManifestSignature(fetched, req.id, version);
   // Refused with the right code before the package is extracted; the local install door
@@ -245,82 +228,59 @@ export async function fetchVerifiedRegistryPackage(
   });
   if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
 
-  const archivePath = join(intoDir, "package.tgz");
-  const extractDir = join(intoDir, "pkg");
-  try {
-    writeFileSync(archivePath, packageBytes);
-    let sourceRoot: string;
-    try {
-      sourceRoot = (await extractPackage(archivePath, extractDir)).sourceRoot;
-    } catch (e) {
-      throw new RegistryError(
-        "ERR_REGISTRY_EXTRACT_FAILED",
-        `the package of ${req.id}@${version} could not be extracted: ${e instanceof Error ? e.message : String(e)}`,
-      );
-    }
-    // The package must carry the very manifest the index signed.
-    const inPackage = resolveExtensionManifestPath(sourceRoot);
-    if (
-      inPackage === undefined ||
-      !sha256HexEqualConstantTime(sha256Hex(readFileSync(inPackage)), vEntry.manifestSha256)
-    ) {
-      throw registryHashMismatch("packaged manifest", req.id, version);
-    }
-    // The entry file must be the one the index listed BEFORE the owner is asked anything.
-    const entryPath = resolve(sourceRoot, extensionEntryRelPath(manifest));
-    if (
-      !isStrictlyInside(sourceRoot, entryPath) ||
-      !existsSync(entryPath) ||
-      !sha256HexEqualConstantTime(sha256Hex(readFileSync(entryPath)), vEntry.entryHash)
-    ) {
-      throw registryHashMismatch("entry file", req.id, version);
-    }
-    return {
-      id: req.id,
-      version,
-      sourceRoot,
-      manifest,
-      publisherKey: entry.publisher.key,
-      entryHash: vEntry.entryHash,
-      reg,
-      rootFingerprint,
-      publisherChange:
-        decision.change === null ? null : { change: decision.change, via: decision.via },
-      provenance:
-        provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
-        null,
-    };
-  } catch (e) {
-    try {
-      rmSync(archivePath, { force: true });
-      rmSync(extractDir, { recursive: true, force: true });
-    } catch {
-      /* best-effort: the original refusal is the error that matters */
-    }
-    throw e;
-  }
+  const { sourceRoot } = await extractVerifiedPackage(
+    packageBytes,
+    req.id,
+    version,
+    vEntry,
+    manifest,
+    intoDir,
+  );
+  return {
+    id: req.id,
+    version,
+    sourceRoot,
+    manifest,
+    publisherKey: entry.publisher.key,
+    entryHash: vEntry.entryHash,
+    reg,
+    rootFingerprint,
+    publisherChange:
+      decision.change === null ? null : { change: decision.change, via: decision.via },
+    provenance:
+      provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
+      null,
+    index,
+  };
 }
 
 /**
- * Installs a package `fetchVerifiedRegistryPackage` already verified: the Vault is already checked,
- * the owner is asked (inside `installExtensionFromLocalDirectory`) before a byte lands in the install
- * tree, and the `extension` row, the Vault publisher key and the install audit row are written here
- * and nowhere else. `channel` is the one the owner ASKED for (spec § 8.1), not the resolved
- * version's: a `--channel beta` install that resolved to a stable version keeps tracking beta.
- * The staged tree under `pkg.sourceRoot` is left for the caller to remove.
+ * The plan fields of `request` with the root's entry patched (a key change the root's fetch found):
+ * the structured `plan` and the rendered `planText` agree with the request's own fields.
  */
+function planWithRoot(
+  request: ExtensionInstallApprovalRequest,
+  patch: Partial<PlannedPackage>,
+): Pick<ExtensionInstallApprovalRequest, "plan" | "planText"> {
+  if (request.plan === undefined) return {};
+  const plan = request.plan.map((p) => (p.id === request.id ? { ...p, ...patch } : p));
+  return {
+    plan,
+    planText: renderInstallPlan(plan, request.planPermissions ?? planPermissionsUnion(plan)),
+  };
+}
+
 /** The approver, showing a publisher key change (fingerprints, and what vouched for it) when there is one. */
 function withKeyChange(
   approve: ExtensionInstallApprover,
   pc: VerifiedRegistryPackage["publisherChange"],
 ): ExtensionInstallApprover {
   if (pc === null) return approve;
-  return (request) =>
-    approve({
-      ...request,
-      publisherChange: { ...pc.change, via: pc.via },
-      publisherChangeNote: keyChangeNote(pc.change, pc.via),
-    });
+  const change = {
+    publisherChange: { ...pc.change, via: pc.via },
+    publisherChangeNote: keyChangeNote(pc.change, pc.via),
+  };
+  return (request) => approve({ ...request, ...change, ...planWithRoot(request, change) });
 }
 
 /** The approver, showing the version's registry-verified build provenance when there is one. */
@@ -334,10 +294,34 @@ function withProvenance(
     approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
 }
 
+/** How `installVerifiedRegistryPackage` treats the package's dependencies. */
+export interface InstallVerifiedRegistryPackageOptions {
+  /**
+   * `"registry"` (the default, the registry install door): a missing dependency is fetched through
+   * the registry-scoped resolver and shown in the one approval. `"installed-only"` (the migration
+   * engine, whose `extension.migrate` consent names only the root): no resolver is built and
+   * nothing is fetched — a dependency must already be installed (from any source), or the install
+   * is refused, so exactly one package is installed.
+   */
+  readonly dependencies?: "registry" | "installed-only";
+}
+
+/**
+ * Installs a package `fetchVerifiedRegistryPackage` already verified, with every dependency it is
+ * missing: the Vault is already checked; the solve reads each dependency's manifest only through a
+ * registry-scoped resolver (I44: verified index, manifest hash, I16 signature, Vault, I48); the owner
+ * is asked ONCE (inside `installExtensionFromLocalDirectory`), over every package, before a byte
+ * lands in the install tree; and the plan installer then stages, installs and entry-hash-checks
+ * every package — this one included, against `pkg.entryHash` — all or nothing. `channel` is the one
+ * the owner ASKED for (spec § 8.1), not the resolved version's: a `--channel beta` install that
+ * resolved to a stable version keeps tracking beta, and its dependencies are chosen on it too.
+ * The staged tree under `pkg.sourceRoot` is left for the caller to remove.
+ */
 export async function installVerifiedRegistryPackage(
   deps: InstallFromRegistryDeps,
   pkg: VerifiedRegistryPackage,
   channel: RegistryChannel,
+  options: InstallVerifiedRegistryPackageOptions = {},
 ): Promise<RegistryInstallResult> {
   const { id, version, reg, rootFingerprint } = pkg;
   const publisher = pkg.manifest.publisher;
@@ -347,6 +331,16 @@ export async function installVerifiedRegistryPackage(
       `the verified manifest of ${id}@${version} names no publisher`,
     );
   }
+  // One resolver per install: it is single-solve (a refused index read is remembered). None at all
+  // for an installed-only install: its dependencies resolve against installed copies only.
+  const resolver =
+    options.dependencies === "installed-only"
+      ? undefined
+      : createRegistryDependencyResolver(deps, {
+          reg,
+          channel,
+          ...(pkg.index === undefined ? {} : { index: pkg.index }),
+        });
   let installed: InstallExtensionFromLocalResult;
   try {
     installed = await installExtensionFromLocalDirectory({
@@ -363,6 +357,10 @@ export async function installVerifiedRegistryPackage(
         pkg.provenance,
         pkg.reg.name,
       ),
+      ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
+      ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
+      // Checked by the plan installer before anything is recorded: a mismatch undoes every package.
+      expectedRootEntryHash: pkg.entryHash,
     });
   } catch (e) {
     if (
@@ -372,17 +370,13 @@ export async function installVerifiedRegistryPackage(
     ) {
       throw e;
     }
-    throw new RegistryError(
-      "ERR_REGISTRY_INSTALL_REFUSED",
-      e instanceof Error ? e.message : String(e),
+    // The refusal code changes; what the plan rollback could not undo is carried over unchanged.
+    const failures = rollbackFailuresOf(e);
+    throw Object.assign(
+      new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", e instanceof Error ? e.message : String(e)),
+      { cause: e },
+      failures.length === 0 ? {} : { rollbackFailures: failures },
     );
-  }
-  if (!sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)) {
-    // Installed bytes disagree with the signed index: undo the install rather than keep it.
-    clearDeps(deps.db, installed.id);
-    deleteExtensionById(deps.db, installed.id);
-    rmSync(installed.installPath, { recursive: true, force: true });
-    throw registryHashMismatch("entry file", id, version);
   }
   setExtensionSource(deps.db, installed.id, { registry: reg.name, rootFingerprint, channel });
   return {
@@ -390,6 +384,11 @@ export async function installVerifiedRegistryPackage(
     sourceRegistry: reg.name,
     rootFingerprint,
     publisher: { id: publisher.id, fingerprint: publisherKeyFingerprint(pkg.publisherKey) },
+    dependencies: installed.installed.flatMap((n) =>
+      n.newlyInstalled && n.id !== id && n.source !== null
+        ? [{ id: n.id, version: n.version, registry: registryNameOf(n.source) }]
+        : [],
+    ),
   };
 }
 

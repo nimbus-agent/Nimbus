@@ -11,9 +11,9 @@ import { writePublisherKey, writePublisherKeyFor } from "../publisher-keys.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
 import {
-  buildTestRegistry,
+  buildMultiExtensionRegistry,
+  type buildTestRegistry,
   PUBLISHER_SEED,
-  resignIndex,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
@@ -46,22 +46,14 @@ afterEach(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
-/** One registry folder carrying several extensions (the fixture builds one id per call). */
+/** One registry folder carrying several extensions. */
 async function buildRegistry(
   name: string,
   exts: Record<string, TestVersion[]>,
   extra: Partial<Parameters<typeof buildTestRegistry>[1]> = {},
 ): Promise<string> {
   const dir = join(tmp, name);
-  const merged: Record<string, unknown> = {};
-  let index: Record<string, unknown> = {};
-  for (const [id, versions] of Object.entries(exts)) {
-    const built = await buildTestRegistry(dir, { id, versions, ...extra });
-    rootKey = built.rootKey;
-    index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as Record<string, unknown>;
-    Object.assign(merged, index["extensions"] as Record<string, unknown>);
-  }
-  resignIndex(join(dir, "index.json"), { ...index, extensions: merged });
+  rootKey = (await buildMultiExtensionRegistry(dir, exts, extra)).rootKey;
   return dir;
 }
 
@@ -409,7 +401,7 @@ describe("collectRegistryUpdates", () => {
     expect(out.updates.map((u) => u.id)).toEqual(["com.b"]);
   });
 
-  test("an update adding a cross-registry dependency is not offered, and the error carries the reason", async () => {
+  test("an update adding a cross-registry dependency is offered, with the dependency's range in dependsOn", async () => {
     const dir = await buildRegistry("main", {
       "com.a": [
         { version: "1.0.0" },
@@ -421,10 +413,10 @@ describe("collectRegistryUpdates", () => {
     });
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
-    expect(out.updates).toEqual([]);
+    expect(out.updates.map((u) => u.toVersion)).toEqual(["1.2.0"]);
     expect(out.errors).toEqual([]);
-    expect(out.refused[0]?.error).toContain("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(out.dependsOn.has("com.a")).toBe(false);
+    expect(out.refused).toEqual([]);
+    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
 });
 

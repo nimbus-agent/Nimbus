@@ -116,7 +116,7 @@ describe("T2 PR 4 — dependency lifecycle (end-to-end in-process)", () => {
 
     const fwdB = forwardDeps(db, "com.example.B");
     expect(fwdB).toHaveLength(1);
-    expect(fwdB[0]).toEqual({ id: "com.shared.A", range: "^1.0.0" });
+    expect(fwdB[0]).toEqual({ id: "com.shared.A", range: "^1.0.0", registry: null });
 
     const revA = reverseDeps(db, "com.shared.A");
     expect(revA).toHaveLength(1);

@@ -19,7 +19,7 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
-import { assertManifestSupported, dependencyRanges } from "../manifest-support.ts";
+import { assertManifestSupported, rangesOf } from "../manifest-support.ts";
 import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
@@ -198,7 +198,7 @@ async function detectOne(
         }),
     detectedAt: deps.now(),
   });
-  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, dependencyRanges(m.dependsOn, m.id));
+  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, rangesOf(m.dependsOn));
 }
 
 export async function collectRegistryUpdates(

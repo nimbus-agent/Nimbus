@@ -14,25 +14,45 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   publisherKeyFingerprint,
+  RegistryError,
   signTrustStatement,
   type UnsignedTrustStatement,
 } from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
-import { listExtensions } from "../../automation/extension-store.ts";
+import { isInstalledAsDependency, listExtensions } from "../../automation/extension-store.ts";
+import { consentDisplayPayload } from "../../engine/executor.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { encodeBase64 } from "../../util/base64.ts";
 import { MockVault } from "../../vault/mock.ts";
-import type { ExtensionInstallApprovalRequest } from "../install-from-local.ts";
+import { forwardDeps } from "../dependency-store.ts";
+import {
+  type ExtensionInstallApprovalRequest,
+  installExtensionFromLocalDirectory,
+  rollbackFailuresOf,
+} from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
+import { decodeBase64 } from "../verify-signature.ts";
 import {
+  buildMultiExtensionRegistry,
   buildTestRegistry,
   PUBLISHER_SEED,
+  ROOT_SEED,
   resignIndex,
   type TestRegistry,
+  type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
-import { type InstallFromRegistryDeps, installFromRegistry } from "./install-from-registry.ts";
+import {
+  fetchVerifiedRegistryPackage,
+  type InstallFromRegistryDeps,
+  installFromRegistry,
+  installVerifiedRegistryPackage,
+} from "./install-from-registry.ts";
+import {
+  createRegistryDependencyResolver,
+  type RegistryDependencyResolver,
+} from "./registry-dependency-fetcher.ts";
 import { getExtensionSource, insertRegistry } from "./registry-store.ts";
 
 const ID = "com.example.tool";
@@ -629,14 +649,431 @@ describe("installFromRegistry refuses manifests this gateway cannot honour yet",
     });
     await refusedBeforeApproval();
   });
+});
 
-  test("an extension with a cross-registry dependency is refused before the owner is asked", async () => {
-    await setup([
-      {
-        version: "1.0.0",
-        dependsOn: { "com.example.dep": { range: "^1.0.0", registry: "nimbus-official" } },
-      },
+describe("installFromRegistry installs a dependency plan", () => {
+  const DEP = "com.example.dep";
+  const DEP2 = "com.example.dep2";
+  const PLAN_PREFIX = "nimbus-plan-";
+  /** Remote registries served from folders by the fake fetch: `https://<name>.test/`. */
+  const served = new Map<string, string>();
+  let urls: string[];
+  /** This test's own plan staging root: never the shared `os.tmpdir()` other workers write to. */
+  let planRoot: string;
+  /** The plan staging root's entries when a dependency package was fetched (staging is under way). */
+  let stagingWhileFetching: string[][];
+
+  beforeEach(() => {
+    // The plan installer records each edge's registry and the dependency marker (V78).
+    db.close();
+    db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 78);
+    served.clear();
+    urls = [];
+    planRoot = join(tmp, "plan-staging");
+    mkdirSync(planRoot, { recursive: true });
+    stagingWhileFetching = [];
+  });
+
+  async function addRemote(name: string, exts: Record<string, TestVersion[]>): Promise<string> {
+    const dir = join(tmp, `reg-${name}`);
+    const keys = await buildMultiExtensionRegistry(dir, exts);
+    served.set(name, dir);
+    insertRegistry(db, {
+      name,
+      url: `https://${name}.test/`,
+      rootKey: keys.rootKey,
+      rootFingerprint: publisherKeyFingerprint(keys.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-01T00:00:00Z",
+      addedAt: NOW,
+      lastIndexSha256: null,
+    });
+    return dir;
+  }
+
+  function planDeps(approve = true): InstallFromRegistryDeps {
+    const d = deps(approve);
+    d.planStagingRoot = planRoot;
+    d.fetch.fetchFn = (url: string) => {
+      urls.push(url);
+      if (url.endsWith(`/${DEP}/1.0.0/package.tgz`)) {
+        stagingWhileFetching.push(readdirSync(planRoot));
+      }
+      const u = new URL(url);
+      const dir = served.get(u.hostname.replace(/\.test$/, ""));
+      if (dir === undefined) return Promise.resolve(new Response("down", { status: 503 }));
+      try {
+        return Promise.resolve(
+          new Response(readFileSync(join(dir, ...u.pathname.split("/").filter(Boolean)))),
+        );
+      } catch {
+        return Promise.resolve(new Response("missing", { status: 404 }));
+      }
+    };
+    return d;
+  }
+
+  /** Root `com.example.tool` → `com.example.dep`, both in `main`. */
+  function mainWithDep(): Promise<string> {
+    return addRemote("main", {
+      [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+  }
+
+  function installedIds(): string[] {
+    return listExtensions(db).map((r) => r.id);
+  }
+
+  /** Staging happened under `planRoot` (one plan directory), and nothing of it is left. */
+  function expectPlanStagingUsedAndRemoved(): void {
+    expect(stagingWhileFetching.length).toBeGreaterThan(0);
+    for (const entries of stagingWhileFetching) {
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.startsWith(PLAN_PREFIX)).toBe(true);
+    }
+    expect(readdirSync(planRoot)).toEqual([]);
+  }
+
+  async function codeOf(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return (e as { code?: unknown }).code ?? e;
+    }
+    return undefined;
+  }
+
+  const PUBLISHER_FP = publisherKeyFingerprint(
+    encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey),
+  );
+
+  test("a missing same-registry dependency is fetched, approved once and installed first", async () => {
+    await mainWithDep();
+    const out = await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    expect(asked).toHaveLength(1);
+    const req = asked[0] as ExtensionInstallApprovalRequest;
+    expect(req.plan?.map((p) => p.id)).toEqual([DEP, ID]);
+    expect(req.plan?.[0]).toMatchObject({
+      id: DEP,
+      version: "1.0.0",
+      registry: "main",
+      registryUrl: "https://main.test/",
+      requiredBy: [{ from: ID, range: "^1.0.0" }],
+      newlyInstalled: true,
+      publisher: { id: "acme", fingerprint: PUBLISHER_FP },
+    });
+    expect(req.plan?.[1]).toMatchObject({ id: ID, requiredBy: [], newlyInstalled: true });
+    expect(req.installs).toEqual([
+      { id: ID, version: "1.0.0" },
+      { id: DEP, version: "1.0.0" },
     ]);
-    await refusedBeforeApproval();
+    expect(req.planText).toContain("This install adds 2 packages:");
+    expect(req.planText).toContain(`${DEP}@1.0.0 (${ID} needs ^1.0.0) — registry main`);
+    expect(req.planPermissions).toEqual({ network: [], filesystem: { read: [], write: [] } });
+
+    expect(installedIds()).toEqual([DEP, ID]);
+    expect(getExtensionSource(db, DEP)).toEqual({
+      registry: "main",
+      rootFingerprint: publisherKeyFingerprint(
+        encodeBase64(nacl.sign.keyPair.fromSeed(ROOT_SEED).publicKey),
+      ),
+      channel: "stable",
+    });
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(isInstalledAsDependency(db, ID)).toBe(false);
+    expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+    expect(out.dependencies).toEqual([{ id: DEP, version: "1.0.0", registry: "main" }]);
+    expect(existsSync(join(extensionsDir, DEP, "dist", "index.js"))).toBe(true);
+  });
+
+  test("a dependency from a named, added registry installs from it", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://other.test/" } },
+        },
+      ],
+    });
+    await addRemote("other", { [DEP]: [{ version: "1.0.0" }] });
+    const out = await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    expect(getExtensionSource(db, DEP)?.registry).toBe("other");
+    expect(asked[0]?.plan?.[0]).toMatchObject({
+      id: DEP,
+      registry: "other",
+      registryUrl: "https://other.test/",
+    });
+    expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "other" }]);
+    expect(out.dependencies).toEqual([{ id: DEP, version: "1.0.0", registry: "other" }]);
+    expect(urls.filter((u) => u.startsWith("https://main.test/") && u.includes(DEP))).toEqual([]);
+    expect(urls.filter((u) => u.startsWith("https://other.test/") && u.includes(DEP))).toEqual([
+      `https://other.test/extensions/${DEP}/1.0.0/manifest.json`,
+      `https://other.test/extensions/${DEP}/1.0.0/package.tgz`,
+    ]);
+  });
+
+  test("a dependency from a registry that is not added is refused before the prompt", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://nowhere.test/" } },
+        },
+      ],
+    });
+    expect(await codeOf(installFromRegistry(planDeps(), { id: ID, registry: "main" }))).toBe(
+      "ERR_DEPENDENCY_REGISTRY_NOT_ADDED",
+    );
+    expect(asked).toHaveLength(0);
+    expect(installedIds()).toEqual([]);
+    expect(urls.filter((u) => u.includes("nowhere.test"))).toEqual([]);
+  });
+
+  test("a locally installed copy does not satisfy a registry dependency", async () => {
+    await mainWithDep();
+    const local = join(tmp, "local-dep");
+    mkdirSync(join(local, "dist"), { recursive: true });
+    writeFileSync(join(local, "dist", "index.js"), "export const v = 1;");
+    writeFileSync(
+      join(local, "nimbus.extension.json"),
+      JSON.stringify({ id: DEP, version: "1.0.0", entry: "dist/index.js", permissions: {} }),
+    );
+    await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: local });
+    expect(await codeOf(installFromRegistry(planDeps(), { id: ID, registry: "main" }))).toBe(
+      "ERR_DEPENDENCY_SOURCE_MISMATCH",
+    );
+    expect(asked).toHaveLength(0);
+    expect(installedIds()).toEqual([DEP]);
+  });
+
+  test("an installed same-registry dependency is reused, not fetched", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: DEP, registry: "main" });
+    const depManifestRows = (): number =>
+      (
+        db
+          .query(
+            "SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.manifest' AND payload_summary LIKE ?",
+          )
+          .get(`%${DEP}%`) as { n: number }
+      ).n;
+    const before = depManifestRows();
+    expect(before).toBe(1);
+    urls = [];
+    asked = [];
+    const out = await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    expect(depManifestRows()).toBe(before);
+    expect(urls.filter((u) => u.includes(DEP))).toEqual([]);
+    expect(asked[0]?.plan?.[0]).toMatchObject({ id: DEP, newlyInstalled: false });
+    expect(asked[0]?.planText).toContain(
+      `Already installed and reused: ${DEP}@1.0.0 (registry main)`,
+    );
+    expect(out.dependencies).toEqual([]);
+    // Installed by the owner's own request, so it is not marked as a dependency.
+    expect(isInstalledAsDependency(db, DEP)).toBe(false);
+    expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+  });
+
+  test("declining installs nothing", async () => {
+    await mainWithDep();
+    await expect(
+      installFromRegistry(planDeps(false), { id: ID, registry: "main" }),
+    ).rejects.toThrow("ERR_EXTENSION_INSTALL_NOT_APPROVED");
+    expect(asked).toHaveLength(1);
+    expect(installedIds()).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+    // Nothing is staged for a declined plan.
+    expect(readdirSync(planRoot)).toEqual([]);
+    // The dependency's package is fetched only after approval.
+    expect(urls.filter((u) => u.includes(`${DEP}/1.0.0/package.tgz`))).toEqual([]);
+  });
+
+  test("a dependency package that fails its hash after approval installs nothing", async () => {
+    const dir = await mainWithDep();
+    const p = join(dir, "extensions", DEP, "1.0.0", "package.tgz");
+    const bytes = readFileSync(p);
+    bytes[bytes.length - 1] = (bytes[bytes.length - 1] ?? 0) ^ 0xff;
+    writeFileSync(p, bytes);
+    expect(await codeOf(installFromRegistry(planDeps(), { id: ID, registry: "main" }))).toBe(
+      "ERR_REGISTRY_HASH_MISMATCH",
+    );
+    expect(asked).toHaveLength(1);
+    expect(installedIds()).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+    expectPlanStagingUsedAndRemoved();
+  });
+
+  test("a root whose entry hash mismatches after its dependency installed rolls the dependency back", async () => {
+    await mainWithDep();
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    expect(
+      await codeOf(
+        installVerifiedRegistryPackage(d, { ...pkg, entryHash: "0".repeat(64) }, "stable"),
+      ),
+    ).toBe("ERR_REGISTRY_HASH_MISMATCH");
+    expect(asked).toHaveLength(1);
+    expect(listExtensions(db)).toEqual([]);
+    expect(forwardDeps(db, ID)).toEqual([]);
+    expect(forwardDeps(db, DEP)).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+  });
+
+  test("a rollback step that fails is reported on the original error, and the other steps still run", async () => {
+    await mainWithDep();
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    // Every rollback `clearDeps` now throws; nothing before the rollback reads this table.
+    db.run("DROP TABLE extension_dependency");
+    let err: unknown;
+    try {
+      await installVerifiedRegistryPackage(d, { ...pkg, entryHash: "0".repeat(64) }, "stable");
+    } catch (e) {
+      err = e;
+    }
+    // The original refusal stays the primary error: same class, same code.
+    expect(err).toBeInstanceOf(RegistryError);
+    expect((err as RegistryError).code).toBe("ERR_REGISTRY_HASH_MISMATCH");
+    expect(rollbackFailuresOf(err).map((f) => [f.step, f.id])).toEqual([
+      ["clearDeps", ID],
+      ["clearDeps", DEP],
+    ]);
+    expect((err as Error).cause).toBeInstanceOf(AggregateError);
+    // The row deletion and the directory removal ran anyway.
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+  });
+
+  test("a failure installing the second dependency removes the first one's row and directory", async () => {
+    await addRemote("main", {
+      [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0", [DEP2]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+      [DEP2]: [{ version: "1.0.0" }],
+    });
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    const resolver = createRegistryDependencyResolver(d, {
+      reg: pkg.reg,
+      channel: "stable",
+      ...(pkg.index === undefined ? {} : { index: pkg.index }),
+    });
+    const stagedIds: string[] = [];
+    const tampering: RegistryDependencyResolver = {
+      ...resolver,
+      async stage(nodes, intoDir) {
+        const staged = await resolver.stage(nodes, intoDir);
+        stagedIds.push(...staged.map((s) => s.id));
+        // The second dependency's staged manifest no longer matches its signature: I16 fails at install.
+        const second = staged[1];
+        if (second === undefined) throw new Error("expected two staged dependencies");
+        const mfPath = join(second.sourceRoot, "nimbus.extension.json");
+        const mf = JSON.parse(readFileSync(mfPath, "utf8")) as Record<string, unknown>;
+        writeFileSync(mfPath, JSON.stringify({ ...mf, name: "tampered" }));
+        return staged;
+      },
+    };
+    await expect(
+      installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: pkg.sourceRoot,
+        vault,
+        publisherKey: decodeBase64(pkg.publisherKey),
+        sourceRegistry: "main",
+        rootFingerprint: pkg.rootFingerprint,
+        approve: async (r) => {
+          asked.push(r);
+          return true;
+        },
+        registryPlan: { resolver: tampering, channel: "stable" },
+        expectedRootEntryHash: pkg.entryHash,
+      }),
+    ).rejects.toThrow();
+    // It was the second dependency's I16 check, at install, that refused.
+    const failed = db
+      .query("SELECT action_json FROM audit_log WHERE action_type = 'extension.signature_failed'")
+      .all() as { action_json: string }[];
+    expect(failed.map((r) => (JSON.parse(r.action_json) as { id: string }).id)).toEqual([DEP2]);
+    expect(stagedIds).toEqual([DEP, DEP2]);
+    expect(asked).toHaveLength(1);
+    expect(listExtensions(db)).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, DEP2))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+  });
+
+  test("a newly installed dependency with no verified record is refused before the prompt", async () => {
+    await mainWithDep();
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    const resolver = createRegistryDependencyResolver(d, {
+      reg: pkg.reg,
+      channel: "stable",
+      ...(pkg.index === undefined ? {} : { index: pkg.index }),
+    });
+    // The solve still plans the dependency, but its verified record is gone: the prompt would
+    // otherwise fall back to no publisher and no permissions, understating what is installed.
+    const forgetful: RegistryDependencyResolver = { ...resolver, verified: () => undefined };
+    let err: unknown;
+    try {
+      await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: pkg.sourceRoot,
+        vault,
+        publisherKey: decodeBase64(pkg.publisherKey),
+        sourceRegistry: "main",
+        rootFingerprint: pkg.rootFingerprint,
+        approve: async (r) => {
+          asked.push(r);
+          return true;
+        },
+        registryPlan: { resolver: forgetful, channel: "stable" },
+        expectedRootEntryHash: pkg.entryHash,
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RegistryError);
+    expect((err as RegistryError).code).toBe("ERR_REGISTRY_INSTALL_REFUSED");
+    expect((err as RegistryError).message).toContain(`${DEP}@1.0.0`);
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toEqual([]);
+  });
+
+  test("the consent display shows every plan field unredacted", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const shown = consentDisplayPayload({
+      type: "extension.install",
+      payload: { ...(asked[0] as ExtensionInstallApprovalRequest) },
+    });
+    expect(JSON.stringify(shown?.["plan"])).not.toContain("[REDACTED]");
+    expect(JSON.stringify(shown?.["planPermissions"])).not.toContain("[REDACTED]");
+    expect(JSON.stringify(shown)).not.toContain("[REDACTED]");
+    expect(shown?.["plan"]).toEqual(asked[0]?.plan);
+    expect(shown?.["planText"]).toBeUndefined();
   });
 });

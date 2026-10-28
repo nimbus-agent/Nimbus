@@ -95,6 +95,30 @@ export function setExtensionPublisherKeyFingerprint(
   return r.changes > 0;
 }
 
+const INSTALLED_AS_DEPENDENCY_SCHEMA_VERSION = 78;
+
+/** V78: marks an extension installed only because another extension depends on it. Throws below V78. */
+export function setInstalledAsDependency(db: Database, id: string, asDependency: boolean): void {
+  if (readIndexedUserVersion(db) < INSTALLED_AS_DEPENDENCY_SCHEMA_VERSION) {
+    throw new Error("The dependency marker requires schema v78+");
+  }
+  dbRun(db, "UPDATE extension SET installed_as_dependency = ? WHERE id = ?", [
+    asDependency ? 1 : 0,
+    id,
+  ]);
+}
+
+/** V78: whether the extension was installed as a dependency; false below V78. */
+export function isInstalledAsDependency(db: Database, id: string): boolean {
+  if (readIndexedUserVersion(db) < INSTALLED_AS_DEPENDENCY_SCHEMA_VERSION) {
+    return false;
+  }
+  const row = db
+    .query("SELECT installed_as_dependency AS d FROM extension WHERE id = ?")
+    .get(id) as { d: number } | null;
+  return row?.d === 1;
+}
+
 export function touchExtensionVerifiedAt(db: Database, id: string, ts: number): void {
   if (readIndexedUserVersion(db) < 10) {
     return;

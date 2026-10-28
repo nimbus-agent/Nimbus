@@ -1,10 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-import {
-  publisherKeyFingerprint,
-  RegistryError,
-  type RegistryErrorCode,
-} from "@nimbus-dev/registry-format";
+import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import {
   listExtensions,
   setExtensionPublisherKeyFingerprint,
@@ -24,11 +20,12 @@ import {
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
-import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
+import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
 import {
+  FETCH_FAILURE_CODES,
   fetchRegistryBytes,
   fetchVerifiedIndex,
   type RegistryFetchDeps,
@@ -150,7 +147,7 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
             },
           },
           ...(manifest.dependsOn !== undefined && {
-            dependsOn: dependencyRanges(manifest.dependsOn, manifest.id),
+            dependsOn: rangesOf(manifest.dependsOn),
           }),
         },
       });
@@ -167,15 +164,6 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
 }
-
-/** Registry errors that mean the bytes could not be FETCHED, as opposed to fetched and refused. */
-const FETCH_FAILURE_CODES: ReadonlySet<RegistryErrorCode> = new Set<RegistryErrorCode>([
-  "ERR_REGISTRY_UNREACHABLE",
-  "ERR_REGISTRY_AIR_GAP",
-  "ERR_REGISTRY_TRANSPORT_REFUSED",
-  "ERR_REGISTRY_TOO_LARGE",
-  "ERR_REGISTRY_NOT_FOUND",
-]);
 
 /**
  * The update's source registry, if it still exists under the root key the update was detected with.

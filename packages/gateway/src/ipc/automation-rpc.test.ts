@@ -845,7 +845,7 @@ describe("extension.info", () => {
       db,
       "com.example.B",
       "1.0.0",
-      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
       Date.now(),
     );
 
@@ -882,13 +882,13 @@ describe("extension.info", () => {
         value: {
           extension: {
             id: string;
-            forwardDeps: Array<{ id: string; range: string }>;
+            forwardDeps: Array<{ id: string; range: string; registry: string | null }>;
             reverseDeps: Array<{ extensionId: string; range: string }>;
           };
         };
       }
     ).value.extension;
-    expect(extB.forwardDeps).toEqual([{ id: "com.shared.A", range: "^1.0.0" }]);
+    expect(extB.forwardDeps).toEqual([{ id: "com.shared.A", range: "^1.0.0", registry: null }]);
     expect(extB.reverseDeps).toEqual([]);
   });
 });
@@ -1025,7 +1025,7 @@ describe("extension.enable / disable / remove", () => {
       db,
       "com.example.B",
       "1.0.0",
-      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0" }],
+      [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
       Date.now(),
     );
 
@@ -1050,7 +1050,7 @@ describe("extension.enable / disable / remove", () => {
         db,
         "com.example.B",
         "1.0.0",
-        [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0" }],
+        [{ id: "com.shared.A", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
         Date.now(),
       );
       recordInstall(db, "com.shared.A", "1.0.0", [], Date.now());

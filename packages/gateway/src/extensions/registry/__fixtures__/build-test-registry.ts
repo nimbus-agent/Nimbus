@@ -136,6 +136,29 @@ export function resignIndex(path: string, index: Record<string, unknown>): void 
 
 type BuildTestRegistryOptions = Parameters<typeof buildTestRegistry>[1];
 
+/**
+ * One registry folder carrying several extensions (`buildTestRegistry` builds one id per call):
+ * each id is built in turn, then the merged `extensions` map is re-signed as one index. `extra`
+ * applies to every id.
+ */
+export async function buildMultiExtensionRegistry(
+  dir: string,
+  exts: Record<string, TestVersion[]>,
+  extra: Partial<Omit<BuildTestRegistryOptions, "id" | "versions">> = {},
+): Promise<{ rootKey: string; publisherKey: string }> {
+  const merged: Record<string, unknown> = {};
+  let index: Record<string, unknown> = {};
+  let keys = { rootKey: "", publisherKey: "" };
+  for (const [id, versions] of Object.entries(exts)) {
+    const built = await buildTestRegistry(dir, { id, versions, ...extra });
+    keys = { rootKey: built.rootKey, publisherKey: built.publisherKey };
+    index = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as Record<string, unknown>;
+    Object.assign(merged, index["extensions"] as Record<string, unknown>);
+  }
+  resignIndex(join(dir, "index.json"), { ...index, extensions: merged });
+  return keys;
+}
+
 /** One version's package, manifest and index entry, written under `dir`. */
 async function buildTestVersion(
   dir: string,
@@ -145,7 +168,9 @@ async function buildTestVersion(
   publisherKey: string,
 ): Promise<{ version: string; entryHash: string; entry: Record<string, unknown> }> {
   const base = join(dir, "extensions", opts.id, v.version);
-  const pkg = join(dir, "build", v.version, "pkg");
+  // Per id as well as per version: several ids built into one folder never share a staging tree.
+  const buildDir = join(dir, "build", opts.id, v.version);
+  const pkg = join(buildDir, "pkg");
   const starterPack = v.starterPack === true || opts.starterPack === true;
   mkdirSync(starterPack ? pkg : join(pkg, "dist"), { recursive: true });
   mkdirSync(base, { recursive: true });
@@ -172,9 +197,7 @@ async function buildTestVersion(
   });
   writeFileSync(join(pkg, "nimbus.extension.json"), manifestText);
   writeFileSync(join(base, "manifest.json"), manifestText);
-  await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: join(dir, "build", v.version) }, [
-    "pkg",
-  ]);
+  await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: buildDir }, ["pkg"]);
   const tgz = await Bun.file(join(base, "package.tgz")).bytes();
   const entryHash = sha(starterPack ? manifestText : entrySource);
   return {

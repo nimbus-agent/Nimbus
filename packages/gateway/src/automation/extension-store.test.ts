@@ -5,9 +5,11 @@ import { LocalIndex } from "../index/local-index.ts";
 import {
   deleteExtensionById,
   insertExtensionRow,
+  isInstalledAsDependency,
   listExtensions,
   selectExtensionInstallPath,
   setExtensionEnabled,
+  setInstalledAsDependency,
   touchExtensionVerifiedAt,
 } from "./extension-store.ts";
 
@@ -57,5 +59,24 @@ describe("extension-store", () => {
         last_verified_at: 0,
       }),
     ).toThrow(/v10/);
+  });
+
+  test("setInstalledAsDependency round-trips", () => {
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    insertExtensionRow(db, {
+      id: "ext.dep",
+      version: "1.0.0",
+      install_path: "/e/ext.dep",
+      manifest_hash: "aa",
+      entry_hash: "bb",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    expect(isInstalledAsDependency(db, "ext.dep")).toBe(false);
+    setInstalledAsDependency(db, "ext.dep", true);
+    expect(isInstalledAsDependency(db, "ext.dep")).toBe(true);
+    setInstalledAsDependency(db, "ext.dep", false);
+    expect(isInstalledAsDependency(db, "ext.dep")).toBe(false);
   });
 });

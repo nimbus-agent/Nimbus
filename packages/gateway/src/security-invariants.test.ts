@@ -7246,13 +7246,15 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const fetchBody = bodyOf(src, "export async function fetchVerifiedRegistryPackage(");
     const resolveAt = fetchBody.indexOf("await resolveRegistryEntry(");
     const manifestAt = fetchBody.indexOf("await fetchRegistryManifest(");
-    const shaAt = fetchBody.search(
-      /sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)/,
+    // The package fetch refuses bytes the index did not sign, and extraction writes the first byte;
+    // both live in registry-package-stage.ts, shared with the dependency resolver (pinned below).
+    const shaAt = fetchBody.indexOf(
+      "await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry)",
     );
     const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
     // The publisher-key decision (trusted, rotation, Nimbus or owner-accepted; spec R5).
     const vaultAt = fetchBody.indexOf("await publisherKeyDecision(deps, {");
-    const writeAt = fetchBody.indexOf("writeFileSync(archivePath, packageBytes)");
+    const writeAt = fetchBody.indexOf("await extractVerifiedPackage(");
     const returnAt = fetchBody.indexOf("return {");
     for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
       expect(at).toBeGreaterThan(-1);
@@ -7260,6 +7262,20 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(manifestAt).toBeGreaterThan(resolveAt);
     expect(writeAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
     expect(returnAt).toBeGreaterThan(writeAt);
+    const stage = stripComments(
+      await read("packages/gateway/src/extensions/registry/registry-package-stage.ts"),
+    );
+    expect(bodyOf(stage, "export async function fetchHashedPackage(")).toMatch(
+      /if \(!sha256HexEqualConstantTime\(sha256Hex\(packageBytes\), vEntry\.packageSha256\)\) \{\s*throw registryHashMismatch\("package"/,
+    );
+    const extractBody = bodyOf(stage, "export async function extractVerifiedPackage(");
+    const extractWriteAt = extractBody.indexOf("writeFileSync(archivePath, packageBytes)");
+    const packagedManifestAt = extractBody.indexOf("vEntry.manifestSha256");
+    const stagedEntryAt = extractBody.indexOf("vEntry.entryHash");
+    for (const at of [extractWriteAt, packagedManifestAt, stagedEntryAt]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(stagedEntryAt).toBeGreaterThan(packagedManifestAt);
     // The package carries the INDEX's publisher key, the one the signature and Vault checks used.
     expect(fetchBody).toMatch(/publisherKey: entry\.publisher\.key,/);
     expect(fetchBody).toMatch(
@@ -7267,19 +7283,22 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     );
     expect(fetchBody).toMatch(/if \(!decision\.ok\) throw publisherKeyConflict\(/);
     // (3) The install half installs ONLY through installExtensionFromLocalDirectory, handed that
-    // index key and recorded against the SOURCE registry; the post-copy entry hash is compared to
-    // the signed index's before the source is recorded, and a mismatch undoes the install.
+    // index key, a registry-scoped dependency resolver and the signed index's entry hash, and is
+    // recorded against the SOURCE registry. The entry hash is checked by the plan installer (pinned
+    // below) before any edge or audit row, so a mismatch undoes every package of the plan.
     const installBody = bodyOf(src, "export async function installVerifiedRegistryPackage(");
+    const resolverAt = installBody.indexOf("createRegistryDependencyResolver(deps, {");
     const localAt = installBody.indexOf("await installExtensionFromLocalDirectory(");
-    const entryHashAt = installBody.indexOf(
-      "sha256HexEqualConstantTime(installed.entryHash, pkg.entryHash)",
-    );
-    const undoAt = installBody.indexOf("deleteExtensionById(deps.db, installed.id)");
     const sourceAt = installBody.indexOf("setExtensionSource(deps.db, installed.id,");
-    for (const at of [localAt, entryHashAt, undoAt, sourceAt]) expect(at).toBeGreaterThan(-1);
-    expect(entryHashAt).toBeGreaterThan(localAt);
-    expect(undoAt).toBeGreaterThan(entryHashAt);
-    expect(sourceAt).toBeGreaterThan(undoAt);
+    for (const at of [resolverAt, localAt, sourceAt]) expect(at).toBeGreaterThan(-1);
+    expect(localAt).toBeGreaterThan(resolverAt);
+    expect(sourceAt).toBeGreaterThan(localAt);
+    expect(installBody).toMatch(/\{ registryPlan: \{ resolver, channel \} \}/);
+    // The resolver is skipped ONLY for an installed-only install (the migration, below).
+    expect(installBody).toMatch(
+      /options\.dependencies === "installed-only"\s*\?\s*undefined\s*:\s*createRegistryDependencyResolver\(deps, \{/,
+    );
+    expect(installBody).toMatch(/expectedRootEntryHash: pkg\.entryHash,/);
     expect(installBody).toMatch(/publisherKey: decodeBase64\(pkg\.publisherKey\),/);
     expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
     // ...and inside it the I16 signature of the COPIED manifest is re-verified against that key
@@ -7294,6 +7313,25 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const rowAt = afterCopy.indexOf("insertExtensionRow(options.db,");
     expect(reverifyAt).toBeGreaterThan(-1);
     expect(rowAt).toBeGreaterThan(reverifyAt);
+    // The plan installer: every installed registry package's entry hash (each dependency against
+    // its index entry, the root against expectedRootEntryHash) is checked before the edges and the
+    // audit row are recorded, and any failure rolls back every package the plan created.
+    const planBody = local.slice(local.indexOf("async function installApprovedPlan("));
+    const rootCheckAt = planBody.indexOf(
+      "assertInstalledEntryHash(root, options.expectedRootEntryHash)",
+    );
+    const depInstallAt = planBody.indexOf("await installStagedDependency(");
+    const recordAt = planBody.indexOf("recordPlanInstallAndAudit(");
+    const rollbackAt = planBody.indexOf("rollbackCreatedPackages(options.db, created)");
+    for (const at of [rootCheckAt, depInstallAt, recordAt, rollbackAt]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(recordAt).toBeGreaterThan(Math.max(rootCheckAt, depInstallAt));
+    expect(rollbackAt).toBeGreaterThan(recordAt);
+    const depFn = local.slice(local.indexOf("async function installStagedDependency("));
+    expect(depFn.slice(0, depFn.indexOf("\n}\n"))).toMatch(
+      /assertInstalledEntryHash\(installed, dep\.vEntry\.entryHash\);[\s\S]*setExtensionSource\(/,
+    );
     // (4) Only two production files may name the install half (a call, an import or an alias): the
     // composition above, and the migration engine, which rebuilds the package from a stage whose
     // tree digest equals the one fetchVerifiedRegistryPackage verified, and requires the installed
@@ -7306,6 +7344,23 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "extensions/migration/migration-engine.ts",
       "extensions/registry/install-from-registry.ts",
     ]);
+    // A migration installs exactly ONE package (spec § 8.1): its `extension.migrate` consent names
+    // only the root, so its install builds no dependency resolver and fetches no dependency — every
+    // call of the install half in the engine passes the installed-only option.
+    const migrationSrc = stripComments(
+      await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
+    );
+    const migrationCalls = [
+      ...migrationSrc.matchAll(
+        /await install\(installDeps\([^)]*\), pkg, "stable"(, \{[^}]*\})?\)/g,
+      ),
+    ];
+    expect(migrationCalls).toHaveLength(1);
+    expect(migrationCalls[0]?.[1]).toMatch(/dependencies: "installed-only"/);
+    expect(migrationSrc).toMatch(
+      /const install = deps\.installVerified \?\? installVerifiedRegistryPackage;/,
+    );
+    expect(migrationSrc.match(/\bawait install\(/g)).toHaveLength(1);
     // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
     const resolver = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
@@ -7336,7 +7391,9 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const seqAt = verified.indexOf("if (index.sequence < reg.lastSequence)");
     expect(pinnedAt).toBeGreaterThan(-1);
     expect(seqAt).toBeGreaterThan(pinnedAt);
-    // The source columns are written by ONE production function, called from the registry installer only.
+    // The source columns are written by ONE production function, called from the registry installer
+    // (the root) and from the plan installer for a dependency it staged from a verified registry
+    // resolution (a `StagedDependency`, which only `RegistryDependencyResolver.stage` produces).
     const files = await readDirFiles("packages/gateway/src");
     const sourceWriters = files
       .filter((f) => /UPDATE\s+extension\s+SET[^;]*\bsource_/.test(stripComments(f.contents)))
@@ -7345,8 +7402,270 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const setSourceCallers = files
       .filter((f) => f.rel !== "extensions/registry/registry-store.ts")
       .filter((f) => /\bsetExtensionSource\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(setSourceCallers).toEqual([
+      "extensions/install-from-local.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
+    const localSrc = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    expect(localSrc.match(/\bsetExtensionSource\(/g)).toHaveLength(1);
+    const stagedDepFn = localSrc.slice(localSrc.indexOf("async function installStagedDependency("));
+    expect(stagedDepFn.slice(0, stagedDepFn.indexOf("\n}\n"))).toMatch(
+      /dep: StagedDependency,[\s\S]*setExtensionSource\(options\.db, dep\.id, \{\s*registry: dep\.reg\.name,/,
+    );
+    // `StagedDependency` is a structural type and `registryPlan` an option, so what makes the
+    // dependency source write above verified-chain-only is WHO can hand the plan installer a
+    // resolver: only the registry installer names `registryPlan` (besides install-from-local.ts,
+    // which declares and reads it) or the resolver factory (besides its defining module).
+    const production = files.filter((f) => !f.rel.endsWith(".test.ts"));
+    const namingPlan = production
+      .filter((f) => f.rel !== "extensions/install-from-local.ts")
+      .filter((f) => /\bregistryPlan\b/.test(stripComments(f.contents)))
       .map((f) => f.rel);
-    expect(setSourceCallers).toEqual(["extensions/registry/install-from-registry.ts"]);
+    expect(namingPlan).toEqual(["extensions/registry/install-from-registry.ts"]);
+    const namingFactory = production
+      .filter((f) => f.rel !== "extensions/registry/registry-dependency-fetcher.ts")
+      .filter((f) => /\bcreateRegistryDependencyResolver\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(namingFactory).toEqual(["extensions/registry/install-from-registry.ts"]);
+  });
+
+  // ---- dependencies (extension dependencies, PR 2) -------------------------------------------
+
+  const DEP = "com.example.i44.dep";
+  const DEP2 = "com.example.i44.dep2";
+
+  /** Remote registries (`https://<name>.test/`) served from folders; every requested URL is logged. */
+  async function remoteSetup(
+    registries: Record<
+      string,
+      Record<string, Array<{ version: string; dependsOn?: Record<string, unknown> }>>
+    >,
+  ) {
+    const { buildMultiExtensionRegistry } = await import(
+      "./extensions/registry/__fixtures__/build-test-registry.ts"
+    );
+    const { insertRegistry } = await import("./extensions/registry/registry-store.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const root = mkdtempSync(join(tmpdir(), "nimbus-i44-deps-"));
+    roots.push(root);
+    const db = new Database(":memory:");
+    dbs.push(db);
+    LocalIndex.ensureSchema(db);
+    const dirs = new Map<string, string>();
+    for (const [name, exts] of Object.entries(registries)) {
+      const dir = join(root, `registry-${name}`);
+      const keys = await buildMultiExtensionRegistry(dir, exts as never);
+      insertRegistry(db, {
+        name,
+        url: `https://${name}.test/`,
+        rootKey: keys.rootKey,
+        rootFingerprint: publisherKeyFingerprint(keys.rootKey),
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
+        lastIndexSha256: null,
+      });
+      dirs.set(name, dir);
+    }
+    const urls: string[] = [];
+    const fetchBag = {
+      ...NO_NETWORK,
+      fetchFn: (url: string) => {
+        urls.push(url);
+        const u = new URL(url);
+        const dir = dirs.get(u.hostname.replace(/\.test$/, ""));
+        if (dir === undefined) return Promise.resolve(new Response("down", { status: 503 }));
+        try {
+          return Promise.resolve(
+            new Response(readFileSync(join(dir, ...u.pathname.split("/").filter(Boolean)))),
+          );
+        } catch {
+          return Promise.resolve(new Response("missing", { status: 404 }));
+        }
+      },
+    };
+    return { db, urls, fetchBag, vault: new MockVault(), extensionsDir: join(root, "extensions") };
+  }
+
+  type RemoteSetup = Awaited<ReturnType<typeof remoteSetup>>;
+
+  /** `registry.install` exactly as the CLI reaches it, recording every type the owner gate is asked. */
+  async function installViaRpc(s: RemoteSetup, id: string, registry: string) {
+    const { dispatchRegistryRpc } = await import("./ipc/registry-rpc.ts");
+    const asked: Array<{ type: string; payload: Record<string, unknown> }> = [];
+    const run = dispatchRegistryRpc({
+      method: "registry.install",
+      params: { id, registry },
+      db: s.db,
+      fetch: s.fetchBag,
+      extensionsDir: s.extensionsDir,
+      vault: s.vault,
+      ownerGate: async (a) => {
+        asked.push(a);
+        return true;
+      },
+    });
+    return { run, asked };
+  }
+
+  test("behavioural: a string dependency is never fetched from another registry", async () => {
+    // Both registries carry the dependency; the root lives in `main` and names it by bare range.
+    const s = await remoteSetup({
+      main: {
+        [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } }],
+        [DEP]: [{ version: "1.0.0" }],
+      },
+      other: { [DEP]: [{ version: "1.0.0" }] },
+    });
+    const { run } = await installViaRpc(s, ID, "main");
+    await run;
+    expect(installedIds(s.db).sort()).toEqual([DEP, ID].sort());
+    // The callee: the dependency's manifest and package were requested from `main` and from no other
+    // registry (a positive control: the same URLs under `other` are what a wrong source would hit).
+    const forDep = s.urls.filter((u) => u.includes(`/extensions/${DEP}/`));
+    expect(forDep).toEqual([
+      `https://main.test/extensions/${DEP}/1.0.0/manifest.json`,
+      `https://main.test/extensions/${DEP}/1.0.0/package.tgz`,
+    ]);
+    expect(
+      s.urls.filter((u) => u.includes("/extensions/") && u.startsWith("https://other.test/")),
+    ).toEqual([]);
+    // Ledger rows by registry: the dependency's one `registry.manifest` row names the root's registry.
+    const rows = s.db
+      .query(
+        "SELECT payload_summary AS p FROM egress_ledger WHERE method = 'registry.manifest' AND payload_summary LIKE ?",
+      )
+      .all(`%${DEP}%`) as Array<{ p: string }>;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.p).toContain("main.test");
+    expect(rows[0]?.p).not.toContain("other.test");
+
+    // An installed copy satisfies the dependency only when it came from that registry: a copy the
+    // owner installed from `other` is refused for a root that resolves its dependency to `main`,
+    // before any prompt, and its recorded source is untouched.
+    const t = await remoteSetup({
+      main: {
+        [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } }],
+        [DEP]: [{ version: "1.0.0" }],
+      },
+      other: { [DEP]: [{ version: "1.0.0" }] },
+    });
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
+    let asked = 0;
+    const deps = {
+      db: t.db,
+      extensionsDir: t.extensionsDir,
+      vault: t.vault,
+      fetch: t.fetchBag,
+      approve: async () => {
+        asked++;
+        return true;
+      },
+    };
+    await installFromRegistry(deps, { id: DEP, registry: "other" });
+    const askedBefore = asked;
+    expect(await refusalOf(installFromRegistry(deps, { id: ID, registry: "main" }))).toMatch(
+      /^ERR_DEPENDENCY_SOURCE_MISMATCH /,
+    );
+    expect(asked).toBe(askedBefore);
+    expect(installedIds(t.db)).toEqual([DEP]);
+    expect(getExtensionSource(t.db, DEP)?.registry).toBe("other");
+  });
+
+  test("behavioural: a dependency's registry must already be added", async () => {
+    const s = await remoteSetup({
+      main: {
+        [ID]: [
+          {
+            version: "1.0.0",
+            dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://nowhere.test/" } },
+          },
+        ],
+      },
+    });
+    const { run, asked } = await installViaRpc(s, ID, "main");
+    await expect(run).rejects.toThrow(/not one of your registries/);
+    // No `registry.add` (nor any prompt at all) was raised: a manifest cannot add a trust root.
+    expect(asked.map((a) => a.type)).not.toContain("registry.add");
+    expect(asked).toEqual([]);
+    const { listRegistries } = await import("./extensions/registry/registry-store.ts");
+    expect(listRegistries(s.db).map((r) => r.name)).toEqual(["main"]);
+    expect(installedIds(s.db)).toEqual([]);
+    expect(s.urls.filter((u) => u.includes("nowhere.test"))).toEqual([]);
+    // The refusal code, through the installer itself.
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const direct = installFromRegistry(
+      {
+        db: s.db,
+        extensionsDir: s.extensionsDir,
+        vault: s.vault,
+        fetch: s.fetchBag,
+        approve: async () => true,
+      },
+      { id: ID, registry: "main" },
+    );
+    expect(await refusalOf(direct)).toMatch(/^ERR_DEPENDENCY_REGISTRY_NOT_ADDED /);
+  });
+
+  test("behavioural: every package installed by a plan is in the approval", async () => {
+    // Root -> DEP -> DEP2: two packages the owner never named. The approval request is the only
+    // thing the owner answers, so each installed id must appear in its `plan`.
+    const s = await remoteSetup({
+      main: {
+        [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } }],
+        [DEP]: [{ version: "1.0.0", dependsOn: { [DEP2]: "^1.0.0" } }],
+        [DEP2]: [{ version: "1.0.0" }],
+      },
+    });
+    const asked: Array<{ plan?: ReadonlyArray<{ id: string }> }> = [];
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    await installFromRegistry(
+      {
+        db: s.db,
+        extensionsDir: s.extensionsDir,
+        vault: s.vault,
+        fetch: s.fetchBag,
+        approve: async (request) => {
+          asked.push(request as never);
+          return true;
+        },
+      },
+      { id: ID, registry: "main" },
+    );
+    expect(asked).toHaveLength(1);
+    const approved = new Set((asked[0]?.plan ?? []).map((p) => p.id));
+    const installed = installedIds(s.db);
+    expect(installed.length).toBe(3);
+    for (const id of installed) expect(approved.has(id), id).toBe(true);
+  });
+
+  test("source pin: installExtensionFromLocalDirectory asks the owner before anything is staged", async () => {
+    const local = stripComments(
+      await read("packages/gateway/src/extensions/install-from-local.ts"),
+    );
+    const doorAt = local.indexOf("export async function installExtensionFromLocalDirectory(");
+    expect(doorAt).toBeGreaterThan(-1);
+    const door = local.slice(doorAt);
+    const askAt = door.indexOf("await requireInstallApproval(");
+    const installAt = door.indexOf("await installApprovedPlan(");
+    expect(askAt).toBeGreaterThan(-1);
+    expect(installAt).toBeGreaterThan(askAt);
+    // `stage(` (a dependency's fetch-and-extract) exists once, inside the helper only the plan
+    // installer calls — so it cannot run before the approval above.
+    expect(local.match(/\.stage\(/g)).toHaveLength(1);
+    const helperAt = local.indexOf("async function stageNewDependencies(");
+    const helper = local.slice(helperAt, local.indexOf("\nasync function", helperAt + 1));
+    expect(helper).toMatch(/\.stage\(/);
+    expect(local.match(/\bstageNewDependencies\(/g)).toHaveLength(2);
+    const planAt = local.indexOf("async function installApprovedPlan(");
+    const plan = local.slice(planAt, local.indexOf("\nfunction", planAt + 1));
+    expect(plan).toMatch(/await stageNewDependencies\(/);
+    expect(plan).not.toMatch(/requireInstallApproval/);
   });
 
   test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
@@ -7376,7 +7695,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);",
     );
     const installAt = installHalf.indexOf(
-      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable")',
+      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable", {',
     );
     // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
     // before the run grant is written.
@@ -8727,6 +9046,7 @@ describe("I44/I48 — publisher key rotation (trust layer PR 3a)", () => {
       "extensions/auto-update-init.ts",
       "extensions/migration/migration-engine.ts",
       "extensions/registry/install-from-registry.ts",
+      "extensions/registry/registry-dependency-fetcher.ts",
       "extensions/registry/registry-update-source.ts",
     ]);
   });

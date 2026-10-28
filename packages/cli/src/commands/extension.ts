@@ -461,6 +461,7 @@ async function runExtensionInstallFromRegistry(
     rootFingerprint?: string;
     publisher?: { id: string; fingerprint: string };
     installPath: string;
+    dependencies?: { id: string; version: string; registry: string }[];
   }>("registry.install", params);
   const who =
     out.publisher === undefined
@@ -469,6 +470,14 @@ async function runExtensionInstallFromRegistry(
   const root = out.rootFingerprint === undefined ? "" : ` (root ${out.rootFingerprint})`;
   console.log(
     `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
+  );
+  const deps = out.dependencies ?? [];
+  for (const d of deps) {
+    console.log(`  + ${d.id}@${d.version} from registry ${d.registry} (installed as a dependency)`);
+  }
+  const toApprove = [...deps.map((d) => d.id), out.id];
+  console.log(
+    `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
   );
   console.log(JSON.stringify(out, undefined, 2));
 }

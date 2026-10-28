@@ -762,6 +762,14 @@ describe("registry.install", () => {
     });
   });
 
+  test("registry.install returns the installed dependencies", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const out = await install({ id: "acme.tool" }, gateRecorder(true).gate);
+    expect(out).toMatchObject({ kind: "hit", value: { id: "acme.tool", dependencies: [] } });
+  });
+
   test("a trust feed that cannot be refreshed first is disclosed in the install prompt", async () => {
     const dir = join(tmp, "reg");
     await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });

@@ -178,7 +178,7 @@ describe("dependency resolution reads installed manifests back from disk", () =>
     expect(byId.get("chain.b")?.newlyInstalled).toBe(false);
     expect(byId.get("chain.c")?.newlyInstalled).toBe(false);
     expect(byId.get("chain.b")?.deps).toEqual([
-      { id: "chain.c", range: "^1.0.0", resolvedVersion: "1.0.0" },
+      { id: "chain.c", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null },
     ]);
     const [complete] = auditPayloads(f.db, "extension.install_complete").slice(-1);
     expect(complete?.["root"]).toBe("chain.a");

@@ -12,14 +12,15 @@ describe("dependency types", () => {
       id: "com.example.foo",
       version: "1.0.0",
       newlyInstalled: true,
-      deps: [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      deps: [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
+      source: null,
     };
     expect(node.deps).toHaveLength(1);
   });
 
   it("ResolveClosureOptions activeConstraints is nested map", () => {
     const opts: ResolveClosureOptions = {
-      installed: new Map([["com.shared.utils", "1.5.0"]]),
+      installed: new Map([["com.shared.utils", { version: "1.5.0", source: null }]]),
       activeConstraints: new Map([["com.example.bar", new Map([["com.shared.utils", "^1.0.0"]])]]),
     };
     expect(opts.activeConstraints.get("com.example.bar")?.get("com.shared.utils")).toBe("^1.0.0");
