@@ -393,6 +393,9 @@ describe("stripControl / formatCaptureTable", () => {
   });
 
   test.each([
+    ["DEL", 0x007f],
+    ["C1 CSI", 0x009b],
+    ["C1 NEL", 0x0085],
     ["LRM", 0x200e],
     ["word joiner", 0x2060],
     ["soft hyphen", 0x00ad],

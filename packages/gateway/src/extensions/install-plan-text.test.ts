@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import {
+  oneLine,
   type PlannedPackage,
   planPermissionsUnion,
   renderInstallPlan,
@@ -180,5 +181,17 @@ describe("the Needs block", () => {
     expect(withNeedsBlock("PLAN", [])).toBe("PLAN");
     expect(withNeedsBlock(undefined, [])).toBeUndefined();
     expect(withNeedsBlock(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("oneLine", () => {
+  test("escapes DEL and C1 controls, not only C0", () => {
+    const input = `a${String.fromCodePoint(0x7f)}b${String.fromCodePoint(0x9b)}c${String.fromCodePoint(0x85)}d`;
+    expect(oneLine(input)).toBe(String.raw`a\u007Fb\u009Bc\u0085d`);
+  });
+
+  test("keeps ordinary non-ASCII text", () => {
+    const text = `caf${String.fromCodePoint(0xe9)} ${String.fromCodePoint(0xa0)}ok`;
+    expect(oneLine(text)).toBe(text);
   });
 });

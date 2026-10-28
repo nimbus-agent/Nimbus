@@ -48,7 +48,7 @@ function escapeCodePoint(cp: number): string {
 }
 
 /** Every C0 control (line breaks and tabs included), DEL, C1 and format-invisible character, escaped. */
-function oneLine(s: string): string {
+export function oneLine(s: string): string {
   let out = "";
   for (const ch of s) {
     const cp = ch.codePointAt(0) ?? 0;
