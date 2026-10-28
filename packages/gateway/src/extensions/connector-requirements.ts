@@ -2,16 +2,20 @@ import type { Database } from "bun:sqlite";
 
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import {
+  type ConnectorServiceId,
   credentialsReusedFrom,
   normalizeConnectorServiceId,
   oauthUnsupportedDetail,
+  UNBUNDLED_CONNECTOR_IDS,
 } from "../connectors/connector-catalog.ts";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import {
   type ExtensionManifestReader,
   parseCredentials,
   readInstalledManifest,
 } from "../connectors/extension-sync/extension-identity.ts";
 import { getConnectorHealth } from "../connectors/health.ts";
+import { connectorAuthUnavailableMessage } from "../ipc/connector-rpc-handlers/auth.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import {
@@ -21,11 +25,14 @@ import {
   findContinuityBinding,
 } from "./continuity/continuity-table.ts";
 import {
-  credentialsConfigured,
   type ResolvedRunCredentials,
+  resolveRunCredentials,
   sortedNames,
 } from "./extension-credentials.ts";
+import { deriveExtensionServiceId } from "./extension-service-id.ts";
+import type { ExtensionManifest } from "./manifest.ts";
 import { getRunGrant } from "./run-grant-store.ts";
+import { extensionRunState } from "./run-state.ts";
 
 export type ConnectorRequirementState =
   | "met"
@@ -63,9 +70,36 @@ export type ConnectorRequirementDeps = {
    * A caller that already read every manifest passes a memo, so no manifest is read twice.
    */
   readonly readManifest?: ExtensionManifestReader;
+  /**
+   * Packages an install plan is about to install (not installed yet, or at another version), each
+   * with its verified manifest and the registry root it comes from. One the continuity table binds
+   * is its connector's owner, judged as having no run grant yet, so an approval shown before the
+   * install never calls that connector connected.
+   */
+  readonly pendingInstalls?: ReadonlyArray<{
+    readonly manifest: ExtensionManifest;
+    readonly sourceRootFingerprint: string | undefined;
+  }>;
 };
 
-type ContinuityOwner = { readonly extensionId: string; readonly entry: ContinuityEntry };
+type ContinuityOwner = {
+  readonly extensionId: string;
+  readonly entry: ContinuityEntry;
+  /** The installed row; null for a package an install plan has not installed yet (no grant). */
+  readonly row: Pick<ExtensionRow, "enabled" | "version" | "tree_digest"> | null;
+  /** The installed copy's hash-checked manifest: what the next approval resolves credentials from. */
+  readonly manifest: ExtensionManifest;
+};
+
+/**
+ * `owners` maps a legacy id to the installed extension that binds it; `installedIds` is every
+ * installed extension id, bound or not; `table` is the continuity table the scan used.
+ */
+type ContinuityScan = {
+  readonly owners: ReadonlyMap<string, ContinuityOwner>;
+  readonly installedIds: ReadonlySet<string>;
+  readonly table: readonly ContinuityEntry[];
+};
 
 /** The id every lookup uses: the catalog id when known, else the same folding the catalog applies. */
 function lookupId(connector: string): string {
@@ -74,18 +108,36 @@ function lookupId(connector: string): string {
   );
 }
 
-/** Legacy id -> the installed extension the continuity table binds it to. Unreadable manifests are skipped. */
-function continuityOwners(deps: ConnectorRequirementDeps): Map<string, ContinuityOwner> {
+/** Legacy id -> the installed extension the continuity table binds it to. Unreadable manifests bind nothing. */
+function continuityOwners(deps: ConnectorRequirementDeps): ContinuityScan {
   const table = deps.continuityTable ?? CONTINUITY_TABLE;
   const owners = new Map<string, ContinuityOwner>();
+  const installedIds = new Set<string>();
   const read = deps.readManifest ?? readInstalledManifest;
   for (const row of listExtensions(deps.db)) {
+    installedIds.add(row.id);
     const manifest = read(row);
     if (manifest === undefined) continue;
     const entry = findContinuityBinding(bindingInputFor(row, manifest), table);
-    if (entry !== undefined) owners.set(entry.legacyServiceId, { extensionId: row.id, entry });
+    if (entry !== undefined) {
+      owners.set(entry.legacyServiceId, { extensionId: row.id, entry, row, manifest });
+    }
   }
-  return owners;
+  for (const pending of deps.pendingInstalls ?? []) {
+    const { manifest } = pending;
+    const entry = findContinuityBinding(
+      {
+        extensionId: manifest.id,
+        publisherKey: manifest.publisher?.key,
+        sourceRootFingerprint: pending.sourceRootFingerprint,
+      },
+      table,
+    );
+    if (entry === undefined) continue;
+    installedIds.add(manifest.id);
+    owners.set(entry.legacyServiceId, { extensionId: manifest.id, entry, row: null, manifest });
+  }
+  return { owners, installedIds, table };
 }
 
 /** Code-unit order: the same on every machine, whatever its locale. */
@@ -104,7 +156,7 @@ function syncedOrWarn(db: Database, id: string, base: Omit<Computed, "state" | "
   return { ...base, state: "met", fix: [] };
 }
 
-/** The names among `creds` whose Vault value is blank, in sorted order. */
+/** The names among `creds` whose Vault value is blank, in sorted order. One read per name. */
 async function blankCredentialNames(
   vault: NimbusVault,
   creds: ResolvedRunCredentials,
@@ -123,7 +175,8 @@ async function blankCredentialNames(
 /**
  * The owner is judged by its own run grant's credentials, never by `isConnectorConfigured`: with no
  * manifest keys for the id that answers `true` vacuously, and with a bound id it reads only the
- * legacy keys, missing a declared credential the binding does not map.
+ * legacy keys, missing a declared credential the binding does not map. A disabled owner, or one
+ * whose grant approved other code (the run-state staleness rule), is never `met`.
  */
 async function ownedStatus(
   deps: ConnectorRequirementDeps,
@@ -136,14 +189,28 @@ async function ownedStatus(
   } as const;
   const setLines = (names: readonly string[]): string[] =>
     names.map((n) => `nimbus extension credential set ${owner.extensionId} ${n}`);
-  const grant = getRunGrant(deps.db, owner.extensionId);
-  if (grant === null) {
+  const stored = getRunGrant(deps.db, owner.extensionId);
+  // A package the plan has not installed yet has no grant for the code it is about to install.
+  const grant = owner.row === null ? null : stored;
+  const runState = owner.row === null ? "no_grant" : extensionRunState(owner.row, grant);
+  if (runState === "disabled") {
+    return {
+      ...base,
+      state: "not_connected",
+      fix: [`nimbus extension enable ${owner.extensionId}`],
+    };
+  }
+  if (grant === null || runState === "grant_stale") {
+    // What the NEXT approval will grant (the service id `approveExtensionRun` keeps or derives), so
+    // the fix never asks for a secret already stored under the key the grant will read.
+    const serviceId = stored?.service_id ?? deriveExtensionServiceId(owner.extensionId);
+    const willGrant = resolveRunCredentials(owner.manifest, serviceId, owner.entry);
     return {
       ...base,
       state: "not_connected",
       fix: [
         `nimbus extension approve ${owner.extensionId}`,
-        ...setLines(sortedNames(owner.entry.credentials)),
+        ...setLines(await blankCredentialNames(deps.vault, willGrant)),
       ],
     };
   }
@@ -151,15 +218,25 @@ async function ownedStatus(
   if (creds === undefined) {
     throw new Error(`${owner.extensionId}'s run grant carries unreadable credentials`);
   }
-  if (!(await credentialsConfigured(deps.vault, creds))) {
+  // "Configured" is "nothing blank": each credential is read once.
+  const blank = await blankCredentialNames(deps.vault, creds);
+  if (blank.length > 0) {
     // Name only what is missing, so following the fix never re-enters a stored secret.
-    return {
-      ...base,
-      state: "not_connected",
-      fix: setLines(await blankCredentialNames(deps.vault, creds)),
-    };
+    return { ...base, state: "not_connected", fix: setLines(blank) };
   }
   return syncedOrWarn(deps.db, id, base);
+}
+
+/**
+ * How a bundled token connector is connected, as typed: `connector auth --token` where
+ * `connector auth` takes a token, else one `vault set` per manifest key (the commands
+ * `connector auth` itself names when it refuses the service).
+ */
+function tokenConnectorFix(target: ConnectorServiceId): string[] {
+  if (connectorAuthUnavailableMessage(target) === null) {
+    return [`nimbus connector auth ${target} --token <token>`];
+  }
+  return CONNECTOR_VAULT_SECRET_KEYS[target].map((k) => `nimbus vault set ${k}`);
 }
 
 async function bundledStatus(deps: ConnectorRequirementDeps, connector: string): Promise<Computed> {
@@ -170,14 +247,49 @@ async function bundledStatus(deps: ConnectorRequirementDeps, connector: string):
   }
   // A requirement on `github_actions` is connected by authenticating `github`.
   const target = credentialsReusedFrom(known) ?? known;
-  const base = {
-    owner: { kind: "bundled" },
-    interactive: oauthUnsupportedDetail(target) === undefined,
-  } as const;
+  const oauth = oauthUnsupportedDetail(target) === undefined;
+  const base = { owner: { kind: "bundled" }, interactive: oauth } as const;
   if (!(await isConnectorConfigured(deps.vault, known))) {
-    return { ...base, state: "not_connected", fix: [`nimbus connector auth ${target}`] };
+    const fix = oauth ? [`nimbus connector auth ${target}`] : tokenConnectorFix(target);
+    return { ...base, state: "not_connected", fix };
   }
   return syncedOrWarn(deps.db, known, base);
+}
+
+const UNBUNDLED_IDS: ReadonlySet<string> = new Set(UNBUNDLED_CONNECTOR_IDS);
+
+/**
+ * A continuity-bound id whose owner did not bind. Not installed: the fix installs it. Installed but
+ * unreadable, or a copy from another source: no command here honestly fixes that, so `unknown`.
+ */
+function ownerNotBound(scan: ContinuityScan, extensionId: string): Computed {
+  const owner = { kind: "extension", extensionId } as const;
+  if (scan.installedIds.has(extensionId)) {
+    return { state: "unknown", owner, fix: [], interactive: false };
+  }
+  return {
+    state: "not_connected",
+    owner,
+    fix: [`nimbus extension install ${extensionId}`],
+    interactive: false,
+  };
+}
+
+/** One connector's status. An id the continuity table binds, or an unbundled one, never reaches the bundled path. */
+async function statusFor(
+  deps: ConnectorRequirementDeps,
+  scan: ContinuityScan,
+  id: string,
+  connector: string,
+  boundTo: string | undefined,
+): Promise<Computed> {
+  const owner = scan.owners.get(id);
+  if (owner !== undefined) return ownedStatus(deps, id, owner);
+  if (boundTo !== undefined) return ownerNotBound(scan, boundTo);
+  if (UNBUNDLED_IDS.has(id)) {
+    return { state: "unknown_connector", owner: { kind: "bundled" }, fix: [], interactive: false };
+  }
+  return bundledStatus(deps, connector);
 }
 
 /**
@@ -201,32 +313,29 @@ export async function connectorRequirementStatuses(
   }
   if (byId.size === 0) return [];
 
-  let owners: Map<string, ContinuityOwner> | undefined;
+  let scan: ContinuityScan | undefined;
   try {
-    owners = continuityOwners(deps);
+    scan = continuityOwners(deps);
   } catch {
-    owners = undefined; // every connector reads `unknown` below
+    scan = undefined; // every connector reads `unknown` below
   }
+  const table = scan?.table ?? deps.continuityTable ?? CONTINUITY_TABLE;
 
   const out: ConnectorRequirementStatus[] = [];
   // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
   for (const [id, slot] of byId) {
-    const owner = owners?.get(id);
+    const boundTo =
+      scan?.owners.get(id)?.extensionId ?? table.find((e) => e.legacyServiceId === id)?.extensionId;
     let computed: Computed;
     try {
-      if (owners === undefined) throw new Error("installed extensions could not be read");
-      computed =
-        owner === undefined
-          ? await bundledStatus(deps, slot.connector) // NOSONAR S9382: sequential Vault reads
-          : await ownedStatus(deps, id, owner); // NOSONAR S9382: sequential Vault reads
+      if (scan === undefined) throw new Error("installed extensions could not be read");
+      computed = await statusFor(deps, scan, id, slot.connector, boundTo); // NOSONAR S9382: sequential Vault reads
     } catch {
       // Keep the owner already resolved, so an extension-owned connector never reads as bundled.
       computed = {
         state: "unknown",
         owner:
-          owner === undefined
-            ? { kind: "bundled" }
-            : { kind: "extension", extensionId: owner.extensionId },
+          boundTo === undefined ? { kind: "bundled" } : { kind: "extension", extensionId: boundTo },
         fix: [],
         interactive: false,
       };

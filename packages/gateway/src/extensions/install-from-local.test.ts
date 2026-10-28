@@ -1861,7 +1861,7 @@ describe("installExtensionFromLocalDirectory — connector requirements in the a
       expect(asked[0]?.planText).toBe(
         [
           "Needs:",
-          "  github: not connected — run: nimbus connector auth github",
+          "  github: not connected — run: nimbus connector auth github --token <token>",
           "  not-a-connector: not a connector this Nimbus knows",
         ].join("\n"),
       );

@@ -1148,7 +1148,7 @@ describe("extension.info / extension.list — connector requirements", () => {
         connector: "github",
         state: "not_connected",
         owner: { kind: "bundled" },
-        fix: ["nimbus connector auth github"],
+        fix: ["nimbus connector auth github --token <token>"],
         // github connects with a token, not OAuth: its fix is not interactive.
         interactive: false,
         requiredBy: ["com.example.a"],

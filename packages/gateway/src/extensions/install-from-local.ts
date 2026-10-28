@@ -35,6 +35,7 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import {
+  type ConnectorRequirementDeps,
   type ConnectorRequirementStatus,
   type ConnectorRequirementStatusesFn,
   connectorRequirementStatuses,
@@ -855,6 +856,30 @@ function planFields(
 }
 
 /**
+ * Every package this plan newly installs (the root included), with the manifest the approval is
+ * built from and the registry root its row will record, so requirement status can see a
+ * continuity-bound owner the plan is about to install (it has no run grant yet).
+ */
+function pendingInstallsOf(
+  options: InstallFromLocalOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  manifest: ExtensionManifest,
+): NonNullable<ConnectorRequirementDeps["pendingInstalls"]> {
+  const out: Array<{ manifest: ExtensionManifest; sourceRootFingerprint: string | undefined }> = [];
+  for (const n of plan.nodes) {
+    if (!n.newlyInstalled) continue;
+    if (n.id === manifest.id) {
+      out.push({ manifest, sourceRootFingerprint: options.rootFingerprint });
+      continue;
+    }
+    const verified = options.registryPlan?.resolver.verified(n.id, n.version);
+    if (verified === undefined) continue;
+    out.push({ manifest: verified.manifest, sourceRootFingerprint: verified.reg.rootFingerprint });
+  }
+  return out;
+}
+
+/**
  * The connector requirements of the root and every newly installed dependency, each read from the
  * manifest the approval is built from (the root's, and the dependency's VERIFIED registry
  * manifest), before anything is staged. Undefined without a Vault (nothing is computed), and
@@ -886,6 +911,7 @@ async function planConnectorRequirements(
         ...(options.continuityTable === undefined
           ? {}
           : { continuityTable: options.continuityTable }),
+        pendingInstalls: pendingInstallsOf(options, plan, manifest),
       },
       required,
     );

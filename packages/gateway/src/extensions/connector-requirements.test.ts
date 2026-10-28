@@ -87,7 +87,11 @@ function installOwner(opts: { readable?: boolean } = {}): void {
     installed_at: 1,
     last_verified_at: 1,
   });
-  dbRun(db, "UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", [FP, EXT]);
+  dbRun(db, "UPDATE extension SET source_root_fingerprint = ?, tree_digest = ? WHERE id = ?", [
+    FP,
+    "d",
+    EXT,
+  ]);
 }
 
 /** A run grant whose credentials come from the real writer, unless `credentialsJson` overrides them. */
@@ -124,10 +128,27 @@ describe("connectorRequirementStatuses", () => {
     ]);
   });
 
-  test("a bundled connector with no key is not connected and names connector auth", async () => {
+  test("a bundled token connector with no key names connector auth with its --token flag", async () => {
     const [s] = await connectorRequirementStatuses({ db, vault }, one(["github"]));
     expect(s?.state).toBe("not_connected");
-    expect(s?.fix).toEqual(["nimbus connector auth github"]);
+    expect(s?.fix).toEqual(["nimbus connector auth github --token <token>"]);
+    expect(s?.interactive).toBe(false);
+  });
+
+  test("an OAuth connector with no key names plain connector auth", async () => {
+    const [s] = await connectorRequirementStatuses({ db, vault }, one(["gmail"]));
+    expect(s?.fix).toEqual(["nimbus connector auth gmail"]);
+    expect(s?.interactive).toBe(true);
+  });
+
+  test("a connector that connector auth refuses names one vault set per manifest key", async () => {
+    const [s] = await connectorRequirementStatuses({ db, vault }, one(["snowflake"]));
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual(
+      CONNECTOR_VAULT_SECRET_KEYS.snowflake.map((k) => `nimbus vault set ${k}`),
+    );
+    expect(s?.fix.length).toBeGreaterThan(0);
+    expect(s?.interactive).toBe(false);
   });
 
   test("configured but never synced is a warning with the sync command", async () => {
@@ -149,7 +170,9 @@ describe("connectorRequirementStatuses", () => {
     const before = await connectorRequirementStatuses({ db, vault }, one(["great-expectations"]));
     expect(before[0]?.connector).toBe("great-expectations");
     expect(before[0]?.state).toBe("not_connected");
-    expect(before[0]?.fix).toEqual(["nimbus connector auth great_expectations"]);
+    expect(before[0]?.fix).toEqual(
+      CONNECTOR_VAULT_SECRET_KEYS.great_expectations.map((k) => `nimbus vault set ${k}`),
+    );
 
     await vault.set(firstKey("great_expectations"), "/results");
     synced("great_expectations");
@@ -161,7 +184,7 @@ describe("connectorRequirementStatuses", () => {
   test("a reused credential points at its source service", async () => {
     const [s] = await connectorRequirementStatuses({ db, vault }, one(["github_actions"]));
     expect(s?.state).toBe("not_connected");
-    expect(s?.fix).toEqual(["nimbus connector auth github"]);
+    expect(s?.fix).toEqual(["nimbus connector auth github --token <token>"]);
   });
 
   test("OAuth connectors are interactive, token connectors are not", async () => {
@@ -213,7 +236,7 @@ describe("connectorRequirementStatuses", () => {
     expect((await connectorRequirementStatuses(deps, one(["legacyx"])))[0]?.state).toBe("met");
   });
 
-  test("an installed row with an unreadable manifest is skipped", async () => {
+  test("an installed owner with an unreadable manifest binds nothing and is unknown, never bundled", async () => {
     installOwner({ readable: false });
     await vault.set(firstKey("github"), "ghp_x");
     synced("github");
@@ -221,15 +244,17 @@ describe("connectorRequirementStatuses", () => {
       { db, vault, continuityTable: TABLE },
       one(["legacyx", "github"]),
     );
-    expect(out.map((s) => [s.connector, s.state, s.owner.kind])).toEqual([
-      ["github", "met", "bundled"],
-      ["legacyx", "unknown_connector", "bundled"],
+    expect(out.map((s) => [s.connector, s.state, s.owner, s.fix])).toEqual([
+      ["github", "met", { kind: "bundled" }, []],
+      ["legacyx", "unknown", { kind: "extension", extensionId: EXT }, []],
     ]);
   });
 
   test("owner without grant", async () => {
     installOwner();
+    // Both credentials the approval WILL grant are stored: only the approval is missing.
     await vault.set("legacyx.token", "legacy-value");
+    await vault.set(OWN_API_KEY, "own-value");
     synced("legacyx");
     expect(
       await connectorRequirementStatuses({ db, vault, continuityTable: TABLE }, one(["legacyx"])),
@@ -238,11 +263,129 @@ describe("connectorRequirementStatuses", () => {
         connector: "legacyx",
         state: "not_connected",
         owner: { kind: "extension", extensionId: EXT },
-        fix: [`nimbus extension approve ${EXT}`, `nimbus extension credential set ${EXT} token`],
+        fix: [`nimbus extension approve ${EXT}`],
         interactive: true,
         requiredBy: ["com.a"],
       },
     ]);
+  });
+
+  test("owner without grant names only the blank credentials the approval will grant", async () => {
+    installOwner();
+    // The legacy key the binding maps is stored; the declared name it does not map is not.
+    await vault.set("legacyx.token", "legacy-value");
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.fix).toEqual([
+      `nimbus extension approve ${EXT}`,
+      `nimbus extension credential set ${EXT} api_key`,
+    ]);
+  });
+
+  test("a disabled owner is not connected and names extension enable", async () => {
+    installOwner();
+    grantOwner();
+    await vault.set("legacyx.token", "set");
+    await vault.set(OWN_API_KEY, "set");
+    synced("legacyx");
+    dbRun(db, "UPDATE extension SET enabled = 0 WHERE id = ?", [EXT]);
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([`nimbus extension enable ${EXT}`]);
+  });
+
+  test("a grant for other code is stale: never met, the fix re-approves first", async () => {
+    installOwner();
+    grantOwner();
+    await vault.set("legacyx.token", "set");
+    synced("legacyx");
+    dbRun(db, "UPDATE extension SET tree_digest = ? WHERE id = ?", ["other", EXT]);
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([
+      `nimbus extension approve ${EXT}`,
+      `nimbus extension credential set ${EXT} api_key`,
+    ]);
+  });
+
+  test("a stale grant with every credential stored still re-approves", async () => {
+    installOwner();
+    grantOwner();
+    await vault.set("legacyx.token", "set");
+    await vault.set(OWN_API_KEY, "set");
+    synced("legacyx");
+    dbRun(db, "UPDATE extension SET version = ? WHERE id = ?", ["1.0.1", EXT]);
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([`nimbus extension approve ${EXT}`]);
+  });
+
+  test("a bound id whose owner is not installed names extension install, never the bundled path", async () => {
+    // `legacyx` is not a catalog id: on the bundled path it would read unknown_connector.
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s).toEqual({
+      connector: "legacyx",
+      state: "not_connected",
+      owner: { kind: "extension", extensionId: EXT },
+      fix: [`nimbus extension install ${EXT}`],
+      interactive: false,
+      requiredBy: ["com.a"],
+    });
+  });
+
+  test("the real table: readwise with its key set but no extension installed is never met", async () => {
+    // audit-ignore-next-line D11-vault-key (the legacy readwise key, set as a fixture)
+    await vault.set("readwise.token", "set");
+    synced("readwise");
+    const [s] = await connectorRequirementStatuses({ db, vault }, one(["readwise"]));
+    expect(s?.state).toBe("not_connected");
+    expect(s?.owner).toEqual({ kind: "extension", extensionId: "com.nimbus.readwise" });
+    expect(s?.fix).toEqual(["nimbus extension install com.nimbus.readwise"]);
+  });
+
+  test("an unbundled id with no continuity entry is unknown_connector", async () => {
+    // audit-ignore-next-line D11-vault-key (the legacy readwise key, set as a fixture)
+    await vault.set("readwise.token", "set");
+    synced("readwise");
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: [] },
+      one(["readwise"]),
+    );
+    expect(s?.state).toBe("unknown_connector");
+    expect(s?.fix).toEqual([]);
+  });
+
+  test("each of an owner's credentials is read from the Vault once, blank ones included", async () => {
+    installOwner();
+    grantOwner();
+    await vault.set("legacyx.token", "set");
+    synced("legacyx");
+    const reads: string[] = [];
+    const realGet = vault.get.bind(vault);
+    vault.get = async (key: string) => {
+      reads.push(key);
+      return realGet(key);
+    };
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.state).toBe("not_connected");
+    expect(reads.sort()).toEqual([OWN_API_KEY, "legacyx.token"].sort());
   });
 
   test("two extensions requiring one connector are merged", async () => {

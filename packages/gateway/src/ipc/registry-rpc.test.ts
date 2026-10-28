@@ -806,7 +806,7 @@ describe("registry.install", () => {
     expect(payload["planText"]).toContain(
       [
         "Needs:",
-        "  github: not connected — run: nimbus connector auth github",
+        "  github: not connected — run: nimbus connector auth github --token <token>",
         "  slack: not connected — run: nimbus connector auth slack",
       ].join("\n"),
     );
