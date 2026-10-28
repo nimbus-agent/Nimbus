@@ -292,6 +292,18 @@ function withProvenance(
     approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
 }
 
+/** How `installVerifiedRegistryPackage` treats the package's dependencies. */
+export interface InstallVerifiedRegistryPackageOptions {
+  /**
+   * `"registry"` (the default, the registry install door): a missing dependency is fetched through
+   * the registry-scoped resolver and shown in the one approval. `"installed-only"` (the migration
+   * engine, whose `extension.migrate` consent names only the root): no resolver is built and
+   * nothing is fetched — a dependency must already be installed (from any source), or the install
+   * is refused, so exactly one package is installed.
+   */
+  readonly dependencies?: "registry" | "installed-only";
+}
+
 /**
  * Installs a package `fetchVerifiedRegistryPackage` already verified, with every dependency it is
  * missing: the Vault is already checked; the solve reads each dependency's manifest only through a
@@ -307,6 +319,7 @@ export async function installVerifiedRegistryPackage(
   deps: InstallFromRegistryDeps,
   pkg: VerifiedRegistryPackage,
   channel: RegistryChannel,
+  options: InstallVerifiedRegistryPackageOptions = {},
 ): Promise<RegistryInstallResult> {
   const { id, version, reg, rootFingerprint } = pkg;
   const publisher = pkg.manifest.publisher;
@@ -316,12 +329,16 @@ export async function installVerifiedRegistryPackage(
       `the verified manifest of ${id}@${version} names no publisher`,
     );
   }
-  // One resolver per install: it is single-solve (a refused index read is remembered).
-  const resolver = createRegistryDependencyResolver(deps, {
-    reg,
-    channel,
-    ...(pkg.index === undefined ? {} : { index: pkg.index }),
-  });
+  // One resolver per install: it is single-solve (a refused index read is remembered). None at all
+  // for an installed-only install: its dependencies resolve against installed copies only.
+  const resolver =
+    options.dependencies === "installed-only"
+      ? undefined
+      : createRegistryDependencyResolver(deps, {
+          reg,
+          channel,
+          ...(pkg.index === undefined ? {} : { index: pkg.index }),
+        });
   let installed: InstallExtensionFromLocalResult;
   try {
     installed = await installExtensionFromLocalDirectory({
@@ -338,7 +355,7 @@ export async function installVerifiedRegistryPackage(
         pkg.provenance,
         pkg.reg.name,
       ),
-      registryPlan: { resolver, channel },
+      ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
       // Checked by the plan installer before anything is recorded: a mismatch undoes every package.
       expectedRootEntryHash: pkg.entryHash,
     });

@@ -1022,7 +1022,11 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);
     let installed: Awaited<ReturnType<typeof installVerifiedRegistryPackage>>;
     try {
-      installed = await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable");
+      // Installed-only (spec § 8.1): the consent named this one package, so no dependency is
+      // fetched — one must already be installed, or this install is refused.
+      installed = await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable", {
+        dependencies: "installed-only",
+      });
     } catch (e) {
       return failAccept(row, `the extension could not be installed: ${errorText(e)}`);
     }

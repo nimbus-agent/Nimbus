@@ -7293,7 +7293,11 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     for (const at of [resolverAt, localAt, sourceAt]) expect(at).toBeGreaterThan(-1);
     expect(localAt).toBeGreaterThan(resolverAt);
     expect(sourceAt).toBeGreaterThan(localAt);
-    expect(installBody).toMatch(/registryPlan: \{ resolver, channel \},/);
+    expect(installBody).toMatch(/\{ registryPlan: \{ resolver, channel \} \}/);
+    // The resolver is skipped ONLY for an installed-only install (the migration, below).
+    expect(installBody).toMatch(
+      /options\.dependencies === "installed-only"\s*\?\s*undefined\s*:\s*createRegistryDependencyResolver\(deps, \{/,
+    );
     expect(installBody).toMatch(/expectedRootEntryHash: pkg\.entryHash,/);
     expect(installBody).toMatch(/publisherKey: decodeBase64\(pkg\.publisherKey\),/);
     expect(installBody).toMatch(/sourceRegistry: reg\.name,/);
@@ -7340,6 +7344,23 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "extensions/migration/migration-engine.ts",
       "extensions/registry/install-from-registry.ts",
     ]);
+    // A migration installs exactly ONE package (spec § 8.1): its `extension.migrate` consent names
+    // only the root, so its install builds no dependency resolver and fetches no dependency — every
+    // call of the install half in the engine passes the installed-only option.
+    const migrationSrc = stripComments(
+      await read("packages/gateway/src/extensions/migration/migration-engine.ts"),
+    );
+    const migrationCalls = [
+      ...migrationSrc.matchAll(
+        /await install\(installDeps\([^)]*\), pkg, "stable"(, \{[^}]*\})?\)/g,
+      ),
+    ];
+    expect(migrationCalls).toHaveLength(1);
+    expect(migrationCalls[0]?.[1]).toMatch(/dependencies: "installed-only"/);
+    expect(migrationSrc).toMatch(
+      /const install = deps\.installVerified \?\? installVerifiedRegistryPackage;/,
+    );
+    expect(migrationSrc.match(/\bawait install\(/g)).toHaveLength(1);
     // Resolution reads only freshly VERIFIED indexes, and refuses ambiguity.
     const resolver = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-resolve.ts"),
@@ -7674,7 +7695,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       "const approvedByMigrationConsent: ExtensionInstallApprover = () => Promise.resolve(true);",
     );
     const installAt = installHalf.indexOf(
-      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable")',
+      'await install(installDeps(reg, approvedByMigrationConsent), pkg, "stable", {',
     );
     // (3) …and the INSTALLED tree must carry the staged digest, in the row and in the result,
     // before the run grant is written.
