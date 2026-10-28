@@ -7,6 +7,7 @@ import {
   oauthUnsupportedDetail,
 } from "../connectors/connector-catalog.ts";
 import {
+  type ExtensionManifestReader,
   parseCredentials,
   readInstalledManifest,
 } from "../connectors/extension-sync/extension-identity.ts";
@@ -57,6 +58,11 @@ export type ConnectorRequirementDeps = {
   readonly db: Database;
   readonly vault: NimbusVault;
   readonly continuityTable?: readonly ContinuityEntry[];
+  /**
+   * How an installed copy's manifest is read (default: hash-checked, unreadable reads as absent).
+   * A caller that already read every manifest passes a memo, so no manifest is read twice.
+   */
+  readonly readManifest?: ExtensionManifestReader;
 };
 
 type ContinuityOwner = { readonly extensionId: string; readonly entry: ContinuityEntry };
@@ -72,13 +78,20 @@ function lookupId(connector: string): string {
 function continuityOwners(deps: ConnectorRequirementDeps): Map<string, ContinuityOwner> {
   const table = deps.continuityTable ?? CONTINUITY_TABLE;
   const owners = new Map<string, ContinuityOwner>();
+  const read = deps.readManifest ?? readInstalledManifest;
   for (const row of listExtensions(deps.db)) {
-    const manifest = readInstalledManifest(row);
+    const manifest = read(row);
     if (manifest === undefined) continue;
     const entry = findContinuityBinding(bindingInputFor(row, manifest), table);
     if (entry !== undefined) owners.set(entry.legacyServiceId, { extensionId: row.id, entry });
   }
   return owners;
+}
+
+/** Code-unit order: the same on every machine, whatever its locale. */
+function byConnector(a: string, b: string): number {
+  if (a === b) return 0;
+  return a < b ? -1 : 1;
 }
 
 type Computed = Pick<ConnectorRequirementStatus, "state" | "owner" | "fix" | "interactive">;
@@ -224,7 +237,7 @@ export async function connectorRequirementStatuses(
       requiredBy: [...slot.requiredBy].sort((a, b) => (a < b ? -1 : 1)),
     });
   }
-  return out.sort((a, b) => (a.connector < b.connector ? -1 : a.connector > b.connector ? 1 : 0));
+  return out.sort((a, b) => byConnector(a.connector, b.connector));
 }
 
 /** One entry of `connectorRequirementStatuses`' `required` list. */
@@ -233,14 +246,18 @@ export type ConnectorRequirementInput = {
   readonly connectors: readonly string[];
 };
 
+/** `connectorRequirementStatuses`, or a test's stand-in for it. */
+export type ConnectorRequirementStatusesFn = typeof connectorRequirementStatuses;
+
 /**
  * What an installed extension's hash-checked manifest requires: `[]` when it declares nothing,
  * undefined when the manifest cannot be read (the caller then reports nothing, rather than "none").
  */
 export function installedConnectorRequirements(
   row: ExtensionRow,
+  read: ExtensionManifestReader = readInstalledManifest,
 ): ConnectorRequirementInput[] | undefined {
-  const manifest = readInstalledManifest(row);
+  const manifest = read(row);
   if (manifest === undefined) return undefined;
   return manifest.requires === undefined
     ? []
@@ -250,14 +267,53 @@ export function installedConnectorRequirements(
 /**
  * `connectorRequirementStatuses` over what the installed extensions `ids` require, each read from
  * its installed copy's hash-checked manifest (one that no longer reads contributes nothing).
+ * Never throws: any failure is undefined (no answer), so it can never fail what asked for it.
  */
 export async function installedConnectorRequirementStatuses(
   deps: ConnectorRequirementDeps,
   ids: readonly string[],
-): Promise<ConnectorRequirementStatus[]> {
-  const wanted = new Set(ids);
-  const required = listExtensions(deps.db)
-    .filter((r) => wanted.has(r.id))
-    .flatMap((r) => installedConnectorRequirements(r) ?? []);
-  return await connectorRequirementStatuses(deps, required);
+  compute: ConnectorRequirementStatusesFn = connectorRequirementStatuses,
+): Promise<ConnectorRequirementStatus[] | undefined> {
+  try {
+    const wanted = new Set(ids);
+    const required = listExtensions(deps.db)
+      .filter((r) => wanted.has(r.id))
+      .flatMap((r) => installedConnectorRequirements(r) ?? []);
+    return await compute(deps, required);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Each extension's own requirement statuses (keyed by extension id), computed in ONE pass: every
+ * distinct connector's status is computed once, however many extensions require it, then projected
+ * onto each extension (its own spelling, `requiredBy: [id]`, sorted by connector) — the same list a
+ * call over that extension alone would return. Never throws: on any failure the map is empty.
+ */
+export async function connectorRequirementStatusesByExtension(
+  deps: ConnectorRequirementDeps,
+  required: readonly ConnectorRequirementInput[],
+  compute: ConnectorRequirementStatusesFn = connectorRequirementStatuses,
+): Promise<Map<string, ConnectorRequirementStatus[]>> {
+  const out = new Map<string, ConnectorRequirementStatus[]>();
+  try {
+    const byId = new Map((await compute(deps, required)).map((s) => [lookupId(s.connector), s]));
+    for (const req of required) {
+      const own = new Map<string, ConnectorRequirementStatus>();
+      for (const connector of req.connectors) {
+        const id = lookupId(connector);
+        const status = byId.get(id);
+        if (status === undefined || own.has(id)) continue;
+        own.set(id, { ...status, connector, requiredBy: [req.extensionId] });
+      }
+      out.set(
+        req.extensionId,
+        [...own.values()].sort((a, b) => byConnector(a.connector, b.connector)),
+      );
+    }
+  } catch {
+    out.clear();
+  }
+  return out;
 }

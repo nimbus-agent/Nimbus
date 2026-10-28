@@ -11,6 +11,7 @@ import {
 } from "../../test/fixtures/extension.ts";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { setExtensionSource } from "../extensions/registry/registry-store.ts";
@@ -1076,6 +1077,21 @@ describe("extension.enable / disable / remove", () => {
   });
 });
 
+/** Stands in for `connectorRequirementStatuses` and always throws. */
+const failingStatuses = (): Promise<never> => Promise.reject(new Error("requirements unavailable"));
+
+/** Counts reads per key. */
+class CountingVault extends MockVault {
+  private readonly counts = new Map<string, number>();
+  override get(key: string): Promise<string | null> {
+    this.counts.set(key, (this.counts.get(key) ?? 0) + 1);
+    return super.get(key);
+  }
+  reads(key: string): number {
+    return this.counts.get(key) ?? 0;
+  }
+}
+
 /** A Vault whose every read fails, as a locked keychain does. */
 class ThrowingVault extends MockVault {
   override get(_key: string): Promise<string | null> {
@@ -1235,6 +1251,78 @@ describe("extension.info / extension.list — connector requirements", () => {
       ["com.example.a", [["github", "unknown", []]]],
       ["com.example.b", [["slack", "unknown", []]]],
     ]);
+  });
+
+  test("extension.list reads a connector shared by two extensions from the Vault once", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    installWithManifest(db, "com.example.b", ["github"]);
+    const vault = new CountingVault();
+    const out = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      vault,
+    })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
+    expect(out.value.extensions.map((e) => e.requires?.map((r) => r.requiredBy))).toEqual([
+      [["com.example.a"]],
+      [["com.example.b"]],
+    ]);
+    const githubKeys = CONNECTOR_VAULT_SECRET_KEYS.github;
+    expect(githubKeys.length).toBeGreaterThan(0);
+    for (const key of githubKeys) expect(vault.reads(key)).toBeLessThanOrEqual(1);
+    expect(githubKeys.some((key) => vault.reads(key) === 1)).toBe(true);
+  });
+
+  test("a failing requirement computation omits requires and never fails the list", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    installWithManifest(db, "com.example.none");
+    const out = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      vault: new MockVault(),
+      requirementStatuses: failingStatuses,
+    })) as { value: { extensions: Array<Record<string, unknown>> } };
+    expect(out.value.extensions.map((e) => [e["id"], "requires" in e])).toEqual([
+      ["com.example.a", false],
+      ["com.example.none", true],
+    ]);
+  });
+
+  test("a failing requirement computation never fails a local install", async () => {
+    const src = join(tmp, "src-fail");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "com.example.needs",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        requires: { connectors: ["slack"] },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const db = seededDb();
+    const asked: Array<Record<string, unknown>> = [];
+    const out = (await dispatchAutomationRpc({
+      method: "extension.install",
+      params: { sourcePath: src },
+      db,
+      extensionsDir: join(tmp, "installed-fail"),
+      ownerGate: async (a) => {
+        asked.push(a.payload);
+        return true;
+      },
+      vault: new MockVault(),
+      requirementStatuses: failingStatuses,
+    })) as { value: Record<string, unknown> };
+    expect(out.value["id"]).toBe("com.example.needs");
+    expect("connectorRequirements" in out.value).toBe(false);
+    expect(asked).toHaveLength(1);
+    expect("connectorRequirements" in (asked[0] ?? {})).toBe(false);
+    expect(asked[0]?.["planText"]).toBeUndefined();
   });
 });
 

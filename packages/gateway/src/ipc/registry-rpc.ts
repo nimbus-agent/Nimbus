@@ -10,7 +10,10 @@ import {
   readRegistryReportUrl,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
-import { installedConnectorRequirementStatuses } from "../extensions/connector-requirements.ts";
+import {
+  type ConnectorRequirementStatusesFn,
+  installedConnectorRequirementStatuses,
+} from "../extensions/connector-requirements.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
@@ -81,6 +84,8 @@ export interface RegistryRpcOptions {
    * binds legacy ids through (the same one `extension.*` gets); absent means the production default.
    */
   continuityTable?: readonly ContinuityEntry[];
+  /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
+  requirementStatuses?: ConnectorRequirementStatusesFn;
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -258,14 +263,18 @@ async function handleInstall(
   // Fresh before acting (I48): a revocation published since the last hourly fetch should refuse
   // this install. Unreachable: proceed on stored state and tell the owner how old it is.
   const note = trustFeedNote(await freshenTrustFeed(o.trustFeed, o.db, Date.now()));
+  let installed: Awaited<ReturnType<typeof installFromRegistry>>;
   try {
-    const installed = await installFromRegistry(
+    installed = await installFromRegistry(
       {
         db: o.db,
         extensionsDir,
         vault,
         fetch,
         ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
+        ...(o.requirementStatuses === undefined
+          ? {}
+          : { requirementStatuses: o.requirementStatuses }),
         // The same HITL action as a local install; the request now also names the registry.
         approve: (request) =>
           ownerGate({
@@ -286,29 +295,6 @@ async function handleInstall(
       action: "install",
       ok: true,
     });
-    // The root and every dependency this install added, each read from its installed copy.
-    const connectorRequirements = await installedConnectorRequirementStatuses(
-      {
-        db: o.db,
-        vault,
-        ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
-      },
-      [installed.id, ...installed.dependencies.map((d) => d.id)],
-    );
-    return {
-      kind: "hit",
-      value: {
-        id: installed.id,
-        version: installed.version,
-        sourceRegistry: installed.sourceRegistry,
-        rootFingerprint: installed.rootFingerprint,
-        publisher: installed.publisher,
-        installPath: installed.installPath,
-        treeDigest: installed.treeDigest,
-        dependencies: installed.dependencies,
-        connectorRequirements,
-      },
-    };
   } catch (e) {
     emitGatewayEvent("extension.stateChanged", {
       extensionId: id,
@@ -326,6 +312,32 @@ async function handleInstall(
       e instanceof Error ? e.message : String(e),
     );
   }
+  // After the install has landed, and outside its error handling: the root and every dependency
+  // this install added, each read from its installed copy. This never throws, and a failure only
+  // leaves the field out — requirement status never fails an install or reports it as failed.
+  const connectorRequirements = await installedConnectorRequirementStatuses(
+    {
+      db: o.db,
+      vault,
+      ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
+    },
+    [installed.id, ...installed.dependencies.map((d) => d.id)],
+    o.requirementStatuses,
+  );
+  return {
+    kind: "hit",
+    value: {
+      id: installed.id,
+      version: installed.version,
+      sourceRegistry: installed.sourceRegistry,
+      rootFingerprint: installed.rootFingerprint,
+      publisher: installed.publisher,
+      installPath: installed.installPath,
+      treeDigest: installed.treeDigest,
+      dependencies: installed.dependencies,
+      ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
+    },
+  };
 }
 
 function handleList(o: RegistryRpcOptions): Hit {

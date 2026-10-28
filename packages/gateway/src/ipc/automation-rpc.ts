@@ -29,6 +29,10 @@ import {
   listWorkflows,
   upsertWorkflowByName,
 } from "../automation/workflow-store.ts";
+import {
+  type ExtensionManifestReader,
+  readInstalledManifest,
+} from "../connectors/extension-sync/extension-identity.ts";
 import { deleteConnectorHealthRow } from "../connectors/health.ts";
 import {
   approveExtensionRun,
@@ -39,8 +43,10 @@ import {
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
 import {
   type ConnectorRequirementDeps,
+  type ConnectorRequirementInput,
   type ConnectorRequirementStatus,
-  connectorRequirementStatuses,
+  type ConnectorRequirementStatusesFn,
+  connectorRequirementStatusesByExtension,
   installedConnectorRequirementStatuses,
   installedConnectorRequirements,
 } from "../extensions/connector-requirements.ts";
@@ -182,6 +188,8 @@ interface AutomationCtx {
   extensionSync?: AutomationRpcExtensionSyncHandle;
   /** The composition's continuity table; absent means the production default. */
   continuityTable?: readonly ContinuityEntry[];
+  /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
+  requirementStatuses?: ConnectorRequirementStatusesFn;
 }
 
 type AutomationHandler = (
@@ -633,19 +641,52 @@ function requirementDeps(ctx: AutomationCtx): ConnectorRequirementDeps | undefin
     : { db: ctx.db, vault: ctx.vault, ...continuityTableOf(ctx) };
 }
 
+/** A manifest reader that reads each installed copy's manifest at most once. */
+function memoManifestReader(): ExtensionManifestReader {
+  const seen = new Map<string, ReturnType<ExtensionManifestReader>>();
+  return (row) => {
+    if (!seen.has(row.id)) seen.set(row.id, readInstalledManifest(row));
+    return seen.get(row.id);
+  };
+}
+
 /**
- * `requires` for one installed copy: whether each connector its manifest requires is connected
- * (`[]` when it requires none). Omitted without a Vault, or when the manifest no longer reads. A
- * failed Vault read is that connector's `unknown`, never a thrown error.
+ * `requires` for each of `rows`, keyed by id: whether each connector its manifest requires is
+ * connected (`[]` when it requires none), in one pass — every manifest is read once and every
+ * distinct connector's status computed once, however many rows require it. A row is absent from
+ * the map without a Vault, when its manifest no longer reads, or when the computation failed: its
+ * `requires` is then omitted, never an error. A failed Vault read is that connector's `unknown`.
  */
-async function requiresOf(
+async function requiresByExtension(
   ctx: AutomationCtx,
-  row: ExtensionRow,
-): Promise<{ requires?: ConnectorRequirementStatus[] }> {
+  rows: readonly ExtensionRow[],
+): Promise<ReadonlyMap<string, ConnectorRequirementStatus[]>> {
   const deps = requirementDeps(ctx);
-  const required = deps === undefined ? undefined : installedConnectorRequirements(row);
-  if (deps === undefined || required === undefined) return {};
-  return { requires: await connectorRequirementStatuses(deps, required) };
+  if (deps === undefined) return new Map();
+  const read = memoManifestReader();
+  const required: ConnectorRequirementInput[] = [];
+  const none: string[] = [];
+  for (const row of rows) {
+    const own = installedConnectorRequirements(row, read);
+    if (own === undefined) continue;
+    if (own.length === 0) none.push(row.id);
+    required.push(...own);
+  }
+  const out = await connectorRequirementStatusesByExtension(
+    { ...deps, readManifest: read },
+    required,
+    ctx.requirementStatuses,
+  );
+  for (const id of none) out.set(id, []);
+  return out;
+}
+
+function withRequires<T extends { id: string }>(
+  item: T,
+  requires: ReadonlyMap<string, ConnectorRequirementStatus[]>,
+): T & { requires?: ConnectorRequirementStatus[] } {
+  const own = requires.get(item.id);
+  return own === undefined ? item : { ...item, requires: own };
 }
 
 async function handleExtensionList(
@@ -661,12 +702,9 @@ async function handleExtensionList(
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
       : all;
-  // Per item, so one extension's requirements never decide another's.
-  const extensions: Array<ExtensionListItem & { requires?: ConnectorRequirementStatus[] }> = [];
-  // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
-  for (const item of filtered) {
-    extensions.push({ ...item, ...(await requiresOf(ctx, item)) }); // NOSONAR S9382: sequential Vault reads
-  }
+  // Once per call, not per item: a connector several extensions require is read from the Vault once.
+  const requires = await requiresByExtension(ctx, filtered);
+  const extensions = filtered.map((item) => withRequires(item, requires));
   // `nimbus doctor` stays quiet about unapproved extensions when approving one would be refused.
   return {
     kind: "hit",
@@ -685,6 +723,7 @@ async function handleExtensionInfo(
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
+  const requires = (await requiresByExtension(ctx, [row])).get(row.id);
   const run = {
     ...extensionRunFields(
       row,
@@ -694,7 +733,7 @@ async function handleExtensionInfo(
     ),
     verifiedPublisher: verifiedPublisherOf(ctx.db, row),
     ...publisherOf(row),
-    ...(await requiresOf(ctx, row)),
+    ...(requires === undefined ? {} : { requires }),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
@@ -812,35 +851,20 @@ async function handleExtensionInstall(
     rec !== undefined && typeof rec["publisherKeyPath"] === "string"
       ? rec["publisherKeyPath"].trim()
       : undefined;
+  let installed: Awaited<ReturnType<typeof installExtensionFromLocalDirectory>>;
   try {
-    const installed = await installExtensionFromLocalDirectory({
+    installed = await installExtensionFromLocalDirectory({
       db: ctx.db,
       extensionsDir: dir,
       sourcePath,
       ...(ctx.vault !== undefined && { vault: ctx.vault }),
       ...continuityTableOf(ctx),
+      ...(ctx.requirementStatuses !== undefined && {
+        requirementStatuses: ctx.requirementStatuses,
+      }),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
       approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
-    const deps = requirementDeps(ctx);
-    return {
-      kind: "hit",
-      value: {
-        id: installed.id,
-        version: installed.version,
-        installPath: installed.installPath,
-        manifestHash: installed.manifestHash,
-        entryHash: installed.entryHash,
-        treeDigest: installed.treeDigest,
-        ...(deps === undefined
-          ? {}
-          : {
-              connectorRequirements: await installedConnectorRequirementStatuses(deps, [
-                installed.id,
-              ]),
-            }),
-      },
-    };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new AutomationRpcError(
@@ -848,6 +872,25 @@ async function handleExtensionInstall(
       msg,
     );
   }
+  // After the install has landed, and outside its error handling: this never throws, and a
+  // failure only leaves the field out — requirement status never fails an install.
+  const deps = requirementDeps(ctx);
+  const connectorRequirements =
+    deps === undefined
+      ? undefined
+      : await installedConnectorRequirementStatuses(deps, [installed.id], ctx.requirementStatuses);
+  return {
+    kind: "hit",
+    value: {
+      id: installed.id,
+      version: installed.version,
+      installPath: installed.installPath,
+      manifestHash: installed.manifestHash,
+      entryHash: installed.entryHash,
+      treeDigest: installed.treeDigest,
+      ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
+    },
+  };
 }
 
 /**
@@ -1154,6 +1197,8 @@ export async function dispatchAutomationRpc(options: {
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
   continuityTable?: readonly ContinuityEntry[];
+  /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
+  requirementStatuses?: ConnectorRequirementStatusesFn;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -1172,6 +1217,9 @@ export async function dispatchAutomationRpc(options: {
     }),
     ...(options.extensionSync !== undefined && { extensionSync: options.extensionSync }),
     ...(options.continuityTable !== undefined && { continuityTable: options.continuityTable }),
+    ...(options.requirementStatuses !== undefined && {
+      requirementStatuses: options.requirementStatuses,
+    }),
   };
   return await handler(asRecord(options.params), ctx);
 }

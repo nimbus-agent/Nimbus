@@ -812,6 +812,42 @@ describe("registry.install", () => {
     );
   });
 
+  test("a failing requirement computation never fails a registry install", async () => {
+    runIndexedSchemaMigrations(db, 78);
+    const dir = join(tmp, "reg");
+    await buildMultiExtensionRegistry(dir, {
+      "acme.tool": [
+        {
+          version: "1.0.0",
+          dependsOn: { "acme.dep": "^1.0.0" },
+          requires: { connectors: ["github"] },
+        },
+      ],
+      "acme.dep": [{ version: "1.0.0", requires: { connectors: ["slack"] } }],
+    });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    const out = (await dispatchRegistryRpc({
+      method: "registry.install",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      extensionsDir,
+      vault: new MockVault(),
+      ownerGate: g.gate,
+      requirementStatuses: () => Promise.reject(new Error("requirements unavailable")),
+    })) as { value: Record<string, unknown> };
+    expect(out.value["id"]).toBe("acme.tool");
+    expect("connectorRequirements" in out.value).toBe(false);
+    // The approval was asked without requirements and without a Needs block.
+    const payload = (g.asked[0] as { payload: Record<string, unknown> }).payload;
+    expect("connectorRequirements" in payload).toBe(false);
+    expect(payload["planText"]).not.toContain("Needs:");
+    // Reported as the success it is, never as a failed install.
+    const installEvents = events.filter((e) => e.params["kind"] === "extension.stateChanged");
+    expect(installEvents.map((e) => (e.params["payload"] as { ok: boolean }).ok)).toEqual([true]);
+  });
+
   test("a trust feed that cannot be refreshed first is disclosed in the install prompt", async () => {
     const dir = join(tmp, "reg");
     await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });

@@ -36,6 +36,7 @@ import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import {
   type ConnectorRequirementStatus,
+  type ConnectorRequirementStatusesFn,
   connectorRequirementStatuses,
 } from "./connector-requirements.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
@@ -856,14 +857,18 @@ function planFields(
 /**
  * The connector requirements of the root and every newly installed dependency, each read from the
  * manifest the approval is built from (the root's, and the dependency's VERIFIED registry
- * manifest), before anything is staged. Undefined without a Vault: nothing is computed.
+ * manifest), before anything is staged. Undefined without a Vault (nothing is computed), and
+ * undefined when the computation fails: the approval then carries no requirements and no `Needs:`
+ * block, and the install goes on — requirement status never refuses an install.
  */
 async function planConnectorRequirements(
   options: InstallFromLocalOptions,
   plan: { nodes: readonly ResolvedNode[] },
   manifest: ExtensionManifest,
 ): Promise<ConnectorRequirementStatus[] | undefined> {
-  if (options.vault === undefined) return undefined;
+  const vault = options.vault;
+  if (vault === undefined) return undefined;
+  const compute = options.requirementStatuses ?? connectorRequirementStatuses;
   const manifests = [
     manifest,
     ...plan.nodes
@@ -873,16 +878,20 @@ async function planConnectorRequirements(
   const required = manifests.flatMap((m) =>
     m?.requires === undefined ? [] : [{ extensionId: m.id, connectors: m.requires.connectors }],
   );
-  return await connectorRequirementStatuses(
-    {
-      db: options.db,
-      vault: options.vault,
-      ...(options.continuityTable === undefined
-        ? {}
-        : { continuityTable: options.continuityTable }),
-    },
-    required,
-  );
+  try {
+    return await compute(
+      {
+        db: options.db,
+        vault,
+        ...(options.continuityTable === undefined
+          ? {}
+          : { continuityTable: options.continuityTable }),
+      },
+      required,
+    );
+  } catch {
+    return undefined;
+  }
 }
 
 function buildInstallApprovalRequest(
@@ -1008,6 +1017,8 @@ interface InstallFromLocalOptions {
   vault?: NimbusVault;
   /** The continuity table requirement status binds legacy connector ids through (default the baked one). */
   continuityTable?: readonly ContinuityEntry[];
+  /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
+  requirementStatuses?: ConnectorRequirementStatusesFn;
   publisherKeyPath?: string;
   /** The publisher's Ed25519 key, supplied by a caller that already established it (a registry install). */
   publisherKey?: Uint8Array;

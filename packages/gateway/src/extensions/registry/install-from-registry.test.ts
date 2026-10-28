@@ -828,6 +828,27 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(installedIds()).toEqual([DEP, ID]);
   });
 
+  test("a failing requirement computation leaves the Needs block out and the plan installs", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: "^1.0.0" },
+          requires: { connectors: ["github"] },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    const d = planDeps();
+    d.requirementStatuses = () => Promise.reject(new Error("requirements unavailable"));
+    await installFromRegistry(d, { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest;
+    expect(req.planText).toContain("This install adds 2 packages:");
+    expect(req.planText).not.toContain("Needs:");
+    expect(req.connectorRequirements).toBeUndefined();
+    expect(installedIds()).toEqual([DEP, ID]);
+  });
+
   test("a dependency from a named, added registry installs from it", async () => {
     await addRemote("main", {
       [ID]: [
