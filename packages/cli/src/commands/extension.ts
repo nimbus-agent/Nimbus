@@ -38,6 +38,7 @@ import { runExtensionKey } from "./extension-key.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import { runExtensionReport } from "./extension-report.ts";
+import { parseRequirementStatuses, requirementLines } from "./extension-requirements-format.ts";
 import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
@@ -89,6 +90,7 @@ type ExtensionListEntry = {
   forwardDeps?: Array<{ id: string; range: string }>;
   reverseDeps?: Array<{ extensionId: string; range: string }>;
   runState?: string;
+  requires?: unknown;
   runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
   source_registry?: string | null;
   /** I48: revocations and takedowns the run grant has not acknowledged. */
@@ -409,6 +411,19 @@ export async function runExtensionInfo(
   if (hasFlag(args, "--deps")) {
     printExtensionInfoDeps(e);
   }
+  const requires = parseRequirementStatuses(e.requires);
+  if (requires.length > 0) {
+    console.log("Requires:");
+    for (const line of requirementLines(requires)) console.log(line);
+  }
+}
+
+/** The `Needs:` block of an install result: nothing when no connector is required. */
+function printNeeds(raw: unknown): void {
+  const needs = parseRequirementStatuses(raw);
+  if (needs.length === 0) return;
+  console.log("Needs:");
+  for (const line of requirementLines(needs)) console.log(line);
 }
 
 /** An argument that can only be a filesystem path, never an extension id. */
@@ -462,6 +477,7 @@ async function runExtensionInstallFromRegistry(
     publisher?: { id: string; fingerprint: string };
     installPath: string;
     dependencies?: { id: string; version: string; registry: string }[];
+    connectorRequirements?: unknown;
   }>("registry.install", params);
   const who =
     out.publisher === undefined
@@ -479,6 +495,7 @@ async function runExtensionInstallFromRegistry(
   console.log(
     `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
   );
+  printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
 }
 
@@ -524,7 +541,9 @@ export async function runExtensionInstall(
     id: string;
     version: string;
     installPath: string;
+    connectorRequirements?: unknown;
   }>("extension.install", installParams);
+  printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
 }
 

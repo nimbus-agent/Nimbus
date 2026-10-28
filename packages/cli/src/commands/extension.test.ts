@@ -218,6 +218,15 @@ describe("runExtensionList", () => {
   });
 });
 
+const REQ = {
+  connector: "github",
+  state: "not_connected",
+  owner: { kind: "bundled" },
+  fix: ["nimbus connector auth github"],
+  interactive: false,
+  requiredBy: [],
+};
+
 describe("runExtensionInfo", () => {
   beforeEach(() => {
     out.reset();
@@ -241,6 +250,26 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).toContain("Version:   1.2.3");
     expect(out.stdout).toContain("Enabled:   yes");
     expect(out.stdout).toContain("Network isolation: per-host");
+  });
+
+  test("prints Requires: with the requirement lines when the extension has some", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext5", version: "1.0", enabled: 1, requires: [REQ] } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext5"], ["info", "ext5"]);
+    expect(out.stdout).toContain(
+      "Requires:\n  github: not connected — run: nimbus connector auth github",
+    );
+  });
+
+  test("prints no Requires: block when there is none", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext6", version: "1.0", enabled: 1, requires: [] } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext6"], ["info", "ext6"]);
+    expect(out.stdout).not.toContain("Requires:");
   });
 
   test("appends message when needs_reinstall is true", async () => {
@@ -326,6 +355,18 @@ describe("runExtensionInstall", () => {
     expect(calls[0]?.method).toBe("extension.install");
     expect(out.stdout).toContain("new.ext");
     expect(out.stdout).toContain("/somewhere");
+  });
+
+  test("a local install prints Needs: before the JSON when the result carries requirements", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client } = createMockIpcClient([
+      { id: "new.ext", version: "1.0.0", installPath: "/somewhere", connectorRequirements: [REQ] },
+    ]);
+    await runExtensionInstall(client, ["install", ".", "--yes"], ["."]);
+    const needs = out.stdout.indexOf(
+      "Needs:\n  github: not connected — run: nimbus connector auth github",
+    );
+    expect(needs).toBe(0);
   });
 
   test("propagates IPC errors with --yes", async () => {
@@ -469,6 +510,37 @@ describe("runExtensionInstall — path versus registry id", () => {
     expect(out.stdout).toContain(
       `installed acme.tool@1.0.0 from registry main (root ${"r".repeat(32)}), publisher acme (${"p".repeat(32)})`,
     );
+  });
+
+  test("a registry install prints Needs: after the approve line, before the JSON", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      {
+        id: "acme.tool",
+        version: "1.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        connectorRequirements: [REQ],
+      },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    const text = out.stdout;
+    const approve = text.indexOf("Nothing runs until you approve it");
+    const needs = text.indexOf(
+      "Needs:\n  github: not connected — run: nimbus connector auth github",
+    );
+    expect(approve).toBeGreaterThanOrEqual(0);
+    expect(needs).toBeGreaterThan(approve);
+    expect(text.indexOf("{", needs)).toBeGreaterThan(needs);
+  });
+
+  test("a registry install with no requirements prints no Needs:", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    expect(out.stdout).not.toContain("Needs:");
   });
 
   test("a registry install without a TTY still goes to the gateway prompt", async () => {

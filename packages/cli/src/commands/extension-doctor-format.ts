@@ -1,4 +1,5 @@
 import { stripControl } from "./captures-format.ts";
+import { parseRequirementStatuses } from "./extension-requirements-format.ts";
 
 /** How many extension ids the doctor line names before summarising the rest. */
 const MAX_LISTED = 5;
@@ -32,6 +33,20 @@ function blockedLines(extensions: readonly unknown[]): string[] {
   });
 }
 
+/** One `[warn]` per requirement an installed extension has that is not connected, or never synced. */
+function requirementWarnLines(extensions: readonly unknown[]): string[] {
+  return extensions.flatMap((e: unknown) => {
+    if (!isRecord(e) || typeof e["id"] !== "string") return [];
+    const id = stripControl(e["id"]);
+    return parseRequirementStatuses(e["requires"])
+      .filter((r) => r.state === "not_connected" || r.state === "configured_never_synced")
+      .map(
+        (r) =>
+          `[warn] Extensions: ${id} needs ${stripControl(r.connector)} — run: ${r.fix.map(stripControl).join(" && ")}`,
+      );
+  });
+}
+
 /**
  * `nimbus doctor`'s extensions line, from an `extension.list` response: one `[warn]` naming the
  * installed extensions that have no run approval or an approval for older code, so an upgrade that
@@ -44,7 +59,7 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
   if (!isRecord(raw) || !Array.isArray(raw["extensions"])) {
     throw new Error("malformed extension.list response from the gateway");
   }
-  const blocked = blockedLines(raw["extensions"]);
+  const blocked = [...blockedLines(raw["extensions"]), ...requirementWarnLines(raw["extensions"])];
   if (raw["runtimeEnabled"] === false) {
     return { lines: blocked, exit: blocked.length === 0 ? 0 : 1 };
   }

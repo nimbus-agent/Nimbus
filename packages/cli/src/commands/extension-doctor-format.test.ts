@@ -8,6 +8,52 @@ import {
 
 const ext = (id: string, runState: string) => ({ id, runState });
 
+describe("doctorExtensionsLines — connector requirements", () => {
+  const req = (connector: string, state: string, fix: string[]) => ({
+    connector,
+    state,
+    owner: { kind: "bundled" },
+    fix,
+    interactive: false,
+    requiredBy: [],
+  });
+  const withReqs = (requires: unknown[]) => ({
+    runtimeEnabled: true,
+    extensions: [{ id: "acme.tool", runState: "ready", requires }],
+  });
+
+  test("not_connected and never-synced each warn with their fix", () => {
+    expect(
+      doctorExtensionsLines(
+        withReqs([
+          req("github", "not_connected", ["nimbus connector auth github"]),
+          req("slack", "configured_never_synced", ["nimbus connector sync slack"]),
+        ]),
+      ),
+    ).toEqual({
+      lines: [
+        "[warn] Extensions: acme.tool needs github — run: nimbus connector auth github",
+        "[warn] Extensions: acme.tool needs slack — run: nimbus connector sync slack",
+      ],
+      exit: 1,
+    });
+  });
+
+  test("several fix commands are joined with &&", () => {
+    expect(doctorExtensionsLines(withReqs([req("rw", "not_connected", ["a", "b"])])).lines).toEqual(
+      ["[warn] Extensions: acme.tool needs rw — run: a && b"],
+    );
+  });
+
+  test("met, unknown_connector and unknown add nothing", () => {
+    expect(
+      doctorExtensionsLines(
+        withReqs([req("a", "met", []), req("b", "unknown_connector", []), req("c", "unknown", [])]),
+      ),
+    ).toEqual({ lines: [], exit: 0 });
+  });
+});
+
 describe("doctorExtensionsLines", () => {
   test("runtime off: silent, even with an unapproved extension", () => {
     expect(
