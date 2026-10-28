@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793144079449,
+  "lastUpdate": 1793162282300,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "902cd4291f9fb5278e56e59a9c1ecebbb293b33c",
-          "message": "fix(connectors): report only what was actually verified in connector auth and targeted fetch (#1141)\n\nTwo defects found while verifying the `nimbus-web-clipper` browser\nclient against a live gateway on v1.26.0. They share one root cause —\n**a surface reporting more than it actually verified** — and they\ncompounded: a GitHub PAT expired, `connector auth` reported success,\ntargeted fetch reported `not_found`, and neither surface named the\ncredential, so the two failures presented identically.\n\nBoth halves are here on one branch. They were built as two logical PRs,\nbut the final review's fix wave spans both, so splitting them now would\nmean surgery on that commit rather than a clean cut.\n\n---\n\n## Part 1 — `connector auth` validates before storing\n\n`nimbus connector auth github` printed `Signed in: github` for a\ncredential that did not authenticate. `connector status` then reported\n`healthState: unauthenticated`, `github_actions` returned 401 every 60s,\nand `itemCount` never moved. A setup command that says \"signed in\" when\nyou are not is how a user concludes the product is broken.\n\nA live identity-endpoint probe now runs against the credentials **in the\nrequest**, strictly before any Vault write, for `github`, `gitlab`,\n`bitbucket`, `jira`, `jenkins` (`connectors/credential-probe.ts`),\nbounded by a 10s timeout so an interactive command cannot hang on a\nstalled provider. Probing in-hand credentials — never a Vault read — is\nwhat makes \"nothing was stored\" true, and stops a typo'd token\nclobbering a working one on its way to being rejected.\n\n- **Only HTTP 401 rejects.** Nothing is stored; the RPC throws and the\nCLI exits `1`.\n- **403 stores as unverified.** A 403 proves the credential\nauthenticated — a fine-grained GitHub PAT can 403 on `/user` while\nworking for the scopes it was issued. This is the deliberate opposite of\nhow 403 reads in Part 2, where fetching a *specific item* means the user\ncannot have it either way. Both readings are documented at both sites.\n- **Anything else non-2xx, or a transport failure, stores as unverified\nand exits `0`.** The credential may well be valid; the machine could not\nconfirm it.\n\nThe ~14 other PAT connectors have no registered probe. They store as\nbefore and are reported as unprobed — not silently claimed verified.\n\n**A new `reauthenticated` health event** clears a stuck\n`unauthenticated` state, guarded to fire only from that state and only\non a `valid` verdict. Without it, `SKIP_HEALTH_STATES` blocks the\nscheduled sync path for anything still `unauthenticated`, so a connector\ngiven a working credential would print \"Verified\" and **still never\nsync** — the gateway's own notification tells the user to run exactly\nthat command. `connector-auth-unsticks-scheduler.test.ts` proves the\nscheduler actually resumes dispatch, not merely that the health row\nflipped.\n\nCLI output now reports only what was checked:\n\n```\nVerified: github\nStored: github (NOT verified — the provider did not confirm it)\nStored: datadog (not verified)\n```\n\n## Part 2 — targeted fetch names the cause\n\n`POST /v1/items/fetch` collapsed every miss into a bare `not_found`: no\ncredential stored, DNS failure, 401, 403, 404, malformed body. The\nbrowser panel rendered \"Nimbus can't fetch this page\" — terminal, no\naction offered — when the answer was \"re-authenticate GitHub\".\n\n`FetchOneResult`'s `not_found` arm now carries a **required** `reason:\n\"no_credential\" | \"unauthorized\" | \"absent\" | \"unreachable\" |\n\"upstream_error\"`, wired at every miss site in all five `fetchOne`\nconnectors. Required by the type: a site that omits a cause is a compile\nerror, not a silent regression. Flipping it from optional to required\nwas the completeness check — it surfaced fixture errors and **zero**\nconnector-source errors, which is a compiler's answer to \"did we wire\nevery site\", not a reviewer's.\n\nEach connector's single `!res.ok` site delegates to one shared mapper\n(`connectors/fetch-miss-reason.ts`), which takes an HTTP status code and\nnothing else — no `Response`, no body, no URL. Every other miss site\nreturns a fixed enum literal. So no site can carry provider text or a\nVault-stored base URL.\n\nA provider **429 routes to the existing `rate_limited` arm**.\n`TargetedFetchOutcome` surfaces `reason`, and `not_configured` gains an\noptional `service` populated only where the fetch-host boundary already\nresolved one — a bare host miss has genuinely nothing to name and stays\nbare, because guessing is what that boundary exists to refuse.\n\n`jenkins` needed a structural change rather than a substitution: its\n`!ok` and JSON-shape checks were fused into one condition, and its\n`upserted === null` arm was reporting `absent` for a malformed array\nbody and for a body missing its identity field. Both are upstream\nfaults, not absence. Guards now sit ahead of the upsert so `absent`\nmeans only \"exists upstream, not new to us\".\n\n---\n\n> **Wire change — additive only, no new `status` arm.** `not_found` now\ncarries `reason: \"no_credential\" | \"unauthorized\" | \"absent\" |\n\"unreachable\" | \"upstream_error\"`. `not_configured` may carry `service`.\nA provider 429 now arrives as the already-handled `rate_limited` arm\nrather than as `not_found`. Old clients ignore the new fields and keep\nworking; `nimbus-web-clipper` can follow up to render them. Its parser\nis fail-closed on unknown `status` values, which is why no arm was\nadded.\n\n---\n\n## Testing and gate status — stated precisely\n\n- `bun test packages/gateway` — **13371 pass / 0 fail / 32 skip**.\n- `bun test packages/cli` — **2271 pass / 0 fail**.\n- `bun run typecheck` — 0. `bun run typecheck:tests` — `0 new`.\n- `bunx tsc --noEmit -p packages/gateway/tsconfig.tests.json` — zero\nerrors referencing files this branch touches. Worth knowing: plain\n`typecheck`'s `include` is `src/**/*`, so it is blind to\n`packages/gateway/test/**`, and `typecheck:tests` does not gate off\nLinux. That blindness hid a CI-blocking error during development; this\ncommand is the one that covers it.\n- **Coverage floor**, CI-Linux-authoritative, measured on\n`oven/bun:1.3`: `credential-probe.ts` 100% line / 100% branch;\n`fetch-miss-reason.ts` 100% line / 100% branch (floors ≥85% / ≥80%).\n- **`bun run preflight` exits 1** on `audit:coverage-floor`, flagging\n`ipc/server/socket-listeners.ts` and `platform/linux.ts`. This branch\nhas **zero commits** touching either file, and both are clean on the\nsame Docker-Linux run — the documented Windows false-violation pattern.\nFlagging rather than calling the branch green; CI should be the arbiter.\n\n## Docs\n\n`docs/cli-reference.md` (three auth outcomes + exit codes),\n`docs/CHANGELOG.md`, and `docs/SECURITY-INVARIANTS.md` — the last\nbecause I29's canonical text still taught `rate_limited` ⇒ no egress\nrow. That is now only half true: an acquire timeout appends no row,\nwhile a provider 429 returned by `fetchOne` **does**, because the\nrequest left the machine. Both are correct for I29; the doc now says so.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Targeted fetch results now explain misses, including missing\ncredentials, authorization failures, absent items, unreachable services,\nupstream errors, and rate limits.\n* Connector authentication now reports verified, unverified, or unprobed\ncredentials.\n* Credentials are checked before storage for supported PAT-based\nconnectors; rejected credentials are not saved.\n* Successful reauthentication restores affected connector health and can\nresume scheduled syncing.\n\n* **Documentation**\n* Updated CLI reference, security guidance, changelog, and design\ndocumentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T18:35:34+03:00",
-          "tree_id": "7bcfc16d589057f78400b029c3fcf2d1ea0d8c2f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/902cd4291f9fb5278e56e59a9c1ecebbb293b33c"
-        },
-        "date": 1786463557422,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.310724449997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 328.42570619999935,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 268.95397060000033,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8299b7848ed3d7b8c08570fa66fdeda03776520c",
+          "message": "chore: release main (#1805)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.8.0</summary>\n\n##\n[10.8.0](https://github.com/nimbus-agent/Nimbus/compare/v10.7.0...v10.8.0)\n(2026-10-27)\n\n\n### Features\n\n* **trust:** the release bakes the Nimbus trust feed and a verified\nsnapshot of it\n([#1803](https://github.com/nimbus-agent/Nimbus/issues/1803))\n([47b4f6c](https://github.com/nimbus-agent/Nimbus/commit/47b4f6c93fa048c71d7f6e1d89f618b2a7cf92ca))\n\n\n### Bug Fixes\n\n* **deps:** @modelcontextprotocol/node 2.1.1 (GHSA-f897-62hf-6gxq)\n([#1804](https://github.com/nimbus-agent/Nimbus/issues/1804))\n([19cdfe7](https://github.com/nimbus-agent/Nimbus/commit/19cdfe7a81ad0fce55c0a4e7708f0a47147aa062))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-28T06:27:14+02:00",
+          "tree_id": "c852266dabee76714812276c891e8b6797147cef",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8299b7848ed3d7b8c08570fa66fdeda03776520c"
+        },
+        "date": 1793162278319,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 285.9873773499996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 287.0846654000008,
             "unit": "ms"
           }
         ]
