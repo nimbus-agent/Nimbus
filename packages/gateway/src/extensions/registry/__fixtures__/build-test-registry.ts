@@ -25,6 +25,8 @@ export interface TestVersion {
   dependsOn?: Record<string, string | DependencySpec>;
   /** Publish this version as a starter pack (see the `starterPack` option). */
   starterPack?: boolean;
+  /** The manifest's `requires` block (connector requirements). */
+  requires?: { connectors: string[] };
 }
 
 export interface TestRegistry {
@@ -186,6 +188,7 @@ async function buildTestVersion(
     ...(starterPack ? { kind: "starter-pack" } : { entry: "dist/index.js", permissions: {} }),
     publisher: { id: publisherId, key: publisherKey },
     ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
+    ...(v.requires === undefined ? {} : { requires: v.requires }),
     ...opts.manifestExtra,
   };
   const manifestText = JSON.stringify({

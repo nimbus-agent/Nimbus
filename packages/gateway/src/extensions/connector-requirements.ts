@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { listExtensions } from "../automation/extension-store.ts";
+import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import {
   credentialsReusedFrom,
   normalizeConnectorServiceId,
@@ -225,4 +225,39 @@ export async function connectorRequirementStatuses(
     });
   }
   return out.sort((a, b) => (a.connector < b.connector ? -1 : a.connector > b.connector ? 1 : 0));
+}
+
+/** One entry of `connectorRequirementStatuses`' `required` list. */
+export type ConnectorRequirementInput = {
+  readonly extensionId: string;
+  readonly connectors: readonly string[];
+};
+
+/**
+ * What an installed extension's hash-checked manifest requires: `[]` when it declares nothing,
+ * undefined when the manifest cannot be read (the caller then reports nothing, rather than "none").
+ */
+export function installedConnectorRequirements(
+  row: ExtensionRow,
+): ConnectorRequirementInput[] | undefined {
+  const manifest = readInstalledManifest(row);
+  if (manifest === undefined) return undefined;
+  return manifest.requires === undefined
+    ? []
+    : [{ extensionId: row.id, connectors: manifest.requires.connectors }];
+}
+
+/**
+ * `connectorRequirementStatuses` over what the installed extensions `ids` require, each read from
+ * its installed copy's hash-checked manifest (one that no longer reads contributes nothing).
+ */
+export async function installedConnectorRequirementStatuses(
+  deps: ConnectorRequirementDeps,
+  ids: readonly string[],
+): Promise<ConnectorRequirementStatus[]> {
+  const wanted = new Set(ids);
+  const required = listExtensions(deps.db)
+    .filter((r) => wanted.has(r.id))
+    .flatMap((r) => installedConnectorRequirements(r) ?? []);
+  return await connectorRequirementStatuses(deps, required);
 }

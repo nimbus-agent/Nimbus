@@ -13,7 +13,10 @@ import {
   signTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-import { buildTestRegistry } from "../extensions/registry/__fixtures__/build-test-registry.ts";
+import {
+  buildMultiExtensionRegistry,
+  buildTestRegistry,
+} from "../extensions/registry/__fixtures__/build-test-registry.ts";
 import { getRegistry, insertRegistry } from "../extensions/registry/registry-store.ts";
 import {
   recordTrustStatements,
@@ -768,6 +771,45 @@ describe("registry.install", () => {
     pin("main", dir);
     const out = await install({ id: "acme.tool" }, gateRecorder(true).gate);
     expect(out).toMatchObject({ kind: "hit", value: { id: "acme.tool", dependencies: [] } });
+  });
+
+  test("registry.install reports the plan's connector requirements", async () => {
+    runIndexedSchemaMigrations(db, 78);
+    const dir = join(tmp, "reg");
+    await buildMultiExtensionRegistry(dir, {
+      "acme.tool": [
+        {
+          version: "1.0.0",
+          dependsOn: { "acme.dep": "^1.0.0" },
+          requires: { connectors: ["github"] },
+        },
+      ],
+      "acme.dep": [{ version: "1.0.0", requires: { connectors: ["slack"] } }],
+    });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    const out = (await install({ id: "acme.tool" }, g.gate)) as {
+      value: {
+        dependencies: Array<{ id: string }>;
+        connectorRequirements: Array<{ connector: string; state: string; requiredBy: string[] }>;
+      };
+    };
+    expect(out.value.dependencies.map((d) => d.id)).toEqual(["acme.dep"]);
+    expect(
+      out.value.connectorRequirements.map((r) => [r.connector, r.state, r.requiredBy]),
+    ).toEqual([
+      ["github", "not_connected", ["acme.tool"]],
+      ["slack", "not_connected", ["acme.dep"]],
+    ]);
+    // The approval named them too, before anything was installed.
+    const payload = (g.asked[0] as { payload: Record<string, unknown> }).payload;
+    expect(payload["planText"]).toContain(
+      [
+        "Needs:",
+        "  github: not connected — run: nimbus connector auth github",
+        "  slack: not connected — run: nimbus connector auth slack",
+      ].join("\n"),
+    );
   });
 
   test("a trust feed that cannot be refreshed first is disclosed in the install prompt", async () => {

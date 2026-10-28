@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -8,6 +9,7 @@ import {
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
@@ -1071,6 +1073,168 @@ describe("extension.enable / disable / remove", () => {
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+});
+
+/** A Vault whose every read fails, as a locked keychain does. */
+class ThrowingVault extends MockVault {
+  override get(_key: string): Promise<string | null> {
+    return Promise.reject(new Error("vault locked"));
+  }
+}
+
+describe("extension.info / extension.list — connector requirements", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-requires-"));
+  });
+  afterEach(() => {
+    rmDirWithRetry(tmp);
+  });
+
+  /** An installed row whose on-disk manifest hashes to the recorded `manifest_hash`. */
+  function installWithManifest(db: Database, id: string, requires?: string[]): void {
+    const dir = join(tmp, id);
+    mkdirSync(dir, { recursive: true });
+    const bytes = JSON.stringify({
+      id,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      ...(requires === undefined ? {} : { requires: { connectors: requires } }),
+    });
+    writeFileSync(join(dir, "nimbus.extension.json"), bytes);
+    insertExtensionRow(db, {
+      id,
+      version: "1.0.0",
+      install_path: dir,
+      manifest_hash: createHash("sha256").update(bytes).digest("hex"),
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+  }
+
+  type Req = { connector: string; state: string; requiredBy: string[]; fix: string[] };
+
+  test("extension.info shows requires", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    installWithManifest(db, "com.example.none");
+    const vault = new MockVault();
+    const info = async (id: string) =>
+      (
+        (await dispatchAutomationRpc({ method: "extension.info", params: { id }, db, vault })) as {
+          value: { extension: { requires?: unknown[] } };
+        }
+      ).value.extension.requires;
+    expect(await info("com.example.a")).toEqual([
+      {
+        connector: "github",
+        state: "not_connected",
+        owner: { kind: "bundled" },
+        fix: ["nimbus connector auth github"],
+        // github connects with a token, not OAuth: its fix is not interactive.
+        interactive: false,
+        requiredBy: ["com.example.a"],
+      },
+    ]);
+    expect(await info("com.example.none")).toEqual([]);
+  });
+
+  test("extension.info omits requires without a Vault", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    const out = (await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.example.a" },
+      db,
+    })) as { value: { extension: Record<string, unknown> } };
+    expect("requires" in out.value.extension).toBe(false);
+  });
+
+  test("extension.list items carry requires", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    installWithManifest(db, "com.example.b", ["slack", "github"]);
+    installWithManifest(db, "com.example.c");
+    const out = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      vault: new MockVault(),
+    })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
+    expect(
+      out.value.extensions.map((e) => [
+        e.id,
+        e.requires?.map((r) => [r.connector, r.state, r.requiredBy]),
+      ]),
+    ).toEqual([
+      ["com.example.a", [["github", "not_connected", ["com.example.a"]]]],
+      [
+        "com.example.b",
+        [
+          ["github", "not_connected", ["com.example.b"]],
+          ["slack", "not_connected", ["com.example.b"]],
+        ],
+      ],
+      ["com.example.c", []],
+    ]);
+  });
+
+  test("extension.install reports the root's connector requirements", async () => {
+    const src = join(tmp, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "com.example.needs",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        requires: { connectors: ["slack"] },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const install = (vault: MockVault | undefined, extensionsDir: string) =>
+      dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db: seededDb(),
+        extensionsDir,
+        ownerGate: async () => true,
+        ...(vault === undefined ? {} : { vault }),
+      }) as Promise<{ value: Record<string, unknown> }>;
+    const out = await install(new MockVault(), join(tmp, "installed"));
+    expect(
+      (out.value["connectorRequirements"] as Req[]).map((r) => [
+        r.connector,
+        r.state,
+        r.requiredBy,
+      ]),
+    ).toEqual([["slack", "not_connected", ["com.example.needs"]]]);
+
+    const bare = await install(undefined, join(tmp, "installed-novault"));
+    expect("connectorRequirements" in bare.value).toBe(false);
+  });
+
+  test("a throwing vault read yields unknown, list still returns", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    installWithManifest(db, "com.example.b", ["slack"]);
+    const out = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      vault: new ThrowingVault(),
+    })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
+    expect(
+      out.value.extensions.map((e) => [
+        e.id,
+        e.requires?.map((r) => [r.connector, r.state, r.fix]),
+      ]),
+    ).toEqual([
+      ["com.example.a", [["github", "unknown", []]]],
+      ["com.example.b", [["slack", "unknown", []]]],
+    ]);
   });
 });
 

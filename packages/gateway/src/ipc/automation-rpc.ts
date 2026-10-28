@@ -37,6 +37,13 @@ import {
   revokeExtensionRun,
 } from "../extensions/approve-run.ts";
 import { type AutoUpdateRpcDeps, dispatchAutoUpdateRpc } from "../extensions/auto-update-rpc.ts";
+import {
+  type ConnectorRequirementDeps,
+  type ConnectorRequirementStatus,
+  connectorRequirementStatuses,
+  installedConnectorRequirementStatuses,
+  installedConnectorRequirements,
+} from "../extensions/connector-requirements.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { clearDeps, forwardDeps, reverseDeps } from "../extensions/dependency-store.ts";
 import {
@@ -619,7 +626,32 @@ function isRunningIn(ctx: AutomationCtx, id: string): boolean {
   return ctx.mesh?.isExtensionRunning(id) ?? false;
 }
 
-function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+/** What requirement status reads, or undefined without a Vault (tests, demo): nothing is computed. */
+function requirementDeps(ctx: AutomationCtx): ConnectorRequirementDeps | undefined {
+  return ctx.vault === undefined
+    ? undefined
+    : { db: ctx.db, vault: ctx.vault, ...continuityTableOf(ctx) };
+}
+
+/**
+ * `requires` for one installed copy: whether each connector its manifest requires is connected
+ * (`[]` when it requires none). Omitted without a Vault, or when the manifest no longer reads. A
+ * failed Vault read is that connector's `unknown`, never a thrown error.
+ */
+async function requiresOf(
+  ctx: AutomationCtx,
+  row: ExtensionRow,
+): Promise<{ requires?: ConnectorRequirementStatus[] }> {
+  const deps = requirementDeps(ctx);
+  const required = deps === undefined ? undefined : installedConnectorRequirements(row);
+  if (deps === undefined || required === undefined) return {};
+  return { requires: await connectorRequirementStatuses(deps, required) };
+}
+
+async function handleExtensionList(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
   const filter = rec !== undefined && typeof rec["filter"] === "string" ? rec["filter"] : "";
   const grants = new Map(listRunGrants(ctx.db).map((g) => [g.extension_id, g]));
   const all = decorateExtensionList(ctx.db, listExtensions(ctx.db), grants, (id) =>
@@ -629,14 +661,23 @@ function handleExtensionList(rec: Record<string, unknown> | undefined, ctx: Auto
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
       : all;
+  // Per item, so one extension's requirements never decide another's.
+  const extensions: Array<ExtensionListItem & { requires?: ConnectorRequirementStatus[] }> = [];
+  // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
+  for (const item of filtered) {
+    extensions.push({ ...item, ...(await requiresOf(ctx, item)) }); // NOSONAR S9382: sequential Vault reads
+  }
   // `nimbus doctor` stays quiet about unapproved extensions when approving one would be refused.
   return {
     kind: "hit",
-    value: { extensions: filtered, runtimeEnabled: ctx.runtimeEnabled ?? true },
+    value: { extensions, runtimeEnabled: ctx.runtimeEnabled ?? true },
   };
 }
 
-function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+async function handleExtensionInfo(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
   const id = requireString(rec, "id");
   const row = listExtensions(ctx.db).find((r) => r.id === id);
   if (row === undefined) {
@@ -653,6 +694,7 @@ function handleExtensionInfo(rec: Record<string, unknown> | undefined, ctx: Auto
     ),
     verifiedPublisher: verifiedPublisherOf(ctx.db, row),
     ...publisherOf(row),
+    ...(await requiresOf(ctx, row)),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
@@ -776,9 +818,11 @@ async function handleExtensionInstall(
       extensionsDir: dir,
       sourcePath,
       ...(ctx.vault !== undefined && { vault: ctx.vault }),
+      ...continuityTableOf(ctx),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
       approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
+    const deps = requirementDeps(ctx);
     return {
       kind: "hit",
       value: {
@@ -788,6 +832,13 @@ async function handleExtensionInstall(
         manifestHash: installed.manifestHash,
         entryHash: installed.entryHash,
         treeDigest: installed.treeDigest,
+        ...(deps === undefined
+          ? {}
+          : {
+              connectorRequirements: await installedConnectorRequirementStatuses(deps, [
+                installed.id,
+              ]),
+            }),
       },
     };
   } catch (e) {

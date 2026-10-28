@@ -34,6 +34,11 @@ import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
+import {
+  type ConnectorRequirementStatus,
+  connectorRequirementStatuses,
+} from "./connector-requirements.ts";
+import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import { resolveClosure } from "./dependency-graph.ts";
 import { clearDeps, recordInstall } from "./dependency-store.ts";
 import {
@@ -49,6 +54,7 @@ import {
   type PlannedPackage,
   planPermissionsUnion,
   renderInstallPlan,
+  withNeedsBlock,
 } from "./install-plan-text.ts";
 import {
   type ExtensionManifest,
@@ -263,6 +269,7 @@ async function installExtensionFromArchive(options: {
   extensionsDir: string;
   archivePath: string;
   vault?: NimbusVault;
+  continuityTable?: readonly ContinuityEntry[];
   publisherKeyPath?: string;
   publisherKey?: Uint8Array;
   sourceRegistry?: string;
@@ -277,6 +284,7 @@ async function installExtensionFromArchive(options: {
       extensionsDir: options.extensionsDir,
       sourcePath: root,
       ...(options.vault !== undefined && { vault: options.vault }),
+      ...(options.continuityTable !== undefined && { continuityTable: options.continuityTable }),
       ...(options.publisherKeyPath !== undefined && {
         publisherKeyPath: options.publisherKeyPath,
       }),
@@ -375,8 +383,18 @@ export type ExtensionInstallApprovalRequest = {
   readonly plan?: readonly PlannedPackage[];
   /** The permissions of every newly installed package together, sorted and deduplicated. */
   readonly planPermissions?: ExtensionManifest["permissions"];
-  /** `renderInstallPlan(plan, planPermissions)`: the prompt body the executor prints after Details. */
+  /**
+   * The prompt body the executor prints after Details (`withNeedsBlock`): the rendered plan
+   * when there is one, then a `Needs:` block when an added package requires a connector. Absent
+   * when there is neither.
+   */
   readonly planText?: string;
+  /**
+   * Whether each connector the root and every newly installed dependency require is connected,
+   * computed before the owner is asked (nothing is installed yet). Set on every install the gateway
+   * has a Vault for (`[]` when nothing is required); absent without one. Install never waits on it.
+   */
+  readonly connectorRequirements?: readonly ConnectorRequirementStatus[];
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
@@ -804,13 +822,15 @@ function buildPlannedPackages(
 
 /**
  * The plan fields of the request, or none: a single-package install (no dependency at all, and no
- * package from another registry than the root's) is asked exactly as before.
+ * package from another registry than the root's) carries no `plan`, and a `planText` only when it
+ * requires a connector (the `Needs:` block alone).
  */
 function planFields(
   options: InstallFromLocalOptions,
   plan: { nodes: readonly ResolvedNode[] },
   manifest: ExtensionManifest,
   rootBadge: VerifiedPublisher | null,
+  requirements: readonly ConnectorRequirementStatus[] | undefined,
 ): Pick<ExtensionInstallApprovalRequest, "plan" | "planPermissions" | "planText"> {
   const registryOf = (n: ResolvedNode): string | null =>
     n.source === null ? null : registryNameOf(n.source);
@@ -820,14 +840,49 @@ function planFields(
     const r = registryOf(n);
     return r !== null && r !== rootRegistry;
   });
-  if (plan.nodes.length <= 1 && !crossRegistry) return {};
+  if (plan.nodes.length <= 1 && !crossRegistry) {
+    const needsOnly = withNeedsBlock(undefined, requirements);
+    return needsOnly === undefined ? {} : { planText: needsOnly };
+  }
   const packages = buildPlannedPackages(options, plan, manifest, rootBadge);
   const planPermissions = planPermissionsUnion(packages);
   return {
     plan: packages,
     planPermissions,
-    planText: renderInstallPlan(packages, planPermissions),
+    planText: withNeedsBlock(renderInstallPlan(packages, planPermissions), requirements),
   };
+}
+
+/**
+ * The connector requirements of the root and every newly installed dependency, each read from the
+ * manifest the approval is built from (the root's, and the dependency's VERIFIED registry
+ * manifest), before anything is staged. Undefined without a Vault: nothing is computed.
+ */
+async function planConnectorRequirements(
+  options: InstallFromLocalOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  manifest: ExtensionManifest,
+): Promise<ConnectorRequirementStatus[] | undefined> {
+  if (options.vault === undefined) return undefined;
+  const manifests = [
+    manifest,
+    ...plan.nodes
+      .filter((n) => n.newlyInstalled && n.id !== manifest.id)
+      .map((n) => options.registryPlan?.resolver.verified(n.id, n.version)?.manifest),
+  ];
+  const required = manifests.flatMap((m) =>
+    m?.requires === undefined ? [] : [{ extensionId: m.id, connectors: m.requires.connectors }],
+  );
+  return await connectorRequirementStatuses(
+    {
+      db: options.db,
+      vault: options.vault,
+      ...(options.continuityTable === undefined
+        ? {}
+        : { continuityTable: options.continuityTable }),
+    },
+    required,
+  );
 }
 
 function buildInstallApprovalRequest(
@@ -836,6 +891,7 @@ function buildInstallApprovalRequest(
   plan: { nodes: readonly ResolvedNode[] },
   sourcePath: string,
   badge: VerifiedPublisher | null,
+  requirements: readonly ConnectorRequirementStatus[] | undefined,
 ): ExtensionInstallApprovalRequest {
   const others = plan.nodes
     .filter((n) => n.newlyInstalled && n.id !== manifest.id)
@@ -851,7 +907,8 @@ function buildInstallApprovalRequest(
     ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
     verifiedPublisher: badge,
     publisherBadge: publisherBadgeText(badge),
-    ...planFields(options, plan, manifest, badge),
+    ...planFields(options, plan, manifest, badge, requirements),
+    ...(requirements === undefined ? {} : { connectorRequirements: requirements }),
   };
 }
 
@@ -949,6 +1006,8 @@ interface InstallFromLocalOptions {
   extensionsDir: string;
   sourcePath: string;
   vault?: NimbusVault;
+  /** The continuity table requirement status binds legacy connector ids through (default the baked one). */
+  continuityTable?: readonly ContinuityEntry[];
   publisherKeyPath?: string;
   /** The publisher's Ed25519 key, supplied by a caller that already established it (a registry install). */
   publisherKey?: Uint8Array;
@@ -996,6 +1055,7 @@ function archiveInstallOptions(
     extensionsDir: options.extensionsDir,
     archivePath,
     ...(options.vault !== undefined && { vault: options.vault }),
+    ...(options.continuityTable !== undefined && { continuityTable: options.continuityTable }),
     ...(options.publisherKeyPath !== undefined && {
       publisherKeyPath: options.publisherKeyPath,
     }),
@@ -1025,6 +1085,7 @@ async function requireInstallApproval(
       plan,
       options.displaySourcePath ?? sourceResolved,
       await installPromptBadge(options, manifest, manifestText),
+      await planConnectorRequirements(options, plan, manifest),
     ),
   );
   if (!approved) {

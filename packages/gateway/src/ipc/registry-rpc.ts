@@ -10,6 +10,8 @@ import {
   readRegistryReportUrl,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
+import { installedConnectorRequirementStatuses } from "../extensions/connector-requirements.ts";
+import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
 import {
@@ -74,6 +76,11 @@ export interface RegistryRpcOptions {
   vault?: NimbusVault;
   /** `registry.install` only: the trust feed, refreshed best-effort first (spec § 6.2). */
   trustFeed?: FreshenHandle;
+  /**
+   * `registry.install` only: the composition's continuity table, which connector requirement status
+   * binds legacy ids through (the same one `extension.*` gets); absent means the production default.
+   */
+  continuityTable?: readonly ContinuityEntry[];
 }
 
 type Hit = { kind: "hit"; value: unknown };
@@ -258,6 +265,7 @@ async function handleInstall(
         extensionsDir,
         vault,
         fetch,
+        ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
         // The same HITL action as a local install; the request now also names the registry.
         approve: (request) =>
           ownerGate({
@@ -278,6 +286,15 @@ async function handleInstall(
       action: "install",
       ok: true,
     });
+    // The root and every dependency this install added, each read from its installed copy.
+    const connectorRequirements = await installedConnectorRequirementStatuses(
+      {
+        db: o.db,
+        vault,
+        ...(o.continuityTable === undefined ? {} : { continuityTable: o.continuityTable }),
+      },
+      [installed.id, ...installed.dependencies.map((d) => d.id)],
+    );
     return {
       kind: "hit",
       value: {
@@ -289,6 +306,7 @@ async function handleInstall(
         installPath: installed.installPath,
         treeDigest: installed.treeDigest,
         dependencies: installed.dependencies,
+        connectorRequirements,
       },
     };
   } catch (e) {

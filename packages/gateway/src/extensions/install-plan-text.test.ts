@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import {
   type PlannedPackage,
   planPermissionsUnion,
   renderInstallPlan,
+  requirementLines,
+  withNeedsBlock,
 } from "./install-plan-text.ts";
 
 const FP = "6fb9a1c2d3e4f5061728394a5b6c7d8e";
@@ -116,5 +119,66 @@ describe("planPermissionsUnion", () => {
       network: ["a.example", "b.example"],
       filesystem: { read: ["~/x", "~/y"], write: ["~/w"] },
     });
+  });
+});
+
+describe("the Needs block", () => {
+  const status = (
+    connector: string,
+    state: ConnectorRequirementStatus["state"],
+    fix: string[] = [],
+  ): ConnectorRequirementStatus => ({
+    connector,
+    state,
+    owner: { kind: "bundled" },
+    fix,
+    interactive: false,
+    requiredBy: ["com.example.tool"],
+  });
+
+  test("one line per state, in the CLI's exact wording", () => {
+    expect(
+      requirementLines([
+        status("github", "met"),
+        status("github", "configured_never_synced", ["nimbus connector sync github"]),
+        status("github", "not_connected", ["nimbus connector auth github"]),
+        status("foo", "unknown_connector"),
+        status("github", "unknown"),
+      ]),
+    ).toEqual([
+      "  github: connected",
+      "  github: connected, never synced — run: nimbus connector sync github",
+      "  github: not connected — run: nimbus connector auth github",
+      "  foo: not a connector this Nimbus knows",
+      "  github: status unavailable",
+    ]);
+  });
+
+  test("several fix commands are joined with &&", () => {
+    expect(
+      requirementLines([
+        status("legacyx", "not_connected", [
+          "nimbus extension approve com.example.x",
+          "nimbus extension credential set com.example.x token",
+        ]),
+      ]),
+    ).toEqual([
+      "  legacyx: not connected — run: nimbus extension approve com.example.x && nimbus extension credential set com.example.x token",
+    ]);
+  });
+
+  test("a manifest-sourced line break is escaped, never rendered", () => {
+    expect(requirementLines([status("git\nhub", "met")])).toEqual([
+      String.raw`  git\u000Ahub: connected`,
+    ]);
+  });
+
+  test("appended after the plan; absent when nothing is required", () => {
+    const needs = [status("github", "met")];
+    expect(withNeedsBlock("PLAN", needs)).toBe("PLAN\nNeeds:\n  github: connected");
+    expect(withNeedsBlock(undefined, needs)).toBe("Needs:\n  github: connected");
+    expect(withNeedsBlock("PLAN", [])).toBe("PLAN");
+    expect(withNeedsBlock(undefined, [])).toBeUndefined();
+    expect(withNeedsBlock(undefined, undefined)).toBeUndefined();
   });
 });

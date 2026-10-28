@@ -1,11 +1,12 @@
 /**
  * The text the local owner approves for an install that adds more than one package (a dependency
- * plan). Pure: it formats what it is handed and reads nothing. The rendered plan is the prompt body
+ * plan), and the connectors the added packages need (a `Needs:` block). Pure: it formats what it is handed and reads nothing. The rendered plan is the prompt body
  * (`executor.ts` prints it after the Details line), so every manifest-sourced string is passed
  * through `oneLine` first: a control, line-break, invisible or bidi character is shown as an escape,
  * never rendered, and cannot forge a line of the prompt.
  */
 import { FORMAT_INVISIBLE_RANGES } from "../mcp-sink/invisible-text.ts";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import type { ExtensionManifest } from "./manifest.ts";
 
 /**
@@ -135,4 +136,48 @@ export function renderInstallPlan(plan: readonly PlannedPackage[], union: Permis
   }
   lines.push(`All packages together: ${permissionsLine(union)}`);
   return lines.join("\n");
+}
+
+/** The status shown after a connector's name, as the CLI shows it (`extension-requirements-format.ts`). */
+function requirementStatusText(s: ConnectorRequirementStatus): string {
+  const fix = s.fix.map(oneLine).join(" && ");
+  switch (s.state) {
+    case "met":
+      return "connected";
+    case "configured_never_synced":
+      return `connected, never synced — run: ${fix}`;
+    case "not_connected":
+      return `not connected — run: ${fix}`;
+    case "unknown_connector":
+      return "not a connector this Nimbus knows";
+    case "unknown":
+      return "status unavailable";
+  }
+}
+
+/** One indented line per connector requirement, in the order given. */
+export function requirementLines(statuses: readonly ConnectorRequirementStatus[]): string[] {
+  return statuses.map((s) => `  ${oneLine(s.connector)}: ${requirementStatusText(s)}`);
+}
+
+/**
+ * `text` (the rendered plan, or nothing for a single-package install) followed by a `Needs:` block
+ * naming every connector the added packages require, when there is one. Undefined only when there
+ * is neither, so a single package with no requirement is asked exactly as before.
+ */
+export function withNeedsBlock(
+  text: string,
+  requirements: readonly ConnectorRequirementStatus[] | undefined,
+): string;
+export function withNeedsBlock(
+  text: string | undefined,
+  requirements: readonly ConnectorRequirementStatus[] | undefined,
+): string | undefined;
+export function withNeedsBlock(
+  text: string | undefined,
+  requirements: readonly ConnectorRequirementStatus[] | undefined,
+): string | undefined {
+  if (requirements === undefined || requirements.length === 0) return text;
+  const needs = ["Needs:", ...requirementLines(requirements)].join("\n");
+  return text === undefined ? needs : `${text}\n${needs}`;
 }
