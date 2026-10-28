@@ -18,26 +18,37 @@ import { join, relative, resolve, sep } from "node:path";
 import {
   assertSafeExtensionId,
   publisherKeyFingerprint,
+  type RegistryChannel,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
 
 import {
+  deleteExtensionById,
   insertExtensionRow,
   listExtensions,
   setExtensionPublisherKeyFingerprint,
+  setInstalledAsDependency,
 } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { resolveClosure } from "./dependency-graph.ts";
-import { recordInstall } from "./dependency-store.ts";
+import { clearDeps, recordInstall } from "./dependency-store.ts";
 import {
   type ExtensionManifestForSolver,
   type InstalledForSolver,
   type RegistryFetcher,
   type ResolvedNode,
+  registryNameOf,
+  type SourceKey,
   sourceKey,
 } from "./dependency-types.ts";
+import {
+  type PlannedPackage,
+  planPermissionsUnion,
+  renderInstallPlan,
+} from "./install-plan-text.ts";
 import {
   type ExtensionManifest,
   extensionEntryRelPath,
@@ -48,7 +59,14 @@ import {
 import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
+import type {
+  RegistryDependencyResolver,
+  StagedDependency,
+} from "./registry/registry-dependency-fetcher.ts";
+import { registryHashMismatch } from "./registry/registry-manifest.ts";
+import { getRegistry, setExtensionSource } from "./registry/registry-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
+import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked } from "./trust/trust-blocks.ts";
 import {
   publisherBadgeText,
@@ -56,6 +74,11 @@ import {
   verifiedPublisherFor,
 } from "./trust/verified-publisher.ts";
 import { decodeBase64, verifyManifestSignature } from "./verify-signature.ts";
+
+export type { PlannedPackage } from "./install-plan-text.ts";
+
+/** The plan installer stages a registry plan's dependencies under `tmpdir()/<prefix>XXXXXX`. */
+const PLAN_STAGING_PREFIX = "nimbus-plan-";
 
 function sha256HexOfBytes(buf: Buffer): string {
   return createHash("sha256").update(buf).digest("hex");
@@ -142,6 +165,8 @@ async function completeExtensionInstallAfterCopy(options: {
   vault?: NimbusVault;
   publisherKeyPath?: string;
   publisherKey?: Uint8Array;
+  /** Called once the row's transaction has committed, so a rollback knows the row exists. */
+  onRowCommitted?: () => void;
 }): Promise<SingleInstallResult> {
   const destManifestPath = resolveExtensionManifestPath(options.dest);
   if (destManifestPath === undefined) {
@@ -193,6 +218,7 @@ async function completeExtensionInstallAfterCopy(options: {
       setExtensionPublisherKeyFingerprint(options.db, options.manifest.id, verifiedKeyFingerprint);
     }
   })();
+  options.onRowCommitted?.();
 
   return {
     id: options.manifest.id,
@@ -337,6 +363,16 @@ export type ExtensionInstallApprovalRequest = {
    */
   readonly provenance?: VersionProvenance;
   readonly provenanceNote?: string;
+  /**
+   * Set only when the install adds or reuses more than one package (or a package from another
+   * registry than the root's): every plan node, in install (topological) order. A single-package
+   * install's request carries none of these three, exactly as before.
+   */
+  readonly plan?: readonly PlannedPackage[];
+  /** The permissions of every newly installed package together, sorted and deduplicated. */
+  readonly planPermissions?: ExtensionManifest["permissions"];
+  /** `renderInstallPlan(plan, planPermissions)`: the prompt body the executor prints after Details. */
+  readonly planText?: string;
 };
 
 /** Resolves `true` only when the local owner approved; anything else installs nothing. */
@@ -418,18 +454,27 @@ function buildLocalSolverFetcher(
   };
 }
 
+type NodeInstallOptions = {
+  db: Database;
+  extensionsDir: string;
+  vault?: NimbusVault;
+  publisherKeyPath?: string;
+  publisherKey?: Uint8Array;
+};
+
+/**
+ * One package the plan installer created: its directory from the moment the copy starts (the
+ * destination did not exist, so removing it removes only what this install made), and its id once
+ * its `extension` row has committed.
+ */
+type CreatedPackage = { readonly dir: string; id: string | null };
+
 async function installRootNode(
-  options: {
-    db: Database;
-    extensionsDir: string;
-    vault?: NimbusVault;
-    publisherKeyPath?: string;
-    publisherKey?: Uint8Array;
-  },
+  options: NodeInstallOptions,
   sourceResolved: string,
   manifest: ExtensionManifest,
-  registerDir: (dir: string) => void,
-): Promise<void> {
+  created: CreatedPackage[],
+): Promise<SingleInstallResult> {
   const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
   if (existsSync(dest)) {
     throw new Error(`extension already installed at ${dest}`);
@@ -438,15 +483,16 @@ async function installRootNode(
   scanForSymlinks(sourceResolved);
   mkdirSync(options.extensionsDir, { recursive: true });
 
+  const record: CreatedPackage = { dir: dest, id: null };
+  created.push(record);
   try {
     cpSync(sourceResolved, dest, { recursive: true, dereference: true });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     throw new Error(`extension copy failed: ${msg}`);
   }
-  registerDir(dest);
 
-  await completeExtensionInstallAfterCopy({
+  return await completeExtensionInstallAfterCopy({
     db: options.db,
     dest,
     manifest,
@@ -455,51 +501,146 @@ async function installRootNode(
       publisherKeyPath: options.publisherKeyPath,
     }),
     ...(options.publisherKey !== undefined && { publisherKey: options.publisherKey }),
+    onRowCommitted: () => {
+      record.id = manifest.id;
+    },
   });
 }
 
-type InstallPlanNodesOptions = {
-  db: Database;
-  extensionsDir: string;
-  vault?: NimbusVault;
-  publisherKeyPath?: string;
-  publisherKey?: Uint8Array;
-};
-
-function rollbackCreatedDirs(createdDirs: readonly string[]): void {
-  for (const dir of [...createdDirs].reverse()) {
+/**
+ * Undoes every package this plan created, newest first: its edges, its row (with any run grant,
+ * `deleteExtensionById`) and its directory. Packages present before the plan are never touched;
+ * audit and egress rows stay. Best-effort per step: the original failure is the error that matters.
+ */
+function rollbackCreatedPackages(db: Database, created: readonly CreatedPackage[]): void {
+  for (const pkg of [...created].reverse()) {
+    if (pkg.id !== null) {
+      try {
+        clearDeps(db, pkg.id);
+        deleteExtensionById(db, pkg.id);
+      } catch {
+        /* best-effort rollback */
+      }
+    }
     try {
-      rmSync(dir, { recursive: true, force: true });
+      rmSync(pkg.dir, { recursive: true, force: true });
     } catch {
       /* best-effort rollback */
     }
   }
 }
 
-async function installPlanNodes(
-  options: InstallPlanNodesOptions,
+/** Refused unless the installed entry file is the one the signed index listed (I44). */
+function assertInstalledEntryHash(
+  installed: SingleInstallResult,
+  expected: string | undefined,
+): void {
+  if (expected === undefined) return;
+  if (!sha256HexEqualConstantTime(installed.entryHash, expected)) {
+    throw registryHashMismatch("entry file", installed.id, installed.version);
+  }
+}
+
+/** Phase 2 of a registry plan: each newly installed dependency's package, staged under `intoDir`. */
+async function stageNewDependencies(
+  options: InstallFromLocalOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  rootId: string,
+  intoDir: () => string,
+): Promise<ReadonlyMap<string, StagedDependency>> {
+  const newDeps = plan.nodes.filter((n) => n.newlyInstalled && n.id !== rootId);
+  const [first] = newDeps;
+  if (first === undefined) return new Map();
+  const hooks = options.registryPlan;
+  if (hooks === undefined) {
+    // Unreachable through the local-only solver, which never plans an uninstalled package.
+    throw new Error(`dependency ${first.id}@${first.version} is not installed; install it first`);
+  }
+  // Only nodes phase 1 verified: `stage` refuses anything else, an installed copy included.
+  const staged = await hooks.resolver.stage(newDeps, intoDir());
+  return new Map(staged.map((s) => [s.id, s]));
+}
+
+/** Installs one staged dependency as a registry package of the plan's channel. */
+async function installStagedDependency(
+  options: InstallFromLocalOptions,
+  channel: RegistryChannel,
+  dep: StagedDependency,
+  created: CreatedPackage[],
+): Promise<void> {
+  const installed = await installRootNode(
+    {
+      db: options.db,
+      extensionsDir: options.extensionsDir,
+      ...(options.vault !== undefined && { vault: options.vault }),
+      publisherKey: decodeBase64(dep.publisherKey),
+    },
+    dep.sourceRoot,
+    dep.manifest,
+    created,
+  );
+  assertInstalledEntryHash(installed, dep.vEntry.entryHash);
+  setExtensionSource(options.db, dep.id, {
+    registry: dep.reg.name,
+    rootFingerprint: dep.reg.rootFingerprint,
+    channel,
+  });
+  setInstalledAsDependency(options.db, dep.id, true);
+}
+
+/**
+ * Installs an approved plan all-or-nothing: stage every newly installed dependency (registry plan
+ * only), install them in topological order — each through the same copy + I16 path as the root,
+ * with its index key and its index entry hash — then the root (checked against
+ * `expectedRootEntryHash`), then record every edge and the install audit row. Any failure undoes
+ * every package created here; the staging directory is always removed.
+ */
+async function installApprovedPlan(
+  options: InstallFromLocalOptions,
   plan: { nodes: readonly ResolvedNode[] },
   sourceResolved: string,
   manifest: ExtensionManifest,
 ): Promise<void> {
-  const createdDirs: string[] = [];
+  const created: CreatedPackage[] = [];
+  let stagingDir: string | undefined;
   try {
+    const staged = await stageNewDependencies(options, plan, manifest.id, () => {
+      stagingDir = mkdtempSync(join(tmpdir(), PLAN_STAGING_PREFIX));
+      return stagingDir;
+    });
+    const channel = options.registryPlan?.channel ?? "stable";
     // SERIAL by design: `plan.nodes` is topologically ordered (dependencies before dependents),
-    // and on the first failure nothing further may start — the catch rolls back exactly the
-    // directories created so far.
+    // and on the first failure nothing further may start — the catch undoes exactly what exists.
     for (const node of plan.nodes) {
-      if (!node.newlyInstalled) {
+      if (!node.newlyInstalled) continue;
+      if (node.id === manifest.id) {
+        const root = await installRootNode(options, sourceResolved, manifest, created); // NOSONAR S9382: topological, fail-fast install order (see above)
+        assertInstalledEntryHash(root, options.expectedRootEntryHash);
         continue;
       }
-      if (node.id !== manifest.id) {
-        // Unreachable through the local-only solver, which never plans an uninstalled package.
-        throw new Error(`dependency ${node.id}@${node.version} is not installed; install it first`);
+      const dep = staged.get(node.id);
+      if (dep === undefined) {
+        throw new Error(`dependency ${node.id}@${node.version} was not staged`);
       }
-      await installRootNode(options, sourceResolved, manifest, (dir) => createdDirs.push(dir)); // NOSONAR S9382: topological, fail-fast install order (see above)
+      await installStagedDependency(options, channel, dep, created); // NOSONAR S9382: topological, fail-fast install order (see above)
     }
+    recordPlanInstallAndAudit(
+      options.db,
+      plan,
+      manifest,
+      options.approve === undefined ? "not_required" : "approved",
+    );
   } catch (e) {
-    rollbackCreatedDirs(createdDirs);
+    rollbackCreatedPackages(options.db, created);
     throw e;
+  } finally {
+    if (stagingDir !== undefined) {
+      try {
+        rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort: the staged trees are copies, never installed code */
+      }
+    }
   }
 }
 
@@ -511,11 +652,141 @@ export class ExtensionInstallNotApprovedError extends Error {
   }
 }
 
+const NO_PERMISSIONS: ExtensionManifest["permissions"] = {
+  network: [],
+  filesystem: { read: [], write: [] },
+};
+
+/** The manifest of an installed (reused) package, read from disk; undefined when unreadable. */
+function installedManifestOf(db: Database, id: string): ExtensionManifest | undefined {
+  const row = listExtensions(db).find((r) => r.id === id);
+  const path = row === undefined ? undefined : resolveExtensionManifestPath(row.install_path);
+  if (path === undefined) return undefined;
+  try {
+    return parseExtensionManifestJson(readFileSync(path, "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+function publisherOf(
+  manifest: ExtensionManifest | undefined,
+): { id: string; fingerprint: string } | null {
+  return manifest?.publisher === undefined
+    ? null
+    : { id: manifest.publisher.id, fingerprint: publisherKeyFingerprint(manifest.publisher.key) };
+}
+
+/** What the owner is shown about one plan node, beyond its id, version, edges and registry. */
+function plannedDetails(
+  options: InstallFromLocalOptions,
+  node: ResolvedNode,
+  manifest: ExtensionManifest,
+  rootBadge: VerifiedPublisher | null,
+): Pick<
+  PlannedPackage,
+  "publisher" | "publisherBadge" | "publisherChange" | "publisherChangeNote" | "permissions"
+> {
+  if (node.id === manifest.id) {
+    return {
+      publisher: publisherOf(manifest),
+      ...(rootBadge === null ? {} : { publisherBadge: publisherBadgeText(rootBadge) }),
+      permissions: manifest.permissions,
+    };
+  }
+  const verified = node.newlyInstalled
+    ? options.registryPlan?.resolver.verified(node.id, node.version)
+    : undefined;
+  if (verified === undefined) {
+    const installed = installedManifestOf(options.db, node.id);
+    return {
+      publisher: publisherOf(installed),
+      permissions: installed?.permissions ?? NO_PERMISSIONS,
+    };
+  }
+  const pc = verified.publisherChange;
+  return {
+    publisher:
+      verified.manifest.publisher === undefined
+        ? null
+        : {
+            id: verified.manifest.publisher.id,
+            fingerprint: publisherKeyFingerprint(verified.publisherKey),
+          },
+    ...(verified.verifiedPublisher === null
+      ? {}
+      : { publisherBadge: publisherBadgeText(verified.verifiedPublisher) }),
+    ...(pc === null
+      ? {}
+      : {
+          publisherChange: { ...pc.change, via: pc.via },
+          publisherChangeNote: keyChangeNote(pc.change, pc.via),
+        }),
+    permissions: verified.manifest.permissions,
+  };
+}
+
+function registryUrlOf(options: InstallFromLocalOptions, source: SourceKey): string | null {
+  return (
+    options.registryPlan?.resolver.registryUrl(source) ??
+    getRegistry(options.db, registryNameOf(source))?.url ??
+    null
+  );
+}
+
+/** Every plan node as the owner is shown it, in plan (topological) order. */
+function buildPlannedPackages(
+  options: InstallFromLocalOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  manifest: ExtensionManifest,
+  rootBadge: VerifiedPublisher | null,
+): PlannedPackage[] {
+  return plan.nodes.map((node) => ({
+    id: node.id,
+    version: node.version,
+    requiredBy: plan.nodes.flatMap((from) =>
+      from.deps.filter((d) => d.id === node.id).map((d) => ({ from: from.id, range: d.range })),
+    ),
+    registry: node.source === null ? null : registryNameOf(node.source),
+    registryUrl: node.source === null ? null : registryUrlOf(options, node.source),
+    ...plannedDetails(options, node, manifest, rootBadge),
+    newlyInstalled: node.newlyInstalled,
+  }));
+}
+
+/**
+ * The plan fields of the request, or none: a single-package install (no dependency at all, and no
+ * package from another registry than the root's) is asked exactly as before.
+ */
+function planFields(
+  options: InstallFromLocalOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  manifest: ExtensionManifest,
+  rootBadge: VerifiedPublisher | null,
+): Pick<ExtensionInstallApprovalRequest, "plan" | "planPermissions" | "planText"> {
+  const registryOf = (n: ResolvedNode): string | null =>
+    n.source === null ? null : registryNameOf(n.source);
+  const rootNode = plan.nodes.find((n) => n.id === manifest.id);
+  const rootRegistry = rootNode === undefined ? null : registryOf(rootNode);
+  const crossRegistry = plan.nodes.some((n) => {
+    const r = registryOf(n);
+    return r !== null && r !== rootRegistry;
+  });
+  if (plan.nodes.length <= 1 && !crossRegistry) return {};
+  const packages = buildPlannedPackages(options, plan, manifest, rootBadge);
+  const planPermissions = planPermissionsUnion(packages);
+  return {
+    plan: packages,
+    planPermissions,
+    planText: renderInstallPlan(packages, planPermissions),
+  };
+}
+
 function buildInstallApprovalRequest(
+  options: InstallFromLocalOptions,
   manifest: ExtensionManifest,
   plan: { nodes: readonly ResolvedNode[] },
   sourcePath: string,
-  source: { sourceRegistry?: string; rootFingerprint?: string } | undefined,
   badge: VerifiedPublisher | null,
 ): ExtensionInstallApprovalRequest {
   const others = plan.nodes
@@ -525,19 +796,14 @@ function buildInstallApprovalRequest(
     id: manifest.id,
     version: manifest.version,
     sourcePath,
-    publisher:
-      manifest.publisher === undefined
-        ? null
-        : {
-            id: manifest.publisher.id,
-            fingerprint: publisherKeyFingerprint(manifest.publisher.key),
-          },
+    publisher: publisherOf(manifest),
     permissions: manifest.permissions,
     installs: [{ id: manifest.id, version: manifest.version }, ...others],
-    ...(source?.sourceRegistry !== undefined && { sourceRegistry: source.sourceRegistry }),
-    ...(source?.rootFingerprint !== undefined && { rootFingerprint: source.rootFingerprint }),
+    ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
+    ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
     verifiedPublisher: badge,
     publisherBadge: publisherBadgeText(badge),
+    ...planFields(options, plan, manifest, badge),
   };
 }
 
@@ -650,6 +916,24 @@ interface InstallFromLocalOptions {
   approve?: ExtensionInstallApprover;
   /** The path to show the owner when `sourcePath` is an archive's temporary extraction. */
   displaySourcePath?: string;
+  /**
+   * A registry install only: the dependency resolver the solve reads (phase 1, verified manifests
+   * only) and the plan installer stages from (phase 2, after approval), and the channel the owner
+   * asked for. Absent, only installed copies satisfy a dependency and nothing is fetched or staged.
+   */
+  registryPlan?: RegistryPlanHooks;
+  /**
+   * A registry install only: the entry-file hash the signed index lists for the root. Checked by
+   * the plan installer after the root is copied and BEFORE any edge or audit row is recorded, so a
+   * mismatch rolls back every package of the plan, dependencies included.
+   */
+  expectedRootEntryHash?: string;
+}
+
+/** What a registry install hands the plan installer (see `InstallFromLocalOptions.registryPlan`). */
+export interface RegistryPlanHooks {
+  readonly resolver: RegistryDependencyResolver;
+  readonly channel: RegistryChannel;
 }
 
 /** The archive install's options: the caller's, with `sourcePath` replaced by the archive path. */
@@ -686,13 +970,10 @@ async function requireInstallApproval(
   if (options.approve === undefined) return;
   const approved = await options.approve(
     buildInstallApprovalRequest(
+      options,
       manifest,
       plan,
       options.displaySourcePath ?? sourceResolved,
-      {
-        ...(options.sourceRegistry !== undefined && { sourceRegistry: options.sourceRegistry }),
-        ...(options.rootFingerprint !== undefined && { rootFingerprint: options.rootFingerprint }),
-      },
       await installPromptBadge(options, manifest, manifestText),
     ),
   );
@@ -735,7 +1016,10 @@ export async function installExtensionFromLocalDirectory(
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 
-  const solverFetcher = buildLocalSolverFetcher(options.db, installedMap);
+  // A registry install resolves through its registry (verified manifests only, I44); any other
+  // install sees only what is installed and fetches nothing.
+  const solverFetcher =
+    options.registryPlan?.resolver.fetcher ?? buildLocalSolverFetcher(options.db, installedMap);
 
   const solverRoot: ExtensionManifestForSolver = {
     id: manifest.id,
@@ -743,9 +1027,10 @@ export async function installExtensionFromLocalDirectory(
     ...(manifest.dependsOn === undefined ? {} : { dependsOn: manifest.dependsOn }),
   };
   const rootSource =
-    options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
+    options.registryPlan?.resolver.rootSource ??
+    (options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
       ? sourceKey(options.sourceRegistry, options.rootFingerprint)
-      : null;
+      : null);
   const plan = await resolveClosure(solverRoot, rootSource, solverFetcher, {
     installed: installedMap,
     activeConstraints,
@@ -772,14 +1057,9 @@ export async function installExtensionFromLocalDirectory(
     sourceResolved,
   );
 
-  await installPlanNodes(options, plan, sourceResolved, manifest);
-
-  recordPlanInstallAndAudit(
-    options.db,
-    plan,
-    manifest,
-    options.approve === undefined ? "not_required" : "approved",
-  );
+  // Stage, install in topological order, check every registry entry hash, record the edges and
+  // the audit row — all or nothing.
+  await installApprovedPlan(options, plan, sourceResolved, manifest);
 
   return buildRootInstallResult(options.extensionsDir, manifest, plan);
 }

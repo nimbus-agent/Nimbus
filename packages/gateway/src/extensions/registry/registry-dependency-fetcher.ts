@@ -52,13 +52,14 @@ import { assertNotBlocked, type BlockSubject, blocksFor } from "../trust/trust-b
 import { type VerifiedPublisher, verifiedPublisherFor } from "../trust/verified-publisher.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { resolveDependencyRegistry } from "./dependency-registry.ts";
-import { type InstallFromRegistryDeps, stageVerifiedPackage } from "./install-from-registry.ts";
+import type { InstallFromRegistryDeps } from "./install-from-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import {
   fetchRegistryManifest,
   sha256Hex,
   verifyRegistryManifestSignature,
 } from "./registry-manifest.ts";
+import { stageVerifiedPackage } from "./registry-package-stage.ts";
 import type { RegistryRow } from "./registry-store.ts";
 
 /** A dependency manifest phase 1 fetched and fully verified; its package is not fetched yet. */
@@ -83,6 +84,8 @@ export interface RegistryDependencyResolver {
   readonly rootSource: SourceKey;
   /** Phase-1 results, by `${id}@${version}`: exactly the manifests the solve used. */
   verified(id: string, version: string): VerifiedDependency | undefined;
+  /** The URL of a registry this resolution met (the root's, or one a dependency named); else null. */
+  registryUrl(source: SourceKey): string | null;
   /** Phase 2 (after approval): stage each node's package under `intoDir/<n>/`; throws on the first failure. */
   stage(
     nodes: readonly { id: string; version: string }[],
@@ -264,6 +267,7 @@ export function createRegistryDependencyResolver(
     fetcher,
     rootSource,
     verified: (id, version) => verifiedById.get(`${id}@${version}`),
+    registryUrl: (source) => registries.get(source)?.url ?? null,
     async stage(nodes, intoDir) {
       const staged: StagedDependency[] = [];
       for (const [n, node] of nodes.entries()) {

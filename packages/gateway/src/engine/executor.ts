@@ -295,7 +295,25 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
     const { promptText: _prompt, ...shown } = action.payload;
     return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
+  if (hasPlanText(action)) {
+    // `planText` is the rendered dependency plan, printed after the Details line by
+    // formatConsentPrompt; `plan` keeps the same facts as structured fields.
+    return redactPayloadForConsentDisplay(omitPlanText(action.payload ?? {})) as Record<
+      string,
+      unknown
+    >;
+  }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
+}
+
+/** An `extension.install` request carrying a rendered dependency plan (`extensions/install-plan-text.ts`). */
+function hasPlanText(action: PlannedAction): boolean {
+  return action.type === "extension.install" && typeof action.payload?.["planText"] === "string";
+}
+
+function omitPlanText(payload: Record<string, unknown>): Record<string, unknown> {
+  const { planText: _plan, ...rest } = payload;
+  return rest;
 }
 
 export function formatConsentPrompt(action: PlannedAction): string {
@@ -308,6 +326,11 @@ export function formatConsentPrompt(action: PlannedAction): string {
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
     lines.push("", `Details: ${JSON.stringify(consentDisplayPayload(action))}`);
   }
+  if (hasPlanText(action)) {
+    // The plan is a purpose-built, escaped rendering: every package, its registry and publisher,
+    // and the permissions they add together.
+    lines.push("", String(action.payload?.["planText"]));
+  }
   return lines.join("\n");
 }
 
@@ -316,15 +339,21 @@ function omitPromptText(payload: Record<string, unknown>): Record<string, unknow
   return rest;
 }
 
+/** The payload the audit row records: the identifying fields, without a rendered prompt body. */
+function auditedAction(action: PlannedAction): PlannedAction {
+  if (action.payload === undefined) return action;
+  // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
+  if (action.type === "pack.install") return { ...action, payload: omitPromptText(action.payload) };
+  // The rendered plan repeats `plan`, which the row keeps.
+  if (hasPlanText(action)) return { ...action, payload: omitPlanText(action.payload) };
+  return action;
+}
+
 function auditPayload(
   action: PlannedAction,
   extras: { hitlRejectReason?: string } | undefined,
 ): string {
-  // The prompt text can run to many lines of pack content; the row keeps the identifying fields.
-  const audited =
-    action.type === "pack.install" && action.payload !== undefined
-      ? { ...action, payload: omitPromptText(action.payload) }
-      : action;
+  const audited = auditedAction(action);
   return redactAuditPayload(
     extras === undefined ? { action: audited } : { action: audited, ...extras },
   );
