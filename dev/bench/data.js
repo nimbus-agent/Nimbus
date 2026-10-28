@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793162282300,
+  "lastUpdate": 1793188538030,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "58e93fd3e9e245c0ad17a3c8a3c51df815afda7a",
-          "message": "feat(agents): nimbus pre-mortem, with a service-scoped incident watcher condition (#1146)\n\n## Why\n\n`nimbus pre-mortem <epic-ref>` — the thirteenth built-in agent, and the\nlast of Spine S1's implicit-knowledge triad. PR A (#1134, v1.27.0)\nshipped schema **V53** and a background pass that mines closed epics\ninto `premortem_theme`, but no agent and no command: the substrate\nconsumed the epic backlog and wrote rows nothing could read. This makes\nit reachable.\n\nGiven a Jira epic, the brief answers *what has gone wrong before on work\nlike this* — from the machine's own history, with every figure traceable\nto indexed rows.\n\n## What it does\n\nFour read lanes, then one write:\n\n1. **Resolve** the epic to its affected services (children → `resolves`\n→ PRs → repo), or take `--service` (repeatable) when a brand-new epic\nhas no children yet.\n2. **Cohort** — closed epics ranked by **IDF-weighted service overlap**,\nso an overlap on a rare service outranks one on `shared-utils`. Overlap\nis a gate applied *before* scoring: without it, \"shares only a\nubiquitous service\" and \"shares nothing\" both score 0 and an unrelated\nepic enters by recency.\n3. **Five structural risks** — cycle time, size overrun, review drag,\nincident coupling, abandonment.\n4. **Themes** — recurring blockers from V53, no model call.\n\nThen it proposes **paused** `incident_opened` watchers, one per affected\nservice, which the user arms with `nimbus watch resume <id>`.\n\n`nimbus pre-mortem <epic-ref> [--service <name>]… [--json] [--refresh]\n[--repropose]`\n\n## The engine change this required\n\nProposed watchers set `filter.service` to a PR repo path\n(`acme/billing-api`), but the watcher engine matched `item.service` —\nthe *connector id*, always `pagerduty` for incidents. Every watcher\nwould have been created, armed by the user, and **never fired**: the\nsame failure #1138 shipped to fix, and the same reasoning this feature\nalready used to justify *not* proposing deploy watchers.\n\nRather than ship a caveat, the engine gained a new filter dimension.\n**`filter.affectedService`** matches\n`graph_entity.metadata.affectedService` — the DORA config service id\nthat `graph-populator.ts` already writes for incident and deployment\nentities — via a `json_valid`-guarded `EXISTS` subquery. pre-mortem\ntranslates repo → config id through the same `resolveServiceId` path the\nincident-coupling query already used; that asymmetry, one path\ntranslating and the other not, was the bug.\n\nVerified end to end through the production write path: matching service\n**fires**, unresolvable **doesn't**, a different service **doesn't**,\nthe pre-fix repo-path shape **doesn't** (original bug reproduced), and\n`filter.service: \"pagerduty\"` still **does** (existing behaviour\npreserved).\n\n**Behaviour change:** a repo with no `[ci.service.<id>]` binding now\ngets **no** watcher where it previously got an inert one, and the brief\nnames that reason.\n\n## Honesty, which is most of the work here\n\nTen defects where the code stated a cause that was not the real cause,\nor a measurement over a population it had not measured. Each is now\neither correct or a named gap:\n\n- incident coupling printed a **fabricated `0%`** as measured fact,\nbecause config-service-ids and repo names never intersect — now\ntranslated, denominated on the members actually measured, with the\nskipped count stated\n- \"No pull requests were found\" when PRs existed and only a timestamp\nwas missing — and again for GitLab, whose MRs carry `metadata.project`\nand no `repo`\n- an epic-not-found error blaming absence when the cause was a renamed\nor localized `issue_type`\n- a remediation naming `nimbus premortem --refresh`, a command that does\nnot exist\n- \"truncated body\" as one of at least three causes of `body_complete =\n0`\n- a missing `created_at_ms` reported as \"this epic is brand new\"\n\nStanding limits, stated in every brief rather than discovered later:\n**Jira-only** (no `linear:project` items are indexed) and\n**team-managed-Jira-only** for `parent_key`; **review drag cannot be\nmeasured for any repo** — no connector indexes a pull request's opened\ntimestamp, so the join is live but dormant; **no deploy-failure watcher\nis proposed**, because `deployment/annotate.ts` creates no `deployment`\ngraph entity for the new filter to match; and a **confidence ceiling\nbelow 1.0**, because no connector indexes ticket comments.\n\n## Surface and security\n\n`agents.premortem` is on the Tauri allowlist (**I7**, 104 → 105) but\ndeliberately **excluded from HTTP and MCP**, matching\n`agents.preflight`: this is the first agent that writes rows, and\n`--repropose` deletes tombstones recording a user's deliberate \"no\". The\nexclusion is structural on both surfaces — the route 404s *and* `GET\n/v1/agents` never advertises it — pinned by a live request/response\ntest. `premortem.refresh` stays off the renderer. Unreachable over LAN\nby construction.\n\nNot an **I2**/HITL matter: I2 governs action types that leave the\nmachine via `engine/executor.ts`, and a local SQLite insert never enters\nthat gate — as `glossary`, `decisions`, `ownership` and the egress\nledger already do. The safety property is `enabled = 0`;\n`listEnabledWatchers` filters on `enabled === 1`, so a paused row cannot\nfire whoever inserted it. The Agent Shape Invariant is amended with\nthose exact bounds.\n\nTwo `json_extract` sites in already-merged PR A code\n(`epic-services.ts`) were guarded en route: unguarded, a single non-JSON\n`metadata` row anywhere in `item` raises `malformed JSON` and kills the\nwhole brief.\n\n## Testing\n\nSix tasks, each reviewed; five fix rounds across the branch; a\nwhole-branch review that found the two most serious defects after six\nclean per-task reviews. Every guard is red-proved — mutated, watched\nfail, restored — because six tests on this branch initially passed\nidentically against broken code, including one where the entire brief\nrenderer could be replaced with `return \"MUTANT\"` with 404 tests still\ngreen.\n\n511 tests in the core suites, 1655 across `ipc`, 172 e2e. Full\n`preflight` green except `audit:coverage-floor`, which fails only on\n`platform/linux.ts`, `ipc/server/socket-listeners.ts` and two\n`mcp-connectors/*/search-filter.ts` — none in this diff; `exclusions.ts`\ndocuments `platform/linux.ts` as the *active* arm on a Linux runner,\nwhich is why that gate is CI-Linux-authoritative. Touched files measure\n97.69/95.83 (`premortem.ts`), 95.71/95.59 (`watcher-engine.ts`), with\nseveral at 100/100 against the 85/80 floor.\n\n## Follow-up, not fixed here\n\n`automation/graph-predicate.ts` resolves entity ids from\n`item.external_id` while every populator writes `item.id`, so\ngraph-predicate watchers likely match nothing in production.\nPre-existing, unchanged by this diff, and the third instance of\n\"configured, armed, and inert\" in this subsystem. Worth its own PR.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **New Features**\n  * Added the `nimbus pre-mortem` command for Jira epic risk analysis.\n* Reports comparable epic history, structural risks, recurring blocker\nthemes, and data-quality gaps.\n* Supports JSON output, service overrides, refresh, and watcher\nreproposals.\n* Proposes paused incident watchers for mapped services; watchers are\nnever enabled automatically.\n* Available through the CLI and desktop app; not available through HTTP\nor MCP.\n\n* **Documentation**\n* Added comprehensive usage, architecture, changelog, roadmap, and\nworkflow documentation.\n\n* **Bug Fixes**\n* Improved handling of invalid metadata and unsupported or unmapped\nservice filters.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T19:03:53+03:00",
-          "tree_id": "33f93ffdc140c7de2e0ceecb349e42971a5647f8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/58e93fd3e9e245c0ad17a3c8a3c51df815afda7a"
-        },
-        "date": 1786464767616,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 237.41069070000265,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 228.77772009999936,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 287.0846654000008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b3affbb509f097f07224552618ccc054e08d17d8",
+          "message": "feat(registry-format): manifest format for cross-registry dependencies, connector requirements and starter packs (#1806)\n\nPhase 9.5 project 4 (extension dependencies and starter packs), PR 1 of\n5: **the manifest format only.** No migration, no new invariant.\n\n## What changes\n\n`@nimbus-dev/registry-format` accepts three new manifest shapes:\n\n- **`dependsOn` object form**: a value may be `{ \"range\": \"1.x\",\n\"registry\": \"<https URL or nimbus-official>\", \"rootKeyFingerprint\": \"<32\nhex>\" }`, naming another registry. The string form still works and\nparses to `{ range }`. `rootKeyFingerprint` requires `registry`, and\nunknown keys are refused.\n- **`requires.connectors`**: the connector ids a package needs\nconfigured. Each must match `[a-z][a-z0-9_-]{0,63}`; the list is sorted\nand de-duplicated. An unknown but well-formed id parses, because the\nroster changes as connectors are unbundled.\n- **`kind: \"starter-pack\"`** (absent means `\"extension\"`): a package of\ndependencies with no code. It must declare `dependsOn` or `requires`. It\nmust not declare `entry`/`entrypoint`, any permission grant, `sync` or\n`credentials`, and this is checked on the raw object so normalisation\ncannot hide a grant. Publishing refuses a starter pack whose tarball\nholds any `dist/` file.\n\nIts entry is its own manifest file, so its index `entryHash` is the\nmanifest's SHA-256. The spec had said `entryHash` would be `\"\"`; that\nwould make every existing client reject the whole index, because\n`index-format` requires a 64-hex `entryHash`.\n\nThe kind is spelled `\"starter-pack\"`, not `\"pack\"`, because \"pack\"\nalready means role packs in the same index.\n\n## What this gateway refuses for now\n\n`extensions/manifest-support.ts` `assertManifestSupported` refuses a\ncross-registry dependency or a starter pack with\n`ERR_EXTENSION_MANIFEST_UNSUPPORTED`. It runs before anything is\nresolved, copied or approved, at every door:\n\n- `installExtensionFromLocalDirectory`, which local-path, archive,\nregistry and migration installs all go through;\n- `install-from-registry.ts`, right after the manifest signature\nverifies;\n- update detection: the update is not offered, and the refusal goes to a\nnew `refused` list. It does not go to `errors`, because an `errors`\nentry marks the registry as temporarily failing, which keeps its stale\noffers cached;\n- update apply (`reverifyUpdateManifest`). Without this check, an update\ndetected earlier would have installed a starter pack through the swap;\nthe new test proves that.\n\nEvery reader of a parsed `dependsOn` goes through `dependencyRanges`,\nwhich throws the same code on a cross-registry entry. So a reader that\nskipped the guard still cannot treat one as a same-registry range.\n\nThe refusals are removed by PR 2 (cross-registry resolution, V78, the\nI44 amendment) and PR 4 (starter packs in the gateway). `requires` is\nparsed but not acted on until PR 3.\n\n## Compatibility\n\n- **Old-form manifests parse to exactly the ranges they had before.**\nSignature verification (I16) runs over the raw manifest, so existing\nsignatures are unaffected.\n- **Older gateways refuse the new shapes rather than misreading them.**\nAn object-form `dependsOn` fails their string check. A starter pack\npoints them at a `dist/index.js` that doesn't exist, so they refuse it.\nThe index format is unchanged.\n- **`kind` and `requires` are now parsed keys.** A third-party manifest\nthat already used either key with a different shape will now be refused.\nNo first-party manifest or scaffold uses them.\n\nThe registry action's `dist/` is rebuilt (`audit:action-dist`).\n\n## Verification\n\n- `bun run preflight:fast`: passed.\n- `bun test packages/registry-format packages/gateway/src/extensions\npackages/gateway/test/e2e/scenarios/dependency-lifecycle.e2e.test.ts`:\n1502 pass, 0 fail.\n- Full CI paths with `--parallel` (Windows, local Bun 1.3.14): failed in\n18 tests plus 10 TUI files that did not load, none in files this PR\ntouches.\n- Five installer tests need `pwsh`, which isn't installed on this\nmachine.\n- The TUI load errors and three timeouts under parallel load all passed\nwhen re-run serially.\n- Red-proofs, each by disabling the guard:\n- With the local-door guard off, the starter-pack test fails because the\ninstall succeeds.\n- With the apply-door guard off, the apply test fails because the\nstarter pack is swapped in.\n- With the local-door guard off, the cross-registry local test still\npasses, because `dependencyRanges` on the solver root refuses it with\nthe same code before approval.\n- A whole-branch review found one Important issue, now fixed: a\ndetection refusal was being recorded as a registry error. The six Minor\nfindings are deferred.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Registry manifests can now describe cross-registry dependencies,\nrequired connectors, and code-free starter packs.\n* Starter packs can be published without an entry file, provided they\nmeet package-content rules.\n\n* **Bug Fixes**\n* Unsupported starter packs and cross-registry dependencies are refused\nbefore installation approval or update application.\n* Unsupported updates are reported separately from registry errors,\nwhile other eligible updates can still be offered.\n\n* **Documentation**\n* Updated manifest, installation, and roadmap documentation to explain\nsupported formats and current limitations, including that connector\nrequirements are parsed but not acted on.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-28T11:45:07Z",
+          "tree_id": "cf211f718abe6dca9afbbc94d1a1f0a7ce2b844d",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b3affbb509f097f07224552618ccc054e08d17d8"
+        },
+        "date": 1793188533870,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 266.68376839999837,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 266.5559805500012,
             "unit": "ms"
           }
         ]
