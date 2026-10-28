@@ -658,6 +658,10 @@ describe("installFromRegistry installs a dependency plan", () => {
   /** Remote registries served from folders by the fake fetch: `https://<name>.test/`. */
   const served = new Map<string, string>();
   let urls: string[];
+  /** This test's own plan staging root: never the shared `os.tmpdir()` other workers write to. */
+  let planRoot: string;
+  /** The plan staging root's entries when a dependency package was fetched (staging is under way). */
+  let stagingWhileFetching: string[][];
 
   beforeEach(() => {
     // The plan installer records each edge's registry and the dependency marker (V78).
@@ -666,6 +670,9 @@ describe("installFromRegistry installs a dependency plan", () => {
     runIndexedSchemaMigrations(db, 78);
     served.clear();
     urls = [];
+    planRoot = join(tmp, "plan-staging");
+    mkdirSync(planRoot, { recursive: true });
+    stagingWhileFetching = [];
   });
 
   async function addRemote(name: string, exts: Record<string, TestVersion[]>): Promise<string> {
@@ -687,8 +694,12 @@ describe("installFromRegistry installs a dependency plan", () => {
 
   function planDeps(approve = true): InstallFromRegistryDeps {
     const d = deps(approve);
+    d.planStagingRoot = planRoot;
     d.fetch.fetchFn = (url: string) => {
       urls.push(url);
+      if (url.endsWith(`/${DEP}/1.0.0/package.tgz`)) {
+        stagingWhileFetching.push(readdirSync(planRoot));
+      }
       const u = new URL(url);
       const dir = served.get(u.hostname.replace(/\.test$/, ""));
       if (dir === undefined) return Promise.resolve(new Response("down", { status: 503 }));
@@ -715,8 +726,14 @@ describe("installFromRegistry installs a dependency plan", () => {
     return listExtensions(db).map((r) => r.id);
   }
 
-  function planStagingDirs(): string[] {
-    return readdirSync(tmpdir()).filter((n) => n.startsWith(PLAN_PREFIX));
+  /** Staging happened under `planRoot` (one plan directory), and nothing of it is left. */
+  function expectPlanStagingUsedAndRemoved(): void {
+    expect(stagingWhileFetching.length).toBeGreaterThan(0);
+    for (const entries of stagingWhileFetching) {
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.startsWith(PLAN_PREFIX)).toBe(true);
+    }
+    expect(readdirSync(planRoot)).toEqual([]);
   }
 
   async function codeOf(p: Promise<unknown>): Promise<unknown> {
@@ -861,7 +878,6 @@ describe("installFromRegistry installs a dependency plan", () => {
 
   test("declining installs nothing", async () => {
     await mainWithDep();
-    const before = new Set(planStagingDirs());
     await expect(
       installFromRegistry(planDeps(false), { id: ID, registry: "main" }),
     ).rejects.toThrow("ERR_EXTENSION_INSTALL_NOT_APPROVED");
@@ -869,7 +885,8 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(installedIds()).toEqual([]);
     expect(existsSync(join(extensionsDir, DEP))).toBe(false);
     expect(existsSync(join(extensionsDir, ID))).toBe(false);
-    expect(planStagingDirs().filter((n) => !before.has(n))).toEqual([]);
+    // Nothing is staged for a declined plan.
+    expect(readdirSync(planRoot)).toEqual([]);
     // The dependency's package is fetched only after approval.
     expect(urls.filter((u) => u.includes(`${DEP}/1.0.0/package.tgz`))).toEqual([]);
   });
@@ -880,7 +897,6 @@ describe("installFromRegistry installs a dependency plan", () => {
     const bytes = readFileSync(p);
     bytes[bytes.length - 1] = (bytes[bytes.length - 1] ?? 0) ^ 0xff;
     writeFileSync(p, bytes);
-    const before = new Set(planStagingDirs());
     expect(await codeOf(installFromRegistry(planDeps(), { id: ID, registry: "main" }))).toBe(
       "ERR_REGISTRY_HASH_MISMATCH",
     );
@@ -888,7 +904,7 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(installedIds()).toEqual([]);
     expect(existsSync(join(extensionsDir, DEP))).toBe(false);
     expect(existsSync(join(extensionsDir, ID))).toBe(false);
-    expect(planStagingDirs().filter((n) => !before.has(n))).toEqual([]);
+    expectPlanStagingUsedAndRemoved();
   });
 
   test("a root whose entry hash mismatches after its dependency installed rolls the dependency back", async () => {

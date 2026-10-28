@@ -70,6 +70,8 @@ export interface InstallFromRegistryDeps {
   vault: NimbusVault;
   fetch: Omit<RegistryFetchDeps, "db">;
   approve: ExtensionInstallApprover;
+  /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
+  planStagingRoot?: string;
 }
 
 export interface InstallFromRegistryRequest {
@@ -356,6 +358,7 @@ export async function installVerifiedRegistryPackage(
         pkg.reg.name,
       ),
       ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
+      ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
       // Checked by the plan installer before anything is recorded: a mismatch undoes every package.
       expectedRootEntryHash: pkg.entryHash,
     });

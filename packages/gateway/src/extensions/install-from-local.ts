@@ -77,7 +77,10 @@ import { decodeBase64, verifyManifestSignature } from "./verify-signature.ts";
 
 export type { PlannedPackage } from "./install-plan-text.ts";
 
-/** The plan installer stages a registry plan's dependencies under `tmpdir()/<prefix>XXXXXX`. */
+/**
+ * The plan installer stages a registry plan's dependencies under `<root>/<prefix>XXXXXX`, where
+ * `<root>` is `planStagingRoot` (default `tmpdir()`).
+ */
 const PLAN_STAGING_PREFIX = "nimbus-plan-";
 
 function sha256HexOfBytes(buf: Buffer): string {
@@ -642,7 +645,7 @@ async function installApprovedPlan(
   let stagingDir: string | undefined;
   try {
     const staged = await stageNewDependencies(options, plan, manifest.id, () => {
-      stagingDir = mkdtempSync(join(tmpdir(), PLAN_STAGING_PREFIX));
+      stagingDir = mkdtempSync(join(options.planStagingRoot ?? tmpdir(), PLAN_STAGING_PREFIX));
       return stagingDir;
     });
     const channel = options.registryPlan?.channel ?? "stable";
@@ -964,6 +967,8 @@ interface InstallFromLocalOptions {
    * mismatch rolls back every package of the plan, dependencies included.
    */
   expectedRootEntryHash?: string;
+  /** Where a registry plan's dependencies are staged (default `os.tmpdir()`); a test seam. */
+  planStagingRoot?: string;
 }
 
 /** What a registry install hands the plan installer (see `InstallFromLocalOptions.registryPlan`). */
