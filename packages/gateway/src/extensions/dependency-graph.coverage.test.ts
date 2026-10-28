@@ -22,7 +22,7 @@ import type {
 const ROOT: ExtensionManifestForSolver = {
   id: "com.example.root",
   version: "1.0.0",
-  dependsOn: { "com.shared.dep": "^1.0.0" },
+  dependsOn: { "com.shared.dep": { range: "^1.0.0" } },
 };
 
 const OPTS: ResolveClosureOptions = { installed: new Map(), activeConstraints: new Map() };
@@ -34,6 +34,7 @@ function conflict(): DependencyConflictError {
 /** listVersions fails with `listErr`; fetchManifest is never reached. */
 function failingList(listErr: unknown): RegistryFetcher {
   return {
+    targetSource: () => null,
     listVersions: async () => {
       throw listErr;
     },
@@ -46,6 +47,7 @@ function failingList(listErr: unknown): RegistryFetcher {
 /** listVersions succeeds with 1.2.0; fetchManifest fails with `fetchErr`. */
 function failingFetch(fetchErr: unknown): RegistryFetcher {
   return {
+    targetSource: () => null,
     listVersions: async () => ["1.2.0"],
     fetchManifest: async () => {
       throw fetchErr;
@@ -68,7 +70,7 @@ describe("resolveClosure — listVersions failure classification", () => {
       missingId: "com.deeper.dep",
       parent: "com.shared.dep",
     });
-    const err = await rejectionOf(resolveClosure(ROOT, failingList(upstream), OPTS));
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingList(upstream), OPTS));
     expect(isOfflineDependencyResolutionError(err)).toBe(true);
     expect(err).not.toBe(upstream);
     if (isOfflineDependencyResolutionError(err)) {
@@ -79,13 +81,15 @@ describe("resolveClosure — listVersions failure classification", () => {
 
   it("passes a DependencyConflictError through unchanged (not disguised as offline)", async () => {
     const original = conflict();
-    const err = await rejectionOf(resolveClosure(ROOT, failingList(original), OPTS));
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingList(original), OPTS));
     expect(err).toBe(original);
     expect(isOfflineDependencyResolutionError(err)).toBe(false);
   });
 
   it("passes a non-Error throw through unchanged", async () => {
-    const err = await rejectionOf(resolveClosure(ROOT, failingList("registry exploded"), OPTS));
+    const err = await rejectionOf(
+      resolveClosure(ROOT, null, failingList("registry exploded"), OPTS),
+    );
     expect(err).toBe("registry exploded");
   });
 });
@@ -93,7 +97,7 @@ describe("resolveClosure — listVersions failure classification", () => {
 describe("resolveClosure — fetchManifest failure classification", () => {
   it("wraps a plain Error from fetchManifest as offline, naming the dependency and parent", async () => {
     const err = await rejectionOf(
-      resolveClosure(ROOT, failingFetch(new Error("ECONNRESET")), OPTS),
+      resolveClosure(ROOT, null, failingFetch(new Error("ECONNRESET")), OPTS),
     );
     expect(isOfflineDependencyResolutionError(err)).toBe(true);
     if (isOfflineDependencyResolutionError(err)) {
@@ -104,13 +108,13 @@ describe("resolveClosure — fetchManifest failure classification", () => {
 
   it("passes a DependencyConflictError from fetchManifest through unchanged", async () => {
     const original = conflict();
-    const err = await rejectionOf(resolveClosure(ROOT, failingFetch(original), OPTS));
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingFetch(original), OPTS));
     expect(err).toBe(original);
   });
 
   it("passes a non-Error fetchManifest throw through unchanged", async () => {
     const thrown = { status: 500 };
-    const err = await rejectionOf(resolveClosure(ROOT, failingFetch(thrown), OPTS));
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingFetch(thrown), OPTS));
     expect(err).toBe(thrown);
   });
 });
@@ -121,13 +125,22 @@ describe("resolveClosure — manifest cache", () => {
     const registry: Record<string, Record<string, ExtensionManifestForSolver>> = {
       "com.shared.d": { "1.0.0": { id: "com.shared.d", version: "1.0.0" } },
       "com.shared.b": {
-        "1.0.0": { id: "com.shared.b", version: "1.0.0", dependsOn: { "com.shared.d": "^1.0.0" } },
+        "1.0.0": {
+          id: "com.shared.b",
+          version: "1.0.0",
+          dependsOn: { "com.shared.d": { range: "^1.0.0" } },
+        },
       },
       "com.shared.c": {
-        "1.0.0": { id: "com.shared.c", version: "1.0.0", dependsOn: { "com.shared.d": "^1.0.0" } },
+        "1.0.0": {
+          id: "com.shared.c",
+          version: "1.0.0",
+          dependsOn: { "com.shared.d": { range: "^1.0.0" } },
+        },
       },
     };
     const fetcher: RegistryFetcher = {
+      targetSource: () => null,
       listVersions: async (id) => Object.keys(registry[id] ?? {}),
       fetchManifest: async (id, version) => {
         calls.push(`${id}@${version}`);
@@ -140,8 +153,9 @@ describe("resolveClosure — manifest cache", () => {
       {
         id: "com.example.a",
         version: "1.0.0",
-        dependsOn: { "com.shared.b": "^1.0.0", "com.shared.c": "^1.0.0" },
+        dependsOn: { "com.shared.b": { range: "^1.0.0" }, "com.shared.c": { range: "^1.0.0" } },
       },
+      null,
       fetcher,
       OPTS,
     );

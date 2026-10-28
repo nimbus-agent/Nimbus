@@ -630,13 +630,7 @@ describe("installFromRegistry refuses manifests this gateway cannot honour yet",
     await refusedBeforeApproval();
   });
 
-  test("an extension with a cross-registry dependency is refused before the owner is asked", async () => {
-    await setup([
-      {
-        version: "1.0.0",
-        dependsOn: { "com.example.dep": { range: "^1.0.0", registry: "nimbus-official" } },
-      },
-    ]);
-    await refusedBeforeApproval();
-  });
+  // Task 5 replaces this: a dependency naming a registry the owner has not added is refused with
+  // ERR_DEPENDENCY_REGISTRY_NOT_ADDED before the owner is asked (the cross-registry refusal is gone).
+  test.todo("an extension depending on a registry that is not added is refused with ERR_DEPENDENCY_REGISTRY_NOT_ADDED", () => {});
 });

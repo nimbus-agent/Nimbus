@@ -7,13 +7,14 @@ import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import type { AvailableUpdate, InstalledExtensionManifestSlice } from "./auto-update-types.ts";
 import { DependencyConflictError, isDependencyConflictError } from "./dependency-errors.ts";
 import { resolveClosure } from "./dependency-graph.ts";
-import type {
-  DependencyConflict,
-  ExtensionManifestForSolver,
-  RegistryFetcher,
+import {
+  type DependencyConflict,
+  type ExtensionManifestForSolver,
+  type InstalledForSolver,
+  type RegistryFetcher,
+  sourceKey,
 } from "./dependency-types.ts";
 import { parseExtensionManifestJson } from "./manifest.ts";
-import { dependencyRanges } from "./manifest-support.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
@@ -214,17 +215,22 @@ export class ExtensionAutoUpdater {
     installed: readonly InstalledExtensionRow[],
   ): Promise<readonly DependencyConflict[] | undefined> {
     try {
-      const installedMap = new Map<string, string>();
+      const installedMap = new Map<string, InstalledForSolver>();
       const activeConstraints = new Map<string, Map<string, string>>();
       const dirById = new Map<string, string>();
       for (const r of installed) {
-        installedMap.set(r.id, r.version);
+        installedMap.set(r.id, {
+          version: r.version,
+          source:
+            r.source === undefined ? null : sourceKey(r.source.registry, r.source.rootFingerprint),
+        });
         dirById.set(r.id, r.install_path);
         if (r.manifest.dependsOn !== undefined && Object.keys(r.manifest.dependsOn).length > 0) {
           activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
         }
       }
-      installedMap.set(id, toVersion);
+      const self = installedMap.get(id);
+      installedMap.set(id, { version: toVersion, source: self?.source ?? null });
       if (newDependsOn !== undefined && Object.keys(newDependsOn).length > 0) {
         activeConstraints.set(id, new Map(Object.entries(newDependsOn)));
       } else {
@@ -234,17 +240,26 @@ export class ExtensionAutoUpdater {
       const proposedManifest: ExtensionManifestForSolver = {
         id,
         version: toVersion,
-        ...(newDependsOn === undefined ? {} : { dependsOn: newDependsOn }),
+        // The update's ranges only (the conflict check compares versions): this fetcher's
+        // `targetSource` is null, so no dependency's registry is consulted (PR 5 changes updates).
+        ...(newDependsOn === undefined
+          ? {}
+          : {
+              dependsOn: Object.fromEntries(
+                Object.entries(newDependsOn).map(([depId, range]) => [depId, { range }]),
+              ),
+            }),
       };
       const fetcher: RegistryFetcher = {
+        targetSource: () => null,
         listVersions: (depId: string): Promise<readonly string[]> => {
-          const v = installedMap.get(depId);
+          const v = installedMap.get(depId)?.version;
           return Promise.resolve(v === undefined ? [] : [v]);
         },
         fetchManifest: async (depId: string, version: string) => {
           if (depId === id && version === toVersion) return proposedManifest;
           const dir = dirById.get(depId);
-          if (dir === undefined || installedMap.get(depId) !== version) {
+          if (dir === undefined || installedMap.get(depId)?.version !== version) {
             throw new Error(`${depId}@${version} is not installed`);
           }
           const parsed = parseExtensionManifestJson(
@@ -253,15 +268,13 @@ export class ExtensionAutoUpdater {
           return {
             id: parsed.id,
             version: parsed.version,
-            ...(parsed.dependsOn === undefined
-              ? {}
-              : { dependsOn: dependencyRanges(parsed.dependsOn, parsed.id) }),
+            ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
           };
         },
       };
 
       assertRootConstraintsSatisfied(id, toVersion, activeConstraints);
-      await resolveClosure(proposedManifest, fetcher, {
+      await resolveClosure(proposedManifest, self?.source ?? null, fetcher, {
         installed: installedMap,
         activeConstraints,
       });

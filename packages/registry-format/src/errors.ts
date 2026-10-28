@@ -36,7 +36,10 @@ export type RegistryErrorCode =
   | "ERR_TRUST_FEED_ROOT_KEY_CHANGED"
   | "ERR_TRUST_FEED_ROLLBACK"
   | "ERR_TRUST_FEED_EQUIVOCATION"
-  | "ERR_EXTENSION_MANIFEST_UNSUPPORTED";
+  | "ERR_EXTENSION_MANIFEST_UNSUPPORTED"
+  | "ERR_DEPENDENCY_SOURCE_MISMATCH"
+  | "ERR_DEPENDENCY_REGISTRY_NOT_ADDED"
+  | "ERR_DEPENDENCY_REGISTRY_KEY_MISMATCH";
 
 /** A registry refusal. The code leads the message, so a CLI shows it; `detail` is the rest. */
 export class RegistryError extends Error {

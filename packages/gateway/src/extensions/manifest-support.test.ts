@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { RegistryError } from "@nimbus-dev/registry-format";
 
-import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
+import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
 
 function refusal(fn: () => unknown): RegistryError {
   try {
@@ -14,17 +14,12 @@ function refusal(fn: () => unknown): RegistryError {
   throw new Error("expected a RegistryError");
 }
 
-describe("dependencyRanges", () => {
-  test("string-only manifest installs unchanged", () => {
-    expect(dependencyRanges({ a: { range: "^1" } })).toEqual({ a: "^1" });
-    expect(dependencyRanges(undefined)).toEqual({});
-  });
-
-  test("dependencyRanges refuses a cross-registry entry too", () => {
-    const e = refusal(() =>
-      dependencyRanges({ a: { range: "^1" }, b: { range: "1.x", registry: "nimbus-official" } }),
-    );
-    expect(e.code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
+describe("rangesOf", () => {
+  test("rangesOf returns every range", () => {
+    expect(
+      rangesOf({ a: { range: "^1" }, b: { range: "1.x", registry: "nimbus-official" } }),
+    ).toEqual({ a: "^1", b: "1.x" });
+    expect(rangesOf(undefined)).toEqual({});
   });
 });
 
@@ -36,18 +31,14 @@ describe("assertManifestSupported", () => {
     expect(() => assertManifestSupported({ id: "x" })).not.toThrow();
   });
 
-  test("cross-registry dependency refused", () => {
-    const e = refusal(() =>
+  test("cross-registry dependency is supported", () => {
+    expect(() =>
       assertManifestSupported({
         id: "x",
         kind: "extension",
         dependsOn: { b: { range: "1.x", registry: "nimbus-official" } },
       }),
-    );
-    expect(e.code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(e.message).toMatch(
-      /x depends on b from another registry; this Nimbus version cannot install cross-registry dependencies yet/,
-    );
+    ).not.toThrow();
   });
 
   test("starter pack refused", () => {

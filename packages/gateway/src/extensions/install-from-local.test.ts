@@ -1754,15 +1754,59 @@ describe("installExtensionFromLocalDirectory — manifests this gateway cannot h
     expect(existsSync(fx.extensionsDir)).toBe(false);
   }
 
-  test("a cross-registry dependency is refused before the owner is asked", async () => {
-    await refusedBeforeApproval(
-      {
-        id: "test.ext.cross",
-        version: "1.0.0",
-        dependsOn: { "test.ext.dep": { range: "^1.0.0", registry: "nimbus-official" } },
-      },
-      true,
+  test("a local install with a cross-registry dependency is satisfied by any installed copy", async () => {
+    const fx = createExtensionInstallFixture("nimbus-install-cross-local-", "dep");
+    writeFileSync(
+      join(fx.src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test.ext.dep", version: "1.2.0", entry: "dist/index.js" }),
+      "utf8",
     );
+    writeFileSync(join(fx.src, "dist", "index.js"), "export {};\n", "utf8");
+    await installExtensionFromLocalDirectory({
+      db: fx.db,
+      extensionsDir: fx.extensionsDir,
+      sourcePath: fx.src,
+    });
+
+    const tmp = mkdtempSync(join(tmpdir(), "nimbus-install-cross-root-"));
+    try {
+      const srcRoot = join(tmp, "root");
+      mkdirSync(join(srcRoot, "dist"), { recursive: true });
+      writeFileSync(
+        join(srcRoot, "nimbus.extension.json"),
+        JSON.stringify({
+          id: "test.ext.cross",
+          version: "1.0.0",
+          entry: "dist/index.js",
+          dependsOn: { "test.ext.dep": { range: "^1.0.0", registry: "nimbus-official" } },
+        }),
+        "utf8",
+      );
+      writeFileSync(join(srcRoot, "dist", "index.js"), "export {};\n", "utf8");
+      let asked = 0;
+      const result = await installExtensionFromLocalDirectory({
+        db: fx.db,
+        extensionsDir: fx.extensionsDir,
+        sourcePath: srcRoot,
+        approve: async () => {
+          asked++;
+          return true;
+        },
+      });
+      expect(asked).toBe(1);
+      const root = result.installed.find((n) => n.id === "test.ext.cross");
+      expect(root?.deps).toEqual([
+        { id: "test.ext.dep", range: "^1.0.0", resolvedVersion: "1.2.0", registry: null },
+      ]);
+      expect(result.installed.find((n) => n.id === "test.ext.dep")?.newlyInstalled).toBe(false);
+      expect(
+        listExtensions(fx.db)
+          .map((r) => r.id)
+          .sort(),
+      ).toEqual(["test.ext.cross", "test.ext.dep"]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   test("a starter pack is refused before the owner is asked", async () => {

@@ -409,7 +409,7 @@ describe("collectRegistryUpdates", () => {
     expect(out.updates.map((u) => u.id)).toEqual(["com.b"]);
   });
 
-  test("an update adding a cross-registry dependency is not offered, and the error carries the reason", async () => {
+  test("an update adding a cross-registry dependency is offered, with the dependency's range in dependsOn", async () => {
     const dir = await buildRegistry("main", {
       "com.a": [
         { version: "1.0.0" },
@@ -421,10 +421,10 @@ describe("collectRegistryUpdates", () => {
     });
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
-    expect(out.updates).toEqual([]);
+    expect(out.updates.map((u) => u.toVersion)).toEqual(["1.2.0"]);
     expect(out.errors).toEqual([]);
-    expect(out.refused[0]?.error).toContain("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(out.dependsOn.has("com.a")).toBe(false);
+    expect(out.refused).toEqual([]);
+    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
 });
 

@@ -24,7 +24,7 @@ import {
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
-import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
+import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
@@ -150,7 +150,7 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
             },
           },
           ...(manifest.dependsOn !== undefined && {
-            dependsOn: dependencyRanges(manifest.dependsOn, manifest.id),
+            dependsOn: rangesOf(manifest.dependsOn),
           }),
         },
       });

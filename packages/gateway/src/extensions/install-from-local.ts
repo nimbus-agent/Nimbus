@@ -31,7 +31,13 @@ import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { resolveClosure } from "./dependency-graph.ts";
 import { recordInstall } from "./dependency-store.ts";
-import type { ResolvedNode } from "./dependency-types.ts";
+import {
+  type ExtensionManifestForSolver,
+  type InstalledForSolver,
+  type RegistryFetcher,
+  type ResolvedNode,
+  sourceKey,
+} from "./dependency-types.ts";
 import {
   type ExtensionManifest,
   extensionEntryRelPath,
@@ -39,7 +45,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
-import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
+import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -343,20 +349,26 @@ export type InstallExtensionFromLocalResult = SingleInstallResult & {
 };
 
 function buildSolverInputs(db: Database): {
-  installed: ReadonlyMap<string, string>;
+  installed: ReadonlyMap<string, InstalledForSolver>;
   activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>;
 } {
   const rows = listExtensions(db);
-  const installed = new Map<string, string>();
+  const installed = new Map<string, InstalledForSolver>();
   const activeConstraints = new Map<string, ReadonlyMap<string, string>>();
   for (const row of rows) {
-    installed.set(row.id, row.version);
+    installed.set(row.id, {
+      version: row.version,
+      source:
+        row.source_registry && row.source_root_fingerprint
+          ? sourceKey(row.source_registry, row.source_root_fingerprint)
+          : null,
+    });
     const manifestPath = resolveExtensionManifestPath(row.install_path);
     if (manifestPath === undefined) continue;
     try {
       const raw = readFileSync(manifestPath, "utf8");
       const mf = parseExtensionManifestJson(raw);
-      const ranges = dependencyRanges(mf.dependsOn, mf.id);
+      const ranges = rangesOf(mf.dependsOn);
       if (Object.keys(ranges).length > 0) {
         activeConstraints.set(row.id, new Map(Object.entries(ranges)));
       }
@@ -368,35 +380,26 @@ function buildSolverInputs(db: Database): {
   return { installed, activeConstraints };
 }
 
-type SolverFetcher = {
-  listVersions(id: string): Promise<readonly string[]>;
-  fetchManifest(
-    id: string,
-    version: string,
-  ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }>;
-};
-
 /**
  * The solver's view of what exists: ONLY what is already installed. Nothing is fetched, so a
  * dependency that is not installed is unsatisfiable and the install refuses (spec § 8.6 step 8;
- * transitive fetching is a later project).
+ * transitive fetching is a later project). `targetSource` is always null, so a dependency — an
+ * object one naming a registry included — is satisfied by any installed copy.
  */
 function buildLocalSolverFetcher(
   db: Database,
-  installedMap: ReadonlyMap<string, string>,
-): SolverFetcher {
+  installedMap: ReadonlyMap<string, InstalledForSolver>,
+): RegistryFetcher {
   return {
+    targetSource: () => null,
     listVersions(id: string): Promise<readonly string[]> {
       const pinned = installedMap.get(id);
-      return Promise.resolve(pinned === undefined ? [] : [pinned]);
+      return Promise.resolve(pinned === undefined ? [] : [pinned.version]);
     },
-    fetchManifest(
-      id: string,
-      version: string,
-    ): Promise<{ id: string; version: string; dependsOn?: Readonly<Record<string, string>> }> {
+    fetchManifest(id: string, version: string): Promise<ExtensionManifestForSolver> {
       return Promise.try(() => {
         const extRow =
-          installedMap.get(id) === version
+          installedMap.get(id)?.version === version
             ? listExtensions(db).find((r) => r.id === id)
             : undefined;
         const mfPath =
@@ -408,9 +411,7 @@ function buildLocalSolverFetcher(
         return {
           id: mf.id,
           version: mf.version,
-          ...(mf.dependsOn === undefined
-            ? {}
-            : { dependsOn: dependencyRanges(mf.dependsOn, mf.id) }),
+          ...(mf.dependsOn === undefined ? {} : { dependsOn: mf.dependsOn }),
         };
       });
     },
@@ -736,12 +737,16 @@ export async function installExtensionFromLocalDirectory(
 
   const solverFetcher = buildLocalSolverFetcher(options.db, installedMap);
 
-  const solverRoot = {
+  const solverRoot: ExtensionManifestForSolver = {
     id: manifest.id,
     version: manifest.version,
-    dependsOn: dependencyRanges(manifest.dependsOn, manifest.id),
+    ...(manifest.dependsOn === undefined ? {} : { dependsOn: manifest.dependsOn }),
   };
-  const plan = await resolveClosure(solverRoot, solverFetcher, {
+  const rootSource =
+    options.sourceRegistry !== undefined && options.rootFingerprint !== undefined
+      ? sourceKey(options.sourceRegistry, options.rootFingerprint)
+      : null;
+  const plan = await resolveClosure(solverRoot, rootSource, solverFetcher, {
     installed: installedMap,
     activeConstraints,
   });
