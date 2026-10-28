@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -32,6 +32,7 @@ import {
   createRegistryDependencyResolver,
   type RegistryDependencyResolver,
 } from "./registry-dependency-fetcher.ts";
+import { sha256Hex } from "./registry-manifest.ts";
 import { getRegistry, insertRegistry } from "./registry-store.ts";
 
 const NOW = Date.parse("2026-10-28T12:00:00Z");
@@ -286,6 +287,96 @@ describe("createRegistryDependencyResolver (phase 1: verified manifests)", () =>
     const e = await rejectionOf(solve(r, rootNeeding({ "com.dep": { range: "^1.0.0" } })));
     expect((e as RegistryError).code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
     expect(r.verified("com.dep", "1.0.0")).toBeUndefined();
+  });
+});
+
+describe("createRegistryDependencyResolver (sources it did not meet itself)", () => {
+  test("a local-folder node names no registry and lists no versions", async () => {
+    await addRegistry("main", { "com.dep": ONE });
+    const r = resolverFor("main");
+    expect(r.fetcher.targetSource(null, "com.dep", { range: "^1.0.0" })).toBeNull();
+    expect(await r.fetcher.listVersions("com.dep", null)).toEqual([]);
+    const e = await rejectionOf(r.fetcher.fetchManifest("com.dep", "1.0.0", null));
+    expect((e as RegistryError).code).toBe("ERR_DEPENDENCY_SOURCE_MISMATCH");
+    expect(ledger()).toBe(0);
+  });
+
+  test("an installed node's recorded registry is looked up by name and fingerprint", async () => {
+    await addRegistry("main", { "com.unrelated": ONE });
+    await addRegistry("other", { "com.dep": ONE });
+    const otherSource = sourceKey("other", publisherKeyFingerprint(rootKey));
+    const r = resolverFor("main");
+    expect(r.registryUrl(otherSource)).toBeNull();
+    expect(await r.fetcher.listVersions("com.dep", otherSource)).toEqual(["1.0.0"]);
+    expect(r.registryUrl(otherSource)).toBe("https://other.test/");
+  });
+
+  test("a recorded registry that was removed or re-pinned is refused", async () => {
+    await addRegistry("main", { "com.dep": ONE });
+    const r = resolverFor("main");
+    for (const source of [sourceKey("gone", "ab".repeat(32)), sourceKey("main", "cd".repeat(32))]) {
+      const e = await rejectionOf(r.fetcher.listVersions("com.dep", source));
+      expect((e as RegistryError).code).toBe("ERR_DEPENDENCY_SOURCE_MISMATCH");
+    }
+  });
+
+  test("a version the index does not list is not found", async () => {
+    await addRegistry("main", { "com.dep": ONE });
+    const r = resolverFor("main");
+    const e = await rejectionOf(r.fetcher.fetchManifest("com.dep", "9.9.9", r.rootSource));
+    expect((e as RegistryError).code).toBe("ERR_REGISTRY_VERSION_NOT_FOUND");
+  });
+});
+
+describe("createRegistryDependencyResolver (installed manifests are re-checked)", () => {
+  function installedRow(id: string): { install_path: string } {
+    return db.query("SELECT install_path FROM extension WHERE id = ?").get(id) as {
+      install_path: string;
+    };
+  }
+
+  async function installDep(): Promise<{ r: RegistryDependencyResolver; manifestPath: string }> {
+    await addRegistry("main", { "com.dep": ONE });
+    await installFromRegistry(deps(), { id: "com.dep" });
+    const manifestPath = join(installedRow("com.dep").install_path, "nimbus.extension.json");
+    return { r: resolverFor("main"), manifestPath };
+  }
+
+  test("an installed manifest whose bytes changed is refused", async () => {
+    const { r, manifestPath } = await installDep();
+    writeFileSync(manifestPath, `${readFileSync(manifestPath, "utf8")}\n`);
+    const e = await rejectionOf(r.fetcher.fetchManifest("com.dep", "1.0.0", r.rootSource));
+    expect((e as RegistryError).code).toBe("ERR_REGISTRY_MANIFEST_INVALID");
+    expect((e as RegistryError).message).toContain("no longer matches");
+  });
+
+  test("an installed copy with no manifest is refused", async () => {
+    const { r, manifestPath } = await installDep();
+    rmSync(manifestPath);
+    const e = await rejectionOf(r.fetcher.fetchManifest("com.dep", "1.0.0", r.rootSource));
+    expect((e as RegistryError).message).toContain("has no manifest");
+  });
+
+  test("an installed manifest that matches its hash but does not parse is refused", async () => {
+    const { r, manifestPath } = await installDep();
+    const bytes = Buffer.from("{ not json");
+    writeFileSync(manifestPath, bytes);
+    db.run("UPDATE extension SET manifest_hash = ? WHERE id = ?", [sha256Hex(bytes), "com.dep"]);
+    const e = await rejectionOf(r.fetcher.fetchManifest("com.dep", "1.0.0", r.rootSource));
+    expect((e as RegistryError).message).toContain("has an unreadable manifest");
+  });
+
+  test("a locally installed copy satisfies a node that names no registry", async () => {
+    const { r } = await installDep();
+    db.run(
+      "UPDATE extension SET source_registry = NULL, source_root_fingerprint = NULL WHERE id = ?",
+      ["com.dep"],
+    );
+    expect(await r.fetcher.fetchManifest("com.dep", "1.0.0", null)).toMatchObject({
+      id: "com.dep",
+      version: "1.0.0",
+    });
+    expect(ledger("registry.manifest")).toBe(1);
   });
 });
 

@@ -298,10 +298,7 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
   if (hasPlanText(action)) {
     // `planText` is the rendered dependency plan, printed after the Details line by
     // formatConsentPrompt; `plan` keeps the same facts as structured fields.
-    return redactPayloadForConsentDisplay(omitPlanText(action.payload ?? {})) as Record<
-      string,
-      unknown
-    >;
+    return redactPayloadForConsentDisplay(omitPlanText(action.payload)) as Record<string, unknown>;
   }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }
