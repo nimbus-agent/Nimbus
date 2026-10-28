@@ -245,13 +245,8 @@ async function visit(
       // The three awaits below are SERIAL by design: this is a depth-first solve over shared,
       // mutable `ctx` state, so no dependency can be resolved concurrently with another.
       const chosen = await resolveDepCandidate(depId, current.id, target, constraintList, ctx); // NOSONAR S9382: the candidate is chosen against the ranges and pins earlier siblings' subtrees left in ctx
-      const depManifest = await loadDepManifest(
-        depId,
-        current.id,
-        chosen.version,
-        chosen.source,
-        ctx,
-      ); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
+      const { version, source } = chosen;
+      const depManifest = await loadDepManifest(depId, current.id, version, source, ctx); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
 
       deps.push({
         id: depId,

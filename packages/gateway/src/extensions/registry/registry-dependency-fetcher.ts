@@ -279,15 +279,9 @@ export function createRegistryDependencyResolver(
           );
         }
         // Sequential by design: one package at a time, and the first refusal stops the rest.
-        const { sourceRoot } = await stageVerifiedPackage(
-          fetchDeps,
-          v.reg,
-          v.id,
-          v.version,
-          v.vEntry,
-          v.manifest,
-          join(intoDir, String(n)),
-        ); // NOSONAR S9382: the first refusal must stop every later fetch
+        const into = join(intoDir, String(n));
+        const args = [fetchDeps, v.reg, v.id, v.version, v.vEntry, v.manifest, into] as const;
+        const { sourceRoot } = await stageVerifiedPackage(...args); // NOSONAR S9382: the first refusal must stop every later fetch
         staged.push({ ...v, sourceRoot });
       }
       return staged;
