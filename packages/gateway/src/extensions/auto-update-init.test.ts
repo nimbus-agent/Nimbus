@@ -470,6 +470,43 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     expect(installedVersion()).toBe("1.0.0");
   });
 
+  it("apply refuses an update whose re-fetched manifest is a starter pack, and nothing changes", async () => {
+    const { runtime, regDir, extensionsDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    // The registry re-publishes 1.2.0 as a starter pack. The cached update is pointed at the new
+    // signed artifacts, so only the manifest's kind can stop it at apply.
+    await buildTestRegistry(regDir, {
+      id: ID,
+      versions: [{ version: "1.0.0" }, { version: "1.2.0", starterPack: true }],
+      manifestExtra: { requires: { connectors: ["github"] } },
+    });
+    const index = JSON.parse(readFileSync(join(regDir, "index.json"), "utf8")) as {
+      extensions: Record<
+        string,
+        {
+          versions: Record<
+            string,
+            { manifestSha256: string; packageSha256: string; entryHash: string }
+          >;
+        }
+      >;
+    };
+    const v = index.extensions[ID]?.versions["1.2.0"];
+    if (v === undefined) throw new Error("no 1.2.0 in the re-published index");
+    await expect(
+      runtime.deps.performUpgrade({
+        ...cached,
+        manifestHash: v.manifestSha256,
+        packageSha256: v.packageSha256,
+        entryHash: v.entryHash,
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_MANIFEST_UNSUPPORTED: com\.example\.tool is a starter pack/);
+    expect(installedVersion()).toBe("1.0.0");
+    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.0.0");
+  });
+
   it("detect → remove the registry → next tick: the update is no longer offered", async () => {
     const { runtime } = await installedFromRegistry();
     await runtime.deps.forcePoll();

@@ -326,9 +326,7 @@ describe("requires and kind", () => {
   });
 
   test("unknown kind refused", () => {
-    expect(() => parseWith({ kind: "pack" })).toThrow(
-      /kind must be "extension" or "starter-pack"/,
-    );
+    expect(() => parseWith({ kind: "pack" })).toThrow(/kind must be "extension" or "starter-pack"/);
   });
 
   test("requires.connectors parsed sorted and deduped", () => {

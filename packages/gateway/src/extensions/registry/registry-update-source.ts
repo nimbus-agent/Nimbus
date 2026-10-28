@@ -18,6 +18,7 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
+import { assertManifestSupported, dependencyRanges } from "../manifest-support.ts";
 import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
@@ -149,6 +150,9 @@ async function detectOne(
     );
   }
   const m = fetched.manifest;
+  // Detection: an update to a shape this gateway cannot honour yet is not offered. The throw is
+  // recorded in `errors` with the id and the reason by the caller.
+  assertManifestSupported(m);
   out.updates.push({
     id: row.id,
     displayName: m.name ?? row.manifest.name ?? row.id,
@@ -181,7 +185,7 @@ async function detectOne(
         }),
     detectedAt: deps.now(),
   });
-  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, m.dependsOn);
+  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, dependencyRanges(m.dependsOn, m.id));
 }
 
 export async function collectRegistryUpdates(

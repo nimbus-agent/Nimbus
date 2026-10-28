@@ -81,8 +81,12 @@ export type ExtensionManifest = {
   dependsOn?: Readonly<Record<string, DependencySpec>>;
   sync?: ExtensionSyncManifest;
   credentials?: ExtensionCredentialDecls;
-  /** Always present after parse; a manifest that names no kind is an `"extension"`. */
-  kind: ExtensionKind;
+  /**
+   * The parser always sets it (`"extension"` when the manifest names none). Optional in the type
+   * because the gateway builds manifests in code (first-party connectors, user MCP servers,
+   * generated tools) that are all extensions: absent means `"extension"`, see {@link isStarterPack}.
+   */
+  kind?: ExtensionKind;
   /** Connectors that must be configured for this package to be useful — sorted, de-duplicated. */
   requires?: { readonly connectors: readonly string[] };
 };

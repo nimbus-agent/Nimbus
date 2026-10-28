@@ -5,7 +5,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type RegistryIndex, registryIndexSigningBytes } from "@nimbus-dev/registry-format";
+import {
+  type DependencySpec,
+  type RegistryIndex,
+  registryIndexSigningBytes,
+} from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
 import { encodeBase64 } from "../../../util/base64.ts";
@@ -17,7 +21,10 @@ export const PUBLISHER_SEED = Uint8Array.from({ length: 32 }, (_, i) => i + 100)
 export interface TestVersion {
   version: string;
   channel?: "stable" | "beta";
-  dependsOn?: Record<string, string>;
+  /** Authorable in both manifest forms: a bare range, or the object form. */
+  dependsOn?: Record<string, string | DependencySpec>;
+  /** Publish this version as a starter pack (see the `starterPack` option). */
+  starterPack?: boolean;
 }
 
 export interface TestRegistry {
@@ -62,6 +69,11 @@ export async function buildTestRegistry(
      * with different content is refused as equivocation (trust layer, V76).
      */
     sequence?: number;
+    /**
+     * Publish every version as a starter pack: `kind: "starter-pack"`, no entry, no permissions,
+     * no `dist/`, and the index `entryHash` is the hash of the manifest (its entry).
+     */
+    starterPack?: boolean;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -134,19 +146,19 @@ async function buildTestVersion(
 ): Promise<{ version: string; entryHash: string; entry: Record<string, unknown> }> {
   const base = join(dir, "extensions", opts.id, v.version);
   const pkg = join(dir, "build", v.version, "pkg");
-  mkdirSync(join(pkg, "dist"), { recursive: true });
+  const starterPack = v.starterPack === true || opts.starterPack === true;
+  mkdirSync(starterPack ? pkg : join(pkg, "dist"), { recursive: true });
   mkdirSync(base, { recursive: true });
   const entrySource =
     opts.entrySource ??
     `export const v = "${v.version}";
 `;
-  writeFileSync(join(pkg, "dist", "index.js"), entrySource);
+  if (!starterPack) writeFileSync(join(pkg, "dist", "index.js"), entrySource);
   const unsigned = {
     id: opts.id,
     name: `Test ${opts.id}`,
     version: v.version,
-    entry: "dist/index.js",
-    permissions: {},
+    ...(starterPack ? { kind: "starter-pack" } : { entry: "dist/index.js", permissions: {} }),
     publisher: { id: publisherId, key: publisherKey },
     ...(v.dependsOn === undefined ? {} : { dependsOn: v.dependsOn }),
     ...opts.manifestExtra,
@@ -164,9 +176,10 @@ async function buildTestVersion(
     "pkg",
   ]);
   const tgz = await Bun.file(join(base, "package.tgz")).bytes();
+  const entryHash = sha(starterPack ? manifestText : entrySource);
   return {
     version: v.version,
-    entryHash: sha(entrySource),
+    entryHash,
     entry: {
       channel: v.channel ?? "stable",
       name: `Test ${opts.id}`,
@@ -175,7 +188,7 @@ async function buildTestVersion(
       package: `extensions/${opts.id}/${v.version}/package.tgz`,
       packageSha256: sha(tgz),
       packageSizeBytes: tgz.byteLength,
-      entryHash: opts.entryHashOverride ?? sha(entrySource),
+      entryHash: opts.entryHashOverride ?? entryHash,
       publishedAt: "2026-10-18T10:00:00Z",
     },
   };

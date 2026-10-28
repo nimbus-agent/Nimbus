@@ -372,6 +372,38 @@ describe("collectRegistryUpdates", () => {
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
+
+  test("an update to a starter pack is not offered, and the error carries the reason", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [
+        { version: "1.0.0" },
+        { version: "1.2.0", starterPack: true, dependsOn: { "com.dep": "^1.0.0" } },
+      ],
+    });
+    addRegistry("main", dir, false);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates).toEqual([]);
+    expect(out.errors).toHaveLength(1);
+    expect(out.errors[0]?.error).toContain("com.a: ERR_EXTENSION_MANIFEST_UNSUPPORTED");
+    expect(out.errors[0]?.error).toContain("com.a is a starter pack");
+  });
+
+  test("an update adding a cross-registry dependency is not offered, and the error carries the reason", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [
+        { version: "1.0.0" },
+        {
+          version: "1.2.0",
+          dependsOn: { "com.dep": { range: "^1.0.0", registry: "nimbus-official" } },
+        },
+      ],
+    });
+    addRegistry("main", dir, false);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates).toEqual([]);
+    expect(out.errors[0]?.error).toContain("com.a: ERR_EXTENSION_MANIFEST_UNSUPPORTED");
+    expect(out.dependsOn.has("com.a")).toBe(false);
+  });
 });
 
 describe("collectRegistryUpdates never offers a blocked version (I48)", () => {

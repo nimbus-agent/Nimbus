@@ -39,6 +39,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
@@ -355,8 +356,9 @@ function buildSolverInputs(db: Database): {
     try {
       const raw = readFileSync(manifestPath, "utf8");
       const mf = parseExtensionManifestJson(raw);
-      if (mf.dependsOn !== undefined && Object.keys(mf.dependsOn).length > 0) {
-        activeConstraints.set(row.id, new Map(Object.entries(mf.dependsOn)));
+      const ranges = dependencyRanges(mf.dependsOn, mf.id);
+      if (Object.keys(ranges).length > 0) {
+        activeConstraints.set(row.id, new Map(Object.entries(ranges)));
       }
     } catch {
       // Unreadable / malformed manifest — skip. The signature-verify startup
@@ -406,7 +408,9 @@ function buildLocalSolverFetcher(
         return {
           id: mf.id,
           version: mf.version,
-          ...(mf.dependsOn === undefined ? {} : { dependsOn: mf.dependsOn }),
+          ...(mf.dependsOn === undefined
+            ? {}
+            : { dependsOn: dependencyRanges(mf.dependsOn, mf.id) }),
         };
       });
     },
@@ -724,12 +728,20 @@ export async function installExtensionFromLocalDirectory(
 
   const manifestBytes = readFileSync(srcManifestPath);
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
+  // The one door every install reaches (local path, archive, registry, migration): a shape this
+  // gateway cannot honour yet is refused before anything is resolved, copied or asked.
+  assertManifestSupported(manifest);
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 
   const solverFetcher = buildLocalSolverFetcher(options.db, installedMap);
 
-  const plan = await resolveClosure(manifest, solverFetcher, {
+  const solverRoot = {
+    id: manifest.id,
+    version: manifest.version,
+    dependsOn: dependencyRanges(manifest.dependsOn, manifest.id),
+  };
+  const plan = await resolveClosure(solverRoot, solverFetcher, {
     installed: installedMap,
     activeConstraints,
   });

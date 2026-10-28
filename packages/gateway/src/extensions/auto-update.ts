@@ -13,6 +13,7 @@ import type {
   RegistryFetcher,
 } from "./dependency-types.ts";
 import { parseExtensionManifestJson } from "./manifest.ts";
+import { dependencyRanges } from "./manifest-support.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
@@ -252,7 +253,9 @@ export class ExtensionAutoUpdater {
           return {
             id: parsed.id,
             version: parsed.version,
-            ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
+            ...(parsed.dependsOn === undefined
+              ? {}
+              : { dependsOn: dependencyRanges(parsed.dependsOn, parsed.id) }),
           };
         },
       };
