@@ -14,6 +14,7 @@ import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { connectorRequirementStatuses } from "./connector-requirements.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
+import { resolveRunCredentials, serializeRunCredentials } from "./extension-credentials.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
 
 const KEY = `${"A".repeat(43)}=`;
@@ -57,6 +58,12 @@ function synced(id: string): void {
   dbRun(db, "INSERT INTO sync_state (connector_id, last_sync_at) VALUES (?, ?)", [id, 1_000]);
 }
 
+const CODE_ID = "ext_com_test_legacyx";
+/** `token` is mapped by the binding (legacy key); `api_key` is not, so it gets the extension's own key. */
+const DECLARED = { token: { env: "LEGACYX_TOKEN" }, api_key: { env: "LEGACYX_API_KEY" } };
+// audit-ignore-next-line D11-vault-key (the extension's own key the real writer derives)
+const OWN_API_KEY = "ext.ext_com_test_legacyx.api_key";
+
 /** Installs a row for `EXT` whose on-disk manifest is readable (or not) and binds `LEGACYX`. */
 function installOwner(opts: { readable?: boolean } = {}): void {
   const dir = join(tmp, "ext");
@@ -68,7 +75,7 @@ function installOwner(opts: { readable?: boolean } = {}): void {
     publisher: { id: "test-pub", key: KEY },
     // Shape only: reading the installed manifest checks its hash, not its signature.
     signature: `${"A".repeat(86)}==`,
-    credentials: { token: { env: "LEGACYX_TOKEN" } },
+    credentials: DECLARED,
   });
   if (opts.readable !== false) writeFileSync(join(dir, "nimbus.extension.json"), bytes);
   insertExtensionRow(db, {
@@ -83,18 +90,19 @@ function installOwner(opts: { readable?: boolean } = {}): void {
   dbRun(db, "UPDATE extension SET source_root_fingerprint = ? WHERE id = ?", [FP, EXT]);
 }
 
-function grantOwner(): void {
+/** A run grant whose credentials come from the real writer, unless `credentialsJson` overrides them. */
+function grantOwner(credentialsJson?: string): void {
   upsertRunGrant(db, {
     extension_id: EXT,
-    service_id: "ext_com_test_legacyx",
+    service_id: CODE_ID,
     version: "1.0.0",
     tree_digest: "d",
     permissions_json: "{}",
     model_access: 0,
     approved_at: 1,
-    credentials_json: JSON.stringify({
-      token: { env: "LEGACYX_TOKEN", vaultKey: "ext.ext_com_test_legacyx.token" },
-    }),
+    credentials_json:
+      credentialsJson ??
+      serializeRunCredentials(resolveRunCredentials({ credentials: DECLARED }, CODE_ID, LEGACYX)),
   });
 }
 
@@ -164,10 +172,11 @@ describe("connectorRequirementStatuses", () => {
     ]);
   });
 
-  test("an owner with a grant is judged by the grant's credentials, not a stale legacy key", async () => {
+  test("an owner with a grant is judged by every credential the grant names, and the fix names only the blank ones", async () => {
     installOwner();
     grantOwner();
-    await vault.set("legacyx.token", "stale");
+    // The bound legacy key is set; the declared credential the binding does not map is blank.
+    await vault.set("legacyx.token", "set");
     synced("legacyx");
     const [s] = await connectorRequirementStatuses(
       { db, vault, continuityTable: TABLE },
@@ -175,14 +184,27 @@ describe("connectorRequirementStatuses", () => {
     );
     expect(s?.owner).toEqual({ kind: "extension", extensionId: EXT });
     expect(s?.state).toBe("not_connected");
-    expect(s?.fix).toEqual([`nimbus extension credential set ${EXT} token`]);
+    expect(s?.fix).toEqual([`nimbus extension credential set ${EXT} api_key`]);
     expect(s?.interactive).toBe(true);
+  });
+
+  test("a grant whose credentials do not parse is unknown and keeps its extension owner", async () => {
+    installOwner();
+    grantOwner("not json");
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.state).toBe("unknown");
+    expect(s?.owner).toEqual({ kind: "extension", extensionId: EXT });
+    expect(s?.fix).toEqual([]);
   });
 
   test("an owner with a grant and its credential set is met once synced", async () => {
     installOwner();
     grantOwner();
-    await vault.set("ext.ext_com_test_legacyx.token", "fresh");
+    await vault.set("legacyx.token", "set");
+    await vault.set(OWN_API_KEY, "set");
     const deps = { db, vault, continuityTable: TABLE };
     expect((await connectorRequirementStatuses(deps, one(["legacyx"])))[0]?.state).toBe(
       "configured_never_synced",

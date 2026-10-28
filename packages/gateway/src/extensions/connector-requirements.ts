@@ -19,7 +19,11 @@ import {
   type ContinuityEntry,
   findContinuityBinding,
 } from "./continuity/continuity-table.ts";
-import { credentialsConfigured, sortedNames } from "./extension-credentials.ts";
+import {
+  credentialsConfigured,
+  type ResolvedRunCredentials,
+  sortedNames,
+} from "./extension-credentials.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 
 export type ConnectorRequirementState =
@@ -87,10 +91,26 @@ function syncedOrWarn(db: Database, id: string, base: Omit<Computed, "state" | "
   return { ...base, state: "met", fix: [] };
 }
 
+/** The names among `creds` whose Vault value is blank, in sorted order. */
+async function blankCredentialNames(
+  vault: NimbusVault,
+  creds: ResolvedRunCredentials,
+): Promise<string[]> {
+  const blank: string[] = [];
+  // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
+  for (const name of sortedNames(creds)) {
+    const v = creds[name];
+    if (v === undefined) continue;
+    const value = await vault.get(v.vaultKey); // NOSONAR S9382: sequential Vault reads
+    if (value === null || value.trim() === "") blank.push(name);
+  }
+  return blank;
+}
+
 /**
- * The owner is judged by its own run grant's credentials, never by `isConnectorConfigured`: that
- * falls through to the legacy Vault keys and would answer `met` on a stale key the extension does
- * not read until it is approved.
+ * The owner is judged by its own run grant's credentials, never by `isConnectorConfigured`: with no
+ * manifest keys for the id that answers `true` vacuously, and with a bound id it reads only the
+ * legacy keys, missing a declared credential the binding does not map.
  */
 async function ownedStatus(
   deps: ConnectorRequirementDeps,
@@ -119,7 +139,12 @@ async function ownedStatus(
     throw new Error(`${owner.extensionId}'s run grant carries unreadable credentials`);
   }
   if (!(await credentialsConfigured(deps.vault, creds))) {
-    return { ...base, state: "not_connected", fix: setLines(sortedNames(creds)) };
+    // Name only what is missing, so following the fix never re-enters a stored secret.
+    return {
+      ...base,
+      state: "not_connected",
+      fix: setLines(await blankCredentialNames(deps.vault, creds)),
+    };
   }
   return syncedOrWarn(deps.db, id, base);
 }
@@ -173,16 +198,25 @@ export async function connectorRequirementStatuses(
   const out: ConnectorRequirementStatus[] = [];
   // Sequential on purpose: on Linux each Vault read spawns a `secret-tool` process.
   for (const [id, slot] of byId) {
+    const owner = owners?.get(id);
     let computed: Computed;
     try {
       if (owners === undefined) throw new Error("installed extensions could not be read");
-      const owner = owners.get(id);
       computed =
         owner === undefined
           ? await bundledStatus(deps, slot.connector) // NOSONAR S9382: sequential Vault reads
           : await ownedStatus(deps, id, owner); // NOSONAR S9382: sequential Vault reads
     } catch {
-      computed = { state: "unknown", owner: { kind: "bundled" }, fix: [], interactive: false };
+      // Keep the owner already resolved, so an extension-owned connector never reads as bundled.
+      computed = {
+        state: "unknown",
+        owner:
+          owner === undefined
+            ? { kind: "bundled" }
+            : { kind: "extension", extensionId: owner.extensionId },
+        fix: [],
+        interactive: false,
+      };
     }
     out.push({
       connector: slot.connector,
