@@ -19,6 +19,7 @@ import {
   assertSafeExtensionId,
   publisherKeyFingerprint,
   type RegistryChannel,
+  RegistryError,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
 
@@ -736,6 +737,14 @@ function plannedDetails(
   const verified = node.newlyInstalled
     ? options.registryPlan?.resolver.verified(node.id, node.version)
     : undefined;
+  if (node.newlyInstalled && verified === undefined) {
+    // The approval must never understate: a package about to be installed is shown from its
+    // verified manifest, or the install is refused here, before the owner is asked.
+    throw new RegistryError(
+      "ERR_REGISTRY_INSTALL_REFUSED",
+      `${node.id}@${node.version} would be installed but has no verified manifest to show in the approval`,
+    );
+  }
   if (verified === undefined) {
     const installed = installedManifestOf(options.db, node.id);
     return {

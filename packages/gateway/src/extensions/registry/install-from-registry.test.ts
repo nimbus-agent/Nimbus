@@ -1020,6 +1020,49 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(existsSync(join(extensionsDir, ID))).toBe(false);
   });
 
+  test("a newly installed dependency with no verified record is refused before the prompt", async () => {
+    await mainWithDep();
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    const resolver = createRegistryDependencyResolver(d, {
+      reg: pkg.reg,
+      channel: "stable",
+      ...(pkg.index === undefined ? {} : { index: pkg.index }),
+    });
+    // The solve still plans the dependency, but its verified record is gone: the prompt would
+    // otherwise fall back to no publisher and no permissions, understating what is installed.
+    const forgetful: RegistryDependencyResolver = { ...resolver, verified: () => undefined };
+    let err: unknown;
+    try {
+      await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: pkg.sourceRoot,
+        vault,
+        publisherKey: decodeBase64(pkg.publisherKey),
+        sourceRegistry: "main",
+        rootFingerprint: pkg.rootFingerprint,
+        approve: async (r) => {
+          asked.push(r);
+          return true;
+        },
+        registryPlan: { resolver: forgetful, channel: "stable" },
+        expectedRootEntryHash: pkg.entryHash,
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RegistryError);
+    expect((err as RegistryError).code).toBe("ERR_REGISTRY_INSTALL_REFUSED");
+    expect((err as RegistryError).message).toContain(`${DEP}@1.0.0`);
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toEqual([]);
+  });
+
   test("the consent display shows every plan field unredacted", async () => {
     await mainWithDep();
     await installFromRegistry(planDeps(), { id: ID, registry: "main" });
