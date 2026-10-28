@@ -44,10 +44,13 @@ export {
 export { type InspectedPackage, inspectPackage } from "./inspect.ts";
 export {
   DEFAULT_EXTENSION_ENTRY,
+  type DependencySpec,
   type ExtensionCredentialDecls,
   type ExtensionManifest,
   type ExtensionSyncManifest,
   extensionEntryRelPath,
+  isCrossRegistryDependency,
+  OFFICIAL_REGISTRY_NAME,
   PUBLISHER_ID_RE,
   PUBLISHER_KEY_RE,
   parseExtensionManifestForRegistry,

@@ -33,6 +33,23 @@ export type ExtensionSyncManifest = {
 
 export type ExtensionCredentialDecls = Readonly<Record<string, { readonly env: string }>>;
 
+/** The reserved registry name a cross-registry dependency may use for the baked official registry. */
+export const OFFICIAL_REGISTRY_NAME = "nimbus-official";
+
+/** One `dependsOn` entry. The string form `"^1.2.0"` parses to `{ range }`. */
+export type DependencySpec = {
+  readonly range: string;
+  /** Absent ⇒ same registry as the dependent. An https URL, or {@link OFFICIAL_REGISTRY_NAME}. */
+  readonly registry?: string;
+  /** 32 lowercase hex — the pinned root-key fingerprint the named registry must have. */
+  readonly rootKeyFingerprint?: string;
+};
+
+/** True when the dependency names a registry of its own rather than the dependent's. */
+export function isCrossRegistryDependency(spec: DependencySpec): boolean {
+  return spec.registry !== undefined;
+}
+
 export type ExtensionManifest = {
   id: string;
   version: string;
@@ -43,7 +60,7 @@ export type ExtensionManifest = {
   signature?: string;
   updateChannel: "stable" | "beta";
   changelog?: string;
-  dependsOn?: Readonly<Record<string, string>>;
+  dependsOn?: Readonly<Record<string, DependencySpec>>;
   sync?: ExtensionSyncManifest;
   credentials?: ExtensionCredentialDecls;
 };
@@ -119,26 +136,72 @@ function parseChangelog(value: unknown): string | undefined {
   return normalized;
 }
 
-function parseDependsOn(value: unknown): Readonly<Record<string, string>> | undefined {
+const ROOT_KEY_FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+
+function parseDependencyRange(depId: string, range: unknown, what: string): string {
+  if (typeof range !== "string" || range.trim() === "") {
+    throw new Error(`extension manifest ${what} must be a non-empty string`);
+  }
+  if (semver.validRange(range) === null) {
+    throw new Error(`extension manifest dependsOn.${depId} is not a valid semver range: ${range}`);
+  }
+  return range;
+}
+
+function isHttpsUrl(v: string): boolean {
+  try {
+    return new URL(v).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function parseDependencyObject(depId: string, o: Record<string, unknown>): DependencySpec {
+  const what = `dependsOn.${depId}`;
+  rejectUnknownKeys(o, ["range", "registry", "rootKeyFingerprint"], what);
+  const range = parseDependencyRange(depId, o["range"], `${what}.range`);
+  const registry = o["registry"];
+  if (
+    registry !== undefined &&
+    (typeof registry !== "string" || (registry !== OFFICIAL_REGISTRY_NAME && !isHttpsUrl(registry)))
+  ) {
+    throw new Error(
+      `extension manifest ${what}.registry must be an https URL or "${OFFICIAL_REGISTRY_NAME}"`,
+    );
+  }
+  const fp = o["rootKeyFingerprint"];
+  if (fp !== undefined) {
+    if (registry === undefined) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint requires registry`);
+    }
+    if (typeof fp !== "string" || !ROOT_KEY_FINGERPRINT_RE.test(fp.toLowerCase())) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint must be 32 hex characters`);
+    }
+  }
+  return {
+    range,
+    ...(registry === undefined ? {} : { registry }),
+    ...(typeof fp === "string" ? { rootKeyFingerprint: fp.toLowerCase() } : {}),
+  };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseDependsOn(value: unknown): Readonly<Record<string, DependencySpec>> | undefined {
   if (value === undefined) return undefined;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainObject(value)) {
     throw new Error("extension manifest dependsOn must be an object");
   }
-  const o = value as Record<string, unknown>;
-  const out: Record<string, string> = {};
-  for (const [depId, range] of Object.entries(o)) {
-    if (typeof depId !== "string" || depId.trim() === "") {
+  const out: Record<string, DependencySpec> = {};
+  for (const [depId, spec] of Object.entries(value)) {
+    if (depId.trim() === "") {
       throw new Error("extension manifest dependsOn keys must be non-empty strings");
     }
-    if (typeof range !== "string" || range.trim() === "") {
-      throw new Error(`extension manifest dependsOn.${depId} must be a non-empty string`);
-    }
-    if (semver.validRange(range) === null) {
-      throw new Error(
-        `extension manifest dependsOn.${depId} is not a valid semver range: ${range}`,
-      );
-    }
-    out[depId] = range;
+    out[depId] = isPlainObject(spec)
+      ? parseDependencyObject(depId, spec)
+      : { range: parseDependencyRange(depId, spec, `dependsOn.${depId}`) };
   }
   return Object.keys(out).length === 0 ? undefined : out;
 }

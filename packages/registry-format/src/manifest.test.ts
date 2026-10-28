@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
-import { parseExtensionManifestForRegistry, parseExtensionManifestJson } from "./manifest.ts";
+import {
+  isCrossRegistryDependency,
+  OFFICIAL_REGISTRY_NAME,
+  parseExtensionManifestForRegistry,
+  parseExtensionManifestJson,
+} from "./manifest.ts";
 
 describe("parseExtensionManifestJson", () => {
   test("parses minimal manifest", () => {
@@ -219,7 +224,7 @@ describe("parseExtensionManifestJson — dependsOn (T2 PR 4)", () => {
     const m = parseExtensionManifestJson(
       JSON.stringify({ id: "x", version: "1.0.0", dependsOn: { "com.shared.utils": "^1.0.0" } }),
     );
-    expect(m.dependsOn?.["com.shared.utils"]).toBe("^1.0.0");
+    expect(m.dependsOn?.["com.shared.utils"]).toEqual({ range: "^1.0.0" });
   });
 
   test("accepts manifest without dependsOn (legacy + zero-dep extensions)", () => {
@@ -237,6 +242,70 @@ describe("parseExtensionManifestJson — dependsOn (T2 PR 4)", () => {
         }),
       ),
     ).toThrow(/semver/);
+  });
+});
+
+describe("dependsOn object form", () => {
+  const FP = "6fb9beb2cf6bdc748c72c03b30b83a9a";
+  const parseDeps = (dependsOn: Record<string, unknown>) =>
+    parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0", dependsOn }));
+
+  test("string and object forms coexist", () => {
+    const m = parseDeps({ a: "^1.2.0", b: { range: "1.x", registry: "https://r.example/" } });
+    expect(m.dependsOn).toEqual({
+      a: { range: "^1.2.0" },
+      b: { range: "1.x", registry: "https://r.example/" },
+    });
+  });
+
+  test("nimbus-official accepted", () => {
+    const m = parseDeps({ b: { range: ">=2.0.0", registry: "nimbus-official" } });
+    expect(m.dependsOn).toEqual({ b: { range: ">=2.0.0", registry: "nimbus-official" } });
+  });
+
+  test("fingerprint lowercased and checked", () => {
+    const m = parseDeps({
+      b: { range: "1.x", registry: "nimbus-official", rootKeyFingerprint: FP.toUpperCase() },
+    });
+    expect(m.dependsOn?.["b"]?.rootKeyFingerprint).toBe(FP);
+    expect(() =>
+      parseDeps({ b: { range: "1.x", registry: "nimbus-official", rootKeyFingerprint: "xyz" } }),
+    ).toThrow(/rootKeyFingerprint must be 32 hex/);
+  });
+
+  test("registry must be https URL or nimbus-official", () => {
+    for (const registry of ["my-local-name", "http://r.example/"]) {
+      expect(() => parseDeps({ b: { range: "1.x", registry } })).toThrow(
+        /registry must be an https URL or "nimbus-official"/,
+      );
+    }
+  });
+
+  test("unknown key in object refused", () => {
+    expect(() => parseDeps({ b: { range: "1.x", foo: 1 } })).toThrow(/unknown key: foo/);
+  });
+
+  test("object without range refused", () => {
+    expect(() => parseDeps({ b: { registry: "nimbus-official" } })).toThrow(
+      /range must be a non-empty string/,
+    );
+  });
+
+  test("invalid range in object refused", () => {
+    expect(() => parseDeps({ b: { range: "not-a-range" } })).toThrow(/not a valid semver range/);
+  });
+
+  test("fingerprint without registry refused", () => {
+    expect(() => parseDeps({ b: { range: "1.x", rootKeyFingerprint: FP } })).toThrow(
+      /rootKeyFingerprint requires registry/,
+    );
+  });
+
+  test("isCrossRegistryDependency is true exactly when a registry is named", () => {
+    expect(isCrossRegistryDependency({ range: "1.x" })).toBe(false);
+    expect(isCrossRegistryDependency({ range: "1.x", registry: OFFICIAL_REGISTRY_NAME })).toBe(
+      true,
+    );
   });
 });
 
