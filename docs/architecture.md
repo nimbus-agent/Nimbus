@@ -921,7 +921,15 @@ Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Pla
 }
 ```
 
-Source of truth: `packages/registry-format/src/manifest.ts` (the pure `@nimbus-dev/registry-format` workspace; the gateway's `extensions/manifest.ts` adds which file a directory holds). Optional fields: `name`, `entry` (default `dist/index.js`), `publisher`, `signature`, `changelog`, `dependsOn`. The manifest file is `nimbus.extension.json` (legacy `nimbus-extension.json` is still read).
+Source of truth: `packages/registry-format/src/manifest.ts` (the pure `@nimbus-dev/registry-format` workspace; the gateway's `extensions/manifest.ts` adds which file a directory holds). Optional fields: `name`, `entry` (default `dist/index.js`), `publisher`, `signature`, `changelog`, `dependsOn`, `requires`, `kind`. The manifest file is `nimbus.extension.json` (legacy `nimbus-extension.json` is still read).
+
+Three shapes the format accepts (Phase 9.5 project 4, PR 1 — the format only):
+
+- **`dependsOn` object form.** A value is a semver range (same registry as the dependent) or `{ "range": "1.x", "registry": "<https URL or nimbus-official>", "rootKeyFingerprint": "<32 hex>" }` naming another registry; `rootKeyFingerprint` requires `registry`, and unknown keys are refused. The string form parses to `{ range }`.
+- **`requires.connectors`** — the connector ids this package needs configured, each matching `[a-z][a-z0-9_-]{0,63}`; parsed sorted and de-duplicated. An unknown but well-formed id parses (the roster changes as connectors unbundle).
+- **`kind: "starter-pack"`** (absent ⇒ `"extension"`) — a package of dependencies with no code: it must declare `dependsOn` or `requires`, and must not declare `entry`/`entrypoint`, any permission grant, `sync` or `credentials` (checked on the raw object). Its entry is its own manifest file, so its index `entryHash` is the manifest's SHA-256 and the tarball holds no `dist/` file (`ERR_REGISTRY_PACKAGE_FILE_SET`).
+
+**This gateway does not install the last two shapes yet.** `extensions/manifest-support.ts` `assertManifestSupported` refuses a cross-registry dependency or a starter pack with `ERR_EXTENSION_MANIFEST_UNSUPPORTED` before anything is resolved, copied or approved, at every door: `installExtensionFromLocalDirectory` (which local, archive, registry and migration installs all reach), `install-from-registry.ts` after the manifest signature verifies, update detection (`registry-update-source.ts`, which does not offer the update and records the reason) and update apply (`auto-update-init.ts` `reverifyUpdateManifest`). Every reader of a parsed `dependsOn` goes through `dependencyRanges`, which throws the same code on a cross-registry entry, so a reader that skipped the guard still cannot treat one as a same-registry range. `requires` is parsed but not yet acted on.
 
 ### User MCP Servers and Scaffold
 

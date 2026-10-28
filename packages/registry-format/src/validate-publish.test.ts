@@ -807,6 +807,30 @@ describe("validatePublish", () => {
     );
   });
 
+  const starterPackManifest = (): Promise<Uint8Array> =>
+    signedManifest({
+      omit: ["entry", "permissions"],
+      extra: { kind: "starter-pack", dependsOn: { "acme/other": "^1.0.0" } },
+    });
+
+  test("starter pack publishes", async () => {
+    const manifest = await starterPackManifest();
+    const pkg = await rawTgz(manifest, ["README.md", "nimbus.extension.json"]);
+    const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
+    expect(v.entryHash).toBe(sha256(manifest));
+    expect(v.permissions).toEqual({ network: [], filesystem: { read: [], write: [] } });
+  });
+
+  test("starter pack with dist file refused", async () => {
+    const manifest = await starterPackManifest();
+    const pkg = await rawTgz(manifest, ["dist/index.js", "nimbus.extension.json"]);
+    await expectRefused(
+      validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PACKAGE_FILE_SET",
+      "a starter pack holds no dist/ files",
+    );
+  });
+
   test("a package holding a file outside the package file set is refused", async () => {
     const manifest = await signedManifest();
     const pkg = await rawTgz(manifest, ["dist/index.js", "nimbus.extension.json", "src/server.ts"]);

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:d60b6d0d8aadcf6fa87b520523118dcbf18793d2bdf3c98f66ba0138b1b15d9f
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:4be46041eb588e74667bfba703ddd6f7bb2728a8981344df0a1ddfd0d13a97b4
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4811,6 +4811,18 @@ var import_tweetnacl3 = __toESM(require_nacl_fast(), 1);
 // ../../registry-format/src/manifest.ts
 var import_semver = __toESM(require_semver2(), 1);
 
+// ../../registry-format/src/package-set.ts
+var PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
+var DIST_DIR = "dist";
+var DOC_FILE_RE = /^(README|LICENSE)(\..+)?$/i;
+function isPackageFile(relPath) {
+  if (relPath === PACKAGE_MANIFEST_FILE)
+    return true;
+  if (relPath.startsWith(`${DIST_DIR}/`))
+    return relPath.length > DIST_DIR.length + 1;
+  return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
+}
+
 // ../../registry-format/src/permissions-validator.ts
 var HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
 function validateAndNormalizePermissions(input) {
@@ -4897,9 +4909,16 @@ function validatePathList(input, label) {
 
 // ../../registry-format/src/manifest.ts
 var DEFAULT_EXTENSION_ENTRY = "dist/index.js";
+function isStarterPack(m) {
+  return m.kind === "starter-pack";
+}
 function extensionEntryRelPath(manifest) {
+  if (isStarterPack(manifest))
+    return PACKAGE_MANIFEST_FILE;
   return manifest.entry !== undefined && manifest.entry !== "" ? manifest.entry : DEFAULT_EXTENSION_ENTRY;
 }
+var OFFICIAL_REGISTRY_NAME = "nimbus-official";
+var CONNECTOR_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 var PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 var PUBLISHER_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 var SIGNATURE_RE = /^[A-Za-z0-9+/]{86}==$/;
@@ -4958,25 +4977,61 @@ function parseChangelog(value) {
   }
   return normalized;
 }
+var ROOT_KEY_FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+function parseDependencyRange(depId, range, what) {
+  if (typeof range !== "string" || range.trim() === "") {
+    throw new Error(`extension manifest ${what} must be a non-empty string`);
+  }
+  if (import_semver.default.validRange(range) === null) {
+    throw new Error(`extension manifest dependsOn.${depId} is not a valid semver range: ${range}`);
+  }
+  return range;
+}
+function isHttpsUrl(v) {
+  try {
+    return new URL(v).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+function parseDependencyObject(depId, o) {
+  const what = `dependsOn.${depId}`;
+  rejectUnknownKeys(o, ["range", "registry", "rootKeyFingerprint"], what);
+  const range = parseDependencyRange(depId, o["range"], `${what}.range`);
+  const registry = o["registry"];
+  if (registry !== undefined && (typeof registry !== "string" || registry !== OFFICIAL_REGISTRY_NAME && !isHttpsUrl(registry))) {
+    throw new Error(`extension manifest ${what}.registry must be an https URL or "${OFFICIAL_REGISTRY_NAME}"`);
+  }
+  const fp = o["rootKeyFingerprint"];
+  if (fp !== undefined) {
+    if (registry === undefined) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint requires registry`);
+    }
+    if (typeof fp !== "string" || !ROOT_KEY_FINGERPRINT_RE.test(fp.toLowerCase())) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint must be 32 hex characters`);
+    }
+  }
+  return {
+    range,
+    ...registry === undefined ? {} : { registry },
+    ...typeof fp === "string" ? { rootKeyFingerprint: fp.toLowerCase() } : {}
+  };
+}
+function isPlainObject(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 function parseDependsOn(value) {
   if (value === undefined)
     return;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainObject(value)) {
     throw new Error("extension manifest dependsOn must be an object");
   }
-  const o = value;
   const out = {};
-  for (const [depId, range] of Object.entries(o)) {
-    if (typeof depId !== "string" || depId.trim() === "") {
+  for (const [depId, spec] of Object.entries(value)) {
+    if (depId.trim() === "") {
       throw new Error("extension manifest dependsOn keys must be non-empty strings");
     }
-    if (typeof range !== "string" || range.trim() === "") {
-      throw new Error(`extension manifest dependsOn.${depId} must be a non-empty string`);
-    }
-    if (import_semver.default.validRange(range) === null) {
-      throw new Error(`extension manifest dependsOn.${depId} is not a valid semver range: ${range}`);
-    }
-    out[depId] = range;
+    out[depId] = isPlainObject(spec) ? parseDependencyObject(depId, spec) : { range: parseDependencyRange(depId, spec, `dependsOn.${depId}`) };
   }
   return Object.keys(out).length === 0 ? undefined : out;
 }
@@ -5053,11 +5108,68 @@ function parseCredentials(value) {
   }
   return out;
 }
+function parseKind(value) {
+  if (value === undefined)
+    return "extension";
+  if (value !== "extension" && value !== "starter-pack") {
+    throw new Error(`extension manifest kind must be "extension" or "starter-pack" (got: ${JSON.stringify(value)})`);
+  }
+  return value;
+}
+function parseRequires(value) {
+  if (value === undefined)
+    return;
+  const o = asPlainObject(value, "requires");
+  rejectUnknownKeys(o, ["connectors"], "requires");
+  const connectors = o["connectors"];
+  if (!Array.isArray(connectors) || connectors.length === 0) {
+    throw new Error("extension manifest requires.connectors must be non-empty array");
+  }
+  const ids = [];
+  for (const [i, c] of connectors.entries()) {
+    if (typeof c !== "string" || !CONNECTOR_ID_RE.test(c)) {
+      throw new Error(`extension manifest requires.connectors[${i}] must match [a-z][a-z0-9_-]{0,63}`);
+    }
+    ids.push(c);
+  }
+  return { connectors: [...new Set(ids)].sort(codeUnitCompare) };
+}
+function grantsAnyPermission(raw) {
+  if (raw === undefined)
+    return false;
+  if (!isPlainObject(raw))
+    return true;
+  const isEmptyList = (v) => v === undefined || Array.isArray(v) && v.length === 0;
+  if (!isEmptyList(raw["network"]))
+    return true;
+  const fs = raw["filesystem"];
+  if (fs === undefined)
+    return false;
+  return !isPlainObject(fs) || !isEmptyList(fs["read"]) || !isEmptyList(fs["write"]);
+}
+function assertStarterPackShape(o, blocks) {
+  if (o["entry"] !== undefined || o["entrypoint"] !== undefined) {
+    throw new Error("extension manifest: a starter pack must not declare entry or entrypoint");
+  }
+  if (grantsAnyPermission(o["permissions"])) {
+    throw new Error("extension manifest: a starter pack must not declare permissions");
+  }
+  for (const key of ["sync", "credentials"]) {
+    if (o[key] !== undefined) {
+      throw new Error(`extension manifest: a starter pack must not declare ${key}`);
+    }
+  }
+  if (blocks.dependsOn === undefined && blocks.requires === undefined) {
+    throw new Error("extension manifest: a starter pack must declare dependsOn or requires");
+  }
+}
 function parseEntry(o) {
   const raw = typeof o["entry"] === "string" ? o["entry"] : o["entrypoint"];
   return typeof raw === "string" ? raw.trim().replaceAll("\\", "/") : undefined;
 }
 function rawManifestEntryRelPath(raw) {
+  if (raw["kind"] === "starter-pack")
+    return PACKAGE_MANIFEST_FILE;
   const entry = parseEntry(raw);
   return extensionEntryRelPath(entry === undefined ? {} : { entry });
 }
@@ -5078,11 +5190,13 @@ function parseOptionalBlocks(o) {
   const dependsOn = parseDependsOn(o["dependsOn"]);
   const sync = parseSync(o["sync"]);
   const credentials = parseCredentials(o["credentials"]);
+  const requires = parseRequires(o["requires"]);
   return {
     ...changelog === undefined ? {} : { changelog },
     ...dependsOn === undefined ? {} : { dependsOn },
     ...sync === undefined ? {} : { sync },
-    ...credentials === undefined ? {} : { credentials }
+    ...credentials === undefined ? {} : { credentials },
+    ...requires === undefined ? {} : { requires }
   };
 }
 function parseExtensionManifestForRegistry(text) {
@@ -5100,7 +5214,10 @@ function parseExtensionManifestForRegistry(text) {
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
+  const kind = parseKind(o["kind"]);
   const blocks = parseOptionalBlocks(o);
+  if (kind === "starter-pack")
+    assertStarterPackShape(o, blocks);
   const isPreT2Legacy = Array.isArray(o["permissions"]);
   const permissions = validateAndNormalizePermissions(o["permissions"] === undefined ? {} : o["permissions"]);
   return {
@@ -5113,7 +5230,8 @@ function parseExtensionManifestForRegistry(text) {
       ...publisher === undefined ? {} : { publisher },
       ...signature === undefined ? {} : { signature },
       updateChannel,
-      ...blocks
+      ...blocks,
+      kind
     },
     isPreT2Legacy
   };
@@ -8911,18 +9029,6 @@ var To = (s) => {
   s.mtimeCache || (s.mtimeCache = new Map), s.filter = t ? (e, i) => t(e, i) && !((s.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0)) : (e, i) => !((s.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0));
 };
 
-// ../../registry-format/src/package-set.ts
-var PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
-var DIST_DIR = "dist";
-var DOC_FILE_RE = /^(README|LICENSE)(\..+)?$/i;
-function isPackageFile(relPath) {
-  if (relPath === PACKAGE_MANIFEST_FILE)
-    return true;
-  if (relPath.startsWith(`${DIST_DIR}/`))
-    return relPath.length > DIST_DIR.length + 1;
-  return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
-}
-
 // ../../registry-format/src/inspect.ts
 function describeEntryType(type) {
   if (type === "SymbolicLink")
@@ -9992,9 +10098,16 @@ function isCleanRelPath(rel) {
   return rel.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
 }
 function assertFileSet(m, files) {
+  const starterPack = isStarterPack(m);
   const entry = extensionEntryRelPath(m);
-  if (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry)) {
+  if (!starterPack && (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry))) {
     throw fileSetInvalid(`extension entry ${entry} must be a file inside dist/`);
+  }
+  if (starterPack) {
+    const code = files.find((f) => f.startsWith(DIST_PREFIX));
+    if (code !== undefined) {
+      throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
+    }
   }
   const seen = new Set;
   const folded = new Map;

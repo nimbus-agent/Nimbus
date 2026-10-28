@@ -42,6 +42,7 @@ import {
   extensionEntryRelPath,
   resolveExtensionManifestPath,
 } from "../manifest.ts";
+import { assertManifestSupported } from "../manifest-support.ts";
 import { extractPackage } from "../package-extract.ts";
 import { isStrictlyInside } from "../path-containment.ts";
 import {
@@ -230,6 +231,9 @@ export async function fetchVerifiedRegistryPackage(
   }
   const { manifest } = fetched;
   await verifyRegistryManifestSignature(fetched, req.id, version);
+  // Refused with the right code before the package is extracted; the local install door
+  // (`installExtensionFromLocalDirectory`) refuses it again as the backstop.
+  assertManifestSupported(manifest);
 
   // A key the Vault does not trust yet is accepted only along the publisher's rotation chain, when
   // Nimbus vouches for it, or when the owner named its exact fingerprint (spec R5).

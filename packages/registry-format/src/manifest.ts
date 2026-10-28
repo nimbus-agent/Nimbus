@@ -4,7 +4,9 @@
  * `extensions/manifest.ts` resolves which file a directory holds).
  */
 import semver from "semver";
+import { codeUnitCompare } from "./code-unit-compare.ts";
 import { isExtensionBaselineEnvKey } from "./extension-env.ts";
+import { PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 import {
   type SandboxPermissions,
   validateAndNormalizePermissions,
@@ -14,12 +16,28 @@ import {
 export const DEFAULT_EXTENSION_ENTRY = "dist/index.js";
 
 /**
- * The manifest's entry, relative to the install path, with an absent or empty `entry` falling back
- * to {@link DEFAULT_EXTENSION_ENTRY}. The ONE spelling of that rule — install, package hashing, startup and
- * strict verification and the pre-spawn accessor all read it — so the file hashed is the file
- * spawned. Lives here, in the manifest leaf module, so every consumer can import it without a cycle.
+ * What a package is. A starter pack carries no code: it exists only to install its `dependsOn`
+ * and name the connectors it `requires`.
  */
-export function extensionEntryRelPath(manifest: { readonly entry?: string }): string {
+export type ExtensionKind = "extension" | "starter-pack";
+
+export function isStarterPack(m: { readonly kind?: ExtensionKind }): boolean {
+  return m.kind === "starter-pack";
+}
+
+/**
+ * The manifest's entry, relative to the install path, with an absent or empty `entry` falling back
+ * to {@link DEFAULT_EXTENSION_ENTRY}. A starter pack's entry is its own manifest file: it has no
+ * code, so every layer that hashes "the entry" hashes the one file the pack is. The ONE spelling of
+ * that rule — install, package hashing, startup and strict verification and the pre-spawn accessor
+ * all read it — so the file hashed is the file spawned. Lives here, in the manifest leaf module, so
+ * every consumer can import it without a cycle.
+ */
+export function extensionEntryRelPath(manifest: {
+  readonly entry?: string;
+  readonly kind?: ExtensionKind;
+}): string {
+  if (isStarterPack(manifest)) return PACKAGE_MANIFEST_FILE;
   return manifest.entry !== undefined && manifest.entry !== ""
     ? manifest.entry
     : DEFAULT_EXTENSION_ENTRY;
@@ -33,6 +51,23 @@ export type ExtensionSyncManifest = {
 
 export type ExtensionCredentialDecls = Readonly<Record<string, { readonly env: string }>>;
 
+/** The reserved registry name a cross-registry dependency may use for the baked official registry. */
+export const OFFICIAL_REGISTRY_NAME = "nimbus-official";
+
+/** One `dependsOn` entry. The string form `"^1.2.0"` parses to `{ range }`. */
+export type DependencySpec = {
+  readonly range: string;
+  /** Absent ⇒ same registry as the dependent. An https URL, or {@link OFFICIAL_REGISTRY_NAME}. */
+  readonly registry?: string;
+  /** 32 lowercase hex — the pinned root-key fingerprint the named registry must have. */
+  readonly rootKeyFingerprint?: string;
+};
+
+/** True when the dependency names a registry of its own rather than the dependent's. */
+export function isCrossRegistryDependency(spec: DependencySpec): boolean {
+  return spec.registry !== undefined;
+}
+
 export type ExtensionManifest = {
   id: string;
   version: string;
@@ -43,10 +78,21 @@ export type ExtensionManifest = {
   signature?: string;
   updateChannel: "stable" | "beta";
   changelog?: string;
-  dependsOn?: Readonly<Record<string, string>>;
+  dependsOn?: Readonly<Record<string, DependencySpec>>;
   sync?: ExtensionSyncManifest;
   credentials?: ExtensionCredentialDecls;
+  /**
+   * The parser always sets it (`"extension"` when the manifest names none). Optional in the type
+   * because the gateway builds manifests in code (first-party connectors, user MCP servers,
+   * generated tools) that are all extensions: absent means `"extension"`, see {@link isStarterPack}.
+   */
+  kind?: ExtensionKind;
+  /** Connectors that must be configured for this package to be useful — sorted, de-duplicated. */
+  requires?: { readonly connectors: readonly string[] };
 };
+
+/** A connector id as `requires.connectors` may name it. Well-formed but unknown ids still parse. */
+export const CONNECTOR_ID_RE = /^[a-z][a-z0-9_-]{0,63}$/;
 
 export const PUBLISHER_ID_RE = /^[a-z0-9][a-z0-9._-]*$/;
 
@@ -119,26 +165,72 @@ function parseChangelog(value: unknown): string | undefined {
   return normalized;
 }
 
-function parseDependsOn(value: unknown): Readonly<Record<string, string>> | undefined {
+const ROOT_KEY_FINGERPRINT_RE = /^[0-9a-f]{32}$/;
+
+function parseDependencyRange(depId: string, range: unknown, what: string): string {
+  if (typeof range !== "string" || range.trim() === "") {
+    throw new Error(`extension manifest ${what} must be a non-empty string`);
+  }
+  if (semver.validRange(range) === null) {
+    throw new Error(`extension manifest dependsOn.${depId} is not a valid semver range: ${range}`);
+  }
+  return range;
+}
+
+function isHttpsUrl(v: string): boolean {
+  try {
+    return new URL(v).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function parseDependencyObject(depId: string, o: Record<string, unknown>): DependencySpec {
+  const what = `dependsOn.${depId}`;
+  rejectUnknownKeys(o, ["range", "registry", "rootKeyFingerprint"], what);
+  const range = parseDependencyRange(depId, o["range"], `${what}.range`);
+  const registry = o["registry"];
+  if (
+    registry !== undefined &&
+    (typeof registry !== "string" || (registry !== OFFICIAL_REGISTRY_NAME && !isHttpsUrl(registry)))
+  ) {
+    throw new Error(
+      `extension manifest ${what}.registry must be an https URL or "${OFFICIAL_REGISTRY_NAME}"`,
+    );
+  }
+  const fp = o["rootKeyFingerprint"];
+  if (fp !== undefined) {
+    if (registry === undefined) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint requires registry`);
+    }
+    if (typeof fp !== "string" || !ROOT_KEY_FINGERPRINT_RE.test(fp.toLowerCase())) {
+      throw new Error(`extension manifest ${what}.rootKeyFingerprint must be 32 hex characters`);
+    }
+  }
+  return {
+    range,
+    ...(registry === undefined ? {} : { registry }),
+    ...(typeof fp === "string" ? { rootKeyFingerprint: fp.toLowerCase() } : {}),
+  };
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseDependsOn(value: unknown): Readonly<Record<string, DependencySpec>> | undefined {
   if (value === undefined) return undefined;
-  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+  if (!isPlainObject(value)) {
     throw new Error("extension manifest dependsOn must be an object");
   }
-  const o = value as Record<string, unknown>;
-  const out: Record<string, string> = {};
-  for (const [depId, range] of Object.entries(o)) {
-    if (typeof depId !== "string" || depId.trim() === "") {
+  const out: Record<string, DependencySpec> = {};
+  for (const [depId, spec] of Object.entries(value)) {
+    if (depId.trim() === "") {
       throw new Error("extension manifest dependsOn keys must be non-empty strings");
     }
-    if (typeof range !== "string" || range.trim() === "") {
-      throw new Error(`extension manifest dependsOn.${depId} must be a non-empty string`);
-    }
-    if (semver.validRange(range) === null) {
-      throw new Error(
-        `extension manifest dependsOn.${depId} is not a valid semver range: ${range}`,
-      );
-    }
-    out[depId] = range;
+    out[depId] = isPlainObject(spec)
+      ? parseDependencyObject(depId, spec)
+      : { range: parseDependencyRange(depId, spec, `dependsOn.${depId}`) };
   }
   return Object.keys(out).length === 0 ? undefined : out;
 }
@@ -246,6 +338,72 @@ function parseCredentials(value: unknown): ExtensionCredentialDecls | undefined 
   return out;
 }
 
+function parseKind(value: unknown): ExtensionKind {
+  if (value === undefined) return "extension";
+  if (value !== "extension" && value !== "starter-pack") {
+    throw new Error(
+      `extension manifest kind must be "extension" or "starter-pack" (got: ${JSON.stringify(value)})`,
+    );
+  }
+  return value;
+}
+
+function parseRequires(value: unknown): { readonly connectors: readonly string[] } | undefined {
+  if (value === undefined) return undefined;
+  const o = asPlainObject(value, "requires");
+  rejectUnknownKeys(o, ["connectors"], "requires");
+  const connectors = o["connectors"];
+  if (!Array.isArray(connectors) || connectors.length === 0) {
+    throw new Error("extension manifest requires.connectors must be non-empty array");
+  }
+  const ids: string[] = [];
+  for (const [i, c] of connectors.entries()) {
+    if (typeof c !== "string" || !CONNECTOR_ID_RE.test(c)) {
+      throw new Error(
+        `extension manifest requires.connectors[${i}] must match [a-z][a-z0-9_-]{0,63}`,
+      );
+    }
+    ids.push(c);
+  }
+  return { connectors: [...new Set(ids)].sort(codeUnitCompare) };
+}
+
+/** True unless `raw` is absent or an object-form permissions block that grants nothing. */
+function grantsAnyPermission(raw: unknown): boolean {
+  if (raw === undefined) return false;
+  if (!isPlainObject(raw)) return true;
+  const isEmptyList = (v: unknown): boolean =>
+    v === undefined || (Array.isArray(v) && v.length === 0);
+  if (!isEmptyList(raw["network"])) return true;
+  const fs = raw["filesystem"];
+  if (fs === undefined) return false;
+  return !isPlainObject(fs) || !isEmptyList(fs["read"]) || !isEmptyList(fs["write"]);
+}
+
+/**
+ * A starter pack can never carry code or a grant: no entry, no permissions, no sync, no
+ * credentials — checked on the RAW object, so a normalising parser cannot mask a declared grant.
+ */
+function assertStarterPackShape(
+  o: Record<string, unknown>,
+  blocks: Pick<ExtensionManifest, "dependsOn" | "requires">,
+): void {
+  if (o["entry"] !== undefined || o["entrypoint"] !== undefined) {
+    throw new Error("extension manifest: a starter pack must not declare entry or entrypoint");
+  }
+  if (grantsAnyPermission(o["permissions"])) {
+    throw new Error("extension manifest: a starter pack must not declare permissions");
+  }
+  for (const key of ["sync", "credentials"] as const) {
+    if (o[key] !== undefined) {
+      throw new Error(`extension manifest: a starter pack must not declare ${key}`);
+    }
+  }
+  if (blocks.dependsOn === undefined && blocks.requires === undefined) {
+    throw new Error("extension manifest: a starter pack must declare dependsOn or requires");
+  }
+}
+
 // All 94 first-party connectors (each `connectors/<id>/nimbus.extension.json` in
 // `@nimbus-dev/connectors`) declare `entrypoint`; this parser
 // read only `entry`, so every one of them fell back to "dist/index.js" while building
@@ -262,6 +420,7 @@ function parseEntry(o: Record<string, unknown>): string | undefined {
  * refusing the rest of the manifest — package inspection hashes the file the gateway will run.
  */
 export function rawManifestEntryRelPath(raw: Record<string, unknown>): string {
+  if (raw["kind"] === "starter-pack") return PACKAGE_MANIFEST_FILE;
   const entry = parseEntry(raw);
   return extensionEntryRelPath(entry === undefined ? {} : { entry });
 }
@@ -291,16 +450,18 @@ function parseManifestObject(text: string): Record<string, unknown> {
 /** The optional manifest blocks that are present; an absent block leaves no key at all. */
 function parseOptionalBlocks(
   o: Record<string, unknown>,
-): Pick<ExtensionManifest, "changelog" | "dependsOn" | "sync" | "credentials"> {
+): Pick<ExtensionManifest, "changelog" | "dependsOn" | "sync" | "credentials" | "requires"> {
   const changelog = parseChangelog(o["changelog"]);
   const dependsOn = parseDependsOn(o["dependsOn"]);
   const sync = parseSync(o["sync"]);
   const credentials = parseCredentials(o["credentials"]);
+  const requires = parseRequires(o["requires"]);
   return {
     ...(changelog === undefined ? {} : { changelog }),
     ...(dependsOn === undefined ? {} : { dependsOn }),
     ...(sync === undefined ? {} : { sync }),
     ...(credentials === undefined ? {} : { credentials }),
+    ...(requires === undefined ? {} : { requires }),
   };
 }
 
@@ -319,7 +480,9 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
     throw new Error("extension manifest must have publisher and signature together, or neither");
   }
   const updateChannel = parseUpdateChannel(o["updateChannel"]);
+  const kind = parseKind(o["kind"]);
   const blocks = parseOptionalBlocks(o);
+  if (kind === "starter-pack") assertStarterPackShape(o, blocks);
   const isPreT2Legacy = Array.isArray(o["permissions"]);
   const permissions = validateAndNormalizePermissions(
     o["permissions"] === undefined ? {} : o["permissions"],
@@ -335,6 +498,7 @@ export function parseExtensionManifestForRegistry(text: string): RegistryParseRe
       ...(signature === undefined ? {} : { signature }),
       updateChannel,
       ...blocks,
+      kind,
     },
     isPreT2Legacy,
   };

@@ -24,6 +24,7 @@ import {
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
+import { assertManifestSupported, dependencyRanges } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
@@ -148,7 +149,9 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
               write: [...manifest.permissions.filesystem.write],
             },
           },
-          ...(manifest.dependsOn !== undefined && { dependsOn: manifest.dependsOn }),
+          ...(manifest.dependsOn !== undefined && {
+            dependsOn: dependencyRanges(manifest.dependsOn, manifest.id),
+          }),
         },
       });
     } catch {
@@ -268,6 +271,9 @@ async function reverifyUpdateManifest(
     );
     if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
     await verifyRegistryManifestSignature(fetched, update.id, update.toVersion);
+    // The APPLY door: an update detected earlier is refused here if its manifest is a shape this
+    // gateway cannot honour yet, before anything is downloaded or swapped.
+    assertManifestSupported(fetched.manifest);
     // I48: a block that landed after detection (or since the last apply attempt) refuses here,
     // before anything is downloaded or swapped.
     assertNotBlocked(fetchDeps.db, {

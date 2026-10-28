@@ -1726,3 +1726,54 @@ describe("the install prompt states whether the publisher is verified (R6, trust
     expect(text).toContain('"verifiedPublisher":{"github":"test-dev"');
   });
 });
+
+describe("installExtensionFromLocalDirectory — manifests this gateway cannot honour yet", () => {
+  async function refusedBeforeApproval(manifest: Record<string, unknown>, withDist: boolean) {
+    const fx = createExtensionInstallFixture("nimbus-install-unsupported-", "src");
+    if (!withDist) rmSync(join(fx.src, "dist"), { recursive: true, force: true });
+    else writeFileSync(join(fx.src, "dist", "index.js"), "export {};\n", "utf8");
+    writeFileSync(join(fx.src, "nimbus.extension.json"), JSON.stringify(manifest), "utf8");
+    let asked = 0;
+    let code: unknown;
+    try {
+      await installExtensionFromLocalDirectory({
+        db: fx.db,
+        extensionsDir: fx.extensionsDir,
+        sourcePath: fx.src,
+        approve: async () => {
+          asked++;
+          return true;
+        },
+      });
+    } catch (e) {
+      code = (e as { code?: unknown }).code;
+    }
+    expect(code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
+    expect(asked).toBe(0);
+    expect(listExtensions(fx.db)).toEqual([]);
+    expect(existsSync(fx.extensionsDir)).toBe(false);
+  }
+
+  test("a cross-registry dependency is refused before the owner is asked", async () => {
+    await refusedBeforeApproval(
+      {
+        id: "test.ext.cross",
+        version: "1.0.0",
+        dependsOn: { "test.ext.dep": { range: "^1.0.0", registry: "nimbus-official" } },
+      },
+      true,
+    );
+  });
+
+  test("a starter pack is refused before the owner is asked", async () => {
+    await refusedBeforeApproval(
+      {
+        id: "test.ext.pack",
+        version: "1.0.0",
+        kind: "starter-pack",
+        dependsOn: { "test.ext.dep": "^1.0.0" },
+      },
+      false,
+    );
+  });
+});

@@ -30,6 +30,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
+import { dependencyRanges } from "./manifest-support.ts";
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKeyFor } from "./publisher-keys.ts";
@@ -275,8 +276,8 @@ function backfillDependencyRowsBestEffort(
     try {
       const raw = readFileSync(manifestPath, "utf8");
       const parsed = parseExtensionManifestJson(raw);
-      const dependsOn = parsed.dependsOn;
-      if (dependsOn === undefined || Object.keys(dependsOn).length === 0) continue;
+      const dependsOn = dependencyRanges(parsed.dependsOn, parsed.id);
+      if (Object.keys(dependsOn).length === 0) continue;
       const deps: ResolvedDep[] = Object.entries(dependsOn).map(([depId, range]) => ({
         id: depId,
         range,

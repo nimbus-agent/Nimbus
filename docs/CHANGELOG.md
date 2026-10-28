@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-28 — Extension dependencies and starter packs PR 1: the manifest format (Phase 9.5 project 4; no migration, no
+  new invariant).** `@nimbus-dev/registry-format` accepts three new manifest shapes: a `dependsOn` value may be an object
+  naming another registry (`{ range, registry, rootKeyFingerprint? }`, the registry an https URL or `nimbus-official`);
+  `requires.connectors` lists the connectors a package needs configured; and `kind: "starter-pack"` is a package of
+  dependencies with no code — no entry, permissions, sync or credentials, no `dist/` file in its tarball, and its manifest
+  as its entry, so its index `entryHash` is the manifest's SHA-256 (an empty one would make every existing client reject
+  the whole index). Publishing accepts all three. **This gateway refuses to install a cross-registry dependency or a
+  starter pack** (`ERR_EXTENSION_MANIFEST_UNSUPPORTED`, before the owner is asked) at every install door, at update
+  detection and at update apply, until the PRs that implement them; `requires` is parsed but not yet acted on.
+
 - **2026-10-27 — Marketplace trust layer PR 5: the release bakes the Nimbus trust feed; the trust layer (Phase 9.5 project 3)
   is complete (no migration, no new invariant).** `BUILTIN_TRUST_FEED` now follows `https://nimbus-agent.github.io/nimbus-trust/`
   (repository `nimbus-agent/nimbus-trust`, signed in its protected `trust-signing` environment; root fingerprint

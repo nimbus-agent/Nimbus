@@ -608,3 +608,35 @@ describe("installFromRegistry follows a publisher's key rotation (spec R5, R8)",
     expect(asked[0]?.publisherChange).toBeUndefined();
   });
 });
+
+describe("installFromRegistry refuses manifests this gateway cannot honour yet", () => {
+  async function refusedBeforeApproval(): Promise<void> {
+    let code: unknown;
+    try {
+      await installFromRegistry(deps(), { id: ID });
+    } catch (e) {
+      code = (e as { code?: unknown }).code;
+    }
+    expect(code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
+    expect(asked).toHaveLength(0);
+    expect(listExtensions(db)).toHaveLength(0);
+    expect(existsSync(extensionsDir)).toBe(false);
+  }
+
+  test("a starter pack is refused before the owner is asked", async () => {
+    await setup([{ version: "1.0.0", dependsOn: { "com.example.dep": "^1.0.0" } }], {
+      starterPack: true,
+    });
+    await refusedBeforeApproval();
+  });
+
+  test("an extension with a cross-registry dependency is refused before the owner is asked", async () => {
+    await setup([
+      {
+        version: "1.0.0",
+        dependsOn: { "com.example.dep": { range: "^1.0.0", registry: "nimbus-official" } },
+      },
+    ]);
+    await refusedBeforeApproval();
+  });
+});

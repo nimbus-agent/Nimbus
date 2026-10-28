@@ -43,11 +43,17 @@ export {
 } from "./index-format.ts";
 export { type InspectedPackage, inspectPackage } from "./inspect.ts";
 export {
+  CONNECTOR_ID_RE,
   DEFAULT_EXTENSION_ENTRY,
+  type DependencySpec,
   type ExtensionCredentialDecls,
+  type ExtensionKind,
   type ExtensionManifest,
   type ExtensionSyncManifest,
   extensionEntryRelPath,
+  isCrossRegistryDependency,
+  isStarterPack,
+  OFFICIAL_REGISTRY_NAME,
   PUBLISHER_ID_RE,
   PUBLISHER_KEY_RE,
   parseExtensionManifestForRegistry,
