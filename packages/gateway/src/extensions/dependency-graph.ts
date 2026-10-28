@@ -13,6 +13,8 @@ import {
   registryNameOf,
   type SourceKey,
 } from "./dependency-types.ts";
+import { FETCH_FAILURE_CODES } from "./registry/registry-fetch.ts";
+import { TrustBlockError } from "./trust/trust-blocks.ts";
 
 type Ranges = Map<string, DependencyConstraint[]>;
 /**
@@ -26,9 +28,15 @@ type Pin = {
 };
 type Pinned = Map<string, Pin>;
 type ManifestCache = Map<string, ExtensionManifestForSolver>;
+/**
+ * Whether a fetcher failure means the registry could not be REACHED. A registry that was reached and
+ * refused (a bad signature, a hash mismatch, a key conflict, an unsupported manifest) or a trust
+ * block is a refusal in its own right and is never reported as "offline".
+ */
 function isRegistryUnreachable(e: unknown): boolean {
   if (e instanceof OfflineDependencyResolutionError) return true;
-  if (e instanceof DependencyConflictError) return false;
+  if (e instanceof DependencyConflictError || e instanceof TrustBlockError) return false;
+  if (e instanceof RegistryError) return FETCH_FAILURE_CODES.has(e.code);
   return e instanceof Error;
 }
 

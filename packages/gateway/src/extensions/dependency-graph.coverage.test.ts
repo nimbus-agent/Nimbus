@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { RegistryError } from "@nimbus-dev/registry-format";
 import {
   DependencyConflictError,
   isOfflineDependencyResolutionError,
@@ -10,6 +11,7 @@ import type {
   RegistryFetcher,
   ResolveClosureOptions,
 } from "./dependency-types.ts";
+import { TrustBlockError } from "./trust/trust-blocks.ts";
 
 /**
  * Error-classification coverage for `resolveClosure`'s two registry calls. Each of
@@ -116,6 +118,31 @@ describe("resolveClosure — fetchManifest failure classification", () => {
     const thrown = { status: 500 };
     const err = await rejectionOf(resolveClosure(ROOT, null, failingFetch(thrown), OPTS));
     expect(err).toBe(thrown);
+  });
+
+  it("passes a registry VERIFICATION refusal through unchanged (a security event, not offline)", async () => {
+    const original = new RegistryError("ERR_REGISTRY_SIGNATURE_INVALID", "bad signature");
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingFetch(original), OPTS));
+    expect(err).toBe(original);
+    expect(isOfflineDependencyResolutionError(err)).toBe(false);
+  });
+
+  it("passes a trust block through unchanged", async () => {
+    const original = new TrustBlockError("ERR_EXTENSION_TAKEN_DOWN", "taken down", []);
+    const err = await rejectionOf(resolveClosure(ROOT, null, failingFetch(original), OPTS));
+    expect(err).toBe(original);
+  });
+
+  it("wraps a registry FETCH failure as offline", async () => {
+    const err = await rejectionOf(
+      resolveClosure(
+        ROOT,
+        null,
+        failingList(new RegistryError("ERR_REGISTRY_UNREACHABLE", "down")),
+        OPTS,
+      ),
+    );
+    expect(isOfflineDependencyResolutionError(err)).toBe(true);
   });
 });
 
