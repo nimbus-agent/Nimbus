@@ -3003,3 +3003,138 @@ describe("runExtensionCredential", () => {
     expect(rpcTimeoutForExtensionSub("credential", ["status", "com.x"])).toBeUndefined();
   });
 });
+
+describe("runExtensionInstall — the post-install walk", () => {
+  const origOut = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const origIn = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const restore = (
+    s: NodeJS.ReadStream | NodeJS.WriteStream,
+    d: PropertyDescriptor | undefined,
+  ): void => {
+    if (d === undefined) delete (s as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(s, "isTTY", d);
+  };
+  const setTty = (v: boolean): void => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: v });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: v });
+  };
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    restore(process.stdout, origOut);
+    restore(process.stdin, origIn);
+  });
+
+  /** A mock client that COUNTS notification handlers per event (the shared mock keeps only one). */
+  type CountingClient = ReturnType<typeof createMockIpcClient> & {
+    handlerCount: Map<string, number>;
+  };
+  function countingClient(responses: unknown[]): CountingClient {
+    const mock = createMockIpcClient(responses);
+    const handlerCount = new Map<string, number>();
+    const inner = mock.client.onNotification.bind(mock.client);
+    Object.assign(mock.client, {
+      onNotification: (event: string, h: (params: unknown) => void): void => {
+        handlerCount.set(event, (handlerCount.get(event) ?? 0) + 1);
+        inner(event, h);
+      },
+    });
+    return Object.assign(mock, { handlerCount });
+  }
+
+  test("no walk under --yes", async () => {
+    setTty(true);
+    const install = countingClient([
+      {
+        id: "new.ext",
+        version: "1.0.0",
+        installPath: "/p",
+        connectorRequirements: [{ ...REQ, interactive: true }],
+      },
+    ]);
+    const made: string[] = [];
+    const asked: string[] = [];
+    await runExtensionInstall(install.client, ["install", ".", "--yes"], ["."], {
+      socketPath: "/sock",
+      makeClient: (p) => {
+        made.push(p);
+        return countingClient([]).client;
+      },
+      confirm: async (q) => {
+        asked.push(q);
+        return true;
+      },
+      connectorAuth: async (id) => {
+        asked.push(`auth ${id}`);
+      },
+    });
+    expect(made).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(install.calls.map((c) => c.method)).toEqual(["extension.install"]);
+    expect(out.stdout).not.toContain("Approve each package to run");
+  });
+
+  test("the walk never approves on the install's client", async () => {
+    setTty(true);
+    const install = countingClient([
+      {
+        id: "com.example.tool",
+        version: "2.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        dependencies: [{ id: "com.example.dep", version: "1.2.0", registry: "main" }],
+      },
+    ]);
+    const fresh: CountingClient[] = [];
+    const timeouts: number[] = [];
+    await runExtensionInstall(
+      install.client,
+      ["install", "com.example.tool"],
+      ["com.example.tool"],
+      {
+        socketPath: "/sock",
+        makeClient: (p, t) => {
+          expect(p).toBe("/sock");
+          timeouts.push(t);
+          const c = countingClient([
+            { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+          ]);
+          fresh.push(c);
+          return c.client;
+        },
+        confirm: async () => {
+          throw new Error("no walk question for an approval");
+        },
+      },
+    );
+    expect(install.calls.map((c) => c.method)).toEqual(["registry.install"]);
+    expect(fresh).toHaveLength(2);
+    expect(fresh.map((c) => c.calls)).toEqual([
+      [{ method: "extension.approveRun", params: { id: "com.example.dep", modelAccess: false } }],
+      [{ method: "extension.approveRun", params: { id: "com.example.tool", modelAccess: false } }],
+    ]);
+    for (const c of fresh) expect(c.handlerCount.get("consent.request")).toBe(1);
+    expect(timeouts).toEqual([INTERACTIVE_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS]);
+    expect(out.stdout).toContain("Approve each package to run (you can decline any):");
+  });
+
+  test("a failing walk never fails the install", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(install.client, ["install", "."], ["."], {
+      socketPath: "/sock",
+      makeClient: () => {
+        throw new Error("socket gone");
+      },
+    });
+    expect(out.stdout).toContain("  new.ext: not approved (socket gone)");
+  });
+
+  test("without walk deps an attended install only prints", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(install.client, ["install", "."], ["."]);
+    expect(out.stdout).not.toContain("Approve each package to run");
+  });
+});
