@@ -882,7 +882,7 @@ describe("extension.info", () => {
         value: {
           extension: {
             id: string;
-            forwardDeps: Array<{ id: string; range: string }>;
+            forwardDeps: Array<{ id: string; range: string; registry: string | null }>;
             reverseDeps: Array<{ extensionId: string; range: string }>;
           };
         };
