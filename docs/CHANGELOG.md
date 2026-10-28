@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-28 — Extension dependencies and starter packs PR 2: registry installs fetch their dependencies (Phase 9.5
+  project 4; schema V78; I44 amended, no new invariant).** `nimbus registry install` now resolves the dependency closure
+  and installs it. A bare-range dependency is fetched from the dependent's own registry through the same verified chain as
+  a root install; an object dependency from the registry it names, which must already be one the owner added
+  (`ERR_DEPENDENCY_REGISTRY_NOT_ADDED` otherwise, with no `registry.add` raised; `ERR_DEPENDENCY_REGISTRY_KEY_MISMATCH` for
+  a pinned root-key fingerprint that differs). The solver pins each id to its source, so an installed copy satisfies a
+  dependency only when it was installed from that registry. The owner answers ONE `extension.install` approval that lists
+  every package (`plan`, `planPermissions`, `planText`), and the plan installer is all-or-nothing: any failure removes
+  every package, row and directory it created. V78 records the registry of each dependency edge and marks packages
+  installed as dependencies. Starter packs are still refused.
 - **2026-10-28 — Extension dependencies and starter packs PR 1: the manifest format (Phase 9.5 project 4; no migration, no
   new invariant).** `@nimbus-dev/registry-format` accepts three new manifest shapes: a `dependsOn` value may be an object
   naming another registry (`{ range, registry, rootKeyFingerprint? }`, the registry an https URL or `nimbus-official`);
