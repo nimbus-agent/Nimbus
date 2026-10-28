@@ -33,6 +33,7 @@ import { inspectPackage } from "./inspect.ts";
 import {
   type ExtensionManifest,
   extensionEntryRelPath,
+  isStarterPack,
   parseExtensionManifestForRegistry,
 } from "./manifest.ts";
 import { isPackageFile, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
@@ -394,9 +395,17 @@ function isCleanRelPath(rel: string): boolean {
 // Rule 13.
 // `inspectPackage` resolves the entry by the same rule, so `entryHash` is the hash of this file.
 function assertFileSet(m: ExtensionManifest, files: string[]): void {
+  // A starter pack's entry IS its manifest (`extensionEntryRelPath`), and it carries no code.
+  const starterPack = isStarterPack(m);
   const entry = extensionEntryRelPath(m);
-  if (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry)) {
+  if (!starterPack && (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry))) {
     throw fileSetInvalid(`extension entry ${entry} must be a file inside dist/`);
+  }
+  if (starterPack) {
+    const code = files.find((f) => f.startsWith(DIST_PREFIX));
+    if (code !== undefined) {
+      throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
+    }
   }
   const seen = new Set<string>();
   const folded = new Map<string, string>();

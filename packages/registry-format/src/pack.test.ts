@@ -146,6 +146,23 @@ describe("registry packer", () => {
     }
   });
 
+  test("packs a directory holding only the manifest and README", async () => {
+    const src = mkdtempSync(join(tmpdir(), "nimbus-reg-pack-"));
+    const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
+    try {
+      writeFileSync(join(src, "nimbus.extension.json"), '{"id":"x","kind":"starter-pack"}');
+      writeFileSync(join(src, "README.md"), "z");
+      await packExtensionDir(src, join(out, "x.tgz"));
+      expect(tarNames(gunzipSync(readFileSync(join(out, "x.tgz"))))).toEqual([
+        "README.md",
+        "nimbus.extension.json",
+      ]);
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
   test("pack refuses a symlink", async () => {
     const src = makeTree();
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));

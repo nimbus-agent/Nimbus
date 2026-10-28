@@ -44,6 +44,17 @@ describe("inspectPackage", () => {
     expect(r.manifestBytes.length).toBeGreaterThan(0);
   });
 
+  test("starter pack entryHash is the manifest hash", async () => {
+    const dir = join(tmp, "pack");
+    mkdirSync(dir);
+    const manifestText = JSON.stringify({ id: "a", kind: "starter-pack", dependsOn: { b: "^1" } });
+    writeFileSync(join(dir, "nimbus.extension.json"), manifestText);
+    writeFileSync(join(dir, "README.md"), "hi");
+    const r = await inspectDir(dir);
+    expect(r.entryHash).toBe(createHash("sha256").update(manifestText).digest("hex"));
+    expect(r.files).toEqual(["README.md", "nimbus.extension.json"]);
+  });
+
   test("a missing entry is refused", async () => {
     await expect(inspectDir(makeExt({ id: "a" }, false))).rejects.toThrow(
       "extension entry dist/index.js is missing or outside the package",
