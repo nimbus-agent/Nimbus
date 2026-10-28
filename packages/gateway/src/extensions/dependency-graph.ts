@@ -146,7 +146,7 @@ async function visit(current: ExtensionManifestForSolver, ctx: SolveContext): Pr
       const candidate = await resolveDepCandidate(depId, current.id, constraintList, ctx); // NOSONAR S9382: the candidate is chosen against the ranges and pins earlier siblings' subtrees left in ctx
       const depManifest = await loadDepManifest(depId, current.id, candidate, ctx); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
 
-      deps.push({ id: depId, range, resolvedVersion: candidate });
+      deps.push({ id: depId, range, resolvedVersion: candidate, registry: null });
 
       if (!ctx.resolved.has(depId)) {
         await visit(depManifest, ctx); // NOSONAR S9382: depth-first recursion - cycle detection relies on ctx.ancestors holding exactly the current path, one subtree at a time

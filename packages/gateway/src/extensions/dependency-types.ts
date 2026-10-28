@@ -2,6 +2,8 @@ export interface ResolvedDep {
   readonly id: string;
   readonly range: string;
   readonly resolvedVersion: string;
+  /** Registry NAME the edge resolved to; null for a local or backfilled edge. */
+  readonly registry: string | null;
 }
 
 export interface ResolvedNode {

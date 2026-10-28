@@ -269,7 +269,9 @@ describe("dependency bookkeeping", () => {
 
     await verifyExtensionsBestEffort(db, logger);
 
-    expect(forwardDeps(db, id)).toEqual([{ id: "com.cov.absent", range: "^1.0.0" }]);
+    expect(forwardDeps(db, id)).toEqual([
+      { id: "com.cov.absent", range: "^1.0.0", registry: null },
+    ]);
     expect(missingDependencyRegistry.reasonFor(id)).toMatchObject({
       reason: "dependency_missing",
       missingDepId: "com.cov.absent",

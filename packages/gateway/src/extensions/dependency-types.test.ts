@@ -12,7 +12,7 @@ describe("dependency types", () => {
       id: "com.example.foo",
       version: "1.0.0",
       newlyInstalled: true,
-      deps: [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0" }],
+      deps: [{ id: "com.shared.utils", range: "^1.0.0", resolvedVersion: "1.5.0", registry: null }],
     };
     expect(node.deps).toHaveLength(1);
   });

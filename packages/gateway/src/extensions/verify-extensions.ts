@@ -282,6 +282,7 @@ function backfillDependencyRowsBestEffort(
         id: depId,
         range,
         resolvedVersion: installed.get(depId) ?? "unknown",
+        registry: null,
       }));
       recordInstall(db, id, version, deps, now);
     } catch (e) {
