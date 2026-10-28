@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 import {
+  extensionEntryRelPath,
   isCrossRegistryDependency,
+  isStarterPack,
   OFFICIAL_REGISTRY_NAME,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
+  rawManifestEntryRelPath,
 } from "./manifest.ts";
 
 describe("parseExtensionManifestJson", () => {
@@ -15,6 +18,7 @@ describe("parseExtensionManifestJson", () => {
       version: "1.0.0",
       permissions: { network: [], filesystem: { read: [], write: [] } },
       updateChannel: "stable",
+      kind: "extension",
     });
   });
 
@@ -306,6 +310,115 @@ describe("dependsOn object form", () => {
     expect(isCrossRegistryDependency({ range: "1.x", registry: OFFICIAL_REGISTRY_NAME })).toBe(
       true,
     );
+  });
+});
+
+describe("requires and kind", () => {
+  const parseWith = (extra: Record<string, unknown>) =>
+    parseExtensionManifestJson(JSON.stringify({ id: "x", version: "1.0.0", ...extra }));
+  const pack = (extra: Record<string, unknown>) =>
+    parseWith({ kind: "starter-pack", dependsOn: { a: "^1.0.0" }, ...extra });
+
+  test("kind defaults to extension", () => {
+    const m = parseWith({});
+    expect(m.kind).toBe("extension");
+    expect(isStarterPack(m)).toBe(false);
+  });
+
+  test("unknown kind refused", () => {
+    expect(() => parseWith({ kind: "pack" })).toThrow(
+      /kind must be "extension" or "starter-pack"/,
+    );
+  });
+
+  test("requires.connectors parsed sorted and deduped", () => {
+    const m = parseWith({ requires: { connectors: ["slack", "github", "github"] } });
+    expect(m.requires).toEqual({ connectors: ["github", "slack"] });
+  });
+
+  test("malformed connector id refused", () => {
+    expect(() => parseWith({ requires: { connectors: ["GitHub"] } })).toThrow(
+      /requires.connectors\[0\] must match/,
+    );
+  });
+
+  test("unknown well-formed connector id accepted", () => {
+    const m = parseWith({ requires: { connectors: ["not-a-real-connector"] } });
+    expect(m.requires).toEqual({ connectors: ["not-a-real-connector"] });
+  });
+
+  test("requires with unknown key refused", () => {
+    expect(() => parseWith({ requires: { connectors: ["github"], extensions: [] } })).toThrow(
+      /unknown key: extensions/,
+    );
+  });
+
+  test("empty connectors refused", () => {
+    expect(() => parseWith({ requires: { connectors: [] } })).toThrow(
+      /requires.connectors must be non-empty/,
+    );
+  });
+
+  test("starter pack with entry refused", () => {
+    expect(() => pack({ entry: "dist/index.js" })).toThrow(/a starter pack must not declare entry/);
+  });
+
+  test("starter pack with entrypoint refused", () => {
+    expect(() => pack({ entrypoint: "dist/server.js" })).toThrow(
+      /a starter pack must not declare entry/,
+    );
+  });
+
+  test("starter pack with permissions refused", () => {
+    expect(() => pack({ permissions: { network: ["x.io"] } })).toThrow(
+      /a starter pack must not declare permissions/,
+    );
+    expect(() => pack({ permissions: { filesystem: { read: ["~/x"] } } })).toThrow(
+      /a starter pack must not declare permissions/,
+    );
+    expect(() => pack({ permissions: [] })).toThrow(/a starter pack must not declare permissions/);
+  });
+
+  test("starter pack with empty permissions accepted", () => {
+    const m = pack({ permissions: { network: [], filesystem: { read: [], write: [] } } });
+    expect(isStarterPack(m)).toBe(true);
+  });
+
+  test("starter pack with sync refused", () => {
+    expect(() =>
+      pack({ sync: { contract: "1", intervalSeconds: 60, itemTypes: ["note"] } }),
+    ).toThrow(/must not declare sync/);
+  });
+
+  test("starter pack with credentials refused", () => {
+    expect(() => pack({ credentials: { token: { env: "X_TOKEN" } } })).toThrow(
+      /must not declare credentials/,
+    );
+  });
+
+  test("starter pack with neither dependsOn nor requires refused", () => {
+    expect(() => parseWith({ kind: "starter-pack" })).toThrow(
+      /a starter pack must declare dependsOn or requires/,
+    );
+  });
+
+  test("starter pack with only requires accepted", () => {
+    const m = parseWith({ kind: "starter-pack", requires: { connectors: ["github"] } });
+    expect(m.kind).toBe("starter-pack");
+    expect(isStarterPack(m)).toBe(true);
+  });
+
+  test("starter pack entry is the manifest", () => {
+    expect(extensionEntryRelPath(pack({}))).toBe("nimbus.extension.json");
+    expect(rawManifestEntryRelPath({ kind: "starter-pack" })).toBe("nimbus.extension.json");
+  });
+
+  test("extension entry rule unchanged", () => {
+    expect(extensionEntryRelPath(parseWith({}))).toBe("dist/index.js");
+    expect(extensionEntryRelPath(parseWith({ entrypoint: "dist/server.js" }))).toBe(
+      "dist/server.js",
+    );
+    expect(rawManifestEntryRelPath({})).toBe("dist/index.js");
   });
 });
 
