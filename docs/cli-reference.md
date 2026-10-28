@@ -4227,7 +4227,7 @@ nimbus doctor
 - Index total item count (warns if zero — suggests connecting a service)
 - On-call push: when `[oncall.push] enabled = true`, warns if your identity is unresolved (no incident could ever be selected); otherwise reports it enabled
 - Notifications: `[ok]` with the backend and `content` mode when OS notifications work; `[info]` when they are off by your choice (`[notifications] enabled = false`, `NIMBUS_NOTIFICATIONS=off`, a demo gateway) or the availability probe has not finished; `[warn]` with the reason when they should work and do not (an invalid `[notifications]` section, an unavailable backend, a platform with none). Silent against a gateway too old to serve `notifications.status`. See [`nimbus notifications`](#nimbus-notifications)
-- Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`
+- Extensions: `[warn]` naming installed extensions that have no run approval or an approval for older code (`nimbus extension approve <id>`); silent when there are none, when the gateway reports the extension runtime off, or on a gateway that predates run approvals. A gateway from before this release does not report whether the runtime is on, so with `[extensions] runtime = false` it can still warn. An extension that had model access is named again with `add --model to keep model access`; it also gives one `[warn] Extensions: <id> needs <connector> — run: <fix>` line for each connector an installed extension requires that is not connected or never synced
 - Extension registries: `[warn]` naming installed extensions whose source registry is no longer configured (they keep running but get no updates; `nimbus registry add` it again, or remove them), and one `[warn]` per registry whose signed index was generated more than 30 days ago (`nimbus registry refresh <name>`; an index never expires, so a registry that stops publishing can hold back updates). Silent when no registry is configured and no installed extension came from one, and on a gateway too old to serve `registry.list`
 - Role packs: `[info]` naming installed packs whose bundled copy differs from the installed one (`pm 1.0.0 -> 1.1.0`, or `version unknown`, or `a different build`), with the hint `nimbus pack install <id>`; never changes the exit code, and silent when none has an update or the gateway cannot answer `pack.list`
 - Connector migration: `[warn]` for a built-in connector that moved to an extension and is waiting for your answer (`nimbus connector migrate accept <id>`, or `decline <id>`), and for one whose migration failed, with the reason (`nimbus connector migrate retry`); a quiet `[info]` (no effect on the exit code) for one you declined, naming `nimbus connector migrate retry` as the way to change your mind. Silent with no migrations and on a gateway too old to serve `migration.list`. See [`nimbus connector migrate`](#nimbus-connector-migrate-list--accept-id--decline-id--retry)
@@ -4652,6 +4652,16 @@ nimbus extension install com.example.notion
 nimbus extension install com.example.notion --registry main --channel beta
 ```
 
+**Connector requirements.** When the package (or a dependency the install adds) declares `requires.connectors`, the install approval ends with a `Needs:` block, and the output prints it again before the JSON summary, one line per connector:
+
+```text
+Needs:
+  github: not connected — run: nimbus connector auth github
+  slack: connected, never synced — run: nimbus connector sync slack
+```
+
+The other lines are `connected`, `not a connector this Nimbus knows`, and `status unavailable` when Nimbus could not read the connector's credential. An extension-owned connector reads `not connected — run: nimbus extension approve <id> && nimbus extension credential set <id> <name>`. A requirement never stops the install. On a terminal, without `--yes`, the command then walks you through the rest after the JSON summary: it asks whether to approve each new package (each answer is the normal `nimbus extension approve` prompt, so you are asked once per package) and whether to connect each connector that can be connected interactively. Declining an approval skips the connectors that needed it. With `--yes`, or when stdin or stdout is not a terminal, nothing is asked and the printed commands are yours to run.
+
 **The built-in official registry.** Every release carries one registry, named `nimbus-official`: its
 URL and root key are part of the release (root fingerprint `6fb9beb2cf6bdc748c72c03b30b83a9a`). It is
 not in `nimbus registry list`, and you do not add it. A bare `nimbus extension install <id>` searches
@@ -4807,6 +4817,8 @@ No publisher key is cached for it. Remove it and reinstall: nimbus extension rem
 A signed extension's `Publisher:` block ends with `Verified publisher: @<handle> (verified <date>)` or `Unverified publisher`; an extension with no publisher prints `Publisher: (unsigned)`. The same `verifiedPublisher` field is in `--json`, and the remote form (`--registry` / `--remote`) prints the same line for the entry's key.
 
 For an extension installed from a registry the reinstall line names that registry instead (`nimbus extension install com.example.notion --registry <name>`), since the registry supplies the publisher key and `--publisher-key` is refused there.
+
+An installed extension that declares `requires.connectors` also prints a `Requires:` block in the same one-line-per-connector form as `Needs:` above (`requires` in `--json`, with each connector's `state`, `owner`, `fix`, `interactive` and `requiredBy`). `nimbus extension list --json` carries the same `requires` on each item. The block is left out when the gateway has no Vault or the installed manifest cannot be read.
 
 ```bash
 nimbus extension info com.example.notion
