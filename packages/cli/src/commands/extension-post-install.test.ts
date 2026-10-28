@@ -189,7 +189,70 @@ describe("runPostInstallWalk", () => {
         },
       },
     );
-    expect(runs).toEqual(["  not run (run it yourself): rm -rf / && nimbus connector auth github"]);
+    expect(runs).toEqual(["  not run — run it yourself: rm -rf / && nimbus connector auth github"]);
+  });
+});
+
+describe("runConnectFix — && semantics", () => {
+  test("an unrecognised command stops the rest; each remaining one is logged, not run", async () => {
+    const runs: string[] = [];
+    await runConnectFix(
+      {
+        ...bundled("github", true),
+        fix: [
+          "nimbus connector auth github",
+          "nimbus connector frobnicate github",
+          "nimbus extension credential set a.b token",
+        ],
+      },
+      new Set(),
+      {
+        connectorAuth: async (id) => {
+          runs.push(`auth ${id}`);
+        },
+        approve: async (id) => {
+          runs.push(`approve ${id}`);
+        },
+        credentialSet: async (ext, name) => {
+          runs.push(`credential ${ext} ${name}`);
+        },
+        log: (line) => {
+          runs.push(line);
+        },
+      },
+    );
+    expect(runs).toEqual([
+      "auth github",
+      "  not run — run it yourself: nimbus connector frobnicate github",
+      "  not run — run it yourself: nimbus extension credential set a.b token",
+    ]);
+  });
+});
+
+describe("runPostInstallWalk — a declined package", () => {
+  test("a requirement whose fix approves a declined package is skipped, not asked", async () => {
+    const { io, events } = fakeIo({ failApprove: new Set(["nimbus.readwise"]) });
+    const owned: RequirementStatusView = {
+      connector: "readwise",
+      state: "not_connected",
+      owner: { kind: "extension", extensionId: "nimbus.readwise" },
+      fix: [
+        "nimbus extension approve nimbus.readwise",
+        "nimbus extension credential set nimbus.readwise api_token",
+      ],
+      interactive: true,
+      requiredBy: [],
+    };
+    await runPostInstallWalk(io, ["nimbus.readwise", "root"], [owned, bundled("github", true)]);
+    expect(events).toEqual([
+      { kind: "log", line: "Approve each package to run (you can decline any):" },
+      { kind: "approve", id: "nimbus.readwise" },
+      { kind: "log", line: "  nimbus.readwise: not approved (consent denied)" },
+      { kind: "approve", id: "root" },
+      { kind: "log", line: "  readwise: skipped — nimbus.readwise was not approved" },
+      { kind: "confirm", question: "This needs github. Connect now? [y/N] " },
+      { kind: "connect", connector: "github", approved: ["root"] },
+    ]);
   });
 });
 

@@ -3075,6 +3075,43 @@ describe("runExtensionInstall — the post-install walk", () => {
     expect(out.stdout).not.toContain("Approve each package to run");
   });
 
+  for (const [name, stdinTty, args] of [
+    ["no walk when stdin is not a terminal", false, ["install", "."]],
+    ["no walk under -y", true, ["install", ".", "-y"]],
+  ] as const) {
+    test(name, async () => {
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: stdinTty });
+      const install = countingClient([
+        {
+          id: "new.ext",
+          version: "1.0.0",
+          installPath: "/p",
+          connectorRequirements: [{ ...REQ, interactive: true }],
+        },
+      ]);
+      const made: string[] = [];
+      const asked: string[] = [];
+      await runExtensionInstall(install.client, [...args], ["."], {
+        socketPath: "/sock",
+        makeClient: (p) => {
+          made.push(p);
+          return countingClient([]).client;
+        },
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+        connectorAuth: async (id) => {
+          asked.push(`auth ${id}`);
+        },
+      });
+      expect(made).toEqual([]);
+      expect(asked).toEqual([]);
+      expect(install.calls.map((c) => c.method)).toEqual(["extension.install"]);
+    });
+  }
+
   test("the walk never approves on the install's client", async () => {
     setTty(true);
     const install = countingClient([

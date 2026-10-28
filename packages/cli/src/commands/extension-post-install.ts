@@ -37,6 +37,7 @@ export async function runPostInstallWalk(
   if (!io.attended) return;
   // Approvals first: a continuity owner's credential set needs its run grant.
   const approved = new Set<string>();
+  const declined = new Set<string>();
   if (toApprove.length > 0) {
     io.log("Approve each package to run (you can decline any):");
     for (const id of toApprove) {
@@ -44,6 +45,7 @@ export async function runPostInstallWalk(
         await io.approve(id);
         approved.add(id);
       } catch (e) {
+        declined.add(id);
         io.log(`  ${stripControl(id)}: not approved (${messageOf(e)})`);
       }
     }
@@ -55,6 +57,13 @@ export async function runPostInstallWalk(
       io.log(`  ${connector}: connect it with: ${req.fix.map(stripControl).join(" && ")}`);
       continue;
     }
+    // A fix that would approve a package the owner just declined would raise the same prompt
+    // again; say so once instead of asking.
+    const refused = declinedApprovalIn(req, declined);
+    if (refused !== undefined) {
+      io.log(`  ${connector}: skipped — ${stripControl(refused)} was not approved`);
+      continue;
+    }
     try {
       if (await io.confirm(`This needs ${connector}. Connect now? [y/N] `)) {
         await io.connect(req, approved);
@@ -63,6 +72,18 @@ export async function runPostInstallWalk(
       io.log(`  ${connector}: not connected (${messageOf(e)})`);
     }
   }
+}
+
+/** The first package a requirement's fix would approve that the owner declined, if any. */
+function declinedApprovalIn(
+  req: RequirementStatusView,
+  declined: ReadonlySet<string>,
+): string | undefined {
+  for (const command of req.fix) {
+    const parsed = parseFixCommand(command);
+    if (parsed?.kind === "approve" && declined.has(parsed.extensionId)) return parsed.extensionId;
+  }
+  return undefined;
 }
 
 /** One fix command, parsed from its fixed prefix. Never handed to a shell. */
@@ -105,18 +126,21 @@ export type ConnectRunners = {
 
 /**
  * Runs a requirement's fix commands in order, as `&&` would: a throw stops the rest. An approval
- * the walk already did is skipped; a command this CLI does not recognise is logged, not run.
+ * the walk already did is skipped. A command this CLI does not recognise is never run, and it
+ * stops the sequence too: it and every command after it are logged for the owner to run.
  */
 export async function runConnectFix(
   req: RequirementStatusView,
   alreadyApproved: ReadonlySet<string>,
   runners: ConnectRunners,
 ): Promise<void> {
-  for (const command of req.fix) {
+  for (const [i, command] of req.fix.entries()) {
     const parsed = parseFixCommand(command);
     if (parsed === undefined) {
-      runners.log(`  not run (run it yourself): ${stripControl(command)}`);
-      continue;
+      for (const rest of req.fix.slice(i)) {
+        runners.log(`  not run — run it yourself: ${stripControl(rest)}`);
+      }
+      return;
     }
     switch (parsed.kind) {
       case "connector-auth":
