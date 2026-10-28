@@ -28,6 +28,7 @@ import {
   ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
+  rollbackFailuresOf,
 } from "../install-from-local.ts";
 import {
   type PlannedPackage,
@@ -349,9 +350,12 @@ export async function installVerifiedRegistryPackage(
     ) {
       throw e;
     }
-    throw new RegistryError(
-      "ERR_REGISTRY_INSTALL_REFUSED",
-      e instanceof Error ? e.message : String(e),
+    // The refusal code changes; what the plan rollback could not undo is carried over unchanged.
+    const failures = rollbackFailuresOf(e);
+    throw Object.assign(
+      new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", e instanceof Error ? e.message : String(e)),
+      { cause: e },
+      failures.length === 0 ? {} : { rollbackFailures: failures },
     );
   }
   setExtensionSource(deps.db, installed.id, { registry: reg.name, rootFingerprint, channel });

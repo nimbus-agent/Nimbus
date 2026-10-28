@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   publisherKeyFingerprint,
+  RegistryError,
   signTrustStatement,
   type UnsignedTrustStatement,
 } from "@nimbus-dev/registry-format";
@@ -28,6 +29,7 @@ import { forwardDeps } from "../dependency-store.ts";
 import {
   type ExtensionInstallApprovalRequest,
   installExtensionFromLocalDirectory,
+  rollbackFailuresOf,
 } from "../install-from-local.ts";
 import { writePublisherKey } from "../publisher-keys.ts";
 import { recordTrustStatements } from "../trust/trust-store.ts";
@@ -906,6 +908,36 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(listExtensions(db)).toEqual([]);
     expect(forwardDeps(db, ID)).toEqual([]);
     expect(forwardDeps(db, DEP)).toEqual([]);
+    expect(existsSync(join(extensionsDir, DEP))).toBe(false);
+    expect(existsSync(join(extensionsDir, ID))).toBe(false);
+  });
+
+  test("a rollback step that fails is reported on the original error, and the other steps still run", async () => {
+    await mainWithDep();
+    const d = planDeps();
+    const pkg = await fetchVerifiedRegistryPackage(
+      d,
+      { id: ID, registry: "main" },
+      join(tmp, "stage-root"),
+    );
+    // Every rollback `clearDeps` now throws; nothing before the rollback reads this table.
+    db.run("DROP TABLE extension_dependency");
+    let err: unknown;
+    try {
+      await installVerifiedRegistryPackage(d, { ...pkg, entryHash: "0".repeat(64) }, "stable");
+    } catch (e) {
+      err = e;
+    }
+    // The original refusal stays the primary error: same class, same code.
+    expect(err).toBeInstanceOf(RegistryError);
+    expect((err as RegistryError).code).toBe("ERR_REGISTRY_HASH_MISMATCH");
+    expect(rollbackFailuresOf(err).map((f) => [f.step, f.id])).toEqual([
+      ["clearDeps", ID],
+      ["clearDeps", DEP],
+    ]);
+    expect((err as Error).cause).toBeInstanceOf(AggregateError);
+    // The row deletion and the directory removal ran anyway.
+    expect(listExtensions(db)).toEqual([]);
     expect(existsSync(join(extensionsDir, DEP))).toBe(false);
     expect(existsSync(join(extensionsDir, ID))).toBe(false);
   });

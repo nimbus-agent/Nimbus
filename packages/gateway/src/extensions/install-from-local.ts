@@ -507,27 +507,64 @@ async function installRootNode(
   });
 }
 
+/** The rollback steps of a failed plan install that themselves failed (see {@link withRollbackFailures}). */
+export type RollbackFailure = {
+  readonly step: "clearDeps" | "deleteExtension" | "removeDirectory";
+  readonly id: string | null;
+  readonly dir: string;
+  readonly error: unknown;
+};
+
+/** The rollback failures a plan install attached to the error it threw; empty when it attached none. */
+export function rollbackFailuresOf(e: unknown): readonly RollbackFailure[] {
+  if (typeof e !== "object" || e === null || !("rollbackFailures" in e)) return [];
+  const failures: unknown = e.rollbackFailures;
+  return Array.isArray(failures) ? (failures as RollbackFailure[]) : [];
+}
+
 /**
  * Undoes every package this plan created, newest first: its edges, its row (with any run grant,
  * `deleteExtensionById`) and its directory. Packages present before the plan are never touched;
- * audit and egress rows stay. Best-effort per step: the original failure is the error that matters.
+ * audit and egress rows stay. Each step runs on its own, so one failing step never skips the
+ * others, and every failure is RETURNED for the caller to report, never swallowed.
  */
-function rollbackCreatedPackages(db: Database, created: readonly CreatedPackage[]): void {
-  for (const pkg of [...created].reverse()) {
-    if (pkg.id !== null) {
-      try {
-        clearDeps(db, pkg.id);
-        deleteExtensionById(db, pkg.id);
-      } catch {
-        /* best-effort rollback */
-      }
-    }
+function rollbackCreatedPackages(
+  db: Database,
+  created: readonly CreatedPackage[],
+): RollbackFailure[] {
+  const failures: RollbackFailure[] = [];
+  const attempt = (step: RollbackFailure["step"], pkg: CreatedPackage, run: () => void): void => {
     try {
-      rmSync(pkg.dir, { recursive: true, force: true });
-    } catch {
-      /* best-effort rollback */
+      run();
+    } catch (error) {
+      failures.push({ step, id: pkg.id, dir: pkg.dir, error });
     }
+  };
+  for (const pkg of [...created].reverse()) {
+    const id = pkg.id;
+    if (id !== null) {
+      attempt("clearDeps", pkg, () => clearDeps(db, id));
+      attempt("deleteExtension", pkg, () => deleteExtensionById(db, id));
+    }
+    attempt("removeDirectory", pkg, () => rmSync(pkg.dir, { recursive: true, force: true }));
   }
+  return failures;
+}
+
+/**
+ * The ORIGINAL install failure, still the primary error (same class, code and message), carrying
+ * any rollback step that failed: as `rollbackFailures`, and as its `cause` when it has none yet.
+ */
+function withRollbackFailures(e: unknown, failures: readonly RollbackFailure[]): unknown {
+  if (failures.length === 0 || !(e instanceof Error)) return e;
+  Object.assign(e, { rollbackFailures: failures });
+  if (e.cause === undefined) {
+    e.cause = new AggregateError(
+      failures.map((f) => f.error),
+      `rollback incomplete: ${failures.map((f) => `${f.step} ${f.id ?? f.dir}`).join(", ")}`,
+    );
+  }
+  return e;
 }
 
 /** Refused unless the installed entry file is the one the signed index listed (I44). */
@@ -631,8 +668,7 @@ async function installApprovedPlan(
       options.approve === undefined ? "not_required" : "approved",
     );
   } catch (e) {
-    rollbackCreatedPackages(options.db, created);
-    throw e;
+    throw withRollbackFailures(e, rollbackCreatedPackages(options.db, created));
   } finally {
     if (stagingDir !== undefined) {
       try {

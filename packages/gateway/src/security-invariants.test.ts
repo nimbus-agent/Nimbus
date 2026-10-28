@@ -7395,6 +7395,21 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(stagedDepFn.slice(0, stagedDepFn.indexOf("\n}\n"))).toMatch(
       /dep: StagedDependency,[\s\S]*setExtensionSource\(options\.db, dep\.id, \{\s*registry: dep\.reg\.name,/,
     );
+    // `StagedDependency` is a structural type and `registryPlan` an option, so what makes the
+    // dependency source write above verified-chain-only is WHO can hand the plan installer a
+    // resolver: only the registry installer names `registryPlan` (besides install-from-local.ts,
+    // which declares and reads it) or the resolver factory (besides its defining module).
+    const production = files.filter((f) => !f.rel.endsWith(".test.ts"));
+    const namingPlan = production
+      .filter((f) => f.rel !== "extensions/install-from-local.ts")
+      .filter((f) => /\bregistryPlan\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(namingPlan).toEqual(["extensions/registry/install-from-registry.ts"]);
+    const namingFactory = production
+      .filter((f) => f.rel !== "extensions/registry/registry-dependency-fetcher.ts")
+      .filter((f) => /\bcreateRegistryDependencyResolver\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(namingFactory).toEqual(["extensions/registry/install-from-registry.ts"]);
   });
 
   test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
