@@ -48,6 +48,12 @@ export class TinyIpcClient {
   private buffer = "";
   private nextId = 1;
   private readonly pending = new Map<number, (v: RpcReply) => void>();
+  private readonly notifyHandlers = new Map<string, (params: Record<string, unknown>) => void>();
+
+  /** Routes a server notification (`consent.request`, say) to `handler`; one handler per method. */
+  onNotification(method: string, handler: (params: Record<string, unknown>) => void): void {
+    this.notifyHandlers.set(method, handler);
+  }
 
   connect(socketPath: string): Promise<void> {
     return new Promise<void>((resolve, reject) => {
@@ -76,7 +82,12 @@ export class TinyIpcClient {
       return;
     }
     const id = msg["id"];
-    if (typeof id !== "number") return;
+    if (typeof id !== "number") {
+      const method = msg["method"];
+      const handler = typeof method === "string" ? this.notifyHandlers.get(method) : undefined;
+      handler?.((msg["params"] as Record<string, unknown> | undefined) ?? {});
+      return;
+    }
     const cb = this.pending.get(id);
     if (cb === undefined) return;
     this.pending.delete(id);
@@ -113,6 +124,10 @@ export async function startRealGateway(
   opts?: { configFiles?: Record<string, string>; env?: Record<string, string> },
 ): Promise<{
   socketPath: string;
+  /** Where the gateway stages sandboxed children (`PlatformPaths.sandboxDir`). */
+  sandboxDir: string;
+  /** Everything the gateway has written to stdout/stderr so far (for failure messages). */
+  output: () => string;
   stop: () => Promise<void>;
 }> {
   const tmp = mkdtempSync(join(tmpdir(), `nimbus-e2e-${tag}-`));
@@ -174,6 +189,8 @@ export async function startRealGateway(
   let stopped = false;
   return {
     socketPath: paths.socketPath,
+    sandboxDir: paths.sandboxDir,
+    output: () => log,
     async stop(): Promise<void> {
       if (stopped) return;
       stopped = true;

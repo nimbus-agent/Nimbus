@@ -9455,6 +9455,109 @@ describe("I49 — extension code runs for evaluation only offline, without crede
     ]);
   });
 
+  test("behavioural: a gateway-hosted eval the LOCAL owner denies at the real executor gate runs nothing and stages nothing", async () => {
+    const { ToolExecutor, NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { LocalIndex } = await import("./index/local-index.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const { installExtensionFromLocalDirectory } = await import(
+      "./extensions/install-from-local.ts"
+    );
+    const { evaluateInstalledExtensions, EvalApprovalDenied } = await import(
+      "./extensions/installed-eval.ts"
+    );
+    const { pkg, sandboxDir } = writePackage();
+    const root = resolve(pkg, "..");
+    const db = new Database(":memory:");
+    try {
+      LocalIndex.ensureSchema(db);
+      const extensionsDir = join(root, "data", "extensions");
+      await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: pkg,
+        approve: async () => true,
+      });
+      const raised: string[] = [];
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async (prompt: string) => {
+            raised.push(prompt);
+            return false;
+          },
+        },
+        { recordAudit: () => {} },
+        { dispatch: async () => ({}) },
+        undefined,
+        NULL_EGRESS_SINK,
+        NO_POLICY_OVERLAY,
+      );
+      let clients = 0;
+      const err = await evaluateInstalledExtensions(["com.example.i49"], {
+        db,
+        vault: new MockVault(),
+        env: {
+          platform: process.platform,
+          protectedRoots: [join(root, "data")],
+          runtimeReadPaths: [],
+          realpath: (p) => realpathSync.native(p),
+        },
+        ownerGate: async (a) => (await exec.gate(a)) === "proceed",
+        sandboxDir,
+        runtimeReadPaths: [],
+        canConfine: () => null,
+        createClient: () => {
+          clients += 1;
+          throw new Error("an eval client was built after a denial");
+        },
+      }).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toBeInstanceOf(EvalApprovalDenied);
+      // The owner WAS asked (the extension passed every pre-consent check), once, for this type.
+      expect(raised).toHaveLength(1);
+      expect(raised[0]).toContain("Type: extension.eval");
+      expect(raised[0]).toContain("com.example.i49");
+      expect(clients).toBe(0);
+      expect(readdirSync(sandboxDir)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("source pin: the installed-extension eval asks the owner before anything can run", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/installed-eval.ts"));
+    const bodyOf = (name: string): string => {
+      const start = src.search(new RegExp(String.raw`\bfunction\s+${name}\s*\(`));
+      expect(start).toBeGreaterThanOrEqual(0);
+      const next = src.slice(start + 1).search(/\n(?:export\s+)?(?:async\s+)?function\s/);
+      return next === -1 ? src.slice(start) : src.slice(start, start + 1 + next);
+    };
+    // The entry point: the one approval strictly before the evaluation loop.
+    const entry = bodyOf("evaluateInstalledExtensions");
+    const ask = entry.search(/\bawait\s+askOwnerOnce\s*\(/);
+    const evaluate = entry.search(/\bevaluateEach\s*\(/);
+    expect(ask).toBeGreaterThanOrEqual(0);
+    expect(evaluate).toBeGreaterThan(ask);
+    // The approval is the executor gate for `extension.eval`, and anything but `true` throws.
+    const askBody = bodyOf("askOwnerOnce");
+    expect(askBody).toMatch(/\bdeps\.ownerGate\s*\(/);
+    expect(askBody).toMatch(/\btype:\s*EXTENSION_EVAL_ACTION_TYPE\b/);
+    expect(askBody).toMatch(
+      /if\s*\(\s*approved\s*!==\s*true\s*\)\s*throw\s+new\s+EvalApprovalDenied/,
+    );
+    expect(src).toMatch(/EXTENSION_EVAL_ACTION_TYPE\s*=\s*"extension\.eval"/);
+    // The ONE run call (`io.run(`, never a direct `runEvalSession(`) lives in evaluateOne, which
+    // only evaluateEach calls — so no code path reaches a spawn without passing the approval.
+    expect([...src.matchAll(/\brunEvalSession\s*\(/g)]).toHaveLength(0);
+    expect([...src.matchAll(/\.run\s*\(/g)]).toHaveLength(1);
+    expect(bodyOf("evaluateOne")).toMatch(/\bio\.run\s*\(/);
+    const evaluateOneCallers = [...src.matchAll(/\bevaluateOne\s*\(/g)].length;
+    expect(evaluateOneCallers).toBe(2); // its declaration and the one call
+    expect(bodyOf("evaluateEach")).toMatch(/\bevaluateOne\s*\(/);
+    expect([...src.matchAll(/\bevaluateEach\s*\(/g)]).toHaveLength(2);
+  });
+
   test("the eval role's module graph reaches no Vault, DB, IPC, egress or executor, nor the gateway", () => {
     // Static value edges and re-exports (`import type` is erased) plus dynamic `import()` edges,
     // from the role: the graph the role actually evaluates, including its in-run imports.

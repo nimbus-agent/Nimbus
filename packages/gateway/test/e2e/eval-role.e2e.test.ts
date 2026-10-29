@@ -1,7 +1,7 @@
 // The `__nimbus-eval` role end to end: a REAL extension package (the `nimbus scaffold mcp` output
-// plus four tools, bundled to `dist/index.js` exactly as extension-runtime.e2e builds its
-// fixture) is evaluated by a REAL role process, which stages it and spawns it under this OS's REAL
-// sandbox (`network: []`, zero filesystem grants, identity `eval.<serviceId>`). Every other eval
+// plus four tools, bundled to `dist/index.js` by the shared `_fixtures/eval-fixture-package.ts`)
+// is evaluated by a REAL role process, which stages it and spawns it under this OS's REAL sandbox
+// (`network: []`, zero filesystem grants, identity `eval.<serviceId>`). Every other eval
 // test drives the runtime with a fake client; only this one proves the whole path — the document on
 // stdout, the score over real MCP replies, the network denial inside the confined child, a server
 // that dies at startup or mid-call, determinism across two runs, and where the child's stderr goes.
@@ -10,88 +10,33 @@
 // LOCALAPPDATA / HOME / XDG_CACHE_HOME at this file's temp dir: no stage is ever made under the
 // real install.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../src/platform/sandbox/sandbox-cwd.ts";
-import { createSandboxRunner } from "../../src/platform/sandbox/sandbox-runner.ts";
+import {
+  buildEvalFixturePackage,
+  type CommandResult,
+  EVAL_FIXTURE_EXPECTED,
+  EVAL_FIXTURE_ID,
+  EVAL_FIXTURE_STDERR_MARKER,
+  EVAL_FIXTURE_SUITE,
+  evalSandboxAvailable,
+  GATEWAY_ENTRY,
+  installDefaultHelper,
+  REPO,
+  runCommand,
+} from "./_fixtures/eval-fixture-package.ts";
 
-const REPO = resolve(import.meta.dir, "..", "..", "..", "..");
-const CLI_ENTRY = join(REPO, "packages", "cli", "src", "index.ts");
-const GATEWAY_ENTRY = join(REPO, "packages", "gateway", "src", "index.ts");
 const IS_CI = process.env["CI"] === "true";
 
-const EXTENSION_ID = "e2e.evalecho";
-const STDERR_MARKER = "NIMBUS-EVAL-E2E-STDERR-MARKER";
+const EXTENSION_ID = EVAL_FIXTURE_ID;
+const STDERR_MARKER = EVAL_FIXTURE_STDERR_MARKER;
 /** CI runners are 13-18x slower than a dev machine at temp-dir work; one role run stays well inside. */
 const ROLE_TIMEOUT_MS = 240_000;
 
-/** The nearest `node_modules/<pkg>` at or above `from` (see user-mcp.e2e.test.ts). */
-function installedPackageDir(pkg: string, from: string): string {
-  for (let dir = from; ; dir = dirname(dir)) {
-    const candidate = join(dir, "node_modules", ...pkg.split("/"));
-    if (existsSync(candidate)) return candidate;
-    if (dirname(dir) === dir) throw new Error(`${pkg} is not installed at or above ${from}`);
-  }
-}
-
-/** The helper CI (and `bun run build:sandbox-helper:win32`) builds in this checkout. */
-const WIN_BUILT_HELPER = join(
-  import.meta.dir,
-  "../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe",
-);
-
-/** Whether this platform's sandbox can confine a no-network policy here (see user-mcp.e2e). */
-const sandboxAvailable = await (async () => {
-  const prior = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
-  if (process.platform === "win32" && prior === undefined) {
-    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = WIN_BUILT_HELPER;
-  }
-  try {
-    const runner = await createSandboxRunner();
-    return (
-      runner.canConfine({
-        id: "eval-role-e2e-probe",
-        permissions: { network: [], filesystem: { read: [], write: [] } },
-      }) === null
-    );
-  } catch {
-    return false;
-  } finally {
-    if (prior === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
-  }
-})();
-
-/**
- * The eval child is spawned through `wrapServerSpecInCwd`'s `__nimbus-sandbox` re-exec, whose env
- * (I1) never carries `NIMBUS_SANDBOX_HELPER_PATH`, so the wrapper resolves the helper next to
- * `process.execPath`. As in extension-runtime.e2e, the checkout's helper is copied there for this
- * file's lifetime only, and removed afterwards only if this file put it there.
- */
-function installDefaultHelper(): () => void {
-  if (process.platform !== "win32") return () => {};
-  const defaultHelper = join(dirname(process.execPath), "nimbus-sandbox-helper.exe");
-  if (existsSync(defaultHelper) || !existsSync(WIN_BUILT_HELPER)) return () => {};
-  copyFileSync(WIN_BUILT_HELPER, defaultHelper);
-  return () => {
-    try {
-      rmSync(defaultHelper, { force: true });
-    } catch {
-      /* best-effort -- a locked file here must not mask the test's real outcome */
-    }
-  };
-}
+const sandboxAvailable = await evalSandboxAvailable("eval-role-e2e-probe");
 
 /** A skip and a pass read the same in a CI summary; on CI an unconfinable sandbox fails by name. */
 describe.skipIf(sandboxAvailable || !IS_CI)("eval role e2e — CI sandbox precondition", () => {
@@ -105,151 +50,7 @@ describe.skipIf(sandboxAvailable || !IS_CI)("eval role e2e — CI sandbox precon
   });
 });
 
-/**
- * The entry: the scaffold's server (whose `echo` returns its input text) plus `fail` (an MCP
- * error reply, after writing a marker to stderr), `net` (a real fetch, reported as JSON so a
- * suite can match the error branch by path), `structured` (an `outputSchema` tool replying with
- * `structuredContent` AND a text block: through the real `@mastra/mcp` that reply is reshaped,
- * so only this case proves the runtime recovers the text the tool sent) and `die` (the server
- * process exits inside the call). `@mastra/mcp` reconnects once on a dropped transport and retries
- * the call on a new child from the same spec: `die` dies again, so the case is scored `crash`, and
- * the cases after it run on a fresh spawn from a fresh stage. This pins that v1 bound.
- */
-const ENTRY_TS = `import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { z } from "zod";
-import { createConnection } from "node:net";
-import { createServer } from "./server.ts";
-
-const server = createServer();
-server.registerTool(
-  "fail",
-  { description: "Always fails", inputSchema: {} },
-  async () => {
-    process.stderr.write("${STDERR_MARKER}\\n");
-    return { isError: true, content: [{ type: "text", text: "BOOM" }] };
-  },
-);
-server.registerTool(
-  "net",
-  { description: "Try to reach the network", inputSchema: {} },
-  // A raw TCP connect to an IP literal, never fetch(): no DNS, so a confined child fails at once
-  // (no route under bwrap's empty netns, denied under AppContainer / SBPL) instead of hanging on
-  // name resolution or taking the runtime down, which made the Linux outcome vary run to run.
-  async () => {
-    const outcome = await new Promise<{ fetched: boolean; error?: string }>((resolve) => {
-      try {
-        const sock = createConnection({ host: "1.1.1.1", port: 80 });
-        sock.setTimeout(3_000, () => {
-          sock.destroy();
-          resolve({ fetched: false, error: "timeout" });
-        });
-        sock.once("connect", () => {
-          sock.destroy();
-          resolve({ fetched: true });
-        });
-        sock.once("error", (e) => resolve({ fetched: false, error: e.message }));
-      } catch (e) {
-        resolve({ fetched: false, error: e instanceof Error ? e.message : String(e) });
-      }
-    });
-    return { content: [{ type: "text", text: JSON.stringify(outcome) }] };
-  },
-);
-server.registerTool(
-  "structured",
-  {
-    description: "Structured output plus a text block",
-    inputSchema: {},
-    outputSchema: { answer: z.number() },
-  },
-  async () => ({
-    structuredContent: { answer: 42 },
-    content: [{ type: "text", text: "STRUCTURED-TEXT" }],
-  }),
-);
-server.registerTool(
-  "die",
-  { description: "Exits mid-call", inputSchema: {} },
-  async () => {
-    process.exit(1);
-  },
-);
-await server.connect(new StdioServerTransport());
-`;
-
-const SUITE = {
-  format: 1,
-  name: "basic",
-  cases: [
-    {
-      name: "echo-exact",
-      tool: "echo",
-      input: { text: "hello" },
-      expect: { rubric: "exact", value: "hello" },
-    },
-    {
-      name: "echo-json-match",
-      tool: "echo",
-      input: { text: '{"greeting":"hi","n":2}' },
-      expect: { rubric: "json-match", value: { greeting: "hi" } },
-    },
-    {
-      name: "fail-is-an-error",
-      tool: "fail",
-      input: {},
-      expect: { rubric: "exact", value: "BOOM", error: true },
-    },
-    {
-      name: "echo-deliberately-wrong",
-      tool: "echo",
-      input: { text: "hello" },
-      expect: { rubric: "exact", value: "goodbye" },
-    },
-    {
-      name: "die-is-a-crash",
-      tool: "die",
-      input: {},
-      expect: { rubric: "exact", value: "never" },
-    },
-    {
-      name: "structured-text",
-      tool: "structured",
-      input: {},
-      expect: { rubric: "exact", value: "STRUCTURED-TEXT" },
-    },
-    {
-      name: "net-is-blocked",
-      tool: "net",
-      input: {},
-      expect: { rubric: "one-of", path: "/fetched", values: [false] },
-    },
-  ],
-};
-
-type RoleResult = { code: number; stdout: string; stderr: string; ms: number };
-
-async function run(argv: string[], cwd: string, env?: Record<string, string>): Promise<RoleResult> {
-  const started = Date.now();
-  const proc = Bun.spawn(argv, {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-    windowsHide: true,
-    ...(env === undefined ? {} : { env }),
-  });
-  const timer = setTimeout(() => proc.kill(), ROLE_TIMEOUT_MS);
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    return { code, stdout, stderr, ms: Date.now() - started };
-  } finally {
-    clearTimeout(timer);
-  }
-}
+type RoleResult = CommandResult;
 
 type CaseResult = {
   suite: string;
@@ -284,7 +85,6 @@ function documentOf(r: RoleResult): RoleDocument {
 describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed extension", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-eval-e2e-"));
   const scaffoldRoot = join(tmp, "scaffold");
-  const project = join(scaffoldRoot, "evalecho");
   const pkg = join(tmp, "pkg");
   const deadPkg = join(tmp, "dead-pkg");
   const home = join(tmp, "home");
@@ -302,48 +102,20 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
   let first: RoleResult | undefined;
 
   function evalRole(dir: string): Promise<RoleResult> {
-    return run(["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir], REPO, roleEnv);
+    return runCommand(
+      ["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir],
+      REPO,
+      roleEnv,
+      ROLE_TIMEOUT_MS,
+    );
   }
 
   beforeAll(async () => {
     for (const d of Object.values(roleEnv).filter((v) => v.startsWith(home))) {
       mkdirSync(d, { recursive: true });
     }
-    // 1. Scaffold through the real CLI.
-    mkdirSync(scaffoldRoot, { recursive: true });
-    const scaffold = await run(["bun", CLI_ENTRY, "scaffold", "mcp", "evalecho"], scaffoldRoot);
-    if (scaffold.code !== 0) {
-      throw new Error(`scaffold exited ${scaffold.code}:\n${scaffold.stdout}\n${scaffold.stderr}`);
-    }
-
-    // 2. Link the two dependencies for the BUILD only (the bundle carries them).
-    mkdirSync(join(project, "node_modules", "@modelcontextprotocol"), { recursive: true });
-    symlinkSync(
-      realpathSync(installedPackageDir("@modelcontextprotocol/sdk", join(REPO, "packages", "cli"))),
-      join(project, "node_modules", "@modelcontextprotocol", "sdk"),
-      "junction",
-    );
-    symlinkSync(
-      realpathSync(installedPackageDir("zod", join(REPO, "packages", "cli"))),
-      join(project, "node_modules", "zod"),
-      "junction",
-    );
-
-    // 3. Bundle the entry into the package.
-    writeFileSync(join(project, "src", "index.ts"), ENTRY_TS, "utf8");
-    const build = await run(
-      ["bun", "build", "src/index.ts", "--target=bun", "--outfile", join(pkg, "dist", "index.js")],
-      project,
-    );
-    if (build.code !== 0) {
-      throw new Error(`bun build exited ${build.code}:\n${build.stdout}\n${build.stderr}`);
-    }
-
-    // 4. Manifest (no grants at all) and the suite.
-    const manifest = { id: EXTENSION_ID, version: "1.0.0", entry: "dist/index.js" };
-    writeFileSync(join(pkg, "nimbus.extension.json"), JSON.stringify(manifest, null, 2), "utf8");
-    mkdirSync(join(pkg, "evals"), { recursive: true });
-    writeFileSync(join(pkg, "evals", "basic.eval.json"), JSON.stringify(SUITE, null, 2), "utf8");
+    // 1-4. The shared fixture package (scaffold, link, bundle, manifest + suite).
+    await buildEvalFixturePackage(scaffoldRoot, pkg);
 
     // 5. A package whose server exits before it ever answers.
     mkdirSync(join(deadPkg, "dist"), { recursive: true });
@@ -356,7 +128,7 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
     );
     writeFileSync(
       join(deadPkg, "evals", "basic.eval.json"),
-      JSON.stringify(SUITE, null, 2),
+      JSON.stringify(EVAL_FIXTURE_SUITE, null, 2),
       "utf8",
     );
 
@@ -382,14 +154,9 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
       expect(doc.version).toBe("1.0.0");
       // On a mismatch the role's stderr (the extension child's included) is the only clue on a CI leg.
       if (doc.report.passed !== 5) console.error(first.stderr);
-      expect(doc.report.cases).toBe(7);
-      expect(doc.report.passed).toBe(5);
-      expect(doc.report.score).toBe(71); // floor(5 * 100 / 7)
-      expect(doc.report.rubrics).toEqual({
-        exact: { cases: 5, passed: 3 },
-        "json-match": { cases: 1, passed: 1 },
-        "one-of": { cases: 1, passed: 1 },
-      });
+      // 7 cases, 5 passed, score floor(5 * 100 / 7) = 71: the same numbers eval-extension.e2e
+      // holds the gateway's installed path to.
+      expect(doc.report).toMatchObject(EVAL_FIXTURE_EXPECTED);
       const byName = new Map(doc.report.results.map((r) => [r.case, r]));
       for (const r of doc.report.results) expect(r.suite).toBe("evals/basic.eval.json");
       expect(byName.get("echo-exact")).toMatchObject({ pass: true, reason: null });
