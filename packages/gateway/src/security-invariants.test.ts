@@ -9439,12 +9439,19 @@ describe("I49 — extension code runs for evaluation only offline, without crede
     expect(builder).toMatch(/\bextensionProcessEnv\s*\(\s*\{\s*\}\s*\)/);
     expect(builder).toMatch(/\bnetwork:\s*\[\s*\]/);
     expect(builder).not.toMatch(/credential/i);
-    // runEvalSession has exactly one production caller: the eval role.
+    // runEvalSession is reached from exactly two production modules: the eval role (`--package`)
+    // and the gateway's installed-extension eval, which runs it only after the owner approved
+    // `extension.eval`. Any REFERENCE counts, not only a call: `deps.run ?? runEvalSession` is a
+    // caller that never writes `runEvalSession(`.
     const callers = files
-      .filter((f) => /\brunEvalSession\s*\(/.test(stripComments(f.contents)))
+      .filter((f) => /\brunEvalSession\b/.test(stripComments(f.contents)))
       .map((f) => f.rel)
       .sort();
-    expect(callers).toEqual(["extensions/eval/eval-role.ts", "extensions/eval/eval-runtime.ts"]);
+    expect(callers).toEqual([
+      "extensions/eval/eval-role.ts",
+      "extensions/eval/eval-runtime.ts",
+      "extensions/installed-eval.ts",
+    ]);
   });
 
   test("the eval role's module graph reaches no Vault, DB, IPC, egress or executor, nor the gateway", () => {
