@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793291331453,
+  "lastUpdate": 1793299848674,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a03f23855a43b4f53b9d4c84b99abf24a31febb3",
-          "message": "chore: release main (#1160)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.1.0</summary>\n\n##\n[2.1.0](https://github.com/nimbus-agent/Nimbus/compare/v2.0.0...v2.1.0)\n(2026-08-12)\n\n\n### Features\n\n* **connectors:** index GitHub PR reviews and size statistics\n([#1159](https://github.com/nimbus-agent/Nimbus/issues/1159))\n([fb8a0c7](https://github.com/nimbus-agent/Nimbus/commit/fb8a0c7a1caeb8ffcf292b9b1f5ca472511e6855))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-12T15:18:18Z",
-          "tree_id": "d2268444704a1e023c287f1a03f23a6c27a8f955",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a03f23855a43b4f53b9d4c84b99abf24a31febb3"
-        },
-        "date": 1786548589634,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 334.8156378499978,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.76923380000517,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 278.8261307499997,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4e34677c274f03103a4a23f7ac625414a1921fff",
+          "message": "feat(eval): nimbus eval --package runs an extension's eval suites in the sandbox, offline and without credentials (I49) (#1819)\n\nPhase 9.5 project 5 (`nimbus eval`), PR 2 of 5: **evals run.** An author\ncan run `nimbus eval --package <dir>`, and the extension's eval suites\nrun in the sandbox with no network and no credentials. This PR adds\ninvariant **I49** and static rule **D38**. There is no migration.\n\n## What changes\n\n- **`__nimbus-eval`, a fifth gateway-executable role**\n(`extensions/eval/eval-role.ts`). It loads and verifies a package\ndirectory and copies its package files into a run-unique stage under\n`ext-stage/eval-<uuid>`. The copy is re-digested and checked against the\nsource files. It then spawns the extension's MCP server in the sandbox\nand calls one tool per eval case. Each case has a 30 s deadline, clipped\nto what is left of the 10 min run. The replies are scored with\n`registry-format`'s judge, and the role prints **exactly one JSON\ndocument**.\n- The role never opens the DB, Vault or IPC. The CLI cannot import\ngateway code, so it spawns this role.\n- **Signatures:** a signed package is checked against the key embedded\nin its manifest; an unsigned dev package runs.\n- **The eval sandbox:** policy id `eval.<serviceId>` (never the run\nprofile's `ext.<serviceId>`). `network: []`, write `[]`, read only the\nruntime paths, and env `extensionProcessEnv({})` with baseline keys\nonly. It is a zero-grant run by construction, and a package's declared\nnetwork and credentials are ignored.\n- **The runner** (`eval-runtime.ts`):\n  - It runs as an ordered sequence of named steps.\n  - After a timeout or crash it respawns from a fresh stage.\n- When the run deadline, not the case deadline, is what cuts a case\nshort, the run fails as `ERR_EVAL_RUN_TIMEOUT`. Its own budget is never\nscored against the extension.\n  - Every disconnect is raced against 2 s.\n- Every stage is removed in a final pass, and stages older than 1 h left\nby a crashed run are swept.\n- **`nimbus eval --package <dir> [--suite <file>] [--json]`** (CLI):\n- **Bounds:** stdout is capped at 8 MiB and stderr keeps a rolling last\n64 KiB, so memory stays bounded while reading. A 12 min wall clock ends\nin a hard kill.\n- **Validation:** the document is checked strictly, and the score must\nagree with its counts and per-case results.\n- **Exit codes:** 0 when the eval ran, 2 on an eval or usage error.\n`--extension` and `--installed` answer \"not available yet\" (PRs 3 and\n5).\n- **I49 / D38.** Extension code runs for evaluation only through\n`runEvalSession`, under a policy built only by\n`buildExtensionEvalSpawnSpec`. D38 confines that builder and the shared\nlaunch command, `extensionEntryCommand`, which now lives in the\ndependency-free `extensions/extension-launch-command.ts`. D33(a)'s\n`selfSpawn(\"extension\")` moved there with it.\n- D38 forbids vault, egress, ipc, db and executor imports,\n`readCredentialEnv`, and any static `@mastra/mcp` import under\n`extensions/eval/`.\n- An I49 test walks the role's import graph, following `import()` edges,\nand requires that it reaches none of those modules.\n\n## Found and fixed during the build\n\n- **A real-sandbox e2e caught a bug the fake-client unit tests could\nnot.** `@mastra/mcp` defaults `onToolError` to `\"throw\"`, so every MCP\nerror reply was scored as a `crash`. The role now sets `onToolError:\n\"return\"` and recovers the text of `structuredContent` replies.\n- **A case cut short by the run deadline was scored as the extension's\ntimeout**, so a slow CI runner could have published a lower score. The\nrun now fails as `ERR_EVAL_RUN_TIMEOUT` instead.\n- **The role's static graph reached `db/`** through\n`extension-runtime.ts`. The launch command was moved out, and the test\nnow requires no `db/`.\n\n## Stated v1 bounds (in SECURITY-INVARIANTS.md, I49)\n\n- `@mastra/mcp` retries a call once, in place, after the server drops\nmid-call; there is no option to disable it. The sandbox grants no\nwrites, so the retry sees the same package and input. A repeating drop\nis scored `crash`, which the e2e `die` case pins.\n- A reply that carries `structuredContent` and `isError` together is\njudged a non-error, because `@mastra/mcp` drops `isError` on that path.\n- The extension's stderr goes to the role's stderr, and the caller keeps\nthe last 64 KiB. The spec was amended for this; the document carries no\nstderr.\n\n## Decisions I made (please check)\n\n- The eval sandbox is exactly a zero-grant run, with no `.eval-scratch`\nwrite grant. The spec is amended. Cases that need scratch space are out\nof v1.\n- Suite results name the suite by its **file** (`evals/a.eval.json`),\nbecause suite `name`s are free text and can repeat across files.\n- The error class is `EvalRunError`, since `EvalError` shadows a JS\nbuilt-in.\n- There is no manifest `runtime` field; the parser is the installer's\nonly manifest rule, and the eval uses it.\n- Real-child CLI tests skip on macOS because of oven-sh/bun#41024. They\nrun on Linux and Windows.\n\n## Known follow-ups (parked, carried to PR 3)\n\n- A child that survives SIGKILL is not `unref`ed, which matters only for\nan unkillable process.\n- A stdout overflow only SIGTERMs the role. Memory stays bounded.\n- A stale-stage sweep that hits EPERM, for example in a concurrent\nWindows sweep, fails the run as `ERR_EVAL_INTERNAL`.\n- Two doc phrases are slightly loose: \"after every child is gone\" (it\nshould say disconnected), and I49 bound (6) on what a \"crash that\nrepeats\" means.\n- A timed-out `disconnect` does not kill the child; the role exits. The\ngateway path in PR 3 must handle it.\n\n## Verification\n\n- **Tests:** a full serial local run of `registry-format`, gateway `src`\nand `test`, CLI `src` and `scripts` gave 32 872 pass and 11 fail. All 11\nfailures are pre-existing and environmental:\n  - 5 `ps1` tests need `pwsh` on PATH;\n- 6 migration and Readwise e2e tests fail only beside `cli/src` in one\nprocess; run on their own, those two files give 15 pass, 2 skip, 0 fail.\n- **Real-sandbox e2e** (`eval-role.e2e.test.ts`) ran on Windows: 7\ncases, 5 passed, score 71, asserted exactly. It shows the network\nblocked, an identical rerun, `ERR_EVAL_START_FAILED`, a deterministic\n`crash` for the `die` tool, the child's stderr on the role's stderr\nonly, and no stage left behind. Linux (bwrap) and macOS run it first in\nCI.\n- **Static checks:** `typecheck`, `typecheck:tests` (0 new),\n`audit:invariants`, `audit:status-drift`, `audit:doc-refs` and\n`preflight:fast` all pass.\n- **Reviews:** each of the 7 tasks was reviewed, with fix rounds on 4 of\nthem. A final whole-branch review by Claude and Antigravity produced a\n20-item fix wave, and a scoped re-review confirmed all 20.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus eval --package <dir>` to run an extension package’s\nevaluation suites and view its score, without starting the Gateway.\n* Optionally select a suite or request JSON output. Evaluation runs\ncases in sequence in a restricted sandbox, without network access or\ncredentials.\n* **Documentation**\n* Added CLI guidance and details on evaluation behavior, limits, and\ncurrently unavailable modes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T18:44:35Z",
+          "tree_id": "eb8f37705211be7c65153e994b0a1d16c1b34d18",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/4e34677c274f03103a4a23f7ac625414a1921fff"
+        },
+        "date": 1793299845268,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 185.19469565000253,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 197.90344399999776,
             "unit": "ms"
           }
         ]
