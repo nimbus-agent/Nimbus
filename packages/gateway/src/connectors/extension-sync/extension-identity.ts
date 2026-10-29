@@ -98,7 +98,8 @@ export function indexServiceIdForCodeServer(
   return hit?.identity.indexServiceId ?? codeServerId;
 }
 
-function parseCredentials(json: string): ResolvedRunCredentials | undefined {
+/** Parses a run grant's `credentials_json`; `undefined` when it is not the stored shape. */
+export function parseCredentials(json: string): ResolvedRunCredentials | undefined {
   let raw: unknown;
   try {
     raw = JSON.parse(json);

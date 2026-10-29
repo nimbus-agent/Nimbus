@@ -366,6 +366,8 @@ describe("extension.install through the RPC", () => {
       },
       permissions: { network: [], filesystem: { read: [], write: [] } },
       installs: [{ id: "test.ext.signed", version: "1.0.0" }],
+      // Set on every install the gateway has a Vault for; this manifest requires no connector.
+      connectorRequirements: [],
     });
   });
 });

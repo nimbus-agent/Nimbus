@@ -16,6 +16,7 @@ import { basename, dirname, join } from "node:path";
 
 import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -1819,5 +1820,107 @@ describe("installExtensionFromLocalDirectory — manifests this gateway cannot h
       },
       false,
     );
+  });
+});
+
+describe("installExtensionFromLocalDirectory — connector requirements in the approval", () => {
+  function requiringSource(prefix: string): { extensionsDir: string; src: string; db: Database } {
+    const f = createExtensionInstallFixture(prefix, "src");
+    writeFileSync(
+      join(f.src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "test.ext.needs",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        requires: { connectors: ["github", "not-a-connector"] },
+      }),
+      "utf8",
+    );
+    writeFileSync(join(f.src, "dist", "index.js"), "export {};\n", "utf8");
+    return f;
+  }
+
+  test("a single-package install is asked over its Needs block alone, before anything is copied", async () => {
+    const f = requiringSource("nimbus-install-needs-");
+    try {
+      const asked: ExtensionInstallApprovalRequest[] = [];
+      let installedAtApproval: number | undefined;
+      await installExtensionFromLocalDirectory({
+        db: f.db,
+        extensionsDir: f.extensionsDir,
+        sourcePath: f.src,
+        vault: new MockVault(),
+        approve: async (r) => {
+          asked.push(r);
+          installedAtApproval = listExtensions(f.db).length;
+          return true;
+        },
+      });
+      expect(installedAtApproval).toBe(0);
+      expect(asked[0]?.plan).toBeUndefined();
+      expect(asked[0]?.planText).toBe(
+        [
+          "Needs:",
+          "  github: not connected — run: nimbus connector auth github --token <token>",
+          "  not-a-connector: not a connector this Nimbus knows",
+        ].join("\n"),
+      );
+      expect(asked[0]?.connectorRequirements?.map((r) => [r.connector, r.state])).toEqual([
+        ["github", "not_connected"],
+        ["not-a-connector", "unknown_connector"],
+      ]);
+    } finally {
+      f.db.close();
+      rmDirWithRetry(dirname(f.src));
+    }
+  });
+
+  test("without a Vault nothing is computed and the request is as before", async () => {
+    const f = requiringSource("nimbus-install-needs-novault-");
+    try {
+      const asked: ExtensionInstallApprovalRequest[] = [];
+      await installExtensionFromLocalDirectory({
+        db: f.db,
+        extensionsDir: f.extensionsDir,
+        sourcePath: f.src,
+        approve: async (r) => {
+          asked.push(r);
+          return true;
+        },
+      });
+      expect(asked[0]?.planText).toBeUndefined();
+      expect(asked[0]?.connectorRequirements).toBeUndefined();
+    } finally {
+      f.db.close();
+      rmDirWithRetry(dirname(f.src));
+    }
+  });
+
+  test("an install requiring nothing carries an empty list and no prompt body", async () => {
+    const f = createExtensionInstallFixture("nimbus-install-needs-none-", "src");
+    writeFileSync(
+      join(f.src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test.ext.plain", version: "1.0.0", entry: "dist/index.js" }),
+      "utf8",
+    );
+    writeFileSync(join(f.src, "dist", "index.js"), "export {};\n", "utf8");
+    try {
+      const asked: ExtensionInstallApprovalRequest[] = [];
+      await installExtensionFromLocalDirectory({
+        db: f.db,
+        extensionsDir: f.extensionsDir,
+        sourcePath: f.src,
+        vault: new MockVault(),
+        approve: async (r) => {
+          asked.push(r);
+          return true;
+        },
+      });
+      expect(asked[0]?.planText).toBeUndefined();
+      expect(asked[0]?.connectorRequirements).toEqual([]);
+    } finally {
+      f.db.close();
+      rmDirWithRetry(dirname(f.src));
+    }
   });
 });

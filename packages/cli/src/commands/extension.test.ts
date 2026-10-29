@@ -218,6 +218,15 @@ describe("runExtensionList", () => {
   });
 });
 
+const REQ = {
+  connector: "github",
+  state: "not_connected",
+  owner: { kind: "bundled" },
+  fix: ["nimbus connector auth github"],
+  interactive: false,
+  requiredBy: [],
+};
+
 describe("runExtensionInfo", () => {
   beforeEach(() => {
     out.reset();
@@ -231,6 +240,18 @@ describe("runExtensionInfo", () => {
     await expect(runExtensionInfo(client, [], [])).rejects.toThrow(/extension info/);
   });
 
+  test("asks extension.info for connector requirements", async () => {
+    const { client, calls } = createMockIpcClient([
+      { extension: { id: "ext1", version: "1.2.3", enabled: 1 } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(calls[0]).toEqual({
+      method: "extension.info",
+      params: { id: "ext1", includeRequires: true },
+    });
+  });
+
   test("prints labelled lines for the extension + sandbox cap", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext1", version: "1.2.3", enabled: 1 } },
@@ -241,6 +262,26 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).toContain("Version:   1.2.3");
     expect(out.stdout).toContain("Enabled:   yes");
     expect(out.stdout).toContain("Network isolation: per-host");
+  });
+
+  test("prints Requires: with the requirement lines when the extension has some", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext5", version: "1.0", enabled: 1, requires: [REQ] } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext5"], ["info", "ext5"]);
+    expect(out.stdout).toContain(
+      "Requires:\n  github: not connected — run: nimbus connector auth github",
+    );
+  });
+
+  test("prints no Requires: block when there is none", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext6", version: "1.0", enabled: 1, requires: [] } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext6"], ["info", "ext6"]);
+    expect(out.stdout).not.toContain("Requires:");
   });
 
   test("appends message when needs_reinstall is true", async () => {
@@ -326,6 +367,18 @@ describe("runExtensionInstall", () => {
     expect(calls[0]?.method).toBe("extension.install");
     expect(out.stdout).toContain("new.ext");
     expect(out.stdout).toContain("/somewhere");
+  });
+
+  test("a local install prints Needs: before the JSON when the result carries requirements", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client } = createMockIpcClient([
+      { id: "new.ext", version: "1.0.0", installPath: "/somewhere", connectorRequirements: [REQ] },
+    ]);
+    await runExtensionInstall(client, ["install", ".", "--yes"], ["."]);
+    const needs = out.stdout.indexOf(
+      "Needs:\n  github: not connected — run: nimbus connector auth github",
+    );
+    expect(needs).toBe(0);
   });
 
   test("propagates IPC errors with --yes", async () => {
@@ -469,6 +522,37 @@ describe("runExtensionInstall — path versus registry id", () => {
     expect(out.stdout).toContain(
       `installed acme.tool@1.0.0 from registry main (root ${"r".repeat(32)}), publisher acme (${"p".repeat(32)})`,
     );
+  });
+
+  test("a registry install prints Needs: after the approve line, before the JSON", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      {
+        id: "acme.tool",
+        version: "1.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        connectorRequirements: [REQ],
+      },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    const text = out.stdout;
+    const approve = text.indexOf("Nothing runs until you approve it");
+    const needs = text.indexOf(
+      "Needs:\n  github: not connected — run: nimbus connector auth github",
+    );
+    expect(approve).toBeGreaterThanOrEqual(0);
+    expect(needs).toBeGreaterThan(approve);
+    expect(text.indexOf("{", needs)).toBeGreaterThan(needs);
+  });
+
+  test("a registry install with no requirements prints no Needs:", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client } = createMockIpcClient([
+      { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+    ]);
+    await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+    expect(out.stdout).not.toContain("Needs:");
   });
 
   test("a registry install without a TTY still goes to the gateway prompt", async () => {
@@ -2929,5 +3013,208 @@ describe("runExtensionCredential", () => {
       INTERACTIVE_RPC_TIMEOUT_MS,
     );
     expect(rpcTimeoutForExtensionSub("credential", ["status", "com.x"])).toBeUndefined();
+  });
+});
+
+describe("runExtensionInstall — the post-install walk", () => {
+  const origOut = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+  const origIn = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const restore = (
+    s: NodeJS.ReadStream | NodeJS.WriteStream,
+    d: PropertyDescriptor | undefined,
+  ): void => {
+    if (d === undefined) delete (s as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(s, "isTTY", d);
+  };
+  const setTty = (v: boolean): void => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: v });
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: v });
+  };
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    restore(process.stdout, origOut);
+    restore(process.stdin, origIn);
+  });
+
+  /** A mock client that COUNTS notification handlers per event (the shared mock keeps only one). */
+  type CountingClient = ReturnType<typeof createMockIpcClient> & {
+    handlerCount: Map<string, number>;
+  };
+  function countingClient(responses: unknown[]): CountingClient {
+    const mock = createMockIpcClient(responses);
+    const handlerCount = new Map<string, number>();
+    const inner = mock.client.onNotification.bind(mock.client);
+    Object.assign(mock.client, {
+      onNotification: (event: string, h: (params: unknown) => void): void => {
+        handlerCount.set(event, (handlerCount.get(event) ?? 0) + 1);
+        inner(event, h);
+      },
+    });
+    return Object.assign(mock, { handlerCount });
+  }
+
+  test("no walk under --yes", async () => {
+    setTty(true);
+    const install = countingClient([
+      {
+        id: "new.ext",
+        version: "1.0.0",
+        installPath: "/p",
+        connectorRequirements: [{ ...REQ, interactive: true }],
+      },
+    ]);
+    const made: string[] = [];
+    const asked: string[] = [];
+    await runExtensionInstall(install.client, ["install", ".", "--yes"], ["."], {
+      socketPath: "/sock",
+      makeClient: (p) => {
+        made.push(p);
+        return countingClient([]).client;
+      },
+      confirm: async (q) => {
+        asked.push(q);
+        return true;
+      },
+      connectorAuth: async (id) => {
+        asked.push(`auth ${id}`);
+      },
+    });
+    expect(made).toEqual([]);
+    expect(asked).toEqual([]);
+    expect(install.calls.map((c) => c.method)).toEqual(["extension.install"]);
+    expect(out.stdout).not.toContain("Approve each package to run");
+  });
+
+  for (const [name, stdinTty, args] of [
+    ["no walk when stdin is not a terminal", false, ["install", "."]],
+    ["no walk under -y", true, ["install", ".", "-y"]],
+  ] as const) {
+    test(name, async () => {
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: stdinTty });
+      const install = countingClient([
+        {
+          id: "new.ext",
+          version: "1.0.0",
+          installPath: "/p",
+          connectorRequirements: [{ ...REQ, interactive: true }],
+        },
+      ]);
+      const made: string[] = [];
+      const asked: string[] = [];
+      await runExtensionInstall(install.client, [...args], ["."], {
+        socketPath: "/sock",
+        makeClient: (p) => {
+          made.push(p);
+          return countingClient([]).client;
+        },
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+        connectorAuth: async (id) => {
+          asked.push(`auth ${id}`);
+        },
+      });
+      expect(made).toEqual([]);
+      expect(asked).toEqual([]);
+      expect(install.calls.map((c) => c.method)).toEqual(["extension.install"]);
+    });
+  }
+
+  test("the walk never approves on the install's client", async () => {
+    setTty(true);
+    const install = countingClient([
+      {
+        id: "com.example.tool",
+        version: "2.0.0",
+        sourceRegistry: "main",
+        installPath: "/p",
+        dependencies: [{ id: "com.example.dep", version: "1.2.0", registry: "main" }],
+      },
+    ]);
+    const fresh: CountingClient[] = [];
+    const timeouts: number[] = [];
+    const asked: string[] = [];
+    await runExtensionInstall(
+      install.client,
+      ["install", "com.example.tool"],
+      ["com.example.tool"],
+      {
+        socketPath: "/sock",
+        makeClient: (p, t) => {
+          expect(p).toBe("/sock");
+          timeouts.push(t);
+          const c = countingClient([
+            { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+          ]);
+          fresh.push(c);
+          return c.client;
+        },
+        confirm: async (q) => {
+          asked.push(q);
+          // The one opening question; each package's own decision is its gateway prompt.
+          if (q === "Approve the 2 new packages to run now? [y/N] ") return true;
+          throw new Error("no walk question for an approval");
+        },
+      },
+    );
+    expect(install.calls.map((c) => c.method)).toEqual(["registry.install"]);
+    expect(asked).toEqual(["Approve the 2 new packages to run now? [y/N] "]);
+    expect(fresh).toHaveLength(2);
+    expect(fresh.map((c) => c.calls)).toEqual([
+      [{ method: "extension.approveRun", params: { id: "com.example.dep", modelAccess: false } }],
+      [{ method: "extension.approveRun", params: { id: "com.example.tool", modelAccess: false } }],
+    ]);
+    for (const c of fresh) expect(c.handlerCount.get("consent.request")).toBe(1);
+    expect(timeouts).toEqual([INTERACTIVE_RPC_TIMEOUT_MS, INTERACTIVE_RPC_TIMEOUT_MS]);
+    expect(out.stdout).toContain("Approve each package to run (you can decline any):");
+  });
+
+  test("a failing walk never fails the install", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(install.client, ["install", "."], ["."], {
+      socketPath: "/sock",
+      makeClient: () => {
+        throw new Error("socket gone");
+      },
+      confirm: async () => true,
+    });
+    // Not a denial: the walk says it could not ask, and stops.
+    expect(out.stdout).toContain("  new.ext: could not ask (socket gone)");
+    expect(out.stdout).not.toContain("not approved");
+  });
+
+  test("a no to the opening question approves nothing and opens no client", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    const made: string[] = [];
+    const asked: string[] = [];
+    await runExtensionInstall(install.client, ["install", "."], ["."], {
+      socketPath: "/sock",
+      makeClient: (p) => {
+        made.push(p);
+        return countingClient([]).client;
+      },
+      confirm: async (q) => {
+        asked.push(q);
+        return false;
+      },
+    });
+    expect(asked).toEqual(["Approve new.ext to run now? [y/N] "]);
+    expect(made).toEqual([]);
+    expect(out.stdout).toContain(
+      "Not approved now; approve later with: nimbus extension approve new.ext",
+    );
+  });
+
+  test("without walk deps an attended install only prints", async () => {
+    setTty(true);
+    const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
+    await runExtensionInstall(install.client, ["install", "."], ["."]);
+    expect(out.stdout).not.toContain("Approve each package to run");
   });
 });

@@ -21,6 +21,8 @@ import {
 } from "@nimbus-dev/registry-format";
 import { listExtensions } from "../../automation/extension-store.ts";
 import type { NimbusVault } from "../../vault/index.ts";
+import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
+import type { ContinuityEntry } from "../continuity/continuity-table.ts";
 import { registryNameOf } from "../dependency-types.ts";
 import {
   type ExtensionInstallApprovalRequest,
@@ -34,6 +36,7 @@ import {
   type PlannedPackage,
   planPermissionsUnion,
   renderInstallPlan,
+  withNeedsBlock,
 } from "../install-plan-text.ts";
 import type { ExtensionManifest } from "../manifest.ts";
 import { assertManifestSupported } from "../manifest-support.ts";
@@ -72,6 +75,10 @@ export interface InstallFromRegistryDeps {
   approve: ExtensionInstallApprover;
   /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
   planStagingRoot?: string;
+  /** The continuity table the approval's connector requirements bind through (default the baked one). */
+  continuityTable?: readonly ContinuityEntry[];
+  /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
+  requirementStatuses?: ConnectorRequirementStatusesFn;
 }
 
 export interface InstallFromRegistryRequest {
@@ -266,7 +273,11 @@ function planWithRoot(
   const plan = request.plan.map((p) => (p.id === request.id ? { ...p, ...patch } : p));
   return {
     plan,
-    planText: renderInstallPlan(plan, request.planPermissions ?? planPermissionsUnion(plan)),
+    // Re-rendered with the same `Needs:` block, so the patched prompt never drops a requirement.
+    planText: withNeedsBlock(
+      renderInstallPlan(plan, request.planPermissions ?? planPermissionsUnion(plan)),
+      request.connectorRequirements,
+    ),
   };
 }
 
@@ -359,6 +370,10 @@ export async function installVerifiedRegistryPackage(
       ),
       ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
       ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
+      ...(deps.continuityTable === undefined ? {} : { continuityTable: deps.continuityTable }),
+      ...(deps.requirementStatuses === undefined
+        ? {}
+        : { requirementStatuses: deps.requirementStatuses }),
       // Checked by the plan installer before anything is recorded: a mismatch undoes every package.
       expectedRootEntryHash: pkg.entryHash,
     });

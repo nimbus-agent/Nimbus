@@ -297,8 +297,10 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
   }
   if (hasPlanText(action)) {
     // `planText` is the rendered dependency plan, printed after the Details line by
-    // formatConsentPrompt; `plan` keeps the same facts as structured fields.
-    return redactPayloadForConsentDisplay(omitPlanText(action.payload)) as Record<string, unknown>;
+    // formatConsentPrompt; `plan` keeps the same facts as structured fields. Its `Needs:` block
+    // renders `connectorRequirements`, so the display copy drops that too (the audit row keeps it).
+    const { connectorRequirements: _needs, ...shown } = omitPlanText(action.payload);
+    return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }

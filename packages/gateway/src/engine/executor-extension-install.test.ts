@@ -75,3 +75,44 @@ describe("extension.install consent with a plan", () => {
     expect(h.prompts[0]).toContain('"planText":5');
   });
 });
+
+describe("extension.install consent with a Needs block", () => {
+  const REQS = [
+    {
+      connector: "github",
+      state: "not_connected",
+      owner: { kind: "bundled" },
+      fix: ["nimbus connector auth github --token <token>"],
+      interactive: false,
+      requiredBy: ["com.example.tool"],
+    },
+  ];
+  const NEEDS =
+    "Needs:\n  github: not connected — run: nimbus connector auth github --token <token>";
+
+  test("connectorRequirements is shown once, as the Needs block, and kept in the audit row", async () => {
+    const h = capture();
+    const action: PlannedAction = {
+      type: "extension.install",
+      payload: { ...BASE_PAYLOAD, connectorRequirements: REQS, planText: NEEDS },
+    };
+    await h.exec.execute(action);
+    expect(consentDisplayPayload(action)).toEqual(BASE_PAYLOAD);
+    expect(h.prompts[0]).toBe(
+      `Action requires your approval\n\nType: extension.install\n\nDetails: ${JSON.stringify(BASE_PAYLOAD)}\n\n${NEEDS}`,
+    );
+    expect(JSON.stringify(h.details[0])).not.toContain("connectorRequirements");
+    expect(h.auditJson).toHaveLength(1);
+    expect(h.auditJson[0]).toContain('"connectorRequirements"');
+    expect(h.auditJson[0]).not.toContain("planText");
+  });
+
+  test("without planText, connectorRequirements stays in the Details line", async () => {
+    const h = capture();
+    await h.exec.execute({
+      type: "extension.install",
+      payload: { ...BASE_PAYLOAD, connectorRequirements: [] },
+    });
+    expect(h.prompts[0]).toContain('"connectorRequirements":[]');
+  });
+});

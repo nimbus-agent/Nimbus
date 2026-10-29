@@ -788,6 +788,113 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(existsSync(join(extensionsDir, DEP, "dist", "index.js"))).toBe(true);
   });
 
+  test("the approval lists the plan's connector requirements before anything is staged", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: "^1.0.0" },
+          requires: { connectors: ["github"] },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0", requires: { connectors: ["slack"] } }],
+    });
+    const d = planDeps();
+    const answer = d.approve;
+    let atApproval: { installed: string[]; staged: string[]; extensionsDir: boolean } | undefined;
+    d.approve = (r) => {
+      atApproval = {
+        installed: installedIds(),
+        staged: readdirSync(planRoot),
+        extensionsDir: existsSync(extensionsDir),
+      };
+      return answer(r);
+    };
+    await installFromRegistry(d, { id: ID, registry: "main" });
+    expect(atApproval).toEqual({ installed: [], staged: [], extensionsDir: false });
+    const req = asked[0] as ExtensionInstallApprovalRequest;
+    expect(req.planText).toContain("This install adds 2 packages:");
+    expect(req.planText).toEndWith(
+      [
+        "Needs:",
+        "  github: not connected — run: nimbus connector auth github --token <token>",
+        "  slack: not connected — run: nimbus connector auth slack",
+      ].join("\n"),
+    );
+    expect(req.connectorRequirements?.map((r) => [r.connector, r.state, r.requiredBy])).toEqual([
+      ["github", "not_connected", [ID]],
+      ["slack", "not_connected", [DEP]],
+    ]);
+    expect(installedIds()).toEqual([DEP, ID]);
+  });
+
+  test("a connector whose continuity owner this plan installs is never connected in the approval", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: "^1.0.0" },
+          requires: { connectors: ["legacyx"] },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    const publisherKey = encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey);
+    const d = planDeps();
+    d.continuityTable = [
+      {
+        legacyServiceId: "legacyx",
+        extensionId: DEP,
+        publisherKey,
+        sourceRootFingerprint: publisherKeyFingerprint(
+          encodeBase64(nacl.sign.keyPair.fromSeed(ROOT_SEED).publicKey),
+        ),
+        // audit-ignore-next-line D11-vault-key (test continuity entry's legacy key)
+        credentials: { token: "legacyx.token" },
+        expectedPermissions: { network: [], read: [], write: [] },
+        itemTypes: [],
+      },
+    ];
+    // The legacy key alone must not make the plan's own owner read as connected.
+    await vault.set("legacyx.token", "legacy-value");
+    await installFromRegistry(d, { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest;
+    expect(req.connectorRequirements).toEqual([
+      {
+        connector: "legacyx",
+        state: "not_connected",
+        owner: { kind: "extension", extensionId: DEP },
+        fix: [`nimbus extension approve ${DEP}`],
+        interactive: true,
+        requiredBy: [ID],
+      },
+    ]);
+    expect(req.planText).toEndWith(
+      ["Needs:", `  legacyx: not connected — run: nimbus extension approve ${DEP}`].join("\n"),
+    );
+  });
+
+  test("a failing requirement computation leaves the Needs block out and the plan installs", async () => {
+    await addRemote("main", {
+      [ID]: [
+        {
+          version: "1.0.0",
+          dependsOn: { [DEP]: "^1.0.0" },
+          requires: { connectors: ["github"] },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    const d = planDeps();
+    d.requirementStatuses = () => Promise.reject(new Error("requirements unavailable"));
+    await installFromRegistry(d, { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest;
+    expect(req.planText).toContain("This install adds 2 packages:");
+    expect(req.planText).not.toContain("Needs:");
+    expect(req.connectorRequirements).toBeUndefined();
+    expect(installedIds()).toEqual([DEP, ID]);
+  });
+
   test("a dependency from a named, added registry installs from it", async () => {
     await addRemote("main", {
       [ID]: [

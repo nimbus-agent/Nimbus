@@ -34,10 +34,17 @@ import {
 import { getCliPlatformPaths } from "../paths.ts";
 import { NIMBUS_VERSION } from "../version.ts";
 import { stripControl } from "./captures-format.ts";
+import { runConnector } from "./connector.ts";
 import { runExtensionKey } from "./extension-key.ts";
+import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
 import { runExtensionReport } from "./extension-report.ts";
+import {
+  parseRequirementStatuses,
+  type RequirementStatusView,
+  requirementLines,
+} from "./extension-requirements-format.ts";
 import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
@@ -89,6 +96,7 @@ type ExtensionListEntry = {
   forwardDeps?: Array<{ id: string; range: string }>;
   reverseDeps?: Array<{ extensionId: string; range: string }>;
   runState?: string;
+  requires?: unknown;
   runGrant?: { serviceId: string; approvedAt: number; modelAccess: boolean } | null;
   source_registry?: string | null;
   /** I48: revocations and takedowns the run grant has not acknowledged. */
@@ -220,6 +228,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   const tree = hasFlag(args, "--tree");
   const params: Record<string, unknown> = {};
   if (filter !== undefined) params["filter"] = filter;
+  if (json) params["includeRequires"] = true;
   const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
   if (json) {
     console.log(JSON.stringify(out, undefined, 2));
@@ -377,7 +386,7 @@ export async function runExtensionInfo(
   const out = await client.call<{
     extension: ExtensionListEntry;
     message?: string;
-  }>("extension.info", { id });
+  }>("extension.info", { id, includeRequires: true });
   const sandboxCap = await fetchSandboxPosture(client);
   if (hasFlag(args, "--json")) {
     console.log(
@@ -409,6 +418,90 @@ export async function runExtensionInfo(
   if (hasFlag(args, "--deps")) {
     printExtensionInfoDeps(e);
   }
+  const requires = parseRequirementStatuses(e.requires);
+  if (requires.length > 0) {
+    console.log("Requires:");
+    for (const line of requirementLines(requires)) console.log(line);
+  }
+}
+
+/** The `Needs:` block of an install result: nothing when no connector is required. */
+function printNeeds(raw: unknown): void {
+  const needs = parseRequirementStatuses(raw);
+  if (needs.length === 0) return;
+  console.log("Needs:");
+  for (const line of requirementLines(needs)) console.log(line);
+}
+
+/**
+ * What the post-install walk needs from `runExtension`. Without it an install never walks, so a
+ * caller that passes no socket gets exactly the printed commands.
+ */
+export interface InstallWalkDeps {
+  /** The gateway socket; every walk action opens its OWN client on it. */
+  readonly socketPath: string;
+  readonly makeClient?: (socketPath: string, requestTimeoutMs: number) => IPCClient;
+  readonly confirm?: (question: string) => Promise<boolean>;
+  readonly connectorAuth?: (id: string) => Promise<void>;
+}
+
+/**
+ * Runs `fn` on a NEW client and disconnects it after. The install's client is never reused: its
+ * `consent.request` handler (the `--yes` auto-approver included) cannot be removed, and handlers
+ * accumulate, so only a fresh client is guaranteed to carry exactly the one prompt handler the
+ * command registers.
+ */
+async function withFreshClient(
+  deps: InstallWalkDeps,
+  fn: (client: IPCClient) => Promise<void>,
+): Promise<void> {
+  const make = deps.makeClient ?? createIpcClient;
+  const client = make(deps.socketPath, INTERACTIVE_RPC_TIMEOUT_MS);
+  await client.connect();
+  try {
+    await fn(client);
+  } finally {
+    await client.disconnect();
+  }
+}
+
+function postInstallIo(args: string[], deps: InstallWalkDeps): PostInstallIo {
+  const approve = (id: string): Promise<void> =>
+    withFreshClient(deps, (c) => runExtensionApprove(c, [], [id]));
+  const log = (line: string): void => console.log(line);
+  return {
+    attended:
+      !hasFlag(args, "--yes") &&
+      !hasFlag(args, "-y") &&
+      process.stdin.isTTY === true &&
+      process.stdout.isTTY === true,
+    confirm: deps.confirm ?? (async (q) => /^y(es)?$/i.test(await readLine(q))),
+    approve,
+    connect: (req, alreadyApproved) =>
+      runConnectFix(req, alreadyApproved, {
+        connectorAuth: deps.connectorAuth ?? ((id) => runConnector(["auth", id])),
+        approve,
+        credentialSet: (ext, name) =>
+          withFreshClient(deps, (c) => runExtensionCredential(c, ["set", ext, name])),
+        log,
+      }),
+    log,
+  };
+}
+
+/** The walk after an install. It never fails the install: anything it throws is only logged. */
+async function walkAfterInstall(
+  args: string[],
+  deps: InstallWalkDeps | undefined,
+  toApprove: readonly string[],
+  requirements: readonly RequirementStatusView[],
+): Promise<void> {
+  if (deps === undefined) return;
+  try {
+    await runPostInstallWalk(postInstallIo(args, deps), toApprove, requirements);
+  } catch (e) {
+    console.log(`(stopped walking through the install: ${stripControl(String(e))})`);
+  }
 }
 
 /** An argument that can only be a filesystem path, never an extension id. */
@@ -430,6 +523,7 @@ async function runExtensionInstallFromRegistry(
   client: IPCClient,
   args: string[],
   id: string,
+  walk: InstallWalkDeps | undefined,
 ): Promise<void> {
   if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
     throw new Error(
@@ -462,6 +556,7 @@ async function runExtensionInstallFromRegistry(
     publisher?: { id: string; fingerprint: string };
     installPath: string;
     dependencies?: { id: string; version: string; registry: string }[];
+    connectorRequirements?: unknown;
   }>("registry.install", params);
   const who =
     out.publisher === undefined
@@ -479,13 +574,21 @@ async function runExtensionInstallFromRegistry(
   console.log(
     `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
   );
+  printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
+  await walkAfterInstall(
+    args,
+    walk,
+    toApprove,
+    parseRequirementStatuses(out.connectorRequirements),
+  );
 }
 
 export async function runExtensionInstall(
   client: IPCClient,
   args: string[],
   rest: string[],
+  walk?: InstallWalkDeps,
 ): Promise<void> {
   const sourceRaw = rest[0]?.trim() ?? "";
   if (sourceRaw === "") {
@@ -495,7 +598,7 @@ export async function runExtensionInstall(
     if (looksLikePath(sourceRaw)) {
       throw new Error(`no such file or directory: ${sourceRaw}`);
     }
-    await runExtensionInstallFromRegistry(client, args, sourceRaw);
+    await runExtensionInstallFromRegistry(client, args, sourceRaw, walk);
     return;
   }
   for (const flag of ["--registry", "--version", "--channel", "--accept-publisher-key"]) {
@@ -524,8 +627,11 @@ export async function runExtensionInstall(
     id: string;
     version: string;
     installPath: string;
+    connectorRequirements?: unknown;
   }>("extension.install", installParams);
+  printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
+  await walkAfterInstall(args, walk, [out.id], parseRequirementStatuses(out.connectorRequirements));
 }
 
 /**
@@ -979,6 +1085,7 @@ async function dispatchExtensionVoid(
   client: IPCClient,
   args: string[],
   rest: string[],
+  socketPath: string,
 ): Promise<boolean> {
   switch (sub) {
     case "list":
@@ -989,7 +1096,7 @@ async function dispatchExtensionVoid(
       await runExtensionInfo(client, rest, args);
       return true;
     case "install":
-      await runExtensionInstall(client, args, rest);
+      await runExtensionInstall(client, args, rest, { socketPath });
       return true;
     case "rehash":
       await runExtensionRehash(client, args, rest);
@@ -1068,7 +1175,7 @@ export async function runExtension(args: string[]): Promise<void> {
   const client = createIpcClient(state.socketPath, rpcTimeoutForExtensionSub(sub, args.slice(1)));
   await client.connect();
   try {
-    if (await dispatchExtensionVoid(sub, client, args, rest)) {
+    if (await dispatchExtensionVoid(sub, client, args, rest, state.socketPath)) {
       return;
     }
     if (await dispatchExtensionWithCode(sub, client, args)) {

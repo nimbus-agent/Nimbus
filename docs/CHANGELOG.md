@@ -18,6 +18,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — Extension dependencies and starter packs PR 3: connector requirements and the post-install walk (Phase 9.5
+  project 4; no migration, no new invariant).** An extension's `requires.connectors` is now acted on. Each connector it
+  names gets a status: `met`, `configured_never_synced`, `not_connected`, `unknown_connector` or `unknown`, with the exact
+  command that fixes it (`nimbus connector auth <id>`, with `--token <token>` for a token connector, or `nimbus vault
+  set <key>` where `connector auth` cannot set it up; `nimbus extension approve <id>` and `nimbus extension credential
+  set <id> <name>` for a connector an extension owns, naming only credentials not stored yet, `nimbus extension enable
+  <id>` when that extension is disabled, or `nimbus extension install <id>` when it is not installed; or `nimbus
+  connector sync <id>`). "Connected" is the same
+  `isConnectorConfigured` the scheduler uses, and an id Nimbus does not know is never reported as connected. The statuses
+  appear in the install approval itself (a `Needs:` block in `planText`, which a single-package install now carries when it
+  requires a connector), in the `connectorRequirements` result of `registry.install` and `extension.install`, in
+  `extension.info` (`extension.requires`) and in each `extension.list` item (`requires`) when asked (`includeRequires`), and the CLI prints them in
+  `nimbus extension install|info` and as warnings in `nimbus doctor`. A requirement never blocks an install, and a failure
+  reading one is reported as `unknown` or left out. After an attended install (stdin and stdout are terminals, no `--yes`)
+  the CLI then offers to approve the new packages (one `Approve … to run now? [y/N]` question first) and to connect each
+  connector. The walk approves nothing itself: each approval is the usual `extension approve` prompt on a fresh IPC
+  client, so `--yes` can never answer it; an approval that cannot be asked stops the walk. In `nimbus doctor` only a
+  not-connected requirement raises the exit code. An unrecognised
+  fix command stops the sequence and is printed for the owner to run. Starter packs are still refused.
 - **2026-10-28 — Extension dependencies and starter packs PR 2: registry installs fetch their dependencies (Phase 9.5
   project 4; schema V78; I44 amended, no new invariant).** `nimbus registry install` now resolves the dependency closure
   and installs it. A bare-range dependency is fetched from the dependent's own registry through the same verified chain as
