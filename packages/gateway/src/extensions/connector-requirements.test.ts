@@ -451,3 +451,43 @@ describe("connectorRequirementStatuses", () => {
     ]);
   });
 });
+
+describe("connectorRequirementStatuses — a starter pack as a bound owner", () => {
+  test("a pack row the continuity table binds is not_connected with no fix, never `extension approve`", async () => {
+    // Hand-built: no shipped continuity entry names a pack. Bound through the test entry anyway.
+    const dir = join(tmp, "pack");
+    mkdirSync(dir, { recursive: true });
+    const bytes = JSON.stringify({
+      id: EXT,
+      version: "1.0.0",
+      kind: "starter-pack",
+      publisher: { id: "test-pub", key: KEY },
+      signature: `${"A".repeat(86)}==`,
+      requires: { connectors: ["github"] },
+    });
+    writeFileSync(join(dir, "nimbus.extension.json"), bytes);
+    insertExtensionRow(db, {
+      id: EXT,
+      version: "1.0.0",
+      install_path: dir,
+      manifest_hash: createHash("sha256").update(bytes).digest("hex"),
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+      kind: "starter-pack",
+    });
+    dbRun(db, "UPDATE extension SET source_root_fingerprint = ?, tree_digest = ? WHERE id = ?", [
+      FP,
+      "d",
+      EXT,
+    ]);
+    const [s] = await connectorRequirementStatuses(
+      { db, vault, continuityTable: TABLE },
+      one(["legacyx"]),
+    );
+    expect(s?.owner).toEqual({ kind: "extension", extensionId: EXT });
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([]);
+    expect(s?.interactive).toBe(false);
+  });
+});

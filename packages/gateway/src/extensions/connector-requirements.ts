@@ -209,6 +209,12 @@ async function ownedStatus(
       interactive: false,
     };
   }
+  if (runState === "pack") {
+    // A starter pack has no code and declares no credentials, so no continuity entry is meant to
+    // name one, and it can never run as this connector. Were a bound row a pack anyway, approving
+    // it is refused (ERR_EXTENSION_STARTER_PACK), so there is no fix to offer.
+    return { ...base, state: "not_connected", fix: [], interactive: false };
+  }
   if (runState === "disabled") {
     return {
       ...base,

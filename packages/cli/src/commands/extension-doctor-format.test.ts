@@ -323,14 +323,9 @@ describe("doctorExtensionsLines — starter packs", () => {
   // "extension.list and extension.info carry kind, and a pack's run state is `pack`").
   const pack = { id: "fx.pack.top", kind: "starter-pack", runState: "pack", runGrant: null };
 
-  test("an installed pack raises no approval warning", () => {
-    expect(doctorExtensionsLines({ runtimeEnabled: true, extensions: [pack] })).toEqual({
-      lines: [],
-      exit: 0,
-    });
-  });
-
   test("a pack is never counted as needing approval, whatever run state it reports", () => {
+    // Red without the `kind` guard: the `no_grant` pack row would be counted. The `pack` row alone
+    // is a shape check (`pack` was never in NEEDS_APPROVAL).
     const out = doctorExtensionsLines({
       runtimeEnabled: true,
       extensions: [
