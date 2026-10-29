@@ -774,6 +774,21 @@ describe("registry.install", () => {
     expect(out).toMatchObject({ kind: "hit", value: { id: "acme.tool", dependencies: [] } });
   });
 
+  test("registry.install labels the root and each added dependency with its kind", async () => {
+    runIndexedSchemaMigrations(db, 79);
+    const dir = join(tmp, "reg");
+    await buildMultiExtensionRegistry(dir, {
+      "acme.pack": [{ version: "1.0.0", starterPack: true, dependsOn: { "acme.dep": "^1.0.0" } }],
+      "acme.dep": [{ version: "1.0.0" }],
+    });
+    pin("main", dir);
+    const out = (await install({ id: "acme.pack" }, gateRecorder(true).gate)) as {
+      value: { kind: string; dependencies: Array<{ id: string; kind: string }> };
+    };
+    expect(out.value.kind).toBe("starter-pack");
+    expect(out.value.dependencies).toMatchObject([{ id: "acme.dep", kind: "extension" }]);
+  });
+
   test("registry.install reports the plan's connector requirements", async () => {
     runIndexedSchemaMigrations(db, 78);
     const dir = join(tmp, "reg");

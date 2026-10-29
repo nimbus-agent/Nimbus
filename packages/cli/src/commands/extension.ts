@@ -583,7 +583,8 @@ async function runExtensionInstallFromRegistry(
     rootFingerprint?: string;
     publisher?: { id: string; fingerprint: string };
     installPath: string;
-    dependencies?: { id: string; version: string; registry: string }[];
+    kind?: string;
+    dependencies?: { id: string; version: string; registry: string; kind?: string }[];
     connectorRequirements?: unknown;
     promoted?: boolean;
   }>("registry.install", params);
@@ -593,17 +594,31 @@ async function runExtensionInstallFromRegistry(
       ? ""
       : `, publisher ${out.publisher.id} (${out.publisher.fingerprint})`;
   const root = out.rootFingerprint === undefined ? "" : ` (root ${out.rootFingerprint})`;
-  console.log(
-    `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
-  );
   const deps = out.dependencies ?? [];
+  const rootIsPack = out.kind === "starter-pack";
+  if (rootIsPack) {
+    console.log(
+      `Installed starter pack ${stripControl(out.id)}@${stripControl(out.version)} with ${deps.length} ${deps.length === 1 ? "package" : "packages"}.`,
+    );
+  } else {
+    console.log(
+      `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
+    );
+  }
   for (const d of deps) {
     console.log(`  + ${d.id}@${d.version} from registry ${d.registry} (installed as a dependency)`);
   }
-  const toApprove = [...deps.map((d) => d.id), out.id];
-  console.log(
-    `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
-  );
+  // A pack has no code and cannot be approved to run: only code packages are offered for approval.
+  // An older gateway sends no kind; that is an extension, as before.
+  const toApprove = [
+    ...deps.filter((d) => d.kind !== "starter-pack").map((d) => d.id),
+    ...(rootIsPack ? [] : [out.id]),
+  ];
+  if (toApprove.length > 0) {
+    console.log(
+      `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
+    );
+  }
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
   await walkAfterInstall(
@@ -657,13 +672,20 @@ export async function runExtensionInstall(
     id: string;
     version: string;
     installPath: string;
+    kind?: string;
     connectorRequirements?: unknown;
     promoted?: boolean;
   }>("extension.install", installParams);
   if (printedPromotion(out)) return;
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
-  await walkAfterInstall(args, walk, [out.id], parseRequirementStatuses(out.connectorRequirements));
+  // A pack has no code and cannot be approved to run; its connector requirements are still offered.
+  await walkAfterInstall(
+    args,
+    walk,
+    out.kind === "starter-pack" ? [] : [out.id],
+    parseRequirementStatuses(out.connectorRequirements),
+  );
 }
 
 /**

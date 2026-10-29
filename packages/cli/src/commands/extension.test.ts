@@ -3389,6 +3389,139 @@ describe("runExtensionInstall — the post-install walk", () => {
     expect(out.stdout).toContain("Approve each package to run (you can decline any):");
   });
 
+  describe("a starter pack has no code to approve", () => {
+    const PACK_REQ = {
+      connector: "github",
+      state: "not_connected",
+      owner: { kind: "bundled" },
+      fix: ["nimbus connector auth github"],
+      requiredBy: ["acme.pack"],
+      interactive: false,
+    };
+    const walkDeps = (asked: string[], approved: string[]) => ({
+      socketPath: "/sock",
+      makeClient: () => {
+        const c = createMockIpcClient([
+          { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+        ]);
+        approved.push("fresh");
+        return c.client;
+      },
+      confirm: async (q: string) => {
+        asked.push(q);
+        return true;
+      },
+      connectorAuth: async (id: string) => {
+        asked.push(`auth ${id}`);
+      },
+    });
+
+    test("a registry pack approves only its code members, dependencies first", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [
+            { id: "acme.sub", version: "1.0.0", registry: "main", kind: "starter-pack" },
+            { id: "acme.dep", version: "1.0.0", registry: "main", kind: "extension" },
+          ],
+        },
+      ]);
+      const asked: string[] = [];
+      const fresh: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, fresh),
+      );
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0 with 2 packages.");
+      expect(out.stdout).toContain(
+        "Nothing runs until you approve it: nimbus extension approve acme.dep",
+      );
+      expect(out.stdout).not.toContain("approve acme.pack");
+      expect(out.stdout).not.toContain("approve acme.sub");
+      // One code package: the single-package question, one approval.
+      expect(asked).toEqual(["Approve acme.dep to run now? [y/N] "]);
+      expect(fresh).toHaveLength(1);
+    });
+
+    test("a pack whose members were all installed already prints no Nothing-runs line and asks nothing", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [],
+        },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, []),
+      );
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0 with 0 packages.");
+      expect(out.stdout).not.toContain("Nothing runs until you approve it");
+      expect(asked).toEqual([]);
+    });
+
+    test("a pack's own connector requirement is still offered, and never as a pack approval", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [],
+          connectorRequirements: [PACK_REQ],
+        },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, []),
+      );
+      expect(out.stdout).toContain("Needs:");
+      expect(out.stdout).not.toContain("extension approve acme.pack");
+      expect(asked.some((q) => q.includes("Approve"))).toBe(false);
+    });
+
+    test("a gateway that reports no kind is treated as an extension", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+      ]);
+      await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+      expect(out.stdout).toContain(
+        "Nothing runs until you approve it: nimbus extension approve acme.tool",
+      );
+      expect(out.stdout).not.toContain("starter pack");
+    });
+
+    test("a local pack install walks no approvals", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        { id: "acme.pack", version: "1.0.0", installPath: "/p", kind: "starter-pack" },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(client, ["install", ".", "--yes"], ["."], walkDeps(asked, []));
+      expect(asked).toEqual([]);
+    });
+  });
+
   test("a failing walk never fails the install", async () => {
     setTty(true);
     const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);

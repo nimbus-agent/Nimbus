@@ -17,6 +17,7 @@ import {
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import {
   ExtensionInstallNotApprovedError,
+  installedKindOf,
   isPromotedInstall,
 } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
@@ -353,7 +354,11 @@ async function handleInstall(
       publisher: installed.publisher,
       installPath: installed.installPath,
       treeDigest: installed.treeDigest,
-      dependencies: installed.dependencies,
+      kind: installedKindOf(o.db, installed.id),
+      dependencies: installed.dependencies.map((d) => ({
+        ...d,
+        kind: installedKindOf(o.db, d.id),
+      })),
       ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
     },
   };

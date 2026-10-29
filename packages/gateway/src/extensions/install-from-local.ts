@@ -434,6 +434,13 @@ export function isPromotedInstall<T extends object>(
   return "promoted" in r && r.promoted === true;
 }
 
+/** The kind recorded for an installed package; "extension" when the row is absent or predates V79. */
+export function installedKindOf(db: Database, id: string): "extension" | "starter-pack" {
+  return listExtensions(db).find((r) => r.id === id)?.kind === "starter-pack"
+    ? "starter-pack"
+    : "extension";
+}
+
 /**
  * The installed row an explicit install may promote, or `undefined` when there is nothing to
  * promote (not installed, or installed explicitly): the caller then refuses exactly as before.

@@ -1390,6 +1390,7 @@ describe("extension.info / extension.list — connector requirements", () => {
         ...(vault === undefined ? {} : { vault }),
       }) as Promise<{ value: Record<string, unknown> }>;
     const out = await install(new MockVault(), join(tmp, "installed"));
+    expect(out.value["kind"]).toBe("extension");
     expect(
       (out.value["connectorRequirements"] as Req[]).map((r) => [
         r.connector,

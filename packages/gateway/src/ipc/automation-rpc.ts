@@ -74,6 +74,7 @@ import {
 import {
   ExtensionInstallNotApprovedError,
   installExtensionFromLocalDirectory,
+  installedKindOf,
   isPromotedInstall,
 } from "../extensions/install-from-local.ts";
 import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
@@ -929,6 +930,7 @@ async function handleExtensionInstall(
       manifestHash: installed.manifestHash,
       entryHash: installed.entryHash,
       treeDigest: installed.treeDigest,
+      kind: installedKindOf(ctx.db, installed.id),
       ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
     },
   };
