@@ -74,6 +74,7 @@ import {
 import {
   ExtensionInstallNotApprovedError,
   installExtensionFromLocalDirectory,
+  isPromotedInstall,
 } from "../extensions/install-from-local.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
@@ -879,6 +880,13 @@ async function handleExtensionInstall(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
       msg,
     );
+  }
+  // A dependency kept by an explicit install: nothing was copied or approved, only its marker moved.
+  if (isPromotedInstall(installed)) {
+    return {
+      kind: "hit",
+      value: { id: installed.id, version: installed.version, promoted: true },
+    };
   }
   // After the install has landed, and outside its error handling: this never throws, and a
   // failure only leaves the field out — requirement status never fails an install.

@@ -15,7 +15,10 @@ import {
   installedConnectorRequirementStatuses,
 } from "../extensions/connector-requirements.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
-import { ExtensionInstallNotApprovedError } from "../extensions/install-from-local.ts";
+import {
+  ExtensionInstallNotApprovedError,
+  isPromotedInstall,
+} from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
 import {
   BUILTIN_REGISTRY_NAME,
@@ -290,11 +293,13 @@ async function handleInstall(
         ...(acceptPublisherKey !== undefined && { acceptPublisherKey }),
       },
     );
-    emitGatewayEvent("extension.stateChanged", {
-      extensionId: installed.id,
-      action: "install",
-      ok: true,
-    });
+    if (!isPromotedInstall(installed)) {
+      emitGatewayEvent("extension.stateChanged", {
+        extensionId: installed.id,
+        action: "install",
+        ok: true,
+      });
+    }
   } catch (e) {
     emitGatewayEvent("extension.stateChanged", {
       extensionId: id,
@@ -311,6 +316,13 @@ async function handleInstall(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
       e instanceof Error ? e.message : String(e),
     );
+  }
+  // A dependency kept by an explicit install: nothing was fetched or installed, only its marker moved.
+  if (isPromotedInstall(installed)) {
+    return {
+      kind: "hit",
+      value: { id: installed.id, version: installed.version, promoted: true },
+    };
   }
   // After the install has landed, and outside its error handling: the root and every dependency
   // this install added, each read from its installed copy. This never throws, and a failure only

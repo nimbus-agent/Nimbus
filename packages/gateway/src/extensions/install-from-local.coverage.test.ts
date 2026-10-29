@@ -4,6 +4,7 @@
  * publisher-key failure (I16's `extension.signature_failed` row), copy failures, and a source
  * manifest changed while the owner was being asked to approve the install.
  */
+
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -11,7 +12,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { assertInstalled } from "../../test/helpers/assert-installed.ts";
 import { listExtensions } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { registerGlobalFetchRestore } from "../testing/bun-test-support.ts";
@@ -117,6 +118,7 @@ describe("archive layouts", () => {
     });
     expect(r.id).toBe("arch.root");
     expect(r.version).toBe("1.2.3");
+    assertInstalled(r);
     expect(r.installPath).toBe(join(f.extensionsDir, "arch.root"));
     expect(existsSync(join(r.installPath, "dist", "index.js"))).toBe(true);
     expect(r.entryHash).toBe(createHash("sha256").update("export default {};\n").digest("hex"));
@@ -172,6 +174,7 @@ describe("dependency resolution reads installed manifests back from disk", () =>
 
     // `chain.c` is only reachable through `chain.b`'s INSTALLED manifest: the solver can only list
     // it if it read b's dependsOn back from disk.
+    assertInstalled(r);
     const byId = new Map(r.installed.map((n) => [n.id, n]));
     expect([...byId.keys()].sort()).toEqual(["chain.a", "chain.b", "chain.c"]);
     expect(byId.get("chain.a")?.newlyInstalled).toBe(true);

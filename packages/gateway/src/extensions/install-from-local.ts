@@ -26,7 +26,9 @@ import {
 
 import {
   deleteExtensionById,
+  type ExtensionRow,
   insertExtensionRow,
+  isInstalledAsDependency,
   listExtensions,
   setExtensionPublisherKeyFingerprint,
   setInstalledAsDependency,
@@ -281,7 +283,7 @@ async function installExtensionFromArchive(options: {
   sourceRegistry?: string;
   rootFingerprint?: string;
   approve?: ExtensionInstallApprover;
-}): Promise<InstallExtensionFromLocalResult> {
+}): Promise<InstallExtensionFromLocalResult | PromotedInstallResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
     const { sourceRoot: root } = await extractPackage(options.archivePath, tmp);
@@ -411,6 +413,59 @@ export type ExtensionInstallApprover = (
 export type InstallExtensionFromLocalResult = SingleInstallResult & {
   installed: readonly ResolvedNode[];
 };
+
+/**
+ * An explicit install of a package that is already installed only as a dependency (V78
+ * `installed_as_dependency = 1`): nothing is fetched, copied or approved, and the only write is the
+ * marker, cleared so a later removal of what needed it no longer offers to remove this one.
+ */
+export type PromotedInstallResult = {
+  readonly id: string;
+  readonly version: string;
+  readonly promoted: true;
+};
+
+export function isPromotedInstall<T extends object>(
+  r: T | PromotedInstallResult,
+): r is PromotedInstallResult {
+  return "promoted" in r && r.promoted === true;
+}
+
+/**
+ * The installed row an explicit install may promote, or `undefined` when there is nothing to
+ * promote (not installed, or installed explicitly): the caller then refuses exactly as before.
+ */
+export function installedDependencyRow(db: Database, id: string): ExtensionRow | undefined {
+  const row = listExtensions(db).find((r) => r.id === id);
+  return row !== undefined && isInstalledAsDependency(db, id) ? row : undefined;
+}
+
+/** Clears the dependency marker on `row`. The marker only decides what a later removal offers, so it needs no consent. */
+export function promoteInstalledDependency(db: Database, row: ExtensionRow): PromotedInstallResult {
+  setInstalledAsDependency(db, row.id, false);
+  return { id: row.id, version: row.version, promoted: true };
+}
+
+/**
+ * A local install promotes an installed dependency only when the folder holds the SAME package: the
+ * same id, version and manifest bytes (`manifest_hash`). A different package that reuses the id is
+ * not taken as the owner keeping the installed one; it falls through to the ordinary install path,
+ * unchanged (another version is refused as already installed; the same version still goes to the
+ * owner's approval) and the marker stays. The plain local install only: a registry-driven call has
+ * already refused an installed id before fetching.
+ */
+function promotableLocalDependency(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+  manifestBytes: Buffer,
+): ExtensionRow | undefined {
+  if (options.registryPlan !== undefined || options.sourceRegistry !== undefined) return undefined;
+  const row = installedDependencyRow(options.db, manifest.id);
+  if (row === undefined || row.version !== manifest.version) return undefined;
+  return sha256HexEqualConstantTime(row.manifest_hash, sha256HexOfBytes(manifestBytes))
+    ? row
+    : undefined;
+}
 
 function buildSolverInputs(db: Database): {
   installed: ReadonlyMap<string, InstalledForSolver>;
@@ -1136,7 +1191,7 @@ async function requireInstallApproval(
 
 export async function installExtensionFromLocalDirectory(
   options: InstallFromLocalOptions,
-): Promise<InstallExtensionFromLocalResult> {
+): Promise<InstallExtensionFromLocalResult | PromotedInstallResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
     throw new Error("extension source path does not exist");
@@ -1170,6 +1225,11 @@ export async function installExtensionFromLocalDirectory(
       `a starter pack's manifest must be named ${EXTENSION_MANIFEST_FILENAME}`,
     );
   }
+
+  // An explicit install of the same package already installed as a dependency keeps it: before
+  // solving and before the owner is asked, since it installs nothing.
+  const promotable = promotableLocalDependency(options, manifest, manifestBytes);
+  if (promotable !== undefined) return promoteInstalledDependency(options.db, promotable);
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 

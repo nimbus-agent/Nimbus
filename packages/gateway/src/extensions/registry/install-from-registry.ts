@@ -19,7 +19,7 @@ import {
   readManifestRepository,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
-import { listExtensions } from "../../automation/extension-store.ts";
+import { type ExtensionRow, listExtensions } from "../../automation/extension-store.ts";
 import type { NimbusVault } from "../../vault/index.ts";
 import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
@@ -30,6 +30,10 @@ import {
   ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
   installExtensionFromLocalDirectory,
+  installedDependencyRow,
+  isPromotedInstall,
+  type PromotedInstallResult,
+  promoteInstalledDependency,
   rollbackFailuresOf,
 } from "../install-from-local.ts";
 import {
@@ -62,7 +66,7 @@ import {
   fetchHashedPackage,
 } from "./registry-package-stage.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
-import { type RegistryRow, setExtensionSource } from "./registry-store.ts";
+import { getExtensionSource, type RegistryRow, setExtensionSource } from "./registry-store.ts";
 
 export { MAX_REGISTRY_MANIFEST_BYTES } from "./registry-manifest.ts";
 
@@ -348,7 +352,7 @@ export async function installVerifiedRegistryPackage(
           channel,
           ...(pkg.index === undefined ? {} : { index: pkg.index }),
         });
-  let installed: InstallExtensionFromLocalResult;
+  let installed: InstallExtensionFromLocalResult | PromotedInstallResult;
   try {
     installed = await installExtensionFromLocalDirectory({
       db: deps.db,
@@ -389,6 +393,10 @@ export async function installVerifiedRegistryPackage(
       failures.length === 0 ? {} : { rollbackFailures: failures },
     );
   }
+  // Unreachable: a registry-driven local install never promotes (the fetch refused an installed id).
+  if (isPromotedInstall(installed)) {
+    throw new RegistryError("ERR_REGISTRY_ALREADY_INSTALLED", `${id} is already installed`);
+  }
   setExtensionSource(deps.db, installed.id, { registry: reg.name, rootFingerprint, channel });
   return {
     ...installed,
@@ -403,10 +411,31 @@ export async function installVerifiedRegistryPackage(
   };
 }
 
+/**
+ * The installed dependency an explicit registry install keeps instead of refusing (spec § 8.1), or
+ * `undefined`. A request that names another version, or another registry than the one the
+ * dependency came from, is not a request for the installed copy: it is refused as before.
+ */
+function promotableRegistryDependency(
+  db: Database,
+  req: InstallFromRegistryRequest,
+): ExtensionRow | undefined {
+  const row = installedDependencyRow(db, req.id);
+  if (row === undefined) return undefined;
+  if (req.version !== undefined && req.version !== row.version) return undefined;
+  if (req.registry !== undefined && req.registry !== getExtensionSource(db, req.id)?.registry) {
+    return undefined;
+  }
+  return row;
+}
+
 export async function installFromRegistry(
   deps: InstallFromRegistryDeps,
   req: InstallFromRegistryRequest,
-): Promise<RegistryInstallResult> {
+): Promise<RegistryInstallResult | PromotedInstallResult> {
+  // Before any fetch: a promotion makes no network request and appends no egress row.
+  const promotable = promotableRegistryDependency(deps.db, req);
+  if (promotable !== undefined) return promoteInstalledDependency(deps.db, promotable);
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-reg-"));
   try {
     const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);

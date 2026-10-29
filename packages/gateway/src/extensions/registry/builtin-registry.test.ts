@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
+import { assertInstalled } from "../../../test/helpers/assert-installed.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { verifyManifestSignature } from "../verify-signature.ts";
@@ -128,6 +129,7 @@ describe("the built-in official registry", () => {
       },
       { id: ID },
     );
+    assertInstalled(out);
     expect(out.sourceRegistry).toBe(BUILTIN_REGISTRY_NAME);
     expect(getExtensionSource(db, ID)).toEqual({
       registry: BUILTIN_REGISTRY_NAME,

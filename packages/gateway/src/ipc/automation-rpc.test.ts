@@ -10,7 +10,11 @@ import {
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import {
+  insertExtensionRow,
+  isInstalledAsDependency,
+  setInstalledAsDependency,
+} from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
@@ -1402,6 +1406,46 @@ describe("extension.install", () => {
       expect((caught as AutomationRpcError).rpcCode).toBe(-32602);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("an explicit install of the same package installed as a dependency promotes it", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const srcRoot = mkdtempSync(join(tmpdir(), "nimbus-ext-promote-"));
+    try {
+      const src = join(srcRoot, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "promote.me", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+      const asked: unknown[] = [];
+      const ownerGate = async (a: unknown): Promise<boolean> => {
+        asked.push(a);
+        return true;
+      };
+      const installOnce = () =>
+        dispatchAutomationRpc({
+          method: "extension.install",
+          params: { sourcePath: src },
+          db,
+          extensionsDir,
+          ownerGate,
+        });
+      await installOnce();
+      setInstalledAsDependency(db, "promote.me", true);
+      asked.length = 0;
+      expect(await installOnce()).toEqual({
+        kind: "hit",
+        value: { id: "promote.me", version: "1.0.0", promoted: true },
+      });
+      expect(asked).toEqual([]);
+      expect(isInstalledAsDependency(db, "promote.me")).toBe(false);
+    } finally {
+      db.close();
+      rmDirWithRetry(srcRoot);
+      rmDirWithRetry(extensionsDir);
     }
   });
 

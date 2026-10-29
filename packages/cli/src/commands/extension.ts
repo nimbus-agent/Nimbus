@@ -522,6 +522,20 @@ function looksLikePath(arg: string): boolean {
   );
 }
 
+/**
+ * Prints the promote copy and returns true when the install only kept a package already installed
+ * as a dependency (`promoted: true`). Nothing was fetched, copied or approved then, so the caller
+ * prints no approve line and no Needs block, and runs no post-install walk.
+ */
+function printedPromotion(out: { id: string; promoted?: boolean }): boolean {
+  if (out.promoted !== true) return false;
+  console.log(
+    `${stripControl(out.id)} is already installed (it came in as a dependency); it is now kept even if what needed it is removed.`,
+  );
+  console.log(JSON.stringify(out, undefined, 2));
+  return true;
+}
+
 const INSTALL_USAGE =
   "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes]";
 
@@ -564,7 +578,9 @@ async function runExtensionInstallFromRegistry(
     installPath: string;
     dependencies?: { id: string; version: string; registry: string }[];
     connectorRequirements?: unknown;
+    promoted?: boolean;
   }>("registry.install", params);
+  if (printedPromotion(out)) return;
   const who =
     out.publisher === undefined
       ? ""
@@ -635,7 +651,9 @@ export async function runExtensionInstall(
     version: string;
     installPath: string;
     connectorRequirements?: unknown;
+    promoted?: boolean;
   }>("extension.install", installParams);
+  if (printedPromotion(out)) return;
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
   await walkAfterInstall(args, walk, [out.id], parseRequirementStatuses(out.connectorRequirements));

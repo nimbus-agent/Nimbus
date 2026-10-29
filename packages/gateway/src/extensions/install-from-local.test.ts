@@ -14,18 +14,19 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
-
 import {
   publisherKeyFingerprint,
   RegistryError,
   signTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
+import { assertInstalled } from "../../test/helpers/assert-installed.ts";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import {
   getExtensionKind,
   isInstalledAsDependency,
   listExtensions,
+  setInstalledAsDependency,
 } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -361,6 +362,7 @@ describe("installExtensionFromLocalDirectory — dependency resolution (T2 PR 4)
     expect(result.id).toBe("closure.root.b");
     expect(result.version).toBe("1.0.0");
 
+    assertInstalled(result);
     expect(result.installed).toHaveLength(2);
 
     const depNode = result.installed.find((n) => n.id === "closure.dep.a");
@@ -734,6 +736,7 @@ describe("installExtensionFromLocalDirectory — dependencies resolve only again
         sourcePath: srcB,
       });
       expect(r.id).toBe("disk.root.b");
+      assertInstalled(r);
       const depNode = r.installed.find((n) => n.id === "disk.dep.a");
       expect(depNode?.newlyInstalled).toBe(false);
     } finally {
@@ -1132,6 +1135,7 @@ describe("buildRootInstallResult — entry hash path (Tier C-12b)", () => {
       "utf8",
     );
     const result = await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+    assertInstalled(result);
     expect(result.entryHash).toHaveLength(64);
   });
 });
@@ -1494,6 +1498,7 @@ describe("installExtensionFromLocalDirectory — tree digest + approval hook", (
     const r = await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
     const row = listExtensions(db)[0];
     expect(row?.tree_digest).toBe(computeExtensionTreeDigest(join(extensionsDir, "test.ext.tree")));
+    assertInstalled(r);
     expect(r.treeDigest).toBe(row?.tree_digest ?? "");
   });
 
@@ -1778,6 +1783,7 @@ describe("installExtensionFromLocalDirectory — cross-registry dependencies and
         },
       });
       expect(asked).toBe(1);
+      assertInstalled(result);
       const root = result.installed.find((n) => n.id === "test.ext.cross");
       expect(root?.deps).toEqual([
         { id: "test.ext.dep", range: "^1.0.0", resolvedVersion: "1.2.0", registry: null },
@@ -1836,6 +1842,7 @@ describe("installExtensionFromLocalDirectory — cross-registry dependencies and
       });
       expect(asked).toBe(1);
       const manifestSha = createHash("sha256").update(manifestText).digest("hex");
+      assertInstalled(result);
       expect(result.entryHash).toBe(manifestSha);
       const pack = listExtensions(fx.db).find((r) => r.id === "test.ext.pack");
       expect(pack?.kind).toBe("starter-pack");
@@ -1988,5 +1995,107 @@ describe("installExtensionFromLocalDirectory — connector requirements in the a
       f.db.close();
       rmDirWithRetry(dirname(f.src));
     }
+  });
+});
+
+describe("installExtensionFromLocalDirectory — an explicit install of a dependency promotes it", () => {
+  const ID = "test.ext.promote";
+
+  async function withInstalled(
+    fn: (fx: {
+      db: Database;
+      extensionsDir: string;
+      root: string;
+      writeSource: (name: string, manifest: Record<string, unknown>) => string;
+      asked: ExtensionInstallApprovalRequest[];
+      approve: (r: ExtensionInstallApprovalRequest) => Promise<boolean>;
+    }) => Promise<void>,
+  ): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-promote-"));
+    const extensionsDir = join(root, "extensions");
+    const db = new Database(":memory:");
+    LocalIndex.ensureSchema(db);
+    const writeSource = (name: string, manifest: Record<string, unknown>): string => {
+      const src = join(root, name);
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(manifest), "utf8");
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+      return src;
+    };
+    const asked: ExtensionInstallApprovalRequest[] = [];
+    const approve = async (r: ExtensionInstallApprovalRequest): Promise<boolean> => {
+      asked.push(r);
+      return true;
+    };
+    try {
+      const src = writeSource("src", { id: ID, version: "1.0.0", entry: "dist/index.js" });
+      await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src, approve });
+      asked.length = 0;
+      await fn({ db, extensionsDir, root, writeSource, asked, approve });
+    } finally {
+      db.close();
+      rmDirWithRetry(root);
+    }
+  }
+
+  test("the same package, installed as a dependency, is promoted with no approval", async () => {
+    await withInstalled(async ({ db, extensionsDir, root, asked, approve }) => {
+      setInstalledAsDependency(db, ID, true);
+      const before = listExtensions(db);
+      const out = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: join(root, "src"),
+        approve,
+      });
+      expect(out).toEqual({ id: ID, version: "1.0.0", promoted: true });
+      expect(asked).toHaveLength(0);
+      expect(isInstalledAsDependency(db, ID)).toBe(false);
+      expect(listExtensions(db)).toEqual(before);
+    });
+  });
+
+  test("a different package reusing the dependency's id is not taken as keeping it", async () => {
+    await withInstalled(async ({ db, extensionsDir, writeSource, asked, approve }) => {
+      setInstalledAsDependency(db, ID, true);
+      // Another version: the ordinary install's refusal, unchanged.
+      const other = writeSource("other-version", {
+        id: ID,
+        version: "2.0.0",
+        entry: "dist/index.js",
+      });
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: other, approve }),
+      ).rejects.toThrow(/already installed at/i);
+      expect(isInstalledAsDependency(db, ID)).toBe(true);
+      // The same version with other manifest bytes: the ordinary install, so the owner is asked,
+      // and nothing promotes the installed copy.
+      asked.length = 0;
+      const bytes = writeSource("other-bytes", {
+        id: ID,
+        version: "1.0.0",
+        entry: "dist/index.js",
+        displayName: "Other",
+      });
+      const out = await installExtensionFromLocalDirectory({
+        db,
+        extensionsDir,
+        sourcePath: bytes,
+        approve,
+      });
+      expect("promoted" in out).toBe(false);
+      expect(asked.map((r) => r.id)).toEqual([ID]);
+      expect(isInstalledAsDependency(db, ID)).toBe(true);
+    });
+  });
+
+  test("an explicit install of an explicitly installed package is still refused", async () => {
+    await withInstalled(async ({ db, extensionsDir, writeSource, approve }) => {
+      const src = writeSource("v2", { id: ID, version: "2.0.0", entry: "dist/index.js" });
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src, approve }),
+      ).rejects.toThrow(/already installed at/i);
+      expect(isInstalledAsDependency(db, ID)).toBe(false);
+    });
   });
 });

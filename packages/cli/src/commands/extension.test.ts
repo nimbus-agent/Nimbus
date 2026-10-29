@@ -3124,6 +3124,50 @@ describe("runExtensionInstall — the post-install walk", () => {
     });
   }
 
+  const PROMOTE_COPY =
+    "acme.dep is already installed (it came in as a dependency); it is now kept even if what needed it is removed.";
+
+  for (const [name, args, rest] of [
+    [
+      "a registry install of a dependency prints the promote copy and walks nothing",
+      ["install", "acme.dep"],
+      ["acme.dep"],
+    ],
+    [
+      "a local install of a dependency prints the promote copy and walks nothing",
+      ["install", "."],
+      ["."],
+    ],
+  ] as const) {
+    test(name, async () => {
+      setTty(true);
+      const install = countingClient([{ id: "acme.dep", version: "1.0.0", promoted: true }]);
+      const made: string[] = [];
+      const asked: string[] = [];
+      await runExtensionInstall(install.client, [...args], [...rest], {
+        socketPath: "/sock",
+        makeClient: (p) => {
+          made.push(p);
+          return countingClient([]).client;
+        },
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+        connectorAuth: async (id) => {
+          asked.push(`auth ${id}`);
+        },
+      });
+      expect(out.stdout.split("\n")[0]).toBe(PROMOTE_COPY);
+      expect(out.stdout).not.toContain("Nothing runs until you approve it");
+      expect(out.stdout).not.toContain("installed acme.dep");
+      expect(out.stdout).not.toContain("Needs:");
+      expect(made).toEqual([]);
+      expect(asked).toEqual([]);
+      expect(install.calls).toHaveLength(1);
+    });
+  }
+
   test("the walk never approves on the install's client", async () => {
     setTty(true);
     const install = countingClient([

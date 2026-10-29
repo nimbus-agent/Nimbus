@@ -13,6 +13,7 @@ import {
   signTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
+import { isInstalledAsDependency } from "../automation/extension-store.ts";
 import {
   buildMultiExtensionRegistry,
   buildTestRegistry,
@@ -810,6 +811,29 @@ describe("registry.install", () => {
         "  slack: not connected — run: nimbus connector auth slack",
       ].join("\n"),
     );
+  });
+
+  test("registry.install of an installed dependency promotes it without asking", async () => {
+    runIndexedSchemaMigrations(db, 79);
+    const dir = join(tmp, "reg");
+    await buildMultiExtensionRegistry(dir, {
+      "acme.tool": [{ version: "1.0.0", dependsOn: { "acme.dep": "^1.0.0" } }],
+      "acme.dep": [{ version: "1.0.0" }],
+    });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    await install({ id: "acme.tool" }, g.gate);
+    expect(isInstalledAsDependency(db, "acme.dep")).toBe(true);
+    events.length = 0;
+    const out = await install({ id: "acme.dep" }, g.gate);
+    expect(out).toEqual({
+      kind: "hit",
+      value: { id: "acme.dep", version: "1.0.0", promoted: true },
+    });
+    expect(g.asked).toHaveLength(1);
+    expect(isInstalledAsDependency(db, "acme.dep")).toBe(false);
+    // Nothing was installed, so no install event is reported.
+    expect(events.filter((e) => e.params["kind"] === "extension.stateChanged")).toEqual([]);
   });
 
   test("a failing requirement computation never fails a registry install", async () => {
