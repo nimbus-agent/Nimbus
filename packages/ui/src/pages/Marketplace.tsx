@@ -16,7 +16,17 @@ interface ExtensionRowProps {
 function ExtensionRow({ ext, disabled, onToggle, onRemove }: Readonly<ExtensionRowProps>) {
   return (
     <tr>
-      <td className="py-2 px-3 font-mono text-sm">{ext.id}</td>
+      <td className="py-2 px-3 font-mono text-sm">
+        {ext.id}
+        {ext.orphaned === true && (
+          <span
+            data-testid="orphaned-marker"
+            className="ml-2 inline-block px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700 font-sans"
+          >
+            installed only as a dependency; nothing needs it now
+          </span>
+        )}
+      </td>
       <td className="py-2 px-3 text-sm">{ext.version}</td>
       <td className="py-2 px-3">
         <span

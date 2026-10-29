@@ -419,6 +419,8 @@ export interface ExtensionSummary {
   readonly enabled: number;
   readonly installPath: string;
   readonly manifestHash: string;
+  /** Present (true) when the extension is installed only as a dependency that nothing needs now. */
+  readonly orphaned?: true;
 }
 
 export interface ExtensionListResult {

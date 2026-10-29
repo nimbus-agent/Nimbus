@@ -73,6 +73,23 @@ describe("Marketplace page", () => {
     expect(screen.getByText("0.9.0")).toBeInTheDocument();
   });
 
+  it("marks an orphaned dependency row and no other", async () => {
+    stubExtensionList([{ ...EXT_1, orphaned: true }, EXT_2]);
+    renderPage();
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
+    const markers = screen.getAllByTestId("orphaned-marker");
+    expect(markers).toHaveLength(1);
+    expect(markers[0]).toHaveTextContent("installed only as a dependency; nothing needs it now");
+    expect(markers[0]?.closest("tr")).toHaveTextContent("nimbus-git");
+  });
+
+  it("shows no marker when the gateway sends no orphaned field", async () => {
+    stubExtensionList([EXT_1, EXT_2]);
+    renderPage();
+    expect(await screen.findByText("nimbus-git")).toBeInTheDocument();
+    expect(screen.queryByTestId("orphaned-marker")).toBeNull();
+  });
+
   it("enabled checkbox reflects the extension state", async () => {
     stubExtensionList([EXT_1, EXT_2]);
     renderPage();

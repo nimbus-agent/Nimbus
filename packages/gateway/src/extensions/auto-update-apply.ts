@@ -1,6 +1,7 @@
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { RollbackFailure } from "./install-from-local.ts";
 import { holdingDir, prevVersionDir, prevVersionsDir, swapBufferDir } from "./version-store.ts";
 
 function hexEqualIgnoreCase(a: string, b: string): boolean {
@@ -37,6 +38,13 @@ export interface ApplyDowngradeOpts {
   id: string;
   fromVersion: string;
   toVersion: string;
+  /** Test seam: the directory rename. Defaults to `fs.rename`. */
+  renameDir?: (from: string, to: string) => Promise<void>;
+}
+
+/** The swap buffer a failed downgrade left on disk, in the shape the rollback reporting reads. */
+function bufferLeftBehind(buffer: string, error: unknown): { rollbackFailures: RollbackFailure[] } {
+  return { rollbackFailures: [{ step: "removeDirectory", id: null, dir: buffer, error }] };
 }
 
 async function exists(path: string): Promise<boolean> {
@@ -118,19 +126,32 @@ export async function applyDowngradeSwap(opts: ApplyDowngradeOpts): Promise<void
   await mkdir(prevVersionsDir(opts.extensionsDir, opts.id), { recursive: true });
   await rm(buffer, { recursive: true, force: true });
 
-  await rename(opts.installPath, buffer);
+  const move = opts.renameDir ?? rename;
+  await move(opts.installPath, buffer);
 
   try {
-    await rename(targetPrevPath, opts.installPath);
+    await move(targetPrevPath, opts.installPath);
   } catch (e) {
-    await rename(buffer, opts.installPath).catch(() => {});
+    let restoreFailure: unknown;
+    await move(buffer, opts.installPath).catch((restoreError: unknown) => {
+      restoreFailure = restoreError;
+    });
+    if (restoreFailure !== undefined && e instanceof Error) {
+      // The buffer (the old tree) stays on disk: name it so the owner is told.
+      Object.assign(e, bufferLeftBehind(buffer, restoreFailure));
+    }
     throw e;
   }
 
   try {
-    await rename(buffer, swapPrevPath);
+    await move(buffer, swapPrevPath);
   } catch (e) {
-    throw new Error(`swap_failed: prev rename: ${e instanceof Error ? e.message : String(e)}`);
+    throw Object.assign(
+      new Error(`swap_failed: prev rename: ${e instanceof Error ? e.message : String(e)}`, {
+        cause: e,
+      }),
+      bufferLeftBehind(buffer, e),
+    );
   }
 }
 
