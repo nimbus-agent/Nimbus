@@ -9255,9 +9255,9 @@ describe("I49 — extension code runs for evaluation only offline, without crede
   // here spawns a process.
   const roots: string[] = [];
   const PLANTED: Readonly<Record<string, string>> = {
-    I49_TOKEN: "i49-planted-credential",
-    GITHUB_TOKEN: "ghp_i49_planted",
-    NIMBUS_I49_SECRET: "nimbus-i49-planted",
+    I49_TOKEN: "pl49a-tok",
+    GITHUB_TOKEN: "pl49b-ghp",
+    NIMBUS_I49_SECRET: "pl49c-sec",
   };
   const saved = new Map<string, string | undefined>();
   beforeEach(() => {

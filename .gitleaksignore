@@ -57,3 +57,10 @@ ff3ab297ae365f7e2a499b21ffbb3111a79f9cc8:packages/gateway/src/platform/assemble.
 # an error message or the consent request payload. HEAD no longer contains any token-shaped value,
 # but the historical commit retains the pattern, so the fingerprint is pinned here. Never a real credential.
 8e96e39cb85c020a226c846555af87f6c28d9c51:packages/gateway/src/connectors/local-auth/adopt-local-auth.test.ts:github-oauth:10
+
+# I49 (nimbus eval, PR #1819, 2026-10-29) — the I49 test plants fake values in process.env to prove
+# the eval spawn's env carries none of them. `generic-api-key` keyed on the GITHUB_TOKEN /
+# NIMBUS_I49_SECRET names. HEAD now uses values under the rule's 10-character minimum; the
+# historical PR-branch commit keeps the old literals, so its two findings are pinned. Never real.
+bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariants.test.ts:generic-api-key:9257
+bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariants.test.ts:generic-api-key:9258
