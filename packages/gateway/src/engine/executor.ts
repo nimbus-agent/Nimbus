@@ -380,6 +380,14 @@ export function formatConsentPrompt(action: PlannedAction): string {
   return lines.join("\n");
 }
 
+/**
+ * What `JSON.stringify` leaves raw that a terminal still acts on: DEL and the C1 controls
+ * (U+007F-U+009F), the line and paragraph separators (U+2028, U+2029), and the bidi embeddings,
+ * overrides (U+202A-U+202E) and isolates (U+2066-U+2069), which can visually reorder a line.
+ * Written as escapes: an invisible literal in a character class is unreviewable.
+ */
+const PROMPT_UNSAFE_AFTER_JSON = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
 /** One `id@version (N cases)` line per extension, or undefined when the payload is malformed. */
 function evalPromptLines(action: PlannedAction): string[] | undefined {
   const list = action.payload?.["extensions"];
@@ -396,9 +404,10 @@ function evalPromptLines(action: PlannedAction): string[] | undefined {
     ) {
       return undefined;
     }
-    // id and version come from a manifest: JSON-quote them (escapes newlines and C0 controls) and
-    // strip C1 controls, so an entry can never forge a prompt line or move the terminal cursor.
-    const label = JSON.stringify(`${r.id}@${r.version}`).replace(/[-]/g, "?");
+    // id and version come from a manifest: JSON-quote them (escapes newlines and C0 controls), then
+    // replace what JSON leaves raw, so an entry can never forge a prompt line, move the terminal
+    // cursor or reorder the line it sits on.
+    const label = JSON.stringify(`${r.id}@${r.version}`).replace(PROMPT_UNSAFE_AFTER_JSON, "?");
     out.push(`${label} (${r.cases} ${r.cases === 1 ? "case" : "cases"})`);
   }
   return out;

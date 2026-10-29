@@ -101,6 +101,7 @@ describe("extension.eval consent", () => {
       [{ id: "a", version: "1", cases: -1 }],
       [{ id: "a", version: "1", cases: 1.5 }],
       [{ id: "a", version: 1, cases: 1 }],
+      [{ id: "a", version: "1", cases: Number.NaN }],
     ]) {
       const text = formatConsentPrompt({ type: "extension.eval", payload: { extensions } });
       expect(text, JSON.stringify(extensions)).toContain("Details:");
@@ -127,6 +128,24 @@ describe("extension.eval consent", () => {
     expect(text).not.toContain("\u009b");
     expect(text).not.toContain("\r");
     expect(text).toContain("a\\nrun: evil");
+  });
+
+  test.each([
+    ["DEL", "\u007f"],
+    ["NEL (U+0085)", "\u0085"],
+    ["LINE SEPARATOR (U+2028)", "\u2028"],
+    ["PARAGRAPH SEPARATOR (U+2029)", "\u2029"],
+    ["LEFT-TO-RIGHT EMBEDDING (U+202A)", "\u202a"],
+    ["RIGHT-TO-LEFT OVERRIDE (U+202E)", "\u202e"],
+    ["LEFT-TO-RIGHT ISOLATE (U+2066)", "\u2066"],
+    ["POP DIRECTIONAL ISOLATE (U+2069)", "\u2069"],
+  ])("%s in id or version is replaced, never shown", (_name, ch) => {
+    const text = formatConsentPrompt({
+      type: "extension.eval",
+      payload: { extensions: [{ id: `a${ch}b`, version: `1${ch}2`, cases: 2 }] },
+    });
+    expect(text).not.toContain(ch);
+    expect(text).toContain('"a?b@1?2" (2 cases)');
   });
 
   test("a delegate is never consulted: the owner is prompted once", async () => {
