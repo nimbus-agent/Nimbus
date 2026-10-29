@@ -1,5 +1,7 @@
-import type { RegistryIndex } from "@nimbus-dev/registry-format";
+import type { DependencySpec, RegistryIndex } from "@nimbus-dev/registry-format";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import type { DependencyConflict, InstallPlan } from "./dependency-types.ts";
+import type { PlannedPackage } from "./install-plan-text.ts";
 import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 
 export type UpdateChannel = "stable" | "beta";
@@ -68,6 +70,13 @@ export interface UpdatePlan {
 }
 
 /**
+ * A package an update adds, as the owner is shown it in the `extension.autoUpdate` approval: the
+ * install plan's block (`PlannedPackage`, from the resolver's verified manifest) and its kind, so a
+ * starter pack is never offered a run approval.
+ */
+export type ShownAddedPackage = PlannedPackage & { readonly kind: "extension" | "starter-pack" };
+
+/**
  * `publisher_key_conflict`: the source registry's signed index names a publisher key that differs
  * from the one the Vault already holds for that publisher id. Never applied (spec § 8.6 step 4).
  */
@@ -121,6 +130,12 @@ export interface AvailableUpdate {
   addedPackages?: readonly AddedPackage[];
   /** The connectors the new version requires that the installed one does not. */
   addedRequirements?: readonly string[];
+  /**
+   * The new version's declared dependencies (full specs, registry kept), from the manifest whose
+   * hash is `manifestHash`; absent when it declares none. The approval re-plans from these, and the
+   * apply re-verifies that same manifest hash.
+   */
+  dependsOn?: Readonly<Record<string, DependencySpec>>;
   /** Set when the new version's verified manifest is a starter pack: it has no code to run. */
   toStarterPack?: true;
 }
@@ -139,7 +154,9 @@ export type AutoUpdateFailPhase =
   | "extract_failed"
   | "downgrade_unavailable"
   /** I48: the target version's key is revoked or the version is taken down (re-checked at apply). */
-  | "trust_blocked";
+  | "trust_blocked"
+  /** The update's dependencies cannot be planned (a conflict, an unadded registry, …): refused before the prompt. */
+  | "update_conflicts";
 
 /** Refused before the prompt, rejected at it, or — after approval — the phase the apply failed in. */
 export type UpdateRejectReason =
@@ -156,4 +173,13 @@ export interface UpdateApplyResult {
   reason?: UpdateRejectReason;
   hint?: string;
   jobId?: string;
+  /** An applied update: the packages its approved plan added (set only when there are any). */
+  addedPackages?: ReadonlyArray<{
+    readonly id: string;
+    readonly version: string;
+    readonly registry: string | null;
+    readonly kind: "extension" | "starter-pack";
+  }>;
+  /** An applied update: the connector requirements its approval showed (set only when there are any). */
+  connectorRequirements?: readonly ConnectorRequirementStatus[];
 }

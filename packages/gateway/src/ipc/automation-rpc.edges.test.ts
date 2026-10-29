@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { planNothing } from "../../test/helpers/empty-update-plan.ts";
 import { insertExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { dbRun } from "../db/write.ts";
 import { AutoUpdateCache } from "../extensions/auto-update-cache.ts";
@@ -421,6 +422,7 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
         appendAudit: async () => {},
         getInstalledVersion: async () => "1.0.0",
         hasPrevVersion: async () => false,
+        planUpdate: planNothing,
         ...overrides,
       },
     };

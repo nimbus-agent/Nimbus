@@ -295,6 +295,12 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
     const { promptText: _prompt, ...shown } = action.payload;
     return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
+  if (hasPlanText(action) && action.type === "extension.autoUpdate") {
+    // The desktop renders `addedPackages` and `connectorRequirements` itself (it never shows
+    // `planText`), so its structured details keep both; the CLI's Details line drops them
+    // (`detailsLinePayload`), because the plan text it prints renders them.
+    return redactPayloadForConsentDisplay(omitPlanText(action.payload)) as Record<string, unknown>;
+  }
   if (hasPlanText(action)) {
     // `planText` is the rendered dependency plan, printed after the Details line by
     // formatConsentPrompt; `plan` keeps the same facts as structured fields. Its `Needs:` block
@@ -305,9 +311,29 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
   return redactPayloadForConsentDisplay(action.payload) as Record<string, unknown>;
 }
 
-/** An `extension.install` request carrying a rendered dependency plan (`extensions/install-plan-text.ts`). */
+/**
+ * An `extension.install` or `extension.autoUpdate` request carrying a rendered plan
+ * (`extensions/install-plan-text.ts`): the packages it adds and the connectors they need.
+ */
 function hasPlanText(action: PlannedAction): boolean {
-  return action.type === "extension.install" && typeof action.payload?.["planText"] === "string";
+  return (
+    (action.type === "extension.install" || action.type === "extension.autoUpdate") &&
+    typeof action.payload?.["planText"] === "string"
+  );
+}
+
+/**
+ * The payload the CLI's Details line shows. For an update with a plan, its `addedPackages` and
+ * `connectorRequirements` are left out as well: the plan text printed after the line renders them,
+ * so each package appears once (the audit row and the desktop's details keep them).
+ */
+function detailsLinePayload(action: PlannedAction): Record<string, unknown> | undefined {
+  const shown = consentDisplayPayload(action);
+  if (shown === undefined || !hasPlanText(action) || action.type !== "extension.autoUpdate") {
+    return shown;
+  }
+  const { addedPackages: _added, connectorRequirements: _needs, ...rest } = shown;
+  return rest;
 }
 
 function omitPlanText(payload: Record<string, unknown>): Record<string, unknown> {
@@ -323,7 +349,7 @@ export function formatConsentPrompt(action: PlannedAction): string {
     return lines.join("\n");
   }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
-    lines.push("", `Details: ${JSON.stringify(consentDisplayPayload(action))}`);
+    lines.push("", `Details: ${JSON.stringify(detailsLinePayload(action))}`);
   }
   if (hasPlanText(action)) {
     // The plan is a purpose-built, escaped rendering: every package, its registry and publisher,

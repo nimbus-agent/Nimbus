@@ -15,6 +15,7 @@ import { rmDirWithRetry } from "../../../test/helpers/rm-dir-with-retry.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { createAutoUpdateRuntime } from "../auto-update-init.ts";
+import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "../auto-update-rpc.ts";
 import { DependencyConflictError } from "../dependency-errors.ts";
 import type { ExtensionManifestForSolver } from "../dependency-types.ts";
 import {
@@ -446,6 +447,104 @@ describe("update detection plans the update through the registries", () => {
     expect(cached?.addedPackages).toBeUndefined();
     expect(cached?.conflicts?.map((c) => c.kind)).toEqual(["offline"]);
     expect(cached?.conflicts?.[0]).toMatchObject({ kind: "offline", id: DEP, parent: ROOT });
+  });
+});
+
+describe("the update approval lists what the update adds (production wiring)", () => {
+  type Asked = { payload: Record<string, unknown>; packageFetches: number };
+
+  /** Detects, then asks to apply ROOT@1.2.0; the owner rejects, so nothing is ever applied. */
+  async function askToUpdate(): Promise<{ asked: Asked[]; result: Record<string, unknown> }> {
+    _resetAutoUpdateMutexForTests();
+    const rt = createAutoUpdateRuntime({
+      db,
+      vault,
+      extensionsDir: join(tmp, "extensions"),
+      dataDir: join(tmp, "data"),
+      fetch: fetchBag(),
+      intervalHours: 24,
+    });
+    await rt.deps.forcePoll();
+    const asked: Asked[] = [];
+    const result = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ROOT, toVersion: "1.2.0" },
+      {
+        ...rt.deps,
+        gate: async (action) => {
+          asked.push({ payload: action.payload, packageFetches: ledger("registry.package") });
+          return { status: "rejected" };
+        },
+      },
+    )) as Record<string, unknown>;
+    return { asked, result };
+  }
+
+  test("an update adding packages shows them in the approval before anything is fetched", async () => {
+    await addRegistry("main", {
+      [ROOT]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    const packagesBefore = ledger("registry.package");
+    const { asked, result } = await askToUpdate();
+    expect(asked).toHaveLength(1);
+    const p = asked[0]?.payload ?? {};
+    expect(p["addedPackages"]).toMatchObject([
+      { id: DEP, version: "1.0.0", registry: "main", newlyInstalled: true, kind: "extension" },
+    ]);
+    expect(String(p["planText"])).toStartWith("This update adds 1 package(s):\n");
+    expect(String(p["planText"])).toContain(`${DEP}@1.0.0 (${ROOT} needs ^1.0.0)`);
+    // Planned from verified manifests only: no package was downloaded before the owner answered.
+    expect(asked[0]?.packageFetches).toBe(packagesBefore);
+    expect(result).toEqual({ applied: false, reason: "user_rejected" });
+    expect(db.query("SELECT id FROM extension WHERE id = ?").get(DEP)).toBeNull();
+  });
+
+  test("the update approval shows the new connector requirement", async () => {
+    await addRegistry("main", {
+      [ROOT]: [
+        { version: "1.0.0" },
+        {
+          version: "1.2.0",
+          dependsOn: { [DEP]: "^1.0.0" },
+          requires: { connectors: ["slack"] },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0", requires: { connectors: ["github"] } }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    const { asked } = await askToUpdate();
+    const p = asked[0]?.payload ?? {};
+    const reqs = p["connectorRequirements"] as Array<{
+      connector: string;
+      state: string;
+      requiredBy: string[];
+    }>;
+    expect(reqs.map((r) => [r.connector, r.state, r.requiredBy])).toEqual([
+      ["github", "not_connected", [DEP]],
+      ["slack", "not_connected", [ROOT]],
+    ]);
+    expect(String(p["planText"])).toContain("\nNeeds:\n  github: not connected");
+  });
+
+  test("a planning conflict refuses before the gate with update_conflicts", async () => {
+    await addRegistry("main", {
+      [ROOT]: [
+        { version: "1.0.0" },
+        {
+          version: "1.2.0",
+          dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://elsewhere.test/" } },
+        },
+      ],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    const { asked, result } = await askToUpdate();
+    expect(asked).toHaveLength(0);
+    expect(result["applied"]).toBe(false);
+    expect(result["reason"]).toBe("update_conflicts");
+    expect(String(result["hint"])).toStartWith("update_conflicts: ");
+    expect(String(result["hint"])).toContain("ERR_DEPENDENCY_REGISTRY_NOT_ADDED");
   });
 });
 

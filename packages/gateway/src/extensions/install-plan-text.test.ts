@@ -5,6 +5,7 @@ import {
   type PlannedPackage,
   planPermissionsUnion,
   renderInstallPlan,
+  renderUpdatePlan,
   requirementLines,
   withNeedsBlock,
 } from "./install-plan-text.ts";
@@ -100,6 +101,27 @@ describe("renderInstallPlan", () => {
     const text = renderInstallPlan([evil], planPermissionsUnion([evil]));
     expect(text.split("\n").filter((l) => l.startsWith("All packages together"))).toHaveLength(1);
     expect(text).toContain(String.raw`~/x\u000A`);
+  });
+});
+
+describe("renderUpdatePlan", () => {
+  test("one added package renders the install block under the update header, then the union", () => {
+    const added = [DEP];
+    expect(renderUpdatePlan(added, planPermissionsUnion(added))).toBe(
+      [
+        "This update adds 1 package(s):",
+        "  com.example.dep@1.2.0 (com.example.tool needs ^1.0.0) — registry main (https://r.example/) — publisher acme (6fb9a1c2d3e4f506…), verified",
+        "    network: api.example.com · read: none · write: none",
+        "The added packages together: network: api.example.com · read: none · write: none",
+      ].join("\n"),
+    );
+  });
+
+  test("a manifest-sourced line break cannot forge a prompt line", () => {
+    const evil: PlannedPackage = { ...DEP, id: "com.example.dep\nApproved: yes" };
+    const text = renderUpdatePlan([evil], planPermissionsUnion([evil]));
+    expect(text.split("\n")).toHaveLength(4);
+    expect(text).toContain(String.raw`com.example.dep\u000AApproved: yes@1.2.0`);
   });
 });
 

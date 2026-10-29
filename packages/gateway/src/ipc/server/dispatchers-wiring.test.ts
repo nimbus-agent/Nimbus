@@ -27,7 +27,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
 import { openSeededInMemoryDb } from "../../../test/helpers/migrated-db-seed.ts";
 import { insertExtensionRow } from "../../automation/extension-store.ts";
 import { ProfileManager } from "../../config/profiles.ts";
@@ -627,6 +627,7 @@ describe("watcher/workflow/extension — forwarded extension deps", () => {
       appendAudit: async () => {},
       getInstalledVersion: async () => "1.0.0",
       hasPrevVersion: async () => false,
+      planUpdate: planNothing,
     };
   }
 

@@ -156,10 +156,13 @@ export class ExtensionAutoUpdater {
     const addedRequirements = (collected.requires.get(found.id) ?? []).filter(
       (c) => !(oldRequires ?? []).includes(c),
     );
+    const dependsOn = collected.dependsOn.get(found.id);
     const update: AvailableUpdate = {
       ...found,
       ...planned,
       ...(addedRequirements.length > 0 ? { addedRequirements } : {}),
+      // The approval re-plans from these (`auto-update-rpc.ts`); the apply re-verifies the manifest.
+      ...(dependsOn === undefined ? {} : { dependsOn }),
     };
     const isNew = this.opts.cache.isNewDetection(update);
     this.opts.cache.upsert(update);
@@ -233,7 +236,7 @@ function oneLine(text: string): string {
 }
 
 /** The conflict a planning failure is; an unclassified failure is `ERR_UPDATE_UNPLANNED`. */
-function updateConflictOf(e: unknown): UpdateConflict {
+export function updateConflictOf(e: unknown): UpdateConflict {
   if (isDependencyConflictError(e)) {
     return { ...e.conflict, reason: oneLine(describeDependencyConflict(e.conflict)) };
   }

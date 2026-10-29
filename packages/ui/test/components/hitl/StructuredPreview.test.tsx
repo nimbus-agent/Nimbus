@@ -202,6 +202,89 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.queryByTestId("auto-update-permission-diff")).toBeNull();
   });
 
+  it("lists the packages an update adds, their permissions together, and the unmet connectors", () => {
+    const details = autoUpdateDetails({
+      addedPackages: [
+        {
+          id: "com.example.dep",
+          version: "1.2.0",
+          registry: "main",
+          registryUrl: "https://main.test/",
+          kind: "extension",
+          permissions: { network: ["api.dep.test"], filesystem: { read: ["~/notes"], write: [] } },
+        },
+        {
+          id: "com.example.pack",
+          version: "2.0.0",
+          registry: "other",
+          registryUrl: null,
+          kind: "starter-pack",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+      ],
+      planPermissions: { network: ["api.dep.test"], filesystem: { read: ["~/notes"], write: [] } },
+      connectorRequirements: [
+        { connector: "github", state: "met", fix: [] },
+        { connector: "slack", state: "not_connected", fix: ["nimbus connector auth slack"] },
+      ],
+    });
+    render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    const list = screen.getByTestId("auto-update-added-packages");
+    expect(list.textContent).toContain("This update adds 2 package(s)");
+    const items = screen.getAllByTestId("auto-update-added-package");
+    expect(items).toHaveLength(2);
+    expect(items[0]?.textContent).toContain("com.example.dep@1.2.0");
+    expect(items[0]?.textContent).toContain("registry main");
+    expect(items[0]?.textContent).toContain("network: api.dep.test");
+    expect(items[0]?.textContent).toContain("read: ~/notes");
+    expect(items[1]?.textContent).toContain("com.example.pack@2.0.0");
+    expect(items[1]?.textContent).toContain("registry other");
+    expect(items[1]?.textContent).toContain("starter pack");
+    expect(screen.getByTestId("auto-update-added-union").textContent).toContain(
+      "network: api.dep.test · read: ~/notes · write: none",
+    );
+    const needs = screen.getByTestId("auto-update-needs");
+    expect(needs.textContent).toContain("slack: not connected — run: nimbus connector auth slack");
+    // A connected requirement needs nothing from the owner.
+    expect(needs.textContent).not.toContain("github");
+  });
+
+  it("words every unmet requirement state and skips malformed entries", () => {
+    const details = autoUpdateDetails({
+      addedPackages: [
+        { id: "com.example.local", version: "1.0.0", registry: null, permissions: null },
+        { id: "com.example.noversion" },
+        "not an object",
+      ],
+      connectorRequirements: [
+        { connector: "a", state: "configured_never_synced", fix: ["nimbus connector sync a"] },
+        { connector: "b", state: "unknown_connector", fix: [] },
+        { connector: "c", state: "unknown", fix: [] },
+        { connector: "d", state: "something_new", fix: [] },
+        { connector: "e" },
+      ],
+    });
+    render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    const items = screen.getAllByTestId("auto-update-added-package");
+    expect(items).toHaveLength(1);
+    expect(items[0]?.textContent).toContain("a local folder");
+    expect(items[0]?.textContent).toContain("network: none · read: none · write: none");
+    // No union from the gateway: none is invented.
+    expect(screen.queryByTestId("auto-update-added-union")).toBeNull();
+    const needs = screen.getByTestId("auto-update-needs").textContent ?? "";
+    expect(needs).toContain("a: connected, never synced — run: nimbus connector sync a");
+    expect(needs).toContain("b: not a connector this Nimbus knows");
+    expect(needs).toContain("c: status unavailable");
+    expect(needs).toContain("d: something_new");
+    expect(needs).not.toContain("e:");
+  });
+
+  it("an update that adds nothing shows no package list and no Needs block", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.queryByTestId("auto-update-added-packages")).toBeNull();
+    expect(screen.queryByTestId("auto-update-needs")).toBeNull();
+  });
+
   it("falls through to generic renderer when action is unknown", () => {
     render(<StructuredPreview details={{ foo: "bar" }} action="some.other.action" />);
     expect(screen.queryByTestId("auto-update-preview")).toBeNull();

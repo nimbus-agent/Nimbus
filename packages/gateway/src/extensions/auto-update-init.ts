@@ -20,7 +20,12 @@ import {
   createPerformUpgrade,
   type PerformUpgradeDeps,
 } from "./auto-update-orchestrate.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import {
+  type ConnectorRequirementInput,
+  type ConnectorRequirementStatus,
+  connectorRequirementStatuses,
+} from "./connector-requirements.ts";
 import {
   installedManifestKind,
   parseExtensionManifestJson,
@@ -30,7 +35,7 @@ import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { currentSourceRegistry, sourceRegistryOf } from "./registry/builtin-registry.ts";
-import { planUpdate } from "./registry/install-from-registry.ts";
+import { type InstallFromRegistryDeps, planUpdate } from "./registry/install-from-registry.ts";
 import {
   FETCH_FAILURE_CODES,
   fetchRegistryBytes,
@@ -78,13 +83,13 @@ export interface AutoUpdateInitOpts {
  * `perform`, then `onApplied(update.id)` — only when `perform` resolved. A throwing hook is
  * swallowed: the update is committed by then, and reporting it as failed would be false.
  */
-export function withUpdateAppliedHook(
-  perform: (update: AvailableUpdate) => Promise<void>,
+export function withUpdateAppliedHook<Rest extends unknown[]>(
+  perform: (update: AvailableUpdate, ...rest: Rest) => Promise<void>,
   onApplied: ((extensionId: string) => void) | undefined,
-): (update: AvailableUpdate) => Promise<void> {
+): (update: AvailableUpdate, ...rest: Rest) => Promise<void> {
   if (onApplied === undefined) return perform;
-  return async (update) => {
-    await perform(update);
+  return async (update, ...rest) => {
+    await perform(update, ...rest);
     try {
       onApplied(update.id);
     } catch {
@@ -96,7 +101,18 @@ export function withUpdateAppliedHook(
 export interface AutoUpdateRuntimeBag {
   cache: AutoUpdateCache;
   forcePoll: () => Promise<void>;
-  performUpgrade: (cached: AvailableUpdate) => Promise<void>;
+  /** Plans a forward update for its approval (`registry/install-from-registry.ts` `planUpdate`, I44). */
+  planUpdate: (cached: AvailableUpdate) => Promise<UpdatePlan>;
+  /** The connectors an update newly requires, with their status; absent ⇒ none shown. */
+  updateRequirements?: (
+    cached: AvailableUpdate,
+    plan: UpdatePlan,
+  ) => Promise<readonly ConnectorRequirementStatus[] | undefined>;
+  /**
+   * The approval passes the plan it listed (`auto-update-rpc.ts` always does); a direct caller
+   * (a test) may omit it.
+   */
+  performUpgrade: (cached: AvailableUpdate, plan?: UpdatePlan) => Promise<void>;
   performDowngrade: (cached: AvailableUpdate) => Promise<void>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
@@ -286,6 +302,47 @@ function recordDeclaredFingerprint(db: Database, extensionId: string): void {
   );
 }
 
+/**
+ * The connectors an update newly requires (the root's added requirements, and each added package's
+ * from its VERIFIED manifest), with their status. The added packages are pending installs, so a
+ * connector one of them will own is never shown as connected. Undefined when it cannot be computed.
+ */
+async function updateRequirementStatuses(
+  opts: AutoUpdateInitOpts,
+  update: AvailableUpdate,
+  plan: UpdatePlan,
+): Promise<ConnectorRequirementStatus[] | undefined> {
+  const added = plan.addedPackages.flatMap((a) => {
+    const verified = plan.resolver.verified(a.id, a.version);
+    return verified === undefined ? [] : [verified];
+  });
+  const required: ConnectorRequirementInput[] = [
+    ...(update.addedRequirements === undefined || update.addedRequirements.length === 0
+      ? []
+      : [{ extensionId: update.id, connectors: update.addedRequirements }]),
+    ...added.flatMap((v) =>
+      v.manifest.requires === undefined
+        ? []
+        : [{ extensionId: v.manifest.id, connectors: v.manifest.requires.connectors }],
+    ),
+  ];
+  try {
+    return await connectorRequirementStatuses(
+      {
+        db: opts.db,
+        vault: opts.vault,
+        pendingInstalls: added.map((v) => ({
+          manifest: v.manifest,
+          sourceRootFingerprint: v.reg.rootFingerprint,
+        })),
+      },
+      required,
+    );
+  } catch {
+    return undefined;
+  }
+}
+
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
   const abortController = new AbortController();
@@ -337,6 +394,16 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       })();
     });
 
+  // The plan's registry deps (detection and the approval). Planning installs nothing and asks
+  // nobody, so the approver is never consulted.
+  const planDeps: InstallFromRegistryDeps = {
+    db: opts.db,
+    extensionsDir: opts.extensionsDir,
+    vault: opts.vault,
+    fetch: opts.fetch,
+    approve: () => Promise.resolve(false),
+  };
+
   const daemon = new ExtensionAutoUpdater({
     cache,
     listInstalled: () => Promise.try(() => listInstalledRows(opts.db)),
@@ -355,18 +422,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     // Detection solves each update's dependencies through its registries (I44); nothing is
     // installed or asked here, so the approver is never consulted.
     planUpdate: (update, newManifest, context) =>
-      planUpdate(
-        {
-          db: opts.db,
-          extensionsDir: opts.extensionsDir,
-          vault: opts.vault,
-          fetch: opts.fetch,
-          approve: () => Promise.resolve(false),
-        },
-        update,
-        newManifest,
-        context,
-      ),
+      planUpdate(planDeps, update, newManifest, context),
     appendAudit: wrapAudit,
     intervalHours: opts.intervalHours,
     now: () => Date.now(),
@@ -411,14 +467,18 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
     dbUpdateExtensionRow,
   });
-  const performUpgrade = withUpdateAppliedHook(async (update) => {
-    await upgrade(update);
-    // The new code may be signed by a rotated key: keep that key under its fingerprint and record
-    // it on the row, so the boot pass and every spawn verify with it (I16).
-    const verified = verifiedKeys.get(updateKey(update));
-    verifiedKeys.delete(updateKey(update));
-    if (verified !== undefined) await recordVerifyingKey(opts, update.id, verified);
-  }, opts.onUpdateApplied);
+  // `_plan` is the plan the owner approved; the apply installs its added packages (PR 5 task 3).
+  const performUpgrade = withUpdateAppliedHook(
+    async (update: AvailableUpdate, _plan?: UpdatePlan) => {
+      await upgrade(update);
+      // The new code may be signed by a rotated key: keep that key under its fingerprint and record
+      // it on the row, so the boot pass and every spawn verify with it (I16).
+      const verified = verifiedKeys.get(updateKey(update));
+      verifiedKeys.delete(updateKey(update));
+      if (verified !== undefined) await recordVerifyingKey(opts, update.id, verified);
+    },
+    opts.onUpdateApplied,
+  );
   const performDowngrade = withUpdateAppliedHook(async (update) => {
     await downgrade(update);
     // The restored copy is signed by the key it was installed with: its declared one.
@@ -428,6 +488,20 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const deps: AutoUpdateRuntimeBag = {
     cache,
     forcePoll: () => daemon.pollOnce(),
+    // The approval re-plans from the new version's declared dependencies, through its registries
+    // (I44), with a fresh read of the source index.
+    planUpdate: (cached) =>
+      planUpdate(
+        planDeps,
+        cached,
+        {
+          id: cached.id,
+          version: cached.toVersion,
+          ...(cached.dependsOn === undefined ? {} : { dependsOn: cached.dependsOn }),
+        },
+        { signal: abortController.signal },
+      ),
+    updateRequirements: (cached, plan) => updateRequirementStatuses(opts, cached, plan),
     performUpgrade,
     performDowngrade,
     appendAudit: wrapAudit,

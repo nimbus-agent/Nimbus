@@ -34,7 +34,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import net from "node:net";
 import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
 import { openSeededInMemoryDb } from "../../../test/helpers/migrated-db-seed.ts";
 import { ProfileManager } from "../../config/profiles.ts";
 import { AutoUpdateCache } from "../../extensions/auto-update-cache.ts";
@@ -205,6 +205,7 @@ describe("createIpcServer — a request in flight when its client disconnects", 
           return installedVersion.promise;
         },
         hasPrevVersion: async () => false,
+        planUpdate: planNothing,
         performUpgrade: async (u) => {
           upgrades.push(u.id);
         },

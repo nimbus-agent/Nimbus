@@ -325,6 +325,10 @@ describe("ExtensionAutoUpdater: detection plans the update's dependencies", () =
         dependsOn: { "com.dep": { range: "^1.0.0", registry: "https://other.test/" } },
       },
     ]);
+    // Cached too: the approval re-plans from these specs.
+    expect(t.cache.get("com.a")?.dependsOn).toEqual({
+      "com.dep": { range: "^1.0.0", registry: "https://other.test/" },
+    });
   });
 
   it("an update adding a fetchable dependency lists it as an added package, not a conflict", async () => {

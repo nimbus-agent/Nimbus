@@ -9,6 +9,7 @@ import {
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
+import { planNothing } from "../../test/helpers/empty-update-plan.ts";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import {
   insertExtensionRow,
@@ -1635,6 +1636,7 @@ describe("extension.checkForUpdates / extension.update (T2 PR 3)", () => {
           appendAudit: async () => {},
           getInstalledVersion: async () => null,
           hasPrevVersion: async () => false,
+          planUpdate: planNothing,
         },
       });
       expect(out).toEqual({ kind: "hit", value: [] });
@@ -1663,6 +1665,7 @@ describe("extension.checkForUpdates / extension.update (T2 PR 3)", () => {
           appendAudit: async () => {},
           getInstalledVersion: async () => null,
           hasPrevVersion: async () => false,
+          planUpdate: planNothing,
         },
       });
       expect(out).toEqual({
