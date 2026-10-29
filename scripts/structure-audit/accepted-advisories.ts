@@ -114,4 +114,20 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
     recheckBy: "2026-11-02",
     owner: "asafgolombek",
   },
+  // MODERATE advisory published 2026-10-29, the same day re2js GHSA-gg6h-894w-4m9c was fixed by
+  // moving re2js to 2.9.1 in bun.lock.
+  {
+    ghsa: "GHSA-rmxm-3fg6-px4f",
+    package: "@hono/node-server",
+    severity: "moderate",
+    noFixReason:
+      "The fix is @hono/node-server 2.1.3. The advisory (CVSS 5.3, CWE-174) covers >=1.19.10 <2.1.3; the top-level copy is already 2.1.3, but @modelcontextprotocol/node 2.1.1 (pinned by the root `overrides` set with client/core/server 2.3.1, #1804) requires ^1.19.9, and 1.19.17 (the latest 1.x) is installed under it. @modelcontextprotocol/node 2.1.2 accepts ^2.1.3, but it requires @modelcontextprotocol/server ^2.4.0, so it means moving the whole pinned MCP set (client/core/server 2.3.1 -> 2.4.0, published 2026-10-23), a coordinated bump that belongs in a bulk dependency update rather than a same-day advisory fix. Checked against the npm registry on 2026-10-29.",
+    reachability:
+      "The flaw is in `serveStatic` (the `@hono/node-server/serve-static` subpath): it decodes a static request path twice, so middleware on static paths can be bypassed. @modelcontextprotocol/node 2.1.1's dist imports exactly one symbol from @hono/node-server, `getRequestListener`, and never imports serve-static; the gateway and CLI import neither @hono/node-server nor @modelcontextprotocol/node directly (the only chain is @nimbus/gateway > @mastra/mcp > @modelcontextprotocol/node). No installed dependent imports @hono/node-server/serve-static, so the vulnerable function is never loaded.",
+    unblockedBy:
+      "Move the root `overrides` MCP set to @modelcontextprotocol/node 2.1.2 with client/core/server 2.4.0 (or later), which lets @hono/node-server dedupe to >=2.1.3. `bun audit` then stops reporting it, and audit:advisories fails on this row as stale until it is deleted.",
+    acceptedOn: "2026-10-29",
+    recheckBy: "2026-11-28",
+    owner: "asafgolombek",
+  },
 ];
