@@ -4,7 +4,7 @@ import {
   publisherKeyFingerprint,
   RegistryError,
 } from "@nimbus-dev/registry-format";
-import { updateConflictOf } from "./auto-update.ts";
+import { updateConflictsHint } from "./auto-update.ts";
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   ACTION_TYPE_AUTO_UPDATE,
@@ -178,7 +178,7 @@ async function planForApproval(
     return {
       applied: false,
       reason: "update_conflicts",
-      hint: `update_conflicts: ${updateConflictOf(e).reason}`,
+      hint: updateConflictsHint(e),
     };
   }
   let requirements: readonly ConnectorRequirementStatus[] = [];

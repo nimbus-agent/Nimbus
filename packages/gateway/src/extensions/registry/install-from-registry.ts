@@ -30,9 +30,18 @@ import type {
 } from "../auto-update-types.ts";
 import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
-import { DependencyConflictError, describeDependencyConflict } from "../dependency-errors.ts";
+import {
+  conflictErrorsOf,
+  DependencyConflictError,
+  DependencyConflictsError,
+  describeDependencyConflict,
+} from "../dependency-errors.ts";
 import { assertRootConstraintsSatisfied, resolveClosure } from "../dependency-graph.ts";
-import { type ExtensionManifestForSolver, registryNameOf } from "../dependency-types.ts";
+import {
+  type ExtensionManifestForSolver,
+  type InstallPlan,
+  registryNameOf,
+} from "../dependency-types.ts";
 import {
   buildSolverInputs,
   type ExtensionInstallApprovalRequest,
@@ -506,7 +515,14 @@ export async function planUpdate(
   const { installed, activeConstraints } = buildSolverInputs(deps.db);
   const constraints = new Map(activeConstraints);
   constraints.delete(update.id);
-  assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
+  // Every conflict is reported (one line each): one on the root itself does not stop the solve.
+  let rootConflict: DependencyConflictError | undefined;
+  try {
+    assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
+  } catch (e) {
+    if (!(e instanceof DependencyConflictError)) throw e;
+    rootConflict = e;
+  }
   // The channel the install TRACKS (spec § 8.1), as a registry install chooses its dependencies on.
   const channel = getExtensionSource(deps.db, update.id)?.channel ?? update.channel;
   const resolver = createRegistryDependencyResolver(deps, {
@@ -516,10 +532,19 @@ export async function planUpdate(
     ...(context.index === undefined ? {} : { index: context.index }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
   });
-  const plan = await resolveClosure(newManifest, resolver.rootSource, resolver.fetcher, {
-    installed,
-    activeConstraints: constraints,
-  });
+  let plan: InstallPlan;
+  try {
+    plan = await resolveClosure(newManifest, resolver.rootSource, resolver.fetcher, {
+      installed,
+      activeConstraints: constraints,
+      collectConflicts: true,
+    });
+  } catch (e) {
+    throw rootConflict === undefined
+      ? e
+      : new DependencyConflictsError([rootConflict, ...conflictErrorsOf(e)]);
+  }
+  if (rootConflict !== undefined) throw rootConflict;
   const addedPackages: AddedPackage[] = plan.nodes.flatMap((n) =>
     n.newlyInstalled && n.id !== update.id && n.source !== null
       ? [

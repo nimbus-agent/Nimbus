@@ -9,6 +9,7 @@ import type {
   UpdatePlanContext,
 } from "./auto-update-types.ts";
 import {
+  conflictErrorsOf,
   describeDependencyConflict,
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
@@ -221,7 +222,7 @@ export class ExtensionAutoUpdater {
       });
       return { addedPackages: plan.addedPackages };
     } catch (e) {
-      return { conflicts: [updateConflictOf(e)] };
+      return { conflicts: updateConflictsOf(e) };
     }
   }
 }
@@ -233,6 +234,18 @@ function oneLine(text: string): string {
     .map((line) => line.trim())
     .filter((line) => line !== "")
     .join(" ");
+}
+
+/** Every conflict a planning failure carries (a collecting solve may meet several), in order. */
+export function updateConflictsOf(e: unknown): UpdateConflict[] {
+  return conflictErrorsOf(e).map(updateConflictOf);
+}
+
+/** The `update_conflicts` refusal's text: one `update_conflicts: <reason>` line per conflict. */
+export function updateConflictsHint(e: unknown): string {
+  return updateConflictsOf(e)
+    .map((c) => `update_conflicts: ${c.reason}`)
+    .join("\n");
 }
 
 /** The conflict a planning failure is; an unclassified failure is `ERR_UPDATE_UNPLANNED`. */

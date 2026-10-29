@@ -576,6 +576,48 @@ describe("the update approval lists what the update adds (production wiring)", (
     expect(String(result["hint"])).toStartWith("update_conflicts: ");
     expect(String(result["hint"])).toContain("ERR_DEPENDENCY_REGISTRY_NOT_ADDED");
   });
+
+  test("every conflict is reported, one update_conflicts line each, in the list and the refusal", async () => {
+    const OTHER = "com.example.other";
+    const PINNER = "com.example.pinner";
+    await addRegistry("main", {
+      [ROOT]: [
+        { version: "1.0.0" },
+        {
+          version: "1.2.0",
+          dependsOn: {
+            [DEP]: { range: "^1.0.0", registry: "https://elsewhere.test/" },
+            [OTHER]: { range: "^1.0.0", registry: "https://another.test/" },
+          },
+        },
+      ],
+      [PINNER]: [{ version: "1.0.0", dependsOn: { [ROOT]: "~1.0.0" } }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    await installFromRegistry(deps(), { id: PINNER });
+    const { asked, result } = await askToUpdate();
+    expect(asked).toHaveLength(0);
+    expect(result["reason"]).toBe("update_conflicts");
+    const lines = String(result["hint"]).split("\n");
+    expect(lines).toHaveLength(3);
+    for (const line of lines) expect(line).toStartWith("update_conflicts: ");
+    // The root's own dependent first, then each unadded registry in declaration order.
+    expect(lines[0]).toContain(`${ROOT}: no version satisfies ~1.0.0 (from ${PINNER})`);
+    expect(lines[1]).toContain("https://elsewhere.test/");
+    expect(lines[2]).toContain("https://another.test/");
+    // Detection lists the same three.
+    const rt = createAutoUpdateRuntime({
+      db,
+      vault,
+      extensionsDir: join(tmp, "extensions"),
+      dataDir: join(tmp, "data"),
+      fetch: fetchBag(),
+      intervalHours: 24,
+    });
+    await rt.deps.forcePoll();
+    const conflicts = rt.deps.cache.get(ROOT)?.conflicts ?? [];
+    expect(conflicts.map((c) => `update_conflicts: ${c.reason}`)).toEqual(lines);
+  });
 });
 
 /** Re-publishes `name`'s folder with mis-signed manifests (same root key, next index sequence). */
