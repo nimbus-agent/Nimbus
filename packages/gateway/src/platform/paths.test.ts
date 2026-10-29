@@ -3,7 +3,12 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlatformInitError } from "./errors.ts";
-import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
+import {
+  createDarwinPaths,
+  createLinuxPaths,
+  createPlatformPathsForCurrentOs,
+  createWindowsPaths,
+} from "./paths.ts";
 
 // Real, unique temp root used as an arbitrary TMPDIR override value (S5443).
 const FAKE_TMPDIR = mkdtempSync(join(tmpdir(), "nimbus-paths-test-"));
@@ -316,5 +321,36 @@ describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () =>
     process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-two");
     const two = createLinuxPaths();
     expect(one.socketPath).not.toBe(two.socketPath);
+  });
+});
+
+describe("createPlatformPathsForCurrentOs", () => {
+  it("equals the per-OS function for this platform", () => {
+    const expected =
+      process.platform === "win32"
+        ? createWindowsPaths()
+        : process.platform === "darwin"
+          ? createDarwinPaths()
+          : createLinuxPaths();
+    expect(createPlatformPathsForCurrentOs().sandboxDir).toBe(expected.sandboxDir);
+  });
+
+  it("picks the function for each supported platform and throws for any other", () => {
+    expect(() => createPlatformPathsForCurrentOs("freebsd")).toThrow(PlatformInitError);
+    if (process.platform === "linux") {
+      expect(createPlatformPathsForCurrentOs("linux").sandboxDir).toBe(
+        createLinuxPaths().sandboxDir,
+      );
+    }
+    if (process.platform === "darwin") {
+      expect(createPlatformPathsForCurrentOs("darwin").sandboxDir).toBe(
+        createDarwinPaths().sandboxDir,
+      );
+    }
+    if (process.platform === "win32") {
+      expect(createPlatformPathsForCurrentOs("win32").sandboxDir).toBe(
+        createWindowsPaths().sandboxDir,
+      );
+    }
   });
 });

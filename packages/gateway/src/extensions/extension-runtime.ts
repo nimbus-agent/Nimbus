@@ -144,18 +144,26 @@ export function buildExtensionSpawnSpec(
     credentialEnv: Readonly<Record<string, string>>;
   },
 ): ServerSpec {
-  const layout = deps.layout ?? DEFAULT_RUNTIME_LAYOUT;
-  const { command, args } = isCompiledBinary(layout)
-    ? selfSpawn("extension", [v.entryPath], layout)
-    : {
-        command: layout.execPath,
-        args: [...DEV_EXTENSION_BUN_FLAGS, "-e", DEV_EXTENSION_ROLE_INLINE, v.entryPath],
-      };
+  const { command, args } = extensionEntryCommand(v.entryPath, deps.layout);
   return wrapServerSpecInCwd(
     { command, args, env: extensionProcessEnv(deps.credentialEnv) },
     buildExtensionRuntimeManifest(v, deps.runtimeReadPaths),
     v.stagePath,
   );
+}
+
+/** The compiled/dev command that runs an extension entry — shared by the run and eval builders. */
+export function extensionEntryCommand(
+  entryPath: string,
+  layoutOverride: RuntimeLayout | undefined,
+): { command: string; args: string[] } {
+  const layout = layoutOverride ?? DEFAULT_RUNTIME_LAYOUT;
+  return isCompiledBinary(layout)
+    ? selfSpawn("extension", [entryPath], layout)
+    : {
+        command: layout.execPath,
+        args: [...DEV_EXTENSION_BUN_FLAGS, "-e", DEV_EXTENSION_ROLE_INLINE, entryPath],
+      };
 }
 
 export type ExtensionSlotSourceDeps = VerifiedExtensionDeps & {

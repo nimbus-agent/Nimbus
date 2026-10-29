@@ -131,3 +131,22 @@ export function createLinuxPaths(): PlatformPaths {
   };
   return demo ? deriveDemoPaths(real) : real;
 }
+
+/**
+ * The per-OS paths for the running platform, for a process that has no `PlatformServices` (an
+ * isolated gateway role). Any platform Nimbus does not support throws.
+ */
+export function createPlatformPathsForCurrentOs(
+  platform: NodeJS.Platform = process.platform,
+): PlatformPaths {
+  switch (platform) {
+    case "win32":
+      return createWindowsPaths();
+    case "darwin":
+      return createDarwinPaths();
+    case "linux":
+      return createLinuxPaths();
+    default:
+      throw new PlatformInitError(`Unsupported platform: ${platform}`);
+  }
+}
