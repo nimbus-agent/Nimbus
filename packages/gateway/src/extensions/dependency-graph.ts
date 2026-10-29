@@ -17,7 +17,7 @@ import {
   registryNameOf,
   type SourceKey,
 } from "./dependency-types.ts";
-import { FETCH_FAILURE_CODES } from "./registry/registry-fetch.ts";
+import { FETCH_FAILURE_CODES } from "./registry/fetch-failure-codes.ts";
 import { TrustBlockError } from "./trust/trust-blocks.ts";
 
 type Ranges = Map<string, DependencyConstraint[]>;

@@ -6,7 +6,7 @@
 import type { RolePackManifest } from "@nimbus-dev/registry-format";
 import { checkPackFragment } from "../config/pack-settable.ts";
 import { routesRemotely } from "../glossary/glossary-visibility.ts";
-import { FORMAT_INVISIBLE_RANGES } from "../mcp-sink/invisible-text.ts";
+import { FORMAT_INVISIBLE_RANGES } from "../util/invisible-text.ts";
 import type { PackSource } from "./pack-record.ts";
 
 const LF = 0x0a;

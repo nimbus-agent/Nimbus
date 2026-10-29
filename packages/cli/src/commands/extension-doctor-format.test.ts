@@ -22,6 +22,15 @@ describe("doctorExtensionsLines — connector requirements", () => {
     extensions: [{ id: "acme.tool", runState: "ready", requires }],
   });
 
+  test("a fix carrying an ANSI escape is stripped from the warn line", () => {
+    const { lines } = doctorExtensionsLines(
+      withReqs([req("github", "not_connected", ["nimbus connector auth \u001b[31mgithub"])]),
+    );
+    const text = lines.join(" ");
+    expect(text).not.toContain("\u001b");
+    expect(text).toContain("nimbus connector auth [31mgithub");
+  });
+
   test("not_connected and never-synced each warn with their fix", () => {
     expect(
       doctorExtensionsLines(

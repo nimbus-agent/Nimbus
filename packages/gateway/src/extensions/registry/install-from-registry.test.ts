@@ -281,16 +281,14 @@ describe("installFromRegistry", () => {
 
   test("the nimbus-reg temp dir is gone after a success and after a refusal", async () => {
     await setup([{ version: "1.0.0" }]);
-    const before = new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("nimbus-reg-")));
-    await installFromRegistry(deps(), { id: ID });
+    const tempRoot = join(tmp, "reg-temp-root");
+    mkdirSync(tempRoot);
+    await installFromRegistry({ ...deps(), tempRoot }, { id: ID });
     resetInstalled();
-    await expect(installFromRegistry(deps(false), { id: ID })).rejects.toThrow(
+    await expect(installFromRegistry({ ...deps(false), tempRoot }, { id: ID })).rejects.toThrow(
       "ERR_EXTENSION_INSTALL_NOT_APPROVED",
     );
-    const after = readdirSync(tmpdir()).filter(
-      (n) => n.startsWith("nimbus-reg-") && !before.has(n),
-    );
-    expect(after).toEqual([]);
+    expect(readdirSync(tempRoot)).toEqual([]);
   });
 
   test("an index entryHash that does not match the packaged entry is refused before any prompt", async () => {
