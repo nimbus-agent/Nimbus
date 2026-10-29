@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793299848674,
+  "lastUpdate": 1793311496747,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "40068b5983b9f87a3a997676f3402e8f8b3e5fbd",
-          "message": "refactor(quality): clear the six remaining Sonar findings and close a coverage measurement gap (#1161)\n\n## First: a correction\n\nWhen #1155 merged I said the Sonar board was at zero. It was not — it\nwas at **six**, and **two of those were files I had refactored but not\nbrought far enough**:\n\n| file | before my #1155 | after #1155 | limit |\n|---|---|---|---|\n| `ownership/ownership-pass.ts` | 55 | **44** | 15 |\n| `premortem/premortem-pass.ts` | 45 | **18** | 15 |\n\nI extracted the parts that were easy to name and stopped at \"much\nbetter\" instead of checking against the threshold. This PR finishes\nboth.\n\n## The six\n\n| file | score | fix |\n|---|---|---|\n| `ownership/ownership-pass.ts` | 44 | `emitPathOwnership` — the file +\ndirectory emit loops, which were always the bulk of the score |\n| `agents/premortem.ts` | 30 | `buildWatcherProposals` |\n| `automation/watcher-engine.ts` | 19 | `resolveWatcherScope` — the\nfilter guard chain |\n| `premortem/premortem-pass.ts` | 18 | `processBatch` — and it removed a\ndead `if (opts.llm !== undefined)` the loop's own earlier guard had\nalready made unreachable |\n| `ipc/agents-rpc.ts` | 17 | `requireEpicRef` + `readServiceOverrides` |\n| `agents/_lib/render.ts` | S4624 | nested template literal hoisted to a\nnamed local |\n\nBehaviour is unchanged throughout, and several extractions record a rule\nthat was previously only implicit:\n\n- **`resolveWatcherScope` fails closed on every arm.** In particular an\n`affectedService` on a condition kind with no timeline entity returns\n`null` rather than being ignored — ignoring it would silently *widen*\nthe watcher to every item of its type, the exact opposite of the\nnarrowing the operator asked for.\n- **`emitPathOwnership` preserves the `upsertGraphEntity` /\n`ensureGraphEntity` split exactly.** The authoritative writer of a node\nupserts (carrying metadata); a purely structural reference\ncreate-if-absents, because an upsert from a call site with no metadata\nto pass would NULL what the authoritative writer just wrote.\n- **`readServiceOverrides` rejects rather than filters.** A caller who\nnames five services and gets three silently dropped would read the\nresulting brief as covering all five. The count cap is checked before\nthe per-entry walk so a caller cannot make the gateway iterate an\narbitrarily long array to discover it was too long.\n\n## A coverage measurement gap, not a testing gap\n\n`packages/mcp-launcher/src/resolve-binary.ts` was reported at **0%\ncoverage** — while `resolve-binary.test.ts` sat next to it, passing. The\ncause: `scripts/coverage-floor/build-lcov.sh` collects from\n`packages/gateway`, `packages/cli` and `packages/mcp-connectors/*` only,\nbut `sonar.sources=packages` scans the whole tree. Nothing ever ran\nthose tests under the istanbul preload.\n\nAdding `packages/mcp-launcher` to the collection loop is the honest fix\n— the tests already existed and pass. Its `src/index.ts` is a shebang\nbin entry point (top-level `spawn`, `process.exit` handlers) with no\nseam to test without executing the launcher, so it joins\n`packages/cli/src/index.ts` in the coverage exclusions — mirrored in\nboth `sonar-project.properties` and\n`scripts/coverage-floor/exclusions.ts`, with `audit:exclusion-parity`\nconfirming (43 patterns).\n\n`mcp-connectors/shared/atlassian-json-fetch.ts` was genuinely untested —\nit gets 11 real tests, including that a caller's `Accept` override wins\nover the default, that `http://` is not silently rewritten to\n`https://`, and that a non-2xx returns `ok:false` rather than throwing\n(Atlassian puts the useful diagnostic in the error body).\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test packages/gateway/src packages/cli/src` — **13,137 pass, 30\nskip, 0 fail**\n- `bun test packages/mcp-connectors/shared packages/mcp-launcher` — 203\npass, 0 fail\n- `bun run typecheck` — 0 errors\n\n## Coverage: what this does and does not do\n\nDuplication landed: **0.1%**, under the 0.2% target.\n\nCoverage is **94.49%** and needs **396** more covered lines+conditions\nto reach 95%. This PR contributes roughly 40 of them (recovering\n`resolve-binary.ts`, adding `atlassian-json-fetch.ts`, dropping the\nlauncher entry point from the denominator). **It does not get to 95%** —\nthat needs a dedicated pass over the genuinely under-tested files,\nchiefly `ipc/server/dispatchers.ts` (175 uncovered),\n`ui/src/ipc/client.ts` (73), `ipc/connector-rpc-handlers/auth.ts` (60),\n`sync/scheduler.ts` (48), `perf/bench-cli.ts` (43) and\n`ipc/server/server.ts` (33). Saying so explicitly rather than implying\nthe target is met.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T18:37:56+03:00",
-          "tree_id": "eeaf8f9368b87875996be76f096362a2874241c0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/40068b5983b9f87a3a997676f3402e8f8b3e5fbd"
-        },
-        "date": 1786549779025,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.19197689999675,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 330.5721713000006,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 197.90344399999776,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0a1ce6a1befd5a9b1cbf835b6d3771338b50fa9c",
+          "message": "feat(eval): nimbus eval --extension evaluates an installed extension behind one owner approval (extension.eval) (#1821)\n\nPhase 9.5 project 5 (`nimbus eval`), PR 3 of 5: **evaluating an\ninstalled extension.**\n\n`nimbus eval --extension <id>` runs an installed extension's eval suites\nthrough the gateway, behind ONE local-owner approval of the new HITL\ntype `extension.eval`. The approval is never delegable. It uses the PR 2\nruntime, so the sandbox has no network and no credentials. Invariant I49\ngains its approval clause.\n\n## What changes\n\n- **`extension.eval` is a HITL type.** It is in the frozen set, never\ndelegable (the `extension.*` rule, with a regression guard in the I20\nblock), and denied as an MCP proposal.\n- The prompt lists each `\"id@version\" (N cases)` and the fixed line\n\"runs with no network and no credentials\".\n- Each line is escaped, because ids and versions come from installed\nmanifests. Control characters, DEL, line and paragraph separators, and\nbidi overrides cannot forge or reorder prompt lines.\n- **`readVerifiedExtensionForEval`** (in\n`extensions/verified-extension.ts`) uses the same check functions as the\nspawn verifier; the spawn path is byte-identical. It needs no run grant\nand grants none. It checks:\n  - the row is present and enabled, and is not a starter pack;\n  - strict hashes, and the live tree digest and version against the ROW;\n  - the I16 signature against the Vault-stored publisher key;\n  - that the entry is inside the install path;\n- every I48 block (installed subject and the Vault key's revocations),\nevaluated with NO acknowledgement, so any block refuses.\n- **`extensions/installed-eval.ts`** lives outside `extensions/eval/`,\nbecause D38 keeps that directory free of vault and db. It runs three\nphases, in order:\n1. `prepareAll` runs before consent: it verifies, loads the package and\ncounts cases. No extension code runs.\n  2. `askOwnerOnce` asks for one approval listing every id once.\n3. `evaluateEach` handles each id in its own error boundary: reload the\npackage, re-verify it (it must match what was verified before consent),\nthen run. A change made during the prompt is caught by the re-verify,\nand a later change by staging's digest check.\n\n  A denial runs nothing (`ERR_EXTENSION_EVAL_NOT_APPROVED`).\n- **IPC `extension.eval { ids }` (1–50).** It goes through the per-call,\ngate-only executor bound to the calling client. It is LAN-forbidden,\nrefused on a demo gateway, and absent from the Tauri allowlist. It also\nrefuses when `[extensions] runtime = false`, before any prompt. The IPC\noptions gain `sandboxDir`.\n- **`nimbus eval --extension <id> [--json]`.**\n- Consent is terminal-only, through the client helper now shared with\n`nimbus pack install`, so no scripted consent source can answer. `--yes`\nand non-TTY sessions are refused before connecting.\n- The gateway's answer is validated with the same checker as the\n`--package` document.\n- Third-party strings are stripped of control characters in prose\noutput.\n\n## Found and fixed during the build\n\n- **A crafted extension id could forge consent-prompt lines.** Manifest\nids and versions are now escaped.\n- **The post-consent order was a TOCTOU window.** As first planned\n(re-verify, then reload), a file changed between the two would have run.\nThe Antigravity plan review caught this, and the order is now reload,\nthen re-verify, then run.\n- **The CLI trusted the gateway's answer.** A malformed answer could\ncrash it; it is now validated.\n- **The denial e2e was flaky on Windows.** Its directory-mtime control\nis replaced by a watcher on the gateway's real stage root.\n\n## Also in this PR (PR 2 follow-ups)\n\n- `proc.unref()` for an abandoned role child.\n- A hard kill after the grace period on stdout overflow.\n- A best-effort stale-stage sweep that tolerates EPERM.\n- Two doc wordings corrected.\n\n## Decisions I made (please check)\n\n- **Disabled extensions and `runtime = false` both refuse evaluation.**\nAnother door should not execute what the owner switched off.\n`--package`, which runs without a gateway, does not read the switch;\nthis is stated as I49 bound (9).\n- **Concurrent evals of one extension share the `eval.<serviceId>`\nAppContainer profile.** I accepted this: the sandbox has no grants.\n- **A known window is deferred to PR 4 and stated in I49 bound (3).** A\nsame-user writer could swap a suite file between the two reads inside\none package load. That changes only the cases evaluated, never what is\ngranted. Closing it needs a parse-from-bytes API in `registry-format`,\nwhich PR 4 touches anyway.\n- **The I20 never-delegable test moved** from the I42 describe block,\nwhere it sat by mistake, to the I20 block, unchanged.\n\n## Known follow-ups (parked)\n\n- A runtime-disabled refusal under `--extension --json` reports code\n`ERR_EVAL_IPC`, with the real code only in the message.\n- The CLI's control-character stripper does not cover U+2028/2029 or\nbidi overrides; the gateway prompt does.\n- `--json` output can carry raw C1 characters. It is line-safe but not\nterminal-inert.\n- A whitespace-only `--extension` id is left to the gateway to refuse.\n\n## Verification\n\n- **Full serial local run** (`registry-format`, gateway `src` and\n`test`, CLI `src`, `scripts`): 32 977 pass, 11 fail. All 11 are the\nknown environmental failures:\n  - 5 `ps1` tests need `pwsh`;\n- 6 migration and Readwise e2e tests fail only beside `cli/src`. Run on\ntheir own, those files give 15 pass, 0 fail.\n- **Real-gateway e2e** (`eval-extension.e2e.test.ts`) ran on Windows\nunder the real sandbox:\n- An approved call scored 7 cases, 5 passed, 71, with exactly one prompt\nand no run grant created.\n- A denied call returned -32603 `ERR_EXTENSION_EVAL_NOT_APPROVED`, and\nno stage appeared.\n  - It passed 5 runs in a row.\n  - Linux (bwrap) and macOS will first run it in CI.\n- **Static checks:** `typecheck`, `typecheck:tests` (0 new),\n`audit:invariants`, `audit:status-drift`, `audit:doc-refs` and\n`preflight:fast` all pass.\n- **Reviews:**\n- Antigravity reviewed the spec delta and the plan; all 12 findings were\napplied.\n  - All 6 tasks were reviewed, and 3 needed fix rounds.\n- Claude and Antigravity ran final branch reviews. The resulting fix\nwave had 12 items plus the flaky-e2e fix, and a scoped re-review\nconfirmed all 13.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus eval --extension <id>` to evaluate installed extensions\nfrom an interactive terminal and view results as text or JSON.\n* Evaluations require one local-owner approval, run in a sandbox without\nnetwork access or credentials, and return results for each requested\nextension.\n* **Bug Fixes**\n* Improved cleanup when evaluation processes exceed output limits or\ntime out.\n* Stage cleanup now skips entries it cannot inspect instead of failing.\n* **Documentation**\n* Updated CLI, security, architecture, and changelog documentation for\ninstalled-extension evaluation and its restrictions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T21:53:45Z",
+          "tree_id": "5acb11f9326166a8845427373889deb3734ee964",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0a1ce6a1befd5a9b1cbf835b6d3771338b50fa9c"
+        },
+        "date": 1793311492618,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 282.02964419999773,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 277.9999981000008,
             "unit": "ms"
           }
         ]
