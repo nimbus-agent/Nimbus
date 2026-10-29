@@ -6,13 +6,14 @@ import type {
   InstalledExtensionManifestSlice,
   UpdateConflict,
   UpdatePlan,
+  UpdatePlanContext,
 } from "./auto-update-types.ts";
 import {
   describeDependencyConflict,
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
 } from "./dependency-errors.ts";
-import type { ExtensionManifestForSolver } from "./dependency-types.ts";
+import { type ExtensionManifestForSolver, sourceKey } from "./dependency-types.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
@@ -49,6 +50,7 @@ export interface ExtensionAutoUpdaterOpts {
   planUpdate: (
     update: AvailableUpdate,
     newManifest: ExtensionManifestForSolver,
+    context: UpdatePlanContext,
   ) => Promise<UpdatePlan>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   intervalHours: number;
@@ -149,7 +151,7 @@ export class ExtensionAutoUpdater {
     collected: CollectedRegistryUpdates,
     installed: readonly InstalledExtensionRow[],
   ): Promise<void> {
-    const planned = await this.computeUpdateConflicts(found, collected.dependsOn.get(found.id));
+    const planned = await this.computeUpdateConflicts(found, collected);
     const oldRequires = installed.find((r) => r.id === found.id)?.manifest.requires?.connectors;
     const addedRequirements = (collected.requires.get(found.id) ?? []).filter(
       (c) => !(oldRequires ?? []).includes(c),
@@ -190,23 +192,33 @@ export class ExtensionAutoUpdater {
    * dependency naming a registry the owner has not added, or a refused manifest is a conflict with
    * a one-line reason. An unreachable registry is an `offline` conflict with no added packages, so
    * the apply re-plans or refuses. Any other failure (an unreadable installed manifest, a source
-   * registry that changed mid-tick) still surfaces the bump, with no dependency info.
+   * registry that changed mid-tick) is an `ERR_UPDATE_UNPLANNED` conflict: an update is never
+   * shown clean without a plan.
+   *
+   * An update whose signature failed or whose publisher key conflicts can never be applied, so it
+   * is not planned at all: no dependency registry is asked anything for it, and it carries neither
+   * conflicts nor added packages (its `verificationStatus` says why it stops).
    */
   private async computeUpdateConflicts(
     found: AvailableUpdate,
-    newDependsOn: ExtensionManifestForSolver["dependsOn"],
+    collected: CollectedRegistryUpdates,
   ): Promise<Pick<AvailableUpdate, "conflicts" | "addedPackages">> {
+    if (found.verificationStatus !== "verified") return {};
+    const newDependsOn = collected.dependsOn.get(found.id);
+    const index = collected.indexes?.get(sourceKey(found.sourceRegistry, found.rootFingerprint));
     const newManifest: ExtensionManifestForSolver = {
       id: found.id,
       version: found.toVersion,
       ...(newDependsOn === undefined ? {} : { dependsOn: newDependsOn }),
     };
     try {
-      const plan = await this.opts.planUpdate(found, newManifest);
+      const plan = await this.opts.planUpdate(found, newManifest, {
+        signal: this.abort.signal,
+        ...(index === undefined ? {} : { index }),
+      });
       return { addedPackages: plan.addedPackages };
     } catch (e) {
-      const conflict = updateConflictOf(e);
-      return conflict === undefined ? {} : { conflicts: [conflict] };
+      return { conflicts: [updateConflictOf(e)] };
     }
   }
 }
@@ -220,8 +232,8 @@ function oneLine(text: string): string {
     .join(" ");
 }
 
-/** The conflict a planning failure is, or undefined when it says nothing about the dependencies. */
-function updateConflictOf(e: unknown): UpdateConflict | undefined {
+/** The conflict a planning failure is; an unclassified failure is `ERR_UPDATE_UNPLANNED`. */
+function updateConflictOf(e: unknown): UpdateConflict {
   if (isDependencyConflictError(e)) {
     return { ...e.conflict, reason: oneLine(describeDependencyConflict(e.conflict)) };
   }
@@ -231,5 +243,10 @@ function updateConflictOf(e: unknown): UpdateConflict | undefined {
   if (e instanceof RegistryError || e instanceof TrustBlockError) {
     return { kind: "registry", code: e.code, reason: oneLine(e.message) };
   }
-  return undefined;
+  const why = e instanceof Error ? e.message : String(e);
+  return {
+    kind: "registry",
+    code: "ERR_UPDATE_UNPLANNED",
+    reason: oneLine(`ERR_UPDATE_UNPLANNED: the update could not be planned: ${why}`),
+  };
 }

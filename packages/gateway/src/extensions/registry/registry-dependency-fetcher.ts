@@ -145,7 +145,7 @@ function readInstalledManifest(row: ExtensionRow): ExtensionManifest {
 
 export function createRegistryDependencyResolver(
   deps: InstallFromRegistryDeps,
-  root: { reg: RegistryRow; channel: RegistryChannel; index?: RegistryIndex },
+  root: { reg: RegistryRow; channel: RegistryChannel; index?: RegistryIndex; signal?: AbortSignal },
 ): RegistryDependencyResolver {
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
   const rootSource = keyOf(root.reg);
@@ -175,7 +175,7 @@ export function createRegistryDependencyResolver(
   function indexOf(source: SourceKey): Promise<RegistryIndex> {
     let read = indexes.get(source);
     if (read === undefined) {
-      read = fetchVerifiedIndex(fetchDeps, registryOf(source));
+      read = fetchVerifiedIndex(fetchDeps, registryOf(source), root.signal);
       indexes.set(source, read);
     }
     return read;
@@ -237,7 +237,15 @@ export function createRegistryDependencyResolver(
       const subject = subjectOf(reg, entry, id, version);
       // I48 before any manifest request, as for the root.
       assertNotBlocked(deps.db, subject);
-      const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, id, version, vEntry);
+      const fetched = await fetchRegistryManifest(
+        fetchDeps,
+        reg,
+        entry,
+        id,
+        version,
+        vEntry,
+        root.signal,
+      );
       await verifyRegistryManifestSignature(fetched, id, version);
       // A dependency's key is never owner-accepted: only the rotation chain or Nimbus vouches.
       const decision = await publisherKeyDecision(deps, {

@@ -43,20 +43,37 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-planupd-"));
   vault = new MockVault();
   served.clear();
+  airGapped = false;
 });
+
+function ledger(method: string): number {
+  const row = db.query("SELECT COUNT(*) AS n FROM egress_ledger WHERE method = ?").get(method);
+  return (row as { n: number }).n;
+}
 
 afterEach(() => {
   db.close();
   rmDirWithRetry(tmp);
 });
 
-async function addRegistry(name: string, exts: Record<string, TestVersion[]>): Promise<void> {
+/** Whether the fake gateway is air-gapped: remote registries are then refused before any request. */
+let airGapped = false;
+
+/**
+ * A registry carrying `exts`, added as an owner registry: remote (`https://<name>.test/`, served
+ * from its folder) unless `local`, whose URL is the folder itself.
+ */
+async function addRegistry(
+  name: string,
+  exts: Record<string, TestVersion[]>,
+  opts: { local?: boolean; extra?: Parameters<typeof buildMultiExtensionRegistry>[2] } = {},
+): Promise<void> {
   const dir = join(tmp, name);
-  rootKey = (await buildMultiExtensionRegistry(dir, exts)).rootKey;
-  served.set(name, dir);
+  rootKey = (await buildMultiExtensionRegistry(dir, exts, opts.extra)).rootKey;
+  if (opts.local !== true) served.set(name, dir);
   insertRegistry(db, {
     name,
-    url: `https://${name}.test/`,
+    url: opts.local === true ? dir : `https://${name}.test/`,
     rootKey,
     rootFingerprint: publisherKeyFingerprint(rootKey),
     lastSequence: 0,
@@ -78,7 +95,7 @@ function fetchBag(): InstallFromRegistryDeps["fetch"] {
         return new Response("missing", { status: 404 });
       }
     },
-    enforceAirGap: () => false,
+    enforceAirGap: () => airGapped,
     now: () => NOW,
     production: false,
     builtin: null,
@@ -339,4 +356,114 @@ describe("update detection plans the update through the registries", () => {
     expect(cached?.addedPackages).toEqual([]);
     expect(cached?.addedRequirements).toEqual(["slack"]);
   });
+
+  test("the source index read this tick is reused: one index request per registry per poll", async () => {
+    await addRegistry("main", {
+      [ROOT]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    const rt = runtime();
+    const before = ledger("registry.index");
+    await rt.deps.forcePoll();
+    expect(rt.deps.cache.get(ROOT)?.addedPackages).toHaveLength(1);
+    expect(ledger("registry.index") - before).toBe(1);
+  });
+
+  test("an update whose signature failed is not planned: its dependency is never fetched", async () => {
+    await addRegistry("main", {
+      [ROOT]: [{ version: "1.0.0" }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    // Re-published (same root key, next sequence) with a 1.2.0 whose manifests are mis-signed.
+    await addRegistryAgain("main", {
+      [ROOT]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    const rt = runtime();
+    const before = ledger("registry.manifest");
+    await rt.deps.forcePoll();
+    const cached = rt.deps.cache.get(ROOT);
+    expect(cached?.verificationStatus).toBe("signature_failed");
+    expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts).toBeUndefined();
+    // The root's own manifest only: nothing was asked for the dependency.
+    expect(ledger("registry.manifest") - before).toBe(1);
+  });
+
+  test("a dependency whose registry is unreachable is an offline conflict", async () => {
+    await addRegistry("main", {
+      [ROOT]: [
+        { version: "1.0.0" },
+        {
+          version: "1.2.0",
+          dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://other.test/" } },
+        },
+      ],
+    });
+    // Added, but every request to it answers 503.
+    addUnservedRegistry("other");
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0", registry: "main" });
+    const rt = runtime();
+    await rt.deps.forcePoll();
+    const cached = rt.deps.cache.get(ROOT);
+    expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts).toEqual([
+      {
+        kind: "offline",
+        id: DEP,
+        parent: ROOT,
+        reason: `offline_dependency_resolution:${DEP} (required by ${ROOT})`,
+      },
+    ]);
+  });
+
+  test("under air gap, a dependency from a remote registry is an offline conflict, never clean", async () => {
+    // The source registry is a local folder (it still answers under air gap); the dependency's
+    // registry is remote, so the fetch layer refuses it with ERR_REGISTRY_AIR_GAP before any
+    // request — an unreachable registry, hence `offline`.
+    await addRegistry(
+      "main",
+      {
+        [ROOT]: [
+          { version: "1.0.0" },
+          {
+            version: "1.2.0",
+            dependsOn: { [DEP]: { range: "^1.0.0", registry: "https://other.test/" } },
+          },
+        ],
+      },
+      { local: true },
+    );
+    await addRegistry("other", { [DEP]: [{ version: "1.0.0" }] });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    airGapped = true;
+    const rt = runtime();
+    await rt.deps.forcePoll();
+    const cached = rt.deps.cache.get(ROOT);
+    expect(cached?.toVersion).toBe("1.2.0");
+    expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts?.map((c) => c.kind)).toEqual(["offline"]);
+    expect(cached?.conflicts?.[0]).toMatchObject({ kind: "offline", id: DEP, parent: ROOT });
+  });
 });
+
+/** Re-publishes `name`'s folder with mis-signed manifests (same root key, next index sequence). */
+async function addRegistryAgain(name: string, exts: Record<string, TestVersion[]>): Promise<void> {
+  await buildMultiExtensionRegistry(join(tmp, name), exts, { badManifestSignature: true });
+}
+
+/** An owner registry row whose URL nothing serves (the fake network answers 503). */
+function addUnservedRegistry(name: string): void {
+  insertRegistry(db, {
+    name,
+    url: `https://${name}.test/`,
+    rootKey,
+    rootFingerprint: publisherKeyFingerprint(rootKey),
+    lastSequence: 0,
+    lastGeneratedAt: "2026-10-01T00:00:00Z",
+    addedAt: 1,
+    lastIndexSha256: null,
+  });
+}

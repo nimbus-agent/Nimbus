@@ -11,6 +11,7 @@ import {
   isStarterPack,
   publisherKeyFingerprint,
   type RegistryChannel,
+  type RegistryIndex,
   type RegistryVersionEntry,
 } from "@nimbus-dev/registry-format";
 import type { NimbusVault } from "../../vault/index.ts";
@@ -20,6 +21,7 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
+import { type SourceKey, sourceKey } from "../dependency-types.ts";
 import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
@@ -56,11 +58,17 @@ export interface CollectedRegistryUpdates {
   dependsOn: ReadonlyMap<string, Readonly<Record<string, DependencySpec>>>;
   /** Each update's NEW `requires.connectors` (absent when it declares none). */
   requires: ReadonlyMap<string, readonly string[]>;
+  /**
+   * Each registry's index as verified this tick, by `sourceKey(name, rootFingerprint)`, so the
+   * update plan reuses it instead of reading it again.
+   */
+  indexes?: ReadonlyMap<SourceKey, RegistryIndex>;
 }
 
 type CollectedOut = CollectedRegistryUpdates & {
   dependsOn: Map<string, Readonly<Record<string, DependencySpec>>>;
   requires: Map<string, readonly string[]>;
+  indexes: Map<SourceKey, RegistryIndex>;
 };
 
 function message(e: unknown): string {
@@ -208,6 +216,7 @@ export async function collectRegistryUpdates(
     errors: [],
     dependsOn: new Map(),
     requires: new Map(),
+    indexes: new Map(),
   };
   for (const [name, group] of groupByRegistry(rows)) {
     // The CURRENT registry table: a registry removed since install yields nothing, and one whose
@@ -226,6 +235,7 @@ export async function collectRegistryUpdates(
       out.errors.push({ registry: name, error: message(e) });
       continue;
     }
+    out.indexes.set(sourceKey(reg.name, reg.rootFingerprint), index);
     for (const row of pinned) {
       try {
         await detectOne(deps, reg, index, row, signal, out); // NOSONAR S9382: one manifest fetch at a time per registry

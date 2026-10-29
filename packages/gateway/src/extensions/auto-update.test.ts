@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type DependencySpec, RegistryError } from "@nimbus-dev/registry-format";
+import {
+  type DependencySpec,
+  RegistryError,
+  type RegistryIndex,
+} from "@nimbus-dev/registry-format";
 
 import {
   ExtensionAutoUpdater,
@@ -9,7 +13,12 @@ import {
   type InstalledExtensionRow,
 } from "./auto-update.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
-import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import type {
+  AddedPackage,
+  AvailableUpdate,
+  UpdatePlan,
+  UpdatePlanContext,
+} from "./auto-update-types.ts";
 import { DependencyConflictError, OfflineDependencyResolutionError } from "./dependency-errors.ts";
 import type { ExtensionManifestForSolver } from "./dependency-types.ts";
 import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
@@ -380,15 +389,62 @@ describe("ExtensionAutoUpdater: detection plans the update's dependencies", () =
     ]);
   });
 
-  it("an unexpected planning failure leaves the update offered with no dependency info", async () => {
+  it("an unexpected planning failure is an unplanned conflict, never a clean update", async () => {
     const t = planning(async () => {
-      throw new Error("installed manifest unreadable");
+      throw new Error('source_registry_changed: registry "main" was removed');
     });
     await t.daemon.pollOnce();
     const cached = t.cache.get("com.a");
     expect(cached?.toVersion).toBe("1.2.0");
-    expect(cached?.conflicts).toBeUndefined();
     expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts).toEqual([
+      {
+        kind: "registry",
+        code: "ERR_UPDATE_UNPLANNED",
+        reason:
+          'ERR_UPDATE_UNPLANNED: the update could not be planned: source_registry_changed: registry "main" was removed',
+      },
+    ]);
+  });
+
+  for (const status of ["signature_failed", "publisher_key_conflict"] as const) {
+    it(`an update whose status is ${status} is not planned`, async () => {
+      let asked = 0;
+      const t = daemon({
+        listInstalled: async () => [installed("com.a")],
+        collect: async () => collected([{ ...update("com.a"), verificationStatus: status }]),
+        planUpdate: async () => {
+          asked += 1;
+          return planned([]);
+        },
+      });
+      await t.daemon.pollOnce();
+      const cached = t.cache.get("com.a");
+      expect(asked).toBe(0);
+      expect(cached?.verificationStatus).toBe(status);
+      expect(cached?.conflicts).toBeUndefined();
+      expect(cached?.addedPackages).toBeUndefined();
+    });
+  }
+
+  it("the plan reuses the source index verified this tick and gets the daemon's signal", async () => {
+    const index = { marker: "verified this tick" } as unknown as RegistryIndex;
+    const contexts: UpdatePlanContext[] = [];
+    const t = daemon({
+      listInstalled: async () => [installed("com.a")],
+      collect: async () => ({
+        ...collected([update("com.a")]),
+        indexes: new Map([[`main#${SOURCE.rootFingerprint}`, index]]),
+      }),
+      planUpdate: async (_u, _m, context) => {
+        contexts.push(context);
+        return planned([]);
+      },
+    });
+    await t.daemon.pollOnce();
+    expect(contexts).toHaveLength(1);
+    expect(contexts[0]?.index).toBe(index);
+    expect(contexts[0]?.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("a new connector requirement is listed in addedRequirements", async () => {

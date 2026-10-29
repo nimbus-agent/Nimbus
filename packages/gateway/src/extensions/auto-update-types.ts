@@ -1,3 +1,4 @@
+import type { RegistryIndex } from "@nimbus-dev/registry-format";
 import type { DependencyConflict, InstallPlan } from "./dependency-types.ts";
 import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 
@@ -53,6 +54,13 @@ export type UpdateConflict =
  * verified manifests the solve used (what the apply stages), the plan has the root at the new
  * version, and `addedPackages` are its newly installed dependencies.
  */
+export interface UpdatePlanContext {
+  /** The source registry's index, verified this tick, so the plan need not read it again. */
+  readonly index?: RegistryIndex;
+  /** Aborts the plan's registry requests (the daemon's stop). */
+  readonly signal?: AbortSignal;
+}
+
 export interface UpdatePlan {
   readonly resolver: RegistryDependencyResolver;
   readonly plan: InstallPlan;
@@ -105,7 +113,11 @@ export interface AvailableUpdate {
   acceptedPublisherKey?: string;
   detectedAt: number;
   conflicts?: readonly UpdateConflict[];
-  /** Set when the update was planned: the dependencies it would install (possibly none). */
+  /**
+   * Set ONLY when the update was planned: the dependencies it would install (possibly none). Absent
+   * means "not planned" (a conflict says why, or the signature/key status stops it), never "adds
+   * nothing".
+   */
   addedPackages?: readonly AddedPackage[];
   /** The connectors the new version requires that the installed one does not. */
   addedRequirements?: readonly string[];

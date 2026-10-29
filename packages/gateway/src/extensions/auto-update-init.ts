@@ -354,7 +354,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       ),
     // Detection solves each update's dependencies through its registries (I44); nothing is
     // installed or asked here, so the approver is never consulted.
-    planUpdate: (update, newManifest) =>
+    planUpdate: (update, newManifest, context) =>
       planUpdate(
         {
           db: opts.db,
@@ -365,6 +365,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         },
         update,
         newManifest,
+        context,
       ),
     appendAudit: wrapAudit,
     intervalHours: opts.intervalHours,

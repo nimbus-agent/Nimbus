@@ -21,7 +21,12 @@ import {
 } from "@nimbus-dev/registry-format";
 import { type ExtensionRow, listExtensions } from "../../automation/extension-store.ts";
 import type { NimbusVault } from "../../vault/index.ts";
-import type { AddedPackage, AvailableUpdate, UpdatePlan } from "../auto-update-types.ts";
+import type {
+  AddedPackage,
+  AvailableUpdate,
+  UpdatePlan,
+  UpdatePlanContext,
+} from "../auto-update-types.ts";
 import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
 import { assertRootConstraintsSatisfied, resolveClosure } from "../dependency-graph.ts";
@@ -482,6 +487,7 @@ export async function planUpdate(
     "id" | "toVersion" | "channel" | "sourceRegistry" | "rootFingerprint"
   >,
   newManifest: ExtensionManifestForSolver,
+  context: UpdatePlanContext = {},
 ): Promise<UpdatePlan> {
   if (newManifest.id !== update.id || newManifest.version !== update.toVersion) {
     throw new Error(
@@ -495,7 +501,13 @@ export async function planUpdate(
   assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
   // The channel the install TRACKS (spec § 8.1), as a registry install chooses its dependencies on.
   const channel = getExtensionSource(deps.db, update.id)?.channel ?? update.channel;
-  const resolver = createRegistryDependencyResolver(deps, { reg, channel });
+  const resolver = createRegistryDependencyResolver(deps, {
+    reg,
+    channel,
+    // The detector's verified read of the source index, only for the registry it came from.
+    ...(context.index === undefined ? {} : { index: context.index }),
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+  });
   const plan = await resolveClosure(newManifest, resolver.rootSource, resolver.fetcher, {
     installed,
     activeConstraints: constraints,
