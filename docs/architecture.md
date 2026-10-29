@@ -185,7 +185,8 @@ unstarted-but-not-disabled scheduler would re-animate its own schedule the first
 one job on it. `ipc/server/demo-gate.ts`'s `demoRefusal(method)` is the separate IPC-layer gate: an
 allow-list of three `connector.*` reads plus a deny-list (`vault.set`, `vault.delete`, `data.import`,
 `extension.install`, `extension.approveRun`, `extension.revokeRun`, `extension.credentialSet`, `extension.eval`,
-`migration.accept`, `migration.decline`, `migration.retry`, and every `registry.*` method), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
+`migration.accept`, `migration.decline`, `migration.retry`, `pack.install`, `pack.remove`, `trust.refresh`, and every
+`registry.*` method), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
 under `connector.*` — so a connector method added later is refused until someone decides otherwise,
 rather than silently becoming a way to bring real credentials into a root labelled "not your data".
 
@@ -2210,11 +2211,30 @@ paths, `write: []`), env `extensionProcessEnv({})`, sandbox id `eval.<serviceId>
 carrying `structuredContent` has its `content` recovered and is judged a non-error (a stated bound). Cases run one at a time in
 suite order, 30 s each clipped to the run's 10 min; a timeout fails that case and respawns from a fresh stage. A dropped
 transport is a stated v1 bound: `@mastra/mcp` reconnects once in place and retries the call on a new child from the same spec
-and stage (the sandbox grants no write, so the retry sees the same package and input); a crash that repeats is scored `crash`
+and stage (the sandbox grants no write, so the retry sees the same package and input); a drop that repeats is scored `crash`
 and respawns from a fresh stage, one that does not is scored on the retry's reply. Stages are removed in a last pass after
-every child is gone, and a run first sweeps eval stages older than an hour. Nothing leaves the machine and no Vault, DB or IPC is opened, so there is no egress row, no index write and no executor.
-Shipped so far: the format and `--package`. `--extension`/`--installed` (through the gateway, behind an `extension.eval`
-approval), the registry's scoring job and any display come in later PRs.
+every child is disconnected, and a run first sweeps eval stages older than an hour (best effort: an entry it cannot read is
+skipped). Nothing leaves the machine and no Vault, DB or IPC is opened, so there is no egress row, no index write and no executor.
+**Evaluating an INSTALLED extension (`extension.eval`, I49's second half).** `nimbus eval --extension <id>` goes through
+the gateway: the CLI calls `extension.eval { ids }` (1 to 50 ids) on a terminal-only consent client (`--yes`/`-y` and a
+non-TTY stdin/stdout are refused before connecting) and exits 0 when the eval ran, 2 otherwise. The handler
+(`ipc/automation-rpc.ts`, owner-gated through the per-call gate-only `buildExtensionGateExecutor`, so consent goes to the
+calling client) hands the ids to `extensions/installed-eval.ts` `evaluateInstalledExtensions`, which works in three phases.
+(1) Pre-consent, no extension code runs: each id is verified by `verified-extension.ts` `readVerifiedExtensionForEval` (the
+I43 checks without a run grant: strict hashes, tree digest, I16, entry containment, and any open I48 block refuses it; it
+needs no grant, grants none and records no acknowledgement) and its suites are read and counted; a failure becomes that id's
+result. (2) ONE `extension.eval` approval for the whole call, listing `{ id, version, cases }` per extension and the fixed
+fact that they run with no network and no credentials; `extension.eval` is in the I2 frozen set and never delegable (I20). A
+denial is `ERR_EXTENSION_EVAL_NOT_APPROVED` (`-32603`) and nothing runs or is staged. (3) Post-consent, one at a time: reload,
+re-verify (any change since the prompt is `ERR_EXTENSION_EVAL_CHANGED`), then the same `runEvalSession` as `--package`,
+staged under the gateway's `<sandboxDir>`. The result is one entry per requested id, in request order:
+`{ id, version, ok: true, report }` or `{ id, version, ok: false, error: { code, message } }`. `extension.eval` is
+LAN-forbidden, refused on a demo-rooted gateway, not on the Tauri allowlist, and `gateway_internal` for MCP proposals. An
+approved call runs to completion (each run bounded by its 10 min deadline) even if the calling client disconnects; the
+result is then discarded.
+
+Shipped so far: the format, `--package` and `--extension`. `--installed` (every installed extension at once), the
+registry's scoring job and any display come in later PRs.
 
 ### Trust layer
 
@@ -2684,7 +2704,7 @@ servers registered `--model` and only while `user_mcp_model_access` allows it) c
 dispatch without it is refused `ERR_USER_MCP_ACTION_MISMATCH` (the I42 pairing, pinned by
 `test/integration/mcp-sink/capture-action-routing.test.ts`).
 
-**Classification: 143 HITL types, 30 first-party types proposable, 113 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3, `extension.migrate` — the one connector-migration decision — with the Readwise unbundling PR 5, and `pack.install` with role packs P3; `obsidian.note.append` left it for the proposable set on 2026-10-25).** Denied classes: file, calendar
+**Classification: 144 HITL types, 30 first-party types proposable, 114 denied (`extension.run` joined the denied set with the extension runtime PR 2, `registry.add` with the registry client PR 3, `extension.migrate` — the one connector-migration decision — with the Readwise unbundling PR 5, `pack.install` with role packs P3, and `extension.eval` with `nimbus eval` PR 3; `obsidian.note.append` left it for the proposable set on 2026-10-25).** Denied classes: file, calendar
 delete, VCS, pipeline, cloud, IaC, Kubernetes, deployment, incident, data-platform, tribal KB (I25), the confined
 ChatOps posts (I23), gateway-internal types, and `unroutable` (the generic `email.*`/`calendar.event.create` types,
 which no connector server is named after). **Mesh-only servers.** `obsidian` is spawned by

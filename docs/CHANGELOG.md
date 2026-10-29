@@ -18,6 +18,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — `nimbus eval` PR 3 of 5: evaluating an installed extension, `nimbus eval --extension` (Phase 9.5 project 5;
+  no migration; invariant I49 amended).** `nimbus eval --extension <id> [--json]` evaluates an INSTALLED extension through the
+  gateway's new `extension.eval { ids }` IPC method (1 to 50 ids, one result per id in request order). Every id is verified
+  first with no extension code running (`readVerifiedExtensionForEval`: the I43 spawn checks against the install row alone,
+  any open I48 block refuses, no run grant needed, granted or acknowledged); then the LOCAL owner approves the whole call ONCE
+  under the new `extension.eval` HITL type (the I2 frozen set, 144 types; never delegable through the existing `extension.*`
+  rule, I20); then each extension is reloaded, re-verified (`ERR_EXTENSION_EVAL_CHANGED` if anything moved) and evaluated by
+  the same `runEvalSession` as `--package`, with no network and no credentials. A denial is `ERR_EXTENSION_EVAL_NOT_APPROVED`
+  (`-32603`) and nothing is staged or run. `extension.eval` is LAN-forbidden, refused on a demo root, not on the Tauri
+  allowlist and denied to the MCP act door (`gateway_internal`; 30 proposable / 114 denied). The CLI consent is terminal-only
+  (`--yes`/`-y` and a non-TTY refused before connecting). **I49** now also states that a gateway-hosted eval runs only after
+  the owner approved `extension.eval`, never delegated, with two new stated bounds: an approved eval runs to its end even if
+  the client disconnects, and the TTY requirement is CLI-side. Tests: a real-gateway e2e (`eval-extension.e2e.test.ts`:
+  approved gives the same 7 cases / 5 passed / 71 as the `--package` e2e over the same shared fixture package, denied gives
+  the not-approved error and no stage), an I49 denial through a real gate-only executor, and a source pin on the
+  approve-then-evaluate order. PR 2 follow-ups: a role whose stdout overflows is now hard-killed after the grace too, an
+  abandoned role child is unref'd, and the stale-stage sweep skips an entry it cannot read instead of throwing. **Not
+  shipped:** `--installed` (still exits 2), the registry CI scoring job and any score display.
+
 - **2026-10-29 — `nimbus eval` PR 2 of 5: the eval runtime and `nimbus eval --package` (Phase 9.5 project 5; no migration;
   invariant I49, static rule D38).** `nimbus eval --package <dir> [--suite <file>] [--json]` runs an extension package's
   `evals/*.eval.json` suites against its own MCP tools and prints the score; exit 0 when the eval ran, 2 on an eval or usage
