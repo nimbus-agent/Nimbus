@@ -681,6 +681,11 @@ async function requiresByExtension(
   return out;
 }
 
+/** Whether the caller asked for connector-requirement status (`includeRequires: true`). */
+function wantsRequires(rec: Record<string, unknown> | undefined): boolean {
+  return rec?.["includeRequires"] === true;
+}
+
 function withRequires<T extends { id: string }>(
   item: T,
   requires: ReadonlyMap<string, ConnectorRequirementStatus[]>,
@@ -702,8 +707,9 @@ async function handleExtensionList(
     filter === "needs-reinstall" || filter === "needs_reinstall"
       ? all.filter((e) => e.needs_reinstall === true)
       : all;
-  // Once per call, not per item: a connector several extensions require is read from the Vault once.
-  const requires = await requiresByExtension(ctx, filtered);
+  // Opt-in: the desktop polls this method and shows no requirements, and each connector's status
+  // is Vault reads (a `secret-tool` spawn apiece on Linux). Once per call when asked, not per item.
+  const requires = wantsRequires(rec) ? await requiresByExtension(ctx, filtered) : new Map();
   const extensions = filtered.map((item) => withRequires(item, requires));
   // `nimbus doctor` stays quiet about unapproved extensions when approving one would be refused.
   return {
@@ -723,7 +729,9 @@ async function handleExtensionInfo(
   }
   const fwd = forwardDeps(ctx.db, row.id);
   const rev = reverseDeps(ctx.db, row.id);
-  const requires = (await requiresByExtension(ctx, [row])).get(row.id);
+  const requires = wantsRequires(rec)
+    ? (await requiresByExtension(ctx, [row])).get(row.id)
+    : undefined;
   const run = {
     ...extensionRunFields(
       row,

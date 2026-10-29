@@ -822,7 +822,7 @@ export async function doctorPrintCaptures(client: Pick<IPCClient, "call">): Prom
 export async function doctorPrintExtensions(client: Pick<IPCClient, "call">): Promise<number> {
   let raw: unknown;
   try {
-    raw = await client.call<unknown>("extension.list", {});
+    raw = await client.call<unknown>("extension.list", { includeRequires: true });
   } catch (e) {
     if (isMethodNotFound(e)) return 0;
     console.log(

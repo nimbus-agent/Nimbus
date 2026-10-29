@@ -29,7 +29,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `isConnectorConfigured` the scheduler uses, and an id Nimbus does not know is never reported as connected. The statuses
   appear in the install approval itself (a `Needs:` block in `planText`, which a single-package install now carries when it
   requires a connector), in the `connectorRequirements` result of `registry.install` and `extension.install`, in
-  `extension.info` (`extension.requires`) and in each `extension.list` item (`requires`), and the CLI prints them in
+  `extension.info` (`extension.requires`) and in each `extension.list` item (`requires`) when asked (`includeRequires`), and the CLI prints them in
   `nimbus extension install|info` and as warnings in `nimbus doctor`. A requirement never blocks an install, and a failure
   reading one is reported as `unknown` or left out. After an attended install (stdin and stdout are terminals, no `--yes`)
   the CLI then offers to approve the new packages (one `Approve … to run now? [y/N]` question first) and to connect each

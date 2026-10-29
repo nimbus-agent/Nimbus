@@ -228,6 +228,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   const tree = hasFlag(args, "--tree");
   const params: Record<string, unknown> = {};
   if (filter !== undefined) params["filter"] = filter;
+  if (json) params["includeRequires"] = true;
   const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
   if (json) {
     console.log(JSON.stringify(out, undefined, 2));
@@ -385,7 +386,7 @@ export async function runExtensionInfo(
   const out = await client.call<{
     extension: ExtensionListEntry;
     message?: string;
-  }>("extension.info", { id });
+  }>("extension.info", { id, includeRequires: true });
   const sandboxCap = await fetchSandboxPosture(client);
   if (hasFlag(args, "--json")) {
     console.log(

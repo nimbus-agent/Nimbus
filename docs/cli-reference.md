@@ -4818,7 +4818,7 @@ A signed extension's `Publisher:` block ends with `Verified publisher: @<handle>
 
 For an extension installed from a registry the reinstall line names that registry instead (`nimbus extension install com.example.notion --registry <name>`), since the registry supplies the publisher key and `--publisher-key` is refused there.
 
-An installed extension that declares `requires.connectors` also prints a `Requires:` block in the same one-line-per-connector form as `Needs:` above (`requires` in `--json`, with each connector's `state`, `owner`, `fix`, `interactive` and `requiredBy`). `nimbus extension list --json` carries the same `requires` on each item. The block is left out when the gateway has no Vault or the installed manifest cannot be read.
+An installed extension that declares `requires.connectors` also prints a `Requires:` block in the same one-line-per-connector form as `Needs:` above (`requires` in `--json`, with each connector's `state`, `owner`, `fix`, `interactive` and `requiredBy`). `nimbus extension list --json` carries the same `requires` on each item. (Both ask the gateway with `includeRequires: true`; without it `extension.info`/`extension.list` leave `requires` out and read nothing from the Vault.) The block is left out when the gateway has no Vault or the installed manifest cannot be read.
 
 ```bash
 nimbus extension info com.example.notion

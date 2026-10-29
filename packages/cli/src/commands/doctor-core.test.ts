@@ -904,6 +904,18 @@ describe("doctorPrintExtensions", () => {
     out.reset();
   });
 
+  it("asks extension.list for connector requirements", async () => {
+    const seen: unknown[] = [];
+    const client: Pick<IPCClient, "call"> = {
+      call: async <T>(_method: string, params?: unknown): Promise<T> => {
+        seen.push(params);
+        return { extensions: [], runtimeEnabled: true } as T;
+      },
+    };
+    await doctorPrintExtensions(client);
+    expect(seen).toEqual([{ includeRequires: true }]);
+  });
+
   it("Method not found on extension.list is quiet", async () => {
     const client = byMethod(() => {
       throw Object.assign(new Error("nope"), { code: -32601 });

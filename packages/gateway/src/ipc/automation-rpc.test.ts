@@ -1130,6 +1130,33 @@ describe("extension.info / extension.list — connector requirements", () => {
     });
   }
 
+  test("requires is computed only when asked, so a poller reads nothing from the Vault", async () => {
+    const db = seededDb();
+    installWithManifest(db, "com.example.a", ["github"]);
+    const vault = new MockVault();
+    let reads = 0;
+    const get = vault.get.bind(vault);
+    vault.get = async (key: string) => {
+      reads += 1;
+      return get(key);
+    };
+    const list = (await dispatchAutomationRpc({
+      method: "extension.list",
+      params: {},
+      db,
+      vault,
+    })) as { value: { extensions: Array<{ requires?: unknown }> } };
+    const info = (await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.example.a" },
+      db,
+      vault,
+    })) as { value: { extension: { requires?: unknown } } };
+    expect(list.value.extensions[0]?.requires).toBeUndefined();
+    expect(info.value.extension.requires).toBeUndefined();
+    expect(reads).toBe(0);
+  });
+
   type Req = { connector: string; state: string; requiredBy: string[]; fix: string[] };
 
   test("extension.info shows requires", async () => {
@@ -1139,7 +1166,12 @@ describe("extension.info / extension.list — connector requirements", () => {
     const vault = new MockVault();
     const info = async (id: string) =>
       (
-        (await dispatchAutomationRpc({ method: "extension.info", params: { id }, db, vault })) as {
+        (await dispatchAutomationRpc({
+          method: "extension.info",
+          params: { id, includeRequires: true },
+          db,
+          vault,
+        })) as {
           value: { extension: { requires?: unknown[] } };
         }
       ).value.extension.requires;
@@ -1162,7 +1194,7 @@ describe("extension.info / extension.list — connector requirements", () => {
     installWithManifest(db, "com.example.a", ["github"]);
     const out = (await dispatchAutomationRpc({
       method: "extension.info",
-      params: { id: "com.example.a" },
+      params: { id: "com.example.a", includeRequires: true },
       db,
     })) as { value: { extension: Record<string, unknown> } };
     expect("requires" in out.value.extension).toBe(false);
@@ -1175,7 +1207,7 @@ describe("extension.info / extension.list — connector requirements", () => {
     installWithManifest(db, "com.example.c");
     const out = (await dispatchAutomationRpc({
       method: "extension.list",
-      params: {},
+      params: { includeRequires: true },
       db,
       vault: new MockVault(),
     })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
@@ -1238,7 +1270,7 @@ describe("extension.info / extension.list — connector requirements", () => {
     installWithManifest(db, "com.example.b", ["slack"]);
     const out = (await dispatchAutomationRpc({
       method: "extension.list",
-      params: {},
+      params: { includeRequires: true },
       db,
       vault: new ThrowingVault(),
     })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
@@ -1260,7 +1292,7 @@ describe("extension.info / extension.list — connector requirements", () => {
     const vault = new CountingVault();
     const out = (await dispatchAutomationRpc({
       method: "extension.list",
-      params: {},
+      params: { includeRequires: true },
       db,
       vault,
     })) as { value: { extensions: Array<{ id: string; requires?: Req[] }> } };
@@ -1280,7 +1312,7 @@ describe("extension.info / extension.list — connector requirements", () => {
     installWithManifest(db, "com.example.none");
     const out = (await dispatchAutomationRpc({
       method: "extension.list",
-      params: {},
+      params: { includeRequires: true },
       db,
       vault: new MockVault(),
       requirementStatuses: failingStatuses,

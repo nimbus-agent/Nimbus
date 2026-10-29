@@ -240,6 +240,18 @@ describe("runExtensionInfo", () => {
     await expect(runExtensionInfo(client, [], [])).rejects.toThrow(/extension info/);
   });
 
+  test("asks extension.info for connector requirements", async () => {
+    const { client, calls } = createMockIpcClient([
+      { extension: { id: "ext1", version: "1.2.3", enabled: 1 } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(calls[0]).toEqual({
+      method: "extension.info",
+      params: { id: "ext1", includeRequires: true },
+    });
+  });
+
   test("prints labelled lines for the extension + sandbox cap", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext1", version: "1.2.3", enabled: 1 } },
