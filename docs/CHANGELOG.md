@@ -37,8 +37,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   folder with identical manifest bytes. `extension remove` now returns `orphanedDependencies`: the packages installed
   only for what was removed and needed by nothing left. The CLI offers to remove them when stdin and stdout are
   terminals, `--clean-deps` removes them without asking, and otherwise a `Kept` line names them with the `nimbus
-  extension remove` command for each, dependents first; a failed removal among them exits 1. The prompts go to stderr,
-  so stdout stays JSON. The desktop removal does not offer orphans (CLI only). Updates that add dependencies, the
+  extension remove` command for each, dependents first; a failed removal among them exits 1. The orphan offer and
+  these lines go to stderr, so stdout stays the removal's JSON. The desktop removal does not offer orphans (CLI only). Updates that add dependencies, the
   dependency edges of an update's new version before the next start, and requirements in update approvals are PR 5.
 - **2026-10-29 — Extension dependencies and starter packs PR 3: connector requirements and the post-install walk (Phase 9.5
   project 4; no migration, no new invariant).** An extension's `requires.connectors` is now acted on. Each connector it
