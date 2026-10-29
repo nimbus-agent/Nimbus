@@ -325,32 +325,33 @@ describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () =>
 });
 
 describe("createPlatformPathsForCurrentOs", () => {
-  it("equals the per-OS function for this platform", () => {
-    const expected =
-      process.platform === "win32"
-        ? createWindowsPaths()
-        : process.platform === "darwin"
-          ? createDarwinPaths()
-          : createLinuxPaths();
-    expect(createPlatformPathsForCurrentOs().sandboxDir).toBe(expected.sandboxDir);
+  let snapshot: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    snapshot = snapshotEnv();
+    clearEnv();
+    // Every arm resolves on any OS once its env is set, so each one runs on every leg.
+    process.env["APPDATA"] = join(FAKE_TMPDIR, "roaming");
+    process.env["LOCALAPPDATA"] = join(FAKE_TMPDIR, "local");
+  });
+  afterEach(() => {
+    restoreEnv(snapshot);
+  });
+
+  it("defaults to this process's platform", () => {
+    expect(createPlatformPathsForCurrentOs().sandboxDir).toBe(
+      createPlatformPathsForCurrentOs(process.platform).sandboxDir,
+    );
   });
 
   it("picks the function for each supported platform and throws for any other", () => {
+    expect(createPlatformPathsForCurrentOs("win32").sandboxDir).toBe(
+      createWindowsPaths().sandboxDir,
+    );
+    expect(createPlatformPathsForCurrentOs("darwin").sandboxDir).toBe(
+      createDarwinPaths().sandboxDir,
+    );
+    expect(createPlatformPathsForCurrentOs("linux").sandboxDir).toBe(createLinuxPaths().sandboxDir);
     expect(() => createPlatformPathsForCurrentOs("freebsd")).toThrow(PlatformInitError);
-    if (process.platform === "linux") {
-      expect(createPlatformPathsForCurrentOs("linux").sandboxDir).toBe(
-        createLinuxPaths().sandboxDir,
-      );
-    }
-    if (process.platform === "darwin") {
-      expect(createPlatformPathsForCurrentOs("darwin").sandboxDir).toBe(
-        createDarwinPaths().sandboxDir,
-      );
-    }
-    if (process.platform === "win32") {
-      expect(createPlatformPathsForCurrentOs("win32").sandboxDir).toBe(
-        createWindowsPaths().sandboxDir,
-      );
-    }
   });
 });

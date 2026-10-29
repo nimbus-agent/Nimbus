@@ -1,10 +1,10 @@
 // The `__nimbus-eval` role end to end: a REAL extension package (the `nimbus scaffold mcp` output
-// plus three tools, bundled to `dist/index.js` exactly as extension-runtime.e2e builds its
+// plus four tools, bundled to `dist/index.js` exactly as extension-runtime.e2e builds its
 // fixture) is evaluated by a REAL role process, which stages it and spawns it under this OS's REAL
 // sandbox (`network: []`, zero filesystem grants, identity `eval.<serviceId>`). Every other eval
 // test drives the runtime with a fake client; only this one proves the whole path — the document on
 // stdout, the score over real MCP replies, the network denial inside the confined child, a server
-// that dies at startup, determinism across two runs, and where the child's stderr goes.
+// that dies at startup or mid-call, determinism across two runs, and where the child's stderr goes.
 //
 // The role resolves its sandbox dir from the platform paths, so every spawn of it points
 // LOCALAPPDATA / HOME / XDG_CACHE_HOME at this file's temp dir: no stage is ever made under the
@@ -108,9 +108,12 @@ describe.skipIf(sandboxAvailable || !IS_CI)("eval role e2e — CI sandbox precon
 /**
  * The entry: the scaffold's server (whose `echo` returns its input text) plus `fail` (an MCP
  * error reply, after writing a marker to stderr), `net` (a real fetch, reported as JSON so a
- * suite can match the error branch by path) and `structured` (an `outputSchema` tool replying with
+ * suite can match the error branch by path), `structured` (an `outputSchema` tool replying with
  * `structuredContent` AND a text block: through the real `@mastra/mcp` that reply is reshaped,
- * so only this case proves the runtime recovers the text the tool sent). None of them throws.
+ * so only this case proves the runtime recovers the text the tool sent) and `die` (the server
+ * process exits inside the call). `@mastra/mcp` reconnects once on a dropped transport and retries
+ * the call on a new child from the same spec: `die` dies again, so the case is scored `crash`, and
+ * the cases after it run on a fresh spawn from a fresh stage. This pins that v1 bound.
  */
 const ENTRY_TS = `import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -150,6 +153,13 @@ server.registerTool(
     content: [{ type: "text", text: "STRUCTURED-TEXT" }],
   }),
 );
+server.registerTool(
+  "die",
+  { description: "Exits mid-call", inputSchema: {} },
+  async () => {
+    process.exit(1);
+  },
+);
 await server.connect(new StdioServerTransport());
 `;
 
@@ -180,6 +190,12 @@ const SUITE = {
       tool: "echo",
       input: { text: "hello" },
       expect: { rubric: "exact", value: "goodbye" },
+    },
+    {
+      name: "die-is-a-crash",
+      tool: "die",
+      input: {},
+      expect: { rubric: "exact", value: "never" },
     },
     {
       name: "structured-text",
@@ -343,18 +359,18 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
   });
 
   test(
-    "scores the package: one JSON line, 6 cases, 5 passed, 83",
+    "scores the package: one JSON line, 7 cases, 5 passed, 71",
     async () => {
       first = await evalRole(pkg);
       const doc = documentOf(first);
       if (!doc.ok) throw new Error(`eval error: ${JSON.stringify(doc.error)}\n${first.stderr}`);
       expect(doc.extensionId).toBe(EXTENSION_ID);
       expect(doc.version).toBe("1.0.0");
-      expect(doc.report.cases).toBe(6);
+      expect(doc.report.cases).toBe(7);
       expect(doc.report.passed).toBe(5);
-      expect(doc.report.score).toBe(83); // floor(5 * 100 / 6)
+      expect(doc.report.score).toBe(71); // floor(5 * 100 / 7)
       expect(doc.report.rubrics).toEqual({
-        exact: { cases: 4, passed: 3 },
+        exact: { cases: 5, passed: 3 },
         "json-match": { cases: 1, passed: 1 },
         "one-of": { cases: 1, passed: 1 },
       });
@@ -364,6 +380,8 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
       expect(byName.get("echo-json-match")).toMatchObject({ pass: true, reason: null });
       expect(byName.get("fail-is-an-error")).toMatchObject({ pass: true, reason: null });
       expect(byName.get("structured-text")).toMatchObject({ pass: true, reason: null });
+      // The server exited mid-call (twice: @mastra/mcp's one in-place retry) and the run went on.
+      expect(byName.get("die-is-a-crash")).toMatchObject({ pass: false, reason: "crash" });
       expect(byName.get("echo-deliberately-wrong")).toMatchObject({
         rubric: "exact",
         pass: false,
@@ -388,6 +406,7 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
     async () => {
       if (first === undefined) throw new Error("the scoring test did not run");
       const a = documentOf(first);
+      expect(a.ok).toBe(true);
       const b = documentOf(await evalRole(pkg));
       expect(b).toEqual(a);
     },
