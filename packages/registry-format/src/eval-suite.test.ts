@@ -1,0 +1,314 @@
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MAX_EVAL_JSON_DEPTH } from "./caps.ts";
+import { RegistryError } from "./errors.ts";
+import {
+  EVAL_RUBRIC_KINDS,
+  isEvalSuiteFile,
+  jsonDepth,
+  loadEvalSuites,
+  parseEvalSuite,
+  parseEvalSuites,
+} from "./eval-suite.ts";
+
+const CAN_SYMLINK = ((): boolean => {
+  const probe = mkdtempSync(join(tmpdir(), "nimbus-symprobe-"));
+  try {
+    writeFileSync(join(probe, "a"), "a");
+    symlinkSync(join(probe, "a"), join(probe, "b"));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(probe, { recursive: true, force: true });
+  }
+})();
+
+const enc = new TextEncoder();
+const bytesOf = (v: unknown): Uint8Array => enc.encode(JSON.stringify(v));
+
+function suiteWith(caseOver: Record<string, unknown> = {}, top: Record<string, unknown> = {}) {
+  return {
+    format: 1,
+    name: "s",
+    cases: [
+      { name: "c1", tool: "t", input: {}, expect: { rubric: "exact", value: "ok" }, ...caseOver },
+    ],
+    ...top,
+  };
+}
+
+function expectRefused(fn: () => unknown, fragment: string): void {
+  let caught: unknown;
+  try {
+    fn();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(RegistryError);
+  const err = caught as RegistryError;
+  expect(err.code).toBe("ERR_REGISTRY_EVAL_SUITE_INVALID");
+  expect(err.message).toContain(fragment);
+}
+
+const parse = (v: unknown) => parseEvalSuite("evals/a.eval.json", bytesOf(v));
+
+function nested(depth: number): unknown {
+  let v: unknown = 1;
+  for (let i = 0; i < depth; i++) v = { a: v };
+  return v;
+}
+
+function pathOf(s: { cases: readonly { expect: object }[] }): unknown {
+  const e = s.cases[0]?.expect;
+  return e === undefined ? undefined : Reflect.get(e, "path");
+}
+
+function jm(value: unknown): Record<string, unknown> {
+  return { expect: { rubric: "json-match", value } };
+}
+
+describe("parseEvalSuite", () => {
+  test("rubric kinds are fixed and ordered", () => {
+    expect([...EVAL_RUBRIC_KINDS]).toEqual(["exact", "json-match", "one-of"]);
+  });
+
+  test("parses a minimal suite", () => {
+    expect(parse(suiteWith())).toEqual({
+      file: "evals/a.eval.json",
+      name: "s",
+      cases: [
+        {
+          name: "c1",
+          tool: "t",
+          input: {},
+          expect: { rubric: "exact", value: "ok", error: false },
+        },
+      ],
+    });
+  });
+
+  test("error defaults to false and can be true", () => {
+    const s = parse(suiteWith({ expect: { rubric: "exact", value: "x", error: true } }));
+    expect(s.cases[0]?.expect.error).toBe(true);
+  });
+
+  test("one-of path defaults to null; explicit paths kept", () => {
+    const a = parse(suiteWith({ expect: { rubric: "one-of", values: [1, "a"] } }));
+    expect(a.cases[0]?.expect).toEqual({
+      rubric: "one-of",
+      values: [1, "a"],
+      path: null,
+      error: false,
+    });
+    const b = parse(suiteWith({ expect: { rubric: "one-of", values: [1], path: "/a/b" } }));
+    expect(pathOf(b)).toBe("/a/b");
+    const c = parse(suiteWith({ expect: { rubric: "one-of", values: [1], path: "" } }));
+    expect(pathOf(c)).toBe("");
+  });
+
+  test("json-match accepts any JSON value and valid $type markers", () => {
+    const s = parse(suiteWith(jm({ a: { $type: "string" }, b: [{ $type: "null" }] })));
+    expect(s.cases[0]?.expect.rubric).toBe("json-match");
+    for (const t of ["string", "number", "boolean", "null", "array", "object"]) {
+      parse(suiteWith(jm({ $type: t })));
+    }
+    parse(suiteWith(jm(null)));
+  });
+
+  test("refuses a BOM", () => {
+    const body = enc.encode(JSON.stringify(suiteWith()));
+    const withBom = new Uint8Array([0xef, 0xbb, 0xbf, ...body]);
+    expectRefused(() => parseEvalSuite("evals/a.eval.json", withBom), "BOM");
+  });
+
+  test("refuses invalid UTF-8 and invalid JSON", () => {
+    expectRefused(() => parseEvalSuite("evals/a.eval.json", new Uint8Array([0xff])), "UTF-8");
+    expectRefused(() => parseEvalSuite("evals/a.eval.json", enc.encode("{nope")), "JSON");
+  });
+
+  test("refuses a file over 1 MiB", () => {
+    expectRefused(
+      () => parseEvalSuite("evals/a.eval.json", new Uint8Array(1024 * 1024 + 1)),
+      "too large",
+    );
+  });
+
+  test("refuses bad top levels", () => {
+    expectRefused(() => parse([]), "object");
+    expectRefused(() => parse(null), "object");
+    expectRefused(() => parse(suiteWith({}, { format: 2 })), "format");
+    expectRefused(() => parse(suiteWith({}, { extra: 1 })), "extra");
+    expectRefused(() => parse(suiteWith({}, { name: "" })), "name");
+    expectRefused(() => parse(suiteWith({}, { name: 5 })), "name");
+    expectRefused(() => parse(suiteWith({}, { name: "x".repeat(121) })), "name");
+    expectRefused(() => parse(suiteWith({}, { cases: [] })), "cases");
+    expectRefused(() => parse(suiteWith({}, { cases: "no" })), "cases");
+    expectRefused(() => parse({ format: 1, name: "s" }), "cases");
+  });
+
+  test("refuses bad cases", () => {
+    expectRefused(() => parse(suiteWith({}, { cases: [5] })), "case");
+    const dup = { name: "d", tool: "t", input: {}, expect: { rubric: "exact", value: "a" } };
+    expectRefused(() => parse(suiteWith({}, { cases: [dup, dup] })), "duplicate");
+    expectRefused(() => parse(suiteWith({ weight: 2 })), "weight");
+    expectRefused(() => parse(suiteWith({ name: "" })), "name");
+    expectRefused(() => parse(suiteWith({ tool: "" })), "tool");
+    expectRefused(() => parse(suiteWith({ tool: "t".repeat(129) })), "tool");
+    expectRefused(() => parse(suiteWith({ input: [] })), "input");
+    expectRefused(() => parse(suiteWith({ input: null })), "input");
+    expectRefused(() => parse(suiteWith({ expect: undefined })), "expect");
+  });
+
+  test("input size cap", () => {
+    const ok = { a: "x".repeat(64 * 1024 - 8) };
+    expect(enc.encode(JSON.stringify(ok)).length).toBe(64 * 1024);
+    parse(suiteWith({ input: ok }));
+    const big = { a: "x".repeat(64 * 1024 - 7) };
+    expect(enc.encode(JSON.stringify(big)).length).toBe(65_537);
+    expectRefused(() => parse(suiteWith({ input: big })), "input");
+  });
+
+  test("input size counts UTF-8 bytes, not characters", () => {
+    const multi = { a: "é".repeat(33_000) };
+    expectRefused(() => parse(suiteWith({ input: multi })), "input");
+  });
+
+  test("depth boundaries", () => {
+    expect(jsonDepth(1)).toBe(0);
+    expect(jsonDepth(null)).toBe(0);
+    expect(jsonDepth({})).toBe(1);
+    expect(jsonDepth([])).toBe(1);
+    expect(jsonDepth([[1]])).toBe(2);
+    expect(jsonDepth({ a: { b: 1 } })).toBe(2);
+    expect(jsonDepth(nested(64))).toBe(64);
+    parse(suiteWith({ input: nested(MAX_EVAL_JSON_DEPTH) }));
+    expectRefused(() => parse(suiteWith({ input: nested(MAX_EVAL_JSON_DEPTH + 1) })), "depth");
+    expectRefused(() => parse(suiteWith(jm(nested(MAX_EVAL_JSON_DEPTH + 1)))), "depth");
+    expectRefused(
+      () =>
+        parse(
+          suiteWith({
+            expect: { rubric: "one-of", values: [nested(MAX_EVAL_JSON_DEPTH + 1)] },
+          }),
+        ),
+      "depth",
+    );
+  });
+
+  test("refuses bad expects", () => {
+    const ex = (e: unknown) => suiteWith({ expect: e });
+    expectRefused(() => parse(ex(5)), "expect");
+    expectRefused(() => parse(ex({ rubric: "fuzzy", value: "a" })), "rubric");
+    expectRefused(() => parse(ex({ rubric: "exact", value: 1 })), "value");
+    expectRefused(() => parse(ex({ rubric: "exact" })), "value");
+    expectRefused(() => parse(ex({ rubric: "exact", value: "a", error: "y" })), "error");
+    expectRefused(() => parse(ex({ rubric: "exact", value: "a", values: [] })), "values");
+    expectRefused(() => parse(ex({ rubric: "json-match" })), "value");
+    expectRefused(() => parse(ex({ rubric: "json-match", value: 1, path: "/a" })), "path");
+    expectRefused(() => parse(ex({ rubric: "one-of", values: [] })), "values");
+    expectRefused(() => parse(ex({ rubric: "one-of", values: "a" })), "values");
+    expectRefused(() => parse(ex({ rubric: "one-of", values: [1], path: "a" })), "path");
+    expectRefused(() => parse(ex({ rubric: "one-of", values: [1], path: 3 })), "path");
+    expectRefused(() => parse(ex({ rubric: "one-of", values: [1], value: 1 })), "value");
+  });
+
+  test("refuses invalid $type markers", () => {
+    expectRefused(() => parse(suiteWith(jm({ $type: "str" }))), "$type");
+    expectRefused(() => parse(suiteWith(jm({ $type: "string", x: 1 }))), "$type");
+    expectRefused(() => parse(suiteWith(jm({ $type: 5 }))), "$type");
+    expectRefused(() => parse(suiteWith(jm([{ k: { $type: "x" } }]))), "$type");
+  });
+});
+
+describe("parseEvalSuites", () => {
+  const file = (name: string, cases = 1) => ({
+    file: `evals/${name}.eval.json`,
+    bytes: bytesOf({
+      format: 1,
+      name,
+      cases: Array.from({ length: cases }, (_, i) => ({
+        name: `c${i}`,
+        tool: "t",
+        input: {},
+        expect: { rubric: "exact", value: "ok" },
+      })),
+    }),
+  });
+
+  test("sorts by file name", () => {
+    const out = parseEvalSuites([file("b"), file("a")]);
+    expect(out.map((s) => s.name)).toEqual(["a", "b"]);
+  });
+
+  test("refuses 21 files", () => {
+    const files = Array.from({ length: 21 }, (_, i) => file(`s${String(i).padStart(2, "0")}`));
+    expectRefused(() => parseEvalSuites(files), "suite files");
+    expect(parseEvalSuites(files.slice(0, 20))).toHaveLength(20);
+  });
+
+  test("refuses 201 cases across files", () => {
+    expectRefused(() => parseEvalSuites([file("a", 100), file("b", 101)]), "cases");
+    expect(parseEvalSuites([file("a", 100), file("b", 100)])).toHaveLength(2);
+  });
+});
+
+describe("isEvalSuiteFile", () => {
+  test("matches only direct children of evals/", () => {
+    expect(isEvalSuiteFile("evals/x.eval.json")).toBe(true);
+    expect(isEvalSuiteFile("evals/sub/x.eval.json")).toBe(false);
+    expect(isEvalSuiteFile("evals/x.json")).toBe(false);
+    expect(isEvalSuiteFile("x.eval.json")).toBe(false);
+  });
+});
+
+describe("loadEvalSuites", () => {
+  const goodText = JSON.stringify(suiteWith());
+
+  test("no evals/ dir gives []", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      expect(loadEvalSuites(root)).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("reads only direct *.eval.json children", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals", "sub"), { recursive: true });
+      writeFileSync(join(root, "evals", "a.eval.json"), goodText);
+      writeFileSync(join(root, "evals", "fixture.txt"), "not json");
+      writeFileSync(join(root, "evals", "sub", "b.eval.json"), "{bad");
+      const out = loadEvalSuites(root);
+      expect(out.map((s) => s.file)).toEqual(["evals/a.eval.json"]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a directory named like a suite is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals", "d.eval.json"), { recursive: true });
+      expectRefused(() => loadEvalSuites(root), "evals/d.eval.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CAN_SYMLINK)("a symlinked suite file is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals"));
+      writeFileSync(join(root, "target.json"), goodText);
+      symlinkSync(join(root, "target.json"), join(root, "evals", "a.eval.json"));
+      expectRefused(() => loadEvalSuites(root), "symlink");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
