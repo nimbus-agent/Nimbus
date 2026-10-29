@@ -4,7 +4,7 @@
  * exactly ONE JSON document to stdout, and renders that. The CLI never imports gateway source, so
  * the document type is declared here.
  */
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { type EvalReport, parseEvalQuality } from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
 
@@ -91,21 +91,81 @@ export function parseEvalRoleDocument(text: string): EvalRoleDocument | null {
 
 const EVAL_ROLE_PIPE_GRACE_MS = 2000;
 
-/**
- * Reads a pipe to its end, or until `stop` settles (the child has exited and a grandchild may
- * still hold the pipe open). `first` keeps everything and calls `onOverflow` once past `max`;
- * `last` keeps a rolling tail, trimmed as it reads so memory stays bounded.
- */
-async function readCapped(
-  stream: ReadableStream<Uint8Array>,
-  max: number,
-  keep: "first" | "last",
-  onOverflow: () => void,
-  stop: Promise<void>,
-): Promise<Uint8Array> {
+/** Where a pipe reader puts what it reads; each strategy bounds what it retains. */
+export interface ByteKeeper {
+  push(chunk: Uint8Array): void;
+  /** Bytes currently held. */
+  retained(): number;
+  overflowed(): boolean;
+  bytes(): Uint8Array;
+}
+
+function concatChunks(chunks: readonly Uint8Array[], size: number): Uint8Array {
+  const all = new Uint8Array(size);
+  let at = 0;
+  for (const c of chunks) {
+    all.set(c, at);
+    at += c.byteLength;
+  }
+  return all;
+}
+
+/** Keeps the first bytes; calls `onOverflow` once past `max` and retains nothing after that. */
+export function firstBytesKeeper(max: number, onOverflow: () => void): ByteKeeper {
   const chunks: Uint8Array[] = [];
   let size = 0;
-  let overflowed = false;
+  let over = false;
+  return {
+    push(chunk) {
+      if (over) return;
+      chunks.push(chunk);
+      size += chunk.byteLength;
+      if (size > max) {
+        over = true;
+        onOverflow();
+      }
+    },
+    retained: () => size,
+    overflowed: () => over,
+    bytes: () => concatChunks(chunks, size),
+  };
+}
+
+/**
+ * Keeps a rolling tail of `max` bytes, dropping whole leading chunks as it reads, so it never
+ * holds more than `max` plus one chunk however long the stream runs.
+ */
+export function lastBytesKeeper(max: number): ByteKeeper {
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  return {
+    push(chunk) {
+      chunks.push(chunk);
+      size += chunk.byteLength;
+      for (let head = chunks[0]; head !== undefined; head = chunks[0]) {
+        if (chunks.length === 1 || size - head.byteLength < max) break;
+        chunks.shift();
+        size -= head.byteLength;
+      }
+    },
+    retained: () => size,
+    overflowed: () => false,
+    bytes: () => {
+      const all = concatChunks(chunks, size);
+      return all.byteLength > max ? all.subarray(all.byteLength - max) : all;
+    },
+  };
+}
+
+/**
+ * Reads a pipe into `keeper` to its end, or until `stop` settles (the child has exited and a
+ * grandchild may still hold the pipe open), then cancels the reader.
+ */
+export async function readCapped(
+  stream: ReadableStream<Uint8Array>,
+  keeper: ByteKeeper,
+  stop: Promise<void>,
+): Promise<Uint8Array> {
   const reader = stream.getReader();
   const stopped = stop.then(() => "stop" as const);
   for (;;) {
@@ -115,35 +175,22 @@ async function readCapped(
       break;
     }
     if (r.done) break;
-    if (overflowed) continue;
-    chunks.push(r.value);
-    size += r.value.byteLength;
-    if (keep === "first" && size > max) {
-      overflowed = true;
-      onOverflow();
-    }
-    while (keep === "last" && chunks.length > 1 && size - (chunks[0]?.byteLength ?? 0) >= max) {
-      size -= chunks.shift()?.byteLength ?? 0;
-    }
+    keeper.push(r.value);
   }
-  const all = new Uint8Array(size);
-  let at = 0;
-  for (const c of chunks) {
-    all.set(c, at);
-    at += c.byteLength;
-  }
-  return keep === "last" && all.byteLength > max ? all.subarray(all.byteLength - max) : all;
+  return keeper.bytes();
 }
 
-export async function spawnEvalRoleWithGrace(
-  cmd: string[],
-  cwd: string | undefined,
-  timeoutMs: number,
-  graceMs: number,
-): Promise<EvalSpawnResult> {
-  let proc: ReturnType<typeof Bun.spawn>;
+type RoleProcess = ReturnType<typeof Bun.spawn>;
+
+/** Every timer a spawn arms, cleared together when the spawn returns. */
+interface SpawnClock {
+  timedOut: boolean;
+  readonly timers: ReturnType<typeof setTimeout>[];
+}
+
+function startRole(cmd: string[], cwd: string | undefined): RoleProcess | EvalSpawnResult {
   try {
-    proc = Bun.spawn(cmd, {
+    return Bun.spawn(cmd, {
       ...(cwd === undefined ? {} : { cwd }),
       stdin: "ignore",
       stdout: "pipe",
@@ -159,35 +206,76 @@ export async function spawnEvalRoleWithGrace(
       timedOut: false,
     };
   }
-  let timedOut = false;
-  const timer = setTimeout(() => {
-    timedOut = true;
+}
+
+function arm(clock: SpawnClock, ms: number, fn: () => void): void {
+  clock.timers.push(setTimeout(fn, ms));
+}
+
+/** SIGKILL, unless the child already exited (a kill after exit could reach a reused pid). */
+function hardKill(proc: RoleProcess): void {
+  if (proc.exitCode === null && proc.signalCode === null) proc.kill(9);
+}
+
+/** On the wall-clock deadline: terminate, then kill hard if the child is still there after the grace. */
+function armWallClock(proc: RoleProcess, clock: SpawnClock, timeoutMs: number, graceMs: number) {
+  arm(clock, timeoutMs, () => {
+    clock.timedOut = true;
     proc.kill();
-  }, timeoutMs);
+    arm(clock, graceMs, () => hardKill(proc));
+  });
+}
+
+/**
+ * The child's exit code, or null once a final deadline (past the hard kill and its grace) passes
+ * without an exit, so the CLI can never block forever on a child the OS would not reap.
+ */
+function exitedOrAbandoned(
+  proc: RoleProcess,
+  clock: SpawnClock,
+  finalMs: number,
+): Promise<number | null> {
+  return new Promise((resolve) => {
+    arm(clock, finalMs, () => resolve(null));
+    proc.exited.then(resolve, () => resolve(null));
+  });
+}
+
+/** Once the child has gone, the readers get `graceMs` to drain before they are cancelled. */
+function graceAfter(exited: Promise<unknown>, clock: SpawnClock, graceMs: number): Promise<void> {
+  return exited.then(() => new Promise<void>((r) => arm(clock, graceMs, r)));
+}
+
+export async function spawnEvalRoleWithGrace(
+  cmd: string[],
+  cwd: string | undefined,
+  timeoutMs: number,
+  graceMs: number,
+): Promise<EvalSpawnResult> {
+  const proc = startRole(cmd, cwd);
+  if (!("pid" in proc)) return proc;
+  const clock: SpawnClock = { timedOut: false, timers: [] };
   try {
-    // Once the child has exited, a grandchild may still hold the pipes: give the readers a short
-    // grace to drain, then cancel them so the wait cannot outlive the child.
-    const stop = proc.exited.then(() => new Promise<void>((r) => setTimeout(r, graceMs)));
+    armWallClock(proc, clock, timeoutMs, graceMs);
+    const exited = exitedOrAbandoned(proc, clock, timeoutMs + 3 * graceMs);
+    // A grandchild may still hold the pipes after the child exits: the readers stop after a grace.
+    const stop = graceAfter(exited, clock, graceMs);
     const [stdout, stderr, code] = await Promise.all([
       readCapped(
         proc.stdout as ReadableStream<Uint8Array>,
-        EVAL_ROLE_STDOUT_MAX_BYTES,
-        "first",
-        () => proc.kill(),
+        firstBytesKeeper(EVAL_ROLE_STDOUT_MAX_BYTES, () => proc.kill()),
         stop,
       ),
       readCapped(
         proc.stderr as ReadableStream<Uint8Array>,
-        EVAL_ROLE_STDERR_KEEP_BYTES,
-        "last",
-        () => {},
+        lastBytesKeeper(EVAL_ROLE_STDERR_KEEP_BYTES),
         stop,
       ),
-      proc.exited,
+      exited,
     ]);
-    return { code, stdout, stderr, timedOut };
+    return { code, stdout, stderr, timedOut: clock.timedOut };
   } finally {
-    clearTimeout(timer);
+    for (const t of clock.timers) clearTimeout(t);
   }
 }
 
@@ -247,46 +335,119 @@ function renderReport(doc: Extract<EvalRoleDocument, { ok: true }>): string[] {
   return lines;
 }
 
-/** Returns the process exit code: 0 when the eval ran (any score), 2 on an eval or usage error. */
-export async function runEval(args: readonly string[], deps?: EvalCliDeps): Promise<number> {
-  const d = deps ?? defaultDeps();
-  const p = parseArgs(args);
+function usageProblem(p: ParsedArgs): string | null {
   if (p.unavailable !== undefined) {
-    d.err(`nimbus eval ${p.unavailable} is not available yet; use --package <dir>`);
-    return 2;
+    return `nimbus eval ${p.unavailable} is not available yet; use --package <dir>`;
   }
-  if (p.bad !== undefined || p.pkg === undefined) {
-    d.err(p.bad === undefined ? USAGE : `${p.bad}\n${USAGE}`);
-    return 2;
+  if (p.bad !== undefined) return `${p.bad}\n${USAGE}`;
+  return p.pkg === undefined ? USAGE : null;
+}
+
+function isInsidePackage(rel: string): boolean {
+  return rel !== "" && rel !== ".." && !rel.startsWith("../") && !isAbsolute(rel);
+}
+
+/**
+ * The role matches a suite by its package-relative POSIX path (`evals/x.eval.json`). Accept what a
+ * shell hands over — `evals\x.eval.json`, `./evals/...`, an absolute path inside the package — and
+ * pass that form; a path outside the package is passed on unchanged (POSIX) for the role to refuse.
+ */
+export function packageRelativeSuite(pkgAbs: string, suite: string): string {
+  const posixSuite = suite.replaceAll("\\", "/");
+  const rel = relative(pkgAbs, resolve(pkgAbs, posixSuite)).replaceAll("\\", "/");
+  return isInsidePackage(rel) ? rel : posixSuite;
+}
+
+function roleArgsFor(pkgArg: string, suite: string | undefined): string[] {
+  const pkg = resolve(pkgArg);
+  const out = ["__nimbus-eval", "--package", pkg];
+  if (suite !== undefined) out.push("--suite", packageRelativeSuite(pkg, suite));
+  return out;
+}
+
+/** A failure the CLI itself detected (no role document to print). */
+type EvalCliErrorCode =
+  | "ERR_EVAL_LAUNCH"
+  | "ERR_EVAL_WALL_CLOCK"
+  | "ERR_EVAL_OUTPUT_TOO_LARGE"
+  | "ERR_EVAL_NO_DOCUMENT";
+
+type RoleOutcome =
+  | { kind: "document"; doc: EvalRoleDocument; text: string }
+  | { kind: "failure"; code: EvalCliErrorCode; message: string };
+
+function noDocumentMessage(code: number | null): string {
+  if (code === 0 || code === null) return "the eval role printed no valid document";
+  return `the eval role exited ${code} without a document`;
+}
+
+function interpretRoleResult(res: EvalSpawnResult): RoleOutcome {
+  if (res.timedOut) {
+    return {
+      kind: "failure",
+      code: "ERR_EVAL_WALL_CLOCK",
+      message: "the eval run exceeded its 12 minute wall-clock limit",
+    };
   }
-  const plan = d.launch();
-  if (!plan.ok) {
-    d.err(`eval failed: ${plan.message}`);
-    return 2;
-  }
-  const roleArgs = ["__nimbus-eval", "--package", resolve(p.pkg)];
-  if (p.suite !== undefined) roleArgs.push("--suite", p.suite);
-  const res = await d.spawnRole([...plan.cmd, ...roleArgs], plan.cwd, EVAL_ROLE_WALL_CLOCK_MS);
-  const tail = new TextDecoder().decode(res.stderr).trim();
-  const fail = (what: string): number => {
-    d.err(`eval failed: ${what}`);
-    if (tail.length > 0) d.err(tail);
-    return 2;
-  };
-  if (res.timedOut) return fail("the eval run exceeded its 12 minute wall-clock limit");
   if (res.stdout.byteLength > EVAL_ROLE_STDOUT_MAX_BYTES) {
-    return fail("the eval output was too large");
+    return {
+      kind: "failure",
+      code: "ERR_EVAL_OUTPUT_TOO_LARGE",
+      message: "the eval output was too large",
+    };
   }
   const text = new TextDecoder().decode(res.stdout).trim();
   const doc = parseEvalRoleDocument(text);
   if (doc === null) {
-    return fail(
-      res.code === 0 || res.code === null
-        ? "the eval role printed no valid document"
-        : `the eval role exited ${res.code} without a document`,
-    );
+    return { kind: "failure", code: "ERR_EVAL_NO_DOCUMENT", message: noDocumentMessage(res.code) };
   }
-  if (!doc.ok) return fail(`${doc.error.code}: ${doc.error.message}`);
+  return { kind: "document", doc, text };
+}
+
+/**
+ * Report an eval error and return 2. With `--json` the error is a JSON document on stdout (the
+ * role's own, verbatim, when it wrote one); otherwise prose on stderr. The child's stderr tail
+ * goes to stderr either way.
+ */
+function reportFailure(
+  d: EvalCliDeps,
+  json: boolean,
+  failure: { prose: string; document: string },
+  tail: string,
+): number {
+  if (json) d.log(failure.document);
+  else d.err(`eval failed: ${failure.prose}`);
+  if (tail.length > 0) d.err(tail);
+  return 2;
+}
+
+function cliFailure(code: EvalCliErrorCode, message: string): { prose: string; document: string } {
+  return { prose: message, document: JSON.stringify({ ok: false, error: { code, message } }) };
+}
+
+/** Returns the process exit code: 0 when the eval ran (any score), 2 on an eval or usage error. */
+export async function runEval(args: readonly string[], deps?: EvalCliDeps): Promise<number> {
+  const d = deps ?? defaultDeps();
+  const p = parseArgs(args);
+  const problem = usageProblem(p);
+  if (problem !== null || p.pkg === undefined) {
+    d.err(problem ?? USAGE);
+    return 2;
+  }
+  const plan = d.launch();
+  if (!plan.ok) return reportFailure(d, p.json, cliFailure("ERR_EVAL_LAUNCH", plan.message), "");
+  const cmd = [...plan.cmd, ...roleArgsFor(p.pkg, p.suite)];
+  const res = await d.spawnRole(cmd, plan.cwd, EVAL_ROLE_WALL_CLOCK_MS);
+  const tail = new TextDecoder().decode(res.stderr).trim();
+  const outcome = interpretRoleResult(res);
+  if (outcome.kind === "failure") {
+    return reportFailure(d, p.json, cliFailure(outcome.code, outcome.message), tail);
+  }
+  const { doc, text } = outcome;
+  if (!doc.ok) {
+    const prose = `${doc.error.code}: ${doc.error.message}`;
+    return reportFailure(d, p.json, { prose, document: text }, tail);
+  }
   if (p.json) d.log(text);
   else for (const line of renderReport(doc)) d.log(line);
   return 0;
