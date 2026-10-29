@@ -295,14 +295,18 @@ export async function spawnEvalRoleWithGrace(
 export const spawnEvalRole: EvalCliDeps["spawnRole"] = (cmd, cwd, timeoutMs) =>
   spawnEvalRoleWithGrace(cmd, cwd, timeoutMs, EVAL_ROLE_PIPE_GRACE_MS);
 
+const realIsTTY = (): boolean => process.stdin.isTTY === true && process.stdout.isTTY === true;
+const realWithClient: NonNullable<EvalCliDeps["withClient"]> = (fn) =>
+  withTerminalConsentClient(fn, INTERACTIVE_RPC_TIMEOUT_MS);
+
 function defaultDeps(): EvalCliDeps {
   return {
     launch: () => resolveGatewayLaunch(process.execPath, import.meta.url),
     spawnRole: spawnEvalRole,
     log: (s) => console.log(s),
     err: (s) => console.error(s),
-    isTTY: () => process.stdin.isTTY === true && process.stdout.isTTY === true,
-    withClient: (fn) => withTerminalConsentClient(fn, INTERACTIVE_RPC_TIMEOUT_MS),
+    isTTY: realIsTTY,
+    withClient: realWithClient,
   };
 }
 
@@ -325,8 +329,9 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     else if (a === "--installed") out.unavailable = a;
     else if (a === "--package" || a === "--suite" || a === "--extension") {
       const v = args[i + 1];
-      if (v === undefined || v.startsWith("--")) out.bad = `${a} needs a value`;
-      else if (a === "--package") out.pkg = v;
+      if (v === undefined || v.startsWith(a === "--extension" ? "-" : "--")) {
+        out.bad = `${a} needs a value`;
+      } else if (a === "--package") out.pkg = v;
       else if (a === "--extension") out.extension = v;
       else out.suite = v;
       i++;
@@ -396,6 +401,7 @@ type EvalCliErrorCode =
   | "ERR_EVAL_OUTPUT_TOO_LARGE"
   | "ERR_EVAL_NO_DOCUMENT"
   | "ERR_EVAL_IPC"
+  | "ERR_EVAL_BAD_RESPONSE"
   | "ERR_EXTENSION_EVAL_NOT_APPROVED";
 
 type RoleOutcome =
@@ -451,6 +457,25 @@ function cliFailure(code: EvalCliErrorCode, message: string): { prose: string; d
   return { prose: message, document: JSON.stringify({ ok: false, error: { code, message } }) };
 }
 
+/** Validate `extension.eval`'s answer for the one requested id; null when it is not one. */
+function parseExtensionEntry(raw: unknown, id: string): ExtensionEvalEntry | null {
+  if (!isObject(raw) || !Array.isArray(raw["results"]) || raw["results"].length !== 1) return null;
+  const e: unknown = raw["results"][0];
+  if (!isObject(e) || e["id"] !== id) return null;
+  if (e["ok"] === true) {
+    const report = parseReport(e["report"]);
+    if (typeof e["version"] !== "string" || report === null) return null;
+    return { id, version: e["version"], ok: true, report };
+  }
+  if (e["ok"] !== false) return null;
+  const err = e["error"];
+  if (!isObject(err) || typeof err["code"] !== "string" || typeof err["message"] !== "string") {
+    return null;
+  }
+  const version = typeof e["version"] === "string" ? e["version"] : null;
+  return { id, version, ok: false, error: { code: err["code"], message: err["message"] } };
+}
+
 const NOT_APPROVED = "ERR_EXTENSION_EVAL_NOT_APPROVED";
 
 /**
@@ -458,40 +483,32 @@ const NOT_APPROVED = "ERR_EXTENSION_EVAL_NOT_APPROVED";
  * approval is terminal-only (no `--yes`, no non-TTY), refused before any connection is made.
  */
 async function runInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<number> {
-  const defaults = defaultDeps();
   if (p.yes) {
     d.err(
       "nimbus eval --extension has no --yes: the approval must be answered by a person at a terminal.",
     );
     return 2;
   }
-  if (((d.isTTY ?? defaults.isTTY) as () => boolean)() !== true) {
+  if (!(d.isTTY ?? realIsTTY)()) {
     d.err(
       "Refusing to evaluate an extension in non-TTY mode: the approval must be answered at a terminal.",
     );
     return 2;
   }
-  const withClient = (d.withClient ?? defaults.withClient) as NonNullable<
-    EvalCliDeps["withClient"]
-  >;
-  let entry: ExtensionEvalEntry | undefined;
+  const withClient = d.withClient ?? realWithClient;
+  const id = p.extension ?? "";
+  let entry: ExtensionEvalEntry | null;
   try {
-    const r = await withClient((call) =>
-      call<{ results: ExtensionEvalEntry[] }>("extension.eval", { ids: [p.extension] }),
-    );
-    entry = r.results[0];
+    const raw = await withClient((call) => call<unknown>("extension.eval", { ids: [id] }));
+    entry = parseExtensionEntry(raw, id);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     const code = message.includes(NOT_APPROVED) ? NOT_APPROVED : "ERR_EVAL_IPC";
     return reportFailure(d, p.json, cliFailure(code, message), "");
   }
-  if (entry === undefined) {
-    return reportFailure(
-      d,
-      p.json,
-      cliFailure("ERR_EVAL_NO_DOCUMENT", "the gateway returned no result"),
-      "",
-    );
+  if (entry === null) {
+    const bad = cliFailure("ERR_EVAL_BAD_RESPONSE", "the gateway's answer was not a valid result");
+    return reportFailure(d, p.json, bad, "");
   }
   if (!entry.ok) {
     const prose = `${entry.error.code}: ${entry.error.message}`;

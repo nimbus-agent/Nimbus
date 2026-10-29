@@ -197,7 +197,12 @@ function ipcEntry(): Record<string, unknown> {
   return { id: "acme/tool", version: "1.0.0", ok: true, report: report() };
 }
 
-function extHarness(opts: { entry?: Record<string, unknown>; rpcError?: Error; tty?: boolean }) {
+function extHarness(opts: {
+  raw?: unknown;
+  entry?: Record<string, unknown>;
+  rpcError?: Error;
+  tty?: boolean;
+}) {
   const h = harness({});
   const rpc: { method: string; params: unknown }[] = [];
   let connects = 0;
@@ -209,6 +214,7 @@ function extHarness(opts: { entry?: Record<string, unknown>; rpcError?: Error; t
       return await fn(async <T>(method: string, params: unknown) => {
         rpc.push({ method, params });
         if (opts.rpcError) throw opts.rpcError;
+        if ("raw" in opts) return opts.raw as T;
         return { results: [opts.entry ?? ipcEntry()] } as T;
       });
     },
@@ -269,6 +275,28 @@ describe("runEval --extension", () => {
   });
 
   test.each([
+    ["null results", { results: null }],
+    ["empty results", { results: [] }],
+    ["not an object", "nope"],
+    ["wrong id", { results: [{ ...ipcEntry(), id: "other/ext" }] }],
+    ["ok without report", { results: [{ id: "acme/tool", version: "1.0.0", ok: true }] }],
+    [
+      "report whose score disagrees with its counts",
+      { results: [{ ...ipcEntry(), report: { ...report(), score: 99 } }] },
+    ],
+    ["not ok without error", { results: [{ id: "acme/tool", version: null, ok: false }] }],
+    ["a string entry", { results: ["acme/tool"] }],
+  ])("malformed answer (%s) exits 2 as ERR_EVAL_BAD_RESPONSE", async (_n, raw) => {
+    const h = extHarness({ raw });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("eval failed");
+    const j = extHarness({ raw });
+    expect(await runEval(["--extension", "acme/tool", "--json"], j.deps)).toBe(2);
+    expect(JSON.parse(j.logs[0] ?? "").error.code).toBe("ERR_EVAL_BAD_RESPONSE");
+  });
+
+  test.each([
+    [["--extension", "-y"]],
     [["--extension"]],
     [["--extension", "--json"]],
     [["--extension", "a/b", "--package", "p"]],
