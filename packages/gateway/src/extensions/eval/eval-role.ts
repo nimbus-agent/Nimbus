@@ -3,6 +3,7 @@ import { format } from "node:util";
 import type { EvalReport } from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
+import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
 import type { EvalMcpClient } from "./eval-runtime.ts";
 import { EvalRunError, loadEvalPackage, messageOf } from "./eval-source.ts";
 
@@ -27,6 +28,11 @@ const USAGE = "usage: __nimbus-eval --package <absolute dir> [--suite <file>] [-
 
 type RoleArgs = { packageDir: string; suiteFile?: string };
 
+/** A flag's value: present and not itself a flag (`--package --json` is a usage error). */
+function isFlagValue(value: string | undefined): value is string {
+  return value !== undefined && !value.startsWith("--");
+}
+
 /** `--json` is a no-op; anything unknown, repeated or valueless is a usage error (null). */
 function parseArgs(argv: readonly string[]): RoleArgs | null {
   let packageDir: string | undefined;
@@ -37,7 +43,7 @@ function parseArgs(argv: readonly string[]): RoleArgs | null {
     const isPkg = a === "--package";
     if (!isPkg && a !== "--suite") return null;
     const value = argv[++i];
-    if (value === undefined) return null;
+    if (!isFlagValue(value)) return null;
     if (isPkg ? packageDir !== undefined : suiteFile !== undefined) return null;
     if (isPkg) packageDir = value;
     else suiteFile = value;
@@ -133,30 +139,58 @@ export function adaptEvalClient(client: McpClientLike, readContent: ContentReade
   };
 }
 
-/** The real run: exported so a test can drive it up to the first thing that fails. */
-export async function defaultEvalRun(args: RoleArgs): Promise<EvalRoleDocument> {
-  const [{ MCPClient, getMcpCallToolContent }, runtime, sandbox, paths, runtimes] =
-    await Promise.all([
-      import("@mastra/mcp"),
-      import("./eval-runtime.ts"),
-      import("../../platform/sandbox/index.ts"),
-      import("../../platform/paths.ts"),
-      import("../../exec/exec-runtimes.ts"),
-    ]);
+/** What a run loads from outside this module; injected in tests, `REAL_EVAL_LOADERS` otherwise. */
+export interface EvalRunLoaders {
+  /** `@mastra/mcp`, imported only here: inside the run, after console output is redirected. */
+  mcp: () => Promise<{
+    createClient: (id: string, servers: ReturnType<typeof evalServerDefs>) => McpClientLike;
+    readContent: ContentReader;
+  }>;
+  canConfine: () => Promise<(p: SandboxPolicy) => string | null>;
+  sandboxDir: () => Promise<string>;
+  runtimeReadPaths: () => Promise<readonly string[]>;
+}
+
+export const REAL_EVAL_LOADERS: EvalRunLoaders = {
+  mcp: async () => {
+    const { MCPClient, getMcpCallToolContent } = await import("@mastra/mcp");
+    return {
+      // MCPClient's tool type is wider than the slice an eval drives (EvalMcpClient).
+      createClient: (id, servers) => new MCPClient({ id, servers }) as unknown as McpClientLike,
+      readContent: getMcpCallToolContent,
+    };
+  },
+  canConfine: async () => {
+    const runner = await (await import("../../platform/sandbox/index.ts")).createSandboxRunner();
+    return (p) => runner.canConfine(p);
+  },
+  sandboxDir: async () =>
+    (await import("../../platform/paths.ts")).createPlatformPathsForCurrentOs().sandboxDir,
+  runtimeReadPaths: async () =>
+    (await import("../../exec/exec-runtimes.ts")).resolveRuntimeById("bun").requiredReadPaths(),
+};
+
+/** The real run: load and verify the package, then run its suites in the sandbox. */
+export async function defaultEvalRun(
+  args: RoleArgs,
+  loaders: EvalRunLoaders = REAL_EVAL_LOADERS,
+): Promise<EvalRoleDocument> {
+  const runtime = await import("./eval-runtime.ts");
   const src = await loadEvalPackage(args.packageDir, {
     ...(args.suiteFile === undefined ? {} : { suiteFile: args.suiteFile }),
   });
-  const runner = await sandbox.createSandboxRunner();
+  const [mcp, canConfine, sandboxDir, runtimeReadPaths] = await Promise.all([
+    loaders.mcp(),
+    loaders.canConfine(),
+    loaders.sandboxDir(),
+    loaders.runtimeReadPaths(),
+  ]);
   const report = await runtime.runEvalSession(src, {
-    sandboxDir: paths.createPlatformPathsForCurrentOs().sandboxDir,
-    runtimeReadPaths: runtimes.resolveRuntimeById("bun").requiredReadPaths(),
-    canConfine: (p) => runner.canConfine(p),
-    // MCPClient's tool type is wider than the slice an eval drives (EvalMcpClient).
+    sandboxDir,
+    runtimeReadPaths,
+    canConfine,
     createClient: (id, servers) =>
-      adaptEvalClient(
-        new MCPClient({ id, servers: evalServerDefs(servers) }) as unknown as McpClientLike,
-        getMcpCallToolContent,
-      ),
+      adaptEvalClient(mcp.createClient(id, evalServerDefs(servers)), mcp.readContent),
   });
   return { ok: true, extensionId: src.extensionId, version: src.version, report };
 }
@@ -166,23 +200,42 @@ function toErrorDocument(e: unknown): EvalRoleDocument {
   return { ok: false, error: { code: "ERR_EVAL_INTERNAL", message: messageOf(e) } };
 }
 
-const REAL_DEPS: EvalRoleDeps = {
+/** The slice of a writable stream `exitAfterFlush` needs. */
+interface FlushableStream {
+  write(s: string, cb: () => void): boolean;
+}
+
+/** Exit once stdout has flushed: an empty write completes only after every earlier write. */
+export function exitAfterFlush(
+  code: number,
+  out: FlushableStream = process.stdout,
+  exit: (code: number) => void = process.exit.bind(process),
+): void {
+  out.write("", () => exit(code));
+}
+
+export const REAL_ROLE_DEPS: EvalRoleDeps = {
   writeStdout: (s) => {
     process.stdout.write(s);
   },
   writeStderr: (s) => {
     process.stderr.write(s);
   },
-  // An empty write completes only after every earlier stdout write has flushed.
-  exit: (code) => {
-    process.stdout.write("", () => process.exit(code));
-  },
+  exit: exitAfterFlush,
   run: defaultEvalRun,
 };
 
+async function runToDocument(deps: EvalRoleDeps, args: RoleArgs): Promise<EvalRoleDocument> {
+  try {
+    return await deps.run(args);
+  } catch (e: unknown) {
+    return toErrorDocument(e);
+  }
+}
+
 export async function runEvalRole(
   argv: readonly string[],
-  deps: EvalRoleDeps = REAL_DEPS,
+  deps: EvalRoleDeps = REAL_ROLE_DEPS,
 ): Promise<void> {
   const args = parseArgs(argv);
   if (args === null) {
@@ -190,12 +243,11 @@ export async function runEvalRole(
     deps.exit(2);
     return;
   }
-  let doc: EvalRoleDocument;
-  try {
-    doc = await withConsoleOnStderr(deps.writeStderr, () => deps.run(args));
-  } catch (e: unknown) {
-    doc = toErrorDocument(e);
-  }
-  deps.writeStdout(`${JSON.stringify(doc)}\n`);
+  // The document is written INSIDE the redirect: a library line logged after the run but before
+  // the restore still goes to stderr, never after the document on stdout.
+  await withConsoleOnStderr(deps.writeStderr, async () => {
+    const doc = await runToDocument(deps, args);
+    deps.writeStdout(`${JSON.stringify(doc)}\n`);
+  });
   deps.exit(0);
 }

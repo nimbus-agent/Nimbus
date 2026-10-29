@@ -1,17 +1,27 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../verify-signature.ts";
 import {
   discardEvalStage,
+  EVAL_STAGE_STALE_MS,
   EvalRunError,
   type EvalRunErrorCode,
   evalFilesDigest,
   loadEvalPackage,
   messageOf,
   stageEvalPackage,
+  sweepStaleEvalStages,
 } from "./eval-source.ts";
 
 const SUITE = {
@@ -219,6 +229,37 @@ describe("stageEvalPackage", () => {
     const src = await loadEvalPackage(pkg);
     const evil = { ...src, entryRel: "../escape.js" };
     expect(() => stageEvalPackage(evil, sandbox)).toThrow(EvalRunError);
+  });
+});
+
+describe("sweepStaleEvalStages", () => {
+  /** A dir under the stage root whose mtime is `ageMs` before `now`. */
+  function agedDir(name: string, now: number, ageMs: number): string {
+    const dir = join(sandbox, "ext-stage", name);
+    mkdirSync(join(dir, "dist"), { recursive: true });
+    writeFileSync(join(dir, "dist", "index.js"), "x");
+    const t = (now - ageMs) / 1000;
+    utimesSync(dir, t, t);
+    return dir;
+  }
+
+  test("removes eval stages older than an hour; keeps younger ones and every non-eval entry", () => {
+    const now = Date.now();
+    const old = agedDir("eval-old", now, EVAL_STAGE_STALE_MS + 60_000);
+    const fresh = agedDir("eval-fresh", now, 60_000);
+    const runRoot = agedDir("ext_acme_x", now, EVAL_STAGE_STALE_MS * 5);
+    sweepStaleEvalStages(sandbox, now);
+    expect(existsSync(old)).toBe(false);
+    expect(existsSync(fresh)).toBe(true); // a concurrent run may own it
+    expect(existsSync(runRoot)).toBe(true); // a run's stage root is not the eval's to sweep
+  });
+
+  test("the threshold is one hour", () => {
+    expect(EVAL_STAGE_STALE_MS).toBe(60 * 60 * 1000);
+  });
+
+  test("no stage root yet is not an error", () => {
+    expect(() => sweepStaleEvalStages(join(root, "nowhere"), Date.now())).not.toThrow();
   });
 });
 

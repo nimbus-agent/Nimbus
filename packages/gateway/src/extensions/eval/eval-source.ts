@@ -4,8 +4,10 @@ import {
   constants,
   copyFileSync,
   fstatSync,
+  lstatSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, posix } from "node:path";
@@ -164,12 +166,46 @@ export async function loadEvalPackage(
   }
 }
 
+/** An eval stage left behind longer than this belongs to no live run and is swept. */
+export const EVAL_STAGE_STALE_MS = 60 * 60 * 1000;
+const EVAL_STAGE_PREFIX = "eval-";
+
+function isOlderThan(path: string, cutoffMs: number): boolean {
+  const st = lstatSync(path, { throwIfNoEntry: false });
+  return st !== undefined && st.mtimeMs < cutoffMs;
+}
+
+/**
+ * Best effort: remove `ext-stage/eval-*` stages older than an hour. A killed child can hold a file
+ * in its stage past the run's own removal (Windows), and nothing else sweeps an eval's stages.
+ * A younger stage is never touched: a concurrent eval may own it. A run's per-service stage root
+ * (`ext_<id>`) is not an eval's to sweep.
+ */
+export function sweepStaleEvalStages(sandboxDir: string, now: number = Date.now()): void {
+  const stageRoot = join(sandboxDir, EXTENSION_STAGE_DIR_NAME);
+  let names: string[];
+  try {
+    names = readdirSync(stageRoot);
+  } catch {
+    return; // no stage root yet
+  }
+  const cutoff = now - EVAL_STAGE_STALE_MS;
+  for (const name of names) {
+    const path = join(stageRoot, name);
+    if (name.startsWith(EVAL_STAGE_PREFIX) && isOlderThan(path, cutoff)) removeBestEffort(path);
+  }
+}
+
 /**
  * Copy ONLY the verified package files into a run-unique stage and re-digest the copy. The stage
  * is the eval child's working directory; its ancestors are gateway-owned and granted to no spawn.
  */
 export function stageEvalPackage(src: EvalPackageSource, sandboxDir: string): EvalStagedPackage {
-  const stagePath = join(sandboxDir, EXTENSION_STAGE_DIR_NAME, `eval-${randomUUID()}`);
+  const stagePath = join(
+    sandboxDir,
+    EXTENSION_STAGE_DIR_NAME,
+    `${EVAL_STAGE_PREFIX}${randomUUID()}`,
+  );
   try {
     for (const rel of src.files) {
       const to = join(stagePath, ...rel.split("/"));

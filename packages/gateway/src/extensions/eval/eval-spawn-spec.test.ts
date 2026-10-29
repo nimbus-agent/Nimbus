@@ -67,6 +67,7 @@ describe("buildExtensionEvalSpawnSpec", () => {
   });
 
   test("env carries only baseline keys plus the sandbox pair: no GITHUB_/NIMBUS_ leaks", () => {
+    const prior = { GITHUB_TOKEN: process.env["GITHUB_TOKEN"], NIMBUS_X: process.env["NIMBUS_X"] };
     process.env["GITHUB_TOKEN"] = "ghp_fake";
     process.env["NIMBUS_X"] = "leak";
     try {
@@ -82,8 +83,11 @@ describe("buildExtensionEvalSpawnSpec", () => {
         ).toBe(true);
       }
     } finally {
-      delete process.env["GITHUB_TOKEN"];
-      delete process.env["NIMBUS_X"];
+      // Restore, not delete: the Linux leg runs files in one worker (`--no-isolate`).
+      for (const [k, v] of Object.entries(prior)) {
+        if (v === undefined) delete process.env[k];
+        else process.env[k] = v;
+      }
     }
   });
 

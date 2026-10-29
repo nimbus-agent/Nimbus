@@ -1,13 +1,21 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { EvalReport } from "@nimbus-dev/registry-format";
 
+import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
   adaptEvalClient,
   defaultEvalRun,
   type EvalRoleDeps,
   type EvalRoleDocument,
+  type EvalRunLoaders,
   evalServerDefs,
+  exitAfterFlush,
   normaliseEvalReply,
+  REAL_EVAL_LOADERS,
+  REAL_ROLE_DEPS,
   runEvalRole,
 } from "./eval-role.ts";
 import { EvalRunError } from "./eval-source.ts";
@@ -51,6 +59,8 @@ describe("runEvalRole", () => {
     [["--package", "/p", "--package", "/q"]],
     [["--package", "/p", "--suite", "a", "--suite", "b"]],
     [["stray"]],
+    [["--package", "--json"]],
+    [["--package", "/p", "--suite", "--json"]],
   ])("usage error %j exits 2 with empty stdout", async (argv) => {
     const h = harness(async () => OK);
     await runEvalRole(argv, h.deps);
@@ -126,6 +136,23 @@ describe("runEvalRole", () => {
     expect(console.debug).toBe(before.debug);
   });
 
+  test("the document is written while console output still goes to stderr", async () => {
+    const before = console.log;
+    const h = harness(async () => OK);
+    const write = h.deps.writeStdout;
+    let redirectedAtWrite = false;
+    h.deps.writeStdout = (s) => {
+      redirectedAtWrite = console.log !== before;
+      console.log("late library line");
+      write(s);
+    };
+    await runEvalRole(["--package", "/p"], h.deps);
+    expect(redirectedAtWrite).toBe(true);
+    expect(h.out).toHaveLength(1);
+    expect(h.err.join("")).toContain("late library line");
+    expect(console.log).toBe(before);
+  });
+
   test("console is restored even when run throws", async () => {
     const before = console.log;
     const h = harness(async () => {
@@ -143,7 +170,7 @@ describe("defaultEvalRun", () => {
     );
   });
 
-  test("a missing suite file is forwarded and refused", async () => {
+  test("a relative package dir with a suite file is refused the same way", async () => {
     await expect(
       defaultEvalRun({ packageDir: "also/relative", suiteFile: "x.eval.json" }),
     ).rejects.toBeInstanceOf(EvalRunError);
@@ -206,5 +233,163 @@ describe("error-reply adapter", () => {
     expect(toolB?.execute).toBeUndefined();
     await client.disconnect();
     expect(disconnected).toBe(1);
+  });
+});
+
+describe("defaultEvalRun with injected loaders", () => {
+  let root: string;
+  let pkg: string;
+  let sandboxDir: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "nimbus-eval-role-"));
+    pkg = join(root, "pkg");
+    sandboxDir = join(root, "sandbox");
+    mkdirSync(join(pkg, "dist"), { recursive: true });
+    mkdirSync(join(pkg, "evals"), { recursive: true });
+    mkdirSync(sandboxDir, { recursive: true });
+    writeFileSync(
+      join(pkg, "nimbus.extension.json"),
+      JSON.stringify({ id: "acme.roletest", version: "2.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(pkg, "dist", "index.js"), "console.log(1);");
+    const cases = [
+      { name: "hi", tool: "echo", input: { text: "hi" }, expect: { rubric: "exact", value: "hi" } },
+      { name: "no", tool: "echo", input: { text: "a" }, expect: { rubric: "exact", value: "b" } },
+    ];
+    writeFileSync(
+      join(pkg, "evals", "basic.eval.json"),
+      JSON.stringify({ format: 1, name: "basic", cases }),
+    );
+    writeFileSync(
+      join(pkg, "evals", "other.eval.json"),
+      JSON.stringify({ format: 1, name: "other", cases: [cases[0]] }),
+    );
+  });
+
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  interface Seen {
+    ids: string[];
+    onToolError: unknown[];
+    disconnects: number;
+  }
+
+  function newSeen(): Seen {
+    return { ids: [], onToolError: [], disconnects: 0 };
+  }
+
+  /**
+   * A fake MCP client per spawn whose `echo` replies with its input text, hidden the way
+   * `@mastra/mcp` hides `content` on a reshaped reply (so the adapter's recovery runs too).
+   */
+  function loaders(seen: Seen, confine: string | null = null): EvalRunLoaders {
+    return {
+      mcp: async () => ({
+        createClient: (id, servers) => {
+          seen.ids.push(id);
+          const [key] = Object.keys(servers);
+          seen.onToolError.push(servers[key ?? ""]?.onToolError);
+          return {
+            listToolsWithErrors: async () => ({
+              tools: {
+                [`${key}_echo`]: {
+                  execute: async (input: unknown) => ({
+                    __c: [{ type: "text", text: (input as { text: string }).text }],
+                  }),
+                },
+              },
+              errors: {},
+            }),
+            disconnect: async () => {
+              seen.disconnects += 1;
+            },
+          };
+        },
+        readContent: (o) => (o as { __c?: unknown }).__c,
+      }),
+      canConfine: async () => () => confine,
+      sandboxDir: async () => sandboxDir,
+      runtimeReadPaths: async () => [join(root, "runtime")],
+    };
+  }
+
+  test("runs every suite through the injected client and returns the scored document", async () => {
+    const seen = newSeen();
+    const doc = await defaultEvalRun({ packageDir: pkg }, loaders(seen));
+    if (!doc.ok) throw new Error(JSON.stringify(doc));
+    expect(doc.extensionId).toBe("acme.roletest");
+    expect(doc.version).toBe("2.0.0");
+    expect(doc.report.cases).toBe(3);
+    expect(doc.report.passed).toBe(2);
+    expect(doc.report.results.map((r) => [r.suite, r.case, r.pass])).toEqual([
+      ["evals/basic.eval.json", "hi", true],
+      ["evals/basic.eval.json", "no", false],
+      ["evals/other.eval.json", "hi", true],
+    ]);
+    expect(seen.ids).toHaveLength(1);
+    expect(seen.onToolError).toEqual(["return"]);
+    expect(seen.disconnects).toBe(1);
+    const stageRoot = join(sandboxDir, EXTENSION_STAGE_DIR_NAME);
+    expect(existsSync(stageRoot) ? readdirSync(stageRoot) : []).toEqual([]);
+  });
+
+  test("a suite file keeps only that suite", async () => {
+    const doc = await defaultEvalRun(
+      { packageDir: pkg, suiteFile: "evals/other.eval.json" },
+      loaders(newSeen()),
+    );
+    if (!doc.ok) throw new Error(JSON.stringify(doc));
+    expect(doc.report.results.map((r) => r.suite)).toEqual(["evals/other.eval.json"]);
+  });
+
+  test("a sandbox that cannot confine refuses before any client is made", async () => {
+    const seen = newSeen();
+    const run = defaultEvalRun({ packageDir: pkg }, loaders(seen, "no sandbox"));
+    await expect(run).rejects.toMatchObject({ code: "ERR_EVAL_SANDBOX_UNAVAILABLE" });
+    expect(seen.ids).toEqual([]);
+  });
+});
+
+describe("the real role dependencies", () => {
+  test("the stdout and stderr writers accept a write; run is defaultEvalRun", () => {
+    expect(() => REAL_ROLE_DEPS.writeStdout("")).not.toThrow();
+    expect(() => REAL_ROLE_DEPS.writeStderr("")).not.toThrow();
+    expect(REAL_ROLE_DEPS.run).toBe(defaultEvalRun);
+  });
+
+  test("exitAfterFlush exits only once the stdout flush callback runs", () => {
+    const exits: number[] = [];
+    let flush: (() => void) | undefined;
+    exitAfterFlush(
+      7,
+      {
+        write: (_s, cb) => {
+          flush = cb;
+          return true;
+        },
+      },
+      (c) => {
+        exits.push(c);
+      },
+    );
+    expect(exits).toEqual([]);
+    flush?.();
+    expect(exits).toEqual([7]);
+  });
+
+  test("the real loaders resolve without spawning anything", async () => {
+    const mcp = await REAL_EVAL_LOADERS.mcp();
+    const client = mcp.createClient(`nimbus-eval-role-test-${crypto.randomUUID()}`, {});
+    await client.disconnect();
+    expect(mcp.readContent({})).toBeUndefined();
+    const canConfine = await REAL_EVAL_LOADERS.canConfine();
+    const verdict = canConfine({
+      id: "eval.role-test",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+    });
+    expect(verdict === null || typeof verdict === "string").toBe(true);
+    expect(typeof (await REAL_EVAL_LOADERS.sandboxDir())).toBe("string");
+    expect((await REAL_EVAL_LOADERS.runtimeReadPaths()).length).toBeGreaterThan(0);
   });
 });

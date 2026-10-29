@@ -1,12 +1,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EvalCase, EvalSuite } from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
-import { SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
+import { SANDBOX_CWD_ENV, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
 import {
   EVAL_CASE_TIMEOUT_MS,
   EVAL_DISCONNECT_TIMEOUT_MS,
@@ -15,7 +23,12 @@ import {
   type EvalRuntimeDeps,
   runEvalSession,
 } from "./eval-runtime.ts";
-import { type EvalPackageSource, EvalRunError, evalFilesDigest } from "./eval-source.ts";
+import {
+  EVAL_STAGE_STALE_MS,
+  type EvalPackageSource,
+  EvalRunError,
+  evalFilesDigest,
+} from "./eval-source.ts";
 
 const SERVICE_ID = "ext_acme_x";
 
@@ -460,6 +473,53 @@ describe("runEvalSession", () => {
     expect(stageEntries()).toEqual([]);
   });
 
+  test("the binding limit is decided BEFORE the call: a run-bound cut is a run timeout", async () => {
+    // The fake clock never moves during the call, so a check made AFTER the timer fires would still
+    // see 10 ms left and score the cut as the extension's case timeout.
+    let clock = 0;
+    const { createClient } = fakeFactory([
+      {
+        tools: { slow: hanging([]) },
+        onList: () => {
+          clock = 990; // 10 ms of run left; the 60 s case timeout cannot be the binding limit
+        },
+      },
+    ]);
+    const code = await codeOf(
+      runEvalSession(
+        source([exactCase("slow", "slow", "x")]),
+        deps(createClient, { caseTimeoutMs: 60_000, runTimeoutMs: 1_000, now: () => clock }),
+      ),
+    );
+    expect(code).toBe("ERR_EVAL_RUN_TIMEOUT");
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a stage the kill could not remove (a child still held it) is removed when the run closes", async () => {
+    const throwsAsync: ToolImpl = async () => {
+      throw new Error("transport closed");
+    };
+    const base = fakeFactory([{ tools: { throwsAsync } }, { tools: { echo } }]);
+    let firstStage = "";
+    const createClient: EvalRuntimeDeps["createClient"] = (id, servers) => {
+      const cwd = Object.values(servers)[0]?.env[SANDBOX_CWD_ENV] ?? "";
+      if (base.created.length === 0) firstStage = cwd;
+      // The respawn comes after the kill tried to remove the first stage: put it back, as a
+      // removal that failed on a file the dead child still held leaves it.
+      else mkdirSync(join(firstStage, "held"), { recursive: true });
+      return base.createClient(id, servers);
+    };
+    const report = await runEvalSession(
+      source([exactCase("a", "throwsAsync", "x"), exactCase("b", "echo", "y")]),
+      deps(createClient),
+    );
+    expect(report.results.map((r) => r.reason)).toEqual(["crash", null]);
+    expect(firstStage).not.toBe("");
+    expect(base.created).toHaveLength(2);
+    expect(existsSync(firstStage)).toBe(false);
+    expect(stageEntries()).toEqual([]);
+  });
+
   test("a case slower than the CASE timeout (run time left) is the extension's timeout", async () => {
     const { createClient } = fakeFactory([{ tools: { slow: hanging([]) } }]);
     const report = await runEvalSession(
@@ -482,6 +542,16 @@ describe("runEvalSession", () => {
     );
     expect(code).toBe("ERR_EVAL_RUN_TIMEOUT");
     expect(created[0]?.disconnects).toBe(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a run first sweeps eval stages an earlier run left over an hour ago", async () => {
+    const stale = join(sandboxDir, EXTENSION_STAGE_DIR_NAME, "eval-left-behind");
+    mkdirSync(stale, { recursive: true });
+    const t = (Date.now() - EVAL_STAGE_STALE_MS - 60_000) / 1000;
+    utimesSync(stale, t, t);
+    const { createClient } = fakeFactory([{ tools: { echo } }]);
+    await runEvalSession(source([exactCase("a", "echo", "hi")]), deps(createClient));
     expect(stageEntries()).toEqual([]);
   });
 

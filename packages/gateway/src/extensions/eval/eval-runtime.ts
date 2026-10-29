@@ -21,6 +21,7 @@ import {
   EvalRunError,
   messageOf,
   stageEvalPackage,
+  sweepStaleEvalStages,
 } from "./eval-source.ts";
 import {
   buildExtensionEvalSpawnSpec,
@@ -191,18 +192,21 @@ function lookupTool(server: EvalServer, run: EvalRun, tool: string): EvalToolExe
 
 /**
  * `min(caseTimeout, runDeadline - now)`; a timeout aborts the call. When the RUN deadline was the
- * binding limit the case is not the extension's failure: the whole run is a run timeout.
+ * binding limit the case is not the extension's failure: the whole run is a run timeout. Which
+ * limit binds is decided BEFORE the call, never from the clock after the timer fires (a timer may
+ * fire a millisecond early, and a cut run would then be scored as a case timeout).
  */
 async function callCaseTool(run: EvalRun, server: EvalServer, c: EvalCase): Promise<EvalReply> {
   const execute = lookupTool(server, run, c.tool);
   if (execute === undefined) return { kind: "failed", reason: "unknown-tool" };
-  const budget = Math.min(run.caseTimeoutMs, remainingMs(run));
+  const left = remainingMs(run);
+  const runBound = left < run.caseTimeoutMs;
   const abort = new AbortController();
   // `.then` so a synchronous throw from `execute` is a rejection like any other.
   const call = Promise.resolve().then(() => execute(c.input, { abortSignal: abort.signal }));
-  const settled = await settleWithin(call, budget, () => abort.abort());
+  const settled = await settleWithin(call, Math.min(run.caseTimeoutMs, left), () => abort.abort());
   if (settled.kind === "timeout") {
-    if (remainingMs(run) <= 0) throw runTimeout(run);
+    if (runBound) throw runTimeout(run);
     return { kind: "failed", reason: "timeout" };
   }
   if (settled.kind === "threw") return { kind: "failed", reason: "crash" };
@@ -217,14 +221,17 @@ async function disconnectWithin(client: EvalMcpClient, ms: number): Promise<void
   );
 }
 
-/** Kill the live server and drop its stage; the next case respawns from a fresh stage. */
+/**
+ * Kill the live server and discard its stage; the next case respawns from a fresh stage. The stage
+ * STAYS in `run.stages`: a child that has not fully exited may still hold a file in it (Windows),
+ * so this removal can fail, and `closeRun` makes a final pass once every process is gone.
+ */
 async function killServer(run: EvalRun): Promise<void> {
   const server = run.server;
   if (server === undefined) return;
   run.server = undefined;
   await disconnectWithin(server.client, run.disconnectTimeoutMs);
   discardEvalStage(server.stage);
-  run.stages.splice(run.stages.indexOf(server.stage), 1); // discarded: never twice
 }
 
 async function runCase(run: EvalRun, suite: EvalSuite, c: EvalCase): Promise<EvalCaseOutcome> {
@@ -266,13 +273,15 @@ function scoreOutcomes(outcomes: readonly EvalCaseOutcome[]): EvalReport {
 
 async function closeRun(run: EvalRun): Promise<void> {
   await killServer(run);
-  // Only stages no server owned remain (e.g. createClient threw after staging).
+  // Every stage the run made, again: removal is idempotent, and one a killed child still held
+  // when it was first discarded is free now.
   for (const stage of run.stages) discardEvalStage(stage);
 }
 
 /**
  * Evaluate a verified package: refuse when the sandbox cannot confine it, spawn ONE sandboxed MCP
- * server (no network, no credentials) from a fresh stage, call one tool per case in suite/case
+ * server (no network, no credentials) from a fresh stage (after sweeping eval stages an earlier
+ * run left behind over an hour ago), call one tool per case in suite/case
  * order under a per-case and a whole-run deadline, respawn from a fresh stage after a case that
  * timed out or crashed, and score deterministically. Throws `EvalRunError`; every client is
  * disconnected and every stage removed whatever happens.
@@ -283,6 +292,7 @@ export async function runEvalSession(
 ): Promise<EvalReport> {
   assertHasCases(src);
   assertSandboxAvailable(src, deps);
+  sweepStaleEvalStages(deps.sandboxDir);
   const run = openRun(src, deps);
   try {
     await spawnServer(run);
