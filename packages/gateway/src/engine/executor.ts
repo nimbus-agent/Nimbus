@@ -149,6 +149,11 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // signed extension — install + run grant + credential grant together. Gate site:
   // extensions/migration/migration-engine.ts (`migrationConsentViaGate`). Never delegable (I20).
   "extension.migrate",
+  // `nimbus eval --extension`: the owner's one approval to run the eval suites of installed
+  // extensions, offline and without credentials. Gate site: extensions/installed-eval.ts, through
+  // the gate-only executor that ipc/server/dispatchers.ts builds per call. Never delegable (see
+  // tryDelegatedApproval's extension.* rule).
+  "extension.eval",
   // Adding a registry pins a trust root that later extension installs verify against. Gate site:
   // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
@@ -289,6 +294,10 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
     const { fromRenderer: _audit, ...shown } = action.payload;
     return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
+  if (action.type === "extension.eval") {
+    // Only the extensions the owner is approving, plus the fixed fact that they run offline.
+    return { extensions: action.payload["extensions"], network: "none" };
+  }
   if (action.type === "pack.install") {
     // `promptText` is the prompt body itself (printed by formatConsentPrompt); repeating it as
     // structured details would show the owner the same text twice.
@@ -354,6 +363,12 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", action.payload["promptText"]);
     return lines.join("\n");
   }
+  const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;
+  if (evalLines !== undefined) {
+    // Purpose-built rendering; a JSON Details line would repeat it.
+    lines.push("", ...evalLines, "", "runs with no network and no credentials");
+    return lines.join("\n");
+  }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
     lines.push("", `Details: ${JSON.stringify(detailsLinePayload(action))}`);
   }
@@ -363,6 +378,39 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", String(action.payload?.["planText"]));
   }
   return lines.join("\n");
+}
+
+/**
+ * What `JSON.stringify` leaves raw that a terminal still acts on: DEL and the C1 controls
+ * (U+007F-U+009F), the line and paragraph separators (U+2028, U+2029), and the bidi embeddings,
+ * overrides (U+202A-U+202E) and isolates (U+2066-U+2069), which can visually reorder a line.
+ * Written as escapes: an invisible literal in a character class is unreviewable.
+ */
+const PROMPT_UNSAFE_AFTER_JSON = /[\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g;
+
+/** One `id@version (N cases)` line per extension, or undefined when the payload is malformed. */
+function evalPromptLines(action: PlannedAction): string[] | undefined {
+  const list = action.payload?.["extensions"];
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  const out: string[] = [];
+  for (const e of list as unknown[]) {
+    const r = e as { id?: unknown; version?: unknown; cases?: unknown } | null;
+    if (
+      typeof r?.id !== "string" ||
+      typeof r.version !== "string" ||
+      typeof r.cases !== "number" ||
+      !Number.isInteger(r.cases) ||
+      r.cases < 0
+    ) {
+      return undefined;
+    }
+    // id and version come from a manifest: JSON-quote them (escapes newlines and C0 controls), then
+    // replace what JSON leaves raw, so an entry can never forge a prompt line, move the terminal
+    // cursor or reorder the line it sits on.
+    const label = JSON.stringify(`${r.id}@${r.version}`).replace(PROMPT_UNSAFE_AFTER_JSON, "?");
+    out.push(`${label} (${r.cases} ${r.cases === 1 ? "case" : "cases"})`);
+  }
+  return out;
 }
 
 function omitPromptText(payload: Record<string, unknown>): Record<string, unknown> {

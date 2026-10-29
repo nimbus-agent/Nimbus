@@ -137,7 +137,7 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-10-25: 143 HITL types, **30 proposable / 113 denied**, 0
+`ACTION_PROPOSABILITY` (as of 2026-10-29: 144 HITL types, **30 proposable / 114 denied**, 0
 unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
 `cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
 `chatops_confined` (I23/D17), `unroutable`, `gateway_internal`.

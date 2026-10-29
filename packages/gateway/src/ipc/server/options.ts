@@ -107,6 +107,8 @@ export type CreateIpcServerOptions = {
   lanPairingWindow?: PairingWindow;
   profileManager?: ProfileManager;
   sandboxRunner?: SandboxRunner;
+  /** Where sandboxed children get their per-run cwd; `extension.eval` stages under it. */
+  sandboxDir?: string;
   /**
    * What `registry.*` fetches with (spec § 8): the injected `fetch`, the single air-gap switch, the
    * clock and the production flag. `db` is added per call from `localIndex`. Absent means every

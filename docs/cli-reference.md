@@ -5023,7 +5023,7 @@ nimbus test                     # In extension root directory
 nimbus test ./nimbus-my-connector
 ```
 
-### `nimbus eval --package <dir> [--suite <file>] [--json]`
+### `nimbus eval --package <dir> [--suite <file>] [--json]` / `nimbus eval --extension <id> [--json]`
 
 Run an extension package's eval suites (`evals/*.eval.json`) against its own MCP tools, in the sandbox, and print the score. Gateway-free: no running gateway, no Vault, no index. The CLI runs the gateway executable's `__nimbus-eval` role, which loads the package (the manifest must parse under the install rules; a signed manifest must verify against the key it carries, and an unsigned author directory is allowed; a starter pack has no code and is refused), stages a copy of its package file set, and runs each case in suite order, one at a time.
 
@@ -5031,11 +5031,14 @@ The extension runs with **no network, no write access and no credentials** (inva
 
 `--suite <file>` runs one suite (a path under `evals/`). `--json` prints the role's document verbatim: `{ "ok": true, "extensionId", "version", "report" }`, where `report` holds the score, the case counts and one result per case. The text form prints a line per suite, each failing case with its reason, and `score N/100 (passed of cases cases)`.
 
-Exit code `0` when the eval ran, whatever the score; `2` on a usage error or an eval error (bad suite, sandbox unavailable, the server failed to start, a run over its limit), printed as `eval failed: ERR_EVAL_*: detail` with the last 64 KiB of the extension's stderr. `--extension <id>` and `--installed` are not available yet and exit `2`.
+Exit code `0` when the eval ran, whatever the score; `2` on a usage error or an eval error (bad suite, sandbox unavailable, the server failed to start, a run over its limit), printed as `eval failed: ERR_EVAL_*: detail` with the last 64 KiB of the extension's stderr. `--installed` is not available yet and exits `2`.
+
+**`--extension <id>`** evaluates an extension you have INSTALLED, through the running gateway (`extension.eval`). The gateway first checks the installed copy exactly as it would before running it (its files against the install record, the publisher signature, any registry block), without needing or creating a run approval; then it asks you ONCE, at this terminal, to approve the evaluation (the prompt names the extension, its version and its case count, and says it runs with no network and no credentials); then it checks the files again and runs the suites in the sandbox, with the same limits and scoring as `--package`. The approval is yours alone: a delegate can never answer it. There is no `--yes`, and a non-interactive terminal is refused before the gateway is contacted. `--suite` cannot be combined with `--extension`. Declining prints `eval failed: ERR_EXTENSION_EVAL_NOT_APPROVED` and nothing runs; an extension whose files changed after you approved is refused with `ERR_EXTENSION_EVAL_CHANGED`. `--json` prints the gateway's result entry, `{ "id", "version", "ok": true, "report" }` or `{ "id", "version", "ok": false, "error": { "code", "message" } }`. Evaluating grants the extension nothing: it still needs `nimbus extension approve` to run. With `[extensions] runtime = false` in `nimbus.toml` the gateway refuses with `ERR_EXTENSION_EVAL_RUNTIME_DISABLED` and does not prompt (the gateway-free `--package` does not read that switch). Names and messages that come from the extension, a registry or the gateway are printed with C0/C1 control characters and DEL removed (line and paragraph separators and bidi controls are not removed in this output yet); `--json` prints them as JSON strings, which escape C0 controls but not C1 characters. If you close the terminal after approving, the evaluation still runs to its end in the gateway. Refused over LAN and on a `--demo` root. Exit codes as for `--package`.
 
 ```bash
 nimbus eval --package ./my-extension
 nimbus eval --package ./my-extension --suite evals/basic.eval.json --json
+nimbus eval --extension acme.notes
 ```
 
 ---

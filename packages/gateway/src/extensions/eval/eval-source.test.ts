@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -257,6 +259,26 @@ describe("sweepStaleEvalStages", () => {
   test("the threshold is one hour", () => {
     expect(EVAL_STAGE_STALE_MS).toBe(60 * 60 * 1000);
   });
+
+  // An entry the sweep cannot stat (a stage root readable but not searchable: readdir works,
+  // lstat is EACCES) must not throw out of the run. Windows has no such mode, and root ignores it.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "an entry that cannot be stat'ed is skipped, never thrown",
+    () => {
+      const now = Date.now();
+      const old = agedDir("eval-old", now, EVAL_STAGE_STALE_MS + 60_000);
+      const stageRoot = join(sandbox, "ext-stage");
+      chmodSync(stageRoot, 0o444);
+      try {
+        // Premise: lstat on the entry really throws here, so the guard is what is exercised.
+        expect(() => lstatSync(old)).toThrow();
+        expect(() => sweepStaleEvalStages(sandbox, now)).not.toThrow();
+      } finally {
+        chmodSync(stageRoot, 0o755);
+      }
+      expect(existsSync(old)).toBe(true); // unreadable, so not judged stale and not removed
+    },
+  );
 
   test("no stage root yet is not an error", () => {
     expect(() => sweepStaleEvalStages(join(root, "nowhere"), Date.now())).not.toThrow();

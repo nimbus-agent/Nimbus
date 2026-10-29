@@ -13,6 +13,7 @@ import { asRecord } from "../../connectors/unknown-record.ts";
 import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts";
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
+import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
 import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
 import { migrationRedactionRoots } from "../../extensions/migration/migration-redact.ts";
 import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
@@ -2020,6 +2021,7 @@ const OWNER_GATED_EXTENSION_METHODS: ReadonlySet<string> = new Set([
   "extension.rehash",
   "extension.approveRun",
   "extension.credentialSet",
+  "extension.eval",
 ]);
 
 function buildExtensionOwnerGate(
@@ -2042,10 +2044,29 @@ function buildExtensionOwnerGate(
  */
 function extensionRunGrantEnvFor(ctx: ServerCtx, method: string): ExtensionRunGrantEnv | undefined {
   const mesh = ctx.options.connectorMesh;
-  if (method !== "extension.approveRun" || mesh === undefined) return undefined;
+  if ((method !== "extension.approveRun" && method !== "extension.eval") || mesh === undefined) {
+    return undefined;
+  }
   // The SAME builder the runtime's pre-spawn verifier is given in `platform/assemble.ts`, so the
   // grant approved here is resolved identically before every spawn.
   return buildExtensionRunGrantEnv(mesh.userMcpProtectedRoots(), ctx.options.extensionsDir);
+}
+
+/** What `extension.eval` runs with: the Bun runtime's read paths, the sandbox dir and the runner. */
+function extensionEvalDepsFor(
+  ctx: ServerCtx,
+  method: string,
+): Parameters<typeof dispatchAutomationRpc>[0]["evalDeps"] {
+  const runner = ctx.options.sandboxRunner;
+  const sandboxDir = ctx.options.sandboxDir;
+  if (method !== "extension.eval" || runner === undefined || sandboxDir === undefined) {
+    return undefined;
+  }
+  return {
+    sandboxDir,
+    runtimeReadPaths: resolveRuntimeById("bun").requiredReadPaths(),
+    canConfine: (p) => runner.canConfine(p),
+  };
 }
 
 async function dispatchExtensionAutomationRpc(
@@ -2061,6 +2082,7 @@ async function dispatchExtensionAutomationRpc(
     const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
     const ownerGate = buildExtensionOwnerGate(ctx, clientId, method);
     const runGrantEnv = extensionRunGrantEnvFor(ctx, method);
+    const evalDeps = extensionEvalDepsFor(ctx, method);
     const out = await dispatchAutomationRpc({
       method,
       params,
@@ -2073,6 +2095,7 @@ async function dispatchExtensionAutomationRpc(
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
+      ...(evalDeps === undefined ? {} : { evalDeps }),
       ...(ctx.options.extensionsRuntimeEnabled === undefined
         ? {}
         : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),

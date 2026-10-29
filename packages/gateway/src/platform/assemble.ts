@@ -4089,6 +4089,7 @@ export async function assemblePlatformServices(
     syncScheduler,
     connectorMesh,
     sandboxRunner,
+    sandboxDir: paths.sandboxDir,
     llmRegistry,
     ...autoUpdateIpcOpts(autoUpdateRuntime, paths.configDir, registryFetch.enforceAirGap()),
   };

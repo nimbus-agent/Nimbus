@@ -21,6 +21,7 @@ const DEMO_REFUSED_METHODS: ReadonlySet<string> = new Set([
   "extension.approveRun",
   "extension.revokeRun",
   "extension.credentialSet",
+  "extension.eval",
   // A demo gateway never prepares a connector migration (its boot evaluation is skipped, I41), so
   // these could only act on rows a real install wrote; `retry` would also fetch the official
   // registry into the demo root. `migration.list` stays a read.

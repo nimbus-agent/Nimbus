@@ -42,7 +42,10 @@ import { ExtensionRunGrantError, type ExtensionRunGrantErrorCode } from "./run-g
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { recordTrustStatements, type StatementSource } from "./trust/trust-store.ts";
-import { readVerifiedExtensionForSpawn } from "./verified-extension.ts";
+import {
+  readVerifiedExtensionForEval,
+  readVerifiedExtensionForSpawn,
+} from "./verified-extension.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
@@ -768,6 +771,82 @@ describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
     recordTrustStatements(f.db, [s], FEED, 1);
     expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
   });
+
+  test("eval: a takedown refuses although the run grant acknowledged it", async () => {
+    const f = await setup({ signed: true });
+    acknowledge(f, [await block(f, "extension.takedown", "malware found")]);
+    // The acknowledgement is real: the spawn verifier honours it.
+    expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
+    let hashed = 0;
+    const treeDigest = (root: string): string => {
+      hashed++;
+      return computeExtensionTreeDigest(root);
+    };
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, { ...deps(f), treeDigest }),
+      "ERR_EXTENSION_TAKEN_DOWN",
+      /malware found/,
+    );
+    expect(hashed).toBe(0);
+  });
+
+  test("eval: a revoked installed key refuses although the run grant acknowledged it", async () => {
+    const f = await setup({ signed: true });
+    acknowledge(f, [await block(f, "key.revoke", "key leaked")]);
+    expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /key leaked/,
+    );
+  });
+
+  test("eval: step 6a alone — a revocation of a Vault key that differs from the installed one refuses KEY_REVOKED", async () => {
+    const f = await setup({ signed: true, approve: false });
+    // Not backfilled: the Vault read falls back to the legacy key, which is now a fresh K2. The
+    // installed manifest still names K1, so step 4a sees no block; only step 6a can see K2's.
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = NULL WHERE id = ?", [f.id]);
+    const k2 = encodeBase64(generateEd25519Keypair().pubkey);
+    expect(k2).not.toBe(installedPublisherKey(f));
+    await f.vault.set("extension.publisher_key.test-pub", k2);
+    const s = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: NIMBUS_KEY,
+        publisherId: "test-pub",
+        keyFingerprint: publisherKeyFingerprint(k2),
+        reason: "k2 leaked",
+      },
+      NIMBUS_SEED,
+    );
+    expect(recordTrustStatements(f.db, [s], FEED, 1).inserted).toBe(1);
+    // Without 6a the signature check against K2 would refuse RUN_UNVERIFIED instead.
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /k2 leaked/,
+    );
+  });
+
+  test("eval: a revoked installed key that is also the Vault's legacy key (row with no recorded fingerprint) refuses at step 4a although the run grant acknowledged it", async () => {
+    const f = await setup({ signed: true });
+    // Not backfilled: the Vault read falls back to the legacy key, the one the revocation names.
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = NULL WHERE id = ?", [f.id]);
+    acknowledge(f, [await block(f, "key.revoke", "vault key leaked")]);
+    expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /vault key leaked/,
+    );
+  });
+
+  test("eval: a block on an extension with no run grant refuses as a typed run-grant error", async () => {
+    const f = await setup({ signed: true, approve: false });
+    await block(f, "extension.takedown", "malware found");
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_TAKEN_DOWN");
+  });
 });
 
 describe("readVerifiedExtensionForSpawn — a starter pack", () => {
@@ -796,5 +875,132 @@ describe("readVerifiedExtensionForSpawn — a starter pack", () => {
       "ERR_EXTENSION_STARTER_PACK",
       /^ERR_EXTENSION_STARTER_PACK: fx\.pack\.top is a starter pack: it has no code to run\./,
     );
+  });
+});
+
+describe("readVerifiedExtensionForEval", () => {
+  test("an installed signed extension with NO run grant verifies, and none is created", async () => {
+    const f = await setup({ signed: true, approve: false });
+    const v = await readVerifiedExtensionForEval(f.id, deps(f));
+    expect(v).toEqual({
+      extensionId: f.id,
+      version: "1.0.0",
+      installPath: realpathSync.native(f.installPath),
+      treeDigest: computeExtensionTreeDigest(f.installPath),
+    });
+    expect(getRunGrant(f.db, f.id)).toBeNull();
+  });
+
+  test("an approved extension verifies too, and its grant is left as it was", async () => {
+    const f = await setup({ signed: true });
+    const before = getRunGrant(f.db, f.id);
+    expect((await readVerifiedExtensionForEval(f.id, deps(f))).extensionId).toBe(f.id);
+    expect(getRunGrant(f.db, f.id)).toEqual(before);
+  });
+
+  test("an unknown id refuses NOT_FOUND", async () => {
+    const f = await setup({ approve: false });
+    await expectCode(
+      readVerifiedExtensionForEval("com.example.nope", deps(f)),
+      "ERR_EXTENSION_NOT_FOUND",
+    );
+  });
+
+  test("a disabled extension refuses RUN_DISABLED", async () => {
+    const f = await setup({ approve: false });
+    setExtensionEnabled(f.db, f.id, false);
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_DISABLED");
+  });
+
+  test("a starter pack refuses STARTER_PACK", async () => {
+    const fx = await installStarterPackFixture("nimbus-eval-pack-");
+    cleanups.push(fx.cleanup);
+    await expectCode(
+      readVerifiedExtensionForEval(PACK_FIXTURE.topPack, {
+        db: fx.db,
+        vault: new MockVault(),
+        env: fx.env,
+      }),
+      "ERR_EXTENSION_STARTER_PACK",
+    );
+  });
+
+  test("a startup signature failure refuses RUN_UNVERIFIED", async () => {
+    const f = await setup({ approve: false });
+    signatureDisabledRegistry.mark(f.id, "signature_failed");
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_UNVERIFIED");
+  });
+
+  test("an entry edited after install refuses RUN_UNVERIFIED (strict hash)", async () => {
+    const f = await setup({ approve: false });
+    writeFileSync(join(f.installPath, "dist", "index.js"), "evil();\n");
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_UNVERIFIED");
+  });
+
+  test("a row with no tree digest refuses RUN_NO_DIGEST", async () => {
+    const f = manualInstall(
+      { id: "com.example.nodigest", version: "1.0.0", entry: "dist/index.js" },
+      { entryFile: (ip) => join(ip, "dist", "index.js"), noDigest: true },
+    );
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_NO_DIGEST");
+  });
+
+  test("a sibling file edited after install refuses RUN_TREE_CHANGED", async () => {
+    const f = await setup({ approve: false });
+    writeFileSync(join(f.installPath, "dist", "chunk.js"), "evil();\n");
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_TREE_CHANGED");
+  });
+
+  test("a row digest that no longer matches the live tree refuses RUN_TREE_CHANGED", async () => {
+    const f = await setup({ approve: false });
+    setExtensionTreeDigest(f.db, f.id, "0".repeat(64));
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_TREE_CHANGED");
+  });
+
+  test("a grant over another digest or version does not matter: only the row is compared", async () => {
+    const f = await setup();
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    upsertRunGrant(f.db, { ...g, tree_digest: "0".repeat(64), version: "0.9.0" });
+    expect((await readVerifiedExtensionForEval(f.id, deps(f))).extensionId).toBe(f.id);
+  });
+
+  test("a manifest version that differs from the row refuses RUN_CHANGED", async () => {
+    const f = await setup({ approve: false });
+    f.db.run("UPDATE extension SET version = ? WHERE id = ?", ["0.9.0", f.id]);
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_RUN_CHANGED",
+      /1\.0\.0.*0\.9\.0/,
+    );
+  });
+
+  test("a publisher key that left the Vault refuses RUN_UNVERIFIED", async () => {
+    const f = await setup({ signed: true, approve: false });
+    await evictPublisherKey(f.vault, "test-pub");
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_RUN_UNVERIFIED");
+  });
+
+  test("a signature that does not verify against the Vault key refuses RUN_UNVERIFIED", async () => {
+    const f = await setup({ signed: true, approve: false });
+    // Not backfilled, so the Vault read returns the legacy key, which is now another key.
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = NULL WHERE id = ?", [f.id]);
+    await f.vault.set(
+      "extension.publisher_key.test-pub",
+      encodeBase64(generateEd25519Keypair().pubkey),
+    );
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_RUN_UNVERIFIED",
+      /signature verification/,
+    );
+  });
+
+  test("an entry outside the install tree refuses ENTRY_OUTSIDE", async () => {
+    const f = manualInstall(
+      { id: "com.example.escape", version: "1.0.0", entry: "../outside.js" },
+      { entryFile: (ip) => join(ip, "..", "outside.js") },
+    );
+    await expectCode(readVerifiedExtensionForEval(f.id, deps(f)), "ERR_EXTENSION_ENTRY_OUTSIDE");
   });
 });

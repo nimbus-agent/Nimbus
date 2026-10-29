@@ -7,6 +7,10 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { type EvalReport, parseEvalQuality } from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
+
+import { type PackCall, withTerminalConsentClient } from "./pack.ts";
 
 export const EVAL_ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
 export const EVAL_ROLE_STDERR_KEEP_BYTES = 64 * 1024;
@@ -32,9 +36,19 @@ export interface EvalCliDeps {
   ) => Promise<EvalSpawnResult>;
   log: (s: string) => void;
   err: (s: string) => void;
+  /** `--extension` only; defaults to the real terminal check. */
+  isTTY?: () => boolean;
+  /** `--extension` only; defaults to the terminal-only consent client. */
+  withClient?: <T>(fn: (call: PackCall) => Promise<T>) => Promise<T>;
 }
 
-const USAGE = "usage: nimbus eval --package <dir> [--suite <file>] [--json]";
+/** One entry of the gateway's `extension.eval` result. Declared here: the CLI reaches it over IPC only. */
+export type ExtensionEvalEntry =
+  | { id: string; version: string; ok: true; report: EvalReport }
+  | { id: string; version: string | null; ok: false; error: { code: string; message: string } };
+
+const USAGE =
+  "usage: nimbus eval --package <dir> [--suite <file>] [--json]\n       nimbus eval --extension <id> [--json]";
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -217,12 +231,17 @@ function hardKill(proc: RoleProcess): void {
   if (proc.exitCode === null && proc.signalCode === null) proc.kill(9);
 }
 
+/** Terminate, then kill hard if the child is still there after the grace. */
+function killWithGrace(proc: RoleProcess, clock: SpawnClock, graceMs: number): void {
+  proc.kill();
+  arm(clock, graceMs, () => hardKill(proc));
+}
+
 /** On the wall-clock deadline: terminate, then kill hard if the child is still there after the grace. */
 function armWallClock(proc: RoleProcess, clock: SpawnClock, timeoutMs: number, graceMs: number) {
   arm(clock, timeoutMs, () => {
     clock.timedOut = true;
-    proc.kill();
-    arm(clock, graceMs, () => hardKill(proc));
+    killWithGrace(proc, clock, graceMs);
   });
 }
 
@@ -236,7 +255,11 @@ function exitedOrAbandoned(
   finalMs: number,
 ): Promise<number | null> {
   return new Promise((resolve) => {
-    arm(clock, finalMs, () => resolve(null));
+    arm(clock, finalMs, () => {
+      // Abandoned: the CLI must not stay alive waiting on a child the OS would not reap.
+      proc.unref();
+      resolve(null);
+    });
     proc.exited.then(resolve, () => resolve(null));
   });
 }
@@ -263,7 +286,7 @@ export async function spawnEvalRoleWithGrace(
     const [stdout, stderr, code] = await Promise.all([
       readCapped(
         proc.stdout as ReadableStream<Uint8Array>,
-        firstBytesKeeper(EVAL_ROLE_STDOUT_MAX_BYTES, () => proc.kill()),
+        firstBytesKeeper(EVAL_ROLE_STDOUT_MAX_BYTES, () => killWithGrace(proc, clock, graceMs)),
         stop,
       ),
       readCapped(
@@ -282,43 +305,74 @@ export async function spawnEvalRoleWithGrace(
 export const spawnEvalRole: EvalCliDeps["spawnRole"] = (cmd, cwd, timeoutMs) =>
   spawnEvalRoleWithGrace(cmd, cwd, timeoutMs, EVAL_ROLE_PIPE_GRACE_MS);
 
+const realIsTTY = (): boolean => process.stdin.isTTY === true && process.stdout.isTTY === true;
+// The request carries the owner's approval (no gateway-side timer) AND then up to the 10-minute eval run per id,
+// so it uses the batch budget like `pack install`, not the one-hour interactive one.
+const realWithClient: NonNullable<EvalCliDeps["withClient"]> = (fn) =>
+  withTerminalConsentClient(fn, BATCH_RPC_TIMEOUT_MS);
+
 function defaultDeps(): EvalCliDeps {
   return {
     launch: () => resolveGatewayLaunch(process.execPath, import.meta.url),
     spawnRole: spawnEvalRole,
     log: (s) => console.log(s),
     err: (s) => console.error(s),
+    isTTY: realIsTTY,
+    withClient: realWithClient,
   };
 }
 
 interface ParsedArgs {
   pkg?: string;
   suite?: string;
+  extension?: string;
+  yes: boolean;
   json: boolean;
   unavailable?: string;
   bad?: string;
 }
 
+/**
+ * The flags that take a value: where the value goes, and the prefix that marks the next argument
+ * as another flag instead (`--extension` refuses `-y` as its value; a package path may start `-`).
+ */
+const VALUE_FLAGS: ReadonlyMap<string, { key: "pkg" | "suite" | "extension"; flagPrefix: string }> =
+  new Map([
+    ["--package", { key: "pkg", flagPrefix: "--" }],
+    ["--suite", { key: "suite", flagPrefix: "--" }],
+    ["--extension", { key: "extension", flagPrefix: "-" }],
+  ]);
+
+function applySwitch(out: ParsedArgs, a: string): void {
+  if (a === "--json") out.json = true;
+  else if (a === "--yes" || a === "-y") out.yes = true;
+  else if (a === "--installed") out.unavailable = a;
+  else out.bad = `unknown argument: ${a}`;
+}
+
 function parseArgs(args: readonly string[]): ParsedArgs {
-  const out: ParsedArgs = { json: false };
+  const out: ParsedArgs = { json: false, yes: false };
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--json") out.json = true;
-    else if (a === "--extension" || a === "--installed") out.unavailable = a;
-    else if (a === "--package" || a === "--suite") {
-      const v = args[i + 1];
-      if (v === undefined || v.startsWith("--")) out.bad = `${a} needs a value`;
-      else if (a === "--package") out.pkg = v;
-      else out.suite = v;
-      i++;
-    } else out.bad = `unknown argument: ${a}`;
+    const a = args[i] ?? "";
+    const flag = VALUE_FLAGS.get(a);
+    if (flag === undefined) {
+      applySwitch(out, a);
+      continue;
+    }
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith(flag.flagPrefix)) out.bad = `${a} needs a value`;
+    else out[flag.key] = v;
+    i++;
   }
   return out;
 }
 
-function renderReport(doc: Extract<EvalRoleDocument, { ok: true }>): string[] {
-  const { report } = doc;
-  const lines: string[] = [`${doc.extensionId} ${doc.version}`];
+/** Every string in a rendered report came from the extension or the gateway: strip it. */
+const clean = stripControlChars;
+
+function renderReport(subject: { id: string; version: string; report: EvalReport }): string[] {
+  const { report } = subject;
+  const lines: string[] = [`${clean(subject.id)} ${clean(subject.version)}`];
   const bySuite = new Map<string, { passed: number; total: number }>();
   for (const r of report.results) {
     const t = bySuite.get(r.suite) ?? { passed: 0, total: 0 };
@@ -326,9 +380,10 @@ function renderReport(doc: Extract<EvalRoleDocument, { ok: true }>): string[] {
     if (r.pass) t.passed += 1;
     bySuite.set(r.suite, t);
   }
-  for (const [suite, t] of bySuite) lines.push(`${suite}: ${t.passed}/${t.total}`);
+  for (const [suite, t] of bySuite) lines.push(`${clean(suite)}: ${t.passed}/${t.total}`);
   for (const r of report.results) {
-    if (!r.pass) lines.push(`  FAIL ${r.suite} ${r.case}: ${r.reason ?? "failed"}`);
+    if (!r.pass)
+      lines.push(`  FAIL ${clean(r.suite)} ${clean(r.case)}: ${clean(r.reason ?? "failed")}`);
   }
   lines.push(`score ${report.score}/100 (${report.passed} of ${report.cases} cases)`);
   lines.push("measured locally; a registry's published score is measured by its CI");
@@ -340,6 +395,11 @@ function usageProblem(p: ParsedArgs): string | null {
     return `nimbus eval ${p.unavailable} is not available yet; use --package <dir>`;
   }
   if (p.bad !== undefined) return `${p.bad}\n${USAGE}`;
+  if (p.extension !== undefined) {
+    return p.pkg === undefined && p.suite === undefined
+      ? null
+      : `--extension cannot be combined with --package or --suite\n${USAGE}`;
+  }
   return p.pkg === undefined ? USAGE : null;
 }
 
@@ -370,7 +430,10 @@ type EvalCliErrorCode =
   | "ERR_EVAL_LAUNCH"
   | "ERR_EVAL_WALL_CLOCK"
   | "ERR_EVAL_OUTPUT_TOO_LARGE"
-  | "ERR_EVAL_NO_DOCUMENT";
+  | "ERR_EVAL_NO_DOCUMENT"
+  | "ERR_EVAL_IPC"
+  | "ERR_EVAL_BAD_RESPONSE"
+  | "ERR_EXTENSION_EVAL_NOT_APPROVED";
 
 type RoleOutcome =
   | { kind: "document"; doc: EvalRoleDocument; text: string }
@@ -406,8 +469,10 @@ function interpretRoleResult(res: EvalSpawnResult): RoleOutcome {
 
 /**
  * Report an eval error and return 2. With `--json` the error is a JSON document on stdout (the
- * role's own, verbatim, when it wrote one); otherwise prose on stderr. The child's stderr tail
- * goes to stderr either way.
+ * role's own, verbatim, when it wrote one: JSON escaping already keeps it on one line); otherwise
+ * prose on stderr, control characters stripped, since the code and message can come from an
+ * extension, a registry or the gateway. The child's stderr tail goes to stderr either way, each
+ * of its lines stripped the same way.
  */
 function reportFailure(
   d: EvalCliDeps,
@@ -416,8 +481,8 @@ function reportFailure(
   tail: string,
 ): number {
   if (json) d.log(failure.document);
-  else d.err(`eval failed: ${failure.prose}`);
-  if (tail.length > 0) d.err(tail);
+  else d.err(`eval failed: ${clean(failure.prose)}`);
+  if (tail.length > 0) d.err(tail.split("\n").map(clean).join("\n"));
   return 2;
 }
 
@@ -425,11 +490,74 @@ function cliFailure(code: EvalCliErrorCode, message: string): { prose: string; d
   return { prose: message, document: JSON.stringify({ ok: false, error: { code, message } }) };
 }
 
+/** Validate `extension.eval`'s answer for the one requested id; null when it is not one. */
+function parseExtensionEntry(raw: unknown, id: string): ExtensionEvalEntry | null {
+  if (!isObject(raw) || !Array.isArray(raw["results"]) || raw["results"].length !== 1) return null;
+  const e: unknown = raw["results"][0];
+  if (!isObject(e) || e["id"] !== id) return null;
+  if (e["ok"] === true) {
+    const report = parseReport(e["report"]);
+    if (typeof e["version"] !== "string" || report === null) return null;
+    return { id, version: e["version"], ok: true, report };
+  }
+  if (e["ok"] !== false) return null;
+  const err = e["error"];
+  if (!isObject(err) || typeof err["code"] !== "string" || typeof err["message"] !== "string") {
+    return null;
+  }
+  const version = typeof e["version"] === "string" ? e["version"] : null;
+  return { id, version, ok: false, error: { code: err["code"], message: err["message"] } };
+}
+
+const NOT_APPROVED = "ERR_EXTENSION_EVAL_NOT_APPROVED";
+
+/**
+ * `--extension <id>`: the gateway evaluates an installed extension behind ONE owner approval. The
+ * approval is terminal-only (no `--yes`, no non-TTY), refused before any connection is made.
+ */
+async function runInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<number> {
+  if (p.yes) {
+    d.err(
+      "nimbus eval --extension has no --yes: the approval must be answered by a person at a terminal.",
+    );
+    return 2;
+  }
+  if (!(d.isTTY ?? realIsTTY)()) {
+    d.err(
+      "Refusing to evaluate an extension in non-TTY mode: the approval must be answered at a terminal.",
+    );
+    return 2;
+  }
+  const withClient = d.withClient ?? realWithClient;
+  const id = (p.extension ?? "").trim();
+  let entry: ExtensionEvalEntry | null;
+  try {
+    const raw = await withClient((call) => call<unknown>("extension.eval", { ids: [id] }));
+    entry = parseExtensionEntry(raw, id);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    const code = message.includes(NOT_APPROVED) ? NOT_APPROVED : "ERR_EVAL_IPC";
+    return reportFailure(d, p.json, cliFailure(code, message), "");
+  }
+  if (entry === null) {
+    const bad = cliFailure("ERR_EVAL_BAD_RESPONSE", "the gateway's answer was not a valid result");
+    return reportFailure(d, p.json, bad, "");
+  }
+  if (!entry.ok) {
+    const prose = `${entry.error.code}: ${entry.error.message}`;
+    return reportFailure(d, p.json, { prose, document: JSON.stringify(entry) }, "");
+  }
+  if (p.json) d.log(JSON.stringify(entry));
+  else for (const line of renderReport(entry)) d.log(line);
+  return 0;
+}
+
 /** Returns the process exit code: 0 when the eval ran (any score), 2 on an eval or usage error. */
 export async function runEval(args: readonly string[], deps?: EvalCliDeps): Promise<number> {
   const d = deps ?? defaultDeps();
   const p = parseArgs(args);
   const problem = usageProblem(p);
+  if (problem === null && p.extension !== undefined) return await runInstalledEval(p, d);
   if (problem !== null || p.pkg === undefined) {
     d.err(problem ?? USAGE);
     return 2;
@@ -449,6 +577,13 @@ export async function runEval(args: readonly string[], deps?: EvalCliDeps): Prom
     return reportFailure(d, p.json, { prose, document: text }, tail);
   }
   if (p.json) d.log(text);
-  else for (const line of renderReport(doc)) d.log(line);
+  else
+    for (const line of renderReport({
+      id: doc.extensionId,
+      version: doc.version,
+      report: doc.report,
+    })) {
+      d.log(line);
+    }
   return 0;
 }

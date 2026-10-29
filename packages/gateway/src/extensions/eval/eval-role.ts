@@ -4,7 +4,7 @@ import type { EvalReport } from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
-import type { EvalMcpClient } from "./eval-runtime.ts";
+import type { EvalMcpClient, EvalRuntimeDeps } from "./eval-runtime.ts";
 import { EvalRunError, loadEvalPackage, messageOf } from "./eval-source.ts";
 
 /**
@@ -170,6 +170,19 @@ export const REAL_EVAL_LOADERS: EvalRunLoaders = {
     (await import("../../exec/exec-runtimes.ts")).resolveRuntimeById("bun").requiredReadPaths(),
 };
 
+/**
+ * The eval runtime's client factory over a dynamically imported `@mastra/mcp`: every server built
+ * with `onToolError: "return"` and every reply normalised. Shared by the role and the gateway's
+ * installed-extension eval, so the two can never drift apart.
+ */
+export async function loadEvalClientFactory(
+  loaders: Pick<EvalRunLoaders, "mcp"> = REAL_EVAL_LOADERS,
+): Promise<EvalRuntimeDeps["createClient"]> {
+  const mcp = await loaders.mcp();
+  return (id, servers) =>
+    adaptEvalClient(mcp.createClient(id, evalServerDefs(servers)), mcp.readContent);
+}
+
 /** The real run: load and verify the package, then run its suites in the sandbox. */
 export async function defaultEvalRun(
   args: RoleArgs,
@@ -179,8 +192,8 @@ export async function defaultEvalRun(
   const src = await loadEvalPackage(args.packageDir, {
     ...(args.suiteFile === undefined ? {} : { suiteFile: args.suiteFile }),
   });
-  const [mcp, canConfine, sandboxDir, runtimeReadPaths] = await Promise.all([
-    loaders.mcp(),
+  const [createClient, canConfine, sandboxDir, runtimeReadPaths] = await Promise.all([
+    loadEvalClientFactory(loaders),
     loaders.canConfine(),
     loaders.sandboxDir(),
     loaders.runtimeReadPaths(),
@@ -189,8 +202,7 @@ export async function defaultEvalRun(
     sandboxDir,
     runtimeReadPaths,
     canConfine,
-    createClient: (id, servers) =>
-      adaptEvalClient(mcp.createClient(id, evalServerDefs(servers)), mcp.readContent),
+    createClient,
   });
   return { ok: true, extensionId: src.extensionId, version: src.version, report };
 }

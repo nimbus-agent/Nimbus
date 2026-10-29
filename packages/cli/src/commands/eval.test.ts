@@ -170,6 +170,30 @@ describe("runEval", () => {
     expect(h.logs).toEqual([]);
   });
 
+  test("--package prose carries no raw control characters from the role document", async () => {
+    const evil = "\u001b[2K\u009b2J\nX";
+    const r = report();
+    const results = (r["results"] as Record<string, unknown>[]).map((x) => ({
+      ...x,
+      case: `${String(x["case"])}${evil}`,
+    }));
+    const doc = { ...okDoc(), extensionId: `acme/tool${evil}`, report: { ...r, results } };
+    const bad = { ok: false, error: { code: `ERR_X${evil}`, message: `boom${evil}` } };
+    const outputs: string[] = [];
+    for (const d of [doc, bad]) {
+      const h = harness({ stdout: enc(JSON.stringify(d)), stderr: enc(`tail${evil}\nline2`) });
+      await runEval(["--package", "p"], h.deps);
+      outputs.push(...h.logs, ...h.errs);
+    }
+    const all = outputs.join("");
+    expect(all).toContain("two");
+    expect(all).toContain("boom");
+    expect(all).not.toContain("\u001b");
+    expect(all).not.toContain("\u009b");
+    // Only the failure prints the stderr tail; it keeps its line breaks, every line stripped.
+    expect(outputs.filter((l) => l.includes("\n"))).toEqual(["tail[2K2J\nX\nline2"]);
+  });
+
   test("a launch plan failure exits 2 with its message", async () => {
     const h = harness({}, () => ({ ok: false, message: "no gateway" }));
     expect(await runEval(["--package", "p"], h.deps)).toBe(2);
@@ -186,12 +210,186 @@ describe("runEval", () => {
     }
   });
 
-  test("--extension and --installed are not available yet", async () => {
-    for (const flag of ["--extension", "--installed"]) {
-      const h = harness({});
-      expect(await runEval([flag, "x"], h.deps)).toBe(2);
-      expect(h.errs[0]).toContain("not available yet");
+  test("--installed is not available yet", async () => {
+    const h = harness({});
+    expect(await runEval(["--installed"], h.deps)).toBe(2);
+    expect(h.errs[0]).toContain("not available yet");
+  });
+});
+
+function ipcEntry(): Record<string, unknown> {
+  return { id: "acme/tool", version: "1.0.0", ok: true, report: report() };
+}
+
+function extHarness(opts: {
+  raw?: unknown;
+  entry?: Record<string, unknown>;
+  rpcError?: Error;
+  tty?: boolean;
+}) {
+  const h = harness({});
+  const rpc: { method: string; params: unknown }[] = [];
+  let connects = 0;
+  const deps: EvalCliDeps = {
+    ...h.deps,
+    isTTY: () => opts.tty ?? true,
+    withClient: async (fn) => {
+      connects += 1;
+      return await fn(async <T>(method: string, params: unknown) => {
+        rpc.push({ method, params });
+        if (opts.rpcError) throw opts.rpcError;
+        if ("raw" in opts) return opts.raw as T;
+        return { results: [opts.entry ?? ipcEntry()] } as T;
+      });
+    },
+  };
+  return { deps, logs: h.logs, errs: h.errs, rpc, connects: () => connects };
+}
+
+describe("runEval --extension", () => {
+  test("renders the report through the shared renderer and exits 0", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(0);
+    expect(h.rpc).toEqual([{ method: "extension.eval", params: { ids: ["acme/tool"] } }]);
+    const out = h.logs.join("\n");
+    expect(out).toContain("acme/tool 1.0.0");
+    expect(out).toContain("evals/a.eval.json: 1/2");
+    expect(out).toContain("FAIL evals/a.eval.json two: wrong text");
+    expect(out).toContain("score 50/100 (1 of 2 cases)");
+  });
+
+  test("--json prints the result entry", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "acme/tool", "--json"], h.deps)).toBe(0);
+    expect(JSON.parse(h.logs[0] ?? "")).toEqual(ipcEntry());
+  });
+
+  test("a per-id error exits 2 as `eval failed: CODE: message`", async () => {
+    const entry = {
+      id: "acme/tool",
+      version: null,
+      ok: false,
+      error: { code: "ERR_X", message: "nope" },
+    };
+    const h = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("eval failed: ERR_X: nope");
+    const j = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool", "--json"], j.deps)).toBe(2);
+    expect(JSON.parse(j.logs[0] ?? "")).toEqual(entry);
+  });
+
+  test("prose output carries no raw control characters from the extension or the gateway", async () => {
+    const evil = "\u001b[2K\u009b2J\nX";
+    const hostile = (s: string): string => `${s}${evil}`;
+    const r = report();
+    const results = (r["results"] as Record<string, unknown>[]).map((x) => ({
+      ...x,
+      suite: hostile("evals/a.eval.json"),
+      case: hostile(String(x["case"])),
+      reason: x["reason"] === null ? null : hostile(String(x["reason"])),
+    }));
+    const okEntry = {
+      id: "acme/tool",
+      version: hostile("1.0.0"),
+      ok: true,
+      report: { ...r, results },
+    };
+    const failEntry = {
+      id: "acme/tool",
+      version: hostile("1.0.0"),
+      ok: false,
+      error: { code: hostile("ERR_X"), message: hostile("takedown reason") },
+    };
+    const outputs: string[] = [];
+    for (const opts of [
+      { entry: okEntry },
+      { entry: failEntry },
+      { rpcError: new Error(hostile("gateway said no")) },
+    ]) {
+      const h = extHarness(opts);
+      await runEval(["--extension", "acme/tool"], h.deps);
+      outputs.push(...h.logs, ...h.errs);
     }
+    const all = outputs.join("");
+    expect(all).toContain("two");
+    expect(all).toContain("takedown reason");
+    expect(all).toContain("gateway said no");
+    expect(all).not.toContain("\u001b");
+    expect(all).not.toContain("\u009b");
+    expect(all).not.toContain("\n");
+  });
+
+  test("--json keeps the gateway's strings verbatim (JSON escaping is line-safe)", async () => {
+    const entry = {
+      id: "acme/tool",
+      version: null,
+      ok: false,
+      error: { code: "ERR_X", message: "a\u001b[2K\nb" },
+    };
+    const h = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool", "--json"], h.deps)).toBe(2);
+    expect(h.logs[0]).not.toContain("\n");
+    expect(JSON.parse(h.logs[0] ?? "")).toEqual(entry);
+  });
+
+  test("the id is trimmed before it is sent and compared", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "  acme/tool "], h.deps)).toBe(0);
+    expect(h.rpc).toEqual([{ method: "extension.eval", params: { ids: ["acme/tool"] } }]);
+  });
+
+  test("a denied approval exits 2", async () => {
+    const h = extHarness({ rpcError: new Error("ERR_EXTENSION_EVAL_NOT_APPROVED: denied") });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("ERR_EXTENSION_EVAL_NOT_APPROVED");
+  });
+
+  test("--yes / -y and non-TTY are refused before connecting", async () => {
+    for (const [args, tty] of [
+      [["--extension", "a/b", "--yes"], true],
+      [["--extension", "a/b", "-y"], true],
+      [["--extension", "a/b"], false],
+    ] as const) {
+      const h = extHarness({ tty });
+      expect(await runEval([...args], h.deps)).toBe(2);
+      expect(h.connects()).toBe(0);
+      expect(h.errs.length).toBeGreaterThan(0);
+    }
+  });
+
+  test.each([
+    ["null results", { results: null }],
+    ["empty results", { results: [] }],
+    ["not an object", "nope"],
+    ["wrong id", { results: [{ ...ipcEntry(), id: "other/ext" }] }],
+    ["ok without report", { results: [{ id: "acme/tool", version: "1.0.0", ok: true }] }],
+    [
+      "report whose score disagrees with its counts",
+      { results: [{ ...ipcEntry(), report: { ...report(), score: 99 } }] },
+    ],
+    ["not ok without error", { results: [{ id: "acme/tool", version: null, ok: false }] }],
+    ["a string entry", { results: ["acme/tool"] }],
+  ])("malformed answer (%s) exits 2 as ERR_EVAL_BAD_RESPONSE", async (_n, raw) => {
+    const h = extHarness({ raw });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("eval failed");
+    const j = extHarness({ raw });
+    expect(await runEval(["--extension", "acme/tool", "--json"], j.deps)).toBe(2);
+    expect(JSON.parse(j.logs[0] ?? "").error.code).toBe("ERR_EVAL_BAD_RESPONSE");
+  });
+
+  test.each([
+    [["--extension", "-y"]],
+    [["--extension"]],
+    [["--extension", "--json"]],
+    [["--extension", "a/b", "--package", "p"]],
+    [["--extension", "a/b", "--suite", "s"]],
+  ])("usage error %p", async (args) => {
+    const h = extHarness({});
+    expect(await runEval([...args], h.deps)).toBe(2);
+    expect(h.connects()).toBe(0);
+    expect(h.errs.join("\n")).toContain("usage:");
   });
 });
 
@@ -363,6 +561,24 @@ describe.skipIf(process.platform === "darwin")("spawnEvalRole (real child)", () 
     expect(out).toBe("x");
     expect(Date.now() - t0).toBeLessThan(7000);
   }, 20_000);
+
+  test("a child that overflows stdout and ignores the kill is killed hard after the grace", async () => {
+    // Before, an overflow sent only the soft kill: a child ignoring it ran on to the wall clock.
+    const t0 = Date.now();
+    const r = await spawnEvalRoleWithGrace(
+      [
+        process.execPath,
+        "-e",
+        'process.on("SIGTERM",()=>{}); const c="x".repeat(1<<20); for(let i=0;i<40;i++){process.stdout.write(c)} setInterval(()=>{},1000)',
+      ],
+      undefined,
+      30_000,
+      300,
+    );
+    expect(r.stdout.byteLength).toBeGreaterThan(EVAL_ROLE_STDOUT_MAX_BYTES);
+    expect(r.timedOut).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+  }, 40_000);
 
   test("a child that ignores the wall-clock kill is killed hard after the grace", async () => {
     const t0 = Date.now();
