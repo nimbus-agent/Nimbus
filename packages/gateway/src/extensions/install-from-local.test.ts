@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -14,10 +15,18 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
-import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
+import {
+  publisherKeyFingerprint,
+  RegistryError,
+  signTrustStatement,
+} from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
-import { listExtensions } from "../automation/extension-store.ts";
+import {
+  getExtensionKind,
+  isInstalledAsDependency,
+  listExtensions,
+} from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
@@ -1728,33 +1737,7 @@ describe("the install prompt states whether the publisher is verified (R6, trust
   });
 });
 
-describe("installExtensionFromLocalDirectory — manifests this gateway cannot honour yet", () => {
-  async function refusedBeforeApproval(manifest: Record<string, unknown>, withDist: boolean) {
-    const fx = createExtensionInstallFixture("nimbus-install-unsupported-", "src");
-    if (!withDist) rmSync(join(fx.src, "dist"), { recursive: true, force: true });
-    else writeFileSync(join(fx.src, "dist", "index.js"), "export {};\n", "utf8");
-    writeFileSync(join(fx.src, "nimbus.extension.json"), JSON.stringify(manifest), "utf8");
-    let asked = 0;
-    let code: unknown;
-    try {
-      await installExtensionFromLocalDirectory({
-        db: fx.db,
-        extensionsDir: fx.extensionsDir,
-        sourcePath: fx.src,
-        approve: async () => {
-          asked++;
-          return true;
-        },
-      });
-    } catch (e) {
-      code = (e as { code?: unknown }).code;
-    }
-    expect(code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(asked).toBe(0);
-    expect(listExtensions(fx.db)).toEqual([]);
-    expect(existsSync(fx.extensionsDir)).toBe(false);
-  }
-
+describe("installExtensionFromLocalDirectory — cross-registry dependencies and starter packs", () => {
   test("a local install with a cross-registry dependency is satisfied by any installed copy", async () => {
     const fx = createExtensionInstallFixture("nimbus-install-cross-local-", "dep");
     writeFileSync(
@@ -1810,16 +1793,99 @@ describe("installExtensionFromLocalDirectory — manifests this gateway cannot h
     }
   });
 
-  test("a starter pack is refused before the owner is asked", async () => {
-    await refusedBeforeApproval(
-      {
-        id: "test.ext.pack",
-        version: "1.0.0",
-        kind: "starter-pack",
-        dependsOn: { "test.ext.dep": "^1.0.0" },
-      },
-      false,
+  /** Installs `test.ext.dep@1.2.0` from a local folder, so a pack needing it can resolve. */
+  async function withInstalledDep(prefix: string) {
+    const fx = createExtensionInstallFixture(prefix, "dep");
+    writeFileSync(
+      join(fx.src, "nimbus.extension.json"),
+      JSON.stringify({ id: "test.ext.dep", version: "1.2.0", entry: "dist/index.js" }),
+      "utf8",
     );
+    writeFileSync(join(fx.src, "dist", "index.js"), "export {};\n", "utf8");
+    await installExtensionFromLocalDirectory({
+      db: fx.db,
+      extensionsDir: fx.extensionsDir,
+      sourcePath: fx.src,
+    });
+    const packSrc = join(dirname(fx.src), "pack");
+    mkdirSync(packSrc, { recursive: true });
+    return { ...fx, packSrc };
+  }
+
+  const PACK_MANIFEST = {
+    id: "test.ext.pack",
+    version: "1.0.0",
+    kind: "starter-pack",
+    dependsOn: { "test.ext.dep": "^1.0.0" },
+  };
+
+  test("a local pack installs when its dependencies are installed", async () => {
+    const fx = await withInstalledDep("nimbus-install-pack-local-");
+    try {
+      const manifestText = JSON.stringify(PACK_MANIFEST);
+      writeFileSync(join(fx.packSrc, "nimbus.extension.json"), manifestText, "utf8");
+      let asked = 0;
+      const result = await installExtensionFromLocalDirectory({
+        db: fx.db,
+        extensionsDir: fx.extensionsDir,
+        sourcePath: fx.packSrc,
+        approve: async () => {
+          asked++;
+          return true;
+        },
+      });
+      expect(asked).toBe(1);
+      const manifestSha = createHash("sha256").update(manifestText).digest("hex");
+      expect(result.entryHash).toBe(manifestSha);
+      const pack = listExtensions(fx.db).find((r) => r.id === "test.ext.pack");
+      expect(pack?.kind).toBe("starter-pack");
+      expect(pack?.entry_hash).toBe(manifestSha);
+      expect(listExtensions(fx.db).find((r) => r.id === "test.ext.dep")?.kind).toBe("extension");
+      expect(getExtensionKind(fx.db, "test.ext.pack")).toBe("starter-pack");
+      expect(getExtensionKind(fx.db, "test.ext.dep")).toBe("extension");
+      expect(getExtensionKind(fx.db, "test.ext.absent")).toBeUndefined();
+      expect(isInstalledAsDependency(fx.db, "test.ext.pack")).toBe(false);
+    } finally {
+      fx.db.close();
+      rmDirWithRetry(dirname(fx.src));
+    }
+  });
+
+  test("a local pack under the legacy manifest name is refused with a clear message", async () => {
+    const fx = await withInstalledDep("nimbus-install-pack-legacy-");
+    try {
+      writeFileSync(
+        join(fx.packSrc, "nimbus-extension.json"),
+        JSON.stringify(PACK_MANIFEST),
+        "utf8",
+      );
+      let asked = 0;
+      let caught: unknown;
+      try {
+        await installExtensionFromLocalDirectory({
+          db: fx.db,
+          extensionsDir: fx.extensionsDir,
+          sourcePath: fx.packSrc,
+          approve: async () => {
+            asked++;
+            return true;
+          },
+        });
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(RegistryError);
+      expect((caught as RegistryError).code).toBe("ERR_REGISTRY_MANIFEST_INVALID");
+      expect((caught as RegistryError).detail).toBe(
+        "a starter pack's manifest must be named nimbus.extension.json",
+      );
+      expect(asked).toBe(0);
+      expect(listExtensions(fx.db).map((r) => r.id)).toEqual(["test.ext.dep"]);
+      expect(existsSync(join(fx.extensionsDir, "test.ext.pack"))).toBe(false);
+    } finally {
+      fx.db.close();
+      rmDirWithRetry(dirname(fx.src));
+    }
   });
 });
 

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import { getExtensionKind, insertExtensionRow } from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -402,6 +402,10 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       .version;
   }
 
+  function kindOf(): string | undefined {
+    return getExtensionKind(db, ID);
+  }
+
   it("detects the newer version and applies a real signed upgrade end to end", async () => {
     const { runtime, extensionsDir } = await installedFromRegistry();
     const before = db.query("SELECT tree_digest FROM extension WHERE id = ?").get(ID) as {
@@ -470,8 +474,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     expect(installedVersion()).toBe("1.0.0");
   });
 
-  it("apply refuses an update whose re-fetched manifest is a starter pack, and nothing changes", async () => {
-    const { runtime, regDir, extensionsDir } = await installedFromRegistry();
+  it("applies an update whose re-fetched manifest is a starter pack, and the row's kind follows it", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
     await runtime.deps.forcePoll();
     const cached = runtime.deps.cache.get(ID);
     if (cached === undefined) throw new Error("no update detected");
@@ -495,16 +499,20 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     };
     const v = index.extensions[ID]?.versions["1.2.0"];
     if (v === undefined) throw new Error("no 1.2.0 in the re-published index");
-    await expect(
-      runtime.deps.performUpgrade({
-        ...cached,
-        manifestHash: v.manifestSha256,
-        packageSha256: v.packageSha256,
-        entryHash: v.entryHash,
-      }),
-    ).rejects.toThrow(/ERR_EXTENSION_MANIFEST_UNSUPPORTED: com\.example\.tool is a starter pack/);
-    expect(installedVersion()).toBe("1.0.0");
-    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.0.0");
+    expect(kindOf()).toBe("extension");
+    await runtime.deps.performUpgrade({
+      ...cached,
+      manifestHash: v.manifestSha256,
+      packageSha256: v.packageSha256,
+      entryHash: v.entryHash,
+    });
+    expect(installedVersion()).toBe("1.2.0");
+    expect(kindOf()).toBe("starter-pack");
+    // A pack's entry is its manifest (spec A3): the row stores the index's entry hash.
+    expect(
+      (db.query("SELECT entry_hash FROM extension WHERE id = ?").get(ID) as { entry_hash: string })
+        .entry_hash,
+    ).toBe(v.entryHash);
   });
 
   it("detect → remove the registry → next tick: the update is no longer offered", async () => {

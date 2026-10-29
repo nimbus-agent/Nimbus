@@ -4,6 +4,9 @@ import { dbRun } from "../db/write.ts";
 import { deleteRunGrant } from "../extensions/run-grant-store.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 
+/** V79: what an installed package is — code to run, or a starter pack (dependencies, no code). */
+export type ExtensionKind = "extension" | "starter-pack";
+
 export type ExtensionRow = {
   id: string;
   version: string;
@@ -28,6 +31,12 @@ export type ExtensionRow = {
    * unsigned extension, or until the boot backfill fills it for a row installed before V76.
    */
   publisher_key_fingerprint?: string | null;
+  /**
+   * V79: `"starter-pack"` for a package of dependencies with no code, else `"extension"`. Every row
+   * {@link listExtensions} returns carries it (`"extension"` below V79); optional only so a row
+   * built by hand for a code extension may leave it out.
+   */
+  kind?: ExtensionKind;
 };
 
 /** V66 added `tree_digest`; below it the column does not exist and every row reads `null`. */
@@ -38,6 +47,13 @@ const SOURCE_SCHEMA_VERSION = 71;
 
 /** V76 added `publisher_key_fingerprint`; below it every row reads `null`. */
 const PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION = 76;
+
+/** V79 added `kind`; below it every row is an extension. */
+const KIND_SCHEMA_VERSION = 79;
+
+function hasKindColumn(db: Database): boolean {
+  return readIndexedUserVersion(db) >= KIND_SCHEMA_VERSION;
+}
 
 function hasTreeDigestColumn(db: Database): boolean {
   return readIndexedUserVersion(db) >= TREE_DIGEST_SCHEMA_VERSION;
@@ -56,9 +72,10 @@ export function listExtensions(db: Database): ExtensionRow[] {
     readIndexedUserVersion(db) >= PUBLISHER_KEY_FINGERPRINT_SCHEMA_VERSION
       ? "publisher_key_fingerprint"
       : "NULL AS publisher_key_fingerprint";
+  const kind = hasKindColumn(db) ? "kind" : "'extension' AS kind";
   return db
     .query(
-      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}, ${keyFp}
+      `SELECT id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, ${digest}, ${source}, ${keyFp}, ${kind}
        FROM extension ORDER BY id`,
     )
     .all() as ExtensionRow[];
@@ -119,6 +136,27 @@ export function isInstalledAsDependency(db: Database, id: string): boolean {
   return row?.d === 1;
 }
 
+/** V79: the installed package's kind; `undefined` when no such row, `"extension"` below V79. */
+export function getExtensionKind(db: Database, id: string): ExtensionKind | undefined {
+  if (readIndexedUserVersion(db) < 10) {
+    return undefined;
+  }
+  const kind = hasKindColumn(db) ? "kind" : "'extension' AS kind";
+  const row = db.query(`SELECT ${kind} FROM extension WHERE id = ?`).get(id) as {
+    kind: ExtensionKind;
+  } | null;
+  return row?.kind;
+}
+
+/**
+ * V79: records the kind of the manifest now installed for `id` (an update can replace an extension
+ * with a starter pack, or the reverse). A no-op below V79, where every row reads `"extension"`.
+ */
+export function setExtensionKind(db: Database, id: string, kind: ExtensionKind): void {
+  if (!hasKindColumn(db)) return;
+  dbRun(db, "UPDATE extension SET kind = ? WHERE id = ?", [kind, id]);
+}
+
 export function touchExtensionVerifiedAt(db: Database, id: string, ts: number): void {
   if (readIndexedUserVersion(db) < 10) {
     return;
@@ -169,6 +207,26 @@ export function insertExtensionRow(
     throw new Error("Extension registry requires schema v10+");
   }
   const enabled = row.enabled ?? 1;
+  if (hasKindColumn(db)) {
+    dbRun(
+      db,
+      `INSERT INTO extension (id, version, install_path, manifest_hash, entry_hash, enabled, installed_at, last_verified_at, tree_digest, kind)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        row.id,
+        row.version,
+        row.install_path,
+        row.manifest_hash,
+        row.entry_hash,
+        enabled,
+        row.installed_at,
+        row.last_verified_at,
+        row.tree_digest ?? null,
+        row.kind ?? "extension",
+      ],
+    );
+    return;
+  }
   if (hasTreeDigestColumn(db)) {
     dbRun(
       db,

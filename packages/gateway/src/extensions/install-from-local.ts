@@ -13,10 +13,11 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 import {
   assertSafeExtensionId,
+  isStarterPack,
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
@@ -59,13 +60,14 @@ import {
   withNeedsBlock,
 } from "./install-plan-text.ts";
 import {
+  EXTENSION_MANIFEST_FILENAME,
   type ExtensionManifest,
   extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
-import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
+import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import type {
@@ -222,6 +224,8 @@ async function completeExtensionInstallAfterCopy(options: {
       manifest_hash: manifestHex,
       entry_hash: entryHex,
       tree_digest: treeDigest,
+      // From the manifest just verified at the destination, never the caller's copy.
+      kind: isStarterPack(destManifest) ? "starter-pack" : "extension",
       enabled: 1,
       installed_at: now,
       last_verified_at: now,
@@ -1158,9 +1162,14 @@ export async function installExtensionFromLocalDirectory(
 
   const manifestBytes = readFileSync(srcManifestPath);
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-  // The one door every install reaches (local path, archive, registry, migration): a shape this
-  // gateway cannot honour yet is refused before anything is resolved, copied or asked.
-  assertManifestSupported(manifest);
+  // A starter pack's entry IS its manifest, under the current name only (`extensionEntryRelPath`),
+  // so a pack under the legacy name would otherwise fail later as a missing entry file.
+  if (isStarterPack(manifest) && basename(srcManifestPath) !== EXTENSION_MANIFEST_FILENAME) {
+    throw new RegistryError(
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      `a starter pack's manifest must be named ${EXTENSION_MANIFEST_FILENAME}`,
+    );
+  }
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 

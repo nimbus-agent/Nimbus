@@ -1,5 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { isStarterPack, parseExtensionManifestJson } from "@nimbus-dev/registry-format";
+
+import type { ExtensionKind } from "../automation/extension-store.ts";
 
 // The manifest model and parser live in the pure `@nimbus-dev/registry-format` workspace, shared
 // with the publishing CLI; this module adds the filesystem half (which file a directory holds).
@@ -27,4 +31,17 @@ export function resolveExtensionManifestPath(dir: string): string | undefined {
     }
   }
   return undefined;
+}
+
+/**
+ * The kind (V79 `extension.kind`) of the manifest installed in `dir`, read for a row whose bytes an
+ * update or a recovery just replaced. Throws when `dir` holds no manifest.
+ */
+export function installedManifestKind(dir: string): ExtensionKind {
+  const path = resolveExtensionManifestPath(dir);
+  if (path === undefined) {
+    throw new Error("extension manifest missing");
+  }
+  const manifest = parseExtensionManifestJson(readFileSync(path, "utf8"));
+  return isStarterPack(manifest) ? "starter-pack" : "extension";
 }

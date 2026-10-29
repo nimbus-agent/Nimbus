@@ -35,6 +35,7 @@ import {
 import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { EXTENSION_DEPENDENCY_REGISTRY_V78_SQL } from "../extension-dependency-registry-v78-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
+import { EXTENSION_KIND_V79_SQL } from "../extension-kind-v79-sql.ts";
 import { EXTENSION_REGISTRY_V71_SQL } from "../extension-registry-v71-sql.ts";
 import { EXTENSION_RUN_GRANT_CREDENTIALS_V72_SQL } from "../extension-run-grant-credentials-v72-sql.ts";
 import { EXTENSION_RUN_GRANT_V70_SQL } from "../extension-run-grant-v70-sql.ts";
@@ -708,6 +709,12 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     78,
     "extension_dependency.depends_on_registry + extension.installed_as_dependency (registry-scoped dependency resolution)",
     EXTENSION_DEPENDENCY_REGISTRY_V78_SQL,
+  ),
+  simpleStep(
+    78,
+    79,
+    "extension.kind (starter packs: a package of dependencies with no code)",
+    EXTENSION_KIND_V79_SQL,
   ),
 ];
 
