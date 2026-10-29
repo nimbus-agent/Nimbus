@@ -167,8 +167,8 @@ describe("runEvalSession", () => {
     expect(report.score).toBe(100);
     expect(report.cases).toBe(2);
     expect(report.results.map((r) => [r.suite, r.case, r.pass, r.reason])).toEqual([
-      ["basic", "a", true, null],
-      ["basic", "b", true, null],
+      ["evals/basic.eval.json", "a", true, null],
+      ["evals/basic.eval.json", "b", true, null],
     ]);
     expect(created).toHaveLength(1);
     expect(created[0]?.id.startsWith(`nimbus-eval-${SERVICE_ID}-`)).toBe(true);
@@ -445,6 +445,33 @@ describe("runEvalSession", () => {
     expect(stageEntries()).toEqual([]);
   });
 
+  test("a LAST case cut short by the run deadline ⇒ ERR_EVAL_RUN_TIMEOUT, not a score", async () => {
+    const signals: AbortSignal[] = [];
+    const { createClient, created } = fakeFactory([{ tools: { slow: hanging(signals) } }]);
+    const code = await codeOf(
+      runEvalSession(
+        source([exactCase("slow", "slow", "x")]),
+        deps(createClient, { caseTimeoutMs: 60_000, runTimeoutMs: 30 }),
+      ),
+    );
+    expect(code).toBe("ERR_EVAL_RUN_TIMEOUT");
+    expect(signals[0]?.aborted).toBe(true);
+    expect(created[0]?.disconnects).toBe(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a case slower than the CASE timeout (run time left) is the extension's timeout", async () => {
+    const { createClient } = fakeFactory([{ tools: { slow: hanging([]) } }]);
+    const report = await runEvalSession(
+      source([exactCase("slow", "slow", "x")]),
+      deps(createClient, { caseTimeoutMs: 15, runTimeoutMs: 60_000 }),
+    );
+    expect(report.results.map((r) => [r.suite, r.case, r.reason])).toEqual([
+      ["evals/basic.eval.json", "slow", "timeout"],
+    ]);
+    expect(report.score).toBe(0);
+  });
+
   test("a listing that never answers is bounded by the run deadline", async () => {
     const { createClient, created } = fakeFactory([{ listHangs: true }]);
     const code = await codeOf(
@@ -459,9 +486,10 @@ describe("runEvalSession", () => {
   });
 
   test("a source with no cases ⇒ ERR_EVAL_NO_SUITES (never a score of 0)", async () => {
-    const { createClient } = fakeFactory([{ tools: { echo } }]);
+    const { createClient, created } = fakeFactory([{ tools: { echo } }]);
     const code = await codeOf(runEvalSession(source([]), deps(createClient)));
     expect(code).toBe("ERR_EVAL_NO_SUITES");
-    expect(stageEntries()).toEqual([]);
+    expect(created).toHaveLength(0); // nothing staged or spawned for nothing
+    expect(existsSync(join(sandboxDir, EXTENSION_STAGE_DIR_NAME))).toBe(false);
   });
 });

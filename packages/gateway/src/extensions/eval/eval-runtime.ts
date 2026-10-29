@@ -189,7 +189,10 @@ function lookupTool(server: EvalServer, run: EvalRun, tool: string): EvalToolExe
   return Object.hasOwn(server.tools, key) ? server.tools[key]?.execute : undefined;
 }
 
-/** `min(caseTimeout, runDeadline - now)`; a timeout aborts the call. */
+/**
+ * `min(caseTimeout, runDeadline - now)`; a timeout aborts the call. When the RUN deadline was the
+ * binding limit the case is not the extension's failure: the whole run is a run timeout.
+ */
 async function callCaseTool(run: EvalRun, server: EvalServer, c: EvalCase): Promise<EvalReply> {
   const execute = lookupTool(server, run, c.tool);
   if (execute === undefined) return { kind: "failed", reason: "unknown-tool" };
@@ -198,7 +201,10 @@ async function callCaseTool(run: EvalRun, server: EvalServer, c: EvalCase): Prom
   // `.then` so a synchronous throw from `execute` is a rejection like any other.
   const call = Promise.resolve().then(() => execute(c.input, { abortSignal: abort.signal }));
   const settled = await settleWithin(call, budget, () => abort.abort());
-  if (settled.kind === "timeout") return { kind: "failed", reason: "timeout" };
+  if (settled.kind === "timeout") {
+    if (remainingMs(run) <= 0) throw runTimeout(run);
+    return { kind: "failed", reason: "timeout" };
+  }
   if (settled.kind === "threw") return { kind: "failed", reason: "crash" };
   return replyFromMcpResult(settled.value);
 }
@@ -218,6 +224,7 @@ async function killServer(run: EvalRun): Promise<void> {
   run.server = undefined;
   await disconnectWithin(server.client, run.disconnectTimeoutMs);
   discardEvalStage(server.stage);
+  run.stages.splice(run.stages.indexOf(server.stage), 1); // discarded: never twice
 }
 
 async function runCase(run: EvalRun, suite: EvalSuite, c: EvalCase): Promise<EvalCaseOutcome> {
@@ -229,7 +236,7 @@ async function runCase(run: EvalRun, suite: EvalSuite, c: EvalCase): Promise<Eva
   }
   const verdict = judgeCase(c, reply);
   return {
-    suite: suite.name,
+    suite: suite.file, // unique; a suite `name` is free text and may repeat
     case: c.name,
     rubric: c.expect.rubric,
     pass: verdict.pass,
@@ -237,16 +244,29 @@ async function runCase(run: EvalRun, suite: EvalSuite, c: EvalCase): Promise<Eva
   };
 }
 
+function countCases(src: EvalPackageSource): number {
+  return src.suites.reduce((n, suite) => n + suite.cases.length, 0);
+}
+
+/** Nothing is staged or spawned for a source without a single case. */
+function assertHasCases(src: EvalPackageSource): void {
+  if (countCases(src) === 0) {
+    throw new EvalRunError("ERR_EVAL_NO_SUITES", "the suites hold no cases");
+  }
+}
+
 // ── Phase 4: score; cleanup ─────────────────────────────────────────────────────────────────────
 
 function scoreOutcomes(outcomes: readonly EvalCaseOutcome[]): EvalReport {
   const report = scoreEval(outcomes);
-  if (report === null) throw new EvalRunError("ERR_EVAL_NO_SUITES", "the suites hold no cases");
+  // Unreachable after `assertHasCases`; kept so a null report can never become a score.
+  if (report === null) throw new EvalRunError("ERR_EVAL_INTERNAL", "no outcomes to score");
   return report;
 }
 
 async function closeRun(run: EvalRun): Promise<void> {
   await killServer(run);
+  // Only stages no server owned remain (e.g. createClient threw after staging).
   for (const stage of run.stages) discardEvalStage(stage);
 }
 
@@ -261,6 +281,7 @@ export async function runEvalSession(
   src: EvalPackageSource,
   deps: EvalRuntimeDeps,
 ): Promise<EvalReport> {
+  assertHasCases(src);
   assertSandboxAvailable(src, deps);
   const run = openRun(src, deps);
   try {
