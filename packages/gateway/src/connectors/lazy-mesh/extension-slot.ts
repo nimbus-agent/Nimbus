@@ -6,8 +6,12 @@ import { ExtensionRunGrantError } from "../../extensions/run-grant-error.ts";
 import { getConnectorHealth, transitionHealth } from "../health.ts";
 import type { ExtensionSlotSource } from "./extension-slot-source.ts";
 import { extensionMeshKey } from "./keys.ts";
+import { extensionServerKey } from "./server-key.ts";
 import type { ServerSpec } from "./slot.ts";
 import type { LazyMeshToolMap } from "./tool-map.ts";
+
+/** Re-exported so existing importers are unchanged; the definition lives in `server-key.ts`. */
+export { extensionServerKey };
 
 /** Builds the MCP client for one extension slot. Production: `new MCPClient(...)`; tests: a fake. */
 export type CreateExtensionClient = (id: string, servers: Record<string, ServerSpec>) => MCPClient;
@@ -305,11 +309,6 @@ export class ExtensionSlots {
       transitionHealth(db, serviceId, { type: "sync_success" });
     }
   }
-}
-
-/** The MCP server name an extension slot registers under: `@mastra/mcp` keys tools `<it>_<tool>`. */
-export function extensionServerKey(serviceId: string): string {
-  return serviceId.replaceAll(/[^a-zA-Z0-9_-]/g, "_");
 }
 
 /** Tool names starting `__nimbus_` belong to the gateway (the sync entry point). */
