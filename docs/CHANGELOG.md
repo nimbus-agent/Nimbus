@@ -28,9 +28,11 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   the same `runEvalSession` as `--package`, with no network and no credentials. A denial is `ERR_EXTENSION_EVAL_NOT_APPROVED`
   (`-32603`) and nothing is staged or run. `extension.eval` is LAN-forbidden, refused on a demo root, not on the Tauri
   allowlist and denied to the MCP act door (`gateway_internal`; 30 proposable / 114 denied). The CLI consent is terminal-only
-  (`--yes`/`-y` and a non-TTY refused before connecting). **I49** now also states that a gateway-hosted eval runs only after
-  the owner approved `extension.eval`, never delegated, with two new stated bounds: an approved eval runs to its end even if
-  the client disconnects, and the TTY requirement is CLI-side. Tests: a real-gateway e2e (`eval-extension.e2e.test.ts`:
+  (`--yes`/`-y` and a non-TTY refused before connecting), and the CLI strips control characters from every name and message
+  it prints that came from the extension, a registry or the gateway. `[extensions] runtime = false` refuses `extension.eval`
+  (`ERR_EXTENSION_EVAL_RUNTIME_DISABLED`) before any check or prompt. **I49** now also states that a gateway-hosted eval runs
+  only after the owner approved `extension.eval`, never delegated, with three new stated bounds: an approved eval runs to its
+  end even if the client disconnects, the TTY requirement is CLI-side, and the runtime switch governs the gateway door only. Tests: a real-gateway e2e (`eval-extension.e2e.test.ts`:
   approved gives the same 7 cases / 5 passed / 71 as the `--package` e2e over the same shared fixture package, denied gives
   the not-approved error and no stage), an I49 denial through a real gate-only executor, and a source pin on the
   approve-then-evaluate order. PR 2 follow-ups: a role whose stdout overflows is now hard-killed after the grace too, an

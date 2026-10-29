@@ -2216,17 +2216,19 @@ and respawns from a fresh stage, one that does not is scored on the retry's repl
 every child is disconnected, and a run first sweeps eval stages older than an hour (best effort: an entry it cannot read is
 skipped). Nothing leaves the machine and no Vault, DB or IPC is opened, so there is no egress row, no index write and no executor.
 **Evaluating an INSTALLED extension (`extension.eval`, I49's second half).** `nimbus eval --extension <id>` goes through
-the gateway: the CLI calls `extension.eval { ids }` (1 to 50 ids) on a terminal-only consent client (`--yes`/`-y` and a
+the gateway: the CLI sends one id, `extension.eval { ids: [id] }` (the IPC method accepts 1 to 50), on a terminal-only consent client (`--yes`/`-y` and a
 non-TTY stdin/stdout are refused before connecting) and exits 0 when the eval ran, 2 otherwise. The handler
 (`ipc/automation-rpc.ts`, owner-gated through the per-call gate-only `buildExtensionGateExecutor`, so consent goes to the
-calling client) hands the ids to `extensions/installed-eval.ts` `evaluateInstalledExtensions`, which works in three phases.
+calling client; with `[extensions] runtime = false` it refuses first, `ERR_EXTENSION_EVAL_RUNTIME_DISABLED`, `-32603`, with no
+prompt) hands the ids to `extensions/installed-eval.ts` `evaluateInstalledExtensions`, which works in three phases.
 (1) Pre-consent, no extension code runs: each id is verified by `verified-extension.ts` `readVerifiedExtensionForEval` (the
 I43 checks without a run grant: strict hashes, tree digest, I16, entry containment, and any open I48 block refuses it; it
 needs no grant, grants none and records no acknowledgement) and its suites are read and counted; a failure becomes that id's
 result. (2) ONE `extension.eval` approval for the whole call, listing `{ id, version, cases }` per extension and the fixed
 fact that they run with no network and no credentials; `extension.eval` is in the I2 frozen set and never delegable (I20). A
 denial is `ERR_EXTENSION_EVAL_NOT_APPROVED` (`-32603`) and nothing runs or is staged. (3) Post-consent, one at a time: reload,
-re-verify (any change since the prompt is `ERR_EXTENSION_EVAL_CHANGED`), then the same `runEvalSession` as `--package`,
+re-verify and compare with the pre-consent verification (version, install path, tree and files digests; any difference is
+`ERR_EXTENSION_EVAL_CHANGED`), then the same `runEvalSession` as `--package`,
 staged under the gateway's `<sandboxDir>`. The result is one entry per requested id, in request order:
 `{ id, version, ok: true, report }` or `{ id, version, ok: false, error: { code, message } }`. `extension.eval` is
 LAN-forbidden, refused on a demo-rooted gateway, not on the Tauri allowlist, and `gateway_internal` for MCP proposals. An
