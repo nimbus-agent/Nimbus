@@ -2,14 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EvalReport } from "@nimbus-dev/registry-format";
+import type { EvalReport, EvalRoleDocument } from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
   adaptEvalClient,
   defaultEvalRun,
   type EvalRoleDeps,
-  type EvalRoleDocument,
   type EvalRunLoaders,
   evalServerDefs,
   exitAfterFlush,

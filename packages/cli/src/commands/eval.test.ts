@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { join, resolve } from "node:path";
-import { type EvalCaseOutcome, scoreEval } from "@nimbus-dev/registry-format";
 import {
   type ByteKeeper,
   EVAL_ROLE_STDOUT_MAX_BYTES,
@@ -9,7 +8,6 @@ import {
   firstBytesKeeper,
   lastBytesKeeper,
   packageRelativeSuite,
-  parseEvalRoleDocument,
   readCapped,
   runEval,
   spawnEvalRole,
@@ -409,68 +407,6 @@ describe("packageRelativeSuite", () => {
     expect(packageRelativeSuite(pkg, "../elsewhere/x.eval.json")).toBe("../elsewhere/x.eval.json");
     const outside = join(resolve("other"), "x.eval.json");
     expect(packageRelativeSuite(pkg, outside)).toBe(outside.replaceAll("\\", "/"));
-  });
-});
-
-describe("parseEvalRoleDocument", () => {
-  test("accepts a report built by the real registry-format scorer", () => {
-    const outcomes: EvalCaseOutcome[] = [
-      { suite: "evals/a.eval.json", case: "one", rubric: "exact", pass: true, reason: null },
-      { suite: "evals/a.eval.json", case: "two", rubric: "json-match", pass: false, reason: "x" },
-      { suite: "evals/b.eval.json", case: "three", rubric: "one-of", pass: true, reason: null },
-    ];
-    const report = scoreEval(outcomes);
-    expect(report).not.toBeNull();
-    const text = JSON.stringify({ ok: true, extensionId: "acme.x", version: "1.0.0", report });
-    const doc = parseEvalRoleDocument(text);
-    expect(doc?.ok).toBe(true);
-    if (doc?.ok !== true) return;
-    expect(doc.report).toEqual(JSON.parse(JSON.stringify(report)));
-  });
-
-  test("accepts both document shapes", () => {
-    expect(parseEvalRoleDocument(JSON.stringify(okDoc()))?.ok).toBe(true);
-    expect(parseEvalRoleDocument('{"ok":false,"error":{"code":"a","message":"b"}}')?.ok).toBe(
-      false,
-    );
-  });
-
-  test("rejects invalid documents", () => {
-    const bad = (mut: (d: Record<string, unknown>) => void): void => {
-      const d = okDoc();
-      mut(d);
-      expect(parseEvalRoleDocument(JSON.stringify(d))).toBeNull();
-    };
-    expect(parseEvalRoleDocument("[]")).toBeNull();
-    expect(parseEvalRoleDocument('{"ok":1}')).toBeNull();
-    expect(parseEvalRoleDocument('{"ok":false}')).toBeNull();
-    expect(parseEvalRoleDocument('{"ok":false,"error":{"code":1,"message":"b"}}')).toBeNull();
-    bad((d) => {
-      d["extensionId"] = 5;
-    });
-    bad((d) => {
-      d["version"] = undefined;
-    });
-    bad((d) => {
-      d["report"] = null;
-    });
-    bad((d) => {
-      (d["report"] as Record<string, unknown>)["results"] = "x";
-    });
-    bad((d) => {
-      (d["report"] as Record<string, unknown>)["results"] = [{ suite: 1 }];
-    });
-    bad((d) => {
-      (d["report"] as Record<string, unknown>)["score"] = 99;
-    });
-    bad((d) => {
-      const rep = d["report"] as { results: unknown[] };
-      rep.results = rep.results.slice(1);
-    });
-    bad((d) => {
-      const rep = d["report"] as { results: { pass: boolean }[] };
-      for (const r of rep.results) r.pass = true;
-    });
   });
 });
 

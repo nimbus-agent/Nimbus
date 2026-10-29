@@ -2,16 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_EVAL_JSON_DEPTH, MAX_EVAL_SUITE_FILE_BYTES } from "./caps.ts";
+import {
+  MAX_ENTRY_COUNT,
+  MAX_EVAL_JSON_DEPTH,
+  MAX_EVAL_SUITE_FILE_BYTES,
+  MAX_MANIFEST_BYTES,
+} from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
   EVAL_RUBRIC_KINDS,
+  evalSuitesFromFiles,
   isEvalSuiteFile,
   jsonDepth,
   loadEvalSuites,
   parseEvalSuite,
   parseEvalSuites,
+  readEvalPackageFiles,
 } from "./eval-suite.ts";
+import { listPackageFiles } from "./package-set.ts";
 
 const CAN_SYMLINK = ((): boolean => {
   const probe = mkdtempSync(join(tmpdir(), "nimbus-symprobe-"));
@@ -371,6 +379,209 @@ describe("loadEvalSuites", () => {
       mkdirSync(join(root, "real"));
       symlinkSync(join(root, "real"), join(root, "evals"), "junction");
       expectRefused(() => loadEvalSuites(root), "symlink");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+function expectCode(fn: () => unknown, code: string, fragment: string): void {
+  let caught: unknown;
+  try {
+    fn();
+  } catch (e) {
+    caught = e;
+  }
+  expect(caught).toBeInstanceOf(RegistryError);
+  expect((caught as RegistryError).code).toBe(code);
+  expect((caught as RegistryError).message).toContain(fragment);
+}
+
+describe("readEvalPackageFiles", () => {
+  let root: string;
+  const put = (rel: string, body: string | Uint8Array): void => {
+    const p = join(root, ...rel.split("/"));
+    mkdirSync(join(p, ".."), { recursive: true });
+    writeFileSync(p, body);
+  };
+  const withRoot = (fn: () => void): void => {
+    root = mkdtempSync(join(tmpdir(), "nimbus-pkgfiles-"));
+    try {
+      fn();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  test("returns the exact bytes of exactly the listed files", () => {
+    withRoot(() => {
+      const bin = new Uint8Array([0, 255, 0xef, 0xbb, 0xbf, 10, 13]);
+      put("dist/index.js", bin);
+      put("evals/a.eval.json", JSON.stringify(suiteWith()));
+      put("nimbus.extension.json", "{}");
+      put("README.md", "unlisted");
+      const out = readEvalPackageFiles(root, [
+        "dist/index.js",
+        "evals/a.eval.json",
+        "nimbus.extension.json",
+      ]);
+      expect([...out.keys()]).toEqual([
+        "dist/index.js",
+        "evals/a.eval.json",
+        "nimbus.extension.json",
+      ]);
+      expect(new Uint8Array(out.get("dist/index.js") ?? [])).toEqual(bin);
+      expect(new TextDecoder().decode(out.get("evals/a.eval.json"))).toBe(
+        JSON.stringify(suiteWith()),
+      );
+    });
+  });
+
+  test("an empty list reads nothing", () => {
+    withRoot(() => {
+      expect(readEvalPackageFiles(root, []).size).toBe(0);
+    });
+  });
+
+  test("a directory is refused as a non-regular file", () => {
+    withRoot(() => {
+      put("dist/index.js", "x");
+      expectCode(
+        () => readEvalPackageFiles(root, ["dist"]),
+        "ERR_REGISTRY_PACKAGE_FILE_SET",
+        "regular file",
+      );
+      mkdirSync(join(root, "evals", "d.eval.json"), { recursive: true });
+      expectRefused(() => readEvalPackageFiles(root, ["evals/d.eval.json"]), "regular file");
+    });
+  });
+
+  test.skipIf(!CAN_SYMLINK)("a symlink is refused, never followed", () => {
+    withRoot(() => {
+      put("target.js", "x");
+      put("evals/real.json", JSON.stringify(suiteWith()));
+      mkdirSync(join(root, "dist"));
+      symlinkSync(join(root, "target.js"), join(root, "dist", "index.js"));
+      symlinkSync(join(root, "evals", "real.json"), join(root, "evals", "a.eval.json"));
+      expectCode(
+        () => readEvalPackageFiles(root, ["dist/index.js"]),
+        "ERR_REGISTRY_PACKAGE_FILE_SET",
+        "symlink",
+      );
+      expectRefused(() => readEvalPackageFiles(root, ["evals/a.eval.json"]), "symlink");
+    });
+  });
+
+  test("an oversized suite or manifest is refused before it is read", () => {
+    withRoot(() => {
+      put("evals/big.eval.json", Buffer.alloc(MAX_EVAL_SUITE_FILE_BYTES + 1, 0x20));
+      put("nimbus.extension.json", Buffer.alloc(MAX_MANIFEST_BYTES + 1, 0x20));
+      expectRefused(() => readEvalPackageFiles(root, ["evals/big.eval.json"]), "too large");
+      expectCode(
+        () => readEvalPackageFiles(root, ["nimbus.extension.json"]),
+        "ERR_REGISTRY_PACKAGE_FILE_SET",
+        "too large",
+      );
+    });
+  });
+
+  test("an unsafe, duplicate or excessive file list is refused before any read", () => {
+    withRoot(() => {
+      put("a.js", "x");
+      for (const rel of ["../a.js", "/a.js", "dist//a.js", "dist\\a.js", "./a.js", ""]) {
+        expectCode(
+          () => readEvalPackageFiles(root, [rel]),
+          "ERR_REGISTRY_PACKAGE_FILE_SET",
+          "package-relative",
+        );
+      }
+      expectCode(
+        () => readEvalPackageFiles(root, ["a.js", "a.js"]),
+        "ERR_REGISTRY_PACKAGE_FILE_SET",
+        "duplicate",
+      );
+      const many = Array.from({ length: MAX_ENTRY_COUNT + 1 }, (_, i) => `f${String(i)}`);
+      expectCode(
+        () => readEvalPackageFiles(root, many),
+        "ERR_REGISTRY_PACKAGE_FILE_SET",
+        String(MAX_ENTRY_COUNT),
+      );
+    });
+  });
+
+  test("a missing file throws", () => {
+    withRoot(() => {
+      expect(() => readEvalPackageFiles(root, ["dist/nope.js"])).toThrow();
+    });
+  });
+});
+
+describe("evalSuitesFromFiles", () => {
+  const good = bytesOf(suiteWith());
+  const named = (name: string): Uint8Array => bytesOf(suiteWith({}, { name }));
+
+  test("parses only direct evals/*.eval.json entries, sorted", () => {
+    const files = new Map<string, Uint8Array>([
+      ["evals/b.eval.json", named("b")],
+      ["evals/a.eval.json", named("a")],
+      ["evals/fixture.txt", enc.encode("not json")],
+      ["evals/sub/c.eval.json", enc.encode("{bad")],
+      ["dist/x.eval.json", enc.encode("{bad")],
+      ["nimbus.extension.json", enc.encode("{}")],
+    ]);
+    expect(evalSuitesFromFiles(files).map((s) => s.file)).toEqual([
+      "evals/a.eval.json",
+      "evals/b.eval.json",
+    ]);
+  });
+
+  test("no suite entries give []", () => {
+    expect(evalSuitesFromFiles(new Map())).toEqual([]);
+    expect(evalSuitesFromFiles(new Map([["dist/index.js", good]]))).toEqual([]);
+  });
+
+  test("a wrong-case suite name is refused, not skipped", () => {
+    expectRefused(
+      () => evalSuitesFromFiles(new Map([["evals/x.Eval.json", good]])),
+      "evals/x.Eval.json",
+    );
+  });
+
+  test("a directory named like a suite is refused", () => {
+    expectRefused(
+      () => evalSuitesFromFiles(new Map([["evals/d.eval.json/inner", good]])),
+      "evals/d.eval.json",
+    );
+  });
+
+  test("a malformed or oversized suite is refused like loadEvalSuites", () => {
+    expectRefused(
+      () => evalSuitesFromFiles(new Map([["evals/a.eval.json", enc.encode("{bad")]])),
+      "not valid JSON",
+    );
+    expectRefused(
+      () =>
+        evalSuitesFromFiles(
+          new Map([["evals/a.eval.json", new Uint8Array(MAX_EVAL_SUITE_FILE_BYTES + 1)]]),
+        ),
+      "too large",
+    );
+  });
+
+  test("agrees with loadEvalSuites on a real package directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals", "sub"), { recursive: true });
+      mkdirSync(join(root, "dist"));
+      writeFileSync(join(root, "nimbus.extension.json"), "{}");
+      writeFileSync(join(root, "dist", "index.js"), "x");
+      writeFileSync(join(root, "evals", "b.eval.json"), named("b"));
+      writeFileSync(join(root, "evals", "a.eval.json"), named("a"));
+      writeFileSync(join(root, "evals", "fixture.txt"), "x");
+      writeFileSync(join(root, "evals", "sub", "c.txt"), "x");
+      const fromBytes = evalSuitesFromFiles(readEvalPackageFiles(root, listPackageFiles(root)));
+      expect(fromBytes).toEqual(loadEvalSuites(root));
+      expect(fromBytes).toHaveLength(2);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

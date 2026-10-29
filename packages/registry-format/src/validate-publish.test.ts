@@ -320,6 +320,7 @@ describe("validatePublish", () => {
       packageSha256: sha256(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId: true,
+      hasEvals: false,
       permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
     });
     // Its scratch space is inside `work` and is cleaned up.
@@ -850,6 +851,21 @@ describe("validatePublish", () => {
     ]);
     const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
     expect(v.entryHash).toBeDefined();
+    expect(v.hasEvals).toBe(true);
+  });
+
+  test("hasEvals follows any file under evals/ in the packed file set", async () => {
+    const manifest = await signedManifest();
+    const packed = await packOf(manifest, { "evals/fixture.txt": "x" });
+    const v = await validatePublish(
+      await candidate({ manifest, pkg: packed }),
+      await indexOf(),
+      NS,
+      work,
+    );
+    expect(v.hasEvals).toBe(true);
+    const plain = await validatePublish(await candidate({ manifest }), await indexOf(), NS, work);
+    expect(plain.hasEvals).toBe(false);
   });
 
   test("a package holding a file outside the package file set is refused", async () => {

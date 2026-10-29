@@ -15,19 +15,19 @@ import {
   codeUnitCompare,
   deriveExtensionServiceId,
   type EvalSuite,
+  evalSuitesFromFiles,
   extensionEntryRelPath,
   isStarterPack,
   listPackageFiles,
-  loadEvalSuites,
   PACKAGE_MANIFEST_FILE,
   parseExtensionManifestForRegistry,
   RegistryError,
+  readEvalPackageFiles,
 } from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
 import { isSameOrInside } from "../../util/path-overlap.ts";
 import { removeBestEffort } from "../extension-stage.ts";
-import { resolveExtensionManifestPath } from "../manifest.ts";
 import {
   decodeBase64,
   type SignedManifestShape,
@@ -69,24 +69,31 @@ export interface EvalPackageSource {
 
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
+const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+
 /** SHA-256 hex of a regular file, classified and read through the one descriptor that opened it. */
 function sha256OfFile(path: string): string {
   const fd = openSync(path, OPEN_FLAGS);
   try {
     if (!fstatSync(fd).isFile()) throw new Error(`not a regular file: ${path}`);
-    return createHash("sha256").update(readFileSync(fd)).digest("hex");
+    return sha256Hex(readFileSync(fd));
   } finally {
     closeSync(fd);
   }
 }
 
-/** SHA-256 over sorted `<rel>\0<sha256(file)>\n` lines of exactly `files` (relative to `root`). */
-export function evalFilesDigest(root: string, files: readonly string[]): string {
-  const lines = files.map((rel) => `${rel}\0${sha256OfFile(join(root, ...rel.split("/")))}\n`);
+/** SHA-256 over sorted `<rel>\0<sha256 hex>\n` lines: the ONE line format of every files digest. */
+function digestOfFileHashes(files: readonly string[], hashOf: (rel: string) => string): string {
+  const lines = files.map((rel) => `${rel}\0${hashOf(rel)}\n`);
   lines.sort(codeUnitCompare);
   const hash = createHash("sha256");
   for (const line of lines) hash.update(line);
   return hash.digest("hex");
+}
+
+/** SHA-256 over sorted `<rel>\0<sha256(file)>\n` lines of exactly `files` (relative to `root`). */
+export function evalFilesDigest(root: string, files: readonly string[]): string {
+  return digestOfFileHashes(files, (rel) => sha256OfFile(join(root, ...rel.split("/"))));
 }
 
 function invalid(message: string): EvalRunError {
@@ -97,12 +104,44 @@ export function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-function readManifest(dir: string): { text: string; raw: SignedManifestShape } {
-  const path = resolveExtensionManifestPath(dir);
-  if (path === undefined || posix.basename(path.replaceAll("\\", "/")) !== PACKAGE_MANIFEST_FILE) {
-    throw invalid(`${PACKAGE_MANIFEST_FILE} not found in ${dir}`);
+/** Reads each listed package file ONCE; a parameter only so a test can act between the read and its uses. */
+export type EvalPackageReader = (
+  dir: string,
+  files: readonly string[],
+) => ReadonlyMap<string, Uint8Array>;
+
+type PackageBytes = ReadonlyMap<string, Uint8Array>;
+
+/** The one read of the package; a suite the reader refuses (a symlink, its size) is a suite error. */
+function readPackageOnce(
+  read: EvalPackageReader,
+  dir: string,
+  files: readonly string[],
+): PackageBytes {
+  try {
+    return read(dir, files);
+  } catch (e) {
+    if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_SUITE_INVALID") {
+      throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
+    }
+    throw e;
   }
-  const text = readFileSync(path, "utf8");
+}
+
+function bytesOf(bytes: PackageBytes, rel: string): Uint8Array {
+  const b = bytes.get(rel);
+  if (b === undefined) throw invalid(`${rel} was not read`);
+  return b;
+}
+
+/** The manifest from the one read: only the canonical `nimbus.extension.json`, never the legacy name. */
+function readManifest(
+  dir: string,
+  bytes: PackageBytes,
+): { text: string; raw: SignedManifestShape } {
+  const b = bytes.get(PACKAGE_MANIFEST_FILE);
+  if (b === undefined) throw invalid(`${PACKAGE_MANIFEST_FILE} not found in ${dir}`);
+  const text = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("utf8");
   return { text, raw: JSON.parse(text) as SignedManifestShape };
 }
 
@@ -115,10 +154,10 @@ async function verifySigned(raw: SignedManifestShape): Promise<void> {
   }
 }
 
-function selectSuites(dir: string, suiteFile: string | undefined): EvalSuite[] {
+function selectSuites(bytes: PackageBytes, suiteFile: string | undefined): EvalSuite[] {
   let suites: EvalSuite[];
   try {
-    suites = loadEvalSuites(dir);
+    suites = evalSuitesFromFiles(bytes);
   } catch (e) {
     if (e instanceof RegistryError) throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
     throw e;
@@ -133,23 +172,28 @@ function selectSuites(dir: string, suiteFile: string | undefined): EvalSuite[] {
   return kept;
 }
 
-/** Load a package directory, verify it, and read its suites. Stages nothing. */
+/**
+ * Load a package directory, verify it, and read its suites. Stages nothing. Every package file is
+ * read ONCE (`readEvalPackageFiles`): the manifest, the suites and `filesDigest` all derive from
+ * that one map, so a file swapped between two uses cannot make them disagree.
+ */
 export async function loadEvalPackage(
   dir: string,
-  opts: { suiteFile?: string } = {},
+  opts: { suiteFile?: string; readFiles?: EvalPackageReader } = {},
 ): Promise<EvalPackageSource> {
   if (!isAbsolute(dir)) throw invalid("the package directory must be an absolute path");
   try {
-    const { text, raw } = readManifest(dir);
+    const files = listPackageFiles(dir);
+    const bytes = readPackageOnce(opts.readFiles ?? readEvalPackageFiles, dir, files);
+    const { text, raw } = readManifest(dir, bytes);
     const { manifest } = parseExtensionManifestForRegistry(text);
     if (isStarterPack(manifest)) throw invalid("a starter pack has no code to evaluate");
     await verifySigned(raw);
-    const files = listPackageFiles(dir);
     const entryRel = posix.normalize(extensionEntryRelPath(manifest));
     if (!files.includes(entryRel)) {
       throw invalid(`the entry "${entryRel}" is not among the package files`);
     }
-    const suites = selectSuites(dir, opts.suiteFile);
+    const suites = selectSuites(bytes, opts.suiteFile);
     return {
       dir,
       extensionId: manifest.id,
@@ -157,7 +201,7 @@ export async function loadEvalPackage(
       serviceId: deriveExtensionServiceId(manifest.id),
       entryRel,
       files,
-      filesDigest: evalFilesDigest(dir, files),
+      filesDigest: digestOfFileHashes(files, (rel) => sha256Hex(bytesOf(bytes, rel))),
       suites,
     };
   } catch (e) {

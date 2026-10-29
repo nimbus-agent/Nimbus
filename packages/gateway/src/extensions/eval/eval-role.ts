@@ -1,6 +1,6 @@
 import { format } from "node:util";
 
-import type { EvalReport } from "@nimbus-dev/registry-format";
+import type { EvalRoleDocument } from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
@@ -11,11 +11,8 @@ import { EvalRunError, loadEvalPackage, messageOf } from "./eval-source.ts";
  * The `__nimbus-eval` role: runs one eval and prints EXACTLY ONE JSON document to stdout.
  * Nothing here reads the Vault, the DB or IPC; `@mastra/mcp` is imported only inside the default
  * `run`, after `console.log/info/debug` are routed to stderr, so a stray log line can never
- * corrupt the document.
+ * corrupt the document. The document's type and its one validator live in registry-format.
  */
-export type EvalRoleDocument =
-  | { ok: true; extensionId: string; version: string; report: EvalReport }
-  | { ok: false; error: { code: string; message: string } };
 
 export interface EvalRoleDeps {
   writeStdout: (s: string) => void;

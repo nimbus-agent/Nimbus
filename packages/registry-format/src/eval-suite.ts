@@ -14,17 +14,21 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import {
+  MAX_ENTRY_COUNT,
   MAX_EVAL_CASES,
   MAX_EVAL_INPUT_BYTES,
   MAX_EVAL_JSON_DEPTH,
   MAX_EVAL_SUITE_FILE_BYTES,
   MAX_EVAL_SUITES,
+  MAX_MANIFEST_BYTES,
+  MAX_UNPACKED_BYTES,
 } from "./caps.ts";
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
+import { EVALS_DIR, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 
 export const EVAL_SUITE_FORMAT = 1;
-export const EVALS_DIR = "evals";
+export { EVALS_DIR };
 
 export type EvalRubricKind = "exact" | "json-match" | "one-of";
 export const EVAL_RUBRIC_KINDS: readonly EvalRubricKind[] = ["exact", "json-match", "one-of"];
@@ -295,41 +299,82 @@ function statEvalsDir(dir: string): boolean {
   return true;
 }
 
+/**
+ * Whether `rel`, the direct `evals/` child `name`, is a suite. A name that is a suite name in any
+ * letter case but not exactly `<name>.eval.json` is refused rather than silently skipped.
+ */
+function isSuiteChild(rel: string, name: string): boolean {
+  if (isEvalSuiteFile(rel)) return true;
+  if (LOOSE_SUITE_RE.test(name)) {
+    refuse(rel, 'a suite file must be named exactly "<name>.eval.json"');
+  }
+  return false;
+}
+
+/** How one file is read: its size cap, how a refusal names it, and which error refuses it. */
+interface ReadLimit {
+  readonly max: number;
+  readonly label: string;
+  readonly kind: string;
+  readonly fail: (rel: string, why: string) => never;
+}
+
+function fileSetRefuse(rel: string, why: string): never {
+  throw new RegistryError("ERR_REGISTRY_PACKAGE_FILE_SET", `${rel}: ${why}`);
+}
+
+const SUITE_LIMIT: ReadLimit = {
+  max: MAX_EVAL_SUITE_FILE_BYTES,
+  label: "suite file",
+  kind: "an eval suite",
+  fail: refuse,
+};
+const MANIFEST_LIMIT: ReadLimit = {
+  max: MAX_MANIFEST_BYTES,
+  label: "manifest",
+  kind: "a package file",
+  fail: fileSetRefuse,
+};
+const PACKAGE_FILE_LIMIT: ReadLimit = {
+  max: MAX_UNPACKED_BYTES,
+  label: "package file",
+  kind: "a package file",
+  fail: fileSetRefuse,
+};
+
 /** Read one suite file after lstat checks; the size is checked before any read. */
 function readSuiteFile(dir: string, name: string): { file: string; bytes: Uint8Array } | null {
   const rel = `${EVALS_DIR}/${name}`;
-  if (!isEvalSuiteFile(rel)) {
-    if (LOOSE_SUITE_RE.test(name))
-      refuse(rel, 'a suite file must be named exactly "<name>.eval.json"');
-    return null;
-  }
-  const full = join(dir, name);
-  if (lstatSync(full).isSymbolicLink()) refuse(rel, "refusing a symlink as an eval suite");
-  return { file: rel, bytes: readSuiteThroughDescriptor(full, rel) };
+  if (!isSuiteChild(rel, name)) return null;
+  return { file: rel, bytes: readNoFollow(join(dir, name), rel, SUITE_LIMIT) };
 }
 
-const SUITE_OPEN_FLAGS =
+const NO_FOLLOW_OPEN_FLAGS =
   constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /**
- * Classify, size-check and read a suite through the ONE descriptor that opened it, so a file
- * swapped in after the check above is never the one read (`O_NOFOLLOW` refuses a symlink on POSIX).
+ * Refuse a symlink or a non-regular entry from its lstat (also where `O_NOFOLLOW` does not exist),
+ * then classify, size-check and read through the ONE descriptor that opened it, so a file swapped
+ * in after the lstat is never the one read (`O_NOFOLLOW` refuses a symlink on POSIX).
  */
-function readSuiteThroughDescriptor(full: string, rel: string): Uint8Array {
+function readNoFollow(full: string, rel: string, limit: ReadLimit): Uint8Array {
+  const pre = lstatSync(full);
+  if (pre.isSymbolicLink()) limit.fail(rel, `refusing a symlink as ${limit.kind}`);
+  if (!pre.isFile()) limit.fail(rel, `${limit.kind} must be a regular file`);
   let fd: number;
   try {
-    fd = openSync(full, SUITE_OPEN_FLAGS);
+    fd = openSync(full, NO_FOLLOW_OPEN_FLAGS);
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ELOOP") {
-      refuse(rel, "refusing a symlink as an eval suite");
+      limit.fail(rel, `refusing a symlink as ${limit.kind}`);
     }
     throw err;
   }
   try {
     const st = fstatSync(fd);
-    if (!st.isFile()) refuse(rel, "an eval suite must be a regular file");
-    if (st.size > MAX_EVAL_SUITE_FILE_BYTES) {
-      refuse(rel, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+    if (!st.isFile()) limit.fail(rel, `${limit.kind} must be a regular file`);
+    if (st.size > limit.max) {
+      limit.fail(rel, `${limit.label} is too large (over ${limit.max} bytes)`);
     }
     return readFileSync(fd);
   } finally {
@@ -347,4 +392,73 @@ export function loadEvalSuites(packageDir: string): EvalSuite[] {
     if (f !== null) files.push(f);
   }
   return parseEvalSuites(files);
+}
+
+const UNSAFE_SEGMENTS: ReadonlySet<string> = new Set(["", ".", ".."]);
+
+/** A `/`-separated path that stays inside the package: no `\`, no empty, `.` or `..` segment. */
+function assertPackageRelative(rel: string): void {
+  if (rel.includes("\\") || rel.split("/").some((seg) => UNSAFE_SEGMENTS.has(seg))) {
+    fileSetRefuse(JSON.stringify(rel), "not a /-separated package-relative path");
+  }
+}
+
+function limitFor(rel: string): ReadLimit {
+  if (isEvalSuiteFile(rel)) return SUITE_LIMIT;
+  return rel === PACKAGE_MANIFEST_FILE ? MANIFEST_LIMIT : PACKAGE_FILE_LIMIT;
+}
+
+/**
+ * Read each of `files` (package-relative, `/`-separated; normally `listPackageFiles(dir)`) ONCE,
+ * through one no-follow descriptor per file: a symlink or a non-regular file is refused, a suite
+ * is held to `MAX_EVAL_SUITE_FILE_BYTES`, the manifest to `MAX_MANIFEST_BYTES`, and all of them
+ * together to `MAX_UNPACKED_BYTES` and `MAX_ENTRY_COUNT` files. Everything a caller derives from a
+ * package (manifest, suites, digest) comes from this one map, so no file can differ between uses.
+ */
+export function readEvalPackageFiles(
+  dir: string,
+  files: readonly string[],
+): Map<string, Uint8Array> {
+  if (files.length > MAX_ENTRY_COUNT) {
+    fileSetRefuse(dir, `${files.length} files; at most ${MAX_ENTRY_COUNT} are allowed`);
+  }
+  const seen = new Set<string>();
+  for (const rel of files) {
+    assertPackageRelative(rel);
+    if (seen.has(rel)) fileSetRefuse(rel, "duplicate file entry");
+    seen.add(rel);
+  }
+  const out = new Map<string, Uint8Array>();
+  let used = 0;
+  for (const rel of files) {
+    const limit = limitFor(rel);
+    const max = Math.min(limit.max, MAX_UNPACKED_BYTES - used);
+    const bytes = readNoFollow(join(dir, ...rel.split("/")), rel, { ...limit, max });
+    used += bytes.byteLength;
+    out.set(rel, bytes);
+  }
+  return out;
+}
+
+/**
+ * The suites among already-read package files (`readEvalPackageFiles`), with `loadEvalSuites`'s
+ * rules: only direct `evals/<name>.eval.json` children are suites, a wrong-case suite name is
+ * refused, and so is a directory named like a suite (it shows up as a path beneath it).
+ */
+export function evalSuitesFromFiles(files: ReadonlyMap<string, Uint8Array>): EvalSuite[] {
+  const suites: { file: string; bytes: Uint8Array }[] = [];
+  const prefix = `${EVALS_DIR}/`;
+  for (const [rel, bytes] of files) {
+    if (!rel.startsWith(prefix)) continue;
+    const rest = rel.slice(prefix.length);
+    const slash = rest.indexOf("/");
+    const name = slash === -1 ? rest : rest.slice(0, slash);
+    const child = `${prefix}${name}`;
+    if (child !== rel) {
+      if (LOOSE_SUITE_RE.test(name)) refuse(child, `${SUITE_LIMIT.kind} must be a regular file`);
+      continue;
+    }
+    if (isSuiteChild(rel, name)) suites.push({ file: rel, bytes });
+  }
+  return parseEvalSuites(suites);
 }

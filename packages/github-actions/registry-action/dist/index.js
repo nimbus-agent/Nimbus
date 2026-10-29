@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:44d258aa620570daf994a52b098c081e9d60148d87d5e180837879f6e0dc6411
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:9eea160a8a343628ca2980a2fba834e0c9b0cd3de396601d315b998dfd696260
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4275,7 +4275,23 @@ import {
   readdirSync,
   readFileSync
 } from "node:fs";
+
+// ../../registry-format/src/package-set.ts
+var PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
 var EVALS_DIR = "evals";
+var DIST_DIR = "dist";
+var DOC_FILE_RE = /^(README|LICENSE)(\..+)?$/i;
+function isPackageFile(relPath) {
+  if (relPath === PACKAGE_MANIFEST_FILE)
+    return true;
+  if (relPath.startsWith(`${DIST_DIR}/`))
+    return relPath.length > DIST_DIR.length + 1;
+  if (relPath.startsWith(`${EVALS_DIR}/`))
+    return relPath.length > EVALS_DIR.length + 1;
+  return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
+}
+
+// ../../registry-format/src/eval-suite.ts
 var TYPE_MARKER_VALUES = new Set([
   "string",
   "number",
@@ -4284,7 +4300,8 @@ var TYPE_MARKER_VALUES = new Set([
   "array",
   "object"
 ]);
-var SUITE_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+var NO_FOLLOW_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+var UNSAFE_SEGMENTS = new Set(["", ".", ".."]);
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
   "PATH",
@@ -4833,20 +4850,6 @@ var import_tweetnacl3 = __toESM(require_nacl_fast(), 1);
 
 // ../../registry-format/src/manifest.ts
 var import_semver = __toESM(require_semver2(), 1);
-
-// ../../registry-format/src/package-set.ts
-var PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
-var DIST_DIR = "dist";
-var DOC_FILE_RE = /^(README|LICENSE)(\..+)?$/i;
-function isPackageFile(relPath) {
-  if (relPath === PACKAGE_MANIFEST_FILE)
-    return true;
-  if (relPath.startsWith(`${DIST_DIR}/`))
-    return relPath.length > DIST_DIR.length + 1;
-  if (relPath.startsWith(`${EVALS_DIR}/`))
-    return relPath.length > EVALS_DIR.length + 1;
-  return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
-}
 
 // ../../registry-format/src/permissions-validator.ts
 var HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
@@ -10206,6 +10209,7 @@ async function validatePublish(c, signed, config, work) {
       packageSha256: sha256Hex(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
+      hasEvals: inspected.files.some((f) => f.startsWith(`${EVALS_DIR}/`)),
       permissions: m.permissions,
       ...repository !== undefined && { repository },
       ...repository === undefined && raw["repository"] !== undefined && { repositoryIgnored: true }

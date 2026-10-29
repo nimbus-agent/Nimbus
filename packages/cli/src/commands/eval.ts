@@ -1,11 +1,16 @@
 /**
  * `nimbus eval --package <dir>`: run an extension package's eval suites in the sandbox and print
  * the score. Gateway-free: it spawns the gateway executable's `__nimbus-eval` role, which writes
- * exactly ONE JSON document to stdout, and renders that. The CLI never imports gateway source, so
- * the document type is declared here.
+ * exactly ONE JSON document to stdout, and renders that. The CLI never imports gateway source; the
+ * document is validated by the one shared validator in `@nimbus-dev/registry-format`.
  */
 import { isAbsolute, relative, resolve } from "node:path";
-import { type EvalReport, parseEvalQuality } from "@nimbus-dev/registry-format";
+import {
+  type EvalReport,
+  type EvalRoleDocument,
+  parseEvalReport,
+  parseEvalRoleDocument,
+} from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
@@ -15,10 +20,6 @@ import { type PackCall, withTerminalConsentClient } from "./pack.ts";
 export const EVAL_ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
 export const EVAL_ROLE_STDERR_KEEP_BYTES = 64 * 1024;
 export const EVAL_ROLE_WALL_CLOCK_MS = 12 * 60 * 1000;
-
-export type EvalRoleDocument =
-  | { ok: true; extensionId: string; version: string; report: EvalReport }
-  | { ok: false; error: { code: string; message: string } };
 
 export interface EvalSpawnResult {
   code: number | null;
@@ -52,55 +53,6 @@ const USAGE =
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function isResult(v: unknown): boolean {
-  return (
-    isObject(v) &&
-    typeof v["suite"] === "string" &&
-    typeof v["case"] === "string" &&
-    typeof v["rubric"] === "string" &&
-    typeof v["pass"] === "boolean" &&
-    (v["reason"] === null || typeof v["reason"] === "string")
-  );
-}
-
-function parseReport(raw: unknown): EvalReport | null {
-  if (!isObject(raw) || !Array.isArray(raw["results"])) return null;
-  if (!raw["results"].every(isResult)) return null;
-  const { results: _results, ...quality } = raw;
-  try {
-    parseEvalQuality(quality);
-  } catch {
-    return null;
-  }
-  const results = raw["results"] as Record<string, unknown>[];
-  if (results.length !== raw["cases"]) return null;
-  if (results.filter((r) => r["pass"] === true).length !== raw["passed"]) return null;
-  return raw as unknown as EvalReport;
-}
-
-/** Validate the role's document; null when it is not one. */
-export function parseEvalRoleDocument(text: string): EvalRoleDocument | null {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(text);
-  } catch {
-    return null;
-  }
-  if (!isObject(raw)) return null;
-  if (raw["ok"] === false) {
-    const e = raw["error"];
-    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
-      return { ok: false, error: { code: e["code"], message: e["message"] } };
-    }
-    return null;
-  }
-  if (raw["ok"] !== true) return null;
-  if (typeof raw["extensionId"] !== "string" || typeof raw["version"] !== "string") return null;
-  const report = parseReport(raw["report"]);
-  if (report === null) return null;
-  return { ok: true, extensionId: raw["extensionId"], version: raw["version"], report };
 }
 
 const EVAL_ROLE_PIPE_GRACE_MS = 2000;
@@ -496,7 +448,7 @@ function parseExtensionEntry(raw: unknown, id: string): ExtensionEvalEntry | nul
   const e: unknown = raw["results"][0];
   if (!isObject(e) || e["id"] !== id) return null;
   if (e["ok"] === true) {
-    const report = parseReport(e["report"]);
+    const report = parseEvalReport(e["report"]);
     if (typeof e["version"] !== "string" || report === null) return null;
     return { id, version: e["version"], ok: true, report };
   }
