@@ -7,7 +7,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { type EvalReport, parseEvalQuality } from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
-import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 
 import { type PackCall, withTerminalConsentClient } from "./pack.ts";
@@ -306,8 +306,10 @@ export const spawnEvalRole: EvalCliDeps["spawnRole"] = (cmd, cwd, timeoutMs) =>
   spawnEvalRoleWithGrace(cmd, cwd, timeoutMs, EVAL_ROLE_PIPE_GRACE_MS);
 
 const realIsTTY = (): boolean => process.stdin.isTTY === true && process.stdout.isTTY === true;
+// The request carries the owner's approval (no gateway-side timer) AND then up to the 10-minute eval run per id,
+// so it uses the batch budget like `pack install`, not the one-hour interactive one.
 const realWithClient: NonNullable<EvalCliDeps["withClient"]> = (fn) =>
-  withTerminalConsentClient(fn, INTERACTIVE_RPC_TIMEOUT_MS);
+  withTerminalConsentClient(fn, BATCH_RPC_TIMEOUT_MS);
 
 function defaultDeps(): EvalCliDeps {
   return {

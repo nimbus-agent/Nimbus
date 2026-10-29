@@ -28,8 +28,9 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   the same `runEvalSession` as `--package`, with no network and no credentials. A denial is `ERR_EXTENSION_EVAL_NOT_APPROVED`
   (`-32603`) and nothing is staged or run. `extension.eval` is LAN-forbidden, refused on a demo root, not on the Tauri
   allowlist and denied to the MCP act door (`gateway_internal`; 30 proposable / 114 denied). The CLI consent is terminal-only
-  (`--yes`/`-y` and a non-TTY refused before connecting), and the CLI strips control characters from every name and message
-  it prints that came from the extension, a registry or the gateway. `[extensions] runtime = false` refuses `extension.eval`
+  (`--yes`/`-y` and a non-TTY refused before connecting), and the CLI strips C0/C1 control characters and DEL from every name and
+  message it prints that came from the extension, a registry or the gateway (not yet line/paragraph separators or bidi
+  controls; `--json` output is JSON-escaped, which leaves C1 characters raw). `[extensions] runtime = false` refuses `extension.eval`
   (`ERR_EXTENSION_EVAL_RUNTIME_DISABLED`) before any check or prompt. **I49** now also states that a gateway-hosted eval runs
   only after the owner approved `extension.eval`, never delegated, with three new stated bounds: an approved eval runs to its
   end even if the client disconnects, the TTY requirement is CLI-side, and the runtime switch governs the gateway door only. Tests: a real-gateway e2e (`eval-extension.e2e.test.ts`:
