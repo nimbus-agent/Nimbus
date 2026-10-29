@@ -74,13 +74,14 @@ async function approvalsPhase(
     return true;
   }
   io.log("Approve each package to run (you can decline any):");
-  for (const id of toApprove) {
+  for (const [i, id] of toApprove.entries()) {
     try {
       await io.approve(id);
       approved.add(id);
     } catch (e) {
       if (!isApprovalDenied(e)) {
         io.log(`  ${stripControl(id)}: could not ask (${messageOf(e)})`);
+        io.log(`Approve later with: ${approveCommands(toApprove.slice(i))}`);
         return false;
       }
       declined.add(id);

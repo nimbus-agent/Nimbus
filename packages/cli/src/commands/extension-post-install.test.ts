@@ -126,6 +126,10 @@ describe("runPostInstallWalk", () => {
       { kind: "log", line: "Approve each package to run (you can decline any):" },
       { kind: "approve", id: "dep.a" },
       { kind: "log", line: "  dep.a: could not ask (socket gone)" },
+      {
+        kind: "log",
+        line: "Approve later with: nimbus extension approve dep.a && nimbus extension approve root",
+      },
     ]);
   });
 

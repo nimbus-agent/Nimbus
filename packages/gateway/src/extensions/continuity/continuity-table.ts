@@ -74,15 +74,30 @@ export function findContinuityBinding(
   return undefined;
 }
 
-/** The ONE way to build binding input; `manifest` must be the verified manifest. */
+/**
+ * Binding input for an INSTALLED extension; `manifest` must be the verified manifest. Together with
+ * `pendingBindingInputFor` (a package an install plan has not installed yet) the only two builders.
+ */
 export function bindingInputFor(
   row: ExtensionRow,
   manifest: ExtensionManifest,
 ): ContinuityBindingInput {
+  // The row id, as before: the binding is for the installed copy.
+  return { ...pendingBindingInputFor(manifest, row.source_root_fingerprint), extensionId: row.id };
+}
+
+/**
+ * Binding input for a package an install plan is about to install: its verified manifest and the
+ * registry root fingerprint its row will record once installed.
+ */
+export function pendingBindingInputFor(
+  manifest: Pick<ExtensionManifest, "id" | "publisher">,
+  sourceRootFingerprint: string | null | undefined,
+): ContinuityBindingInput {
   return {
-    extensionId: row.id,
+    extensionId: manifest.id,
     publisherKey: manifest.publisher?.key,
-    sourceRootFingerprint: row.source_root_fingerprint,
+    sourceRootFingerprint,
   };
 }
 

@@ -5,6 +5,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { signTrustStatement } from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
+
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
@@ -16,6 +19,8 @@ import { connectorRequirementStatuses } from "./connector-requirements.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import { resolveRunCredentials, serializeRunCredentials } from "./extension-credentials.ts";
 import { upsertRunGrant } from "./run-grant-store.ts";
+import { recordTrustStatements } from "./trust/trust-store.ts";
+import { encodeBase64 } from "./verify-signature.ts";
 
 const KEY = `${"A".repeat(43)}=`;
 const FP = "fp-test-root";
@@ -282,6 +287,36 @@ describe("connectorRequirementStatuses", () => {
       `nimbus extension approve ${EXT}`,
       `nimbus extension credential set ${EXT} api_key`,
     ]);
+  });
+
+  test("a trust-blocked owner is never met and names extension info", async () => {
+    installOwner();
+    grantOwner();
+    await vault.set("legacyx.token", "set");
+    await vault.set(OWN_API_KEY, "set");
+    synced("legacyx");
+    const deps = { db, vault, continuityTable: TABLE };
+    expect((await connectorRequirementStatuses(deps, one(["legacyx"])))[0]?.state).toBe("met");
+
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 5);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const takedown = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: EXT,
+        publisherId: "test-pub",
+        versions: "*",
+        reason: "malware",
+      },
+      seed,
+    );
+    recordTrustStatements(db, [takedown], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    const [s] = await connectorRequirementStatuses(deps, one(["legacyx"]));
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([`nimbus extension info ${EXT}`]);
+    expect(s?.interactive).toBe(false);
   });
 
   test("a disabled owner is not connected and names extension enable", async () => {

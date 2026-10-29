@@ -23,6 +23,7 @@ import {
   CONTINUITY_TABLE,
   type ContinuityEntry,
   findContinuityBinding,
+  pendingBindingInputFor,
 } from "./continuity/continuity-table.ts";
 import {
   type ResolvedRunCredentials,
@@ -33,6 +34,7 @@ import { deriveExtensionServiceId } from "./extension-service-id.ts";
 import type { ExtensionManifest } from "./manifest.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 import { extensionRunState } from "./run-state.ts";
+import { blocksForInstalled } from "./trust/trust-blocks.ts";
 
 export type ConnectorRequirementState =
   | "met"
@@ -86,7 +88,7 @@ type ContinuityOwner = {
   readonly extensionId: string;
   readonly entry: ContinuityEntry;
   /** The installed row; null for a package an install plan has not installed yet (no grant). */
-  readonly row: Pick<ExtensionRow, "enabled" | "version" | "tree_digest"> | null;
+  readonly row: ExtensionRow | null;
   /** The installed copy's hash-checked manifest: what the next approval resolves credentials from. */
   readonly manifest: ExtensionManifest;
 };
@@ -126,11 +128,7 @@ function continuityOwners(deps: ConnectorRequirementDeps): ContinuityScan {
   for (const pending of deps.pendingInstalls ?? []) {
     const { manifest } = pending;
     const entry = findContinuityBinding(
-      {
-        extensionId: manifest.id,
-        publisherKey: manifest.publisher?.key,
-        sourceRootFingerprint: pending.sourceRootFingerprint,
-      },
+      pendingBindingInputFor(manifest, pending.sourceRootFingerprint),
       table,
     );
     if (entry === undefined) continue;
@@ -192,7 +190,25 @@ async function ownedStatus(
   const stored = getRunGrant(deps.db, owner.extensionId);
   // A package the plan has not installed yet has no grant for the code it is about to install.
   const grant = owner.row === null ? null : stored;
-  const runState = owner.row === null ? "no_grant" : extensionRunState(owner.row, grant);
+  // The I48 blocks the run state reads for `extension.info`, so a blocked owner is never `met`.
+  const runState =
+    owner.row === null
+      ? "no_grant"
+      : extensionRunState(
+          owner.row,
+          grant,
+          false,
+          blocksForInstalled(deps.db, owner.row, owner.manifest),
+        );
+  if (runState === "blocked") {
+    // A re-approval cannot clear a revocation or takedown; `info` shows what blocks it.
+    return {
+      ...base,
+      state: "not_connected",
+      fix: [`nimbus extension info ${owner.extensionId}`],
+      interactive: false,
+    };
+  }
   if (runState === "disabled") {
     return {
       ...base,
