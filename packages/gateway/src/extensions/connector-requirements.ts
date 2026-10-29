@@ -265,6 +265,15 @@ const TOKEN_CONNECTOR_AUTH_FLAGS: Readonly<Record<string, string>> = {
   sentry: "--token <token> --sentry-org <slug>",
   jenkins: "--username <user> --token <api_token> --api-base <url>",
   grafana: "--api-base <url> --token <api_token>",
+  discord: "--token <bot_token> --enable",
+  datadog: "--datadog-api-key <api_key> --datadog-app-key <app_key>",
+  kubernetes: "--kubeconfig <path>",
+  // The CLI also takes a key pair (`--aws-access-key`, `--aws-secret-key`, `--aws-region`); the
+  // profile alone is the shortest form it accepts.
+  aws: "--aws-profile <profile>",
+  azure: "--azure-tenant-id <id> --azure-client-id <id> --azure-client-secret <secret>",
+  gcp: "--gcp-credentials-json <path>",
+  iac: "--enable",
 };
 
 /**

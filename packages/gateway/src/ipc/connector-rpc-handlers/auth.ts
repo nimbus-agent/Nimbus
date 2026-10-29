@@ -882,6 +882,11 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
   },
 };
 
+/** The services `connector.auth` sets up from a token or other flags rather than OAuth. */
+export function patConnectorAuthServiceIds(): ConnectorServiceId[] {
+  return Object.keys(PAT_CONNECTOR_AUTH_HANDLERS) as ConnectorServiceId[];
+}
+
 /**
  * Why `connector.auth` cannot set up `id`, and what the user should run instead — or `null` when it
  * can (the service has an OAuth profile).

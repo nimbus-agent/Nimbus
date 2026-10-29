@@ -14,6 +14,7 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-man
 import { dbRun } from "../db/write.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
+import { patConnectorAuthServiceIds } from "../ipc/connector-rpc-handlers/auth.ts";
 import { MockVault } from "../vault/mock.ts";
 import { connectorRequirementStatuses } from "./connector-requirements.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
@@ -156,10 +157,45 @@ describe("connectorRequirementStatuses", () => {
       "nimbus connector auth jenkins --username <user> --token <api_token> --api-base <url>",
     ],
     ["grafana", "nimbus connector auth grafana --api-base <url> --token <api_token>"],
+    ["discord", "nimbus connector auth discord --token <bot_token> --enable"],
+    [
+      "datadog",
+      "nimbus connector auth datadog --datadog-api-key <api_key> --datadog-app-key <app_key>",
+    ],
+    ["kubernetes", "nimbus connector auth kubernetes --kubeconfig <path>"],
+    ["aws", "nimbus connector auth aws --aws-profile <profile>"],
+    [
+      "azure",
+      "nimbus connector auth azure --azure-tenant-id <id> --azure-client-id <id> --azure-client-secret <secret>",
+    ],
+    ["gcp", "nimbus connector auth gcp --gcp-credentials-json <path>"],
+    ["iac", "nimbus connector auth iac --enable"],
   ])("%s's fix names every flag connector auth requires", async (id, command) => {
     const [s] = await connectorRequirementStatuses({ db, vault }, one([id]));
     expect(s?.state).toBe("not_connected");
     expect(s?.fix).toEqual([command]);
+  });
+
+  /**
+   * The connectors whose `nimbus connector auth` needs `--token` and nothing else. The source of
+   * truth is the CLI, `packages/cli/src/commands/connector.ts` (each `apply*ConnectorAuth`): a
+   * connector belongs here only when its CLI auth succeeds with `--token` alone.
+   */
+  const TOKEN_ONLY_CLI_AUTH = ["github", "gitlab", "linear", "circleci", "pagerduty", "newrelic"];
+
+  test("every connector auth token connector beyond the token-only ones names its own flags", async () => {
+    const ids = patConnectorAuthServiceIds();
+    expect(ids).toEqual(expect.arrayContaining(TOKEN_ONLY_CLI_AUTH));
+    for (const id of ids) {
+      const [s] = await connectorRequirementStatuses({ db, vault }, one([id]));
+      const fallback = `nimbus connector auth ${id} --token <token>`;
+      if (TOKEN_ONLY_CLI_AUTH.includes(id)) {
+        expect({ id, fix: s?.fix }).toEqual({ id, fix: [fallback] });
+      } else {
+        expect({ id, fix: s?.fix }).not.toEqual({ id, fix: [fallback] });
+        expect(s?.fix[0]?.startsWith(`nimbus connector auth ${id} `)).toBe(true);
+      }
+    }
   });
 
   test("an OAuth connector with no key names plain connector auth", async () => {
