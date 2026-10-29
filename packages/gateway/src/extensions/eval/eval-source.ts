@@ -83,8 +83,8 @@ function sha256OfFile(path: string): string {
 }
 
 /** SHA-256 over sorted `<rel>\0<sha256 hex>\n` lines: the ONE line format of every files digest. */
-function digestOfFileHashes(files: readonly string[], hashOf: (rel: string) => string): string {
-  const lines = files.map((rel) => `${rel}\0${hashOf(rel)}\n`);
+function digestOfFileHashes(hashes: readonly (readonly [string, string])[]): string {
+  const lines = hashes.map(([rel, hex]) => `${rel}\0${hex}\n`);
   lines.sort(codeUnitCompare);
   const hash = createHash("sha256");
   for (const line of lines) hash.update(line);
@@ -93,7 +93,9 @@ function digestOfFileHashes(files: readonly string[], hashOf: (rel: string) => s
 
 /** SHA-256 over sorted `<rel>\0<sha256(file)>\n` lines of exactly `files` (relative to `root`). */
 export function evalFilesDigest(root: string, files: readonly string[]): string {
-  return digestOfFileHashes(files, (rel) => sha256OfFile(join(root, ...rel.split("/"))));
+  return digestOfFileHashes(
+    files.map((rel) => [rel, sha256OfFile(join(root, ...rel.split("/")))] as const),
+  );
 }
 
 function invalid(message: string): EvalRunError {
@@ -110,35 +112,39 @@ export type EvalPackageReader = (
   files: readonly string[],
 ) => ReadonlyMap<string, Uint8Array>;
 
-type PackageBytes = ReadonlyMap<string, Uint8Array>;
+type PackageMap = ReadonlyMap<string, Uint8Array>;
+type PackageEntries = readonly (readonly [string, Uint8Array])[];
 
-/** The one read of the package; a suite the reader refuses (a symlink, its size) is a suite error. */
+/**
+ * The one read of the package, as `[rel, bytes]` in `files` order. The reader must return exactly
+ * `files` (same count, every key), so nothing derived later (manifest, suites, digest) can come
+ * from bytes the digest does not cover. A suite the reader refuses (a symlink, its size) is a
+ * suite error.
+ */
 function readPackageOnce(
   read: EvalPackageReader,
   dir: string,
   files: readonly string[],
-): PackageBytes {
+): PackageEntries {
+  let got: PackageMap;
   try {
-    return read(dir, files);
+    got = read(dir, files);
   } catch (e) {
     if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_SUITE_INVALID") {
       throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
     }
     throw e;
   }
-}
-
-function bytesOf(bytes: PackageBytes, rel: string): Uint8Array {
-  const b = bytes.get(rel);
-  if (b === undefined) throw invalid(`${rel} was not read`);
-  return b;
+  if (got.size !== files.length) throw invalid("the package read returned a different file set");
+  return files.map((rel) => {
+    const b = got.get(rel);
+    if (b === undefined) throw invalid(`the package read did not return ${rel}`);
+    return [rel, b] as const;
+  });
 }
 
 /** The manifest from the one read: only the canonical `nimbus.extension.json`, never the legacy name. */
-function readManifest(
-  dir: string,
-  bytes: PackageBytes,
-): { text: string; raw: SignedManifestShape } {
+function readManifest(dir: string, bytes: PackageMap): { text: string; raw: SignedManifestShape } {
   const b = bytes.get(PACKAGE_MANIFEST_FILE);
   if (b === undefined) throw invalid(`${PACKAGE_MANIFEST_FILE} not found in ${dir}`);
   const text = Buffer.from(b.buffer, b.byteOffset, b.byteLength).toString("utf8");
@@ -154,7 +160,7 @@ async function verifySigned(raw: SignedManifestShape): Promise<void> {
   }
 }
 
-function selectSuites(bytes: PackageBytes, suiteFile: string | undefined): EvalSuite[] {
+function selectSuites(bytes: PackageMap, suiteFile: string | undefined): EvalSuite[] {
   let suites: EvalSuite[];
   try {
     suites = evalSuitesFromFiles(bytes);
@@ -184,7 +190,8 @@ export async function loadEvalPackage(
   if (!isAbsolute(dir)) throw invalid("the package directory must be an absolute path");
   try {
     const files = listPackageFiles(dir);
-    const bytes = readPackageOnce(opts.readFiles ?? readEvalPackageFiles, dir, files);
+    const entries = readPackageOnce(opts.readFiles ?? readEvalPackageFiles, dir, files);
+    const bytes: PackageMap = new Map(entries);
     const { text, raw } = readManifest(dir, bytes);
     const { manifest } = parseExtensionManifestForRegistry(text);
     if (isStarterPack(manifest)) throw invalid("a starter pack has no code to evaluate");
@@ -201,7 +208,7 @@ export async function loadEvalPackage(
       serviceId: deriveExtensionServiceId(manifest.id),
       entryRel,
       files,
-      filesDigest: digestOfFileHashes(files, (rel) => sha256Hex(bytesOf(bytes, rel))),
+      filesDigest: digestOfFileHashes(entries.map(([rel, b]) => [rel, sha256Hex(b)])),
       suites,
     };
   } catch (e) {

@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  closeSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  rmSync,
+  symlinkSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -18,6 +29,7 @@ import {
   parseEvalSuite,
   parseEvalSuites,
   readEvalPackageFiles,
+  readExactly,
 } from "./eval-suite.ts";
 import { listPackageFiles } from "./package-set.ts";
 
@@ -582,6 +594,63 @@ describe("evalSuitesFromFiles", () => {
       const fromBytes = evalSuitesFromFiles(readEvalPackageFiles(root, listPackageFiles(root)));
       expect(fromBytes).toEqual(loadEvalSuites(root));
       expect(fromBytes).toHaveLength(2);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("readExactly", () => {
+  const overflow = (): never => {
+    throw new Error("grew");
+  };
+  const withFile = (body: string, fn: (path: string, fd: number) => void): void => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-exact-"));
+    const path = join(root, "f");
+    writeFileSync(path, body);
+    const fd = openSync(path, "r");
+    try {
+      fn(path, fd);
+    } finally {
+      closeSync(fd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  };
+
+  test("reads exactly the fstat size", () => {
+    withFile("hello", (_p, fd) => {
+      const size = fstatSync(fd).size;
+      expect(new TextDecoder().decode(readExactly(fd, size, overflow))).toBe("hello");
+    });
+  });
+
+  test("an empty file reads as no bytes", () => {
+    withFile("", (_p, fd) => {
+      expect(readExactly(fd, 0, overflow).byteLength).toBe(0);
+    });
+  });
+
+  test("a file that grew after its fstat is refused, never read past its size", () => {
+    withFile("hello", (path, fd) => {
+      const size = fstatSync(fd).size;
+      appendFileSync(path, " and more");
+      expect(() => readExactly(fd, size, overflow)).toThrow("grew");
+    });
+  });
+
+  test("a file that shrank after its fstat yields the bytes that remain", () => {
+    withFile("hello world", (path, fd) => {
+      const size = fstatSync(fd).size;
+      truncateSync(path, 5);
+      expect(new TextDecoder().decode(readExactly(fd, size, overflow))).toBe("hello");
+    });
+  });
+
+  test("readEvalPackageFiles reads a multi-chunk file whole through the exact-size loop", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-exact-"));
+    try {
+      writeFileSync(join(root, "README.md"), "x".repeat(70_000));
+      expect(readEvalPackageFiles(root, ["README.md"]).get("README.md")?.byteLength).toBe(70_000);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

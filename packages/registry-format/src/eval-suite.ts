@@ -10,7 +10,7 @@ import {
   lstatSync,
   openSync,
   readdirSync,
-  readFileSync,
+  readSync,
 } from "node:fs";
 import { join } from "node:path";
 import {
@@ -353,6 +353,22 @@ const NO_FOLLOW_OPEN_FLAGS =
   constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 
 /**
+ * Read at most `size` bytes from `fd` into a `size + 1` buffer, looping until EOF. A byte past
+ * `size` means the file grew after the fstat that sized (and capped) it: `onOverflow` refuses it,
+ * so no read ever overshoots the cap checked from that fstat. A file that shrank yields fewer bytes.
+ */
+export function readExactly(fd: number, size: number, onOverflow: () => never): Uint8Array {
+  const buf = new Uint8Array(size + 1);
+  let got = 0;
+  for (;;) {
+    const n = readSync(fd, buf, got, buf.length - got, null);
+    if (n === 0) return buf.subarray(0, got);
+    got += n;
+    if (got > size) onOverflow();
+  }
+}
+
+/**
  * Refuse a symlink or a non-regular entry from its lstat (also where `O_NOFOLLOW` does not exist),
  * then classify, size-check and read through the ONE descriptor that opened it, so a file swapped
  * in after the lstat is never the one read (`O_NOFOLLOW` refuses a symlink on POSIX).
@@ -376,7 +392,9 @@ function readNoFollow(full: string, rel: string, limit: ReadLimit): Uint8Array {
     if (st.size > limit.max) {
       limit.fail(rel, `${limit.label} is too large (over ${limit.max} bytes)`);
     }
-    return readFileSync(fd);
+    return readExactly(fd, st.size, () =>
+      limit.fail(rel, `${limit.label} grew while it was read (over ${st.size} bytes)`),
+    );
   } finally {
     closeSync(fd);
   }

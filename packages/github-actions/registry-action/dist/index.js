@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:9eea160a8a343628ca2980a2fba834e0c9b0cd3de396601d315b998dfd696260
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:6b56b6c12574fdc5f9e7968bc66e23b868a2c161be072a34ee9474c317ec8e52
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4273,7 +4273,7 @@ import {
   lstatSync,
   openSync,
   readdirSync,
-  readFileSync
+  readSync
 } from "node:fs";
 
 // ../../registry-format/src/package-set.ts
@@ -4292,6 +4292,7 @@ function isPackageFile(relPath) {
 }
 
 // ../../registry-format/src/eval-suite.ts
+var SUITE_FILE_RE = /^evals\/[^/]+\.eval\.json$/;
 var TYPE_MARKER_VALUES = new Set([
   "string",
   "number",
@@ -4300,6 +4301,9 @@ var TYPE_MARKER_VALUES = new Set([
   "array",
   "object"
 ]);
+function isEvalSuiteFile(relPath) {
+  return SUITE_FILE_RE.test(relPath);
+}
 var NO_FOLLOW_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 var UNSAFE_SEGMENTS = new Set(["", ".", ".."]);
 // ../../registry-format/src/extension-env.ts
@@ -5832,7 +5836,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
 }
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash4 } from "node:crypto";
-import { closeSync as closeSync2, fstatSync as fstatSync2, mkdirSync, openSync as openSync2, readFileSync as readFileSync2 } from "node:fs";
+import { closeSync as closeSync2, fstatSync as fstatSync2, mkdirSync, openSync as openSync2, readFileSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 // ../../../node_modules/.bun/tar@7.5.22/node_modules/tar/dist/esm/index.min.js
@@ -9080,7 +9084,7 @@ function readRegularFile(path, missing, maxBytes) {
       throw missing();
     if (maxBytes !== undefined && st.size > maxBytes)
       throw manifestInvalid("manifest is too large");
-    return readFileSync2(fd);
+    return readFileSync(fd);
   } finally {
     closeSync2(fd);
   }
@@ -10209,7 +10213,7 @@ async function validatePublish(c, signed, config, work) {
       packageSha256: sha256Hex(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
-      hasEvals: inspected.files.some((f) => f.startsWith(`${EVALS_DIR}/`)),
+      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
       permissions: m.permissions,
       ...repository !== undefined && { repository },
       ...repository === undefined && raw["repository"] !== undefined && { repositoryIgnored: true }

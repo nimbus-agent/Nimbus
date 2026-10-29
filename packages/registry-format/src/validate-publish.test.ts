@@ -854,18 +854,21 @@ describe("validatePublish", () => {
     expect(v.hasEvals).toBe(true);
   });
 
-  test("hasEvals follows any file under evals/ in the packed file set", async () => {
+  test("hasEvals means a suite file: fixtures alone under evals/ do not count", async () => {
     const manifest = await signedManifest();
-    const packed = await packOf(manifest, { "evals/fixture.txt": "x" });
-    const v = await validatePublish(
-      await candidate({ manifest, pkg: packed }),
-      await indexOf(),
-      NS,
-      work,
+    const verdict = async (files: Record<string, string>) =>
+      validatePublish(
+        await candidate({ manifest, pkg: await packOf(manifest, files) }),
+        await indexOf(),
+        NS,
+        work,
+      );
+    expect((await verdict({ "evals/fixture.txt": "x" })).hasEvals).toBe(false);
+    expect((await verdict({ "evals/data/a.eval.json": "x" })).hasEvals).toBe(false);
+    expect((await verdict({ "evals/fixture.txt": "x", "evals/a.eval.json": "{}" })).hasEvals).toBe(
+      true,
     );
-    expect(v.hasEvals).toBe(true);
-    const plain = await validatePublish(await candidate({ manifest }), await indexOf(), NS, work);
-    expect(plain.hasEvals).toBe(false);
+    expect((await verdict({})).hasEvals).toBe(false);
   });
 
   test("a package holding a file outside the package file set is refused", async () => {

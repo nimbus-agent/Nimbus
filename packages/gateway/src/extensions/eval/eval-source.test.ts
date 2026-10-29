@@ -23,6 +23,7 @@ import { encodeBase64, generateEd25519Keypair, signManifest } from "../verify-si
 import {
   discardEvalStage,
   EVAL_STAGE_STALE_MS,
+  type EvalPackageReader,
   EvalRunError,
   type EvalRunErrorCode,
   evalFilesDigest,
@@ -199,22 +200,47 @@ describe("loadEvalPackage", () => {
     expect(evalFilesDigest(pkg, src.files)).not.toBe(original);
   });
 
-  test("a reader that leaves a listed file out is refused, never digested around", async () => {
-    layout(baseManifest());
-    const partial = await loadEvalPackage(pkg, {
-      readFiles: (dir, files) => {
+  describe("the reader must return exactly the listed files", () => {
+    const EVIL = new TextEncoder().encode(JSON.stringify({ ...SUITE, name: "evil" }));
+    const messageFrom = (readFiles: EvalPackageReader): Promise<string> =>
+      loadEvalPackage(pkg, { readFiles }).then(
+        () => "no error",
+        (e: unknown) => `${(e as EvalRunError).code}: ${messageOf(e)}`,
+      );
+
+    test("a listed file left out is refused", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
         const all = readEvalPackageFiles(dir, files);
         all.delete("README.md");
         return all;
-      },
-    }).then(
-      () => "no error",
-      (e: unknown) => messageOf(e),
-    );
-    expect(partial).toContain("README.md was not read");
-    expect(await codeOf(loadEvalPackage(pkg, { readFiles: () => new Map() }))).toBe(
-      "ERR_EVAL_PACKAGE_INVALID",
-    );
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read returned a different file set");
+      expect(await codeOf(loadEvalPackage(pkg, { readFiles: () => new Map() }))).toBe(
+        "ERR_EVAL_PACKAGE_INVALID",
+      );
+    });
+
+    test("an extra, undigested suite is refused, never evaluated", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
+        const all = readEvalPackageFiles(dir, files);
+        all.set("evals/evil.eval.json", EVIL);
+        return all;
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read returned a different file set");
+    });
+
+    test("a swapped key of the same count is refused", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
+        const all = readEvalPackageFiles(dir, files);
+        all.delete("README.md");
+        all.set("evals/evil.eval.json", EVIL);
+        return all;
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read did not return README.md");
+    });
   });
 
   test("the digest of the read bytes has the same line format as evalFilesDigest", async () => {
