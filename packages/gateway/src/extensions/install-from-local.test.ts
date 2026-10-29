@@ -544,6 +544,48 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     db2.close();
   });
 
+  test("a destination directory an extension row owns still reads as already installed", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-dest-owned-",
+      "src-owned",
+    );
+    try {
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.owned.ext", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+      await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+      const dest = join(extensionsDir, "dest.owned.ext");
+      expect(listExtensions(db).map((r) => r.install_path)).toEqual([dest]);
+      // Another version through a registry-sourced call: it skips the plain local early refusal,
+      // so the root install itself meets the directory, which the installed row owns. Never the
+      // leftover copy, which would tell the owner to delete a live install.
+      const src2 = join(dirname(src), "src-owned-v2");
+      mkdirSync(join(src2, "dist"), { recursive: true });
+      writeFileSync(
+        join(src2, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.owned.ext", version: "2.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src2,
+          sourceRegistry: "main",
+          rootFingerprint: "ab".repeat(16),
+        }),
+      ).rejects.toThrow(`extension already installed at ${dest}`);
+      expect(existsSync(dest)).toBe(true);
+    } finally {
+      db.close();
+      rmDirWithRetry(dirname(src));
+    }
+  });
+
   test("manifest with absolute entry path is rejected", async () => {
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-absentry-",

@@ -49,6 +49,8 @@ const served = new Map<string, string>();
 let airGapped = false;
 /** The built-in registry these deps carry (none unless a test serves one). */
 let builtin: BuiltinRegistryConfig | null = null;
+/** Every request the harness `fetchFn` was asked to make. */
+let fetchCalls = 0;
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -58,6 +60,7 @@ beforeEach(() => {
   served.clear();
   airGapped = false;
   builtin = null;
+  fetchCalls = 0;
 });
 
 afterEach(() => {
@@ -98,6 +101,7 @@ function deps(): InstallFromRegistryDeps {
     vault,
     fetch: {
       fetchFn: async (url) => {
+        fetchCalls++;
         const u = new URL(url);
         const dir = served.get(u.hostname.replace(/\.test$/, ""));
         if (dir === undefined) return new Response("down", { status: 503 });
@@ -427,9 +431,11 @@ describe("createRegistryDependencyResolver under air gap", () => {
     await addLocalRoot();
     airGapped = true;
     const before = ledger();
+    fetchCalls = 0;
     const installed = await installFromRegistry(deps(), { id: ROOT_ID, registry: "main" });
     expect(installed).toMatchObject({ id: ROOT_ID, version: "1.0.0" });
     expect(ledger()).toBe(before);
+    expect(fetchCalls).toBe(0);
     const row = db.query("SELECT version FROM extension WHERE id = ?").get(ROOT_ID);
     expect(row).toEqual({ version: "1.0.0" });
   });
@@ -452,9 +458,11 @@ describe("createRegistryDependencyResolver under air gap", () => {
     await addLocalRoot();
     airGapped = true;
     const before = ledger();
+    fetchCalls = 0;
     const e = await rejectionOf(installFromRegistry(deps(), { id: ROOT_ID, registry: "main" }));
     expect((e as RegistryError).code).toBe("ERR_DEPENDENCY_SOURCE_MISMATCH");
     expect(ledger()).toBe(before);
+    expect(fetchCalls).toBe(0);
   });
 
   test("an air-gapped owner registry refuses with the air-gap code, not as offline", async () => {
