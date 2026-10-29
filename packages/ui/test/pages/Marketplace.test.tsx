@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -148,6 +148,57 @@ describe("Marketplace page", () => {
     expect(await screen.findByTestId("orphan-notice")).toHaveTextContent(
       "Also installed only for nimbus-git: dep.a, dep.b. Remove them from the CLI with nimbus extension remove <id>.",
     );
+  });
+
+  async function showNotice(rows: unknown[]) {
+    extensionRemoveMock.mockResolvedValue({ ok: true, orphanedDependencies: ["dep.a"] });
+    stubExtensionList(rows);
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /remove extension nimbus-git/i }),
+    );
+    expect(await screen.findByTestId("orphan-notice")).toBeInTheDocument();
+  }
+
+  it("the orphan notice can be dismissed", async () => {
+    await showNotice([EXT_1]);
+    await userEvent.click(screen.getByRole("button", { name: /dismiss notice/i }));
+    expect(screen.queryByTestId("orphan-notice")).toBeNull();
+  });
+
+  it("the next enable or disable clears the orphan notice", async () => {
+    extensionEnableMock.mockResolvedValue({ ok: true });
+    await showNotice([EXT_1, EXT_2]);
+    await userEvent.click(screen.getByLabelText("nimbus-slack enabled"));
+    expect(extensionEnableMock).toHaveBeenCalledWith("nimbus-slack");
+    expect(screen.queryByTestId("orphan-notice")).toBeNull();
+  });
+
+  it("the next install clears the orphan notice", async () => {
+    openMock.mockResolvedValue(null);
+    await showNotice([EXT_1]);
+    await userEvent.click(screen.getByRole("button", { name: /install from directory/i }));
+    await waitFor(() => expect(openMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("orphan-notice")).toBeNull();
+  });
+
+  it("the next remove clears the orphan notice before it answers", async () => {
+    await showNotice([EXT_1, EXT_2]);
+    let answer: (v: unknown) => void = () => {};
+    extensionRemoveMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /remove extension nimbus-slack/i }));
+    await waitFor(() => expect(extensionRemoveMock).toHaveBeenCalledWith("nimbus-slack"));
+    expect(screen.queryByTestId("orphan-notice")).toBeNull();
+    await act(async () => {
+      answer({ ok: true });
+    });
+    await waitFor(() => expect(screen.getByLabelText("nimbus-slack enabled")).toBeEnabled());
   });
 
   it("shows no notice when an older gateway sends no orphanedDependencies", async () => {
