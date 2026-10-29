@@ -81,4 +81,57 @@ describe("package file set", () => {
       }
     },
   );
+
+  test("listPackageFiles keeps evals/**", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-pkgset-"));
+    try {
+      for (const f of [
+        "nimbus.extension.json",
+        "dist/index.js",
+        "evals/a.eval.json",
+        "evals/fixtures/data.json",
+        "evalsX/nope.json",
+      ]) {
+        touch(root, f);
+      }
+      expect(listPackageFiles(root)).toEqual([
+        "dist/index.js",
+        "evals/a.eval.json",
+        "evals/fixtures/data.json",
+        "nimbus.extension.json",
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("isPackageFile accepts evals/<rest> only", () => {
+    expect(isPackageFile("evals/")).toBe(false);
+    expect(isPackageFile("evals")).toBe(false);
+    expect(isPackageFile("evals/x")).toBe(true);
+    expect(isPackageFile("evalsX/a.json")).toBe(false);
+    expect(isPackageFile("sub/evals/a.json")).toBe(false);
+  });
+
+  test("evals as a regular file is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-pkgset-"));
+    try {
+      touch(root, "evals");
+      expect(() => listPackageFiles(root)).toThrow("refusing to pack evals: it is not a directory");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CAN_SYMLINK)("a symlink inside evals/ is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-pkgset-"));
+    try {
+      touch(root, "target.txt");
+      mkdirSync(join(root, "evals"));
+      symlinkSync(join(root, "target.txt"), join(root, "evals", "link.json"));
+      expect(() => listPackageFiles(root)).toThrow("refusing to pack a symlink: evals/link.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

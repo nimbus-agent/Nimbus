@@ -3,6 +3,12 @@ export const REGISTRY_FORMAT_VERSION = 1;
 
 export {
   MAX_ENTRY_COUNT,
+  MAX_EVAL_CASES,
+  MAX_EVAL_INPUT_BYTES,
+  MAX_EVAL_JSON_DEPTH,
+  MAX_EVAL_REPLY_BYTES,
+  MAX_EVAL_SUITE_FILE_BYTES,
+  MAX_EVAL_SUITES,
   MAX_MANIFEST_BYTES,
   MAX_PACKAGE_BYTES,
   MAX_ROLE_PACK_DEFAULTS_BYTES,
@@ -11,6 +17,38 @@ export {
 } from "./caps.ts";
 export { codeUnitCompare } from "./code-unit-compare.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
+export {
+  parseEvalQuality,
+  readVersionQuality,
+  type VersionQuality,
+} from "./eval-quality.ts";
+export {
+  EVAL_SCORER_VERSION,
+  type EvalCaseOutcome,
+  type EvalQuality,
+  type EvalReply,
+  type EvalReport,
+  type EvalRubricTally,
+  jsonDeepEqual,
+  judgeCase,
+  matchesJsonPattern,
+  resolveJsonPointer,
+  scoreEval,
+} from "./eval-score.ts";
+export {
+  EVAL_RUBRIC_KINDS,
+  EVAL_SUITE_FORMAT,
+  EVALS_DIR,
+  type EvalCase,
+  type EvalExpect,
+  type EvalRubricKind,
+  type EvalSuite,
+  isEvalSuiteFile,
+  jsonDepth,
+  loadEvalSuites,
+  parseEvalSuite,
+  parseEvalSuites,
+} from "./eval-suite.ts";
 export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 export {
   assertCanonicalExtensionId,

@@ -520,3 +520,37 @@ describe("trust-layer fields on a registry index", () => {
     expect(registryIndexDigest(parseRegistryIndex(enc(parsed)))).toBe(PINNED_FIXTURE_DIGEST);
   });
 });
+
+describe("index version entry quality (carried raw)", () => {
+  function withQuality(quality: unknown) {
+    const idx = structuredClone(unsigned) as unknown as Mutable;
+    idx.extensions["acme/deploy"]!.versions["1.0.0"]!["quality"] = quality;
+    return idx;
+  }
+  const cases: [string, unknown][] = [
+    ["malformed", { score: "high" }],
+    [
+      "valid",
+      {
+        scorer: 1,
+        score: 100,
+        cases: 1,
+        passed: 1,
+        rubrics: {
+          exact: { cases: 1, passed: 1 },
+          "json-match": { cases: 0, passed: 0 },
+          "one-of": { cases: 0, passed: 0 },
+        },
+      },
+    ],
+  ];
+  for (const [label, quality] of cases) {
+    test(`a ${label} quality survives parse and signature verification unchanged`, async () => {
+      const signed = sign(withQuality(quality));
+      const parsed = parseRegistryIndex(enc(signed));
+      expect(parsed.extensions["acme/deploy"]!.versions["1.0.0"]!.quality).toEqual(quality);
+      await verifyRegistryIndexSelf(parsed);
+      await verifyRegistryIndexPinned(parsed, ROOT_KEY);
+    });
+  }
+});

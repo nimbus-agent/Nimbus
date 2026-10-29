@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:990dd53325c532758ab5111e83d52336a4ae31029a6a1a2e3fb885160f5afc78
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:44d258aa620570daf994a52b098c081e9d60148d87d5e180837879f6e0dc6411
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4241,6 +4241,9 @@ var MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
 var MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 var MAX_ENTRY_COUNT = 5000;
 var MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024;
+var MAX_EVAL_INPUT_BYTES = 64 * 1024;
+var MAX_EVAL_REPLY_BYTES = 1024 * 1024;
+var MAX_EVAL_SUITE_FILE_BYTES = 1024 * 1024;
 // ../../registry-format/src/code-unit-compare.ts
 function codeUnitCompare(a, b) {
   if (a < b) {
@@ -4262,6 +4265,26 @@ class RegistryError extends Error {
     this.name = "RegistryError";
   }
 }
+// ../../registry-format/src/eval-suite.ts
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync
+} from "node:fs";
+var EVALS_DIR = "evals";
+var TYPE_MARKER_VALUES = new Set([
+  "string",
+  "number",
+  "boolean",
+  "null",
+  "array",
+  "object"
+]);
+var SUITE_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
   "PATH",
@@ -4820,6 +4843,8 @@ function isPackageFile(relPath) {
     return true;
   if (relPath.startsWith(`${DIST_DIR}/`))
     return relPath.length > DIST_DIR.length + 1;
+  if (relPath.startsWith(`${EVALS_DIR}/`))
+    return relPath.length > EVALS_DIR.length + 1;
   return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
 }
 
@@ -5804,7 +5829,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
 }
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash4 } from "node:crypto";
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync as closeSync2, fstatSync as fstatSync2, mkdirSync, openSync as openSync2, readFileSync as readFileSync2 } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 // ../../../node_modules/.bun/tar@7.5.22/node_modules/tar/dist/esm/index.min.js
@@ -9042,19 +9067,19 @@ var manifestInvalid = (detail) => new RegistryError("ERR_REGISTRY_MANIFEST_INVAL
 function readRegularFile(path, missing, maxBytes) {
   let fd;
   try {
-    fd = openSync(path, "r");
+    fd = openSync2(path, "r");
   } catch {
     throw missing();
   }
   try {
-    const st = fstatSync(fd);
+    const st = fstatSync2(fd);
     if (!st.isFile())
       throw missing();
     if (maxBytes !== undefined && st.size > maxBytes)
       throw manifestInvalid("manifest is too large");
-    return readFileSync(fd);
+    return readFileSync2(fd);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 async function inspectPackage(tgz, work) {
@@ -10107,6 +10132,10 @@ function assertFileSet(m, files) {
     const code = files.find((f) => f.startsWith(DIST_PREFIX));
     if (code !== undefined) {
       throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
+    }
+    const evalFile = files.find((f) => f.startsWith(`${EVALS_DIR}/`));
+    if (evalFile !== undefined) {
+      throw fileSetInvalid(`package holds ${evalFile}, but a starter pack holds no evals/ files`);
     }
   }
   const seen = new Set;

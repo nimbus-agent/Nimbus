@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — `nimbus eval` PR 1 of 5: the eval format (Phase 9.5 project 5; no migration, no new invariant).**
+  `@nimbus-dev/registry-format` gains the pure rules for extension evals: an `evals/<name>.eval.json` suite format (fixed
+  inputs, network off), three deterministic rubrics (`exact`, `json-match`, `one-of`), an integer scorer
+  (`floor(100 * passed / cases)`, scorer version 1, no score for zero cases), and an optional `quality` field on index version
+  entries that the registry signs with the index (read with `readVersionQuality`; the parser carries it raw and never rewrites
+  it). `evals/` is now part of a package's file set (rule 13) and is packaged with the extension; a starter pack may not carry
+  it, and a registry on an older action pin refuses a package with `evals/` until it updates. The registry action's `dist` is
+  rebuilt. **Nothing runs evals yet:** `nimbus eval`, the registry CI scoring job and any client display land in later PRs. The
+  roadmap's Wave 5 rows are corrected to match (JSON not YAML, a registry-signed index entry not the manifest, "exactly" not
+  "within rounding", the built-in agent suites split into their own follow-up row).
+
 - **2026-10-29 — Extension dependency follow-ups (no migration, no new invariant).** Under air gap an already-installed
   dependency from the registry its declaration names is reused with zero requests, while a fetch is refused with
   `ERR_REGISTRY_AIR_GAP`, not "offline". Install refusals now say what happened: a leftover directory, a local reinstall of an

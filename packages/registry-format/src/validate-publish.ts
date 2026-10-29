@@ -20,6 +20,7 @@ import semver from "semver";
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
+import { EVALS_DIR } from "./eval-suite.ts";
 import {
   assertCanonicalExtensionId,
   assertPublishableExtensionId,
@@ -405,6 +406,10 @@ function assertFileSet(m: ExtensionManifest, files: string[]): void {
     const code = files.find((f) => f.startsWith(DIST_PREFIX));
     if (code !== undefined) {
       throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
+    }
+    const evalFile = files.find((f) => f.startsWith(`${EVALS_DIR}/`));
+    if (evalFile !== undefined) {
+      throw fileSetInvalid(`package holds ${evalFile}, but a starter pack holds no evals/ files`);
     }
   }
   const seen = new Set<string>();

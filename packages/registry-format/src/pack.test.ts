@@ -146,6 +146,20 @@ describe("registry packer", () => {
     }
   });
 
+  test("evals/** is packed with the extension", async () => {
+    const src = makeTree();
+    const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
+    try {
+      mkdirSync(join(src, "evals"));
+      writeFileSync(join(src, "evals", "a.eval.json"), "{}");
+      await packExtensionDir(src, join(out, "x.tgz"));
+      expect(tarNames(gunzipSync(readFileSync(join(out, "x.tgz"))))).toContain("evals/a.eval.json");
+    } finally {
+      rmSync(src, { recursive: true, force: true });
+      rmSync(out, { recursive: true, force: true });
+    }
+  });
+
   test("packs a directory holding only the manifest and README", async () => {
     const src = mkdtempSync(join(tmpdir(), "nimbus-reg-pack-"));
     const out = mkdtempSync(join(tmpdir(), "nimbus-reg-out-"));
