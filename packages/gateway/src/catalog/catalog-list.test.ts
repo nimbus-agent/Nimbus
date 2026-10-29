@@ -45,7 +45,7 @@ function addExtension(
   root: string,
   id: string,
   manifest: Record<string, unknown>,
-  opts: { tamper?: boolean } = {},
+  opts: { tamper?: boolean; kind?: "extension" | "starter-pack" } = {},
 ): void {
   const dir = join(root, id);
   mkdirSync(dir, { recursive: true });
@@ -60,6 +60,7 @@ function addExtension(
     entry_hash: "0".repeat(64),
     installed_at: 1,
     last_verified_at: 1,
+    ...(opts.kind === undefined ? {} : { kind: opts.kind }),
   });
   if (opts.tamper === true) {
     writeFileSync(join(dir, "nimbus.extension.json"), `${bytes} `);
@@ -111,6 +112,16 @@ describe("buildCatalogList", () => {
     expect(firstMcp).toBe(firstExt + 2);
     const builtinIds = connectors.slice(0, firstExt).map((c) => c.id);
     expect(builtinIds).toEqual([...builtinIds].sort());
+  });
+
+  test("a starter pack is not listed as a connector", () => {
+    const { db, root } = setup();
+    addExtension(db, root, "com.example.pack", { name: "Pack" }, { kind: "starter-pack" });
+    addExtension(db, root, "com.example.code", { name: "Code" });
+    const r = buildCatalogList({ ...EXTRAS, db, snapshot: snapshotOf("") });
+    expect(r.connectors.filter((c) => c.kind === "extension").map((c) => c.id)).toEqual([
+      "com.example.code",
+    ]);
   });
 
   test("an extension whose manifest fails verification is listed with name null", () => {

@@ -7,6 +7,7 @@
  */
 import type { Database } from "bun:sqlite";
 import {
+  isStarterPack,
   publisherKeyFingerprint,
   type RegistryChannel,
   type RegistryVersionEntry,
@@ -180,6 +181,7 @@ async function detectOne(
               : {}),
           },
         }),
+    ...(isStarterPack(m) ? { toStarterPack: true as const } : {}),
     detectedAt: deps.now(),
   });
   if (m.dependsOn !== undefined) out.dependsOn.set(row.id, rangesOf(m.dependsOn));

@@ -645,6 +645,27 @@ describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension run
     );
   });
 
+  it("an update that turns the extension into a starter pack says so, not approve", async () => {
+    const deps = baseDeps();
+    const cached = deps.cache.get("com.example.a");
+    if (cached === undefined) throw new Error("fixture missing");
+    deps.cache.upsert({ ...cached, toStarterPack: true });
+    const asked: Array<Record<string, unknown>> = [];
+    deps.gate = async (a) => {
+      asked.push(a.payload);
+      return { status: "rejected" };
+    };
+    deps.hasRunGrant = async () => true;
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(asked[0]?.["runGrantNote"]).toBe(
+      "The new version is a starter pack: it has no code to run, and its approval to run is removed.",
+    );
+  });
+
   it("omits the note when there is no run grant, or no way to ask", async () => {
     expect("runGrantNote" in (await askedPayload(async () => false))).toBe(false);
     expect("runGrantNote" in (await askedPayload())).toBe(false);

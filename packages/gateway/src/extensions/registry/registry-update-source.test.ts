@@ -363,6 +363,7 @@ describe("collectRegistryUpdates", () => {
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+    expect("toStarterPack" in (out.updates[0] ?? {})).toBe(false);
   });
 
   test("an update to a starter pack is offered like any other update", async () => {
@@ -377,6 +378,7 @@ describe("collectRegistryUpdates", () => {
     expect(out.errors).toEqual([]);
     expect(out.updates.map((u) => [u.id, u.toVersion])).toEqual([["com.a", "1.2.0"]]);
     expect(out.updates[0]?.verificationStatus).toBe("verified");
+    expect(out.updates[0]?.toStarterPack).toBe(true);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
 

@@ -413,8 +413,9 @@ export async function installVerifiedRegistryPackage(
 
 /**
  * The installed dependency an explicit registry install keeps instead of refusing (spec § 8.1), or
- * `undefined`. A request that names another version, or another registry or channel than the one
- * the dependency came from, is not a request for the installed copy: it is refused as before.
+ * `undefined`. Only a dependency with a recorded registry source is promotable. A request that
+ * names another version, or another registry or channel than the one the dependency came from, is
+ * not a request for the installed copy: it is refused as before.
  */
 function promotableRegistryDependency(
   db: Database,
@@ -424,8 +425,11 @@ function promotableRegistryDependency(
   if (row === undefined) return undefined;
   if (req.version !== undefined && req.version !== row.version) return undefined;
   const source = getExtensionSource(db, req.id);
-  if (req.registry !== undefined && req.registry !== source?.registry) return undefined;
-  if (req.channel !== undefined && req.channel !== source?.channel) return undefined;
+  // A dependency with no recorded registry source came in some other way (a local folder): a
+  // registry install never vouches for it.
+  if (source === undefined) return undefined;
+  if (req.registry !== undefined && req.registry !== source.registry) return undefined;
+  if (req.channel !== undefined && req.channel !== source.channel) return undefined;
   return row;
 }
 

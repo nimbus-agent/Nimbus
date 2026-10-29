@@ -1032,6 +1032,26 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(isInstalledAsDependency(db, DEP)).toBe(true);
   });
 
+  test("a dependency with no recorded registry source is never promoted by a registry install", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    db.run(
+      "UPDATE extension SET source_registry = NULL, source_root_fingerprint = NULL, source_channel = NULL WHERE id = ?",
+      [DEP],
+    );
+    expect(getExtensionSource(db, DEP)).toBeUndefined();
+    const ledgerBefore = egressRows();
+    urls = [];
+    asked = [];
+    expect(await codeOf(installFromRegistry(planDeps(), { id: DEP }))).toBe(
+      "ERR_REGISTRY_ALREADY_INSTALLED",
+    );
+    expect(urls).toEqual([]);
+    expect(egressRows()).toBe(ledgerBefore);
+    expect(asked).toHaveLength(0);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+  });
+
   test("an explicit install of an explicitly installed package is still refused", async () => {
     await mainWithDep();
     await installFromRegistry(planDeps(), { id: ID, registry: "main" });

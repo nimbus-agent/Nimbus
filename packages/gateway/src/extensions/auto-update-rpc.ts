@@ -51,6 +51,13 @@ export function runGrantNoteFor(id: string): string {
   return `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
 }
 
+/**
+ * The consent note an update shows when it turns an extension holding a run grant into a starter
+ * pack: the grant goes, and `approve` refuses a pack, so the re-approve note would mislead.
+ */
+export const STARTER_PACK_UPDATE_NOTE =
+  "The new version is a starter pack: it has no code to run, and its approval to run is removed.";
+
 /** R6 for an update: never a badge for code whose signature did not verify. */
 function updateBadge(cached: AvailableUpdate, deps: AutoUpdateRpcDeps): VerifiedPublisher | null {
   if (cached.verificationStatus !== "verified") return null;
@@ -104,7 +111,10 @@ function buildUpdateAction(
       // Never `*Key`-named: the executor's prompt redacts such fields (`SENSITIVE_PAYLOAD_KEY`).
       sourceRegistry: cached.sourceRegistry,
       rootFingerprint: cached.rootFingerprint,
-      ...(hasRunGrant && { runGrantNote: runGrantNoteFor(cached.id) }),
+      ...(hasRunGrant && {
+        runGrantNote:
+          cached.toStarterPack === true ? STARTER_PACK_UPDATE_NOTE : runGrantNoteFor(cached.id),
+      }),
       // A publisher key change, stated in the prompt (fingerprints only; never `*Key`-named).
       ...publisherChangeFields(cached),
       // A downgrade restores a local previous version, which the update's key does not describe.

@@ -3,27 +3,35 @@
  * `@nimbus-dev/registry-format`'s `manifest.coverage.test.ts`.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import {
   EXTENSION_MANIFEST_FILENAME,
   EXTENSION_MANIFEST_FILENAME_LEGACY,
+  installedManifestKind,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 
 const dirs: string[] = [];
 afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) rmDirWithRetry(d);
+});
+
+function tempDir(): string {
+  const d = mkdtempSync(join(tmpdir(), "nimbus-manifest-cov-"));
+  dirs.push(d);
+  return d;
+}
+
+describe("installedManifestKind", () => {
+  test("a directory with no manifest throws", () => {
+    expect(() => installedManifestKind(tempDir())).toThrow("extension manifest missing");
+  });
 });
 
 describe("resolveExtensionManifestPath", () => {
-  function tempDir(): string {
-    const d = mkdtempSync(join(tmpdir(), "nimbus-manifest-cov-"));
-    dirs.push(d);
-    return d;
-  }
-
   test("a directory with no manifest resolves to undefined", () => {
     expect(resolveExtensionManifestPath(tempDir())).toBeUndefined();
   });
