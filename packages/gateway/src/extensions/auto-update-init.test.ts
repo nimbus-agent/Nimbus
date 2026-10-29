@@ -17,6 +17,7 @@ import {
   buildTestRegistry,
   PUBLISHER_SEED,
   resignIndex,
+  type TestVersion,
 } from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
@@ -366,15 +367,14 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
   });
 
   /** Installs 1.0.0 from a local registry that also carries 1.2.0, and builds the runtime. */
-  async function installedFromRegistry() {
+  async function installedFromRegistry(
+    versions: TestVersion[] = [{ version: "1.0.0" }, { version: "1.2.0" }],
+  ) {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-reg-"));
     db = freshDb();
     const regDir = join(tmpRoot, "registry");
     const extensionsDir = join(tmpRoot, "extensions");
-    const reg = await buildTestRegistry(regDir, {
-      id: ID,
-      versions: [{ version: "1.0.0" }, { version: "1.2.0" }],
-    });
+    const reg = await buildTestRegistry(regDir, { id: ID, versions });
     insertRegistry(db, {
       name: "main",
       url: regDir,
@@ -513,6 +513,22 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       (db.query("SELECT entry_hash FROM extension WHERE id = ?").get(ID) as { entry_hash: string })
         .entry_hash,
     ).toBe(v.entryHash);
+  });
+
+  it("applies an update from a starter pack to code, and the row's kind follows it", async () => {
+    // A pack with no dependencies needs a connector requirement to be a valid pack.
+    const { runtime, extensionsDir } = await installedFromRegistry([
+      { version: "1.0.0", starterPack: true, requires: { connectors: ["github"] } },
+      { version: "1.2.0" },
+    ]);
+    expect(kindOf()).toBe("starter-pack");
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    await runtime.deps.performUpgrade(cached);
+    expect(installedVersion()).toBe("1.2.0");
+    expect(kindOf()).toBe("extension");
+    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
   });
 
   it("detect → remove the registry → next tick: the update is no longer offered", async () => {

@@ -11,6 +11,7 @@ import {
   setupFreshExtensionDb,
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import {
   insertExtensionRow,
   listExtensions,
@@ -406,6 +407,49 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       removeExtensionVersionStore(extensionsDir, id);
       dbRun(db, "DELETE FROM extension WHERE 1=1");
       db.close();
+    }
+  });
+
+  test("crash recovery records the promoted version's kind when it differs from the row's", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    const id = "com.example.crash-kind";
+    try {
+      // The crash interrupted a pack -> code update: the row says 1.1.0 (code), and the only
+      // version left to promote is the 1.0.0 starter pack, whose entry is its manifest.
+      const prevDir = prevVersionDir(extensionsDir, id, "1.0.0");
+      mkdirSync(prevDir, { recursive: true });
+      writeFileSync(
+        join(prevDir, "nimbus.extension.json"),
+        JSON.stringify({
+          id,
+          version: "1.0.0",
+          kind: "starter-pack",
+          dependsOn: { "com.example.member": "^1.0.0" },
+        }),
+        "utf8",
+      );
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: join(extensionsDir, id),
+        manifest_hash: "a".repeat(64),
+        entry_hash: "b".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+        kind: "extension",
+      });
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      const row = listExtensions(db).find((r) => r.id === id);
+      expect(row?.version).toBe("1.0.0");
+      expect(row?.kind).toBe("starter-pack");
+    } finally {
+      removeExtensionVersionStore(extensionsDir, id);
+      db.close();
+      rmDirWithRetry(extensionsDir);
     }
   });
 
