@@ -2,7 +2,7 @@
 import { ROLE_SENTINELS } from "./platform/runtime-layout.ts";
 
 /**
- * The gateway executable has four roles, selected by argv[2]. A compiled binary ships alone — no
+ * The gateway executable has five roles, selected by argv[2]. A compiled binary ships alone — no
  * bun on PATH, no source tree beside it — so the only program it can spawn is itself.
  *
  * This file stays THIN on purpose. Each role is reached through a dynamic import so that a
@@ -30,6 +30,9 @@ if (sentinel === ROLE_SENTINELS.sandbox) {
 } else if (sentinel === ROLE_SENTINELS.extension) {
   const { runExtensionEntry } = await import("./extensions/run-extension-entry.ts");
   await runExtensionEntry(roleArgs[0]);
+} else if (sentinel === ROLE_SENTINELS.eval) {
+  const { runEvalRole } = await import("./extensions/eval/eval-role.ts");
+  await runEvalRole(roleArgs);
 } else {
   const { main } = await import("./gateway-main.ts");
   try {

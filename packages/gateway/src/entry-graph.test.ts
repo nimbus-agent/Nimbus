@@ -96,6 +96,12 @@ describe("the entry shim", () => {
     expect(graph.filter((f) => STATEFUL.test(f))).toEqual([]);
   });
 
+  test("the eval role never reaches db/, vault/ or ipc/", () => {
+    const graph = [...transitiveStaticGraph(resolve(SRC, "extensions", "eval", "eval-role.ts"))];
+    expect(graph.length).toBeGreaterThan(0);
+    expect(graph.filter((f) => STATEFUL.test(f))).toEqual([]);
+  });
+
   // Red-prove: without this, a walker that silently resolves nothing would make the assertion
   // above pass vacuously. The gateway role MUST reach the stateful modules.
   test("the walker really does traverse — the gateway role reaches db/vault/ipc", () => {

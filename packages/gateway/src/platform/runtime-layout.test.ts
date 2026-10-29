@@ -106,9 +106,9 @@ describe("selfSpawn", () => {
     });
   });
 
-  test("the three sentinels are distinct and namespaced", () => {
+  test("the four sentinels are distinct and namespaced", () => {
     const all = Object.values(ROLE_SENTINELS);
-    expect(new Set(all).size).toBe(3);
+    expect(new Set(all).size).toBe(4);
     for (const s of Object.values(ROLE_SENTINELS)) {
       expect(s.startsWith("__nimbus-")).toBe(true);
     }
