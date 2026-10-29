@@ -760,7 +760,11 @@ describe.skipIf(!sandboxAvailable)("an approved extension over a real gateway", 
     plantBunAutoloads(leaf);
     expect(existsSync(leaf)).toBe(true);
 
-    expect(await client.call<{ ok: boolean }>("extension.remove", { id: EXTENSION_ID })).toEqual({
+    expect(
+      await client.call<{ ok: boolean; orphanedDependencies?: string[] }>("extension.remove", {
+        id: EXTENSION_ID,
+      }),
+    ).toEqual({
       ok: true,
       orphanedDependencies: [],
     });
