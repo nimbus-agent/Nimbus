@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
-
 import {
   assertSafeExtensionId,
   isStarterPack,
@@ -23,6 +22,7 @@ import {
   RegistryError,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
+import type { Logger } from "pino";
 
 import {
   deleteExtensionById,
@@ -35,6 +35,7 @@ import {
 } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "../util/invisible-text.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import {
@@ -465,10 +466,9 @@ export function promoteInstalledDependency(db: Database, row: ExtensionRow): Pro
 /**
  * A local install promotes an installed dependency only when the folder holds the SAME package: the
  * same id, version and manifest bytes (`manifest_hash`). A different package that reuses the id is
- * not taken as the owner keeping the installed one; it falls through to the ordinary install path,
- * unchanged (another version is refused as already installed; the same version still goes to the
- * owner's approval) and the marker stays. The plain local install only: a registry-driven call has
- * already refused an installed id before fetching.
+ * not taken as the owner keeping the installed one: it is refused as already installed, before any
+ * approval (see {@link assertNotAlreadyInstalledLocally}), and the marker stays. The plain local
+ * install only: a registry-driven call has already refused an installed id before fetching.
  */
 function promotableLocalDependency(
   options: InstallFromLocalOptions,
@@ -481,6 +481,23 @@ function promotableLocalDependency(
   return sha256HexEqualConstantTime(row.manifest_hash, sha256HexOfBytes(manifestBytes))
     ? row
     : undefined;
+}
+
+/**
+ * A plain local install of an id that is already installed, and that did not qualify for promotion,
+ * can only end refused (its install directory exists). Refuse it before solving and before the
+ * owner is asked, rather than after an approval it could never use.
+ */
+function assertNotAlreadyInstalledLocally(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+): void {
+  if (options.registryPlan !== undefined || options.sourceRegistry !== undefined) return;
+  const row = listExtensions(options.db).find((r) => r.id === manifest.id);
+  if (row === undefined) return;
+  throw new Error(
+    `${row.id}@${row.version} is already installed; remove it first (nimbus extension remove ${row.id}) to reinstall it`,
+  );
 }
 
 /**
@@ -572,6 +589,22 @@ type NodeInstallOptions = {
  */
 type CreatedPackage = { readonly dir: string; id: string | null };
 
+/**
+ * Whether an extension row owns `dest`, the install directory of `id`: a row with that id, or one
+ * whose `install_path` resolves to `dest`. Matching the id as well means a live install is never
+ * called a leftover when its stored path differs from `dest` only in case, or the extensions
+ * directory has moved.
+ */
+function installDirectoryIsOwned(db: Database, id: string, dest: string): boolean {
+  const target = resolve(dest);
+  return listExtensions(db).some((r) => r.id === id || resolve(r.install_path) === target);
+}
+
+/** The refusal for a directory no extension row owns (see {@link installDirectoryIsOwned}). */
+function leftoverDirectoryMessage(dest: string): string {
+  return `a directory from an earlier failed install is in the way at ${dest}; remove it and retry`;
+}
+
 async function installRootNode(
   options: NodeInstallOptions,
   sourceResolved: string,
@@ -580,7 +613,14 @@ async function installRootNode(
 ): Promise<SingleInstallResult> {
   const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
   if (existsSync(dest)) {
-    throw new Error(`extension already installed at ${dest}`);
+    // A directory no extension row owns is what an earlier install left behind (a rollback that
+    // could not remove it, or a crash), not an installed extension: say which, so the owner knows
+    // removing the directory is safe.
+    throw new Error(
+      installDirectoryIsOwned(options.db, manifest.id, dest)
+        ? `extension already installed at ${dest}`
+        : leftoverDirectoryMessage(dest),
+    );
   }
 
   scanForSymlinks(sourceResolved);
@@ -623,6 +663,59 @@ export function rollbackFailuresOf(e: unknown): readonly RollbackFailure[] {
   if (typeof e !== "object" || e === null || !("rollbackFailures" in e)) return [];
   const failures: unknown = e.rollbackFailures;
   return Array.isArray(failures) ? (failures as RollbackFailure[]) : [];
+}
+
+/** C0 controls plus every invisible or bidi format character (`FORMAT_INVISIBLE_RANGES`, which covers DEL and C1). */
+const NOTE_UNSAFE_RE = rangesRegExp([[0x0000, 0x001f], ...FORMAT_INVISIBLE_RANGES]);
+
+/**
+ * The rollback-incomplete note an install refusal carries to the owner: ` (rollback incomplete:
+ * <path or id>, …)` naming what is left behind — the directory a failed `removeDirectory` left, else
+ * the id whose row or edges remain — each once, control and invisible format characters stripped
+ * (a path is owner-visible text, so a bidi override must not reorder it); `""` when the error
+ * carries no rollback failure.
+ */
+export function rollbackIncompleteNote(e: unknown): string {
+  const detail = rollbackIncompleteDetail(e);
+  return detail === "" ? "" : ` (${detail})`;
+}
+
+/** The note without its leading space and parentheses, `rollback incomplete: <path or id>, …`; `""` when complete. */
+export function rollbackIncompleteDetail(e: unknown): string {
+  const failures = rollbackFailuresOf(e);
+  if (failures.length === 0) return "";
+  const left = failures.map((f) =>
+    (f.step === "removeDirectory" ? f.dir : (f.id ?? f.dir)).replace(NOTE_UNSAFE_RE, ""),
+  );
+  return `rollback incomplete: ${[...new Set(left)].join(", ")}`;
+}
+
+/**
+ * Where an install refusal is caught for the owner (an RPC result): a rollback that itself failed
+ * is logged as a warning with every failed step, and the returned note (see
+ * {@link rollbackIncompleteNote}) is appended to the message the owner sees. `""` (and no log)
+ * when the rollback was complete.
+ */
+export function reportIncompleteRollback(
+  logger: Pick<Logger, "warn">,
+  installing: string,
+  e: unknown,
+): string {
+  const note = rollbackIncompleteNote(e);
+  if (note === "") return note;
+  logger.warn(
+    {
+      installing,
+      rollbackFailures: rollbackFailuresOf(e).map((f) => ({
+        step: f.step,
+        id: f.id,
+        dir: f.dir,
+        error: f.error instanceof Error ? f.error.message : String(f.error),
+      })),
+    },
+    "extension install refused, and its rollback left packages behind",
+  );
+  return note;
 }
 
 /**
@@ -716,11 +809,15 @@ async function installStagedDependency(
 ): Promise<void> {
   // Another install got there while the plan was staged: an install race, refused as the plan's
   // up-front existence check refuses it (never read as a failed signature). The same check in
-  // `installRootNode` runs in this tick, so it can no longer be the one that fires.
-  if (existsSync(extensionInstallDirectory(options.extensionsDir, dep.id))) {
+  // `installRootNode` runs in this tick, so it can no longer be the one that fires. A directory no
+  // row owns is a leftover from an earlier failed install, and is named as one.
+  const depDir = extensionInstallDirectory(options.extensionsDir, dep.id);
+  if (existsSync(depDir)) {
     throw new RegistryError(
       "ERR_REGISTRY_INSTALL_REFUSED",
-      `${dep.id} was installed while this plan was being installed; the plan that would install ${dep.id}@${dep.version} is out of date`,
+      installDirectoryIsOwned(options.db, dep.id, depDir)
+        ? `${dep.id} was installed while this plan was being installed; the plan that would install ${dep.id}@${dep.version} is out of date`
+        : leftoverDirectoryMessage(depDir),
     );
   }
   const installed = await installRootNode(
@@ -833,10 +930,13 @@ export async function installPlanDependencies(
   const newDeps = plan.nodes.filter((n) => n.newlyInstalled && n.id !== rootId);
   const installedIds = new Set(listExtensions(options.db).map((r) => r.id));
   for (const node of newDeps) {
-    if (
-      installedIds.has(node.id) ||
-      existsSync(extensionInstallDirectory(options.extensionsDir, node.id))
-    ) {
+    const dir = extensionInstallDirectory(options.extensionsDir, node.id);
+    const dirInTheWay = !installedIds.has(node.id) && existsSync(dir);
+    if (dirInTheWay && !installDirectoryIsOwned(options.db, node.id, dir)) {
+      // A directory no row owns is a leftover from an earlier failed install, not an installed package.
+      throw new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", leftoverDirectoryMessage(dir));
+    }
+    if (installedIds.has(node.id) || dirInTheWay) {
       throw new RegistryError(
         "ERR_REGISTRY_INSTALL_REFUSED",
         `${node.id} is already installed; the plan that would install ${node.id}@${node.version} is out of date`,
@@ -1342,6 +1442,7 @@ export async function installExtensionFromLocalDirectory(
   // solving and before the owner is asked, since it installs nothing.
   const promotable = promotableLocalDependency(options, manifest, manifestBytes);
   if (promotable !== undefined) return promoteInstalledDependency(options.db, promotable);
+  assertNotAlreadyInstalledLocally(options, manifest);
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 

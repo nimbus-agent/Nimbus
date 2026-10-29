@@ -16,7 +16,17 @@ interface ExtensionRowProps {
 function ExtensionRow({ ext, disabled, onToggle, onRemove }: Readonly<ExtensionRowProps>) {
   return (
     <tr>
-      <td className="py-2 px-3 font-mono text-sm">{ext.id}</td>
+      <td className="py-2 px-3 font-mono text-sm">
+        {ext.id}
+        {ext.orphaned === true && (
+          <span
+            data-testid="orphaned-marker"
+            className="ml-2 inline-block px-1.5 py-0.5 rounded text-xs bg-amber-100 text-amber-700 font-sans"
+          >
+            installed only as a dependency; nothing needs it now
+          </span>
+        )}
+      </td>
       <td className="py-2 px-3 text-sm">{ext.version}</td>
       <td className="py-2 px-3">
         <span
@@ -61,9 +71,12 @@ export function Marketplace() {
 
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [orphanNotice, setOrphanNotice] = useState<string | null>(null);
 
   async function handleToggle(ext: ExtensionSummary) {
     if (actionInFlight) return;
+    // The notice describes the last removal; the next action makes it stale.
+    setOrphanNotice(null);
     setActionInFlight(ext.id);
     try {
       if (ext.enabled === 1) {
@@ -79,9 +92,18 @@ export function Marketplace() {
 
   async function handleRemove(ext: ExtensionSummary) {
     if (!globalThis.confirm(`Remove extension "${ext.id}"?`)) return;
+    setOrphanNotice(null);
     setActionInFlight(ext.id);
     try {
-      await createIpcClient().extensionRemove(ext.id);
+      const res = await createIpcClient().extensionRemove(ext.id);
+      const orphans = Array.isArray(res?.orphanedDependencies)
+        ? res.orphanedDependencies.filter((o): o is string => typeof o === "string")
+        : [];
+      setOrphanNotice(
+        orphans.length === 0
+          ? null
+          : `Also installed only for ${ext.id}: ${orphans.join(", ")}. Remove them from the CLI with nimbus extension remove <id>.`,
+      );
       refetch();
     } finally {
       setActionInFlight(null);
@@ -90,6 +112,7 @@ export function Marketplace() {
 
   async function handleInstall() {
     setInstallError(null);
+    setOrphanNotice(null);
     const picked = await openDialog({ directory: true, multiple: false });
     if (typeof picked !== "string" || picked.trim() === "") return;
     try {
@@ -102,6 +125,21 @@ export function Marketplace() {
 
   return (
     <div className="p-6 flex flex-col gap-4">
+      {orphanNotice !== null && (
+        <div className="flex items-start gap-2">
+          <p role="status" data-testid="orphan-notice" className="text-sm text-amber-700">
+            {orphanNotice}
+          </p>
+          <button
+            type="button"
+            aria-label="Dismiss notice"
+            onClick={() => setOrphanNotice(null)}
+            className="text-sm text-neutral-500"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Extensions</h1>
         <button

@@ -43,6 +43,20 @@ function blockedLines(extensions: readonly unknown[]): string[] {
 }
 
 /**
+ * One `[warn]` per extension the gateway flags `orphaned`: installed only as a dependency and
+ * nothing needs it now. Surfaced, never removed; an older gateway sends no flag and gets no line.
+ */
+function orphanLines(extensions: readonly unknown[]): string[] {
+  return extensions.flatMap((e: unknown) => {
+    if (!isRecord(e) || typeof e["id"] !== "string" || e["orphaned"] !== true) return [];
+    const id = stripControl(e["id"]);
+    return [
+      `[warn] Extensions: ${id} was installed only as a dependency and nothing needs it now; remove it with: nimbus extension remove ${id}`,
+    ];
+  });
+}
+
+/**
  * One `[warn]` per requirement an installed extension has that is not connected, or never synced.
  * Only `not_connected` is unmet (spec § 5.4): `unmet` says whether any line raises the exit code.
  */
@@ -77,9 +91,11 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
   }
   const blockedOnly = blockedLines(raw["extensions"]);
   const needs = requirementWarnLines(raw["extensions"]);
-  const blocked = [...blockedOnly, ...needs.lines];
-  // A never-synced requirement warns but is not unmet; a blocked extension or an unconnected one is.
-  const baseExit = blockedOnly.length > 0 || needs.unmet ? 1 : 0;
+  const orphans = orphanLines(raw["extensions"]);
+  const blocked = [...blockedOnly, ...needs.lines, ...orphans];
+  // A never-synced requirement warns but is not unmet; a blocked extension, an unconnected one or
+  // an unneeded dependency is.
+  const baseExit = blockedOnly.length > 0 || needs.unmet || orphans.length > 0 ? 1 : 0;
   if (raw["runtimeEnabled"] === false) {
     return { lines: blocked, exit: baseExit };
   }

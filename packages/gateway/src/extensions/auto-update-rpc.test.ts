@@ -599,6 +599,77 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     expect(audits[0]?.payload["id"]).toBe("com.example.a");
   });
 
+  it.each([
+    ["an update", "1.1.0", "extension.autoUpdate.failed"],
+    ["a downgrade", "1.0.0", "extension.downgrade.failed"],
+  ])(
+    "%s whose rollback failed is warned and shown to the owner as detail",
+    async (_what, toVersion, auditType) => {
+      const deps = baseDeps();
+      if (toVersion === "1.0.0") {
+        deps.getInstalledVersion = async () => "1.1.0";
+        const cur = deps.cache.get("com.example.a")!;
+        deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+        deps.hasPrevVersion = async () => true;
+      }
+      const audits: Array<{ type: string; payload: Record<string, unknown> }> = [];
+      deps.appendAudit = async (type, payload) => {
+        audits.push({ type, payload });
+      };
+      const warned: unknown[][] = [];
+      deps.logger = { warn: (...args: unknown[]) => void warned.push(args) };
+      const failed = () =>
+        Object.assign(new Error("swap_failed: rename EBUSY"), {
+          rollbackFailures: [
+            {
+              step: "removeDirectory",
+              id: "acme.dep",
+              dir: `/x/${String.fromCodePoint(0x202e)}acme.dep`,
+              error: new Error("EBUSY"),
+            },
+          ],
+        });
+      deps.performUpgrade = async () => {
+        throw failed();
+      };
+      deps.performDowngrade = async () => {
+        throw failed();
+      };
+      const res = await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion },
+        deps,
+      );
+      expect(res).toEqual({
+        applied: false,
+        reason: "swap_failed",
+        detail: "rollback incomplete: /x/acme.dep",
+      });
+      expect(audits[0]?.type).toBe(auditType);
+      expect(audits[0]?.payload["message"]).toBe(
+        "swap_failed: rename EBUSY (rollback incomplete: /x/acme.dep)",
+      );
+      expect(warned).toHaveLength(1);
+      expect(warned[0]?.[0]).toMatchObject({ installing: "com.example.a" });
+    },
+  );
+
+  it("a failure whose rollback completed carries no detail and warns nothing", async () => {
+    const deps = baseDeps();
+    const warned: unknown[][] = [];
+    deps.logger = { warn: (...args: unknown[]) => void warned.push(args) };
+    deps.performUpgrade = async () => {
+      throw new Error("swap_failed: rename EBUSY");
+    };
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(res).toEqual({ applied: false, reason: "swap_failed" });
+    expect(warned).toHaveLength(0);
+  });
+
   // line 140 non-Error throw: throw a non-Error value → phase = "internal_error"
   it("returns internal_error and uses phase=internal_error when performUpgrade throws a non-Error value", async () => {
     const deps = baseDeps();

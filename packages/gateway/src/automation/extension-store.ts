@@ -125,6 +125,15 @@ export function setInstalledAsDependency(db: Database, id: string, asDependency:
   ]);
 }
 
+/** V78: ids of every extension installed as a dependency, sorted; empty below V78. */
+export function listInstalledAsDependencyIds(db: Database): string[] {
+  if (readIndexedUserVersion(db) < INSTALLED_AS_DEPENDENCY_SCHEMA_VERSION) return [];
+  const rows = db
+    .query("SELECT id FROM extension WHERE installed_as_dependency = 1 ORDER BY id")
+    .all() as Array<{ id: string }>;
+  return rows.map((r) => r.id);
+}
+
 /** V78: whether the extension was installed as a dependency; false below V78. */
 export function isInstalledAsDependency(db: Database, id: string): boolean {
   if (readIndexedUserVersion(db) < INSTALLED_AS_DEPENDENCY_SCHEMA_VERSION) {

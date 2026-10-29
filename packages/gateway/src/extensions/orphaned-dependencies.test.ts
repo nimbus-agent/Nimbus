@@ -3,7 +3,11 @@ import { describe, expect, test } from "bun:test";
 import { insertExtensionRow, setInstalledAsDependency } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { clearDeps, recordInstall } from "./dependency-store.ts";
-import { orphanedAfterEdgeChange, orphanedDependencies } from "./orphaned-dependencies.ts";
+import {
+  orphanedAfterEdgeChange,
+  orphanedDependencies,
+  unneededDependencies,
+} from "./orphaned-dependencies.ts";
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -203,5 +207,31 @@ describe("orphanedAfterEdgeChange", () => {
     deps(db, "z", ["a"]);
     deps(db, "root", []);
     expect(orphanedAfterEdgeChange(db, "root", ["a", "z"])).toEqual(["z", "a"]);
+  });
+});
+
+describe("unneededDependencies", () => {
+  test("an edge-less dependency-installed row is reported; explicit and pack rows are not", () => {
+    const db = freshDb();
+    add(db, "left.over", { asDependency: true });
+    add(db, "explicit");
+    add(db, "chosen.pack", { kind: "starter-pack" });
+    expect(unneededDependencies(db)).toEqual(["left.over"]);
+  });
+
+  test("a row any edge still names is never reported", () => {
+    const db = freshDb();
+    add(db, "pack", { kind: "starter-pack" });
+    add(db, "named", { asDependency: true });
+    add(db, "free", { asDependency: true });
+    deps(db, "pack", ["named"]);
+    expect(unneededDependencies(db)).toEqual(["free"]);
+  });
+
+  test("a row named by an edge whose dependent has no extension row is never reported", () => {
+    const db = freshDb();
+    add(db, "named", { asDependency: true });
+    deps(db, "ghost.dependent", ["named"]);
+    expect(unneededDependencies(db)).toEqual([]);
   });
 });

@@ -4,6 +4,7 @@ import {
   publisherKeyFingerprint,
   RegistryError,
 } from "@nimbus-dev/registry-format";
+import pino, { type Logger } from "pino";
 import { updateConflictsHint } from "./auto-update.ts";
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
@@ -18,6 +19,7 @@ import {
   type UpgradeOutcome,
 } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import { reportIncompleteRollback, rollbackIncompleteDetail } from "./install-from-local.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { publisherBadgeText, type VerifiedPublisher } from "./trust/verified-publisher.ts";
@@ -74,7 +76,14 @@ export interface AutoUpdateRpcDeps {
    * detection takes the badge away at once. Absent ⇒ every update shows as unverified.
    */
   verifiedPublisherOf?: (cached: AvailableUpdate) => VerifiedPublisher | null;
+  /** Test seam: where an incomplete update or downgrade rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }
+
+const autoUpdateRpcLog = pino({
+  name: "auto-update-rpc",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 const mutex = new Map<string, Promise<void>>();
 
@@ -476,6 +485,10 @@ async function applyUpdateUnderMutex(
     return appliedResult(cached, approved, orphaned, !isDowngrade && hadRunGrant);
   } catch (e) {
     const phase = e instanceof Error ? extractPhase(e.message) : "internal_error";
+    // A rollback that left packages behind is named, never swallowed (e.g. a `swap_failed`): warned
+    // with every failed step, in the audit message, and to the owner as `detail`.
+    const note = reportIncompleteRollback(deps.logger ?? autoUpdateRpcLog, cached.id, e);
+    const detail = rollbackIncompleteDetail(e);
     await deps.appendAudit(
       isDowngrade ? "extension.downgrade.failed" : "extension.autoUpdate.failed",
       {
@@ -483,11 +496,11 @@ async function applyUpdateUnderMutex(
         fromVersion: cached.fromVersion,
         toVersion: cached.toVersion,
         phase,
-        message: e instanceof Error ? e.message : String(e),
+        message: `${e instanceof Error ? e.message : String(e)}${note}`,
       },
     );
     // The owner sees the phase the audit row records (a tampered package is `sha256_mismatch`).
-    return { applied: false, reason: phase };
+    return { applied: false, reason: phase, ...(detail === "" ? {} : { detail }) };
   } finally {
     mutex.delete(cached.id);
     releaseMutex();

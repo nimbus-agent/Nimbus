@@ -61,6 +61,18 @@ describe("requirementLines", () => {
   });
 });
 
+describe("requirementLines, control characters in a fix", () => {
+  test("a fix carrying an ANSI escape is stripped", () => {
+    const out = requirementLines(
+      parseRequirementStatuses([
+        entry("github", "not_connected", ["nimbus connector auth \u001b[31mgithub"]),
+      ]),
+    );
+    expect(out).toEqual(["  github: not connected — run: nimbus connector auth [31mgithub"]);
+    expect(out.join("")).not.toContain("\u001b");
+  });
+});
+
 describe("parseRequirementStatuses", () => {
   test("drops a malformed entry and keeps the rest", () => {
     const out = parseRequirementStatuses([

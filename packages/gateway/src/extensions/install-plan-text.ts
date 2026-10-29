@@ -5,7 +5,7 @@
  * through `oneLine` first: a control, line-break, invisible or bidi character is shown as an escape,
  * never rendered, and cannot forge a line of the prompt.
  */
-import { FORMAT_INVISIBLE_RANGES } from "../mcp-sink/invisible-text.ts";
+import { FORMAT_INVISIBLE_RANGES } from "../util/invisible-text.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import type { ExtensionManifest } from "./manifest.ts";
 

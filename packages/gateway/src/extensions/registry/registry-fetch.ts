@@ -4,7 +4,6 @@ import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
   RegistryError,
-  type RegistryErrorCode,
   type RegistryIndex,
   readRegistryStatements,
   registryIndexDigest,
@@ -20,8 +19,12 @@ import {
   currentRegistryFloor,
   recordAnyRegistryFetch,
 } from "./builtin-registry.ts";
+import { FETCH_FAILURE_CODES } from "./fetch-failure-codes.ts";
 import type { RegistryRow } from "./registry-store.ts";
 import { resolveRegistryLocation, resolveRegistryResource } from "./registry-transport.ts";
+
+/** Re-exported for existing importers; the set lives in a leaf module (no I/O). */
+export { FETCH_FAILURE_CODES };
 
 export interface RegistryFetchDeps {
   db: Database;
@@ -55,15 +58,6 @@ export type RegistryFetchMeta = {
   version?: string;
   maxBytes: number;
 };
-
-/** Registry errors that mean the bytes could not be FETCHED, as opposed to fetched and refused. */
-export const FETCH_FAILURE_CODES: ReadonlySet<RegistryErrorCode> = new Set<RegistryErrorCode>([
-  "ERR_REGISTRY_UNREACHABLE",
-  "ERR_REGISTRY_AIR_GAP",
-  "ERR_REGISTRY_TRANSPORT_REFUSED",
-  "ERR_REGISTRY_TOO_LARGE",
-  "ERR_REGISTRY_NOT_FOUND",
-]);
 
 const FETCH_TIMEOUT_MS = 30_000;
 const MAX_REDIRECTS = 3;

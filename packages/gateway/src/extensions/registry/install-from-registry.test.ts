@@ -281,16 +281,30 @@ describe("installFromRegistry", () => {
 
   test("the nimbus-reg temp dir is gone after a success and after a refusal", async () => {
     await setup([{ version: "1.0.0" }]);
-    const before = new Set(readdirSync(tmpdir()).filter((n) => n.startsWith("nimbus-reg-")));
-    await installFromRegistry(deps(), { id: ID });
+    const tempRoot = join(tmp, "reg-temp-root");
+    mkdirSync(tempRoot);
+    // While the owner is asked, the staging directory exists under `tempRoot` (not the OS tmpdir):
+    // an empty `tempRoot` afterwards proves the cleanup only because the install used it.
+    const inFlight: string[][] = [];
+    const watching = (approve: boolean): InstallFromRegistryDeps => ({
+      ...deps(approve),
+      tempRoot,
+      approve: async () => {
+        inFlight.push(readdirSync(tempRoot));
+        return approve;
+      },
+    });
+    await installFromRegistry(watching(true), { id: ID });
     resetInstalled();
-    await expect(installFromRegistry(deps(false), { id: ID })).rejects.toThrow(
+    await expect(installFromRegistry(watching(false), { id: ID })).rejects.toThrow(
       "ERR_EXTENSION_INSTALL_NOT_APPROVED",
     );
-    const after = readdirSync(tmpdir()).filter(
-      (n) => n.startsWith("nimbus-reg-") && !before.has(n),
-    );
-    expect(after).toEqual([]);
+    expect(inFlight).toHaveLength(2);
+    for (const names of inFlight) {
+      expect(names).toHaveLength(1);
+      expect(names[0]).toStartWith("nimbus-reg-");
+    }
+    expect(readdirSync(tempRoot)).toEqual([]);
   });
 
   test("an index entryHash that does not match the packaged entry is refused before any prompt", async () => {

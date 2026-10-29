@@ -587,6 +587,27 @@ describe("extension.list", () => {
     expect(value.extensions.map((e) => e.id)).toEqual(["com.example.a", "com.example.b"]);
   });
 
+  test("flags a dependency-installed row no edge names as orphaned, and only that one", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.pack", "/p/pack");
+    seedExtensionRow(db, "com.example.named", "/p/named");
+    seedExtensionRow(db, "com.example.left", "/p/left");
+    setInstalledAsDependency(db, "com.example.named", true);
+    setInstalledAsDependency(db, "com.example.left", true);
+    recordInstall(
+      db,
+      "com.example.pack",
+      "1.0.0",
+      [{ id: "com.example.named", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
+      1,
+    );
+    const out = await dispatchAutomationRpc({ method: "extension.list", params: {}, db });
+    const value = (out as { value: { extensions: Array<{ id: string; orphaned?: true }> } }).value;
+    expect(value.extensions.filter((e) => e.orphaned === true).map((e) => e.id)).toEqual([
+      "com.example.left",
+    ]);
+  });
+
   test("filter=needs-reinstall returns only pre-T2 disabled extensions", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
@@ -1690,5 +1711,46 @@ describe("extension.checkForUpdates / extension.update (T2 PR 3)", () => {
     } finally {
       rmSync(extensionsDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("extension.install names an incomplete rollback", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-rollback-"));
+  });
+  afterEach(() => {
+    rmDirWithRetry(tmp);
+  });
+
+  test("a refusal whose rollback failed is warned and carries the rollback-incomplete note", async () => {
+    const src = join(tmp, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "com.example.half", version: "1.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const db = seededDb();
+    // The edge write after the row commits fails, and so does the rollback's own edge clear.
+    db.run("DROP TABLE extension_dependency");
+    const warned: unknown[] = [];
+    let err: unknown;
+    try {
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db,
+        extensionsDir: join(tmp, "installed"),
+        ownerGate: async () => true,
+        logger: { warn: (...args: unknown[]) => void warned.push(args) },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(AutomationRpcError);
+    expect((err as Error).message).toEndWith(" (rollback incomplete: com.example.half)");
+    expect(warned).toHaveLength(1);
+    db.close();
   });
 });

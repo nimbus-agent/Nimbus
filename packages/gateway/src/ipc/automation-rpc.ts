@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import pino, { type Logger } from "pino";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -76,8 +77,9 @@ import {
   installExtensionFromLocalDirectory,
   installedKindOf,
   isPromotedInstall,
+  reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
-import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
+import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -193,7 +195,14 @@ interface AutomationCtx {
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
   requirementStatuses?: ConnectorRequirementStatusesFn;
+  /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }
+
+const automationRpcLog = pino({
+  name: "automation-rpc",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 type AutomationHandler = (
   rec: Record<string, unknown> | undefined,
@@ -563,6 +572,8 @@ type ExtensionListItem = ExtensionRow &
       | SignatureDisableReason;
     needs_reinstall?: boolean;
     signature_disabled?: boolean;
+    /** Installed only as a dependency and no edge names it now; the owner removes it. */
+    orphaned?: true;
   };
 
 /**
@@ -629,12 +640,14 @@ function decorateExtensionList(
   isRunning: (id: string) => boolean,
 ): ExtensionListItem[] {
   const preT2 = new Set(preT2DisabledIds());
+  const unneeded = new Set(unneededDependencies(db));
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
     const run = {
       ...extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id), trustBlocksOf(db, r)),
       verifiedPublisher: verifiedPublisherOf(db, r),
       ...publisherOf(r),
+      ...(unneeded.has(r.id) ? { orphaned: true as const } : {}),
     };
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };
@@ -894,7 +907,9 @@ async function handleExtensionInstall(
       approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // A rollback that left packages behind is warned and named in the refusal (never swallowed).
+    const note = reportIncompleteRollback(ctx.logger ?? automationRpcLog, sourcePath, e);
+    const msg = `${e instanceof Error ? e.message : String(e)}${note}`;
     throw new AutomationRpcError(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
       msg,
@@ -1242,6 +1257,8 @@ export async function dispatchAutomationRpc(options: {
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
   requirementStatuses?: ConnectorRequirementStatusesFn;
+  /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -1263,6 +1280,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.requirementStatuses !== undefined && {
       requirementStatuses: options.requirementStatuses,
     }),
+    ...(options.logger !== undefined && { logger: options.logger }),
   };
   return await handler(asRecord(options.params), ctx);
 }

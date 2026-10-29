@@ -1349,6 +1349,8 @@ export interface UpdateApplyResultCli {
   readonly applied: boolean;
   readonly reason?: string;
   readonly hint?: string;
+  /** A failed update or downgrade whose rollback itself failed: what it left behind. Absent from an older gateway. */
+  readonly detail?: string;
   readonly jobId?: string;
   /** The packages an applied update installed. Absent from an older gateway. */
   readonly addedPackages?: readonly {
@@ -1465,8 +1467,15 @@ async function applyExtensionUpdate(
     .filter((line) => line !== "")
     .map((line) => `\n  hint: ${line}`)
     .join("");
-  opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}\n`);
+  opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}${detailPart(res)}\n`);
   return 1;
+}
+
+/** The `detail:` line of a failed update or downgrade (a rollback that left something behind); `""` without one. */
+function detailPart(res: UpdateApplyResultCli): string {
+  return res.detail === undefined || res.detail === ""
+    ? ""
+    : `\n  detail: ${stripControl(res.detail)}`;
 }
 
 /**
@@ -1606,7 +1615,7 @@ export async function runExtensionDowngradeWithCaller(
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
-  opts.writeStderr(`downgrade failed: ${res.reason ?? "unknown"}${hintPart}\n`);
+  opts.writeStderr(`downgrade failed: ${res.reason ?? "unknown"}${hintPart}${detailPart(res)}\n`);
   return 1;
 }
 

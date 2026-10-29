@@ -22,6 +22,15 @@ describe("doctorExtensionsLines — connector requirements", () => {
     extensions: [{ id: "acme.tool", runState: "ready", requires }],
   });
 
+  test("a fix carrying an ANSI escape is stripped from the warn line", () => {
+    const { lines } = doctorExtensionsLines(
+      withReqs([req("github", "not_connected", ["nimbus connector auth \u001b[31mgithub"])]),
+    );
+    const text = lines.join(" ");
+    expect(text).not.toContain("\u001b");
+    expect(text).toContain("nimbus connector auth [31mgithub");
+  });
+
   test("not_connected and never-synced each warn with their fix", () => {
     expect(
       doctorExtensionsLines(
@@ -197,7 +206,7 @@ describe("doctorExtensionsLines — blocked extensions (I48)", () => {
   test("comes before the not-approved line; control characters are stripped", () => {
     const r = doctorExtensionsLines({
       runtimeEnabled: true,
-      extensions: [blocked("c[31m", "extension.takedown", "r"), ext("d", "no_grant")],
+      extensions: [blocked("c\u001b[31m", "extension.takedown", "r"), ext("d", "no_grant")],
     });
     expect(r.lines).toHaveLength(2);
     expect(r.lines[0]).toContain("blocked");
@@ -355,5 +364,27 @@ describe("doctorExtensionsLines — starter packs", () => {
     expect(out.lines).toEqual([
       "[warn] Extensions: 1 installed extension(s) not approved to run, or approved for an older version (fx.code.a) — nimbus extension approve <id>",
     ]);
+  });
+});
+
+describe("doctorExtensionsLines, unneeded dependencies", () => {
+  test("an orphaned extension warns with the remove command and raises the exit code", () => {
+    expect(
+      doctorExtensionsLines({
+        runtimeEnabled: true,
+        extensions: [{ id: "left.over\u001b[2J", runState: "ready", orphaned: true }],
+      }),
+    ).toEqual({
+      lines: [
+        "[warn] Extensions: left.over[2J was installed only as a dependency and nothing needs it now; remove it with: nimbus extension remove left.over[2J",
+      ],
+      exit: 1,
+    });
+  });
+
+  test("an older gateway with no orphaned flag prints no orphan line", () => {
+    expect(
+      doctorExtensionsLines({ runtimeEnabled: true, extensions: [ext("a.b", "ready")] }),
+    ).toEqual({ lines: [], exit: 0 });
   });
 });

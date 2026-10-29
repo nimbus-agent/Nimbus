@@ -104,6 +104,8 @@ export interface InstallFromRegistryDeps {
   approve: ExtensionInstallApprover;
   /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
   planStagingRoot?: string;
+  /** Where the per-install download directory is created (default `os.tmpdir()`); a test seam. */
+  tempRoot?: string;
   /** The continuity table the approval's connector requirements bind through (default the baked one). */
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
@@ -466,7 +468,7 @@ export async function installFromRegistry(
   // Before any fetch: a promotion makes no network request and appends no egress row.
   const promotable = promotableRegistryDependency(deps.db, req);
   if (promotable !== undefined) return promoteInstalledDependency(deps.db, promotable);
-  const tmp = mkdtempSync(join(tmpdir(), "nimbus-reg-"));
+  const tmp = mkdtempSync(join(deps.tempRoot ?? tmpdir(), "nimbus-reg-"));
   try {
     const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);
     return await installVerifiedRegistryPackage(deps, pkg, req.channel ?? "stable");

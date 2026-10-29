@@ -28,6 +28,7 @@ import {
   listExtensions,
   setInstalledAsDependency,
 } from "../automation/extension-store.ts";
+import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
@@ -35,6 +36,8 @@ import {
   ExtensionInstallNotApprovedError,
   extensionInstallDirectory,
   installExtensionFromLocalDirectory,
+  reportIncompleteRollback,
+  rollbackIncompleteNote,
 } from "./install-from-local.ts";
 import { extractTarGzToDirectory, resolveSystemTarCommand } from "./package-extract.ts";
 import { PublisherKeyRequired, readPublisherKey, writePublisherKey } from "./publisher-keys.ts";
@@ -507,7 +510,7 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     }
   });
 
-  test("install fails when destination directory already exists from a previous install at a different version", async () => {
+  test("a destination directory no extension row owns is named as a leftover of a failed install", async () => {
     const { extensionsDir, src, db } = createExtensionInstallFixture(
       "nimbus-install-dest-exists-",
       "src-v1",
@@ -532,9 +535,100 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
     );
     writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
 
+    // db2 has no row for the directory: what is in the way is a leftover, not an installed extension.
+    const dest = join(extensionsDir, "dest.exists.ext");
     await expect(
       installExtensionFromLocalDirectory({ db: db2, extensionsDir, sourcePath: src2 }),
-    ).rejects.toThrow(/already installed at/i);
+    ).rejects.toThrow(
+      `a directory from an earlier failed install is in the way at ${dest}; remove it and retry`,
+    );
+    db2.close();
+  });
+
+  test("a destination directory an extension row owns still reads as already installed", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-dest-owned-",
+      "src-owned",
+    );
+    try {
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.owned.ext", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+      await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+      const dest = join(extensionsDir, "dest.owned.ext");
+      expect(listExtensions(db).map((r) => r.install_path)).toEqual([dest]);
+      // Another version through a registry-sourced call: it skips the plain local early refusal,
+      // so the root install itself meets the directory, which the installed row owns. Never the
+      // leftover copy, which would tell the owner to delete a live install.
+      const src2 = join(dirname(src), "src-owned-v2");
+      mkdirSync(join(src2, "dist"), { recursive: true });
+      writeFileSync(
+        join(src2, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.owned.ext", version: "2.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src2,
+          sourceRegistry: "main",
+          rootFingerprint: "ab".repeat(16),
+        }),
+      ).rejects.toThrow(`extension already installed at ${dest}`);
+      expect(existsSync(dest)).toBe(true);
+    } finally {
+      db.close();
+      rmDirWithRetry(dirname(src));
+    }
+  });
+
+  test("a row with the id owns the directory even when its stored path differs only in case", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-dest-case-",
+      "src-case",
+    );
+    try {
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.case.ext", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+      await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+      const dest = join(extensionsDir, "dest.case.ext");
+      // The stored path no longer resolves to `dest` as a string (a case difference on Windows, or
+      // a moved extensions directory): only the id still names the live install.
+      dbRun(db, "UPDATE extension SET install_path = ? WHERE id = ?", [
+        join(extensionsDir, "DEST.CASE.EXT"),
+        "dest.case.ext",
+      ]);
+      const src2 = join(dirname(src), "src-case-v2");
+      mkdirSync(join(src2, "dist"), { recursive: true });
+      writeFileSync(
+        join(src2, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.case.ext", version: "2.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src2,
+          sourceRegistry: "main",
+          rootFingerprint: "ab".repeat(16),
+        }),
+      ).rejects.toThrow(`extension already installed at ${dest}`);
+      expect(existsSync(dest)).toBe(true);
+    } finally {
+      db.close();
+      rmDirWithRetry(dirname(src));
+    }
   });
 
   test("manifest with absolute entry path is rejected", async () => {
@@ -2058,7 +2152,8 @@ describe("installExtensionFromLocalDirectory — an explicit install of a depend
   test("a different package reusing the dependency's id is not taken as keeping it", async () => {
     await withInstalled(async ({ db, extensionsDir, writeSource, asked, approve }) => {
       setInstalledAsDependency(db, ID, true);
-      // Another version: the ordinary install's refusal, unchanged.
+      const refusal = `${ID}@1.0.0 is already installed; remove it first (nimbus extension remove ${ID}) to reinstall it`;
+      // Another version: refused as already installed, before the owner is asked.
       const other = writeSource("other-version", {
         id: ID,
         version: "2.0.0",
@@ -2066,36 +2161,107 @@ describe("installExtensionFromLocalDirectory — an explicit install of a depend
       });
       await expect(
         installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: other, approve }),
-      ).rejects.toThrow(/already installed at/i);
+      ).rejects.toThrow(refusal);
       expect(isInstalledAsDependency(db, ID)).toBe(true);
-      // The same version with other manifest bytes: the ordinary install, so the owner is asked,
-      // and nothing promotes the installed copy.
-      asked.length = 0;
+      // The same version with other manifest bytes: not promotable, so refused the same way, and
+      // nothing promotes the installed copy.
       const bytes = writeSource("other-bytes", {
         id: ID,
         version: "1.0.0",
         entry: "dist/index.js",
         displayName: "Other",
       });
-      const out = await installExtensionFromLocalDirectory({
-        db,
-        extensionsDir,
-        sourcePath: bytes,
-        approve,
-      });
-      expect("promoted" in out).toBe(false);
-      expect(asked.map((r) => r.id)).toEqual([ID]);
+      await expect(
+        installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: bytes, approve }),
+      ).rejects.toThrow(refusal);
+      expect(asked).toHaveLength(0);
       expect(isInstalledAsDependency(db, ID)).toBe(true);
     });
   });
 
   test("an explicit install of an explicitly installed package is still refused", async () => {
-    await withInstalled(async ({ db, extensionsDir, writeSource, approve }) => {
+    await withInstalled(async ({ db, extensionsDir, writeSource, asked, approve }) => {
       const src = writeSource("v2", { id: ID, version: "2.0.0", entry: "dist/index.js" });
       await expect(
         installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src, approve }),
-      ).rejects.toThrow(/already installed at/i);
+      ).rejects.toThrow(
+        `${ID}@1.0.0 is already installed; remove it first (nimbus extension remove ${ID}) to reinstall it`,
+      );
+      expect(asked).toHaveLength(0);
       expect(isInstalledAsDependency(db, ID)).toBe(false);
     });
+  });
+
+  test("a same-version local reinstall is refused before solving and before any approval", async () => {
+    await withInstalled(async ({ db, extensionsDir, root, asked, approve }) => {
+      const before = listExtensions(db);
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: join(root, "src"),
+          approve,
+        }),
+      ).rejects.toThrow(
+        `${ID}@1.0.0 is already installed; remove it first (nimbus extension remove ${ID}) to reinstall it`,
+      );
+      expect(asked).toHaveLength(0);
+      expect(listExtensions(db)).toEqual(before);
+    });
+  });
+});
+
+describe("an incomplete rollback is named, never swallowed", () => {
+  function refusedWith(failures: readonly Record<string, unknown>[]): Error {
+    return Object.assign(new Error("install refused"), { rollbackFailures: failures });
+  }
+
+  test("no rollback failure means no note and no warning", () => {
+    const warned: unknown[] = [];
+    const logger = { warn: (...args: unknown[]) => void warned.push(args) };
+    expect(rollbackIncompleteNote(new Error("plain"))).toBe("");
+    expect(reportIncompleteRollback(logger, "x", new Error("plain"))).toBe("");
+    expect(warned).toHaveLength(0);
+  });
+
+  test("names the directory a removal left and the id a row step left, once each, controls stripped", () => {
+    const e = refusedWith([
+      { step: "clearDeps", id: "com.a", dir: "/x/com.a", error: new Error("busy") },
+      { step: "deleteExtension", id: "com.a", dir: "/x/com.a", error: new Error("busy") },
+      { step: "removeDirectory", id: null, dir: "/x/b\u001b[31m\nad", error: new Error("EBUSY") },
+    ]);
+    expect(rollbackIncompleteNote(e)).toBe(" (rollback incomplete: com.a, /x/b[31mad)");
+  });
+
+  test("bidi overrides, zero-width spaces and line separators are stripped too", () => {
+    const e = refusedWith([
+      {
+        step: "removeDirectory",
+        id: null,
+        dir: `/x/${String.fromCodePoint(0x202e)}evil${String.fromCodePoint(0x200b)}${String.fromCodePoint(0x2028)}dir`,
+        error: new Error("EBUSY"),
+      },
+    ]);
+    expect(rollbackIncompleteNote(e)).toBe(" (rollback incomplete: /x/evildir)");
+  });
+
+  test("the reporter warns with every failed step and returns the note", () => {
+    const warned: unknown[][] = [];
+    const logger = { warn: (...args: unknown[]) => void warned.push(args) };
+    const e = refusedWith([
+      { step: "removeDirectory", id: "com.a", dir: "/x/com.a", error: new Error("EBUSY") },
+    ]);
+    expect(reportIncompleteRollback(logger, "com.a", e)).toBe(" (rollback incomplete: /x/com.a)");
+    expect(warned).toEqual([
+      [
+        {
+          installing: "com.a",
+          rollbackFailures: [
+            { step: "removeDirectory", id: "com.a", dir: "/x/com.a", error: "EBUSY" },
+          ],
+        },
+        "extension install refused, and its rollback left packages behind",
+      ],
+    ]);
   });
 });

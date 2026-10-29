@@ -789,6 +789,39 @@ describe("registry.install", () => {
     expect(out.value.dependencies).toMatchObject([{ id: "acme.dep", kind: "extension" }]);
   });
 
+  test("registry.install names a rollback that left packages behind, and warns it", async () => {
+    runIndexedSchemaMigrations(db, 78);
+    const dir = join(tmp, "reg");
+    await buildMultiExtensionRegistry(dir, {
+      "acme.tool": [{ version: "1.0.0", dependsOn: { "acme.dep": "^1.0.0" } }],
+      "acme.dep": [{ version: "1.0.0" }],
+    });
+    pin("main", dir);
+    // The plan's edge write fails after both rows commit, and so does each rollback edge clear.
+    db.run("DROP TABLE extension_dependency");
+    const warned: unknown[] = [];
+    let err: unknown;
+    try {
+      await dispatchRegistryRpc({
+        method: "registry.install",
+        params: { id: "acme.tool" },
+        db,
+        fetch: fetchBag(),
+        extensionsDir,
+        vault: new MockVault(),
+        ownerGate: gateRecorder(true).gate,
+        logger: { warn: (...args: unknown[]) => void warned.push(args) },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect((err as Error).message).toEndWith(" (rollback incomplete: acme.tool, acme.dep)");
+    expect(warned).toHaveLength(1);
+    expect(events.at(-1)?.params).toMatchObject({
+      payload: { ok: false, error: (err as Error).message },
+    });
+  });
+
   test("registry.install reports the plan's connector requirements", async () => {
     runIndexedSchemaMigrations(db, 78);
     const dir = join(tmp, "reg");

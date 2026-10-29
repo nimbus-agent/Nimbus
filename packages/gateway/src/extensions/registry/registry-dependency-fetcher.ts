@@ -206,7 +206,15 @@ export function createRegistryDependencyResolver(
     targetSource(parentSource: SourceKey | null, depId: string, spec: DependencySpec) {
       // A node from a local folder names no registry its dependencies could come from.
       if (parentSource === null) return null;
-      const reg = resolveDependencyRegistry(fetchDeps, registryOf(parentSource), depId, spec);
+      // Naming a registry contacts nothing (it reads the database and the baked built-in row), so
+      // an INSTALLED dependency is named whatever the air-gap switch says: reusing it needs no
+      // request, and the solver reads its on-disk manifest. Anything that would fetch — a
+      // dependency not installed, or one whose installed version no range admits — is still
+      // refused with ERR_REGISTRY_AIR_GAP, here or by the fetch layer. An installed copy from
+      // another registry stays a source mismatch: the solver compares the pin with this source.
+      const installed = listExtensions(deps.db).some((r) => r.id === depId);
+      const naming = installed ? { ...fetchDeps, enforceAirGap: () => false } : fetchDeps;
+      const reg = resolveDependencyRegistry(naming, registryOf(parentSource), depId, spec);
       const key = keyOf(reg);
       if (!registries.has(key)) registries.set(key, reg);
       return key;

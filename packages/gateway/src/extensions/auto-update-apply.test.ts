@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +13,15 @@ import {
   MAX_TARBALL_BYTES,
   verifyTarballSha256,
 } from "./auto-update-apply.ts";
+import { rollbackFailuresOf } from "./install-from-local.ts";
 import { MAX_UNPACKED_BYTES } from "./package-extract.ts";
-import { holdingDir, pendingDir, prevVersionDir, prevVersionsDir } from "./version-store.ts";
+import {
+  holdingDir,
+  pendingDir,
+  prevVersionDir,
+  prevVersionsDir,
+  swapBufferDir,
+} from "./version-store.ts";
 
 describe("package caps", () => {
   it("the gateway's limits equal the ones the publisher enforces", () => {
@@ -269,6 +276,56 @@ describe("applyDowngradeSwap", () => {
           toVersion: "1.0.0",
         }),
       ).rejects.toThrow(/swap_failed/);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names the buffer dir in rollbackFailures when the prev rename fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
+    try {
+      const { extensionsDir, installPath } = await makeExt(root, "1.1.0", "1.0.0");
+      const swapPrevPath = prevVersionDir(extensionsDir, ID, "1.1.0");
+      await mkdir(swapPrevPath, { recursive: true });
+      await writeFile(join(swapPrevPath, "blocker.txt"), "blocker");
+      const err = await applyDowngradeSwap({
+        installPath,
+        extensionsDir,
+        id: ID,
+        fromVersion: "1.1.0",
+        toVersion: "1.0.0",
+      }).catch((e: unknown) => e);
+      const failures = rollbackFailuresOf(err);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.step).toBe("removeDirectory");
+      expect(failures[0]?.dir).toBe(swapBufferDir(extensionsDir, ID));
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("names the buffer dir when the restore after a failed rename also fails", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-auto-downgrade-"));
+    try {
+      const { extensionsDir, installPath } = await makeExt(root, "1.1.0", "1.0.0");
+      const buffer = swapBufferDir(extensionsDir, ID);
+      let calls = 0;
+      const err = await applyDowngradeSwap({
+        installPath,
+        extensionsDir,
+        id: ID,
+        fromVersion: "1.1.0",
+        toVersion: "1.0.0",
+        renameDir: async (from, to) => {
+          calls += 1;
+          if (calls === 1) return rename(from, to);
+          throw new Error(calls === 2 ? "target busy" : "restore busy");
+        },
+      }).catch((e: unknown) => e);
+      expect((err as Error).message).toBe("target busy");
+      const failures = rollbackFailuresOf(err);
+      expect(failures).toHaveLength(1);
+      expect(failures[0]?.dir).toBe(buffer);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
