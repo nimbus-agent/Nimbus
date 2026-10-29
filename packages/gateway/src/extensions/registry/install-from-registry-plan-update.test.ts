@@ -17,7 +17,11 @@ import {
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import { rmDirWithRetry } from "../../../test/helpers/rm-dir-with-retry.ts";
-import { getExtensionKind, isInstalledAsDependency } from "../../automation/extension-store.ts";
+import {
+  getExtensionKind,
+  insertExtensionRow,
+  isInstalledAsDependency,
+} from "../../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
@@ -983,7 +987,7 @@ describe("an approved update installs the packages it adds (production wiring)",
     expect(plan.addedPackages.map((p) => p.id)).toEqual([DEP]);
     await installFromRegistry(deps(), { id: DEP });
     await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(
-      /^update_conflicts: .*ERR_REGISTRY_INSTALL_REFUSED/,
+      /^update_conflicts: .*ERR_REGISTRY_INSTALL_REFUSED.*is already installed; the plan that would install/,
     );
     expect(versionOf(ROOT)).toBe("1.0.0");
     // The owner's own install of DEP is untouched by the refusal.
@@ -1007,6 +1011,68 @@ describe("an approved update installs the packages it adds (production wiring)",
     expect(versionOf(ROOT)).toBe("1.0.0");
     expect(versionOf(DEP)).toBeUndefined();
     // Not this install's to remove: it never created that directory.
+    expect(existsSync(depDir)).toBe(true);
+  });
+
+  test("a directory no row owns that appears while staging is named as a leftover", async () => {
+    await installedRoot();
+    const depDir = join(tmp, "extensions", DEP);
+    const { rt, cached } = await detected();
+    const plan = await rt.deps.planUpdate(cached);
+    beforeServe = (url) => {
+      if (url.includes(`/extensions/${DEP}/`) && url.endsWith("/package.tgz")) {
+        mkdirSync(depDir, { recursive: true });
+      }
+    };
+    await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(
+      `a directory from an earlier failed install is in the way at ${depDir}; remove it and retry`,
+    );
+    expect(versionOf(ROOT)).toBe("1.0.0");
+    expect(existsSync(depDir)).toBe(true);
+  });
+
+  test("a directory a row owns that appears while staging is still an install race", async () => {
+    await installedRoot();
+    const depDir = join(tmp, "extensions", DEP);
+    const { rt, cached } = await detected();
+    const plan = await rt.deps.planUpdate(cached);
+    beforeServe = (url) => {
+      if (url.includes(`/extensions/${DEP}/`) && url.endsWith("/package.tgz")) {
+        mkdirSync(depDir, { recursive: true });
+        insertExtensionRow(db, {
+          id: DEP,
+          version: "1.0.0",
+          install_path: depDir,
+          manifest_hash: "m",
+          entry_hash: "e",
+          installed_at: 1,
+          last_verified_at: 1,
+        });
+      }
+    };
+    await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(
+      `${DEP} was installed while this plan was being installed`,
+    );
+    expect(versionOf(ROOT)).toBe("1.0.0");
+  });
+
+  test("a dependency directory left by an earlier failed install is named as a leftover, never as installed", async () => {
+    await installedRoot();
+    const depDir = join(tmp, "extensions", DEP);
+    const { rt, cached } = await detected();
+    const plan = await rt.deps.planUpdate(cached);
+    mkdirSync(depDir, { recursive: true });
+    let err: unknown;
+    try {
+      await rt.deps.performUpgrade(cached, plan);
+    } catch (e) {
+      err = e;
+    }
+    expect(String(err)).toContain(
+      `a directory from an earlier failed install is in the way at ${depDir}; remove it and retry`,
+    );
+    expect(String(err)).not.toContain("is already installed");
+    expect(versionOf(ROOT)).toBe("1.0.0");
     expect(existsSync(depDir)).toBe(true);
   });
 

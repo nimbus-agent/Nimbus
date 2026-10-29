@@ -589,6 +589,22 @@ type NodeInstallOptions = {
  */
 type CreatedPackage = { readonly dir: string; id: string | null };
 
+/**
+ * Whether an extension row owns `dest`, the install directory of `id`: a row with that id, or one
+ * whose `install_path` resolves to `dest`. Matching the id as well means a live install is never
+ * called a leftover when its stored path differs from `dest` only in case, or the extensions
+ * directory has moved.
+ */
+function installDirectoryIsOwned(db: Database, id: string, dest: string): boolean {
+  const target = resolve(dest);
+  return listExtensions(db).some((r) => r.id === id || resolve(r.install_path) === target);
+}
+
+/** The refusal for a directory no extension row owns (see {@link installDirectoryIsOwned}). */
+function leftoverDirectoryMessage(dest: string): string {
+  return `a directory from an earlier failed install is in the way at ${dest}; remove it and retry`;
+}
+
 async function installRootNode(
   options: NodeInstallOptions,
   sourceResolved: string,
@@ -600,11 +616,10 @@ async function installRootNode(
     // A directory no extension row owns is what an earlier install left behind (a rollback that
     // could not remove it, or a crash), not an installed extension: say which, so the owner knows
     // removing the directory is safe.
-    const owned = listExtensions(options.db).some((r) => resolve(r.install_path) === resolve(dest));
     throw new Error(
-      owned
+      installDirectoryIsOwned(options.db, manifest.id, dest)
         ? `extension already installed at ${dest}`
-        : `a directory from an earlier failed install is in the way at ${dest}; remove it and retry`,
+        : leftoverDirectoryMessage(dest),
     );
   }
 
@@ -794,11 +809,15 @@ async function installStagedDependency(
 ): Promise<void> {
   // Another install got there while the plan was staged: an install race, refused as the plan's
   // up-front existence check refuses it (never read as a failed signature). The same check in
-  // `installRootNode` runs in this tick, so it can no longer be the one that fires.
-  if (existsSync(extensionInstallDirectory(options.extensionsDir, dep.id))) {
+  // `installRootNode` runs in this tick, so it can no longer be the one that fires. A directory no
+  // row owns is a leftover from an earlier failed install, and is named as one.
+  const depDir = extensionInstallDirectory(options.extensionsDir, dep.id);
+  if (existsSync(depDir)) {
     throw new RegistryError(
       "ERR_REGISTRY_INSTALL_REFUSED",
-      `${dep.id} was installed while this plan was being installed; the plan that would install ${dep.id}@${dep.version} is out of date`,
+      installDirectoryIsOwned(options.db, dep.id, depDir)
+        ? `${dep.id} was installed while this plan was being installed; the plan that would install ${dep.id}@${dep.version} is out of date`
+        : leftoverDirectoryMessage(depDir),
     );
   }
   const installed = await installRootNode(
@@ -911,10 +930,13 @@ export async function installPlanDependencies(
   const newDeps = plan.nodes.filter((n) => n.newlyInstalled && n.id !== rootId);
   const installedIds = new Set(listExtensions(options.db).map((r) => r.id));
   for (const node of newDeps) {
-    if (
-      installedIds.has(node.id) ||
-      existsSync(extensionInstallDirectory(options.extensionsDir, node.id))
-    ) {
+    const dir = extensionInstallDirectory(options.extensionsDir, node.id);
+    const dirInTheWay = !installedIds.has(node.id) && existsSync(dir);
+    if (dirInTheWay && !installDirectoryIsOwned(options.db, node.id, dir)) {
+      // A directory no row owns is a leftover from an earlier failed install, not an installed package.
+      throw new RegistryError("ERR_REGISTRY_INSTALL_REFUSED", leftoverDirectoryMessage(dir));
+    }
+    if (installedIds.has(node.id) || dirInTheWay) {
       throw new RegistryError(
         "ERR_REGISTRY_INSTALL_REFUSED",
         `${node.id} is already installed; the plan that would install ${node.id}@${node.version} is out of date`,

@@ -28,6 +28,7 @@ import {
   listExtensions,
   setInstalledAsDependency,
 } from "../automation/extension-store.ts";
+import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
 import {
@@ -567,6 +568,50 @@ describe("install-from-local — early-rejection / error-handling branches (Tier
       writeFileSync(
         join(src2, "nimbus.extension.json"),
         JSON.stringify({ id: "dest.owned.ext", version: "2.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
+      await expect(
+        installExtensionFromLocalDirectory({
+          db,
+          extensionsDir,
+          sourcePath: src2,
+          sourceRegistry: "main",
+          rootFingerprint: "ab".repeat(16),
+        }),
+      ).rejects.toThrow(`extension already installed at ${dest}`);
+      expect(existsSync(dest)).toBe(true);
+    } finally {
+      db.close();
+      rmDirWithRetry(dirname(src));
+    }
+  });
+
+  test("a row with the id owns the directory even when its stored path differs only in case", async () => {
+    const { extensionsDir, src, db } = createExtensionInstallFixture(
+      "nimbus-install-dest-case-",
+      "src-case",
+    );
+    try {
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.case.ext", version: "1.0.0", entry: "dist/index.js" }),
+        "utf8",
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n", "utf8");
+      await installExtensionFromLocalDirectory({ db, extensionsDir, sourcePath: src });
+      const dest = join(extensionsDir, "dest.case.ext");
+      // The stored path no longer resolves to `dest` as a string (a case difference on Windows, or
+      // a moved extensions directory): only the id still names the live install.
+      dbRun(db, "UPDATE extension SET install_path = ? WHERE id = ?", [
+        join(extensionsDir, "DEST.CASE.EXT"),
+        "dest.case.ext",
+      ]);
+      const src2 = join(dirname(src), "src-case-v2");
+      mkdirSync(join(src2, "dist"), { recursive: true });
+      writeFileSync(
+        join(src2, "nimbus.extension.json"),
+        JSON.stringify({ id: "dest.case.ext", version: "2.0.0", entry: "dist/index.js" }),
         "utf8",
       );
       writeFileSync(join(src2, "dist", "index.js"), "export {}\n", "utf8");
