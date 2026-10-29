@@ -117,6 +117,7 @@ describe.skipIf(sandboxAvailable || !IS_CI)("eval role e2e — CI sandbox precon
  */
 const ENTRY_TS = `import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { createConnection } from "node:net";
 import { createServer } from "./server.ts";
 
 const server = createServer();
@@ -131,14 +132,27 @@ server.registerTool(
 server.registerTool(
   "net",
   { description: "Try to reach the network", inputSchema: {} },
+  // A raw TCP connect to an IP literal, never fetch(): no DNS, so a confined child fails at once
+  // (no route under bwrap's empty netns, denied under AppContainer / SBPL) instead of hanging on
+  // name resolution or taking the runtime down, which made the Linux outcome vary run to run.
   async () => {
-    try {
-      const res = await fetch("https://example.com", { signal: AbortSignal.timeout(10_000) });
-      return { content: [{ type: "text", text: JSON.stringify({ fetched: true, status: res.status }) }] };
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text: JSON.stringify({ fetched: false, error }) }] };
-    }
+    const outcome = await new Promise<{ fetched: boolean; error?: string }>((resolve) => {
+      try {
+        const sock = createConnection({ host: "1.1.1.1", port: 80 });
+        sock.setTimeout(3_000, () => {
+          sock.destroy();
+          resolve({ fetched: false, error: "timeout" });
+        });
+        sock.once("connect", () => {
+          sock.destroy();
+          resolve({ fetched: true });
+        });
+        sock.once("error", (e) => resolve({ fetched: false, error: e.message }));
+      } catch (e) {
+        resolve({ fetched: false, error: e instanceof Error ? e.message : String(e) });
+      }
+    });
+    return { content: [{ type: "text", text: JSON.stringify(outcome) }] };
   },
 );
 server.registerTool(
@@ -366,6 +380,8 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
       if (!doc.ok) throw new Error(`eval error: ${JSON.stringify(doc.error)}\n${first.stderr}`);
       expect(doc.extensionId).toBe(EXTENSION_ID);
       expect(doc.version).toBe("1.0.0");
+      // On a mismatch the role's stderr (the extension child's included) is the only clue on a CI leg.
+      if (doc.report.passed !== 5) console.error(first.stderr);
       expect(doc.report.cases).toBe(7);
       expect(doc.report.passed).toBe(5);
       expect(doc.report.score).toBe(71); // floor(5 * 100 / 7)
