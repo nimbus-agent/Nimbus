@@ -61,6 +61,7 @@ export function Marketplace() {
 
   const [actionInFlight, setActionInFlight] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
+  const [orphanNotice, setOrphanNotice] = useState<string | null>(null);
 
   async function handleToggle(ext: ExtensionSummary) {
     if (actionInFlight) return;
@@ -81,7 +82,15 @@ export function Marketplace() {
     if (!globalThis.confirm(`Remove extension "${ext.id}"?`)) return;
     setActionInFlight(ext.id);
     try {
-      await createIpcClient().extensionRemove(ext.id);
+      const res = await createIpcClient().extensionRemove(ext.id);
+      const orphans = Array.isArray(res?.orphanedDependencies)
+        ? res.orphanedDependencies.filter((o): o is string => typeof o === "string")
+        : [];
+      setOrphanNotice(
+        orphans.length === 0
+          ? null
+          : `Also installed only for ${ext.id}: ${orphans.join(", ")}. Remove them from the CLI with nimbus extension remove <id>.`,
+      );
       refetch();
     } finally {
       setActionInFlight(null);
@@ -102,6 +111,11 @@ export function Marketplace() {
 
   return (
     <div className="p-6 flex flex-col gap-4">
+      {orphanNotice !== null && (
+        <p role="status" data-testid="orphan-notice" className="text-sm text-amber-700">
+          {orphanNotice}
+        </p>
+      )}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">Extensions</h1>
         <button

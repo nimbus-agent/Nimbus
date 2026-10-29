@@ -117,7 +117,7 @@ export interface NimbusIpcClient {
   extensionInstall(sourcePath: string): Promise<ExtensionInstallResult>;
   extensionEnable(id: string): Promise<{ ok: boolean }>;
   extensionDisable(id: string): Promise<{ ok: boolean }>;
-  extensionRemove(id: string): Promise<{ ok: boolean }>;
+  extensionRemove(id: string): Promise<{ ok: boolean; orphanedDependencies?: string[] }>;
   workflowList(): Promise<WorkflowListResult>;
   workflowListRuns(workflowName: string, limit: number): Promise<WorkflowListRunsResult>;
   workflowSave(params: {
@@ -485,8 +485,10 @@ export function createIpcClient(): NimbusIpcClient {
     async extensionDisable(id: string): Promise<{ ok: boolean }> {
       return await this.call<{ ok: boolean }>("extension.disable", { id });
     },
-    async extensionRemove(id: string): Promise<{ ok: boolean }> {
-      return await this.call<{ ok: boolean }>("extension.remove", { id });
+    async extensionRemove(id: string): Promise<{ ok: boolean; orphanedDependencies?: string[] }> {
+      return await this.call<{ ok: boolean; orphanedDependencies?: string[] }>("extension.remove", {
+        id,
+      });
     },
     async workflowList(): Promise<WorkflowListResult> {
       const res = await this.call<unknown>("workflow.list", {});

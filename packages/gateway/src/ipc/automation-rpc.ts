@@ -79,7 +79,7 @@ import {
   isPromotedInstall,
   reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
-import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
+import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -572,6 +572,8 @@ type ExtensionListItem = ExtensionRow &
       | SignatureDisableReason;
     needs_reinstall?: boolean;
     signature_disabled?: boolean;
+    /** Installed only as a dependency and no edge names it now; the owner removes it. */
+    orphaned?: true;
   };
 
 /**
@@ -638,12 +640,14 @@ function decorateExtensionList(
   isRunning: (id: string) => boolean,
 ): ExtensionListItem[] {
   const preT2 = new Set(preT2DisabledIds());
+  const unneeded = new Set(unneededDependencies(db));
   const signature = new Map(signatureDisabledRegistry.list().map((e) => [e.id, e.reason]));
   return rows.map((r) => {
     const run = {
       ...extensionRunFields(r, grants.get(r.id) ?? null, isRunning(r.id), trustBlocksOf(db, r)),
       verifiedPublisher: verifiedPublisherOf(db, r),
       ...publisherOf(r),
+      ...(unneeded.has(r.id) ? { orphaned: true as const } : {}),
     };
     if (preT2.has(r.id)) {
       return { ...r, ...run, disabled_reason: PRE_T2_DISABLE_REASON, needs_reinstall: true };

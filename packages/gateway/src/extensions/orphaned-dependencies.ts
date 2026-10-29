@@ -1,5 +1,8 @@
 import type { Database } from "bun:sqlite";
-import { isInstalledAsDependency } from "../automation/extension-store.ts";
+import {
+  isInstalledAsDependency,
+  listInstalledAsDependencyIds,
+} from "../automation/extension-store.ts";
 import { forwardDeps, reverseDeps } from "./dependency-store.ts";
 
 function sortedForwardIds(db: Database, id: string): string[] {
@@ -102,4 +105,13 @@ export function orphanedAfterEdgeChange(
   const orphaned = new Set<string>();
   growOrphanSet(db, orphaned, seeds, new Set([dependentId]));
   return dependentsFirst(db, orphaned, seeds);
+}
+
+/**
+ * Dependency-installed packages (marker 1) that no dependency edge names: an interrupted update or
+ * downgrade can leave one. A starter pack the owner chose has marker 0 and is never listed. Any
+ * edge naming the row, from any dependent, keeps it out. Surfaced only; removal is the owner's act.
+ */
+export function unneededDependencies(db: Database): string[] {
+  return listInstalledAsDependencyIds(db).filter((id) => reverseDeps(db, id).length === 0);
 }

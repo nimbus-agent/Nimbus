@@ -137,6 +137,31 @@ describe("Marketplace page", () => {
     expect(extensionRemoveMock).toHaveBeenCalledWith("nimbus-git");
   });
 
+  it("names the orphaned dependencies the gateway reports after a remove", async () => {
+    extensionRemoveMock.mockResolvedValue({ ok: true, orphanedDependencies: ["dep.a", "dep.b"] });
+    stubExtensionList([EXT_1]);
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /remove extension nimbus-git/i }),
+    );
+    expect(await screen.findByTestId("orphan-notice")).toHaveTextContent(
+      "Also installed only for nimbus-git: dep.a, dep.b. Remove them from the CLI with nimbus extension remove <id>.",
+    );
+  });
+
+  it("shows no notice when an older gateway sends no orphanedDependencies", async () => {
+    extensionRemoveMock.mockResolvedValue({ ok: true });
+    stubExtensionList([EXT_1]);
+    vi.spyOn(globalThis, "confirm").mockReturnValue(true);
+    renderPage();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /remove extension nimbus-git/i }),
+    );
+    await waitFor(() => expect(extensionRemoveMock).toHaveBeenCalled());
+    expect(screen.queryByTestId("orphan-notice")).toBeNull();
+  });
+
   it("opens directory dialog and calls extensionInstall with the selected path", async () => {
     stubExtensionList([]);
     openMock.mockResolvedValue("/my/extension/dir");

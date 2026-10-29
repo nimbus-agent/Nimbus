@@ -587,6 +587,27 @@ describe("extension.list", () => {
     expect(value.extensions.map((e) => e.id)).toEqual(["com.example.a", "com.example.b"]);
   });
 
+  test("flags a dependency-installed row no edge names as orphaned, and only that one", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.pack", "/p/pack");
+    seedExtensionRow(db, "com.example.named", "/p/named");
+    seedExtensionRow(db, "com.example.left", "/p/left");
+    setInstalledAsDependency(db, "com.example.named", true);
+    setInstalledAsDependency(db, "com.example.left", true);
+    recordInstall(
+      db,
+      "com.example.pack",
+      "1.0.0",
+      [{ id: "com.example.named", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
+      1,
+    );
+    const out = await dispatchAutomationRpc({ method: "extension.list", params: {}, db });
+    const value = (out as { value: { extensions: Array<{ id: string; orphaned?: true }> } }).value;
+    expect(value.extensions.filter((e) => e.orphaned === true).map((e) => e.id)).toEqual([
+      "com.example.left",
+    ]);
+  });
+
   test("filter=needs-reinstall returns only pre-T2 disabled extensions", async () => {
     const db = seededDb();
     seedExtensionRow(db, "com.example.a", "/p/a");
