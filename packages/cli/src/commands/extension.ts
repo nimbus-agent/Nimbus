@@ -1180,6 +1180,7 @@ async function dispatchExtensionWithCode(
   sub: string,
   client: IPCClient,
   args: string[],
+  socketPath?: string,
 ): Promise<boolean> {
   const handlers: Record<string, () => Promise<number>> = {
     search: async () =>
@@ -1188,7 +1189,8 @@ async function dispatchExtensionWithCode(
         stdout: (s) => process.stdout.write(s),
         stderr: (s) => process.stderr.write(s),
       }),
-    update: () => runExtensionUpdate(client, args),
+    update: () =>
+      runExtensionUpdate(client, args, socketPath === undefined ? undefined : { socketPath }),
     report: () =>
       runExtensionReport(args.slice(1), {
         client,
@@ -1307,7 +1309,7 @@ export async function runExtension(args: string[]): Promise<void> {
     if (await dispatchExtensionVoid(sub, client, args, rest, state.socketPath)) {
       return;
     }
-    if (await dispatchExtensionWithCode(sub, client, args)) {
+    if (await dispatchExtensionWithCode(sub, client, args, state.socketPath)) {
       return;
     }
     throw new Error(EXTENSION_USAGE);
@@ -1329,6 +1331,10 @@ export interface AvailableUpdateCli {
   readonly sourceRegistry: string;
   /** R6, computed by the gateway when it served the list. Absent from an older gateway. */
   readonly verifiedPublisher?: VerifiedPublisherCli | null;
+  /** The dependencies the update would install. Absent from an older gateway, or when not planned. */
+  readonly addedPackages?: readonly { readonly id: string }[];
+  /** Why the update does not fit, one line each. Absent from an older gateway. */
+  readonly conflicts?: readonly { readonly reason?: string }[];
 }
 
 export interface UpdateApplyResultCli {
@@ -1336,6 +1342,16 @@ export interface UpdateApplyResultCli {
   readonly reason?: string;
   readonly hint?: string;
   readonly jobId?: string;
+  /** The packages an applied update installed. Absent from an older gateway. */
+  readonly addedPackages?: readonly {
+    readonly id: string;
+    readonly version: string;
+    readonly registry: string | null;
+    readonly kind?: string;
+  }[];
+  readonly connectorRequirements?: unknown;
+  /** An applied downgrade: dependency-installed packages left needed by nothing, dependents first. */
+  readonly orphanedDependencies?: readonly string[];
 }
 
 export type AutoUpdateIpcCaller = (
@@ -1348,6 +1364,8 @@ export interface RunExtensionUpdateOpts {
   caller: AutoUpdateIpcCaller;
   writeStdout: (s: string) => void;
   writeStderr: (s: string) => void;
+  /** The post-install walk's wiring. Without it an update never walks (the commands are printed). */
+  walk?: InstallWalkDeps;
 }
 
 /**
@@ -1362,7 +1380,12 @@ function formatUpdateRow(u: AvailableUpdateCli): string {
       : signatureLabel(u.verificationStatus);
   const mark = verifiedPublisherCell(u.verifiedPublisher);
   const verified = mark === "-" ? "" : `\t${mark}`;
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}`;
+  const added = (u.addedPackages ?? []).map((p) => stripControl(p.id));
+  const adds = added.length === 0 ? "" : `\tadds ${added.join(", ")}`;
+  const conflicts = (u.conflicts ?? [])
+    .map((c) => `\tconflict: ${stripControl(c.reason ?? "conflict")}`)
+    .join("");
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${conflicts}`;
 }
 
 async function listExtensionUpdates(
@@ -1416,11 +1439,44 @@ async function applyExtensionUpdate(
   if (res.applied) {
     const jobIdPart = res.jobId === undefined ? "" : ` (jobId=${res.jobId})`;
     opts.writeStdout(`updated ${id} to ${targetVersion}${jobIdPart}\n`);
+    await reportAddedPackages(opts, res);
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
   opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
+}
+
+/**
+ * What an applied update added: the `+` lines, the approve hint for the added CODE packages (a
+ * starter-pack member has no code and is never offered), `Needs:`, then the attended walk.
+ */
+async function reportAddedPackages(
+  opts: RunExtensionUpdateOpts,
+  res: UpdateApplyResultCli,
+): Promise<void> {
+  const added = res.addedPackages ?? [];
+  for (const d of added) {
+    opts.writeStdout(
+      `  + ${stripControl(d.id)}@${stripControl(d.version)} from registry ${stripControl(d.registry ?? "unknown")} (installed as a dependency)
+`,
+    );
+  }
+  const toApprove = added.filter((d) => d.kind !== "starter-pack").map((d) => stripControl(d.id));
+  if (toApprove.length > 0) {
+    opts.writeStdout(
+      `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}
+`,
+    );
+  }
+  const needs = parseRequirementStatuses(res.connectorRequirements);
+  if (needs.length > 0) {
+    opts.writeStdout("Needs:\n");
+    for (const line of requirementLines(needs)) opts.writeStdout(`${line}\n`);
+  }
+  if (toApprove.length > 0 || needs.length > 0) {
+    await walkAfterInstall(opts.args, opts.walk, toApprove, needs);
+  }
 }
 
 export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
@@ -1444,7 +1500,11 @@ export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts)
   );
 }
 
-export async function runExtensionUpdate(client: IPCClient, args: string[]): Promise<number> {
+export async function runExtensionUpdate(
+  client: IPCClient,
+  args: string[],
+  walk?: InstallWalkDeps,
+): Promise<number> {
   // The gateway raises the owner's HITL prompt (`extension.update`) over this connection; `--check`
   // only reads, so it never prompts and registers nothing.
   if (extensionUpdateApplies(args.slice(1))) {
@@ -1455,6 +1515,7 @@ export async function runExtensionUpdate(client: IPCClient, args: string[]): Pro
     caller: async (method, params) => client.call<unknown>(method, params),
     writeStdout: (s) => process.stdout.write(s),
     writeStderr: (s) => process.stderr.write(s),
+    ...(walk === undefined ? {} : { walk }),
   });
 }
 
@@ -1501,6 +1562,12 @@ export async function runExtensionDowngradeWithCaller(
   }
   if (res.applied) {
     opts.writeStdout(`downgraded ${id} to ${toVersion}\n`);
+    const kept = (res.orphanedDependencies ?? []).map(stripControl);
+    if (kept.length > 0) {
+      opts.writeStderr(
+        `Kept ${kept.join(", ")}, no longer needed by ${stripControl(id)}; remove them with: ${kept.map((k) => `nimbus extension remove ${k}`).join(" && ")}\n`,
+      );
+    }
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;

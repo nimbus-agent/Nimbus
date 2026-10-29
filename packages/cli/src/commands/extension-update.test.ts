@@ -1,4 +1,6 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+
+import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 import {
   type AutoUpdateIpcCaller,
@@ -215,5 +217,163 @@ describe("runExtensionDowngradeWithCaller", () => {
       params: { id: "com.x.a", toVersion: "1.0.0" },
     });
     expect(captured.stdout.join("")).toContain("downgraded com.x.a to 1.0.0");
+  });
+});
+
+const REQ = {
+  connector: "github",
+  state: "not_connected",
+  owner: { kind: "bundled" },
+  fix: ["nimbus connector auth github"],
+  requiredBy: ["com.x.dep"],
+  interactive: true,
+};
+
+function applyCaller(
+  update: AvailableUpdateCli,
+  result: UpdateApplyResultCli,
+): AutoUpdateIpcCaller {
+  return async (method) => (method === "extension.checkForUpdates" ? [update] : result);
+}
+
+async function applyWith(
+  result: UpdateApplyResultCli,
+  extra: Partial<Parameters<typeof runExtensionUpdateWithCaller>[0]> = {},
+): Promise<{ stdout: string; stderr: string; code: number }> {
+  const c = captureStreams();
+  const code = await runExtensionUpdateWithCaller({
+    args: ["com.x.a"],
+    caller: applyCaller(sampleUpdate(), result),
+    writeStdout: (s) => c.stdout.push(s),
+    writeStderr: (s) => c.stderr.push(s),
+    ...extra,
+  });
+  return { stdout: c.stdout.join(""), stderr: c.stderr.join(""), code };
+}
+
+describe("extension update — what it adds", () => {
+  test("the list shows `adds <ids>` and the conflict reason", async () => {
+    const rows: AvailableUpdateCli[] = [
+      { ...sampleUpdate(), addedPackages: [{ id: "com.dep" }, { id: "com.dep2" }] },
+      { ...sampleUpdate(), id: "com.x.b", conflicts: [{ reason: "dep needs registry zed" }] },
+    ];
+    const c = captureStreams();
+    await runExtensionUpdateWithCaller({
+      args: ["--check"],
+      caller: async () => rows,
+      writeStdout: (s) => c.stdout.push(s),
+      writeStderr: (s) => c.stderr.push(s),
+    });
+    const text = c.stdout.join("");
+    expect(text).toContain("adds com.dep, com.dep2");
+    expect(text).toContain("dep needs registry zed");
+  });
+
+  test("apply prints the + line, then Nothing runs, then Needs", async () => {
+    const r = await applyWith({
+      applied: true,
+      addedPackages: [{ id: "com.x.dep", version: "1.2.0", registry: "main", kind: "extension" }],
+      connectorRequirements: [REQ],
+    });
+    const lines = r.stdout.split("\n");
+    expect(lines[0]).toBe("updated com.x.a to 1.1.0");
+    expect(lines[1]).toBe("  + com.x.dep@1.2.0 from registry main (installed as a dependency)");
+    expect(lines[2]).toBe("Nothing runs until you approve it: nimbus extension approve com.x.dep");
+    expect(lines[3]).toBe("Needs:");
+  });
+
+  test("a starter-pack member is never offered for approval", async () => {
+    const r = await applyWith({
+      applied: true,
+      addedPackages: [
+        { id: "com.x.pack2", version: "1.0.0", registry: "main", kind: "starter-pack" },
+      ],
+    });
+    expect(r.stdout).toContain("+ com.x.pack2@1.0.0");
+    expect(r.stdout).not.toContain("Nothing runs");
+  });
+
+  describe("the walk", () => {
+    const origOut = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    const origIn = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    const restore = (
+      s: NodeJS.ReadStream | NodeJS.WriteStream,
+      d: PropertyDescriptor | undefined,
+    ): void => {
+      if (d === undefined) delete (s as { isTTY?: boolean }).isTTY;
+      else Object.defineProperty(s, "isTTY", d);
+    };
+    afterEach(() => {
+      restore(process.stdout, origOut);
+      restore(process.stdin, origIn);
+    });
+    const setTty = (v: boolean): void => {
+      Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: v });
+      Object.defineProperty(process.stdin, "isTTY", { configurable: true, value: v });
+    };
+    const result: UpdateApplyResultCli = {
+      applied: true,
+      addedPackages: [
+        { id: "com.x.dep", version: "1.2.0", registry: "main", kind: "extension" },
+        { id: "com.x.pk", version: "1.0.0", registry: "main", kind: "starter-pack" },
+      ],
+    };
+
+    test("an attended apply walks approvals for code packages only", async () => {
+      setTty(true);
+      const fresh: Array<ReturnType<typeof createMockIpcClient>> = [];
+      await applyWith(result, {
+        walk: {
+          socketPath: "/sock",
+          makeClient: () => {
+            const m = createMockIpcClient([
+              { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+            ]);
+            fresh.push(m);
+            return m.client;
+          },
+          confirm: async () => true,
+        },
+      });
+      expect(fresh.flatMap((m) => m.calls.map((c) => c.params))).toEqual([
+        { id: "com.x.dep", modelAccess: false },
+      ]);
+    });
+
+    test("an unattended apply (--yes) prints the commands and walks nothing", async () => {
+      setTty(true);
+      let made = 0;
+      const r = await applyWith(result, {
+        args: ["com.x.a", "--yes"],
+        walk: {
+          socketPath: "/sock",
+          makeClient: () => {
+            made += 1;
+            return createMockIpcClient([]).client;
+          },
+          confirm: async () => true,
+        },
+      });
+      expect(made).toBe(0);
+      expect(r.stdout).toContain("nimbus extension approve com.x.dep");
+    });
+  });
+});
+
+describe("extension downgrade — orphans", () => {
+  test("prints the Kept line on stderr; stdout is as today", async () => {
+    const c = captureStreams();
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["com.x.a", "--to", "1.0.0"],
+      caller: async () => ({ applied: true, orphanedDependencies: ["com.a", "com.b"] }),
+      fetchInfo: async () => ({}),
+      writeStdout: (s) => c.stdout.push(s),
+      writeStderr: (s) => c.stderr.push(s),
+    });
+    expect(code).toBe(0);
+    expect(c.stdout.join("")).toBe("downgraded com.x.a to 1.0.0\n");
+    expect(c.stderr.join("")).toBe(
+      "Kept com.a, com.b, no longer needed by com.x.a; remove them with: nimbus extension remove com.a && nimbus extension remove com.b\n",
+    );
   });
 });
