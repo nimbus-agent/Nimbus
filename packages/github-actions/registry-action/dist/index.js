@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:9e1f95058b6278299fcc2b83f61351a028f256d1208555d895ce3e18993e43e5
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:44d258aa620570daf994a52b098c081e9d60148d87d5e180837879f6e0dc6411
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4266,6 +4266,15 @@ class RegistryError extends Error {
   }
 }
 // ../../registry-format/src/eval-suite.ts
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync
+} from "node:fs";
 var EVALS_DIR = "evals";
 var TYPE_MARKER_VALUES = new Set([
   "string",
@@ -4275,6 +4284,7 @@ var TYPE_MARKER_VALUES = new Set([
   "array",
   "object"
 ]);
+var SUITE_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
   "PATH",
@@ -5819,7 +5829,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
 }
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash4 } from "node:crypto";
-import { closeSync, fstatSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync as closeSync2, fstatSync as fstatSync2, mkdirSync, openSync as openSync2, readFileSync as readFileSync2 } from "node:fs";
 import { join, resolve, sep } from "node:path";
 
 // ../../../node_modules/.bun/tar@7.5.22/node_modules/tar/dist/esm/index.min.js
@@ -9057,19 +9067,19 @@ var manifestInvalid = (detail) => new RegistryError("ERR_REGISTRY_MANIFEST_INVAL
 function readRegularFile(path, missing, maxBytes) {
   let fd;
   try {
-    fd = openSync(path, "r");
+    fd = openSync2(path, "r");
   } catch {
     throw missing();
   }
   try {
-    const st = fstatSync(fd);
+    const st = fstatSync2(fd);
     if (!st.isFile())
       throw missing();
     if (maxBytes !== undefined && st.size > maxBytes)
       throw manifestInvalid("manifest is too large");
-    return readFileSync(fd);
+    return readFileSync2(fd);
   } finally {
-    closeSync(fd);
+    closeSync2(fd);
   }
 }
 async function inspectPackage(tgz, work) {

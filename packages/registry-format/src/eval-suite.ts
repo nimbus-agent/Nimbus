@@ -3,7 +3,15 @@
  * schema (unknown keys are refused) so a suite means the same thing to every judge. Pure: no Bun,
  * no gateway imports. A suite that fails to parse refuses with `ERR_REGISTRY_EVAL_SUITE_INVALID`.
  */
-import { lstatSync, readdirSync, readFileSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import {
   MAX_EVAL_CASES,
@@ -296,13 +304,37 @@ function readSuiteFile(dir: string, name: string): { file: string; bytes: Uint8A
     return null;
   }
   const full = join(dir, name);
-  const st = lstatSync(full);
-  if (st.isSymbolicLink()) refuse(rel, "refusing a symlink as an eval suite");
-  if (!st.isFile()) refuse(rel, "an eval suite must be a regular file");
-  if (st.size > MAX_EVAL_SUITE_FILE_BYTES) {
-    refuse(rel, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+  if (lstatSync(full).isSymbolicLink()) refuse(rel, "refusing a symlink as an eval suite");
+  return { file: rel, bytes: readSuiteThroughDescriptor(full, rel) };
+}
+
+const SUITE_OPEN_FLAGS =
+  constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+/**
+ * Classify, size-check and read a suite through the ONE descriptor that opened it, so a file
+ * swapped in after the check above is never the one read (`O_NOFOLLOW` refuses a symlink on POSIX).
+ */
+function readSuiteThroughDescriptor(full: string, rel: string): Uint8Array {
+  let fd: number;
+  try {
+    fd = openSync(full, SUITE_OPEN_FLAGS);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ELOOP") {
+      refuse(rel, "refusing a symlink as an eval suite");
+    }
+    throw err;
   }
-  return { file: rel, bytes: readFileSync(full) };
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) refuse(rel, "an eval suite must be a regular file");
+    if (st.size > MAX_EVAL_SUITE_FILE_BYTES) {
+      refuse(rel, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+    }
+    return readFileSync(fd);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** The suites under `<packageDir>/evals`: direct children only; a symlink or non-file suite is refused. */
