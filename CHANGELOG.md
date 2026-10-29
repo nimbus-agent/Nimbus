@@ -2,6 +2,23 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.9.0](https://github.com/nimbus-agent/Nimbus/compare/v10.8.0...v10.9.0) (2026-10-29)
+
+
+### Features
+
+* **extensions:** an extension's connector requirements show their status in the install approval, info, list and doctor, and an attended install offers a walk through approvals and connecting ([#1811](https://github.com/nimbus-agent/Nimbus/issues/1811)) ([01c46ed](https://github.com/nimbus-agent/Nimbus/commit/01c46edfb1f48248fe48a750b16443300cd50364))
+* **extensions:** an update that adds dependencies lists them in its approval and installs them from the right registry, all or nothing ([#1814](https://github.com/nimbus-agent/Nimbus/issues/1814)) ([f18d931](https://github.com/nimbus-agent/Nimbus/commit/f18d931849a1dc1cf56b7dd47e71cca634d17eec))
+* **extensions:** registry installs fetch their dependencies from the right registry, in one approved plan ([#1810](https://github.com/nimbus-agent/Nimbus/issues/1810)) ([ac07b02](https://github.com/nimbus-agent/Nimbus/commit/ac07b0260a73575c201c2cd25b731de23708a8ec))
+* **extensions:** starter packs install with their members, never run, keep explicitly installed dependencies, and offer to remove the members only they needed ([#1813](https://github.com/nimbus-agent/Nimbus/issues/1813)) ([2f15dce](https://github.com/nimbus-agent/Nimbus/commit/2f15dce125af1e6f043653b8c10a88738f7af604))
+* **registry-format:** manifest format for cross-registry dependencies, connector requirements and starter packs ([#1806](https://github.com/nimbus-agent/Nimbus/issues/1806)) ([b3affbb](https://github.com/nimbus-agent/Nimbus/commit/b3affbb509f097f07224552618ccc054e08d17d8))
+
+
+### Bug Fixes
+
+* **deps:** re2js 2.9.1 (GHSA-gg6h-894w-4m9c); accept @hono/node-server GHSA-rmxm-3fg6-px4f (serveStatic never loaded) ([#1812](https://github.com/nimbus-agent/Nimbus/issues/1812)) ([8b637ea](https://github.com/nimbus-agent/Nimbus/commit/8b637ea3cbf2f29717347e11fd485f5fda4530c2))
+* **extensions:** dependency follow-ups — air-gap reuse, truthful refusals, findable orphans, complete connector commands ([#1815](https://github.com/nimbus-agent/Nimbus/issues/1815)) ([a4ff6e1](https://github.com/nimbus-agent/Nimbus/commit/a4ff6e12fbf4d53289256e4c5611369b43ee8489))
+
 ## [10.8.0](https://github.com/nimbus-agent/Nimbus/compare/v10.7.0...v10.8.0) (2026-10-27)
 
 
