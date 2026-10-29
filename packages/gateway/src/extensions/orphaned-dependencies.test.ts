@@ -227,4 +227,11 @@ describe("unneededDependencies", () => {
     deps(db, "pack", ["named"]);
     expect(unneededDependencies(db)).toEqual(["free"]);
   });
+
+  test("a row named by an edge whose dependent has no extension row is never reported", () => {
+    const db = freshDb();
+    add(db, "named", { asDependency: true });
+    deps(db, "ghost.dependent", ["named"]);
+    expect(unneededDependencies(db)).toEqual([]);
+  });
 });
