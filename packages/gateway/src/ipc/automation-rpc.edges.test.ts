@@ -418,7 +418,7 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
         performUpgrade: async (c) => {
           upgraded.push(`${c.id}@${c.toVersion}`);
         },
-        performDowngrade: async () => {},
+        performDowngrade: async () => ({ orphanedDependencies: [] }),
         appendAudit: async () => {},
         getInstalledVersion: async () => "1.0.0",
         hasPrevVersion: async () => false,

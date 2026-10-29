@@ -11,6 +11,7 @@ import {
   ACTION_TYPE_DOWNGRADE,
   type AutoUpdateFailPhase,
   type AvailableUpdate,
+  type DowngradeOutcome,
   type ShownAddedPackage,
   type UpdateApplyResult,
   type UpdatePlan,
@@ -48,7 +49,8 @@ export interface AutoUpdateRpcDeps {
   ) => Promise<readonly ConnectorRequirementStatus[] | undefined>;
   /** Applies an approved forward update with the plan its approval listed. */
   performUpgrade: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<void>;
-  performDowngrade: (cached: AvailableUpdate) => Promise<void>;
+  /** Restores the previous version and its edges; reports the dependencies it left orphaned. */
+  performDowngrade: (cached: AvailableUpdate) => Promise<DowngradeOutcome>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
@@ -354,10 +356,14 @@ async function movedSinceApproval(
   return false;
 }
 
-/** The applied result: what the approved plan added and the requirements the approval showed. */
+/**
+ * The applied result: what the approved plan added and the requirements the approval showed, or,
+ * for a downgrade, the dependencies it left orphaned.
+ */
 function appliedResult(
   cached: AvailableUpdate,
   approved: ApprovedUpdatePlan | undefined,
+  orphaned: readonly string[] = [],
 ): UpdateApplyResult {
   const shown = approved?.shown ?? [];
   const requirements = approved?.requirements ?? [];
@@ -373,6 +379,7 @@ function appliedResult(
       })),
     }),
     ...(requirements.length > 0 && { connectorRequirements: requirements }),
+    ...(orphaned.length > 0 && { orphanedDependencies: [...orphaned] }),
   };
 }
 
@@ -400,8 +407,9 @@ async function applyUpdateUnderMutex(
       // The owner re-runs the update, and is asked about the plan as it now stands.
       return { applied: false, reason: "cache_miss" };
     }
+    let orphaned: readonly string[] = [];
     if (approved === undefined) {
-      await deps.performDowngrade(cached);
+      ({ orphanedDependencies: orphaned } = await deps.performDowngrade(cached));
       await deps.appendAudit("extension.downgrade.applied", {
         id: cached.id,
         fromVersion: cached.fromVersion,
@@ -417,7 +425,7 @@ async function applyUpdateUnderMutex(
       });
     }
     deps.cache.remove(cached.id);
-    return appliedResult(cached, approved);
+    return appliedResult(cached, approved, orphaned);
   } catch (e) {
     const phase = e instanceof Error ? extractPhase(e.message) : "internal_error";
     await deps.appendAudit(

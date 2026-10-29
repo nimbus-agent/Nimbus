@@ -209,7 +209,7 @@ describe("createIpcServer — a request in flight when its client disconnects", 
         performUpgrade: async (u) => {
           upgrades.push(u.id);
         },
-        performDowngrade: async () => {},
+        performDowngrade: async () => ({ orphanedDependencies: [] }),
         appendAudit: async () => {},
       },
     });

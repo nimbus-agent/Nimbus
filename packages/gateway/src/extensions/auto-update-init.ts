@@ -26,22 +26,26 @@ import {
   type PerformUpgradeDeps,
   type UpgradeDependencies,
 } from "./auto-update-orchestrate.ts";
-import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import type { AvailableUpdate, DowngradeOutcome, UpdatePlan } from "./auto-update-types.ts";
 import {
   type ConnectorRequirementInput,
   type ConnectorRequirementStatus,
   connectorRequirementStatuses,
 } from "./connector-requirements.ts";
-import { recordInstall } from "./dependency-store.ts";
+import { declaredDependencyEdges, forwardDeps, recordInstall } from "./dependency-store.ts";
+import type { ResolvedDep } from "./dependency-types.ts";
 import {
+  installedManifestDependsOn,
   installedManifestKind,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { rangesOf } from "./manifest-support.ts";
+import { orphanedAfterEdgeChange } from "./orphaned-dependencies.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { currentSourceRegistry, sourceRegistryOf } from "./registry/builtin-registry.ts";
+import { resolveDependencyRegistry } from "./registry/dependency-registry.ts";
 import {
   type InstallFromRegistryDeps,
   installUpdateDependencies,
@@ -94,18 +98,19 @@ export interface AutoUpdateInitOpts {
  * `perform`, then `onApplied(update.id)` — only when `perform` resolved. A throwing hook is
  * swallowed: the update is committed by then, and reporting it as failed would be false.
  */
-export function withUpdateAppliedHook<Rest extends unknown[]>(
-  perform: (update: AvailableUpdate, ...rest: Rest) => Promise<void>,
+export function withUpdateAppliedHook<Rest extends unknown[], Result = void>(
+  perform: (update: AvailableUpdate, ...rest: Rest) => Promise<Result>,
   onApplied: ((extensionId: string) => void) | undefined,
-): (update: AvailableUpdate, ...rest: Rest) => Promise<void> {
+): (update: AvailableUpdate, ...rest: Rest) => Promise<Result> {
   if (onApplied === undefined) return perform;
   return async (update, ...rest) => {
-    await perform(update, ...rest);
+    const result = await perform(update, ...rest);
     try {
       onApplied(update.id);
     } catch {
       // The update stands; the stale grant still refuses every spawn (I43) until re-approval.
     }
+    return result;
   };
 }
 
@@ -124,7 +129,8 @@ export interface AutoUpdateRuntimeBag {
    * (a test) may omit it.
    */
   performUpgrade: (cached: AvailableUpdate, plan?: UpdatePlan) => Promise<void>;
-  performDowngrade: (cached: AvailableUpdate) => Promise<void>;
+  /** Restores the previous version and its edges; reports the dependencies it left needed by nothing. */
+  performDowngrade: (cached: AvailableUpdate) => Promise<DowngradeOutcome>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
@@ -411,6 +417,51 @@ function assertPlanMatchesManifest(
   return { id: root.id, version: root.version, deps: root.deps };
 }
 
+/**
+ * The restored version's edges (amendment 10): each declared dependency's range, the version of it
+ * installed now (`""` when absent), and the registry its declaration resolves to from the
+ * extension's source registry — null when that registry, or the one the declaration names, no
+ * longer resolves. A downgrade never fails over a registry name.
+ */
+function restoredDependencyEdges(
+  fetchDeps: RegistryFetchDeps,
+  update: AvailableUpdate,
+  dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
+): ResolvedDep[] {
+  const parent = currentSourceRegistry(fetchDeps, update);
+  const installed = new Map(listExtensions(fetchDeps.db).map((r) => [r.id, r.version] as const));
+  return declaredDependencyEdges(
+    dependsOn,
+    (depId) => installed.get(depId),
+    (depId, spec) => {
+      if (parent === undefined) return null;
+      try {
+        return resolveDependencyRegistry(fetchDeps, parent, depId, spec).name;
+      } catch {
+        return null;
+      }
+    },
+  );
+}
+
+/**
+ * The dependency-installed packages a downgrade left needed by nothing: its dropped dependencies
+ * (`before` minus the restored edges), walked after the edges were rewritten. Reported, never removed;
+ * a walk that throws reports nothing and never fails the committed downgrade.
+ */
+function orphanedAfterDowngrade(db: Database, id: string, before: readonly string[]): string[] {
+  try {
+    const restored = new Set(forwardDeps(db, id).map((d) => d.id));
+    return orphanedAfterEdgeChange(
+      db,
+      id,
+      before.filter((depId) => !restored.has(depId)),
+    );
+  } catch {
+    return [];
+  }
+}
+
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
   const abortController = new AbortController();
@@ -577,6 +628,13 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const downgrade = createPerformDowngrade({
     extensionsRoot: opts.extensionsDir,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
+    restoredEdges: (update, restoredRoot) => [
+      {
+        id: update.id,
+        version: update.toVersion,
+        deps: restoredDependencyEdges(fetchDeps, update, installedManifestDependsOn(restoredRoot)),
+      },
+    ],
     dbUpdateExtensionRow,
   });
   // `plan` is the plan the owner approved; the apply installs exactly its added packages.
@@ -591,10 +649,12 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     },
     opts.onUpdateApplied,
   );
-  const performDowngrade = withUpdateAppliedHook(async (update) => {
+  const performDowngrade = withUpdateAppliedHook(async (update): Promise<DowngradeOutcome> => {
+    const before = forwardDeps(opts.db, update.id).map((d) => d.id);
     await downgrade(update);
     // The restored copy is signed by the key it was installed with: its declared one.
     recordDeclaredFingerprint(opts.db, update.id);
+    return { orphanedDependencies: orphanedAfterDowngrade(opts.db, update.id, before) };
   }, opts.onUpdateApplied);
 
   const deps: AutoUpdateRuntimeBag = {

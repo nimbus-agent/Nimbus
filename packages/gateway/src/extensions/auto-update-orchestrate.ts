@@ -190,13 +190,13 @@ export function createPerformUpgrade(deps: PerformUpgradeDeps) {
 export interface PerformDowngradeDeps {
   extensionsRoot: string;
   stopExtensionClient: (extensionId: string) => Promise<void>;
-  dbUpdateExtensionRow: (
-    id: string,
-    version: string,
-    manifestHash: string,
-    entryHash: string,
-    treeDigest: string,
-  ) => Promise<void>;
+  /**
+   * The edges the restored version declares, read from its measured package before the swap and
+   * recorded with the row. Absent, the row is written alone (the edges are left as they are).
+   */
+  restoredEdges?: (update: AvailableUpdate, restoredRoot: string) => readonly DependencyEdgeWrite[];
+  /** The row write; `edges`, when given, are recorded in the SAME transaction. */
+  dbUpdateExtensionRow: PerformUpgradeDeps["dbUpdateExtensionRow"];
 }
 
 export function createPerformDowngrade(deps: PerformDowngradeDeps) {
@@ -210,6 +210,8 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
     const measured = assertPackageMatchesClaims(targetPrev, update);
     // Digested before the swap, so a tree that cannot be digested is refused with nothing moved.
     const treeDigest = computeExtensionTreeDigest(targetPrev);
+    // Read before the swap too: a restored manifest whose edges cannot be read moves nothing.
+    const edges = deps.restoredEdges?.(update, targetPrev);
     await applyDowngradeSwap({
       installPath: join(deps.extensionsRoot, update.id),
       extensionsDir: deps.extensionsRoot,
@@ -217,13 +219,23 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
       fromVersion: update.fromVersion,
       toVersion: update.toVersion,
     });
-    await deps.dbUpdateExtensionRow(
-      update.id,
-      update.toVersion,
-      measured.manifestHash,
-      measured.entryHash,
-      treeDigest,
-    );
+    // The row and the restored edges in one transaction (`dbUpdateExtensionRow`).
+    await (edges === undefined
+      ? deps.dbUpdateExtensionRow(
+          update.id,
+          update.toVersion,
+          measured.manifestHash,
+          measured.entryHash,
+          treeDigest,
+        )
+      : deps.dbUpdateExtensionRow(
+          update.id,
+          update.toVersion,
+          measured.manifestHash,
+          measured.entryHash,
+          treeDigest,
+          edges,
+        ));
     await deps.stopExtensionClient(update.id);
   };
 }

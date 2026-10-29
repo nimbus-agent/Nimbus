@@ -5,13 +5,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-import { getExtensionKind, insertExtensionRow } from "../automation/extension-store.ts";
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
+import {
+  getExtensionKind,
+  insertExtensionRow,
+  listExtensions,
+  setInstalledAsDependency,
+} from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
 import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
+import { forwardDeps, recordInstall } from "./dependency-store.ts";
+import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { evictPublisherKey, writePublisherKey } from "./publisher-keys.ts";
 import {
   buildTestRegistry,
@@ -755,3 +763,167 @@ describe("auto-update-init: verifiedPublisherOf (trust layer PR 3c)", () => {
     }
   });
 });
+
+describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
+  const ROOT = "ext.root";
+  let tmpRoot: string | undefined;
+  afterEach(() => {
+    if (tmpRoot !== undefined) rmDirWithRetry(tmpRoot);
+    tmpRoot = undefined;
+  });
+
+  /** Writes a code package (manifest + entry) to `dir`; returns its measured hashes. */
+  function writePackage(dir: string, version: string, dependsOn: Record<string, unknown>) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "nimbus.extension.json"),
+      JSON.stringify({ id: ROOT, version, entry: "index.js", dependsOn }),
+    );
+    writeFileSync(join(dir, "index.js"), `// ${version}\n`);
+    return computeExtensionPackageHashes(dir);
+  }
+
+  function addRow(db: Database, id: string, version: string, asDependency: boolean): void {
+    insertExtensionRow(db, {
+      id,
+      version,
+      install_path: `/nowhere/${id}`,
+      manifest_hash: "a".repeat(64),
+      entry_hash: "b".repeat(64),
+      enabled: 1,
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    if (asDependency) setInstalledAsDependency(db, id, true);
+  }
+
+  function edge(id: string, registry: string | null) {
+    return { id, range: "^1.0.0", resolvedVersion: "1.0.0", registry };
+  }
+
+  /**
+   * `ROOT` at 1.1.0 (which added `dep.new`, from registry main) with `prev/1.0.0` on disk, whose
+   * manifest declares `restored`. The source registry `main` is added.
+   */
+  function setup(restored: Record<string, unknown>) {
+    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-downgrade-"));
+    const extensionsDir = join(tmpRoot, "extensions");
+    const db = freshDb();
+    const rootKey = encodeBase64(nacl.sign.keyPair().publicKey);
+    insertRegistry(db, {
+      name: "main",
+      url: "https://main.test/",
+      rootKey,
+      rootFingerprint: publisherKeyFingerprint(rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-01T00:00:00Z",
+      addedAt: 1,
+      lastIndexSha256: null,
+    });
+    const active = join(extensionsDir, ROOT);
+    const activeHashes = writePackage(active, "1.1.0", { "dep.new": "^1.0.0" });
+    insertExtensionRow(db, {
+      id: ROOT,
+      version: "1.1.0",
+      install_path: active,
+      manifest_hash: activeHashes.manifestHash,
+      entry_hash: activeHashes.entryHash,
+      enabled: 1,
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    const prevHashes = writePackage(
+      prevVersionDir(extensionsDir, ROOT, "1.0.0"),
+      "1.0.0",
+      restored,
+    );
+    recordInstall(db, ROOT, "1.1.0", [edge("dep.new", "main")], 1);
+    const update: AvailableUpdate = {
+      id: ROOT,
+      displayName: ROOT,
+      fromVersion: "1.1.0",
+      toVersion: "1.0.0",
+      channel: "stable",
+      changelog: "",
+      publisherStatus: "unverified",
+      manifestHash: prevHashes.manifestHash,
+      signatureB64: "",
+      entryHash: prevHashes.entryHash,
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 0,
+      sourceRegistry: "main",
+      rootFingerprint: publisherKeyFingerprint(rootKey),
+      packagePath: "",
+      permissionDiff: {
+        network: { added: [], removed: [] },
+        filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
+      },
+      verificationStatus: "verified",
+      detectedAt: 1,
+    };
+    const { deps } = createAutoUpdateRuntime(baseOpts(db, extensionsDir, join(tmpRoot, "data")));
+    return { db, deps, update };
+  }
+
+  it("a downgrade restores the old edges and reports the added dependency as orphaned", async () => {
+    const { db, deps, update } = setup({
+      "dep.old": "^1.0.0",
+      "dep.gone": "^2.0.0",
+      "dep.elsewhere": { range: "^1.0.0", registry: "https://not-added.test/" },
+    });
+    addRow(db, "dep.new", "1.0.0", true);
+    addRow(db, "dep.new.child", "1.0.0", true);
+    recordInstall(db, "dep.new", "1.0.0", [edge("dep.new.child", "main")], 1);
+    addRow(db, "dep.old", "1.0.0", true);
+
+    const outcome = await deps.performDowngrade(update);
+
+    expect(getExtensionVersion(db, ROOT)).toBe("1.0.0");
+    expect([...forwardDeps(db, ROOT)].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      // Its registry is one the owner no longer has: recorded as null, never a failed downgrade.
+      { id: "dep.elsewhere", range: "^1.0.0", registry: null },
+      { id: "dep.gone", range: "^2.0.0", registry: "main" },
+      { id: "dep.old", range: "^1.0.0", registry: "main" },
+    ]);
+    // Dependents first: removing them in this order never trips `reverse_dep_blocked`.
+    expect(outcome.orphanedDependencies).toEqual(["dep.new", "dep.new.child"]);
+    // A downgrade installs and removes nothing.
+    expect(getExtensionVersion(db, "dep.new")).toBe("1.0.0");
+    expect(getExtensionVersion(db, "dep.new.child")).toBe("1.0.0");
+  });
+
+  it("a downgrade never reports an explicitly installed or still-needed package", async () => {
+    const { db, deps, update } = setup({});
+    recordInstall(
+      db,
+      ROOT,
+      "1.1.0",
+      [edge("dep.new", "main"), edge("explicit", "main"), edge("shared", "main")],
+      1,
+    );
+    addRow(db, "dep.new", "1.0.0", true);
+    addRow(db, "explicit", "1.0.0", false);
+    addRow(db, "shared", "1.0.0", true);
+    addRow(db, "other", "1.0.0", false);
+    recordInstall(db, "other", "1.0.0", [edge("shared", "main")], 1);
+
+    const outcome = await deps.performDowngrade(update);
+
+    expect(forwardDeps(db, ROOT)).toEqual([]);
+    expect(outcome.orphanedDependencies).toEqual(["dep.new"]);
+  });
+
+  it("the restored edges commit with the row: a failed row write leaves the old edges", async () => {
+    const { db, deps, update } = setup({ "dep.old": "^1.0.0" });
+    db.exec(
+      "CREATE TRIGGER fail_edges BEFORE INSERT ON extension_dependency BEGIN SELECT RAISE(ABORT, 'edge write refused'); END",
+    );
+    await expect(deps.performDowngrade(update)).rejects.toThrow("edge write refused");
+    expect(getExtensionVersion(db, ROOT)).toBe("1.1.0");
+    expect(forwardDeps(db, ROOT)).toEqual([{ id: "dep.new", range: "^1.0.0", registry: "main" }]);
+  });
+});
+
+function getExtensionVersion(db: Database, id: string): string | undefined {
+  return listExtensions(db).find((r) => r.id === id)?.version;
+}

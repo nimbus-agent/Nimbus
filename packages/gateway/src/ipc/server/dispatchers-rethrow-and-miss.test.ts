@@ -296,7 +296,7 @@ describe("a non-domain error propagates unchanged — never remapped to an RPC c
         cache,
         forcePoll: async () => {},
         performUpgrade: async () => {},
-        performDowngrade: async () => {},
+        performDowngrade: async () => ({ orphanedDependencies: [] }),
         appendAudit: async () => {},
         getInstalledVersion: () => Promise.reject(boom),
         hasPrevVersion: async () => false,

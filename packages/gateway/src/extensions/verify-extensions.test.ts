@@ -20,7 +20,7 @@ import {
 import { dbRun } from "../db/write.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
-import { forwardDeps } from "./dependency-store.ts";
+import { forwardDeps, recordInstall } from "./dependency-store.ts";
 import {
   recoveredPendingRehashMessage,
   recoveredPendingRehashRegistry,
@@ -32,6 +32,7 @@ import {
 } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { writePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
+import { insertRegistry } from "./registry/registry-store.ts";
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
@@ -459,6 +460,93 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       expect(row?.version).toBe("1.0.0");
       expect(row?.kind).toBe("starter-pack");
       expect(getRunGrant(db, id)).toBeNull();
+    } finally {
+      removeExtensionVersionStore(extensionsDir, id);
+      db.close();
+      rmDirWithRetry(extensionsDir);
+    }
+  });
+
+  test("crash recovery rewrites the edges from the promoted version", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const { logger } = memoryLogger();
+    const id = "com.example.crash-edges";
+    try {
+      // The crash interrupted 1.0.0 -> 1.1.0, which had added com.example.dep-new; 1.0.0 declares
+      // com.example.dep-old (from the source registry) and one from a registry named by URL.
+      const prevDir = prevVersionDir(extensionsDir, id, "1.0.0");
+      mkdirSync(join(prevDir, "dist"), { recursive: true });
+      writeFileSync(
+        join(prevDir, "nimbus.extension.json"),
+        JSON.stringify({
+          id,
+          version: "1.0.0",
+          dependsOn: {
+            "com.example.dep-old": "^1.0.0",
+            "com.example.dep-url": { range: "^2.0.0", registry: "https://elsewhere.test/" },
+          },
+        }),
+        "utf8",
+      );
+      writeFileSync(join(prevDir, "dist", "index.js"), "// entry 1.0.0", "utf8");
+      insertExtensionRow(db, {
+        id,
+        version: "1.1.0",
+        install_path: join(extensionsDir, id),
+        manifest_hash: "a".repeat(64),
+        entry_hash: "b".repeat(64),
+        enabled: 1,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+      insertExtensionRow(db, {
+        id: "com.example.dep-old",
+        version: "1.2.0",
+        install_path: join(extensionsDir, "com.example.dep-old"),
+        manifest_hash: "a".repeat(64),
+        entry_hash: "b".repeat(64),
+        enabled: 0,
+        installed_at: Date.now(),
+        last_verified_at: Date.now(),
+      });
+      const rootKey = encodeBase64(generateEd25519Keypair().pubkey);
+      insertRegistry(db, {
+        name: "main",
+        url: "https://main.test/",
+        rootKey,
+        rootFingerprint: publisherKeyFingerprint(rootKey),
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
+        lastIndexSha256: null,
+      });
+      dbRun(
+        db,
+        "UPDATE extension SET source_registry = ?, source_root_fingerprint = ?, source_channel = ? WHERE id = ?",
+        ["main", publisherKeyFingerprint(rootKey), "stable", id],
+      );
+      recordInstall(
+        db,
+        id,
+        "1.1.0",
+        [
+          {
+            id: "com.example.dep-new",
+            range: "^1.0.0",
+            resolvedVersion: "1.0.0",
+            registry: "main",
+          },
+        ],
+        1,
+      );
+
+      await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
+
+      expect(listExtensions(db).find((r) => r.id === id)?.version).toBe("1.0.0");
+      expect([...forwardDeps(db, id)].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+        { id: "com.example.dep-old", range: "^1.0.0", registry: "main" },
+        { id: "com.example.dep-url", range: "^2.0.0", registry: null },
+      ]);
     } finally {
       removeExtensionVersionStore(extensionsDir, id);
       db.close();

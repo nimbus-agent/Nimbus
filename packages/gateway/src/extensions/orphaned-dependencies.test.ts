@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { insertExtensionRow, setInstalledAsDependency } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { clearDeps, recordInstall } from "./dependency-store.ts";
-import { orphanedDependencies } from "./orphaned-dependencies.ts";
+import { orphanedAfterEdgeChange, orphanedDependencies } from "./orphaned-dependencies.ts";
 
 function freshDb(): Database {
   const db = new Database(":memory:");
@@ -153,5 +153,45 @@ describe("orphanedDependencies", () => {
     const db = freshDb();
     add(db, "solo");
     expect(orphanedDependencies(db, "solo")).toEqual([]);
+  });
+});
+
+describe("orphanedAfterEdgeChange", () => {
+  test("a dropped dependency-installed package and its own sole dependency, dependents first", () => {
+    const db = freshDb();
+    add(db, "root");
+    add(db, "a", { asDependency: true });
+    add(db, "b", { asDependency: true });
+    add(db, "c", { asDependency: true });
+    deps(db, "a", ["b"]);
+    // The rewritten edges: root now depends on c only.
+    deps(db, "root", ["c"]);
+    expect(orphanedAfterEdgeChange(db, "root", ["a"])).toEqual(["a", "b"]);
+  });
+
+  test("never an explicitly installed, still-needed or kept package", () => {
+    const db = freshDb();
+    add(db, "root");
+    add(db, "explicit");
+    add(db, "shared", { asDependency: true });
+    add(db, "other");
+    deps(db, "other", ["shared"]);
+    add(db, "loop", { asDependency: true });
+    add(db, "root2", { asDependency: true });
+    deps(db, "loop", ["root2"]);
+    deps(db, "root", []);
+    expect(orphanedAfterEdgeChange(db, "root", ["explicit", "shared", "gone"])).toEqual([]);
+    // `root2` would follow from `loop`, but the dependent itself is never listed.
+    expect(orphanedAfterEdgeChange(db, "root2", ["loop"])).toEqual(["loop"]);
+  });
+
+  test("two dropped packages, one depending on the other, come out dependents first", () => {
+    const db = freshDb();
+    add(db, "root");
+    add(db, "a", { asDependency: true });
+    add(db, "z", { asDependency: true });
+    deps(db, "z", ["a"]);
+    deps(db, "root", []);
+    expect(orphanedAfterEdgeChange(db, "root", ["a", "z"])).toEqual(["z", "a"]);
   });
 });

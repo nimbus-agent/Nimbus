@@ -99,7 +99,7 @@ function baseDeps(): Deps {
     forcePoll: async () => {},
     gate: async () => "proceed" as const,
     performUpgrade: mock(async () => {}),
-    performDowngrade: mock(async () => {}),
+    performDowngrade: mock(async () => ({ orphanedDependencies: [] })),
     appendAudit: async () => {},
     getInstalledVersion: async () => "1.0.0",
     hasPrevVersion: async () => false,
@@ -356,7 +356,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     const cur = deps.cache.get("com.example.a")!;
     deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
     deps.hasPrevVersion = async () => true;
-    const performDowngrade = mock(async () => {});
+    const performDowngrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performDowngrade = performDowngrade;
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
@@ -365,6 +365,45 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     )) as { applied: boolean };
     expect(performDowngrade).toHaveBeenCalled();
     expect(res.applied).toBe(true);
+  });
+
+  it("a downgrade result names the dependencies it left orphaned, and the gate shows no plan", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    const gated: unknown[] = [];
+    deps.gate = async (action) => {
+      gated.push(action);
+      return "proceed" as const;
+    };
+    deps.performDowngrade = async () => ({ orphanedDependencies: ["dep.new", "dep.child"] });
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    );
+    expect(res).toEqual({
+      applied: true,
+      jobId: "d".repeat(16),
+      orphanedDependencies: ["dep.new", "dep.child"],
+    });
+    expect(JSON.stringify(gated)).not.toContain("planText");
+  });
+
+  it("a downgrade that orphans nothing carries no orphanedDependencies field", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    );
+    expect(res).toEqual({ applied: true, jobId: "d".repeat(16) });
   });
 
   it("refuses a forward update whose source registry is gone, before the gate", async () => {

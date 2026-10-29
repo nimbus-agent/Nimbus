@@ -182,4 +182,14 @@ export interface UpdateApplyResult {
   }>;
   /** An applied update: the connector requirements its approval showed (set only when there are any). */
   connectorRequirements?: readonly ConnectorRequirementStatus[];
+  /**
+   * An applied downgrade: the dependency-installed packages it left needed by nothing, dependents
+   * first (set only when there are any). Kept, never removed; the owner removes them.
+   */
+  orphanedDependencies?: readonly string[];
+}
+
+/** What an applied downgrade reports: the dependencies it left needed by nothing, dependents first. */
+export interface DowngradeOutcome {
+  readonly orphanedDependencies: readonly string[];
 }
