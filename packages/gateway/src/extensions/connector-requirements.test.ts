@@ -140,6 +140,22 @@ describe("connectorRequirementStatuses", () => {
     expect(s?.interactive).toBe(false);
   });
 
+  test.each([
+    ["jira", "nimbus connector auth jira --username <email> --token <token> --api-base <url>"],
+    [
+      "confluence",
+      "nimbus connector auth confluence --username <email> --token <token> --api-base <url>",
+    ],
+    ["bitbucket", "nimbus connector auth bitbucket --username <name> --token <app_password>"],
+    ["sentry", "nimbus connector auth sentry --token <token> --sentry-org <slug>"],
+    ["jenkins", "nimbus connector auth jenkins --username <user> --token <token> --api-base <url>"],
+    ["grafana", "nimbus connector auth grafana --api-base <url> --token <token>"],
+  ])("%s's fix names every flag connector auth requires", async (id, command) => {
+    const [s] = await connectorRequirementStatuses({ db, vault }, one([id]));
+    expect(s?.state).toBe("not_connected");
+    expect(s?.fix).toEqual([command]);
+  });
+
   test("an OAuth connector with no key names plain connector auth", async () => {
     const [s] = await connectorRequirementStatuses({ db, vault }, one(["gmail"]));
     expect(s?.fix).toEqual(["nimbus connector auth gmail"]);

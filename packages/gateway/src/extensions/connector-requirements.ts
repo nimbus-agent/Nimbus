@@ -252,13 +252,31 @@ async function ownedStatus(
 }
 
 /**
+ * The flags `nimbus connector auth <id>` requires for the token connectors that need more than
+ * `--token`, in the order the CLI's own usage text gives them (optional flags such as
+ * `--sentry-url` are left out). The gateway cannot import the CLI; the source of truth is
+ * `packages/cli/src/commands/connector.ts` (the `apply*ConnectorAuth` functions and
+ * `JIRA_CONNECTOR_SITE` / `CONFLUENCE_CONNECTOR_SITE`). A connector absent here takes `--token` alone.
+ */
+const TOKEN_CONNECTOR_AUTH_FLAGS: Readonly<Record<string, string>> = {
+  jira: "--username <email> --token <token> --api-base <url>",
+  confluence: "--username <email> --token <token> --api-base <url>",
+  bitbucket: "--username <name> --token <app_password>",
+  sentry: "--token <token> --sentry-org <slug>",
+  jenkins: "--username <user> --token <token> --api-base <url>",
+  grafana: "--api-base <url> --token <token>",
+};
+
+/**
  * How a bundled token connector is connected, as typed: `connector auth --token` where
  * `connector auth` takes a token, else one `vault set` per manifest key (the commands
  * `connector auth` itself names when it refuses the service).
  */
 function tokenConnectorFix(target: ConnectorServiceId): string[] {
   if (connectorAuthUnavailableMessage(target) === null) {
-    return [`nimbus connector auth ${target} --token <token>`];
+    return [
+      `nimbus connector auth ${target} ${TOKEN_CONNECTOR_AUTH_FLAGS[target] ?? "--token <token>"}`,
+    ];
   }
   return CONNECTOR_VAULT_SECRET_KEYS[target].map((k) => `nimbus vault set ${k}`);
 }
