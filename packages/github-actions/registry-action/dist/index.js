@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:990dd53325c532758ab5111e83d52336a4ae31029a6a1a2e3fb885160f5afc78
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:a335162ef5cac4456c579bb6f377aee5fa1b41ad7c2c2e5f626f6d37534965b7
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4241,6 +4241,9 @@ var MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
 var MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 var MAX_ENTRY_COUNT = 5000;
 var MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024;
+var MAX_EVAL_INPUT_BYTES = 64 * 1024;
+var MAX_EVAL_REPLY_BYTES = 1024 * 1024;
+var MAX_EVAL_SUITE_FILE_BYTES = 1024 * 1024;
 // ../../registry-format/src/code-unit-compare.ts
 function codeUnitCompare(a, b) {
   if (a < b) {
@@ -4262,6 +4265,16 @@ class RegistryError extends Error {
     this.name = "RegistryError";
   }
 }
+// ../../registry-format/src/eval-suite.ts
+var EVALS_DIR = "evals";
+var TYPE_MARKER_VALUES = new Set([
+  "string",
+  "number",
+  "boolean",
+  "null",
+  "array",
+  "object"
+]);
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
   "PATH",
@@ -4820,6 +4833,8 @@ function isPackageFile(relPath) {
     return true;
   if (relPath.startsWith(`${DIST_DIR}/`))
     return relPath.length > DIST_DIR.length + 1;
+  if (relPath.startsWith(`${EVALS_DIR}/`))
+    return relPath.length > EVALS_DIR.length + 1;
   return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
 }
 
@@ -10107,6 +10122,10 @@ function assertFileSet(m, files) {
     const code = files.find((f) => f.startsWith(DIST_PREFIX));
     if (code !== undefined) {
       throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
+    }
+    const evalFile = files.find((f) => f.startsWith(`${EVALS_DIR}/`));
+    if (evalFile !== undefined) {
+      throw fileSetInvalid(`package holds ${evalFile}, but a starter pack holds no evals/ files`);
     }
   }
   const seen = new Set;

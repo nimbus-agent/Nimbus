@@ -34,6 +34,14 @@ All four modes read the repository from the git tree, never the working director
 `extensions/` (or a trust feed's `publishers/`, `requests/`, `statements/`) that is not a regular
 `100644` file (a symlink or a submodule above all) is refused or skipped.
 
+## Packages with `evals/`
+
+A package may now carry an `evals/` directory (extension eval suites, `evals/<name>.eval.json`);
+the file set the registry validates (rule 13) includes it. A registry whose workflow still pins an
+older action release refuses such a package under rule 13 until the pin is updated. A starter pack
+(`kind: "starter-pack"`) may not carry `evals/`. This action does not run evals yet: scoring and
+the registry-signed `quality` on index entries arrive in later changes.
+
 ## Inputs
 
 | Input | Required | Description |

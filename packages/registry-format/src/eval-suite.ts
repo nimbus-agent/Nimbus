@@ -163,7 +163,7 @@ function parseOneOf(file: string, where: string, raw: RawObject): EvalExpect {
   let path: string | null = null;
   if (raw.path !== undefined) {
     if (typeof raw.path !== "string" || (raw.path !== "" && !raw.path.startsWith("/"))) {
-      refuse(file, `${where}.path must be "" or an RFC 6901 pointer starting with "/"`);
+      refuse(file, `${where}${".path"} must be "" or an RFC 6901 pointer starting with "/"`);
     }
     path = raw.path;
   }
