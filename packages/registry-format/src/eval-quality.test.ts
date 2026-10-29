@@ -44,7 +44,7 @@ describe("parseEvalQuality", () => {
     refused("x");
     refused(mut((q) => (q["scorer"] = 2)));
     refused(mut((q) => (q["score"] = 101)));
-    refused(mut((q) => (q["score"] = 70)));
+    expect(refused(mut((q) => (q["score"] = 70)))).toContain("score does not match");
     refused(mut((q) => (q["score"] = 66.5)));
     refused(mut((q) => (q["passed"] = 4)));
     refused(mut((q) => (q["passed"] = -1)));
@@ -55,7 +55,7 @@ describe("parseEvalQuality", () => {
     refused(mut((q) => delete q["score"]));
     refused(mut((q) => delete rub(q)["one-of"]));
     refused(mut((q) => (rub(q)["extra"] = { cases: 0, passed: 0 })));
-    refused(mut((q) => (rub(q)["exact"] = { cases: 2, passed: 1 })));
+    expect(refused(mut((q) => (rub(q)["exact"] = { cases: 2, passed: 1 })))).toContain("sum");
     refused(mut((q) => (rub(q)["exact"] = { cases: 1, passed: 2 })));
     refused(mut((q) => (rub(q)["exact"] = { cases: 1.5, passed: 1 })));
     refused(mut((q) => (rub(q)["exact"] = { cases: 1, passed: 1, x: 1 })));

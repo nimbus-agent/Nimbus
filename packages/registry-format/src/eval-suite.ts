@@ -163,7 +163,7 @@ function parseOneOf(file: string, where: string, raw: RawObject): EvalExpect {
   let path: string | null = null;
   if (raw.path !== undefined) {
     if (typeof raw.path !== "string" || (raw.path !== "" && !raw.path.startsWith("/"))) {
-      refuse(file, `${where}${".path"} must be "" or an RFC 6901 pointer starting with "/"`);
+      refuse(file, `path of ${where} must be "" or an RFC 6901 pointer starting with "/"`);
     }
     path = raw.path;
   }
@@ -242,6 +242,9 @@ export function parseEvalSuite(file: string, bytes: Uint8Array): EvalSuite {
   if (!Array.isArray(raw.cases) || raw.cases.length === 0) {
     refuse(file, "cases must be a non-empty array");
   }
+  if (raw.cases.length > MAX_EVAL_CASES) {
+    refuse(file, `${raw.cases.length} cases; at most ${MAX_EVAL_CASES} are allowed`);
+  }
   const seen = new Set<string>();
   const cases = raw.cases.map((c, i) => parseCase(file, i, c, seen));
   return { file, name, cases };
@@ -254,6 +257,11 @@ export function parseEvalSuites(
   if (files.length > MAX_EVAL_SUITES) {
     refuse(EVALS_DIR, `${files.length} suite files; at most ${MAX_EVAL_SUITES} are allowed`);
   }
+  const names = new Set<string>();
+  for (const f of files) {
+    if (names.has(f.file)) refuse(f.file, "duplicate suite file entry");
+    names.add(f.file);
+  }
   const sorted = [...files].sort((a, b) => codeUnitCompare(a.file, b.file));
   const suites = sorted.map((f) => parseEvalSuite(f.file, f.bytes));
   const total = suites.reduce((n, s) => n + s.cases.length, 0);
@@ -263,24 +271,48 @@ export function parseEvalSuites(
   return suites;
 }
 
+const LOOSE_SUITE_RE = /\.eval\.json$/i;
+
+/** lstat the `evals` directory: missing is `null`; a symlink or a non-directory is refused. */
+function statEvalsDir(dir: string): boolean {
+  let st: ReturnType<typeof lstatSync>;
+  try {
+    st = lstatSync(dir);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw err;
+  }
+  if (st.isSymbolicLink()) refuse(EVALS_DIR, "refusing a symlink as the evals directory");
+  if (!st.isDirectory()) refuse(EVALS_DIR, "evals must be a directory");
+  return true;
+}
+
+/** Read one suite file after lstat checks; the size is checked before any read. */
+function readSuiteFile(dir: string, name: string): { file: string; bytes: Uint8Array } | null {
+  const rel = `${EVALS_DIR}/${name}`;
+  if (!isEvalSuiteFile(rel)) {
+    if (LOOSE_SUITE_RE.test(name))
+      refuse(rel, 'a suite file must be named exactly "<name>.eval.json"');
+    return null;
+  }
+  const full = join(dir, name);
+  const st = lstatSync(full);
+  if (st.isSymbolicLink()) refuse(rel, "refusing a symlink as an eval suite");
+  if (!st.isFile()) refuse(rel, "an eval suite must be a regular file");
+  if (st.size > MAX_EVAL_SUITE_FILE_BYTES) {
+    refuse(rel, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+  }
+  return { file: rel, bytes: readFileSync(full) };
+}
+
 /** The suites under `<packageDir>/evals`: direct children only; a symlink or non-file suite is refused. */
 export function loadEvalSuites(packageDir: string): EvalSuite[] {
   const dir = join(packageDir, EVALS_DIR);
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw err;
-  }
+  if (!statEvalsDir(dir)) return [];
   const files: { file: string; bytes: Uint8Array }[] = [];
-  for (const name of names) {
-    const rel = `${EVALS_DIR}/${name}`;
-    if (!isEvalSuiteFile(rel)) continue;
-    const st = lstatSync(join(dir, name));
-    if (st.isSymbolicLink()) refuse(rel, "refusing a symlink as an eval suite");
-    if (!st.isFile()) refuse(rel, "an eval suite must be a regular file");
-    files.push({ file: rel, bytes: readFileSync(join(dir, name)) });
+  for (const name of readdirSync(dir)) {
+    const f = readSuiteFile(dir, name);
+    if (f !== null) files.push(f);
   }
   return parseEvalSuites(files);
 }

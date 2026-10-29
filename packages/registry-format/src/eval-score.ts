@@ -57,6 +57,7 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
+// Unknown `$type` names never reach here: the parser (eval-suite.ts checkTypeMarkers) rejects them.
 function matchesTypeMarker(type: unknown, value: unknown): boolean {
   switch (type) {
     case "null":

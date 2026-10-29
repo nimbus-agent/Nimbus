@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { MAX_EVAL_JSON_DEPTH } from "./caps.ts";
+import { MAX_EVAL_JSON_DEPTH, MAX_EVAL_SUITE_FILE_BYTES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
   EVAL_RUBRIC_KINDS,
@@ -160,6 +160,8 @@ describe("parseEvalSuite", () => {
     expectRefused(() => parse(suiteWith({ input: [] })), "input");
     expectRefused(() => parse(suiteWith({ input: null })), "input");
     expectRefused(() => parse(suiteWith({ expect: undefined })), "expect");
+    expectRefused(() => parse(suiteWith({ expect: null })), "expect");
+    expectRefused(() => parse(suiteWith({ expect: "exact" })), "expect");
   });
 
   test("input size cap", () => {
@@ -223,6 +225,18 @@ describe("parseEvalSuite", () => {
   });
 });
 
+describe("parseEvalSuite case cap", () => {
+  test("refuses a single suite with 201 cases", () => {
+    const cases = Array.from({ length: 201 }, (_, i) => ({
+      name: `c${i}`,
+      tool: "t",
+      input: {},
+      expect: { rubric: "exact", value: "ok" },
+    }));
+    expectRefused(() => parse({ format: 1, name: "s", cases }), "cases");
+  });
+});
+
 describe("parseEvalSuites", () => {
   const file = (name: string, cases = 1) => ({
     file: `evals/${name}.eval.json`,
@@ -247,6 +261,10 @@ describe("parseEvalSuites", () => {
     const files = Array.from({ length: 21 }, (_, i) => file(`s${String(i).padStart(2, "0")}`));
     expectRefused(() => parseEvalSuites(files), "suite files");
     expect(parseEvalSuites(files.slice(0, 20))).toHaveLength(20);
+  });
+
+  test("refuses duplicate file entries", () => {
+    expectRefused(() => parseEvalSuites([file("a"), file("a")]), "duplicate");
   });
 
   test("refuses 201 cases across files", () => {
@@ -306,6 +324,52 @@ describe("loadEvalSuites", () => {
       mkdirSync(join(root, "evals"));
       writeFileSync(join(root, "target.json"), goodText);
       symlinkSync(join(root, "target.json"), join(root, "evals", "a.eval.json"));
+      expectRefused(() => loadEvalSuites(root), "symlink");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an oversized suite file is refused without being read", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals"));
+      writeFileSync(
+        join(root, "evals", "big.eval.json"),
+        Buffer.alloc(MAX_EVAL_SUITE_FILE_BYTES + 1, 0x20),
+      );
+      expectRefused(() => loadEvalSuites(root), "too large");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a wrong-case suite name is refused, not skipped", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "evals"));
+      writeFileSync(join(root, "evals", "x.Eval.json"), goodText);
+      expectRefused(() => loadEvalSuites(root), "evals/x.Eval.json");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("evals that is a regular file is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      writeFileSync(join(root, "evals"), "x");
+      expectRefused(() => loadEvalSuites(root), "directory");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test.skipIf(!CAN_SYMLINK)("a symlinked evals directory is refused", () => {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evals-"));
+    try {
+      mkdirSync(join(root, "real"));
+      symlinkSync(join(root, "real"), join(root, "evals"), "junction");
       expectRefused(() => loadEvalSuites(root), "symlink");
     } finally {
       rmSync(root, { recursive: true, force: true });
