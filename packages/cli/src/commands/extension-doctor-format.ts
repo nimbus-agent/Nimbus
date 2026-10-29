@@ -15,12 +15,21 @@ function grantHadModelAccess(grant: unknown): boolean {
 }
 
 /**
+ * A starter pack's run state is always `pack`, which hides `blocked`; a pack is blocked when the
+ * gateway still reports an unacknowledged block for it.
+ */
+function isBlocked(e: Record<string, unknown>): boolean {
+  if (e["runState"] === "blocked") return true;
+  return e["runState"] === "pack" && Array.isArray(e["blockedBy"]) && e["blockedBy"].length > 0;
+}
+
+/**
  * One `[warn]` per extension the gateway reports `blocked` (I48): a revocation or takedown its run
  * approval did not acknowledge. Named even with the runtime off, since it is a fact about the code.
  */
 function blockedLines(extensions: readonly unknown[]): string[] {
   return extensions.flatMap((e: unknown) => {
-    if (!isRecord(e) || typeof e["id"] !== "string" || e["runState"] !== "blocked") return [];
+    if (!isRecord(e) || typeof e["id"] !== "string" || !isBlocked(e)) return [];
     const id = stripControl(e["id"]);
     const first = Array.isArray(e["blockedBy"]) ? e["blockedBy"].find(isRecord) : undefined;
     const kind =

@@ -47,3 +47,18 @@ test("defaults to the real readline constructor, reading process.stdin", async (
     Object.defineProperty(process, "stdout", { value: originalStdout, configurable: true });
   }
 });
+
+test("writes the question to the output it is given, not stdout", async () => {
+  let output: unknown;
+  const make = ((opts: { output: unknown }) => {
+    output = opts.output;
+    return { question: async () => "y", close: () => {} };
+  }) as unknown as MakeInterface;
+  const sink = new Writable({
+    write(_chunk, _enc, cb) {
+      cb();
+    },
+  });
+  expect(await readLine("Go? ", make, sink)).toBe("y");
+  expect(output).toBe(sink);
+});

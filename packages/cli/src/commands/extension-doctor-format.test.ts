@@ -204,6 +204,23 @@ describe("doctorExtensionsLines — blocked extensions (I48)", () => {
     expect([...(r.lines[0] ?? "")].some((c) => c.charCodeAt(0) < 0x20)).toBe(false);
     expect(r.lines[1]).toContain("not approved");
   });
+  test("a starter pack is reported blocked by its blocks, though its run state is pack", () => {
+    const r = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [
+        {
+          id: "p",
+          kind: "starter-pack",
+          runState: "pack",
+          blockedBy: [{ kind: "extension.takedown", reason: "x" }],
+        },
+        { id: "q", kind: "starter-pack", runState: "pack", blockedBy: [] },
+      ],
+    });
+    expect(r.lines).toEqual([
+      "[warn] Extensions: p is blocked: it was taken down (x) — it does not run; nimbus extension info p",
+    ]);
+  });
   test("a blocked entry without blockedBy still reads", () => {
     expect(
       doctorExtensionsLines({ runtimeEnabled: true, extensions: [ext("e", "blocked")] }).lines[0],

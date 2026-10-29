@@ -134,13 +134,19 @@ function blockIssuerPhrase(b: TrustBlockView): string {
  * `nimbus extension info`'s lines for each block (I48). Every value came from a signed statement a
  * third party wrote, so control characters are stripped before it reaches the terminal.
  */
-export function formatBlockLines(id: string, blocks: readonly TrustBlockView[]): string[] {
+export function formatBlockLines(
+  id: string,
+  blocks: readonly TrustBlockView[],
+  kind?: string,
+): string[] {
   if (blocks.length === 0) return [];
   const lines = blocks.map((b) => {
     const what = b.kind === "key.revoke" ? "publisher key revoked" : "taken down";
     const by = blockIssuerPhrase(b);
     return `Blocked:   ${what} by ${by} on ${stripControl(b.issuedAt)}: ${stripControl(b.reason)}`;
   });
+  // A starter pack has no code, and `approve` refuses one: never suggest it.
+  if (kind === "starter-pack") return lines;
   lines.push(
     `           It does not run. To run it anyway: nimbus extension approve ${stripControl(id)}`,
   );
@@ -418,7 +424,7 @@ export async function runExtensionInfo(
   console.log(`Enabled:   ${formatEnabledLine(e)}`);
   const runLine = formatRunLine(e);
   if (runLine !== null) console.log(`Run:       ${runLine}`);
-  for (const line of formatBlockLines(e.id, e.blockedBy ?? [])) console.log(line);
+  for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
@@ -914,8 +920,9 @@ export type ExtensionRemoveIo = {
   readonly confirm: (question: string) => Promise<boolean>;
 };
 
+/** The offer's question goes to stderr: stdout carries the removal's JSON result. */
 const defaultRemoveIo: ExtensionRemoveIo = {
-  confirm: async (q) => /^y(es)?$/i.test(await readLine(q)),
+  confirm: async (q) => /^y(es)?$/i.test(await readLine(q, undefined, process.stderr)),
 };
 
 type ExtensionRemoveResult = { ok: boolean; orphanedDependencies?: unknown };
@@ -976,7 +983,7 @@ export async function runExtensionRemove(
   console.log(JSON.stringify(out, undefined, 2));
   await handleOrphanedDependencies(client, id, orphansOf(out), {
     cleanDeps,
-    attended: !accept && process.stdout.isTTY === true,
+    attended: !accept && process.stdin.isTTY === true && process.stdout.isTTY === true,
     io,
   });
 }
@@ -1003,7 +1010,12 @@ async function handleOrphanedDependencies(
   if (!opts.cleanDeps) {
     const question = `Also remove ${orphans.length} package(s) installed only for ${safeId}: ${list}? [y/N] `;
     if (!opts.attended || !(await opts.io.confirm(question))) {
-      say(`Kept ${list}, installed only for ${safeId}; remove them with --clean-deps.`);
+      // Not `--clean-deps`: `id` is already gone, so naming it again fails, and nothing offers
+      // these packages later. Name the removals that work now, dependents first.
+      const commands = orphans
+        .map((o) => `nimbus extension remove ${stripControl(o)}`)
+        .join(" && ");
+      say(`Kept ${list}, installed only for ${safeId}; remove them with: ${commands}`);
       return;
     }
   }

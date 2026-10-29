@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import {
   parseExtensionManifestForRegistry,
   publisherKeyFingerprint,
@@ -715,6 +716,12 @@ describe("runExtensionDisable", () => {
 
 describe("runExtensionRemove", () => {
   const origIsTty = process.stdout.isTTY;
+  const origStdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+
+  /** The remove offer needs both ends to be a terminal (attended). */
+  function setStdinTty(value: boolean): void {
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value });
+  }
 
   beforeEach(() => {
     out.reset();
@@ -724,6 +731,8 @@ describe("runExtensionRemove", () => {
       configurable: true,
       value: origIsTty,
     });
+    if (origStdinTty === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(process.stdin, "isTTY", origStdinTty);
     clearFixture();
   });
 
@@ -800,7 +809,8 @@ describe("runExtensionRemove", () => {
 
   const orphaned = { ok: true, orphanedDependencies: ["inner", "code.a"] };
   const offer = "Also remove 2 package(s) installed only for pack: inner, code.a? [y/N] ";
-  const kept = "Kept inner, code.a, installed only for pack; remove them with --clean-deps.";
+  const kept =
+    "Kept inner, code.a, installed only for pack; remove them with: nimbus extension remove inner && nimbus extension remove code.a";
   const mustNotAsk = {
     confirm: async (): Promise<boolean> => {
       throw new Error("must not ask");
@@ -825,6 +835,7 @@ describe("runExtensionRemove", () => {
 
   test("TTY: the offer answered yes removes each orphan in order, with no further offer", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(true);
     setFixture({ clackAnswer: true });
     const questions: string[] = [];
     const { client, calls } = createMockIpcClient([
@@ -848,6 +859,7 @@ describe("runExtensionRemove", () => {
 
   test("TTY: the offer answered no keeps the orphans and names them", async () => {
     Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(true);
     setFixture({ clackAnswer: true });
     const questions: string[] = [];
     const { client, calls } = createMockIpcClient([orphaned]);
@@ -862,6 +874,49 @@ describe("runExtensionRemove", () => {
     expect(questions).toEqual([offer]);
     expect(calls).toHaveLength(1);
     expect(err).toContain(kept);
+  });
+
+  test("stdout a TTY but stdin not: no offer, and the Kept line names the removals", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(false);
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([orphaned]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack"], ["pack"], mustNotAsk),
+    );
+    expect(calls).toHaveLength(1);
+    expect(err).toContain(kept);
+  });
+
+  test("the default offer asks on stderr, so stdout stays JSON after a no", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const input = new Readable({ read() {} });
+    Object.defineProperty(input, "isTTY", { configurable: true, value: true });
+    const origStdin = process.stdin;
+    Object.defineProperty(process, "stdin", { value: input, configurable: true });
+    const rawStdout: string[] = [];
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      rawStdout.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const { client, calls } = createMockIpcClient([orphaned]);
+      const err = await withStderr(async () => {
+        const pending = runExtensionRemove(client, ["remove", "pack"], ["pack"]);
+        setTimeout(() => input.push("n\n"), 10);
+        await pending;
+      });
+      expect(calls).toHaveLength(1);
+      expect(err).toContain(offer);
+      expect(err).toContain(kept);
+      expect(rawStdout.join("")).toBe("");
+      expect(JSON.parse(out.stdout)).toEqual(orphaned);
+    } finally {
+      process.stdout.write = origStdoutWrite;
+      Object.defineProperty(process, "stdin", { value: origStdin, configurable: true });
+    }
   });
 
   test("TTY: --clean-deps keeps the removal's confirmation and removes the orphans without the offer", async () => {
@@ -2928,6 +2983,23 @@ describe("run state in human output", () => {
       noColor: true,
     });
     expect(without).not.toMatch(/\bRun\b/);
+  });
+
+  test("formatBlockLines: a starter pack's blocks never suggest approving it", () => {
+    const block = {
+      statementId: "s1",
+      kind: "extension.takedown",
+      issuer: "nimbus",
+      registry: null,
+      reason: "malware",
+      issuedAt: "2026-10-26T12:00:00Z",
+    };
+    const lines = formatBlockLines("acme.pack", [block], "starter-pack");
+    expect(lines).toHaveLength(1);
+    expect(lines.join(" ")).not.toContain("approve");
+    expect(formatBlockLines("acme.tool", [block], "extension").at(-1)).toContain(
+      "nimbus extension approve acme.tool",
+    );
   });
 
   test("formatBlockLines (I48): one line per block, issuer named, the override last", () => {
