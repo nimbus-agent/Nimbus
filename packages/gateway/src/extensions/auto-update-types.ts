@@ -187,6 +187,13 @@ export interface UpdateApplyResult {
    * first (set only when there are any). Kept, never removed; the owner removes them.
    */
   orphanedDependencies?: readonly string[];
+  /**
+   * An applied forward update: the root had a run grant before it, which the update made stale, so
+   * the owner must approve it again (set only when true).
+   */
+  grantDropped?: boolean;
+  /** An applied forward update that turned the root into a starter pack (which cannot be approved). */
+  rootKind?: "starter-pack";
 }
 
 /** What an applied downgrade reports: the dependencies it left needed by nothing, dependents first. */

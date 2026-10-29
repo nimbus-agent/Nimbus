@@ -761,6 +761,30 @@ describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension run
     );
   });
 
+  it("the applied result says the grant was dropped, and the pack case says rootKind", async () => {
+    const run = async (grant: boolean, pack: boolean) => {
+      const deps = baseDeps();
+      const cached = deps.cache.get("com.example.a");
+      if (cached === undefined) throw new Error("fixture missing");
+      if (pack) deps.cache.upsert({ ...cached, toStarterPack: true });
+      deps.hasRunGrant = async () => grant;
+      return (await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion: "1.1.0" },
+        deps,
+      )) as Record<string, unknown>;
+    };
+    const dropped = await run(true, false);
+    expect(dropped["applied"]).toBe(true);
+    expect(dropped["grantDropped"]).toBe(true);
+    expect("rootKind" in dropped).toBe(false);
+    const none = await run(false, false);
+    expect("grantDropped" in none).toBe(false);
+    const pack = await run(true, true);
+    expect(pack["grantDropped"]).toBe(true);
+    expect(pack["rootKind"]).toBe("starter-pack");
+  });
+
   it("omits the note when there is no run grant, or no way to ask", async () => {
     expect("runGrantNote" in (await askedPayload(async () => false))).toBe(false);
     expect("runGrantNote" in (await askedPayload())).toBe(false);

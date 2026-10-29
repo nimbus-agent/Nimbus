@@ -364,6 +364,7 @@ function appliedResult(
   cached: AvailableUpdate,
   approved: ApprovedUpdatePlan | undefined,
   orphaned: readonly string[] = [],
+  grantDropped = false,
 ): UpdateApplyResult {
   const shown = approved?.shown ?? [];
   const requirements = approved?.requirements ?? [];
@@ -380,6 +381,9 @@ function appliedResult(
     }),
     ...(requirements.length > 0 && { connectorRequirements: requirements }),
     ...(orphaned.length > 0 && { orphanedDependencies: [...orphaned] }),
+    ...(grantDropped && { grantDropped: true }),
+    ...(cached.toStarterPack === true &&
+      approved !== undefined && { rootKind: "starter-pack" as const }),
   };
 }
 
@@ -388,6 +392,7 @@ async function applyUpdateUnderMutex(
   cached: AvailableUpdate,
   installedAtGate: string,
   approved: ApprovedUpdatePlan | undefined,
+  hadRunGrant: boolean,
   deps: AutoUpdateRpcDeps,
 ): Promise<UpdateApplyResult> {
   const isDowngrade = approved === undefined;
@@ -425,7 +430,7 @@ async function applyUpdateUnderMutex(
       });
     }
     deps.cache.remove(cached.id);
-    return appliedResult(cached, approved, orphaned);
+    return appliedResult(cached, approved, orphaned, !isDowngrade && hadRunGrant);
   } catch (e) {
     const phase = e instanceof Error ? extractPhase(e.message) : "internal_error";
     await deps.appendAudit(
@@ -473,7 +478,7 @@ async function handleExtensionUpdate(
     return { applied: false, reason: "user_rejected" };
   }
 
-  return applyUpdateUnderMutex(cached, installed, approved, deps);
+  return applyUpdateUnderMutex(cached, installed, approved, hasRunGrant, deps);
 }
 
 export async function dispatchAutoUpdateRpc(

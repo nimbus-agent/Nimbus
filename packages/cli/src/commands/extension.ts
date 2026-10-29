@@ -1350,6 +1350,10 @@ export interface UpdateApplyResultCli {
     readonly kind?: string;
   }[];
   readonly connectorRequirements?: unknown;
+  /** An applied update: the root had a run grant, now stale. */
+  readonly grantDropped?: boolean;
+  /** An applied update that made the root a starter pack (it cannot be approved). */
+  readonly rootKind?: string;
   /** An applied downgrade: dependency-installed packages left needed by nothing, dependents first. */
   readonly orphanedDependencies?: readonly string[];
 }
@@ -1439,7 +1443,7 @@ async function applyExtensionUpdate(
   if (res.applied) {
     const jobIdPart = res.jobId === undefined ? "" : ` (jobId=${res.jobId})`;
     opts.writeStdout(`updated ${id} to ${targetVersion}${jobIdPart}\n`);
-    await reportAddedPackages(opts, res);
+    await reportAddedPackages(opts, res, id);
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
@@ -1454,26 +1458,25 @@ async function applyExtensionUpdate(
 async function reportAddedPackages(
   opts: RunExtensionUpdateOpts,
   res: UpdateApplyResultCli,
+  id: string,
 ): Promise<void> {
   const added = res.addedPackages ?? [];
-  for (const d of added) {
-    opts.writeStdout(
-      `  + ${stripControl(d.id)}@${stripControl(d.version)} from registry ${stripControl(d.registry ?? "unknown")} (installed as a dependency)
-`,
-    );
-  }
+  const lines: string[] = added.map(
+    (d) =>
+      `  + ${stripControl(d.id)}@${stripControl(d.version)} from registry ${stripControl(d.registry ?? "unknown")} (installed as a dependency)`,
+  );
   const toApprove = added.filter((d) => d.kind !== "starter-pack").map((d) => stripControl(d.id));
+  // The root's approval went stale with the update; a root that is now a pack cannot be approved.
+  if (res.grantDropped === true && res.rootKind !== "starter-pack") {
+    toApprove.push(stripControl(id));
+  }
   if (toApprove.length > 0) {
-    opts.writeStdout(
-      `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}
-`,
-    );
+    const cmds = toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ");
+    lines.push(`Nothing runs until you approve it: ${cmds}`);
   }
   const needs = parseRequirementStatuses(res.connectorRequirements);
-  if (needs.length > 0) {
-    opts.writeStdout("Needs:\n");
-    for (const line of requirementLines(needs)) opts.writeStdout(`${line}\n`);
-  }
+  if (needs.length > 0) lines.push("Needs:", ...requirementLines(needs));
+  if (lines.length > 0) opts.writeStdout(`${lines.join("\n")}\n`);
   if (toApprove.length > 0 || needs.length > 0) {
     await walkAfterInstall(opts.args, opts.walk, toApprove, needs);
   }

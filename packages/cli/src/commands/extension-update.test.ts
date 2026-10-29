@@ -377,3 +377,39 @@ describe("extension downgrade — orphans", () => {
     );
   });
 });
+
+describe("extension update — root grant, control characters, older gateway", () => {
+  test("a dropped grant adds the root LAST to the approve line", async () => {
+    const r = await applyWith({
+      applied: true,
+      grantDropped: true,
+      addedPackages: [{ id: "com.x.dep", version: "1.2.0", registry: "main", kind: "extension" }],
+    });
+    expect(r.stdout).toContain(
+      "Nothing runs until you approve it: nimbus extension approve com.x.dep && nimbus extension approve com.x.a",
+    );
+  });
+
+  test("a root that became a starter pack is never offered, whatever the grant", async () => {
+    const r = await applyWith({ applied: true, grantDropped: true, rootKind: "starter-pack" });
+    expect(r.stdout).toBe("updated com.x.a to 1.1.0\n");
+  });
+
+  test("control characters in a manifest-sourced id are stripped", async () => {
+    const r = await applyWith({
+      applied: true,
+      addedPackages: [
+        { id: "com.evil[2Jdep", version: "1.0.0", registry: "main", kind: "extension" },
+      ],
+    });
+    expect(r.stdout).not.toContain("");
+    expect(r.stdout).not.toContain("");
+    expect(r.stdout).toContain("com.evil");
+  });
+
+  test("an older gateway result prints exactly today's output", async () => {
+    const r = await applyWith({ applied: true, jobId: "j1" });
+    expect(r.stdout).toBe("updated com.x.a to 1.1.0 (jobId=j1)\n");
+    expect(r.stderr).toBe("");
+  });
+});
