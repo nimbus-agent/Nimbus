@@ -28,8 +28,9 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   run continues on a fresh copy. **I49** records that extension code runs for evaluation only this way; **D38** confines the
   eval spec builder and the unwrapped launch command, and keeps `extensions/eval/` from importing the Vault, DB, IPC, egress or
   executor modules, naming `readCredentialEnv` or importing `@mastra/mcp` statically. Stated bounds: a reply carrying both
-  `structuredContent` and `isError` is judged a non-error, and the role evaluates (never calls) `db/` modules through
-  `extension-runtime.ts`. **Not shipped:** `--extension` and `--installed` (they exit 2, "not available yet"), the
+  `structuredContent` and `isError` is judged a non-error. The launch command shared by the run and eval builders moves to
+  the dependency-free `extensions/extension-launch-command.ts` (D33(a) follows it), so the role's module graph reaches no
+  `db/`, `vault/`, `ipc/` or `egress/` module. **Not shipped:** `--extension` and `--installed` (they exit 2, "not available yet"), the
   `extension.eval` approval, the registry CI scoring job and any score display.
 
 - **2026-10-29 — `nimbus eval` PR 1 of 5: the eval format (Phase 9.5 project 5; no migration, no new invariant).**

@@ -127,7 +127,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 
 **Static D33** (`scripts/structure-audit/check-nimbus-invariants.ts`):
 
-- **(a)** `checkExtensionRoleConfinement` — the `__nimbus-extension` literal only in `platform/runtime-layout.ts`; `selfSpawn("extension", …)` only in `extensions/extension-runtime.ts`.
+- **(a)** `checkExtensionRoleConfinement` — the `__nimbus-extension` literal only in `platform/runtime-layout.ts`; `selfSpawn("extension", …)` only in `extensions/extension-launch-command.ts` (whose `extensionEntryCommand` D38(b) confines to the run and eval builders).
 - **(b)** `checkRunGrantTableConfinement` — `extension_run_grant` only in `run-grant-store.ts` and its V70 DDL.
 - **(c)** `checkRunGrantWriters` — `upsertRunGrant` only in the store + `approve-run.ts`; `deleteRunGrant` additionally `automation/extension-store.ts`. Aliased imports count.
 - Stated bound: text scans; a dynamically composed role string, call or identifier evades them. The I43 source pins in `security-invariants.test.ts` cover the spec builders.

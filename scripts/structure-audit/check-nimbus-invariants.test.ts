@@ -3228,7 +3228,7 @@ describe("D38 — extension code runs for evaluation only offline, without crede
           `${EVAL}/eval-spawn-spec.ts`,
           [
             'import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";',
-            'import { extensionEntryCommand } from "../extension-runtime.ts";',
+            'import { extensionEntryCommand } from "../extension-launch-command.ts";',
             'import { extensionProcessEnv } from "../spawn-env.ts";',
             "export function buildExtensionEvalSpawnSpec() { return extensionEntryCommand(); }",
           ].join("\n"),
@@ -3474,16 +3474,17 @@ describe("D33(c) — only the store and the approve/revoke path create or delete
   });
 });
 
-describe("D33(a) — the __nimbus-extension role is named only by the layout and the runtime", () => {
+describe("D33(a) — the __nimbus-extension role is named only by the layout and the launch command", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const LAYOUT = "packages/gateway/src/platform/runtime-layout.ts";
   const RUNTIME = "packages/gateway/src/extensions/extension-runtime.ts";
+  const LAUNCH = "packages/gateway/src/extensions/extension-launch-command.ts";
 
-  test("allows the literal in runtime-layout.ts and selfSpawn(extension) in extension-runtime.ts", () => {
+  test("allows the literal in runtime-layout.ts and selfSpawn(extension) in extension-launch-command.ts", () => {
     expect(
       checkExtensionRoleConfinement([
         file(LAYOUT, 'export const R = { extension: "__nimbus-extension" };'),
-        file(RUNTIME, 'selfSpawn("extension", [p]);'),
+        file(LAUNCH, 'selfSpawn("extension", [p]);'),
       ]),
     ).toEqual([]);
   });
@@ -3510,9 +3511,15 @@ describe("D33(a) — the __nimbus-extension role is named only by the layout and
     ["inner whitespace", 'selfSpawn( "extension", [p])'],
     ["whitespace before the paren", 'selfSpawn ("extension", [p])'],
     ["a comment before the paren", 'selfSpawn /* note */ ("extension", [p])'],
-  ])("FAILS on selfSpawn with %s outside extension-runtime.ts", (_n, src) => {
+  ])("FAILS on selfSpawn with %s outside extension-launch-command.ts", (_n, src) => {
     expect(
       checkExtensionRoleConfinement([file("packages/gateway/src/index.ts", src)]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on selfSpawn(extension) in extension-runtime.ts (it holds the launch command, not the role)", () => {
+    expect(
+      checkExtensionRoleConfinement([file(RUNTIME, 'selfSpawn("extension", [p]);')]),
     ).toHaveLength(1);
   });
 

@@ -1934,7 +1934,9 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
 }
 
 // (a) The `__nimbus-extension` self-role sentinel is named only by `platform/runtime-layout.ts` (which
-//     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-runtime.ts`,
+//     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-launch-command.ts`
+//     (`extensionEntryCommand`, whose callers D38(b) confines to the run builder in `extension-runtime.ts`
+//     and the eval builder),
 //     the spawner that runs the entry from a verified, re-digested per-spawn stage
 //     (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the child's working directory) through the
 //     sandbox. `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
@@ -1949,8 +1951,11 @@ const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/runtime-layout.ts",
 ];
 const D33_EXT_SELFSPAWN_RE = /\bselfSpawn\s*\(\s*["'`]extension["'`]/g;
+// The unwrapped launch command lives in a dependency-free module (so the eval role, which imports
+// it through its spec builder, reaches no db/ module, I49); D38(b) confines ITS callers to the two
+// builders that wrap it through the sandbox: `extension-runtime.ts` and `eval/eval-spawn-spec.ts`.
 const D33_EXT_SELFSPAWN_ALLOWED: readonly string[] = [
-  "packages/gateway/src/extensions/extension-runtime.ts",
+  "packages/gateway/src/extensions/extension-launch-command.ts",
 ];
 
 export function checkExtensionRoleConfinement(files: readonly FileEntry[]): Violation[] {
@@ -2062,8 +2067,8 @@ export function checkTrustTableConfinement(files: readonly FileEntry[]): Violati
 // `buildExtensionEvalSpawnSpec` builds: no network, baseline env only. Five clauses:
 // (a) `buildExtensionEvalSpawnSpec` is named only by its module and the runtime that calls it;
 // (b) `extensionEntryCommand` (the UNWRAPPED launch command of an extension entry) only by
-//     `extensions/extension-runtime.ts`, which defines it and wraps it for a run, and the eval spec
-//     module, which wraps it for an eval — a third holder could launch an entry outside both specs;
+//     `extensions/extension-launch-command.ts`, which defines it, `extensions/extension-runtime.ts`,
+//     which wraps it for a run, and the eval spec module, which wraps it for an eval — a third holder could launch an entry outside both specs;
 // (c) a file under `extensions/eval/` imports nothing — statically, as a type, or dynamically —
 //     whose specifier has a `vault/`, `egress/`, `ipc/` or `db/` segment or names `engine/executor`;
 // (d) `readCredentialEnv` is never named under `extensions/eval/`;
@@ -2082,6 +2087,7 @@ const D38_SPEC_BUILDER_ALLOWED: readonly string[] = [
 ];
 const D38_ENTRY_COMMAND_RE = /\bextensionEntryCommand\b/g;
 const D38_ENTRY_COMMAND_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/extension-launch-command.ts",
   "packages/gateway/src/extensions/extension-runtime.ts",
   "packages/gateway/src/extensions/eval/eval-spawn-spec.ts",
 ];
@@ -3465,7 +3471,7 @@ async function run(): Promise<void> {
     const v = checkExtensionRoleConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D33(a) the __nimbus-extension role (or selfSpawn("extension")) named outside platform/runtime-layout.ts and extensions/extension-runtime.ts — an extension entry could be spawned without the sandbox and the run grant: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D33(a) the __nimbus-extension role (or selfSpawn("extension")) named outside platform/runtime-layout.ts and extensions/extension-launch-command.ts — an extension entry could be spawned without the sandbox and the run grant: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
@@ -3503,7 +3509,7 @@ async function run(): Promise<void> {
       "eval-spec-builder-confined":
         "(a) buildExtensionEvalSpawnSpec named outside extensions/eval/eval-spawn-spec.ts and eval-runtime.ts",
       "eval-entry-command-confined":
-        "(b) extensionEntryCommand named outside extensions/extension-runtime.ts and extensions/eval/eval-spawn-spec.ts",
+        "(b) extensionEntryCommand named outside extensions/extension-launch-command.ts, extension-runtime.ts and eval/eval-spawn-spec.ts",
       "eval-imports-confined":
         "(c) a module under extensions/eval/ imports from vault/, egress/, ipc/, db/ or engine/executor",
       "eval-no-credentials": "(d) readCredentialEnv named under extensions/eval/",

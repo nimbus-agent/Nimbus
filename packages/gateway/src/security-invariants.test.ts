@@ -9419,7 +9419,7 @@ describe("I49 — extension code runs for evaluation only offline, without crede
     expect(callers).toEqual(["extensions/eval/eval-role.ts", "extensions/eval/eval-runtime.ts"]);
   });
 
-  test("the eval role's module graph reaches no Vault, IPC, egress or executor, nor the gateway; DB modules only through extension-runtime.ts", () => {
+  test("the eval role's module graph reaches no Vault, DB, IPC, egress or executor, nor the gateway", () => {
     // Static value edges and re-exports (`import type` is erased) plus dynamic `import()` edges,
     // from the role: the graph the role actually evaluates, including its in-run imports.
     const EDGE_RE =
@@ -9435,15 +9435,14 @@ describe("I49 — extension code runs for evaluation only offline, without crede
       const base = resolve(from, "..", spec);
       return [base, `${base}.ts`, join(base, "index.ts")].find(isFile);
     };
-    /** Repo-src-relative files reached from the role; a file in `leaves` is reached but not entered. */
-    const graph = (leaves: readonly string[] = []): string[] => {
+    /** Repo-src-relative files reached from the role. */
+    const graph = (): string[] => {
       const seen = new Set<string>();
       const stack = [join(SRC_ROOT, "extensions", "eval", "eval-role.ts")];
       while (stack.length > 0) {
         const file = stack.pop() as string;
         if (seen.has(file)) continue;
         seen.add(file);
-        if (leaves.includes(relative(SRC_ROOT, file).replaceAll("\\", "/"))) continue;
         const code = stripComments(readFileSync(file, "utf8"));
         for (const m of code.matchAll(EDGE_RE)) {
           const r = resolveSpec(file, (m[1] ?? m[2]) as string);
@@ -9452,20 +9451,15 @@ describe("I49 — extension code runs for evaluation only offline, without crede
       }
       return [...seen].map((f) => relative(SRC_ROOT, f).replaceAll("\\", "/"));
     };
-    const STATEFUL = /(^|\/)(db|vault|ipc|egress)\//;
     const rel = graph();
     // Red-proof that the walk followed the dynamic edges: the runtime and the spec builder are in.
     expect(rel).toContain("extensions/eval/eval-runtime.ts");
     expect(rel).toContain("extensions/eval/eval-spawn-spec.ts");
+    expect(rel).toContain("extensions/extension-launch-command.ts");
     expect(rel).toContain("platform/sandbox/index.ts");
-    expect(rel.filter((f) => /(^|\/)(vault|ipc|egress)\//.test(f))).toEqual([]);
+    expect(rel.filter((f) => /(^|\/)(db|vault|ipc|egress)\//.test(f))).toEqual([]);
     expect(rel.filter((f) => f === "engine/executor.ts" || f === "gateway-main.ts")).toEqual([]);
-    // STATED BOUND (docs/SECURITY-INVARIANTS.md I49): the spec builder imports the launch command
-    // from `extensions/extension-runtime.ts`, whose static imports (the extension and run-grant
-    // stores) make the role EVALUATE `db/` modules; nothing in the eval path calls them or opens a
-    // database. Pin that extension-runtime.ts is the ONLY way in, so a new DB edge anywhere else in
-    // the eval graph fails here.
-    expect(rel.filter((f) => STATEFUL.test(f)).length).toBeGreaterThan(0);
-    expect(graph(["extensions/extension-runtime.ts"]).filter((f) => STATEFUL.test(f))).toEqual([]);
+    // The run path's module (stores, Vault-backed credentials) is not in the eval graph at all.
+    expect(rel).not.toContain("extensions/extension-runtime.ts");
   });
 });

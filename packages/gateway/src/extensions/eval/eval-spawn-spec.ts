@@ -4,7 +4,7 @@ import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import { wrapServerSpecInCwd } from "../../connectors/lazy-mesh/wrap-server-spec.ts";
 import type { RuntimeLayout } from "../../platform/runtime-layout.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
-import { extensionEntryCommand } from "../extension-runtime.ts";
+import { extensionEntryCommand } from "../extension-launch-command.ts";
 import { extensionProcessEnv } from "../spawn-env.ts";
 
 /** A verified package staged for an eval: the code under test, never an installed extension. */
