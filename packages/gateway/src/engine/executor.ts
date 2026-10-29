@@ -387,10 +387,19 @@ function evalPromptLines(action: PlannedAction): string[] | undefined {
   const out: string[] = [];
   for (const e of list as unknown[]) {
     const r = e as { id?: unknown; version?: unknown; cases?: unknown } | null;
-    if (typeof r?.id !== "string" || typeof r.version !== "string" || typeof r.cases !== "number") {
+    if (
+      typeof r?.id !== "string" ||
+      typeof r.version !== "string" ||
+      typeof r.cases !== "number" ||
+      !Number.isInteger(r.cases) ||
+      r.cases < 0
+    ) {
       return undefined;
     }
-    out.push(`${r.id}@${r.version} (${r.cases} cases)`);
+    // id and version come from a manifest: JSON-quote them (escapes newlines and C0 controls) and
+    // strip C1 controls, so an entry can never forge a prompt line or move the terminal cursor.
+    const label = JSON.stringify(`${r.id}@${r.version}`).replace(/[-]/g, "?");
+    out.push(`${label} (${r.cases} ${r.cases === 1 ? "case" : "cases"})`);
   }
   return out;
 }

@@ -85,8 +85,8 @@ describe("extension.eval consent", () => {
         "",
         "Type: extension.eval",
         "",
-        "com.example.a@1.2.0 (3 cases)",
-        "com.example.b@0.4.1 (12 cases)",
+        '"com.example.a@1.2.0" (3 cases)',
+        '"com.example.b@0.4.1" (12 cases)',
         "",
         "runs with no network and no credentials",
       ].join("\n"),
@@ -94,8 +94,39 @@ describe("extension.eval consent", () => {
   });
 
   test("a malformed extensions payload falls back to the generic format", () => {
-    const text = formatConsentPrompt({ type: "extension.eval", payload: { extensions: "x" } });
-    expect(text).toContain("Details:");
+    for (const extensions of [
+      "x",
+      [],
+      [{ id: "a", version: "1", cases: 1 }, null],
+      [{ id: "a", version: "1", cases: -1 }],
+      [{ id: "a", version: "1", cases: 1.5 }],
+      [{ id: "a", version: 1, cases: 1 }],
+    ]) {
+      const text = formatConsentPrompt({ type: "extension.eval", payload: { extensions } });
+      expect(text, JSON.stringify(extensions)).toContain("Details:");
+    }
+  });
+
+  test("one case is singular", () => {
+    const text = formatConsentPrompt({
+      type: "extension.eval",
+      payload: { extensions: [{ id: "a", version: "1", cases: 1 }] },
+    });
+    expect(text).toContain('"a@1" (1 case)');
+  });
+
+  test("control characters in id and version cannot forge or erase prompt lines", () => {
+    const text = formatConsentPrompt({
+      type: "extension.eval",
+      payload: {
+        extensions: [{ id: "a\nrun: evil\u001b[2K\u009b", version: "1\r\n2", cases: 2 }],
+      },
+    });
+    expect(text.split("\n")).toHaveLength(7);
+    expect(text).not.toContain("\u001b");
+    expect(text).not.toContain("\u009b");
+    expect(text).not.toContain("\r");
+    expect(text).toContain("a\\nrun: evil");
   });
 
   test("a delegate is never consulted: the owner is prompted once", async () => {
