@@ -259,12 +259,12 @@ async function ownedStatus(
  * `JIRA_CONNECTOR_SITE` / `CONFLUENCE_CONNECTOR_SITE`). A connector absent here takes `--token` alone.
  */
 const TOKEN_CONNECTOR_AUTH_FLAGS: Readonly<Record<string, string>> = {
-  jira: "--username <email> --token <token> --api-base <url>",
-  confluence: "--username <email> --token <token> --api-base <url>",
-  bitbucket: "--username <name> --token <app_password>",
+  jira: "--username <email> --token <api_token> --api-base <url>",
+  confluence: "--username <email> --token <api_token> --api-base <url>",
+  bitbucket: "--username <atlassian_username> --token <app_password>",
   sentry: "--token <token> --sentry-org <slug>",
-  jenkins: "--username <user> --token <token> --api-base <url>",
-  grafana: "--api-base <url> --token <token>",
+  jenkins: "--username <user> --token <api_token> --api-base <url>",
+  grafana: "--api-base <url> --token <api_token>",
 };
 
 /**
