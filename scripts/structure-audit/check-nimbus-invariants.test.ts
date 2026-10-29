@@ -3281,6 +3281,8 @@ describe("D38 — extension code runs for evaluation only offline, without crede
     ["a dynamic import", 'const v = await import("../../vault/index.ts");'],
     ["a re-export", 'export { dbRun } from "../../db/write.ts";'],
     ["a bare import", 'import "../../ipc/server.ts";'],
+    ["a bare db/ directory specifier", 'import { dbRun } from "../../db";'],
+    ["a bare vault/ directory specifier", 'const v = await import("../../vault");'],
     ["a multi-line import", 'import {\n  dbRun,\n  dbExec,\n} from "../../db/write.ts";'],
   ])("(c) FAILS on a module under extensions/eval/ importing %s", (_n, src) => {
     expect(rules([file(`${EVAL}/eval-source.ts`, src)])).toEqual(["eval-imports-confined"]);
@@ -3294,6 +3296,7 @@ describe("D38 — extension code runs for evaluation only offline, without crede
           'import "../vault/index.ts";',
         ),
         file(`${EVAL}/eval-source.ts`, 'import { x } from "../../dbx/y.ts";'),
+        file(`${EVAL}/eval-source.ts`, 'import { x } from "../../dbx";'),
         file(`${EVAL}/eval-source.ts`, 'import { x } from "../../platform/ipc-path.ts";'),
         file(`${EVAL}/eval-source.ts`, '// import { dbRun } from "../../db/write.ts";'),
       ]),

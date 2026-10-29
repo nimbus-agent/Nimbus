@@ -41,9 +41,33 @@ describe("extensionEntryCommand", () => {
     expect(command).toBe(process.execPath);
   });
 
+  /**
+   * Every module the source loads at runtime — a value import, a bare `import "x"`, a re-export,
+   * `import("x")` and `require("x")` — read by Bun's own scanner, so code quoted inside a string
+   * (this module carries the dev-tree launcher as text) is not mistaken for an import.
+   */
+  function moduleSpecifiers(src: string): string[] {
+    return new Bun.Transpiler({ loader: "ts" }).scanImports(src).map((i) => i.path);
+  }
+
+  test("the specifier scan sees every runtime import form, and none quoted in a string", () => {
+    expect(
+      moduleSpecifiers(
+        [
+          'import { a } from "./a.ts";',
+          "a();",
+          'import "./c.ts";',
+          'const d = await import("./d.ts");',
+          'const e = require("./e.ts");',
+          'export { f } from "./f.ts";',
+          "const quoted = 'await import(\"./g.ts\")';",
+        ].join("\n"),
+      ),
+    ).toEqual(["./a.ts", "./c.ts", "./d.ts", "./e.ts", "./f.ts"]);
+  });
+
   test("the module imports nothing but the runtime layout (the eval role's graph depends on it)", async () => {
     const src = await Bun.file(join(import.meta.dir, "extension-launch-command.ts")).text();
-    const specifiers = [...src.matchAll(/\bfrom\s*["']([^"']+)["']/g)].map((m) => m[1]);
-    expect(specifiers).toEqual(["../platform/runtime-layout.ts"]);
+    expect(moduleSpecifiers(src)).toEqual(["../platform/runtime-layout.ts"]);
   });
 });

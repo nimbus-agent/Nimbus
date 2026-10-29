@@ -6714,7 +6714,9 @@ describe("I43 — an installed extension's code runs only through the verified s
   test("the spec builders are named only by extension-runtime.ts, and the spec is built once, inside prepareSpawn", async () => {
     // Both builders are exported (unit tests use them) and take a plain interface, so a second
     // production caller could build a launchable spec without the verifier. D33(a) cannot see that:
-    // the sentinel and `selfSpawn("extension"` stay inside the builder. Any mention elsewhere — a
+    // the sentinel stays in `platform/runtime-layout.ts` and `selfSpawn("extension"` in
+    // `extension-launch-command.ts`, whose callers D38(b) confines to the two builders (this one
+    // and the eval builder), so a second caller of THIS builder trips neither. Any mention elsewhere — a
     // call, an import, an aliased import — fails here.
     const files = await readDirFiles("packages/gateway/src");
     const builderRe = /\b(?:buildExtensionSpawnSpec|buildExtensionRuntimeManifest)\b/;

@@ -1935,17 +1935,18 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
 
 // (a) The `__nimbus-extension` self-role sentinel is named only by `platform/runtime-layout.ts` (which
 //     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-launch-command.ts`
-//     (`extensionEntryCommand`, whose callers D38(b) confines to the run builder in `extension-runtime.ts`
-//     and the eval builder),
-//     the spawner that runs the entry from a verified, re-digested per-spawn stage
-//     (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the child's working directory) through the
-//     sandbox. `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
+//     (`extensionEntryCommand`, the UNWRAPPED launch command, in a dependency-free module). That
+//     module spawns nothing itself: D38(b) confines its callers to the two builders that wrap it
+//     through the sandbox — the run builder in `extension-runtime.ts`, which runs the entry from a
+//     verified, re-digested per-spawn stage (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the
+//     child's working directory), and the eval builder `eval/eval-spawn-spec.ts` (I49).
+//     `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
 //     comment-stripped source but NOT string-stripped (the sentinel IS a string literal, as with
 //     D29(a)); test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a
 //     dynamically composed role string or `selfSpawn(role)` with a variable evades a text scan. That
-//     gap is covered by I43's tests rather than by this rule: the spec builders and the stager are
-//     each named only by `extension-runtime.ts` (and the stager's own module), and the spec is built
-//     once, inside `prepareSpawn`, after the verifier and the stage digest check.
+//     gap is covered by tests rather than by this rule: I43's pin names the run's spec builders only
+//     in `extension-runtime.ts` and builds the spec once, inside `prepareSpawn`, after the verifier
+//     and the stage digest check; D38(a) names the eval builder only in its module and the eval runtime.
 const D33_EXT_SENTINEL_RE = /__nimbus-extension/g;
 const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/runtime-layout.ts",
@@ -2070,7 +2071,8 @@ export function checkTrustTableConfinement(files: readonly FileEntry[]): Violati
 //     `extensions/extension-launch-command.ts`, which defines it, `extensions/extension-runtime.ts`,
 //     which wraps it for a run, and the eval spec module, which wraps it for an eval — a third holder could launch an entry outside both specs;
 // (c) a file under `extensions/eval/` imports nothing — statically, as a type, or dynamically —
-//     whose specifier has a `vault/`, `egress/`, `ipc/` or `db/` segment or names `engine/executor`;
+//     whose specifier has a `vault`, `egress`, `ipc` or `db` segment (a file under it, or the bare
+//     directory) or names `engine/executor`;
 // (d) `readCredentialEnv` is never named under `extensions/eval/`;
 // (e) no file under `extensions/eval/` value-imports `@mastra/mcp` statically: the role imports it
 //     only inside its run, after console output is routed to stderr (the one-document contract).
@@ -2095,7 +2097,8 @@ const D38_CREDENTIAL_RE = /\breadCredentialEnv\b/g;
 /** Every module specifier: `from "x"`, bare `import "x"`, `import("x")`, `require("x")`. */
 const D38_SPECIFIER_RE =
   /(?:\bfrom\s*|^\s*import\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'`]([^"'`]+)["'`]/gm;
-const D38_FORBIDDEN_SPECIFIER_RE = /(?:^|\/)(?:vault|egress|ipc|db)\/|engine\/executor/;
+// A segment, ending in `/` or at the end of the specifier: `../../db` (a directory import) is caught.
+const D38_FORBIDDEN_SPECIFIER_RE = /(?:^|\/)(?:vault|egress|ipc|db)(?:\/|$)|engine\/executor/;
 const D38_STATIC_MASTRA_RE =
   /^\s*(?:import|export)\s+(?!type\b)(?:[^;]*?\bfrom\s*)?["']@mastra\/mcp(?:\/[^"']*)?["']/gm;
 
