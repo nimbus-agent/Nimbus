@@ -717,6 +717,9 @@ describe("an approved update installs the packages it adds (production wiring)",
     expect(packageRowsFor(DEP)).toBe(1);
   });
 
+  // The POSITIVE half of "apply installs the approved set or refuses": the index changes between
+  // the gate and the apply, the approved version is still listed, so the apply goes ahead and
+  // installs exactly that version. The two tests after it are the refusing half.
   test("apply installs the approved set: a newer dependency version published after the gate is not taken", async () => {
     await installedRoot();
     const { result } = await update(async () => {

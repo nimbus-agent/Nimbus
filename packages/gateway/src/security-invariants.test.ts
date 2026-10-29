@@ -7770,8 +7770,17 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       const pkg = join(t.extensionsDir, "..", "registry-main", "extensions", DEP, "1.0.0");
       writeFileSync(join(pkg, "package.tgz"), "tampered");
     });
-    expect(tampered).toMatchObject({ applied: false });
+    // Refused as a verification failure, after exactly one (ledgered) download of DEP's package:
+    // the bytes were fetched, hash-checked and never installed.
+    expect(tampered).toEqual({ applied: false, reason: "signature_failed" });
+    const depPackageRows = t.db
+      .query(
+        "SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.package' AND payload_summary LIKE ?",
+      )
+      .get(`%${DEP}%`) as { n: number };
+    expect(depPackageRows.n).toBe(1);
     expect(installedIds(t.db)).toEqual([ID]);
+    expect(existsSync(join(t.extensionsDir, DEP))).toBe(false);
     expect(
       (t.db.query("SELECT version FROM extension WHERE id = ?").get(ID) as { version: string })
         .version,
@@ -7826,6 +7835,12 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
     );
     expect(registrySrc.match(/\binstallPlanDependencies\(/g)).toHaveLength(1);
+    // Exactly one definition and no in-module caller of the dependency half in install-from-local.ts,
+    // and exactly one definition plus one call of the update step: a second caller fails the count.
+    expect(local.match(/\binstallPlanDependencies\(/g)).toHaveLength(1);
+    expect(local.match(/\bfunction installPlanDependencies\(/g)).toHaveLength(1);
+    expect(registrySrc.match(/\binstallUpdateDependencies\(/g)).toHaveLength(1);
+    expect(registrySrc.match(/\bfunction installUpdateDependencies\(/g)).toHaveLength(1);
     const stepAt = registrySrc.indexOf("export async function installUpdateDependencies(");
     expect(stepAt).toBeGreaterThan(-1);
     expect(registrySrc.indexOf("await installPlanDependencies(")).toBeGreaterThan(stepAt);
@@ -7834,6 +7849,11 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .filter((f) => /\binstallUpdateDependencies\b/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(namingStep).toEqual(["extensions/auto-update-init.ts"]);
+    const initSrc = stripComments(
+      await read("packages/gateway/src/extensions/auto-update-init.ts"),
+    );
+    expect(initSrc.match(/\binstallUpdateDependencies\(/g)).toHaveLength(1);
+    expect(initSrc.match(/\binstallUpdateDependencies\b/g)).toHaveLength(2);
   });
 
   test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {
