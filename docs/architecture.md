@@ -184,7 +184,7 @@ return early only on `stopped`, and every finished job's own `.finally` calls `t
 unstarted-but-not-disabled scheduler would re-animate its own schedule the first time anything ran
 one job on it. `ipc/server/demo-gate.ts`'s `demoRefusal(method)` is the separate IPC-layer gate: an
 allow-list of three `connector.*` reads plus a deny-list (`vault.set`, `vault.delete`, `data.import`,
-`extension.install`, `extension.approveRun`, `extension.revokeRun`, `extension.credentialSet`,
+`extension.install`, `extension.approveRun`, `extension.revokeRun`, `extension.credentialSet`, `extension.eval`,
 `migration.accept`, `migration.decline`, `migration.retry`, and every `registry.*` method), returning `ERR_DEMO_FORBIDDEN` (`-32000`) for everything else
 under `connector.*` — so a connector method added later is refused until someone decides otherwise,
 rather than silently becoming a way to bring real credentials into a root labelled "not your data".

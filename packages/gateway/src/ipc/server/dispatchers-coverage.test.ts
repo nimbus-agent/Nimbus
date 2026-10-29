@@ -1187,6 +1187,53 @@ describe("tryDispatchAutomationRpc — buildAutoUpdateDeps branches", () => {
 });
 
 // ---------------------------------------------------------------------------
+// extension.eval - ROUTING: tryDispatchAutomationRpc claims it and wires the gate, env and sandbox
+// ---------------------------------------------------------------------------
+describe("tryDispatchAutomationRpc - extension.eval routing", () => {
+  const fakeSession = {} as unknown as Parameters<typeof tryDispatchAutomationRpc>[2];
+  const mesh = {
+    userMcpProtectedRoots: () => [],
+  } as unknown as NonNullable<ServerCtx["options"]["connectorMesh"]>;
+  const runner = {
+    canConfine: () => null,
+  } as unknown as NonNullable<ServerCtx["options"]["sandboxRunner"]>;
+
+  function evalCtx(omit?: "sandboxRunner" | "sandboxDir"): ServerCtx {
+    return makeCtx({
+      localIndex: new LocalIndex(trackedDb()),
+      connectorMesh: mesh,
+      ...(omit === "sandboxRunner" ? {} : { sandboxRunner: runner }),
+      ...(omit === "sandboxDir" ? {} : { sandboxDir: tmpdir() }),
+    });
+  }
+
+  test("reaches the handler: bad params are -32602", async () => {
+    await expect(
+      tryDispatchAutomationRpc(evalCtx(), "c1", fakeSession, "extension.eval", { ids: [] }),
+    ).rejects.toMatchObject({ rpcCode: -32602 });
+  });
+
+  test("with the gate, env and sandbox wired, an unknown id is a per-extension failure (no prompt)", async () => {
+    const out = (await tryDispatchAutomationRpc(evalCtx(), "c1", fakeSession, "extension.eval", {
+      ids: ["no.such"],
+    })) as { results: Array<{ id: string; ok: boolean; error?: { code: string } }> };
+    expect(out.results).toHaveLength(1);
+    expect(out.results[0]?.ok).toBe(false);
+    expect(out.results[0]?.error?.code).toBe("ERR_EXTENSION_NOT_FOUND");
+  });
+
+  test("without a sandbox runner or sandboxDir the method refuses -32603", async () => {
+    for (const omit of ["sandboxRunner", "sandboxDir"] as const) {
+      await expect(
+        tryDispatchAutomationRpc(evalCtx(omit), "c1", fakeSession, "extension.eval", {
+          ids: ["a.b"],
+        }),
+      ).rejects.toMatchObject({ rpcCode: -32603 });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // People RPC — error catch  (lines 859-868)
 // BRDAs: line=859 b1, line=863 b0/b1
 // ---------------------------------------------------------------------------

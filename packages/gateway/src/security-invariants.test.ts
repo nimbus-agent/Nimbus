@@ -5796,6 +5796,7 @@ describe("I41 — a demo-rooted process never reaches the real install", () => {
       "vault.delete",
       "data.import",
       "extension.install",
+      "extension.eval",
       "pack.install",
       "pack.remove",
     ]) {

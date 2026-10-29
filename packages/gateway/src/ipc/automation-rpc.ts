@@ -79,6 +79,11 @@ import {
   isPromotedInstall,
   reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
+import {
+  EvalApprovalDenied,
+  evaluateInstalledExtensions,
+  type InstalledEvalDeps,
+} from "../extensions/installed-eval.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
@@ -180,6 +185,12 @@ export type AutomationOwnerGate = (action: {
   payload: Record<string, unknown>;
 }) => Promise<boolean>;
 
+/** What `extension.eval` needs beyond the DB, Vault and owner gate; the extras are test seams. */
+export type AutomationEvalDeps = Pick<
+  InstalledEvalDeps,
+  "sandboxDir" | "runtimeReadPaths" | "canConfine" | "createClient" | "verify" | "load" | "run"
+>;
+
 interface AutomationCtx {
   db: Database;
   extensionsDir?: string;
@@ -188,6 +199,7 @@ interface AutomationCtx {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  evalDeps?: AutomationEvalDeps;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
@@ -344,6 +356,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.list": (rec, ctx) => handleExtensionList(rec, ctx),
 
   "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
+
+  "extension.eval": (rec, ctx) => handleExtensionEval(rec, ctx),
 
   "extension.install": async (rec, ctx) => {
     const sourcePath = requireString(rec, "sourcePath");
@@ -1020,6 +1034,61 @@ async function handleExtensionRehash(
   return { kind: "hit", value: { id, treeDigest, changed: true } };
 }
 
+const EVAL_MAX_IDS = 50;
+
+/** `ids`: 1–50 non-empty strings, else -32602. Checked before anything else, so before consent. */
+function requireEvalIds(rec: Record<string, unknown> | undefined): string[] {
+  const raw = rec?.["ids"];
+  if (
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    raw.length > EVAL_MAX_IDS ||
+    !raw.every((x): x is string => typeof x === "string" && x.trim() !== "")
+  ) {
+    throw new AutomationRpcError(
+      -32602,
+      `Missing or invalid ids (1 to ${EVAL_MAX_IDS} extension ids)`,
+    );
+  }
+  return raw.map((x) => x.trim());
+}
+
+/**
+ * Evaluate installed extensions' eval suites (invariant I49): one `extension.eval` approval from
+ * the LOCAL owner for the whole call, never delegable. Everything is verified before the prompt.
+ */
+async function handleExtensionEval(
+  rec: Record<string, unknown> | undefined,
+  ctx: AutomationCtx,
+): Promise<Hit> {
+  const ids = requireEvalIds(rec);
+  const { ownerGate, runGrantEnv, evalDeps, vault } = ctx;
+  if (
+    ownerGate === undefined ||
+    runGrantEnv === undefined ||
+    evalDeps === undefined ||
+    vault === undefined
+  ) {
+    throw new AutomationRpcError(
+      -32603,
+      "extension.eval requires the owner's HITL gate, the extension environment, the Vault and a sandbox",
+    );
+  }
+  try {
+    const results = await evaluateInstalledExtensions(ids, {
+      ...evalDeps,
+      db: ctx.db,
+      vault,
+      env: runGrantEnv,
+      ownerGate,
+    });
+    return { kind: "hit", value: { results } };
+  } catch (e) {
+    if (e instanceof EvalApprovalDenied) throw new AutomationRpcError(-32603, e.message);
+    throw e;
+  }
+}
+
 /** A refusal that happened AFTER the owner was involved is an internal-class error, like rehash's. */
 const RUN_GRANT_POST_CONSENT: ReadonlySet<string> = new Set([
   "ERR_EXTENSION_RUN_NOT_APPROVED",
@@ -1252,6 +1321,7 @@ export async function dispatchAutomationRpc(options: {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  evalDeps?: AutomationEvalDeps;
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
   continuityTable?: readonly ContinuityEntry[];
@@ -1272,6 +1342,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
+    ...(options.evalDeps !== undefined && { evalDeps: options.evalDeps }),
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,
     }),

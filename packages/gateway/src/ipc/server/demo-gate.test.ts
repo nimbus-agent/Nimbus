@@ -57,6 +57,7 @@ describe("demoRefusal", () => {
     "extension.approveRun",
     "extension.revokeRun",
     "extension.credentialSet",
+    "extension.eval",
     "registry.add",
     "registry.list",
     "registry.refresh",
