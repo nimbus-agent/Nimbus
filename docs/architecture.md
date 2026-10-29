@@ -2185,6 +2185,16 @@ I44. `registry search` reads the owner's registries only, so it does not include
 - *Registries in `nimbus.toml`.* A trust root is state the owner approved through a HITL prompt, with a rollback anchor that must
   update atomically with a fetch; a hand-edited config file has neither the approval nor the transaction.
 
+**Eval suites and `quality` (format only).** A package may carry `evals/*.eval.json` suites (`registry-format`: `eval-suite.ts`,
+`eval-score.ts`, `eval-quality.ts`). A case names one tool, a fixed input and one of three deterministic rubrics (`exact`,
+`json-match`, `one-of`); the score is `floor(100 * passed / cases)` in integer arithmetic, so the same package always scores the
+same, and a suite that fails to parse is an error, never a partial score. `evals/` is packaged with the extension and counts
+toward the file-set rule (rule 13); a starter pack may not carry it. A version entry in the registry index may carry an optional
+`quality` object, signed with the rest of the index by the registry root key (the party that measured the score signs it, not the
+author); `parseRegistryIndex` carries it raw and `readVersionQuality` reads it as scored, unscored or invalid. The gateway caches
+no index entries, so there is no table: a score would be read from the verified index when asked. This format is all that has
+shipped: running evals (`nimbus eval`), the registry's scoring job and any display come in later PRs.
+
 ### Trust layer
 
 **PRs 2a–4c of 5 (marketplace trust layer, Phase 9.5 project 3; schema migrations V76 (PR 1) and V77 (PR 3b); invariant I48 with static D37).**
