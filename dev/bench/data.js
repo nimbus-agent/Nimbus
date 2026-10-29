@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793234815092,
+  "lastUpdate": 1793239134663,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0e3b18336d1e1cb79080d09b660f20ca785c57ca",
-          "message": "fix(clips): embed web clips locally and stop advertising discarded text (#1151)\n\nCloses #1006. Closes #1005.\n\nTwo defects that had to be fixed together, because the fix each issue\nrecommends regresses the other.\n\n## #1006 — clip text was reaching OpenAI\n\n`nimbus:web_clip` was in `PROSE_HEAVY_TYPES`, which\n`RoutingEmbeddingPipeline` reads to send an item to the 1536-dim OpenAI\nembedder whenever `openai.api_key` is set. Both web-clipper store\nlistings say the opposite: the Chrome listing puts clips \"into your\nprivate, local-first Nimbus index\", and it and the AMO privacy policy\nboth say there are \"no remote servers, no telemetry, and no cloud\".\nThose sentences describe the *extension*, which does only talk to\nloopback — so each was narrowly true while the system as a whole was\nnot.\n\n`nimbus:web_clip` is removed from `PROSE_HEAVY_TYPES`. Clips now embed\non-device via MiniLM-384 whether or not a key is configured. Retrieval\nquality on long articles is the deliberate price; the public claim is\nnot negotiable.\n\n**This was live, not theoretical.** #1006 hedged that clips were never\nembedded at all, so the egress \"may not actually be occurring yet\". That\nis stale — `scheduleEmbedding` is wired through\n`platform/assemble.ts:2391` → `clips/clip-ingest.ts:111`, so clip text\nwas genuinely going out.\n\n## The coupling — why this is one PR\n\n`bodyCapForItemType` derived the 16 KiB body cap **from\n`PROSE_HEAVY_TYPES`**. So #1006's recommended fix, taken literally,\nwould have silently cut the clip body cap from 16,384 back to 512 and\nre-opened #1005 — a privacy fix regressing a data fix, with no test\nbetween them to say so.\n\nStorage shape and embedding destination are now separate questions:\n\n- `embedding/routing.ts` keeps `PROSE_HEAVY_TYPES` (may this type embed\nremotely?) and gains `LOCAL_ONLY_PROSE_TYPES` (prose-shaped, but pinned\nlocal).\n- `index/body-caps.ts` owns `LONG_BODY_TYPES` — the explicit union — and\n`bodyCapForItemType` reads that.\n\nThe two source sets **must stay disjoint**: absence from\n`PROSE_HEAVY_TYPES` is the whole of the privacy enforcement, so a key\npresent in both would read as \"pinned local\" while routing remotely.\n`routing.test.ts` pins the disjointness, stated as what cannot hold\nrather than as an allow-list.\n\nBoth regression directions were red-proved before being committed:\n\n| injected regression | result |\n|---|---|\n| `web_clip` back in `PROSE_HEAVY_TYPES` (in both sets) | 5 tests fail,\nincl. the disjointness guard |\n| `web_clip` in neither set (the #1005 cap regression) | 2 tests fail,\nincl. `document-body-full` |\n\n`body-caps.test.ts` asserts the cap and the routing **in one test**,\nbecause each passes alone in exactly the case where the coupling is\nbroken.\n\n## #1005 — `wordCount` described text the index had thrown away\n\nMost of #1005 was already fixed by V48/V49 after it was filed:\n`clip-ingest.ts` passes the declared-full `body:` arm, not\n`bodyPreview:`, so clips get 16 KiB and an honest `body_complete`. What\nremained is the honesty defect the issue leads with — `wordCount` was\ncomputed on the submitted text, so a 34,000-character article stored at\n16 KiB advertised the full count, and no field let a caller detect the\nloss.\n\n- `wordCount` now measures the **stored** body — what a search can\nactually return.\n- An over-cap clip additionally carries `sourceWordCount` + `truncated:\ntrue`. A clip that fits carries neither, so the common shape is\nunchanged.\n- Both surface through `clip.list`; `nimbus clip list` footnotes the\ncount of partial clips rather than widening its fixed-width table.\n- A legacy row carrying neither key reads as **not** truncated — which\nis what absence meant when it was written. `truncated` is derived from\n`sourceWordCount`'s presence, not from a sibling flag, so a pre-existing\nrow cannot read as \"unknown\".\n- The counts reuse the store's own `bodyCapForItemType` + `clampBody`\nrather than reimplementing them, so they cannot drift from the storage\nrule; the clamp runs only on the rare over-cap clip.\n\n## Migration\n\nClips already embedded through OpenAI keep their 1536-dim vectors.\n`index.reembed` is model-targeted and `pipeline.embedItem` deletes only\nthe chunks for the model it is writing, so re-embedding locally would\n**add** MiniLM vectors beside the OpenAI ones rather than replace them —\nand `vectorSearchChunksDual` concatenates both tables without deduping\nby item. To move an existing clip fully local: `nimbus clip delete\n<id|url>` then re-clip. `embedding_chunk.item_id` is `ON DELETE\nCASCADE`, so that drops every model's chunks and the `AFTER DELETE`\ntriggers clear both vec tables.\n\n**Text already sent to OpenAI cannot be recalled.** This stops future\negress; it does not undo past egress.\n\nNo schema change, no migration, no new invariant.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test packages/gateway/src/{embedding,index,clips,search}` — 859\npass, 0 fail\n- `bun test packages/gateway/src/ipc\npackages/gateway/src/security-invariants.test.ts` — 1788 pass, 0 fail\n- `bun test packages/cli/src/commands/clip.test.ts\npackages/gateway/test/unit` — 2178 pass, 0 fail\n\n## Follow-up not taken here\n\n`nimbus:research_brief` and `nimbus:glossary_term` are also\nlocally-generated `nimbus:` content still routed remotely. They carry no\nequivalent public claim, so changing them is out of scope for these two\nissues — worth a separate decision.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T18:16:51Z",
-          "tree_id": "f3541092a8608e903116569bf294ef2699d218c0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0e3b18336d1e1cb79080d09b660f20ca785c57ca"
-        },
-        "date": 1786472793570,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.3615842999974,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.8216004499991,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.2713466000059,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "01c46edfb1f48248fe48a750b16443300cd50364",
+          "message": "feat(extensions): an extension's connector requirements show their status in the install approval, info, list and doctor, and an attended install offers a walk through approvals and connecting (#1811)\n\nThis is PR 3 of 5 of Phase 9.5 project 4, extension dependencies and\nstarter packs.\n- PR 1, #1806: the manifest format.\n- PR 2, #1810: registry installs fetch their dependencies in one\napproved plan.\n\n## What changes for a user\n\nAn extension can declare `requires.connectors`, for example\n`[\"github\"]`. Nimbus now says whether each connector is connected,\neverywhere that matters.\n\n### Where the status appears\n\n- **In the install approval itself, before anything is downloaded.** It\nappears as a `Needs:` block after the plan.\n- **After the install.** The install output prints the same `Needs:`\nblock.\n- **In `nimbus extension info` and `nimbus extension list`.** Both show\na `Requires:` section.\n- **In `nimbus doctor`.** Its Extensions section gives one `[warn]` line\nper unmet connector.\n\n### What the status means\n\nEach connector gets one of these lines:\n\n| Status | Line printed |\n|---|---|\n| Connected | `github: connected` |\n| Connected, never synced (a warning; it does not fail `doctor`) |\n`github: connected, never synced — run: nimbus connector sync github` |\n| Not connected | `github: not connected — run: <the command that fixes\nit>` |\n| Unknown connector | `foo: not a connector this Nimbus knows` |\n| Not computed | `github: status unavailable` |\n\n\"Connected\" comes from the same Vault check the scheduler uses before\nevery sync (`isConnectorConfigured`), with three corrections:\n- an id Nimbus doesn't know is never reported as connected;\n- a connector owned by an unbundled extension is judged by that\nextension's own run grant and credentials, never by a stale legacy Vault\nkey;\n- a disabled owner, one whose approval is for an older version, or one\nthe trust layer blocks (I48) is never reported as connected.\n\n### What the fix command says\n\nThe fix command is what actually works for that connector:\n- an OAuth connector: `nimbus connector auth <id>`;\n- a token connector: `nimbus connector auth <id> --token <token>`;\n- a connector `connector auth` refuses: `nimbus vault set <key>`;\n- an unbundled connector whose extension isn't installed: `nimbus\nextension install <id>`;\n- an extension owner: `nimbus extension approve <ext>`, then `credential\nset` only for the credentials that are blank.\n\n### Requirements never block an install\n\nA failure while computing a requirement leaves the field out. It never\nfails an install, `info` or `list`.\n\n### The post-install walk\n\nAfter an attended install, meaning both stdin and stdout are a terminal\nand there is no `--yes`, the CLI offers a walk:\n\n1. **It asks once:** `Approve the N new packages to run now? [y/N]`.\n2. **On yes, each package gets its own existing `extension.run` HITL\nprompt.** The walk never approves anything itself.\n3. **Each approval runs on a fresh IPC connection.** Consent handlers\npile up on a connection and can't be removed, so this keeps the\ninstall's own handlers away from it, including the `--yes`\nauto-approver. Consent is also unicast in the gateway.\n4. **A denial and a failure are reported differently.** A denial is\nreported as such. A transport failure stops the walk.\n5. **Then, for each connector that is not connected, it asks:** `This\nneeds <connector>. Connect now? [y/N]`.\n- It asks only where connecting can happen right there: an OAuth\nsign-in, or an extension credential entered at a hidden prompt.\n   - For a token connector it prints the command instead.\n   - It skips connectors whose packages were all declined.\n\nNothing runs unless each package is approved, as before.\n\n## Internals\n\n- **`extensions/connector-requirements.ts`** is new. It holds\n`connectorRequirementStatuses` and the per-extension and installed\nhelpers. Each connector is computed once per call, and each manifest is\nread once.\n- **New result fields:**\n- `registry.install` and `extension.install` results carry\n`connectorRequirements`;\n  - `extension.info` carries `extension.requires`;\n  - each `extension.list` item carries `requires`.\n\n  All are optional, and an older client ignores them.\n- **The approval:** the `extension.install` approval payload carries\n`connectorRequirements`, and `planText` gains the `Needs:` block. The\nconsent display shows the requirements once, while the audit row keeps\nthe structured field.\n- **`RegistryRpcOptions.continuityTable`** is wired from the\ncomposition.\n- **New CLI files:**\n- `extension-requirements-format.ts`, for parsing and rendering\nrequirement statuses;\n- `extension-post-install.ts`, the walk, built on dependency injection.\n- **No invariant changes.** The walk adds no gate: run grants are still\ncreated only by the executor's `extension.run` consent (I43), and the\nmigration path still installs exactly one package (the I44 pin is\nunchanged).\n\n## Decisions made while building\n\n- **\"Connected\" means the Vault predicate, not `connector list`'s sync\nhealth.** `connector list` and `doctor` show scheduler health and never\nread the Vault, so the Vault check is the only honest answer to \"is a\ncredential set?\" (spec §8.1 asks for one shared function).\n- **The doctor surface is `nimbus doctor`'s Extensions section.** There\nis no separate `nimbus extension doctor` command.\n- **Two Antigravity findings were checked and not taken:**\n  - mixed-case ids: the manifest grammar already forbids them;\n  - `requires` without `connectors`: the parser already refuses it.\n\n## Review history\n\n- **The plan:** Antigravity reviewed it, and all 11 of its findings were\napplied. They include the fresh-connection rule, the `interactive` flag\nand requirements in the approval.\n- **Each of the five tasks:** a task review, plus a fix round where\nfindings came up.\n- **The whole branch:** a Claude reviewer (1 Important, 7 Minor) and\nAntigravity (4 findings that held up). All were fixed in one pass, each\nwith a test that fails without its fix. The re-review then found that a\ntrust-blocked owner still read `met`; that is fixed too.\n\n## Known follow-ups, not blocking\n\n- **Multi-flag token connectors.** Six of them (jira, confluence,\nbitbucket, sentry, jenkins, grafana) need flags beyond `--token`, so\ntheir printed fix is incomplete as typed. `connector auth` names the\nmissing flag when run.\n- **Missing tests.** No test pins the control-character stripping on\n`doctor` lines and on the fix commands in `info` and the install output.\nThe stripping itself is in place.\n- **Out of scope here.** Starter packs and orphan removal are PR 4.\nRequirements in update approvals are PR 5. There is no desktop display\nof `requires` (spec §9).\n\n## Verification\n\n- `bun run preflight:fast` passes, and `bun run typecheck` is clean.\n- `bun test` over the gateway's `extensions`, `ipc` and `engine`\ndirectories, `security-invariants.test.ts` and `packages/cli/src`: 10263\npass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension approvals, install results, and extension details and\nlistings can show required connectors and their connection status.\n* After attended installs, the CLI can guide you through approving\npackages and connecting eligible required connectors. This walkthrough\nis skipped for unattended installs, and its failures do not fail the\ninstallation.\n* `nimbus doctor` reports disconnected or configured-but-not-yet-synced\nrequired connectors with suggested fixes; only disconnected requirements\naffect its exit code.\n* Connector status may appear as unknown or be omitted when it cannot be\ndetermined.\n* **Documentation**\n* Updated the changelog, CLI reference, architecture documentation, and\nroadmap.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T01:48:20Z",
+          "tree_id": "da9e64ec2e5ecc025d51a7ffe33fb72daaeb11ec",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/01c46edfb1f48248fe48a750b16443300cd50364"
+        },
+        "date": 1793239131163,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.75300275000006,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 293.89337615000113,
             "unit": "ms"
           }
         ]
