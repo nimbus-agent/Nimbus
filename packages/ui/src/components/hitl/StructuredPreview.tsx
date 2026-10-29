@@ -86,14 +86,20 @@ interface PublisherBadge {
 
 type Permissions = { network: string[]; filesystem: { read: string[]; write: string[] } };
 
-/** A package the update installs alongside the new version, as the gateway's plan lists it. */
-interface AddedPackageView {
-  id: string;
-  version: string;
-  registry: string | null;
-  starterPack: boolean;
-  permissions: Permissions;
-}
+/**
+ * A package the update installs alongside the new version, as the gateway's plan lists it, or an
+ * entry that could not be read: it is still shown (and counted), so the list never understates.
+ */
+type AddedPackageView =
+  | {
+      unreadable: false;
+      id: string;
+      version: string;
+      registry: string | null;
+      starterPack: boolean;
+      permissions: Permissions;
+    }
+  | { unreadable: true };
 
 /** A connector requirement the owner must act on (anything but `met`). */
 interface NeedView {
@@ -204,24 +210,39 @@ function readPermissions(v: unknown): Permissions {
   };
 }
 
-/** Every well-formed entry of the gateway's `addedPackages` (one missing an id or version is dropped). */
+/** One view per entry of the gateway's `addedPackages`; one missing an id or version is unreadable. */
 function readAddedPackages(v: unknown): AddedPackageView[] {
   if (!Array.isArray(v)) return [];
-  return v.flatMap((entry) => {
+  return v.map((entry): AddedPackageView => {
     const rec = asRecord(entry);
     const id = readStringField(rec, "id");
     const version = readStringField(rec, "version");
-    if (id === undefined || version === undefined) return [];
-    return [
-      {
-        id,
-        version,
-        registry: readStringField(rec, "registry") ?? null,
-        starterPack: rec["kind"] === "starter-pack",
-        permissions: readPermissions(rec["permissions"]),
-      },
-    ];
+    if (id === undefined || version === undefined) return { unreadable: true };
+    return {
+      unreadable: false,
+      id,
+      version,
+      registry: readStringField(rec, "registry") ?? null,
+      starterPack: rec["kind"] === "starter-pack",
+      permissions: readPermissions(rec["permissions"]),
+    };
   });
+}
+
+function AddedPackageItem({ p }: { readonly p: AddedPackageView }): ReactNode {
+  if (p.unreadable) {
+    return <span className="text-red-700">unreadable package entry</span>;
+  }
+  return (
+    <>
+      <code>
+        {p.id}@{p.version}
+      </code>{" "}
+      — {p.registry === null ? "a local folder" : `registry ${p.registry}`}
+      {p.starterPack && " — starter pack (no code to run)"}
+      <div className="text-xs">{permissionsText(p.permissions)}</div>
+    </>
+  );
 }
 
 /** The status after a connector's name, as the CLI's `Needs:` block words it. */
@@ -321,14 +342,11 @@ function AddedByUpdate({ payload }: { readonly payload: AutoUpdatePayload }): Re
         >
           <h3 className="text-sm font-semibold mb-1">This update adds {added.length} package(s)</h3>
           <ul className="list-disc pl-4 text-sm">
-            {added.map((p) => (
-              <li key={`${p.id}@${p.version}`} data-testid="auto-update-added-package">
-                <code>
-                  {p.id}@{p.version}
-                </code>{" "}
-                — {p.registry === null ? "a local folder" : `registry ${p.registry}`}
-                {p.starterPack && " — starter pack (no code to run)"}
-                <div className="text-xs">{permissionsText(p.permissions)}</div>
+            {added.map((p, i) => (
+              // Entries are positional (an unreadable one has no id), and the list never reorders.
+              // biome-ignore lint/suspicious/noArrayIndexKey: static list rendered once per prompt
+              <li key={i} data-testid="auto-update-added-package">
+                <AddedPackageItem p={p} />
               </li>
             ))}
           </ul>

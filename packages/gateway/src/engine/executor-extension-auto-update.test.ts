@@ -37,6 +37,8 @@ const ADDED = [
   },
 ];
 
+const UNION = { network: ["api.example.com"], filesystem: { read: [], write: [] } };
+
 const REQS = [
   {
     connector: "github",
@@ -80,6 +82,7 @@ describe("extension.autoUpdate consent with the packages it adds", () => {
     payload: {
       ...BASE_PAYLOAD,
       addedPackages: ADDED,
+      planPermissions: UNION,
       connectorRequirements: REQS,
       planText: PLAN_TEXT,
     },
@@ -99,6 +102,7 @@ describe("extension.autoUpdate consent with the packages it adds", () => {
     expect(h.details[0]).toEqual({
       ...BASE_PAYLOAD,
       addedPackages: ADDED,
+      planPermissions: UNION,
       connectorRequirements: REQS,
     });
     expect(consentDisplayPayload(action)).toEqual(h.details[0]);
@@ -111,6 +115,7 @@ describe("extension.autoUpdate consent with the packages it adds", () => {
     expect(h.auditJson[0]).toContain('"addedPackages"');
     expect(h.auditJson[0]).toContain("com.example.dep");
     expect(h.auditJson[0]).toContain('"connectorRequirements"');
+    expect(h.auditJson[0]).toContain('"planPermissions"');
     expect(h.auditJson[0]).not.toContain("planText");
     expect(h.auditJson[0]).not.toContain("This update adds");
   });

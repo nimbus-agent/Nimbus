@@ -249,7 +249,7 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(needs.textContent).not.toContain("github");
   });
 
-  it("words every unmet requirement state and skips malformed entries", () => {
+  it("words every unmet requirement state and shows a malformed package entry as unreadable", () => {
     const details = autoUpdateDetails({
       addedPackages: [
         { id: "com.example.local", version: "1.0.0", registry: null, permissions: null },
@@ -265,8 +265,14 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       ],
     });
     render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    // Every entry the gateway sent is counted and shown; an unreadable one says so.
+    expect(screen.getByTestId("auto-update-added-packages").textContent).toContain(
+      "This update adds 3 package(s)",
+    );
     const items = screen.getAllByTestId("auto-update-added-package");
-    expect(items).toHaveLength(1);
+    expect(items).toHaveLength(3);
+    expect(items[1]?.textContent).toBe("unreadable package entry");
+    expect(items[2]?.textContent).toBe("unreadable package entry");
     expect(items[0]?.textContent).toContain("a local folder");
     expect(items[0]?.textContent).toContain("network: none · read: none · write: none");
     // No union from the gateway: none is invented.

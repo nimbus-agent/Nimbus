@@ -323,16 +323,22 @@ function hasPlanText(action: PlannedAction): boolean {
 }
 
 /**
- * The payload the CLI's Details line shows. For an update with a plan, its `addedPackages` and
- * `connectorRequirements` are left out as well: the plan text printed after the line renders them,
- * so each package appears once (the audit row and the desktop's details keep them).
+ * The payload the CLI's Details line shows. For an update with a plan, its `addedPackages`,
+ * `planPermissions` and `connectorRequirements` are left out as well: the plan text printed after
+ * the line renders them, so each fact appears once (the audit row and the desktop's details keep
+ * them).
  */
 function detailsLinePayload(action: PlannedAction): Record<string, unknown> | undefined {
   const shown = consentDisplayPayload(action);
   if (shown === undefined || !hasPlanText(action) || action.type !== "extension.autoUpdate") {
     return shown;
   }
-  const { addedPackages: _added, connectorRequirements: _needs, ...rest } = shown;
+  const {
+    addedPackages: _added,
+    planPermissions: _union,
+    connectorRequirements: _needs,
+    ...rest
+  } = shown;
   return rest;
 }
 

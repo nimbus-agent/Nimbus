@@ -451,7 +451,11 @@ describe("update detection plans the update through the registries", () => {
 });
 
 describe("the update approval lists what the update adds (production wiring)", () => {
-  type Asked = { payload: Record<string, unknown>; packageFetches: number };
+  type Asked = {
+    payload: Record<string, unknown>;
+    packageFetches: number;
+    manifestFetches: number;
+  };
 
   /** Detects, then asks to apply ROOT@1.2.0; the owner rejects, so nothing is ever applied. */
   async function askToUpdate(): Promise<{ asked: Asked[]; result: Record<string, unknown> }> {
@@ -472,7 +476,11 @@ describe("the update approval lists what the update adds (production wiring)", (
       {
         ...rt.deps,
         gate: async (action) => {
-          asked.push({ payload: action.payload, packageFetches: ledger("registry.package") });
+          asked.push({
+            payload: action.payload,
+            packageFetches: ledger("registry.package"),
+            manifestFetches: ledger("registry.manifest"),
+          });
           return { status: "rejected" };
         },
       },
@@ -487,6 +495,9 @@ describe("the update approval lists what the update adds (production wiring)", (
     });
     await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
     const packagesBefore = ledger("registry.package");
+    // The counter is live: the root's own install downloaded its package through the ledger.
+    expect(packagesBefore).toBeGreaterThan(0);
+    const manifestsBefore = ledger("registry.manifest");
     const { asked, result } = await askToUpdate();
     expect(asked).toHaveLength(1);
     const p = asked[0]?.payload ?? {};
@@ -497,6 +508,7 @@ describe("the update approval lists what the update adds (production wiring)", (
     expect(String(p["planText"])).toContain(`${DEP}@1.0.0 (${ROOT} needs ^1.0.0)`);
     // Planned from verified manifests only: no package was downloaded before the owner answered.
     expect(asked[0]?.packageFetches).toBe(packagesBefore);
+    expect(asked[0]?.manifestFetches).toBeGreaterThan(manifestsBefore);
     expect(result).toEqual({ applied: false, reason: "user_rejected" });
     expect(db.query("SELECT id FROM extension WHERE id = ?").get(DEP)).toBeNull();
   });
