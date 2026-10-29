@@ -1882,6 +1882,49 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
     expect(forged).toBe("fallback_to_owner");
     expect(badId).toBe("fallback_to_owner");
   });
+
+  test("I20: a delegate never approves registry.add, extension.* or pack.install: the delegate is not consulted and the owner is prompted", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    for (const type of [
+      "registry.add",
+      "extension.install",
+      "extension.run",
+      "extension.autoUpdate",
+      "extension.migrate",
+      "extension.eval",
+      "pack.install",
+    ]) {
+      let prompts = 0;
+      let remote = 0;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return false;
+          },
+        },
+        { recordAudit: () => {} },
+        { dispatch: async () => ({}) },
+        {
+          store: {
+            activeDelegateFor: () => true,
+            activeDelegateePeer: () => "peer-1",
+          },
+          isOperatorValid: () => true,
+          requestRemote: async () => {
+            remote += 1;
+            return { kind: "answered", peerId: "peer-1", approved: true };
+          },
+        },
+        NULL_EGRESS_SINK,
+        NO_POLICY_OVERLAY,
+      );
+      const res = await exec.execute({ type, payload: {} });
+      expect(res.status, type).toBe("rejected");
+      expect(remote, type).toBe(0);
+      expect(prompts, type).toBe(1);
+    }
+  });
 });
 
 describe("I21 — quorum counts only DISTINCT authenticated peers", () => {
@@ -6277,49 +6320,6 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
     expect(res.status).toBe("rejected");
     expect(remote).toBe(0);
     expect(prompts).toBe(1);
-  });
-
-  test("I20: a delegate never approves registry.add, extension.* or pack.install: the delegate is not consulted and the owner is prompted", async () => {
-    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
-    for (const type of [
-      "registry.add",
-      "extension.install",
-      "extension.run",
-      "extension.autoUpdate",
-      "extension.migrate",
-      "extension.eval",
-      "pack.install",
-    ]) {
-      let prompts = 0;
-      let remote = 0;
-      const exec = new ToolExecutor(
-        {
-          requestApproval: async () => {
-            prompts += 1;
-            return false;
-          },
-        },
-        { recordAudit: () => {} },
-        { dispatch: async () => ({}) },
-        {
-          store: {
-            activeDelegateFor: () => true,
-            activeDelegateePeer: () => "peer-1",
-          },
-          isOperatorValid: () => true,
-          requestRemote: async () => {
-            remote += 1;
-            return { kind: "answered", peerId: "peer-1", approved: true };
-          },
-        },
-        NULL_EGRESS_SINK,
-        NO_POLICY_OVERLAY,
-      );
-      const res = await exec.execute({ type, payload: {} });
-      expect(res.status, type).toBe("rejected");
-      expect(remote, type).toBe(0);
-      expect(prompts, type).toBe(1);
-    }
   });
 
   test("share replay never runs an ext_ tool", async () => {
