@@ -68,7 +68,6 @@ function fakeDeps(opts: FakeOpts = {}): { deps: InstalledEvalDeps; rec: Recorder
     const v: VerifiedExtensionForEval = {
       extensionId: id,
       version: "1.0.0",
-      serviceId: `ext_${id.replaceAll(".", "_")}`,
       installPath: `/ext/${id}`,
       treeDigest,
     };

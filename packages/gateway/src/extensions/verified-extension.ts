@@ -17,7 +17,7 @@ import {
   resolveExtensionRunGrants,
   serializeRunGrants,
 } from "./extension-run-grants.ts";
-import { deriveExtensionServiceId, EXTENSION_SERVICE_ID_PATTERN } from "./extension-service-id.ts";
+import { EXTENSION_SERVICE_ID_PATTERN } from "./extension-service-id.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import {
   type ExtensionManifest,
@@ -472,8 +472,6 @@ export async function readVerifiedExtensionForSpawn(
 export interface VerifiedExtensionForEval {
   readonly extensionId: string;
   readonly version: string;
-  /** derived from the id (there is no run grant to read it from) */
-  readonly serviceId: string;
   /** realpath */
   readonly installPath: string;
   /** the live tree digest, equal to the row's */
@@ -520,17 +518,11 @@ export async function readVerifiedExtensionForEval(
   await assertPublisherSignature(deps.db, row, manifest, noGrant, deps.vault);
   // 7
   const { installPath } = resolveEntryInside(row, manifest, deps.env);
-  const serviceId = deriveExtensionServiceId(row.id);
-  if (!EXTENSION_SERVICE_ID_PATTERN.test(serviceId)) {
-    refuse(
-      "ERR_EXTENSION_SERVICE_ID_INVALID",
-      `${row.id} does not derive a valid service id ("${serviceId}")`,
-    );
-  }
+  // No service id here: the evaluation runs under `loadEvalPackage`'s own derivation from the same
+  // manifest id, and `assertSamePackage` holds that package to this extension.
   return {
     extensionId: row.id,
     version: row.version,
-    serviceId,
     installPath,
     treeDigest: rowDigest,
   };

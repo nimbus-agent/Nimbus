@@ -31,7 +31,6 @@ function fakes(calls: string[]): AutomationEvalDeps {
   const verify: NonNullable<InstalledEvalDeps["verify"]> = async (id) => ({
     extensionId: id,
     version: "1.0.0",
-    serviceId: "ext_x",
     installPath: `/ext/${id}`,
     treeDigest: "t",
   });

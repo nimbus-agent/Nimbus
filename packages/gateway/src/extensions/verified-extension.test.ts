@@ -857,7 +857,6 @@ describe("readVerifiedExtensionForEval", () => {
     expect(v).toEqual({
       extensionId: f.id,
       version: "1.0.0",
-      serviceId: "ext_com_example_spawn",
       installPath: realpathSync.native(f.installPath),
       treeDigest: computeExtensionTreeDigest(f.installPath),
     });
