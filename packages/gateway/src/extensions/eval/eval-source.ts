@@ -170,9 +170,14 @@ export async function loadEvalPackage(
 export const EVAL_STAGE_STALE_MS = 60 * 60 * 1000;
 const EVAL_STAGE_PREFIX = "eval-";
 
+/** False when the entry cannot be read (gone, or denied): a sweep never fails a run. */
 function isOlderThan(path: string, cutoffMs: number): boolean {
-  const st = lstatSync(path, { throwIfNoEntry: false });
-  return st !== undefined && st.mtimeMs < cutoffMs;
+  try {
+    const st = lstatSync(path, { throwIfNoEntry: false });
+    return st !== undefined && st.mtimeMs < cutoffMs;
+  } catch {
+    return false;
+  }
 }
 
 /**

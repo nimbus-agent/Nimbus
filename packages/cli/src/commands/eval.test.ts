@@ -478,6 +478,24 @@ describe.skipIf(process.platform === "darwin")("spawnEvalRole (real child)", () 
     expect(Date.now() - t0).toBeLessThan(7000);
   }, 20_000);
 
+  test("a child that overflows stdout and ignores the kill is killed hard after the grace", async () => {
+    // Before, an overflow sent only the soft kill: a child ignoring it ran on to the wall clock.
+    const t0 = Date.now();
+    const r = await spawnEvalRoleWithGrace(
+      [
+        process.execPath,
+        "-e",
+        'process.on("SIGTERM",()=>{}); const c="x".repeat(1<<20); for(let i=0;i<40;i++){process.stdout.write(c)} setInterval(()=>{},1000)',
+      ],
+      undefined,
+      30_000,
+      300,
+    );
+    expect(r.stdout.byteLength).toBeGreaterThan(EVAL_ROLE_STDOUT_MAX_BYTES);
+    expect(r.timedOut).toBe(false);
+    expect(Date.now() - t0).toBeLessThan(15_000);
+  }, 40_000);
+
   test("a child that ignores the wall-clock kill is killed hard after the grace", async () => {
     const t0 = Date.now();
     const r = await spawnEvalRoleWithGrace(

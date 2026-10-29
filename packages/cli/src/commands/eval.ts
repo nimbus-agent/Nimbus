@@ -230,12 +230,17 @@ function hardKill(proc: RoleProcess): void {
   if (proc.exitCode === null && proc.signalCode === null) proc.kill(9);
 }
 
+/** Terminate, then kill hard if the child is still there after the grace. */
+function killWithGrace(proc: RoleProcess, clock: SpawnClock, graceMs: number): void {
+  proc.kill();
+  arm(clock, graceMs, () => hardKill(proc));
+}
+
 /** On the wall-clock deadline: terminate, then kill hard if the child is still there after the grace. */
 function armWallClock(proc: RoleProcess, clock: SpawnClock, timeoutMs: number, graceMs: number) {
   arm(clock, timeoutMs, () => {
     clock.timedOut = true;
-    proc.kill();
-    arm(clock, graceMs, () => hardKill(proc));
+    killWithGrace(proc, clock, graceMs);
   });
 }
 
@@ -249,7 +254,11 @@ function exitedOrAbandoned(
   finalMs: number,
 ): Promise<number | null> {
   return new Promise((resolve) => {
-    arm(clock, finalMs, () => resolve(null));
+    arm(clock, finalMs, () => {
+      // Abandoned: the CLI must not stay alive waiting on a child the OS would not reap.
+      proc.unref();
+      resolve(null);
+    });
     proc.exited.then(resolve, () => resolve(null));
   });
 }
@@ -276,7 +285,7 @@ export async function spawnEvalRoleWithGrace(
     const [stdout, stderr, code] = await Promise.all([
       readCapped(
         proc.stdout as ReadableStream<Uint8Array>,
-        firstBytesKeeper(EVAL_ROLE_STDOUT_MAX_BYTES, () => proc.kill()),
+        firstBytesKeeper(EVAL_ROLE_STDOUT_MAX_BYTES, () => killWithGrace(proc, clock, graceMs)),
         stop,
       ),
       readCapped(
