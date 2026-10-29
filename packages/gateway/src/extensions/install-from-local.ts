@@ -714,6 +714,15 @@ async function installStagedDependency(
   dep: StagedDependency,
   created: CreatedPackage[],
 ): Promise<void> {
+  // Another install got there while the plan was staged: an install race, refused as the plan's
+  // up-front existence check refuses it (never read as a failed signature). The same check in
+  // `installRootNode` runs in this tick, so it can no longer be the one that fires.
+  if (existsSync(extensionInstallDirectory(options.extensionsDir, dep.id))) {
+    throw new RegistryError(
+      "ERR_REGISTRY_INSTALL_REFUSED",
+      `${dep.id} was installed while this plan was being installed; the plan that would install ${dep.id}@${dep.version} is out of date`,
+    );
+  }
   const installed = await installRootNode(
     {
       db: options.db,

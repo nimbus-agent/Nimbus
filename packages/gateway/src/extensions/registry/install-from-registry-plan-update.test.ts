@@ -58,6 +58,7 @@ beforeEach(() => {
   vault = new MockVault();
   served.clear();
   airGapped = false;
+  beforeServe = undefined;
 });
 
 function ledger(method: string): number {
@@ -72,6 +73,9 @@ afterEach(() => {
 
 /** Whether the fake gateway is air-gapped: remote registries are then refused before any request. */
 let airGapped = false;
+
+/** Runs before the fake network serves each request (a test may change the disk underneath). */
+let beforeServe: ((url: string) => void) | undefined;
 
 /**
  * A registry carrying `exts`, added as an owner registry: remote (`https://<name>.test/`, served
@@ -100,6 +104,7 @@ async function addRegistry(
 function fetchBag(): InstallFromRegistryDeps["fetch"] {
   return {
     fetchFn: async (url) => {
+      beforeServe?.(url);
       const u = new URL(url);
       const dir = served.get(u.hostname.replace(/\.test$/, ""));
       if (dir === undefined) return new Response("down", { status: 503 });
@@ -914,6 +919,25 @@ describe("an approved update installs the packages it adds (production wiring)",
     // The owner's own install of DEP is untouched by the refusal.
     expect(versionOf(DEP)).toBe("1.0.0");
     expect(isInstalledAsDependency(db, DEP)).toBe(false);
+  });
+
+  test("a package that appears while the dependencies are staged is an install race, not a signature failure", async () => {
+    await installedRoot();
+    const depDir = join(tmp, "extensions", DEP);
+    const { result } = await update(() => {
+      // After the up-front existence check: DEP's directory appears while its package downloads.
+      beforeServe = (url) => {
+        if (url.includes(`/extensions/${DEP}/`) && url.endsWith("/package.tgz")) {
+          mkdirSync(depDir, { recursive: true });
+        }
+      };
+    });
+    expect(packageRowsFor(DEP)).toBe(1);
+    expect(result).toEqual({ applied: false, reason: "update_conflicts" });
+    expect(versionOf(ROOT)).toBe("1.0.0");
+    expect(versionOf(DEP)).toBeUndefined();
+    // Not this install's to remove: it never created that directory.
+    expect(existsSync(depDir)).toBe(true);
   });
 
   test("a dependent that came to pin the root since the plan refuses the apply", async () => {
