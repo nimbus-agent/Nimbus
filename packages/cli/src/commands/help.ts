@@ -104,7 +104,7 @@ PRIVACY & AUDIT
                               [fleet] enabled = true + a [[fleet.job]])
   nimbus eval --package <dir> [--suite <file>] [--json]
                               Run an extension package's eval suites in the sandbox; prints the score
-  nimbus security scan       Local security scan (secrets, vulnerable deps, risky IaC)
+  nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)
   nimbus telemetry show | disable

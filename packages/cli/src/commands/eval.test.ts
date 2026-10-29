@@ -7,6 +7,7 @@ import {
   parseEvalRoleDocument,
   runEval,
   spawnEvalRole,
+  spawnEvalRoleWithGrace,
 } from "./eval.ts";
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
@@ -175,10 +176,19 @@ describe("parseEvalRoleDocument", () => {
     bad((d) => {
       (d["report"] as Record<string, unknown>)["score"] = 99;
     });
+    bad((d) => {
+      const rep = d["report"] as { results: unknown[] };
+      rep.results = rep.results.slice(1);
+    });
+    bad((d) => {
+      const rep = d["report"] as { results: { pass: boolean }[] };
+      for (const r of rep.results) r.pass = true;
+    });
   });
 });
 
-describe("spawnEvalRole (real child)", () => {
+// Real-child spawns hang under macOS `--parallel` (oven-sh/bun#41024); Linux and Windows cover them.
+describe.skipIf(process.platform === "darwin")("spawnEvalRole (real child)", () => {
   const run = (script: string, timeoutMs = 20_000) =>
     spawnEvalRole([process.execPath, "-e", script], undefined, timeoutMs);
 
@@ -212,5 +222,34 @@ describe("spawnEvalRole (real child)", () => {
     const r = await spawnEvalRole(["definitely-not-a-real-binary-xyz"], undefined, 1000);
     expect(r.code).toBeNull();
     expect(new TextDecoder().decode(r.stderr)).toContain("could not start the gateway");
+  });
+
+  test("keeps exactly the last 64 KiB when stderr arrives in many small chunks", async () => {
+    const r = await run(
+      "for(let i=0;i<5000;i++){process.stderr.write(String(i%10).repeat(40)+String.fromCharCode(10))}",
+    );
+    expect(r.stderr.byteLength).toBe(64 * 1024);
+    const full = Array.from(
+      { length: 5000 },
+      (_, i) => `${String(i % 10).repeat(40)}
+`,
+    ).join("");
+    expect(new TextDecoder().decode(r.stderr)).toBe(full.slice(full.length - 64 * 1024));
+  });
+
+  test("does not wait forever on a pipe a grandchild still holds", async () => {
+    const t0 = Date.now();
+    const r = await spawnEvalRoleWithGrace(
+      [
+        process.execPath,
+        "-e",
+        'Bun.spawn([process.execPath,"-e","setTimeout(()=>{},6000)"],{stdio:["ignore","inherit","inherit"]}).unref(); process.stdout.write("hi")',
+      ],
+      undefined,
+      20_000,
+      200,
+    );
+    expect(Date.now() - t0).toBeLessThan(4500);
+    expect(new TextDecoder().decode(r.stdout)).toBe("hi");
   });
 });

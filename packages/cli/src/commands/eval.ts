@@ -60,6 +60,9 @@ function parseReport(raw: unknown): EvalReport | null {
   } catch {
     return null;
   }
+  const results = raw["results"] as Record<string, unknown>[];
+  if (results.length !== raw["cases"]) return null;
+  if (results.filter((r) => r["pass"] === true).length !== raw["passed"]) return null;
   return raw as unknown as EvalReport;
 }
 
@@ -86,25 +89,41 @@ export function parseEvalRoleDocument(text: string): EvalRoleDocument | null {
   return { ok: true, extensionId: raw["extensionId"], version: raw["version"], report };
 }
 
+const EVAL_ROLE_PIPE_GRACE_MS = 2000;
+
+/**
+ * Reads a pipe to its end, or until `stop` settles (the child has exited and a grandchild may
+ * still hold the pipe open). `first` keeps everything and calls `onOverflow` once past `max`;
+ * `last` keeps a rolling tail, trimmed as it reads so memory stays bounded.
+ */
 async function readCapped(
   stream: ReadableStream<Uint8Array>,
   max: number,
   keep: "first" | "last",
   onOverflow: () => void,
+  stop: Promise<void>,
 ): Promise<Uint8Array> {
   const chunks: Uint8Array[] = [];
   let size = 0;
   let overflowed = false;
   const reader = stream.getReader();
+  const stopped = stop.then(() => "stop" as const);
   for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
+    const r = await Promise.race([reader.read(), stopped]);
+    if (r === "stop") {
+      reader.cancel().catch(() => {});
+      break;
+    }
+    if (r.done) break;
     if (overflowed) continue;
-    chunks.push(value);
-    size += value.byteLength;
+    chunks.push(r.value);
+    size += r.value.byteLength;
     if (keep === "first" && size > max) {
       overflowed = true;
       onOverflow();
+    }
+    while (keep === "last" && chunks.length > 1 && size - (chunks[0]?.byteLength ?? 0) >= max) {
+      size -= chunks.shift()?.byteLength ?? 0;
     }
   }
   const all = new Uint8Array(size);
@@ -116,7 +135,12 @@ async function readCapped(
   return keep === "last" && all.byteLength > max ? all.subarray(all.byteLength - max) : all;
 }
 
-export const spawnEvalRole: EvalCliDeps["spawnRole"] = async (cmd, cwd, timeoutMs) => {
+export async function spawnEvalRoleWithGrace(
+  cmd: string[],
+  cwd: string | undefined,
+  timeoutMs: number,
+  graceMs: number,
+): Promise<EvalSpawnResult> {
   let proc: ReturnType<typeof Bun.spawn>;
   try {
     proc = Bun.spawn(cmd, {
@@ -141,18 +165,23 @@ export const spawnEvalRole: EvalCliDeps["spawnRole"] = async (cmd, cwd, timeoutM
     proc.kill();
   }, timeoutMs);
   try {
+    // Once the child has exited, a grandchild may still hold the pipes: give the readers a short
+    // grace to drain, then cancel them so the wait cannot outlive the child.
+    const stop = proc.exited.then(() => new Promise<void>((r) => setTimeout(r, graceMs)));
     const [stdout, stderr, code] = await Promise.all([
       readCapped(
         proc.stdout as ReadableStream<Uint8Array>,
         EVAL_ROLE_STDOUT_MAX_BYTES,
         "first",
         () => proc.kill(),
+        stop,
       ),
       readCapped(
         proc.stderr as ReadableStream<Uint8Array>,
         EVAL_ROLE_STDERR_KEEP_BYTES,
         "last",
         () => {},
+        stop,
       ),
       proc.exited,
     ]);
@@ -160,7 +189,10 @@ export const spawnEvalRole: EvalCliDeps["spawnRole"] = async (cmd, cwd, timeoutM
   } finally {
     clearTimeout(timer);
   }
-};
+}
+
+export const spawnEvalRole: EvalCliDeps["spawnRole"] = (cmd, cwd, timeoutMs) =>
+  spawnEvalRoleWithGrace(cmd, cwd, timeoutMs, EVAL_ROLE_PIPE_GRACE_MS);
 
 function defaultDeps(): EvalCliDeps {
   return {
