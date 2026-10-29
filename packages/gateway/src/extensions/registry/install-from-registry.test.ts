@@ -20,6 +20,7 @@ import {
 } from "@nimbus-dev/registry-format";
 import * as tar from "tar";
 import nacl from "tweetnacl";
+import { assertInstalled } from "../../../test/helpers/assert-installed.ts";
 import { isInstalledAsDependency, listExtensions } from "../../automation/extension-store.ts";
 import { consentDisplayPayload } from "../../engine/executor.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
@@ -133,6 +134,7 @@ describe("installFromRegistry", () => {
     await setup([{ version: "1.0.0" }]);
     const out = await installFromRegistry(deps(), { id: ID });
     expect(out.id).toBe(ID);
+    assertInstalled(out);
     expect(out.sourceRegistry).toBe("main");
     expect(existsSync(join(extensionsDir, ID, "dist", "index.js"))).toBe(true);
     expect(getExtensionSource(db, ID)).toEqual({
@@ -446,6 +448,7 @@ describe("installFromRegistry refusals before any prompt", () => {
     await writePublisherKey(vault, "acme", nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey);
     const out = await installFromRegistry(deps(), { id: ID });
     expect(out.version).toBe("1.0.0");
+    assertInstalled(out);
     expect(out.publisher.id).toBe("acme");
     expect(listExtensions(db).map((r) => r.id)).toEqual([ID]);
   });
@@ -629,28 +632,6 @@ describe("installFromRegistry follows a publisher's key rotation (spec R5, R8)",
   });
 });
 
-describe("installFromRegistry refuses manifests this gateway cannot honour yet", () => {
-  async function refusedBeforeApproval(): Promise<void> {
-    let code: unknown;
-    try {
-      await installFromRegistry(deps(), { id: ID });
-    } catch (e) {
-      code = (e as { code?: unknown }).code;
-    }
-    expect(code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(asked).toHaveLength(0);
-    expect(listExtensions(db)).toHaveLength(0);
-    expect(existsSync(extensionsDir)).toBe(false);
-  }
-
-  test("a starter pack is refused before the owner is asked", async () => {
-    await setup([{ version: "1.0.0", dependsOn: { "com.example.dep": "^1.0.0" } }], {
-      starterPack: true,
-    });
-    await refusedBeforeApproval();
-  });
-});
-
 describe("installFromRegistry installs a dependency plan", () => {
   const DEP = "com.example.dep";
   const DEP2 = "com.example.dep2";
@@ -664,10 +645,11 @@ describe("installFromRegistry installs a dependency plan", () => {
   let stagingWhileFetching: string[][];
 
   beforeEach(() => {
-    // The plan installer records each edge's registry and the dependency marker (V78).
+    // The plan installer records each edge's registry and the dependency marker (V78), and each
+    // package's kind (V79).
     db.close();
     db = new Database(":memory:");
-    runIndexedSchemaMigrations(db, 78);
+    runIndexedSchemaMigrations(db, 79);
     served.clear();
     urls = [];
     planRoot = join(tmp, "plan-staging");
@@ -784,6 +766,7 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(isInstalledAsDependency(db, DEP)).toBe(true);
     expect(isInstalledAsDependency(db, ID)).toBe(false);
     expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+    assertInstalled(out);
     expect(out.dependencies).toEqual([{ id: DEP, version: "1.0.0", registry: "main" }]);
     expect(existsSync(join(extensionsDir, DEP, "dist", "index.js"))).toBe(true);
   });
@@ -913,6 +896,7 @@ describe("installFromRegistry installs a dependency plan", () => {
       registryUrl: "https://other.test/",
     });
     expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "other" }]);
+    assertInstalled(out);
     expect(out.dependencies).toEqual([{ id: DEP, version: "1.0.0", registry: "other" }]);
     expect(urls.filter((u) => u.startsWith("https://main.test/") && u.includes(DEP))).toEqual([]);
     expect(urls.filter((u) => u.startsWith("https://other.test/") && u.includes(DEP))).toEqual([
@@ -977,10 +961,108 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(asked[0]?.planText).toContain(
       `Already installed and reused: ${DEP}@1.0.0 (registry main)`,
     );
+    assertInstalled(out);
     expect(out.dependencies).toEqual([]);
     // Installed by the owner's own request, so it is not marked as a dependency.
     expect(isInstalledAsDependency(db, DEP)).toBe(false);
     expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+  });
+
+  const egressRows = (): number =>
+    (db.query("SELECT COUNT(*) AS n FROM egress_ledger").get() as { n: number }).n;
+
+  test("an explicit registry install of a dependency promotes it", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    const rowBefore = listExtensions(db).find((r) => r.id === DEP);
+    const ledgerBefore = egressRows();
+    urls = [];
+    asked = [];
+    const out = await installFromRegistry(planDeps(), { id: DEP });
+    expect(out).toEqual({
+      id: DEP,
+      version: "1.0.0",
+      promoted: true,
+      sourceRegistry: "main",
+      channel: "stable",
+    });
+    expect(urls).toEqual([]);
+    expect(egressRows()).toBe(ledgerBefore);
+    expect(asked).toHaveLength(0);
+    expect(isInstalledAsDependency(db, DEP)).toBe(false);
+    // Only the marker moved: the installed copy and its edges are untouched.
+    expect(listExtensions(db).find((r) => r.id === DEP)).toEqual(rowBefore);
+    expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+  });
+
+  test("a registry install naming the dependency's own registry, version and channel promotes it", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const out = await installFromRegistry(planDeps(), {
+      id: DEP,
+      registry: "main",
+      version: "1.0.0",
+      channel: "stable",
+    });
+    expect(out).toEqual({
+      id: DEP,
+      version: "1.0.0",
+      promoted: true,
+      sourceRegistry: "main",
+      channel: "stable",
+    });
+    expect(isInstalledAsDependency(db, DEP)).toBe(false);
+  });
+
+  test("a registry install of a dependency asking another version, registry or channel is still refused", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    urls = [];
+    for (const req of [
+      { id: DEP, version: "2.0.0" },
+      { id: DEP, registry: "other" },
+      { id: DEP, channel: "beta" as const },
+    ]) {
+      expect(await codeOf(installFromRegistry(planDeps(), req))).toBe(
+        "ERR_REGISTRY_ALREADY_INSTALLED",
+      );
+    }
+    expect(urls).toEqual([]);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+  });
+
+  test("a dependency with no recorded registry source is never promoted by a registry install", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    db.run(
+      "UPDATE extension SET source_registry = NULL, source_root_fingerprint = NULL, source_channel = NULL WHERE id = ?",
+      [DEP],
+    );
+    expect(getExtensionSource(db, DEP)).toBeUndefined();
+    const ledgerBefore = egressRows();
+    urls = [];
+    asked = [];
+    expect(await codeOf(installFromRegistry(planDeps(), { id: DEP }))).toBe(
+      "ERR_REGISTRY_ALREADY_INSTALLED",
+    );
+    expect(urls).toEqual([]);
+    expect(egressRows()).toBe(ledgerBefore);
+    expect(asked).toHaveLength(0);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+  });
+
+  test("an explicit install of an explicitly installed package is still refused", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const ledgerBefore = egressRows();
+    asked = [];
+    expect(await codeOf(installFromRegistry(planDeps(), { id: ID }))).toBe(
+      "ERR_REGISTRY_ALREADY_INSTALLED",
+    );
+    expect(egressRows()).toBe(ledgerBefore);
+    expect(asked).toHaveLength(0);
+    expect(isInstalledAsDependency(db, ID)).toBe(false);
   });
 
   test("declining installs nothing", async () => {
@@ -1182,5 +1264,63 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(JSON.stringify(shown)).not.toContain("[REDACTED]");
     expect(shown?.["plan"]).toEqual(asked[0]?.plan);
     expect(shown?.["planText"]).toBeUndefined();
+  });
+
+  const PACK = "com.example.pack";
+  const SUBPACK = "com.example.subpack";
+
+  function kindOf(id: string): string | undefined {
+    return listExtensions(db).find((r) => r.id === id)?.kind;
+  }
+
+  test("a registry starter pack installs with its members in one approval", async () => {
+    const dir = await addRemote("main", {
+      [PACK]: [
+        {
+          version: "1.0.0",
+          starterPack: true,
+          dependsOn: { [DEP]: "^1.0.0", [DEP2]: "^1.0.0" },
+        },
+      ],
+      [DEP]: [{ version: "1.0.0" }],
+      [DEP2]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(planDeps(), { id: PACK, registry: "main" });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.plan?.map((p) => p.id).sort()).toEqual([DEP, DEP2, PACK].sort());
+    expect(asked[0]?.plan?.at(-1)?.id).toBe(PACK);
+    expect(installedIds()).toEqual([DEP, DEP2, PACK]);
+    expect(kindOf(PACK)).toBe("starter-pack");
+    expect(kindOf(DEP)).toBe("extension");
+    expect(kindOf(DEP2)).toBe("extension");
+    expect(isInstalledAsDependency(db, PACK)).toBe(false);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(isInstalledAsDependency(db, DEP2)).toBe(true);
+    const manifestBytes = readFileSync(join(dir, "extensions", PACK, "1.0.0", "manifest.json"));
+    const manifestSha = createHash("sha256").update(manifestBytes).digest("hex");
+    expect(listExtensions(db).find((r) => r.id === PACK)?.entry_hash).toBe(manifestSha);
+    expect(forwardDeps(db, PACK).map((d) => d.id)).toEqual([DEP, DEP2]);
+    expect(existsSync(join(extensionsDir, PACK, "dist"))).toBe(false);
+  });
+
+  test("pack of packs", async () => {
+    await addRemote("main", {
+      [PACK]: [{ version: "1.0.0", starterPack: true, dependsOn: { [SUBPACK]: "^1.0.0" } }],
+      [SUBPACK]: [{ version: "1.0.0", starterPack: true, dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(planDeps(), { id: PACK, registry: "main" });
+    expect(asked).toHaveLength(1);
+    // Topological: every dependency is listed (and installed) before what needs it.
+    expect(asked[0]?.plan?.map((p) => p.id)).toEqual([DEP, SUBPACK, PACK]);
+    expect(installedIds()).toEqual([DEP, PACK, SUBPACK]);
+    expect(kindOf(PACK)).toBe("starter-pack");
+    expect(kindOf(SUBPACK)).toBe("starter-pack");
+    expect(kindOf(DEP)).toBe("extension");
+    expect(isInstalledAsDependency(db, PACK)).toBe(false);
+    expect(isInstalledAsDependency(db, SUBPACK)).toBe(true);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(forwardDeps(db, PACK).map((d) => d.id)).toEqual([SUBPACK]);
+    expect(forwardDeps(db, SUBPACK).map((d) => d.id)).toEqual([DEP]);
   });
 });

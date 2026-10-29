@@ -204,6 +204,23 @@ describe("doctorExtensionsLines — blocked extensions (I48)", () => {
     expect([...(r.lines[0] ?? "")].some((c) => c.charCodeAt(0) < 0x20)).toBe(false);
     expect(r.lines[1]).toContain("not approved");
   });
+  test("a starter pack is reported blocked by its blocks, though its run state is pack", () => {
+    const r = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [
+        {
+          id: "p",
+          kind: "starter-pack",
+          runState: "pack",
+          blockedBy: [{ kind: "extension.takedown", reason: "x" }],
+        },
+        { id: "q", kind: "starter-pack", runState: "pack", blockedBy: [] },
+      ],
+    });
+    expect(r.lines).toEqual([
+      "[warn] Extensions: p is blocked: it was taken down (x) — it does not run; nimbus extension info p",
+    ]);
+  });
   test("a blocked entry without blockedBy still reads", () => {
     expect(
       doctorExtensionsLines({ runtimeEnabled: true, extensions: [ext("e", "blocked")] }).lines[0],
@@ -315,5 +332,28 @@ describe("doctorMigrationLines next step", () => {
     const { lines } = doctorMigrationLines(row(err));
     expect(lines[0]).toContain("nimbus extension approve com.nimbus.readwise");
     expect(lines[0]).not.toContain("migrate retry");
+  });
+});
+
+describe("doctorExtensionsLines — starter packs", () => {
+  // The shape the gateway's extension.list gives a pack row (automation-rpc.run-grant.test.ts,
+  // "extension.list and extension.info carry kind, and a pack's run state is `pack`").
+  const pack = { id: "fx.pack.top", kind: "starter-pack", runState: "pack", runGrant: null };
+
+  test("a pack is never counted as needing approval, whatever run state it reports", () => {
+    // Red without the `kind` guard: the `no_grant` pack row would be counted. The `pack` row alone
+    // is a shape check (`pack` was never in NEEDS_APPROVAL).
+    const out = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [
+        pack,
+        { ...pack, id: "fx.pack.sub", runState: "no_grant" },
+        { id: "fx.code.a", kind: "extension", runState: "no_grant", runGrant: null },
+      ],
+    });
+    expect(out.exit).toBe(1);
+    expect(out.lines).toEqual([
+      "[warn] Extensions: 1 installed extension(s) not approved to run, or approved for an older version (fx.code.a) — nimbus extension approve <id>",
+    ]);
   });
 });

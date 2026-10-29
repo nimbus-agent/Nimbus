@@ -33,6 +33,7 @@ import { pendingMigrationForExtension } from "./migration/migration-store.ts";
 import { networkAccessLine } from "./network-access-line.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
+import { refuseStarterPack } from "./starter-pack-refusal.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   acknowledgementJson,
@@ -456,6 +457,9 @@ async function approveRun(
 ): Promise<ApproveExtensionRunResult> {
   assertRuntimeEnabled(deps);
   const row = requireRow(deps.db, extensionId);
+  // Before anything is resolved and before any prompt, for both doors (the owner's `approve` and
+  // the migration auto-approver): a starter pack has no code, so it never holds a run grant (I43).
+  refuseStarterPack(deps.db, row);
   const treeDigest = assertRunnable(row);
   const manifest = readVerifiedManifest(row);
   const grants = resolveExtensionRunGrants(manifest.permissions, row.install_path, deps.env);

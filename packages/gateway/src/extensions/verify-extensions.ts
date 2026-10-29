@@ -9,6 +9,7 @@ import {
   type ExtensionRow,
   listExtensions,
   setExtensionEnabled,
+  setExtensionKind,
   touchExtensionVerifiedAt,
   updateExtensionRowVersion,
 } from "../automation/extension-store.ts";
@@ -26,6 +27,7 @@ import {
 } from "./hard-disable.ts";
 import {
   extensionEntryRelPath,
+  installedManifestKind,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
@@ -68,9 +70,11 @@ function tryPromotePrevVersion(
     // adopts them with `extension rehash`. Anything able to write the versions area could have
     // planted that tree, so recovery must not make it look healthy.
     const measured = computeExtensionPackageHashes(activePath);
+    const kind = installedManifestKind(activePath);
     // One transaction: an interruption must not leave a recovered row enabled with a NULL digest.
     db.transaction(() => {
       updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
+      setExtensionKind(db, row.id, kind);
       setExtensionEnabled(db, row.id, false);
     })();
     recoveredPendingRehashRegistry.mark(row.id);

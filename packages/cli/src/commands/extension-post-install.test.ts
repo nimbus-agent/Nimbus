@@ -86,6 +86,16 @@ describe("runPostInstallWalk", () => {
     ]);
   });
 
+  test("with nothing to approve (a pack) the walk asks no approval and still offers the pack's connector", async () => {
+    const { io, events } = fakeIo();
+    const req = { ...bundled("github", true), requiredBy: ["acme.pack"] };
+    await runPostInstallWalk(io, [], [req]);
+    expect(events).toEqual([
+      { kind: "confirm", question: "This needs github. Connect now? [y/N] " },
+      { kind: "connect", connector: "github", approved: [] },
+    ]);
+  });
+
   test("one package is named in the opening question", async () => {
     const { io, events } = fakeIo({ answer: false });
     await runPostInstallWalk(io, ["root"], []);

@@ -41,7 +41,6 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "../manifest.ts";
-import { assertManifestSupported } from "../manifest-support.ts";
 import {
   type KeyChange,
   type KeyVia,
@@ -247,7 +246,6 @@ export function createRegistryDependencyResolver(
         source: subject.source,
       });
       if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
-      assertManifestSupported(fetched.manifest);
       verifiedById.set(`${id}@${version}`, {
         id,
         version,

@@ -18,6 +18,11 @@ import {
   trustStatementId,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
+import {
+  installStarterPackFixture,
+  PACK_FIXTURE,
+  TOP_PACK_REFUSAL,
+} from "../../test/helpers/starter-pack-fixture.ts";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   insertExtensionRow,
@@ -41,6 +46,7 @@ import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
 import { recordMigrationPrepared } from "./migration/migration-store.ts";
+import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { recordTrustStatements, type StatementSource } from "./trust/trust-store.ts";
@@ -1147,5 +1153,121 @@ describe("approving a blocked extension (I48)", () => {
       ),
     ).rejects.toThrow("ERR_EXTENSION_RUN_CHANGED");
     expect(getRunGrant(s.db, ID)).toBeNull();
+  });
+});
+
+describe("a starter pack is never approved to run", () => {
+  async function packs() {
+    const fx = await installStarterPackFixture("nimbus-approve-pack-");
+    cleanups.push(fx.cleanup);
+    return fx;
+  }
+
+  async function refusal(p: Promise<unknown>): Promise<ExtensionRunGrantError> {
+    let caught: unknown;
+    try {
+      await p;
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ExtensionRunGrantError);
+    return caught as ExtensionRunGrantError;
+  }
+
+  test("approveExtensionRun refuses ERR_EXTENSION_STARTER_PACK naming its transitive code members, before any prompt", async () => {
+    const fx = await packs();
+    const seen: Asked[] = [];
+    const e = await refusal(
+      approveExtensionRun(PACK_FIXTURE.topPack, {
+        db: fx.db,
+        env: fx.env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_STARTER_PACK");
+    expect(e.message).toBe(`ERR_EXTENSION_STARTER_PACK: ${TOP_PACK_REFUSAL}`);
+    expect(seen).toHaveLength(0);
+    expect(getRunGrant(fx.db, PACK_FIXTURE.topPack)).toBeNull();
+    expect(listRunGrants(fx.db)).toHaveLength(0);
+  });
+
+  test("a pack with no members gets the short copy", async () => {
+    const fx = await packs();
+    const seen: Asked[] = [];
+    const e = await refusal(
+      approveExtensionRun(PACK_FIXTURE.barePack, {
+        db: fx.db,
+        env: fx.env,
+        gate: gateThat(true, seen),
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
+    );
+    expect(e.message).toBe(
+      `ERR_EXTENSION_STARTER_PACK: ${PACK_FIXTURE.barePack} is a starter pack: it has no code to run.`,
+    );
+    expect(seen).toHaveLength(0);
+    expect(listRunGrants(fx.db)).toHaveLength(0);
+  });
+
+  test("a sub-pack lists only its own code member", async () => {
+    const fx = await packs();
+    const e = await refusal(
+      approveExtensionRun(PACK_FIXTURE.subPack, {
+        db: fx.db,
+        env: fx.env,
+        gate: async () => true,
+        runtimeEnabled: true,
+        now: () => 1,
+      }),
+    );
+    expect(e.message).toBe(
+      `ERR_EXTENSION_STARTER_PACK: ${PACK_FIXTURE.subPack} is a starter pack: it has no code to run. Approve its members instead: nimbus extension approve ${PACK_FIXTURE.codeB}`,
+    );
+  });
+
+  test("the migration auto-approver (I46) refuses a pack too, and grants nothing", async () => {
+    const fx = await packs();
+    const digest =
+      listExtensions(fx.db).find((r) => r.id === PACK_FIXTURE.topPack)?.tree_digest ?? null;
+    expect(digest).not.toBeNull();
+    recordMigrationPrepared(
+      fx.db,
+      {
+        id: "mig-pack",
+        legacyServiceId: "fixture_reader",
+        extensionId: PACK_FIXTURE.topPack,
+        version: "1.0.0",
+        treeDigest: digest ?? "",
+        stagePath: "/stage",
+      },
+      1,
+    );
+    const e = await refusal(
+      approveMigratedExtensionRun(
+        { db: fx.db, env: fx.env, runtimeEnabled: true, now: () => 1 },
+        PACK_FIXTURE.topPack,
+      ),
+    );
+    expect(e.code).toBe("ERR_EXTENSION_STARTER_PACK");
+    expect(e.message).toBe(`ERR_EXTENSION_STARTER_PACK: ${TOP_PACK_REFUSAL}`);
+    expect(listRunGrants(fx.db)).toHaveLength(0);
+  });
+
+  test("the pack's code members still approve one by one; installing the pack granted them nothing", async () => {
+    const fx = await packs();
+    expect(listRunGrants(fx.db)).toHaveLength(0);
+    const seen: Asked[] = [];
+    await approveExtensionRun(PACK_FIXTURE.codeA, {
+      db: fx.db,
+      env: fx.env,
+      gate: gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 1,
+    });
+    expect(seen).toHaveLength(1);
+    expect(listRunGrants(fx.db).map((g) => g.extension_id)).toEqual([PACK_FIXTURE.codeA]);
   });
 });

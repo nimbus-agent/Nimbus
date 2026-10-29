@@ -18,6 +18,28 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — Extension dependencies and starter packs PR 4: starter packs (Phase 9.5 project 4; schema V79, no new
+  invariant).** A `kind: "starter-pack"` package now installs. It goes through the same one-approval plan as any
+  dependency closure (`nimbus extension install <id>`, the `registry.install` IPC, and a local folder install): one prompt
+  lists every member. A registry install then prints `Installed starter pack <id>@<version>.`, and `Added <n> package(s)
+  it needs.` when it added something. V79 adds `extension.kind`. A pack has no code, so it is never granted
+  `extension.run` and never spawned: `nimbus extension approve <pack>` and the spawn path refuse it
+  (`ERR_EXTENSION_STARTER_PACK`) and name the approve command for each code member, found through sub-packs too.
+  Installing a pack approves none of its members. Its run state is `pack` (`pack (no code)` in `extension list`),
+  `nimbus doctor` does not warn that it is unapproved (it does report a blocked pack), `extension info` never suggests
+  approving one, the connector catalog does not list it, and the post-install walk offers to approve only the members
+  with code. An update that turns an extension into a pack drops its run grant, and its approval says so (`The new
+  version is a starter pack: it has no code to run, and its approval to run is removed.`) instead of asking for a new
+  approve. A local pack under the legacy manifest name is refused with a clear message. Installing a package by name
+  that is already installed only as a dependency now promotes it (it is kept when what needed it is removed) with no
+  fetch and no approval: from a registry only when the dependency has a recorded registry source and any `--version`,
+  `--registry` and `--channel` named match the installed copy (`--accept-publisher-key` is ignored), or from a local
+  folder with identical manifest bytes. `extension remove` now returns `orphanedDependencies`: the packages installed
+  only for what was removed and needed by nothing left. The CLI offers to remove them when stdin and stdout are
+  terminals, `--clean-deps` removes them without asking, and otherwise a `Kept` line names them with the `nimbus
+  extension remove` command for each, dependents first; a failed removal among them exits 1. The orphan offer and
+  these lines go to stderr, so stdout stays the removal's JSON. The desktop removal does not offer orphans (CLI only). Updates that add dependencies, the
+  dependency edges of an update's new version before the next start, and requirements in update approvals are PR 5.
 - **2026-10-29 — Extension dependencies and starter packs PR 3: connector requirements and the post-install walk (Phase 9.5
   project 4; no migration, no new invariant).** An extension's `requires.connectors` is now acted on. Each connector it
   names gets a status: `met`, `configured_never_synced`, `not_connected`, `unknown_connector` or `unknown`, with the exact
@@ -38,8 +60,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   not-connected requirement raises the exit code. An unrecognised
   fix command stops the sequence and is printed for the owner to run. Starter packs are still refused.
 - **2026-10-28 — Extension dependencies and starter packs PR 2: registry installs fetch their dependencies (Phase 9.5
-  project 4; schema V78; I44 amended, no new invariant).** `nimbus registry install` now resolves the dependency closure
-  and installs it. A bare-range dependency is fetched from the dependent's own registry through the same verified chain as
+  project 4; schema V78; I44 amended, no new invariant).** A registry install (`nimbus extension install <id>`, the
+  `registry.install` IPC) now resolves the dependency closure and installs it. A bare-range dependency is fetched from the dependent's own registry through the same verified chain as
   a root install; an object dependency from the registry it names, which must already be one the owner added
   (`ERR_DEPENDENCY_REGISTRY_NOT_ADDED` otherwise, with no `registry.add` raised; `ERR_DEPENDENCY_REGISTRY_KEY_MISMATCH` for
   a pinned root-key fingerprint that differs). The solver pins each id to its source, so an installed copy satisfies a

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publisherKeyFingerprint, signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import { getExtensionKind, insertExtensionRow } from "../automation/extension-store.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
@@ -17,11 +17,12 @@ import {
   buildTestRegistry,
   PUBLISHER_SEED,
   resignIndex,
+  type TestVersion,
 } from "./registry/__fixtures__/build-test-registry.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
-import { upsertRunGrant } from "./run-grant-store.ts";
+import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { recordTrustStatements } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
@@ -366,15 +367,14 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
   });
 
   /** Installs 1.0.0 from a local registry that also carries 1.2.0, and builds the runtime. */
-  async function installedFromRegistry() {
+  async function installedFromRegistry(
+    versions: TestVersion[] = [{ version: "1.0.0" }, { version: "1.2.0" }],
+  ) {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-reg-"));
     db = freshDb();
     const regDir = join(tmpRoot, "registry");
     const extensionsDir = join(tmpRoot, "extensions");
-    const reg = await buildTestRegistry(regDir, {
-      id: ID,
-      versions: [{ version: "1.0.0" }, { version: "1.2.0" }],
-    });
+    const reg = await buildTestRegistry(regDir, { id: ID, versions });
     insertRegistry(db, {
       name: "main",
       url: regDir,
@@ -402,6 +402,10 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       .version;
   }
 
+  function kindOf(): string | undefined {
+    return getExtensionKind(db, ID);
+  }
+
   it("detects the newer version and applies a real signed upgrade end to end", async () => {
     const { runtime, extensionsDir } = await installedFromRegistry();
     const before = db.query("SELECT tree_digest FROM extension WHERE id = ?").get(ID) as {
@@ -416,6 +420,16 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       verificationStatus: "verified",
     });
     if (cached === undefined) throw new Error("no update detected");
+    upsertRunGrant(db, {
+      extension_id: ID,
+      service_id: "ext_update_code",
+      version: "1.0.0",
+      tree_digest: before.tree_digest,
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
 
     await runtime.deps.performUpgrade(cached);
 
@@ -424,6 +438,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       tree_digest: string;
     };
     expect(row.version).toBe("1.2.0");
+    // A code-to-code update leaves an existing grant in place (stale, not deleted).
+    expect(getRunGrant(db, ID)?.version).toBe("1.0.0");
     // A new tree digest is what leaves any I43 run grant stale: the owner must re-approve.
     expect(row.tree_digest).not.toBe(before.tree_digest);
     expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
@@ -470,8 +486,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     expect(installedVersion()).toBe("1.0.0");
   });
 
-  it("apply refuses an update whose re-fetched manifest is a starter pack, and nothing changes", async () => {
-    const { runtime, regDir, extensionsDir } = await installedFromRegistry();
+  it("applies an update whose re-fetched manifest is a starter pack, and the row's kind follows it", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
     await runtime.deps.forcePoll();
     const cached = runtime.deps.cache.get(ID);
     if (cached === undefined) throw new Error("no update detected");
@@ -495,16 +511,48 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     };
     const v = index.extensions[ID]?.versions["1.2.0"];
     if (v === undefined) throw new Error("no 1.2.0 in the re-published index");
-    await expect(
-      runtime.deps.performUpgrade({
-        ...cached,
-        manifestHash: v.manifestSha256,
-        packageSha256: v.packageSha256,
-        entryHash: v.entryHash,
-      }),
-    ).rejects.toThrow(/ERR_EXTENSION_MANIFEST_UNSUPPORTED: com\.example\.tool is a starter pack/);
-    expect(installedVersion()).toBe("1.0.0");
-    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.0.0");
+    expect(kindOf()).toBe("extension");
+    // The owner had approved the code version to run. A pack never holds a run grant (I43).
+    upsertRunGrant(db, {
+      extension_id: ID,
+      service_id: "ext_update_pack",
+      version: "1.0.0",
+      tree_digest: "c".repeat(64),
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+    await runtime.deps.performUpgrade({
+      ...cached,
+      manifestHash: v.manifestSha256,
+      packageSha256: v.packageSha256,
+      entryHash: v.entryHash,
+    });
+    expect(installedVersion()).toBe("1.2.0");
+    expect(kindOf()).toBe("starter-pack");
+    expect(getRunGrant(db, ID)).toBeNull();
+    // A pack's entry is its manifest (spec A3): the row stores the index's entry hash.
+    expect(
+      (db.query("SELECT entry_hash FROM extension WHERE id = ?").get(ID) as { entry_hash: string })
+        .entry_hash,
+    ).toBe(v.entryHash);
+  });
+
+  it("applies an update from a starter pack to code, and the row's kind follows it", async () => {
+    // A pack with no dependencies needs a connector requirement to be a valid pack.
+    const { runtime, extensionsDir } = await installedFromRegistry([
+      { version: "1.0.0", starterPack: true, requires: { connectors: ["github"] } },
+      { version: "1.2.0" },
+    ]);
+    expect(kindOf()).toBe("starter-pack");
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    await runtime.deps.performUpgrade(cached);
+    expect(installedVersion()).toBe("1.2.0");
+    expect(kindOf()).toBe("extension");
+    expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
   });
 
   it("detect → remove the registry → next tick: the update is no longer offered", async () => {

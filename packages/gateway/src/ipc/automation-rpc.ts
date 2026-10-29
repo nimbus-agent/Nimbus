@@ -74,7 +74,10 @@ import {
 import {
   ExtensionInstallNotApprovedError,
   installExtensionFromLocalDirectory,
+  installedKindOf,
+  isPromotedInstall,
 } from "../extensions/install-from-local.ts";
+import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -448,6 +451,10 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
         if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
         await ctx.extensionSync.purgeBeforeRemove(id);
       }
+      // Before `clearDeps`, which takes this id's forward edges that the walk starts from. It never
+      // reads this id's own row, so it also precedes the delete; a failure offers nothing rather
+      // than leave the removal half done.
+      const orphaned = orphanedDependenciesOrNone(ctx.db, id);
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
@@ -459,7 +466,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       await stopAndCleanUpRemovedExtension(ctx, id, serviceId);
       removeExtensionFiles(ctx, id, installPath);
       emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "remove", ok: true });
-      return { kind: "hit", value: { ok: true } };
+      return { kind: "hit", value: { ok: true, orphanedDependencies: orphaned } };
     } catch (e) {
       emitGatewayEvent("extension.stateChanged", {
         extensionId: id,
@@ -502,6 +509,19 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     }),
   }),
 };
+
+/** The removal's orphan offer; a walk that throws offers nothing and never fails the removal. */
+export function orphanedDependenciesOrNone(
+  db: Database,
+  removedId: string,
+  walk: (db: Database, removedId: string) => string[] = orphanedDependencies,
+): string[] {
+  try {
+    return walk(db, removedId);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * The service id whose stage root `extension.remove` deletes: the grant's stored id, else the one
@@ -880,6 +900,20 @@ async function handleExtensionInstall(
       msg,
     );
   }
+  // A dependency kept by an explicit install: nothing was copied or approved, only its marker moved.
+  if (isPromotedInstall(installed)) {
+    return {
+      kind: "hit",
+      value: {
+        id: installed.id,
+        version: installed.version,
+        promoted: true,
+        ...(installed.sourceRegistry === undefined
+          ? {}
+          : { sourceRegistry: installed.sourceRegistry, channel: installed.channel }),
+      },
+    };
+  }
   // After the install has landed, and outside its error handling: this never throws, and a
   // failure only leaves the field out — requirement status never fails an install.
   const deps = requirementDeps(ctx);
@@ -896,6 +930,7 @@ async function handleExtensionInstall(
       manifestHash: installed.manifestHash,
       entryHash: installed.entryHash,
       treeDigest: installed.treeDigest,
+      kind: installedKindOf(ctx.db, installed.id),
       ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
     },
   };

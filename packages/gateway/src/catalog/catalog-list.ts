@@ -128,7 +128,9 @@ export function buildCatalogList(deps: {
   const serviceByExtension = new Map(
     listRunGrants(deps.db).map((g) => [g.extension_id, g.service_id]),
   );
+  // A starter pack is not a connector: it has no code and no service, only members.
   const extensions: CatalogConnector[] = listExtensions(deps.db)
+    .filter((row) => row.kind !== "starter-pack")
     .map(
       (row): CatalogConnector => ({
         kind: "extension",

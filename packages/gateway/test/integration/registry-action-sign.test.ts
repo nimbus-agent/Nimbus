@@ -32,6 +32,7 @@ import { installFromRegistry } from "../../src/extensions/registry/install-from-
 import { insertRegistry } from "../../src/extensions/registry/registry-store.ts";
 import { MockVault } from "../../src/vault/mock.ts";
 import { setupFreshExtensionDb } from "../fixtures/extension.ts";
+import { assertInstalled } from "../helpers/assert-installed.ts";
 
 // Builds repositories, runs the action in a subprocess and installs: far over bun's 5 s default.
 setDefaultTimeout(120_000);
@@ -173,6 +174,7 @@ describe("registry action sign → gateway install", () => {
         { id: "acme/echo" },
       );
       expect(installed.id).toBe("acme/echo");
+      assertInstalled(installed);
       expect(installed.sourceRegistry).toBe("main");
       expect(asked).toHaveLength(1);
       expect(existsSync(join(installed.installPath, "dist", "index.js"))).toBe(true);

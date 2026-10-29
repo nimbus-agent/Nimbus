@@ -1983,7 +1983,8 @@ export function checkExtensionRoleConfinement(files: readonly FileEntry[]): Viol
 // (c) D33(b) confines the TABLE; this confines who may CREATE or DELETE a grant through the store.
 //     `upsertRunGrant` is named only by its definition and `extensions/approve-run.ts` (which calls
 //     it after the owner's `extension.run` approval); `deleteRunGrant` additionally by
-//     `automation/extension-store.ts` (uninstall drops the grant with the row). Any other mention — a
+//     `automation/extension-store.ts` (uninstall drops the grant with the row, and `setExtensionKind`
+//     drops it when an update turns the row into a starter pack). Any other mention — a
 //     call or an import, aliased or not — is a violation, so a second door cannot be opened by
 //     importing the function under another name. Comments and string literals are stripped first;
 //     test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a

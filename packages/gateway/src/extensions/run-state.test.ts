@@ -134,3 +134,27 @@ describe("the running state (extension runtime PR 3)", () => {
     expect(extensionRunFields(full, grant, true).runState).toBe("running");
   });
 });
+
+describe("the pack state (starter packs)", () => {
+  const pack = { ...row, kind: "starter-pack" as const };
+  const takedown: TrustBlock = {
+    statementId: "s1",
+    kind: "extension.takedown",
+    issuer: "nimbus",
+    registry: null,
+    reason: "malware",
+    issuedAt: "2026-10-26T12:00:00Z",
+  };
+  test("a starter pack is `pack` before every other state", () => {
+    expect(extensionRunState(pack, null)).toBe("pack");
+    expect(extensionRunState(pack, grant, true)).toBe("pack");
+    expect(extensionRunState({ ...pack, enabled: 0 }, grant)).toBe("pack");
+    expect(extensionRunState(pack, null, false, [takedown])).toBe("pack");
+  });
+  test("a code extension an update turned into a pack is `pack`, not grant_stale", () => {
+    expect(extensionRunState({ ...pack, version: "2.0.0" }, grant)).toBe("pack");
+    expect(extensionRunState({ ...row, kind: "extension", version: "2.0.0" }, grant)).toBe(
+      "grant_stale",
+    );
+  });
+});

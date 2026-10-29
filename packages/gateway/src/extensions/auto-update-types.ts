@@ -63,6 +63,8 @@ export interface AvailableUpdate {
   acceptedPublisherKey?: string;
   detectedAt: number;
   conflicts?: readonly DependencyConflict[];
+  /** Set when the new version's verified manifest is a starter pack: it has no code to run. */
+  toStarterPack?: true;
 }
 
 export const ACTION_TYPE_AUTO_UPDATE = "extension.autoUpdate" as const;

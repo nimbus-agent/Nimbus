@@ -278,15 +278,17 @@ describe("createRegistryDependencyResolver (phase 1: verified manifests)", () =>
     expect(r.verified("com.dep", "1.0.0")).toBeUndefined();
   });
 
-  test("a starter-pack dependency is refused until supported", async () => {
+  test("a pack can be a dependency", async () => {
     await addRegistry("main", {
       "com.dep": [{ version: "1.0.0", starterPack: true, dependsOn: { "com.leaf": "^1.0.0" } }],
       "com.leaf": ONE,
     });
     const r = resolverFor("main");
-    const e = await rejectionOf(solve(r, rootNeeding({ "com.dep": { range: "^1.0.0" } })));
-    expect((e as RegistryError).code).toBe("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(r.verified("com.dep", "1.0.0")).toBeUndefined();
+    const plan = await solve(r, rootNeeding({ "com.dep": { range: "^1.0.0" } }));
+    // Topological: the pack's member, then the pack, then the root that needs it.
+    expect(plan.nodes.map((n) => n.id)).toEqual(["com.leaf", "com.dep", ROOT_ID]);
+    expect(r.verified("com.dep", "1.0.0")?.manifest.kind).toBe("starter-pack");
+    expect(r.verified("com.leaf", "1.0.0")).toBeDefined();
   });
 });
 

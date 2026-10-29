@@ -10,7 +10,11 @@ import {
   stageSignedExtensionOnDisk,
 } from "../../test/fixtures/extension.ts";
 import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
-import { insertExtensionRow } from "../automation/extension-store.ts";
+import {
+  insertExtensionRow,
+  isInstalledAsDependency,
+  setInstalledAsDependency,
+} from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
@@ -21,7 +25,11 @@ import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.t
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
-import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
+import {
+  AutomationRpcError,
+  dispatchAutomationRpc,
+  orphanedDependenciesOrNone,
+} from "./automation-rpc.ts";
 
 function seededDb(): Database {
   const db = new Database(":memory:");
@@ -1075,6 +1083,136 @@ describe("extension.enable / disable / remove", () => {
       rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+
+  test("remove returns the dependency-installed members only it needed, dependents first", async () => {
+    const db = seededDb();
+    const root = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-orphans-"));
+    try {
+      for (const id of ["pack", "pack2", "inner", "code.a", "lib", "shared", "explicit"]) {
+        mkdirSync(join(root, id), { recursive: true });
+        seedExtensionRow(db, id, join(root, id));
+      }
+      for (const id of ["inner", "code.a", "lib", "shared"]) setInstalledAsDependency(db, id, true);
+      const dep = (on: string) => ({
+        id: on,
+        range: "^1.0.0",
+        resolvedVersion: "1.0.0",
+        registry: null,
+      });
+      recordInstall(db, "pack", "1.0.0", [dep("inner"), dep("shared"), dep("explicit")], 1);
+      recordInstall(db, "pack2", "1.0.0", [dep("shared")], 1);
+      recordInstall(db, "inner", "1.0.0", [dep("code.a")], 1);
+      recordInstall(db, "code.a", "1.0.0", [dep("lib")], 1);
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "pack" },
+        db,
+      });
+      expect((out as { value: unknown }).value).toEqual({
+        ok: true,
+        orphanedDependencies: ["inner", "code.a", "lib"],
+      });
+      // Only the removed id goes; the orphans are offered, not removed.
+      expect(db.query("SELECT id FROM extension WHERE id = 'inner'").get()).not.toBeNull();
+      expect(forwardDeps(db, "pack")).toHaveLength(0);
+
+      // Removing them in the returned order never trips reverse_dep_blocked.
+      for (const id of ["inner", "code.a", "lib"]) {
+        await dispatchAutomationRpc({ method: "extension.remove", params: { id }, db });
+      }
+      expect(isInstalledAsDependency(db, "shared")).toBe(true);
+    } finally {
+      await rmDirWithRetry(root);
+    }
+  });
+
+  test("a throwing orphan walk offers nothing and the removal still completes", async () => {
+    const db = seededDb();
+    const root = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-walk-throws-"));
+    try {
+      for (const id of ["pack", "member"]) {
+        mkdirSync(join(root, id), { recursive: true });
+        seedExtensionRow(db, id, join(root, id));
+      }
+      recordInstall(
+        db,
+        "pack",
+        "1.0.0",
+        [{ id: "member", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
+        1,
+      );
+      // The walk reads the marker column; without it every marker read throws.
+      db.run("ALTER TABLE extension DROP COLUMN installed_as_dependency");
+      expect(() => isInstalledAsDependency(db, "member")).toThrow();
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "pack" },
+        db,
+      });
+      expect((out as { value: unknown }).value).toEqual({ ok: true, orphanedDependencies: [] });
+      expect(db.query("SELECT id FROM extension WHERE id = 'pack'").get()).toBeNull();
+      // The edges went too, so the member is not left blocked by a removed dependent.
+      expect(reverseDeps(db, "member")).toHaveLength(0);
+    } finally {
+      await rmDirWithRetry(root);
+    }
+  });
+
+  test("orphanedDependenciesOrNone returns the walk's result, or none when it throws", () => {
+    const db = seededDb();
+    expect(orphanedDependenciesOrNone(db, "x", () => ["a"])).toEqual(["a"]);
+    expect(
+      orphanedDependenciesOrNone(db, "x", () => {
+        throw new Error("boom");
+      }),
+    ).toEqual([]);
+  });
+
+  test("remove with force:true offers the removed member's own orphans, not the pack's", async () => {
+    const db = seededDb();
+    const root = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-force-orphans-"));
+    try {
+      for (const id of ["pack", "member", "lib", "sibling"]) {
+        mkdirSync(join(root, id), { recursive: true });
+        seedExtensionRow(db, id, join(root, id));
+      }
+      for (const id of ["member", "lib", "sibling"]) setInstalledAsDependency(db, id, true);
+      const dep = (on: string) => ({
+        id: on,
+        range: "^1.0.0",
+        resolvedVersion: "1.0.0",
+        registry: null,
+      });
+      recordInstall(db, "pack", "1.0.0", [dep("member"), dep("sibling")], 1);
+      recordInstall(db, "member", "1.0.0", [dep("lib")], 1);
+
+      const forced = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "member", force: true },
+        db,
+      });
+      expect((forced as { value: unknown }).value).toEqual({
+        ok: true,
+        orphanedDependencies: ["lib"],
+      });
+      await dispatchAutomationRpc({ method: "extension.remove", params: { id: "lib" }, db });
+
+      // pack -> member now dangles; removing the pack offers only what is still installed.
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "pack" },
+        db,
+      });
+      expect((out as { value: unknown }).value).toEqual({
+        ok: true,
+        orphanedDependencies: ["sibling"],
+      });
+    } finally {
+      await rmDirWithRetry(root);
+    }
+  });
 });
 
 /** Stands in for `connectorRequirementStatuses` and always throws. */
@@ -1252,6 +1390,7 @@ describe("extension.info / extension.list — connector requirements", () => {
         ...(vault === undefined ? {} : { vault }),
       }) as Promise<{ value: Record<string, unknown> }>;
     const out = await install(new MockVault(), join(tmp, "installed"));
+    expect(out.value["kind"]).toBe("extension");
     expect(
       (out.value["connectorRequirements"] as Req[]).map((r) => [
         r.connector,
@@ -1402,6 +1541,46 @@ describe("extension.install", () => {
       expect((caught as AutomationRpcError).rpcCode).toBe(-32602);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("an explicit install of the same package installed as a dependency promotes it", async () => {
+    const { db, extensionsDir } = setupFreshExtensionDb();
+    const srcRoot = mkdtempSync(join(tmpdir(), "nimbus-ext-promote-"));
+    try {
+      const src = join(srcRoot, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "promote.me", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {}\n");
+      const asked: unknown[] = [];
+      const ownerGate = async (a: unknown): Promise<boolean> => {
+        asked.push(a);
+        return true;
+      };
+      const installOnce = () =>
+        dispatchAutomationRpc({
+          method: "extension.install",
+          params: { sourcePath: src },
+          db,
+          extensionsDir,
+          ownerGate,
+        });
+      await installOnce();
+      setInstalledAsDependency(db, "promote.me", true);
+      asked.length = 0;
+      expect(await installOnce()).toEqual({
+        kind: "hit",
+        value: { id: "promote.me", version: "1.0.0", promoted: true },
+      });
+      expect(asked).toEqual([]);
+      expect(isInstalledAsDependency(db, "promote.me")).toBe(false);
+    } finally {
+      db.close();
+      rmDirWithRetry(srcRoot);
+      rmDirWithRetry(extensionsDir);
     }
   });
 

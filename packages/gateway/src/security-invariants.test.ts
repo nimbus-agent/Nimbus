@@ -6599,6 +6599,66 @@ describe("I43 — an installed extension's code runs only through the verified s
     );
   });
 
+  test("a starter pack is never granted extension.run and never spawned", async () => {
+    const { installStarterPackFixture, PACK_FIXTURE } = await import(
+      "../test/helpers/starter-pack-fixture.ts"
+    );
+    const { approveExtensionRun } = await import("./extensions/approve-run.ts");
+    const { getRunGrant, listRunGrants, upsertRunGrant } = await import(
+      "./extensions/run-grant-store.ts"
+    );
+    const { serializeRunGrants } = await import("./extensions/extension-run-grants.ts");
+    const { createExtensionSlotSource } = await import("./extensions/extension-runtime.ts");
+    const { MockVault } = await import("./vault/mock.ts");
+    const fx = await installStarterPackFixture("nimbus-i43-pack-");
+    try {
+      // Approval: refused before the owner is asked, and no grant row exists afterwards.
+      let asked = 0;
+      expect(
+        await refusalCode(
+          approveExtensionRun(PACK_FIXTURE.topPack, {
+            db: fx.db,
+            env: fx.env,
+            gate: async () => {
+              asked++;
+              return true;
+            },
+            runtimeEnabled: true,
+            now: () => 1,
+          }),
+        ),
+      ).toBe("ERR_EXTENSION_STARTER_PACK");
+      expect(asked).toBe(0);
+      expect(getRunGrant(fx.db, PACK_FIXTURE.topPack)).toBeNull();
+      expect(listRunGrants(fx.db)).toEqual([]);
+      // Spawn: even a grant row that got there some other way prepares no spawn of a pack.
+      const row = listExtensions(fx.db).find((r) => r.id === PACK_FIXTURE.topPack);
+      upsertRunGrant(fx.db, {
+        extension_id: PACK_FIXTURE.topPack,
+        service_id: "ext_fx_pack_top",
+        version: "1.0.0",
+        tree_digest: row?.tree_digest ?? "",
+        permissions_json: serializeRunGrants({ network: [], read: [], write: [] }),
+        model_access: 0,
+        approved_at: 1,
+        credentials_json: "{}",
+      });
+      const source = createExtensionSlotSource({
+        db: fx.db,
+        vault: new MockVault(),
+        env: fx.env,
+        sandboxDir: join(fx.root, "sandbox"),
+        runtimeReadPaths: () => [],
+        isConnectorAllowed: () => true,
+      });
+      expect(await refusalCode(source.prepareSpawn("ext_fx_pack_top"))).toBe(
+        "ERR_EXTENSION_STARTER_PACK",
+      );
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   test("source pin: prepareSpawn verifies through readVerifiedExtensionForSpawn BEFORE it builds the spec", async () => {
     const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
     const fnAt = src.indexOf("export function createExtensionSlotSource(");

@@ -5,12 +5,14 @@
  * "remotely" from a folder by a fake `fetchFn`) and a FIXTURE continuity entry — never the baked
  * ones, and never the network.
  */
+
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import { assertInstalled } from "../../test/helpers/assert-installed.ts";
 import { listExtensions } from "../automation/extension-store.ts";
 import {
   createExtensionCredentialsResolver,
@@ -171,6 +173,7 @@ async function installedApprovedThenPublished(): Promise<void> {
     { db, extensionsDir, vault, fetch: fetchBag(builtin), approve: async () => true },
     { id: EXT_ID },
   );
+  assertInstalled(out);
   expect(out.sourceRegistry).toBe(BUILTIN_REGISTRY_NAME);
   const gateCalls: string[] = [];
   await approve(gateCalls);

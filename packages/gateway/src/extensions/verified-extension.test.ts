@@ -19,7 +19,10 @@ import {
   trustStatementId,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-
+import {
+  installStarterPackFixture,
+  PACK_FIXTURE,
+} from "../../test/helpers/starter-pack-fixture.ts";
 import {
   insertExtensionRow,
   listExtensions,
@@ -764,5 +767,34 @@ describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
     );
     recordTrustStatements(f.db, [s], FEED, 1);
     expect((await readVerifiedExtensionForSpawn(f.id, deps(f))).extensionId).toBe(f.id);
+  });
+});
+
+describe("readVerifiedExtensionForSpawn — a starter pack", () => {
+  test("a pack with a hand-inserted run grant refuses ERR_EXTENSION_STARTER_PACK before any hash check", async () => {
+    const fx = await installStarterPackFixture("nimbus-spawn-pack-");
+    cleanups.push(fx.cleanup);
+    const row = listExtensions(fx.db).find((r) => r.id === PACK_FIXTURE.topPack);
+    expect(row?.kind).toBe("starter-pack");
+    // No production path writes this: it stands for a grant that got there some other way.
+    upsertRunGrant(fx.db, {
+      extension_id: PACK_FIXTURE.topPack,
+      service_id: "ext_fx_pack_top",
+      version: "1.0.0",
+      tree_digest: row?.tree_digest ?? "",
+      permissions_json: serializeRunGrants({ network: [], read: [], write: [] }),
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+    await expectCode(
+      readVerifiedExtensionForSpawn(PACK_FIXTURE.topPack, {
+        db: fx.db,
+        vault: new MockVault(),
+        env: fx.env,
+      }),
+      "ERR_EXTENSION_STARTER_PACK",
+      /^ERR_EXTENSION_STARTER_PACK: fx\.pack\.top is a starter pack: it has no code to run\./,
+    );
   });
 });

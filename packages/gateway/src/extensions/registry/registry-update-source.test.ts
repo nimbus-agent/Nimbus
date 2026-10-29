@@ -363,9 +363,10 @@ describe("collectRegistryUpdates", () => {
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+    expect("toStarterPack" in (out.updates[0] ?? {})).toBe(false);
   });
 
-  test("an update to a starter pack is not offered, and the error carries the reason", async () => {
+  test("an update to a starter pack is offered like any other update", async () => {
     const dir = await buildRegistry("main", {
       "com.a": [
         { version: "1.0.0" },
@@ -374,31 +375,11 @@ describe("collectRegistryUpdates", () => {
     });
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
-    expect(out.updates).toEqual([]);
-    expect(out.refused).toHaveLength(1);
-    expect(out.refused[0]).toMatchObject({ id: "com.a", registry: "main" });
-    expect(out.refused[0]?.error).toContain("ERR_EXTENSION_MANIFEST_UNSUPPORTED");
-    expect(out.refused[0]?.error).toContain("com.a is a starter pack");
-  });
-
-  test("a refused update is not a registry error, so the registry's stale offers can still be dropped", async () => {
-    const dir = await buildRegistry("main", {
-      "com.a": [
-        { version: "1.0.0" },
-        { version: "1.2.0", starterPack: true, dependsOn: { "com.dep": "^1.0.0" } },
-      ],
-      "com.b": V12,
-    });
-    addRegistry("main", dir, false);
-    const out = await collectRegistryUpdates(
-      deps(),
-      [row("com.a", "main"), row("com.b", "main")],
-      signal,
-    );
-    // `errors` marks a registry as transiently failing, which keeps every cached offer from it.
     expect(out.errors).toEqual([]);
-    expect(out.refused.map((r) => r.id)).toEqual(["com.a"]);
-    expect(out.updates.map((u) => u.id)).toEqual(["com.b"]);
+    expect(out.updates.map((u) => [u.id, u.toVersion])).toEqual([["com.a", "1.2.0"]]);
+    expect(out.updates[0]?.verificationStatus).toBe("verified");
+    expect(out.updates[0]?.toStarterPack).toBe(true);
+    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
 
   test("an update adding a cross-registry dependency is offered, with the dependency's range in dependsOn", async () => {
@@ -415,7 +396,6 @@ describe("collectRegistryUpdates", () => {
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.updates.map((u) => u.toVersion)).toEqual(["1.2.0"]);
     expect(out.errors).toEqual([]);
-    expect(out.refused).toEqual([]);
     expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
   });
 });

@@ -13,10 +13,11 @@ import {
   statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 
 import {
   assertSafeExtensionId,
+  isStarterPack,
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
@@ -25,7 +26,9 @@ import {
 
 import {
   deleteExtensionById,
+  type ExtensionRow,
   insertExtensionRow,
+  isInstalledAsDependency,
   listExtensions,
   setExtensionPublisherKeyFingerprint,
   setInstalledAsDependency,
@@ -59,13 +62,14 @@ import {
   withNeedsBlock,
 } from "./install-plan-text.ts";
 import {
+  EXTENSION_MANIFEST_FILENAME,
   type ExtensionManifest,
   extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "./manifest.ts";
-import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
+import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { resolvePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
 import type {
@@ -73,7 +77,7 @@ import type {
   StagedDependency,
 } from "./registry/registry-dependency-fetcher.ts";
 import { registryHashMismatch } from "./registry/registry-manifest.ts";
-import { getRegistry, setExtensionSource } from "./registry/registry-store.ts";
+import { getExtensionSource, getRegistry, setExtensionSource } from "./registry/registry-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked } from "./trust/trust-blocks.ts";
@@ -222,6 +226,8 @@ async function completeExtensionInstallAfterCopy(options: {
       manifest_hash: manifestHex,
       entry_hash: entryHex,
       tree_digest: treeDigest,
+      // From the manifest just verified at the destination, never the caller's copy.
+      kind: isStarterPack(destManifest) ? "starter-pack" : "extension",
       enabled: 1,
       installed_at: now,
       last_verified_at: now,
@@ -277,7 +283,7 @@ async function installExtensionFromArchive(options: {
   sourceRegistry?: string;
   rootFingerprint?: string;
   approve?: ExtensionInstallApprover;
-}): Promise<InstallExtensionFromLocalResult> {
+}): Promise<InstallExtensionFromLocalResult | PromotedInstallResult> {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-tgz-"));
   try {
     const { sourceRoot: root } = await extractPackage(options.archivePath, tmp);
@@ -407,6 +413,75 @@ export type ExtensionInstallApprover = (
 export type InstallExtensionFromLocalResult = SingleInstallResult & {
   installed: readonly ResolvedNode[];
 };
+
+/**
+ * An explicit install of a package that is already installed only as a dependency (V78
+ * `installed_as_dependency = 1`): nothing is fetched, copied or approved, and the only write is the
+ * marker, cleared so a later removal of what needed it no longer offers to remove this one.
+ */
+export type PromotedInstallResult = {
+  readonly id: string;
+  readonly version: string;
+  readonly promoted: true;
+  /** The registry and channel the kept copy was installed from; absent for a local copy. */
+  readonly sourceRegistry?: string;
+  readonly channel?: "stable" | "beta";
+};
+
+export function isPromotedInstall<T extends object>(
+  r: T | PromotedInstallResult,
+): r is PromotedInstallResult {
+  return "promoted" in r && r.promoted === true;
+}
+
+/** The kind recorded for an installed package; "extension" when the row is absent or predates V79. */
+export function installedKindOf(db: Database, id: string): "extension" | "starter-pack" {
+  return listExtensions(db).find((r) => r.id === id)?.kind === "starter-pack"
+    ? "starter-pack"
+    : "extension";
+}
+
+/**
+ * The installed row an explicit install may promote, or `undefined` when there is nothing to
+ * promote (not installed, or installed explicitly): the caller then refuses exactly as before.
+ */
+export function installedDependencyRow(db: Database, id: string): ExtensionRow | undefined {
+  const row = listExtensions(db).find((r) => r.id === id);
+  return row !== undefined && isInstalledAsDependency(db, id) ? row : undefined;
+}
+
+/** Clears the dependency marker on `row`. The marker only decides what a later removal offers, so it needs no consent. */
+export function promoteInstalledDependency(db: Database, row: ExtensionRow): PromotedInstallResult {
+  setInstalledAsDependency(db, row.id, false);
+  const source = getExtensionSource(db, row.id);
+  return {
+    id: row.id,
+    version: row.version,
+    promoted: true,
+    ...(source === undefined ? {} : { sourceRegistry: source.registry, channel: source.channel }),
+  };
+}
+
+/**
+ * A local install promotes an installed dependency only when the folder holds the SAME package: the
+ * same id, version and manifest bytes (`manifest_hash`). A different package that reuses the id is
+ * not taken as the owner keeping the installed one; it falls through to the ordinary install path,
+ * unchanged (another version is refused as already installed; the same version still goes to the
+ * owner's approval) and the marker stays. The plain local install only: a registry-driven call has
+ * already refused an installed id before fetching.
+ */
+function promotableLocalDependency(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+  manifestBytes: Buffer,
+): ExtensionRow | undefined {
+  if (options.registryPlan !== undefined || options.sourceRegistry !== undefined) return undefined;
+  const row = installedDependencyRow(options.db, manifest.id);
+  if (row === undefined || row.version !== manifest.version) return undefined;
+  return sha256HexEqualConstantTime(row.manifest_hash, sha256HexOfBytes(manifestBytes))
+    ? row
+    : undefined;
+}
 
 function buildSolverInputs(db: Database): {
   installed: ReadonlyMap<string, InstalledForSolver>;
@@ -1132,7 +1207,7 @@ async function requireInstallApproval(
 
 export async function installExtensionFromLocalDirectory(
   options: InstallFromLocalOptions,
-): Promise<InstallExtensionFromLocalResult> {
+): Promise<InstallExtensionFromLocalResult | PromotedInstallResult> {
   const sourceResolved = resolve(options.sourcePath);
   if (!existsSync(sourceResolved)) {
     throw new Error("extension source path does not exist");
@@ -1158,9 +1233,19 @@ export async function installExtensionFromLocalDirectory(
 
   const manifestBytes = readFileSync(srcManifestPath);
   const manifest = parseExtensionManifestJson(manifestBytes.toString("utf8"));
-  // The one door every install reaches (local path, archive, registry, migration): a shape this
-  // gateway cannot honour yet is refused before anything is resolved, copied or asked.
-  assertManifestSupported(manifest);
+  // A starter pack's entry IS its manifest, under the current name only (`extensionEntryRelPath`),
+  // so a pack under the legacy name would otherwise fail later as a missing entry file.
+  if (isStarterPack(manifest) && basename(srcManifestPath) !== EXTENSION_MANIFEST_FILENAME) {
+    throw new RegistryError(
+      "ERR_REGISTRY_MANIFEST_INVALID",
+      `a starter pack's manifest must be named ${EXTENSION_MANIFEST_FILENAME}`,
+    );
+  }
+
+  // An explicit install of the same package already installed as a dependency keeps it: before
+  // solving and before the owner is asked, since it installs nothing.
+  const promotable = promotableLocalDependency(options, manifest, manifestBytes);
+  if (promotable !== undefined) return promoteInstalledDependency(options.db, promotable);
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 

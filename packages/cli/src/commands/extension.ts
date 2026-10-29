@@ -65,7 +65,14 @@ export function stripFlags(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model" || a === "--remote") {
+    if (
+      a === "--yes" ||
+      a === "-y" ||
+      a === "--json" ||
+      a === "--model" ||
+      a === "--remote" ||
+      a === "--clean-deps"
+    ) {
       continue;
     }
     if (
@@ -88,6 +95,8 @@ export function stripFlags(args: string[]): string[] {
 type ExtensionListEntry = {
   id: string;
   version: string;
+  /** V79: a starter pack has no code and never runs; absent from an older gateway. */
+  kind?: "extension" | "starter-pack";
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -125,13 +134,19 @@ function blockIssuerPhrase(b: TrustBlockView): string {
  * `nimbus extension info`'s lines for each block (I48). Every value came from a signed statement a
  * third party wrote, so control characters are stripped before it reaches the terminal.
  */
-export function formatBlockLines(id: string, blocks: readonly TrustBlockView[]): string[] {
+export function formatBlockLines(
+  id: string,
+  blocks: readonly TrustBlockView[],
+  kind?: string,
+): string[] {
   if (blocks.length === 0) return [];
   const lines = blocks.map((b) => {
     const what = b.kind === "key.revoke" ? "publisher key revoked" : "taken down";
     const by = blockIssuerPhrase(b);
     return `Blocked:   ${what} by ${by} on ${stripControl(b.issuedAt)}: ${stripControl(b.reason)}`;
   });
+  // A starter pack has no code, and `approve` refuses one: never suggest it.
+  if (kind === "starter-pack") return lines;
   lines.push(
     `           It does not run. To run it anyway: nimbus extension approve ${stripControl(id)}`,
   );
@@ -185,7 +200,7 @@ export function formatExtensionListTable(
       status = r.signatureDisabled === true ? SIGNATURE_DISABLED_STATUS : "disabled";
     }
     const cells = [r.id, r.version, publisherCell(r), status];
-    if (showRun) cells.push(r.runState ?? "-");
+    if (showRun) cells.push(r.runState === undefined ? "-" : runStateLabel(r.runState));
     if (showSource) cells.push(r.sourceRegistry === undefined ? "-" : `from ${r.sourceRegistry}`);
     return cells;
   });
@@ -213,13 +228,18 @@ export function formatExtensionListTable(
   return `${lines.join("\n")}\n`;
 }
 
+/** How a run state reads to the owner: a starter pack has no code, so it never runs. */
+export function runStateLabel(state: string): string {
+  return state === "pack" ? "pack (no code)" : state;
+}
+
 /** `nimbus extension info`'s run line: the run state, and the grant behind it when there is one. */
 export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant">): string | null {
   if (e.runState === undefined) return null;
-  if (e.runGrant === undefined || e.runGrant === null) return e.runState;
+  if (e.runGrant === undefined || e.runGrant === null) return runStateLabel(e.runState);
   const at = new Date(e.runGrant.approvedAt).toISOString();
   const model = e.runGrant.modelAccess ? "yes" : "no";
-  return `${e.runState} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
+  return `${runStateLabel(e.runState)} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
 }
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
@@ -404,7 +424,7 @@ export async function runExtensionInfo(
   console.log(`Enabled:   ${formatEnabledLine(e)}`);
   const runLine = formatRunLine(e);
   if (runLine !== null) console.log(`Run:       ${runLine}`);
-  for (const line of formatBlockLines(e.id, e.blockedBy ?? [])) console.log(line);
+  for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
@@ -515,6 +535,20 @@ function looksLikePath(arg: string): boolean {
   );
 }
 
+/**
+ * Prints the promote copy and returns true when the install only kept a package already installed
+ * as a dependency (`promoted: true`). Nothing was fetched, copied or approved then, so the caller
+ * prints no approve line and no Needs block, and runs no post-install walk.
+ */
+function printedPromotion(out: { id: string; promoted?: boolean }): boolean {
+  if (out.promoted !== true) return false;
+  console.log(
+    `${stripControl(out.id)} is already installed (it came in as a dependency); it is now kept even if what needed it is removed.`,
+  );
+  console.log(JSON.stringify(out, undefined, 2));
+  return true;
+}
+
 const INSTALL_USAGE =
   "Usage: nimbus extension install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes]";
 
@@ -555,25 +589,41 @@ async function runExtensionInstallFromRegistry(
     rootFingerprint?: string;
     publisher?: { id: string; fingerprint: string };
     installPath: string;
-    dependencies?: { id: string; version: string; registry: string }[];
+    kind?: string;
+    dependencies?: { id: string; version: string; registry: string; kind?: string }[];
     connectorRequirements?: unknown;
+    promoted?: boolean;
   }>("registry.install", params);
+  if (printedPromotion(out)) return;
   const who =
     out.publisher === undefined
       ? ""
       : `, publisher ${out.publisher.id} (${out.publisher.fingerprint})`;
   const root = out.rootFingerprint === undefined ? "" : ` (root ${out.rootFingerprint})`;
-  console.log(
-    `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
-  );
   const deps = out.dependencies ?? [];
+  const rootIsPack = out.kind === "starter-pack";
+  if (rootIsPack) {
+    console.log(`Installed starter pack ${stripControl(out.id)}@${stripControl(out.version)}.`);
+    if (deps.length > 0) console.log(`Added ${deps.length} package(s) it needs.`);
+  } else {
+    console.log(
+      `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,
+    );
+  }
   for (const d of deps) {
     console.log(`  + ${d.id}@${d.version} from registry ${d.registry} (installed as a dependency)`);
   }
-  const toApprove = [...deps.map((d) => d.id), out.id];
-  console.log(
-    `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
-  );
+  // A pack has no code and cannot be approved to run: only code packages are offered for approval.
+  // An older gateway sends no kind; that is an extension, as before.
+  const toApprove = [
+    ...deps.filter((d) => d.kind !== "starter-pack").map((d) => d.id),
+    ...(rootIsPack ? [] : [out.id]),
+  ];
+  if (toApprove.length > 0) {
+    console.log(
+      `Nothing runs until you approve it: ${toApprove.map((i) => `nimbus extension approve ${i}`).join(" && ")}`,
+    );
+  }
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
   await walkAfterInstall(
@@ -627,11 +677,20 @@ export async function runExtensionInstall(
     id: string;
     version: string;
     installPath: string;
+    kind?: string;
     connectorRequirements?: unknown;
+    promoted?: boolean;
   }>("extension.install", installParams);
+  if (printedPromotion(out)) return;
   printNeeds(out.connectorRequirements);
   console.log(JSON.stringify(out, undefined, 2));
-  await walkAfterInstall(args, walk, [out.id], parseRequirementStatuses(out.connectorRequirements));
+  // A pack has no code and cannot be approved to run; its connector requirements are still offered.
+  await walkAfterInstall(
+    args,
+    walk,
+    out.kind === "starter-pack" ? [] : [out.id],
+    parseRequirementStatuses(out.connectorRequirements),
+  );
 }
 
 /**
@@ -856,17 +915,37 @@ export async function runExtensionDisable(client: IPCClient, rest: string[]): Pr
   console.log(JSON.stringify(out, undefined, 2));
 }
 
+/** The removal's one prompt beyond the confirmation: the offer to remove orphaned members. */
+export type ExtensionRemoveIo = {
+  readonly confirm: (question: string) => Promise<boolean>;
+};
+
+/** The offer's question goes to stderr: stdout carries the removal's JSON result. */
+const defaultRemoveIo: ExtensionRemoveIo = {
+  confirm: async (q) => /^y(es)?$/i.test(await readLine(q, undefined, process.stderr)),
+};
+
+type ExtensionRemoveResult = { ok: boolean; orphanedDependencies?: unknown };
+
+/** An older gateway returns no `orphanedDependencies`; anything not a string list reads as none. */
+function orphansOf(out: ExtensionRemoveResult): string[] {
+  const raw = out.orphanedDependencies;
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
 export async function runExtensionRemove(
   client: IPCClient,
   args: string[],
   rest: string[],
+  io: ExtensionRemoveIo = defaultRemoveIo,
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force]");
+    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force] [--clean-deps]");
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
   const force = hasFlag(args, "--force");
+  const cleanDeps = hasFlag(args, "--clean-deps");
 
   if (force) {
     process.stderr.write(
@@ -889,10 +968,10 @@ export async function runExtensionRemove(
     }
   }
 
-  let out: { ok: boolean };
+  let out: ExtensionRemoveResult;
   const payload: { id: string; force?: true } = force ? { id, force: true } : { id };
   try {
-    out = await client.call<{ ok: boolean }>("extension.remove", payload);
+    out = await client.call<ExtensionRemoveResult>("extension.remove", payload);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("reverse_dep_blocked")) {
@@ -902,6 +981,56 @@ export async function runExtensionRemove(
     throw e;
   }
   console.log(JSON.stringify(out, undefined, 2));
+  await handleOrphanedDependencies(client, id, orphansOf(out), {
+    cleanDeps,
+    attended: !accept && process.stdin.isTTY === true && process.stdout.isTTY === true,
+    io,
+  });
+}
+
+/**
+ * After a removal: the members installed only for `id` are removed with `--clean-deps`, offered at
+ * an attended terminal, and otherwise only named. Each goes through its own `extension.remove`, in
+ * the gateway's order (dependents first), with no second confirmation and no further offer; one
+ * that fails is reported and the rest still go, and the command then exits 1. Every line here goes
+ * to stderr, so stdout stays the removal's JSON result.
+ */
+async function handleOrphanedDependencies(
+  client: IPCClient,
+  id: string,
+  orphans: readonly string[],
+  opts: { cleanDeps: boolean; attended: boolean; io: ExtensionRemoveIo },
+): Promise<void> {
+  if (orphans.length === 0) return;
+  const safeId = stripControl(id);
+  const list = orphans.map((o) => stripControl(o)).join(", ");
+  const say = (line: string): void => {
+    process.stderr.write(`${line}\n`);
+  };
+  if (!opts.cleanDeps) {
+    const question = `Also remove ${orphans.length} package(s) installed only for ${safeId}: ${list}? [y/N] `;
+    if (!opts.attended || !(await opts.io.confirm(question))) {
+      // Not `--clean-deps`: `id` is already gone, so naming it again fails, and nothing offers
+      // these packages later. Name the removals that work now, dependents first.
+      const commands = orphans
+        .map((o) => `nimbus extension remove ${stripControl(o)}`)
+        .join(" && ");
+      say(`Kept ${list}, installed only for ${safeId}; remove them with: ${commands}`);
+      return;
+    }
+  }
+  let failed = 0;
+  for (const orphan of orphans) {
+    try {
+      await client.call<ExtensionRemoveResult>("extension.remove", { id: orphan });
+      say(`Removed ${stripControl(orphan)}.`);
+    } catch (e) {
+      failed += 1;
+      const msg = e instanceof Error ? e.message : String(e);
+      say(`Could not remove ${stripControl(orphan)}: ${stripControl(msg)}`);
+    }
+  }
+  if (failed > 0) process.exitCode = 1;
 }
 
 /**
@@ -1016,7 +1145,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
  * Subcommands that need no gateway. `publish` and `key` get the RAW args: `stripFlags` drops

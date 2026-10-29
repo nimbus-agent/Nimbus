@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import {
   parseExtensionManifestForRegistry,
   publisherKeyFingerprint,
@@ -91,6 +92,8 @@ describe("stripFlags", () => {
     // `approve --model <id>` must not send "--model" as the id.
     expect(stripFlags(["--model", "a.b"])).toEqual(["a.b"]);
     expect(stripFlags(["a.b", "--model"])).toEqual(["a.b"]);
+    // `remove --clean-deps <id>` must not send "--clean-deps" as the id.
+    expect(stripFlags(["--clean-deps", "pack"])).toEqual(["pack"]);
   });
   test("removes --filter + value pair", () => {
     expect(stripFlags(["info", "--filter", "needs-reinstall", "id"])).toEqual(["info", "id"]);
@@ -713,6 +716,12 @@ describe("runExtensionDisable", () => {
 
 describe("runExtensionRemove", () => {
   const origIsTty = process.stdout.isTTY;
+  const origStdinTty = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+
+  /** The remove offer needs both ends to be a terminal (attended). */
+  function setStdinTty(value: boolean): void {
+    Object.defineProperty(process.stdin, "isTTY", { configurable: true, value });
+  }
 
   beforeEach(() => {
     out.reset();
@@ -722,6 +731,8 @@ describe("runExtensionRemove", () => {
       configurable: true,
       value: origIsTty,
     });
+    if (origStdinTty === undefined) delete (process.stdin as { isTTY?: boolean }).isTTY;
+    else Object.defineProperty(process.stdin, "isTTY", origStdinTty);
     clearFixture();
   });
 
@@ -794,6 +805,218 @@ describe("runExtensionRemove", () => {
     await runExtensionRemove(client, ["remove", "my.ext"], ["my.ext"]);
     expect(calls).toHaveLength(0);
     expect(out.stdout).toContain("Cancelled.");
+  });
+
+  const orphaned = { ok: true, orphanedDependencies: ["inner", "code.a"] };
+  const offer = "Also remove 2 package(s) installed only for pack: inner, code.a? [y/N] ";
+  const kept =
+    "Kept inner, code.a, installed only for pack; remove them with: nimbus extension remove inner && nimbus extension remove code.a";
+  const mustNotAsk = {
+    confirm: async (): Promise<boolean> => {
+      throw new Error("must not ask");
+    },
+  };
+
+  /** Runs `fn` with stderr captured; returns what it wrote. */
+  async function withStderr(fn: () => Promise<void>): Promise<string> {
+    const errs: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      errs.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      await fn();
+    } finally {
+      process.stderr.write = origWrite;
+    }
+    return errs.join("");
+  }
+
+  test("TTY: the offer answered yes removes each orphan in order, with no further offer", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(true);
+    setFixture({ clackAnswer: true });
+    const questions: string[] = [];
+    const { client, calls } = createMockIpcClient([
+      orphaned,
+      { ok: true, orphanedDependencies: ["ignored"] },
+      { ok: true, orphanedDependencies: [] },
+    ]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack"], ["pack"], {
+        confirm: async (q) => {
+          questions.push(q);
+          return true;
+        },
+      }),
+    );
+    expect(questions).toEqual([offer]);
+    expect(calls.map((c) => c.params)).toEqual([{ id: "pack" }, { id: "inner" }, { id: "code.a" }]);
+    expect(err).toContain("Removed inner.");
+    expect(err).toContain("Removed code.a.");
+  });
+
+  test("TTY: the offer answered no keeps the orphans and names them", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(true);
+    setFixture({ clackAnswer: true });
+    const questions: string[] = [];
+    const { client, calls } = createMockIpcClient([orphaned]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack"], ["pack"], {
+        confirm: async (q) => {
+          questions.push(q);
+          return false;
+        },
+      }),
+    );
+    expect(questions).toEqual([offer]);
+    expect(calls).toHaveLength(1);
+    expect(err).toContain(kept);
+  });
+
+  test("stdout a TTY but stdin not: no offer, and the Kept line names the removals", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setStdinTty(false);
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([orphaned]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack"], ["pack"], mustNotAsk),
+    );
+    expect(calls).toHaveLength(1);
+    expect(err).toContain(kept);
+  });
+
+  test("the default offer asks on stderr, so stdout stays JSON after a no", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const input = new Readable({ read() {} });
+    Object.defineProperty(input, "isTTY", { configurable: true, value: true });
+    const origStdin = process.stdin;
+    Object.defineProperty(process, "stdin", { value: input, configurable: true });
+    const rawStdout: string[] = [];
+    const origStdoutWrite = process.stdout.write.bind(process.stdout);
+    process.stdout.write = (chunk: string | Uint8Array): boolean => {
+      rawStdout.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const { client, calls } = createMockIpcClient([orphaned]);
+      const err = await withStderr(async () => {
+        const pending = runExtensionRemove(client, ["remove", "pack"], ["pack"]);
+        setTimeout(() => input.push("n\n"), 10);
+        await pending;
+      });
+      expect(calls).toHaveLength(1);
+      expect(err).toContain(offer);
+      expect(err).toContain(kept);
+      expect(rawStdout.join("")).toBe("");
+      expect(JSON.parse(out.stdout)).toEqual(orphaned);
+    } finally {
+      process.stdout.write = origStdoutWrite;
+      Object.defineProperty(process, "stdin", { value: origStdin, configurable: true });
+    }
+  });
+
+  test("TTY: --clean-deps keeps the removal's confirmation and removes the orphans without the offer", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([orphaned, { ok: true }, { ok: true }]);
+    await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack", "--clean-deps"], ["pack"], mustNotAsk),
+    );
+    expect(calls.map((c) => c.params)).toEqual([{ id: "pack" }, { id: "inner" }, { id: "code.a" }]);
+  });
+
+  test("TTY: --clean-deps with the removal declined removes nothing", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: false });
+    const { client, calls } = createMockIpcClient([]);
+    await runExtensionRemove(client, ["remove", "pack", "--clean-deps"], ["pack"], mustNotAsk);
+    expect(calls).toHaveLength(0);
+    expect(out.stdout).toContain("Cancelled.");
+  });
+
+  test("TTY: no orphans asks nothing", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([{ ok: true, orphanedDependencies: [] }]);
+    await runExtensionRemove(client, ["remove", "pack"], ["pack"], mustNotAsk);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("--yes --json without --clean-deps names the orphans on stderr; stdout stays JSON", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client, calls } = createMockIpcClient([orphaned]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack", "--yes", "--json"], ["pack"], mustNotAsk),
+    );
+    expect(calls).toHaveLength(1);
+    expect(err).toContain(kept);
+    expect(JSON.parse(out.stdout)).toEqual(orphaned);
+  });
+
+  test("--clean-deps --yes removes the orphans without asking, in a script; stdout stays JSON", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([orphaned, { ok: true }, { ok: true }]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"], mustNotAsk),
+    );
+    expect(calls.map((c) => c.params)).toEqual([{ id: "pack" }, { id: "inner" }, { id: "code.a" }]);
+    expect(err).toContain("Removed code.a.");
+    expect(JSON.parse(out.stdout)).toEqual(orphaned);
+  });
+
+  test("an orphan that fails to remove is reported, the rest still go, and the exit code is 1", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const priorExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      const { client, calls } = createMockIpcClient([
+        orphaned,
+        new Error("Extension not found"),
+        { ok: true },
+      ]);
+      const err = await withStderr(() =>
+        runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"]),
+      );
+      expect(calls.map((c) => c.params)).toEqual([
+        { id: "pack" },
+        { id: "inner" },
+        { id: "code.a" },
+      ]);
+      expect(err).toContain("Could not remove inner: Extension not found");
+      expect(err).toContain("Removed code.a.");
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = priorExitCode ?? 0;
+    }
+  });
+
+  test("every orphan removed leaves the exit code alone", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const priorExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      const { client } = createMockIpcClient([orphaned, { ok: true }, { ok: true }]);
+      await withStderr(() =>
+        runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"]),
+      );
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = priorExitCode ?? 0;
+    }
+  });
+
+  test("an older gateway's result without orphanedDependencies offers nothing", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([{ ok: true }]);
+    const err = await withStderr(() =>
+      runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"]),
+    );
+    expect(calls).toHaveLength(1);
+    expect(err).not.toContain("Kept");
   });
 });
 
@@ -2762,6 +2985,23 @@ describe("run state in human output", () => {
     expect(without).not.toMatch(/\bRun\b/);
   });
 
+  test("formatBlockLines: a starter pack's blocks never suggest approving it", () => {
+    const block = {
+      statementId: "s1",
+      kind: "extension.takedown",
+      issuer: "nimbus",
+      registry: null,
+      reason: "malware",
+      issuedAt: "2026-10-26T12:00:00Z",
+    };
+    const lines = formatBlockLines("acme.pack", [block], "starter-pack");
+    expect(lines).toHaveLength(1);
+    expect(lines.join(" ")).not.toContain("approve");
+    expect(formatBlockLines("acme.tool", [block], "extension").at(-1)).toContain(
+      "nimbus extension approve acme.tool",
+    );
+  });
+
   test("formatBlockLines (I48): one line per block, issuer named, the override last", () => {
     expect(formatBlockLines("a", [])).toEqual([]);
     const lines = formatBlockLines("acme.tool", [
@@ -3124,6 +3364,54 @@ describe("runExtensionInstall — the post-install walk", () => {
     });
   }
 
+  const PROMOTE_COPY =
+    "acme.dep is already installed (it came in as a dependency); it is now kept even if what needed it is removed.";
+
+  for (const [name, args, rest] of [
+    [
+      "a registry install of a dependency prints the promote copy and walks nothing",
+      ["install", "acme.dep"],
+      ["acme.dep"],
+    ],
+    [
+      "a local install of a dependency prints the promote copy and walks nothing",
+      ["install", "."],
+      ["."],
+    ],
+  ] as const) {
+    test(name, async () => {
+      setTty(true);
+      const install = countingClient([
+        { id: "acme.dep", version: "1.0.0", promoted: true, sourceRegistry: "main" },
+      ]);
+      const made: string[] = [];
+      const asked: string[] = [];
+      await runExtensionInstall(install.client, [...args], [...rest], {
+        socketPath: "/sock",
+        makeClient: (p) => {
+          made.push(p);
+          return countingClient([]).client;
+        },
+        confirm: async (q) => {
+          asked.push(q);
+          return true;
+        },
+        connectorAuth: async (id) => {
+          asked.push(`auth ${id}`);
+        },
+      });
+      expect(out.stdout.split("\n")[0]).toBe(PROMOTE_COPY);
+      // The JSON names the registry the kept copy came from.
+      expect(out.stdout).toContain('"sourceRegistry": "main"');
+      expect(out.stdout).not.toContain("Nothing runs until you approve it");
+      expect(out.stdout).not.toContain("installed acme.dep");
+      expect(out.stdout).not.toContain("Needs:");
+      expect(made).toEqual([]);
+      expect(asked).toEqual([]);
+      expect(install.calls).toHaveLength(1);
+    });
+  }
+
   test("the walk never approves on the install's client", async () => {
     setTty(true);
     const install = countingClient([
@@ -3173,6 +3461,141 @@ describe("runExtensionInstall — the post-install walk", () => {
     expect(out.stdout).toContain("Approve each package to run (you can decline any):");
   });
 
+  describe("a starter pack has no code to approve", () => {
+    const PACK_REQ = {
+      connector: "github",
+      state: "not_connected",
+      owner: { kind: "bundled" },
+      fix: ["nimbus connector auth github"],
+      requiredBy: ["acme.pack"],
+      interactive: false,
+    };
+    const walkDeps = (asked: string[], approved: string[]) => ({
+      socketPath: "/sock",
+      makeClient: () => {
+        const c = createMockIpcClient([
+          { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+        ]);
+        approved.push("fresh");
+        return c.client;
+      },
+      confirm: async (q: string) => {
+        asked.push(q);
+        return true;
+      },
+      connectorAuth: async (id: string) => {
+        asked.push(`auth ${id}`);
+      },
+    });
+
+    test("a registry pack approves only its code members, dependencies first", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [
+            { id: "acme.sub", version: "1.0.0", registry: "main", kind: "starter-pack" },
+            { id: "acme.dep", version: "1.0.0", registry: "main", kind: "extension" },
+          ],
+        },
+      ]);
+      const asked: string[] = [];
+      const fresh: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, fresh),
+      );
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0.");
+      expect(out.stdout).toContain("Added 2 package(s) it needs.");
+      expect(out.stdout).toContain(
+        "Nothing runs until you approve it: nimbus extension approve acme.dep",
+      );
+      expect(out.stdout).not.toContain("approve acme.pack");
+      expect(out.stdout).not.toContain("approve acme.sub");
+      // One code package: the single-package question, one approval.
+      expect(asked).toEqual(["Approve acme.dep to run now? [y/N] "]);
+      expect(fresh).toHaveLength(1);
+    });
+
+    test("a pack whose members were all installed already prints no Nothing-runs line and asks nothing", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [],
+        },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, []),
+      );
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0.");
+      expect(out.stdout).not.toContain("Added ");
+      expect(out.stdout).not.toContain("Nothing runs until you approve it");
+      expect(asked).toEqual([]);
+    });
+
+    test("a pack's own connector requirement is still offered, and never as a pack approval", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        {
+          id: "acme.pack",
+          version: "1.0.0",
+          sourceRegistry: "main",
+          installPath: "/p",
+          kind: "starter-pack",
+          dependencies: [],
+          connectorRequirements: [PACK_REQ],
+        },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(
+        client,
+        ["install", "acme.pack"],
+        ["acme.pack"],
+        walkDeps(asked, []),
+      );
+      expect(out.stdout).toContain("Needs:");
+      expect(out.stdout).not.toContain("extension approve acme.pack");
+      expect(asked.some((q) => q.includes("Approve"))).toBe(false);
+    });
+
+    test("a gateway that reports no kind is treated as an extension", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        { id: "acme.tool", version: "1.0.0", sourceRegistry: "main", installPath: "/p" },
+      ]);
+      await runExtensionInstall(client, ["install", "acme.tool"], ["acme.tool"]);
+      expect(out.stdout).toContain(
+        "Nothing runs until you approve it: nimbus extension approve acme.tool",
+      );
+      expect(out.stdout).not.toContain("starter pack");
+    });
+
+    test("a local pack install walks no approvals", async () => {
+      setTty(true);
+      const { client } = createMockIpcClient([
+        { id: "acme.pack", version: "1.0.0", installPath: "/p", kind: "starter-pack" },
+      ]);
+      const asked: string[] = [];
+      await runExtensionInstall(client, ["install", ".", "--yes"], ["."], walkDeps(asked, []));
+      expect(asked).toEqual([]);
+    });
+  });
+
   test("a failing walk never fails the install", async () => {
     setTty(true);
     const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
@@ -3216,5 +3639,25 @@ describe("runExtensionInstall — the post-install walk", () => {
     const install = countingClient([{ id: "new.ext", version: "1.0.0", installPath: "/p" }]);
     await runExtensionInstall(install.client, ["install", "."], ["."]);
     expect(out.stdout).not.toContain("Approve each package to run");
+  });
+});
+
+describe("a starter pack in extension list / info", () => {
+  test("the Run column shows `pack (no code)` for a pack", () => {
+    const formatted = formatExtensionListTable(
+      [
+        { id: "fx.pack.top", version: "1.0.0", enabled: 1, runState: "pack" },
+        { id: "fx.code.a", version: "1.0.0", enabled: 1, runState: "no_grant" },
+      ],
+      { isTty: false, noColor: true },
+    );
+    const packLine = formatted.split("\n").find((l) => l.startsWith("fx.pack.top"));
+    expect(packLine).toMatch(/\spack \(no code\)\s*$/);
+    const codeLine = formatted.split("\n").find((l) => l.startsWith("fx.code.a"));
+    expect(codeLine).toMatch(/\sno_grant\s*$/);
+  });
+
+  test("the info run line names a pack the same way", () => {
+    expect(formatRunLine({ runState: "pack", runGrant: null })).toBe("pack (no code)");
   });
 });

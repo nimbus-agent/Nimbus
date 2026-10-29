@@ -3,6 +3,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
 import {
   listExtensions,
+  selectExtensionInstallPath,
+  setExtensionKind,
   setExtensionPublisherKeyFingerprint,
   updateExtensionRowVersion,
 } from "../automation/extension-store.ts";
@@ -19,8 +21,12 @@ import {
   type PerformUpgradeDeps,
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
-import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
-import { assertManifestSupported, rangesOf } from "./manifest-support.ts";
+import {
+  installedManifestKind,
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "./manifest.ts";
+import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
@@ -259,9 +265,6 @@ async function reverifyUpdateManifest(
     );
     if (!decision.ok) throw publisherKeyConflict(entry.publisher.id, decision);
     await verifyRegistryManifestSignature(fetched, update.id, update.toVersion);
-    // The APPLY door: an update detected earlier is refused here if its manifest is a shape this
-    // gateway cannot honour yet, before anything is downloaded or swapped.
-    assertManifestSupported(fetched.manifest);
     // I48: a block that landed after detection (or since the last apply attempt) refuses here,
     // before anything is downloaded or swapped.
     assertNotBlocked(fetchDeps.db, {
@@ -327,7 +330,9 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     return Promise.resolve();
   };
 
-  // One definition for the upgrade AND downgrade paths — it is the same row write either way.
+  // One definition for the upgrade AND downgrade paths — it is the same row write either way. It
+  // runs after the swap, so the manifest now installed says whether the row is a starter pack
+  // (an update may turn an extension into a pack, or the reverse).
   const dbUpdateExtensionRow: PerformUpgradeDeps["dbUpdateExtensionRow"] = (
     id,
     version,
@@ -336,15 +341,20 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     treeDigest,
   ) =>
     Promise.try(() => {
-      updateExtensionRowVersion(
-        opts.db,
-        id,
-        version,
-        manifestHash,
-        entryHash,
-        Date.now(),
-        treeDigest,
-      );
+      const installPath = selectExtensionInstallPath(opts.db, id);
+      const kind = installPath === null ? null : installedManifestKind(installPath);
+      opts.db.transaction(() => {
+        updateExtensionRowVersion(
+          opts.db,
+          id,
+          version,
+          manifestHash,
+          entryHash,
+          Date.now(),
+          treeDigest,
+        );
+        if (kind !== null) setExtensionKind(opts.db, id, kind);
+      })();
     });
 
   const daemon = new ExtensionAutoUpdater({
