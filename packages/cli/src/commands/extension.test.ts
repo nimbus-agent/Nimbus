@@ -91,6 +91,8 @@ describe("stripFlags", () => {
     // `approve --model <id>` must not send "--model" as the id.
     expect(stripFlags(["--model", "a.b"])).toEqual(["a.b"]);
     expect(stripFlags(["a.b", "--model"])).toEqual(["a.b"]);
+    // `remove --clean-deps <id>` must not send "--clean-deps" as the id.
+    expect(stripFlags(["--clean-deps", "pack"])).toEqual(["pack"]);
   });
   test("removes --filter + value pair", () => {
     expect(stripFlags(["info", "--filter", "needs-reinstall", "id"])).toEqual(["info", "id"]);
@@ -794,6 +796,111 @@ describe("runExtensionRemove", () => {
     await runExtensionRemove(client, ["remove", "my.ext"], ["my.ext"]);
     expect(calls).toHaveLength(0);
     expect(out.stdout).toContain("Cancelled.");
+  });
+
+  const orphaned = { ok: true, orphanedDependencies: ["inner", "code.a"] };
+  const offer = "Also remove 2 package(s) installed only for pack: inner, code.a? [y/N] ";
+
+  test("TTY: the offer answered yes removes each orphan in order, with no further offer", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const questions: string[] = [];
+    const { client, calls } = createMockIpcClient([
+      orphaned,
+      { ok: true, orphanedDependencies: ["ignored"] },
+      { ok: true, orphanedDependencies: [] },
+    ]);
+    await runExtensionRemove(client, ["remove", "pack"], ["pack"], {
+      confirm: async (q) => {
+        questions.push(q);
+        return true;
+      },
+    });
+    expect(questions).toEqual([offer]);
+    expect(calls.map((c) => c.params)).toEqual([{ id: "pack" }, { id: "inner" }, { id: "code.a" }]);
+    expect(out.stdout).toContain("Removed inner.");
+    expect(out.stdout).toContain("Removed code.a.");
+  });
+
+  test("TTY: the offer answered no keeps the orphans", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([orphaned]);
+    await runExtensionRemove(client, ["remove", "pack"], ["pack"], { confirm: async () => false });
+    expect(calls).toHaveLength(1);
+    expect(out.stdout).not.toContain("--clean-deps");
+  });
+
+  test("TTY: no orphans asks nothing", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    setFixture({ clackAnswer: true });
+    const { client, calls } = createMockIpcClient([{ ok: true, orphanedDependencies: [] }]);
+    await runExtensionRemove(client, ["remove", "pack"], ["pack"], {
+      confirm: async () => {
+        throw new Error("must not ask");
+      },
+    });
+    expect(calls).toHaveLength(1);
+  });
+
+  test("--yes without --clean-deps prints the non-interactive line and removes nothing more", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: true });
+    const { client, calls } = createMockIpcClient([orphaned]);
+    await runExtensionRemove(client, ["remove", "pack", "--yes"], ["pack"], {
+      confirm: async () => {
+        throw new Error("must not ask");
+      },
+    });
+    expect(calls).toHaveLength(1);
+    expect(out.stdout).toContain(
+      "Kept inner, code.a, installed only for pack; remove them with --clean-deps.",
+    );
+  });
+
+  test("--clean-deps --yes removes the orphans without asking, in a script", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([orphaned, { ok: true }, { ok: true }]);
+    await runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"], {
+      confirm: async () => {
+        throw new Error("must not ask");
+      },
+    });
+    expect(calls.map((c) => c.params)).toEqual([{ id: "pack" }, { id: "inner" }, { id: "code.a" }]);
+  });
+
+  test("an orphan that fails to remove is reported and the rest still go", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const errs: string[] = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (chunk: string | Uint8Array): boolean => {
+      errs.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+      return true;
+    };
+    try {
+      const { client, calls } = createMockIpcClient([
+        orphaned,
+        new Error("Extension not found"),
+        { ok: true },
+      ]);
+      await runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"]);
+      expect(calls.map((c) => c.params)).toEqual([
+        { id: "pack" },
+        { id: "inner" },
+        { id: "code.a" },
+      ]);
+      expect(errs.join("")).toContain("Could not remove inner: Extension not found");
+      expect(out.stdout).toContain("Removed code.a.");
+    } finally {
+      process.stderr.write = origWrite;
+    }
+  });
+
+  test("an older gateway's result without orphanedDependencies offers nothing", async () => {
+    Object.defineProperty(process.stdout, "isTTY", { configurable: true, value: false });
+    const { client, calls } = createMockIpcClient([{ ok: true }]);
+    await runExtensionRemove(client, ["remove", "pack", "--yes", "--clean-deps"], ["pack"]);
+    expect(calls).toHaveLength(1);
+    expect(out.stdout).not.toContain("Kept");
   });
 });
 

@@ -65,7 +65,14 @@ export function stripFlags(args: string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    if (a === "--yes" || a === "-y" || a === "--json" || a === "--model" || a === "--remote") {
+    if (
+      a === "--yes" ||
+      a === "-y" ||
+      a === "--json" ||
+      a === "--model" ||
+      a === "--remote" ||
+      a === "--clean-deps"
+    ) {
       continue;
     }
     if (
@@ -881,17 +888,36 @@ export async function runExtensionDisable(client: IPCClient, rest: string[]): Pr
   console.log(JSON.stringify(out, undefined, 2));
 }
 
+/** The removal's one prompt beyond the confirmation: the offer to remove orphaned members. */
+export type ExtensionRemoveIo = {
+  readonly confirm: (question: string) => Promise<boolean>;
+};
+
+const defaultRemoveIo: ExtensionRemoveIo = {
+  confirm: async (q) => /^y(es)?$/i.test(await readLine(q)),
+};
+
+type ExtensionRemoveResult = { ok: boolean; orphanedDependencies?: unknown };
+
+/** An older gateway returns no `orphanedDependencies`; anything not a string list reads as none. */
+function orphansOf(out: ExtensionRemoveResult): string[] {
+  const raw = out.orphanedDependencies;
+  return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
+}
+
 export async function runExtensionRemove(
   client: IPCClient,
   args: string[],
   rest: string[],
+  io: ExtensionRemoveIo = defaultRemoveIo,
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force]");
+    throw new Error("Usage: nimbus extension remove <id> [--yes] [--force] [--clean-deps]");
   }
   const accept = hasFlag(args, "--yes") || hasFlag(args, "-y");
   const force = hasFlag(args, "--force");
+  const cleanDeps = hasFlag(args, "--clean-deps");
 
   if (force) {
     process.stderr.write(
@@ -914,10 +940,10 @@ export async function runExtensionRemove(
     }
   }
 
-  let out: { ok: boolean };
+  let out: ExtensionRemoveResult;
   const payload: { id: string; force?: true } = force ? { id, force: true } : { id };
   try {
-    out = await client.call<{ ok: boolean }>("extension.remove", payload);
+    out = await client.call<ExtensionRemoveResult>("extension.remove", payload);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (msg.includes("reverse_dep_blocked")) {
@@ -927,6 +953,45 @@ export async function runExtensionRemove(
     throw e;
   }
   console.log(JSON.stringify(out, undefined, 2));
+  await handleOrphanedDependencies(client, id, orphansOf(out), {
+    cleanDeps,
+    attended: !accept && process.stdout.isTTY === true,
+    io,
+  });
+}
+
+/**
+ * After a removal: the members installed only for `id` are removed with `--clean-deps`, offered at
+ * an attended terminal, and otherwise only named. Each goes through its own `extension.remove`, in
+ * the gateway's order (dependents first), with no second confirmation and no further offer; one
+ * that fails is reported and the rest still go.
+ */
+async function handleOrphanedDependencies(
+  client: IPCClient,
+  id: string,
+  orphans: readonly string[],
+  opts: { cleanDeps: boolean; attended: boolean; io: ExtensionRemoveIo },
+): Promise<void> {
+  if (orphans.length === 0) return;
+  const safeId = stripControl(id);
+  const list = orphans.map((o) => stripControl(o)).join(", ");
+  if (!opts.cleanDeps) {
+    if (!opts.attended) {
+      console.log(`Kept ${list}, installed only for ${safeId}; remove them with --clean-deps.`);
+      return;
+    }
+    const question = `Also remove ${orphans.length} package(s) installed only for ${safeId}: ${list}? [y/N] `;
+    if (!(await opts.io.confirm(question))) return;
+  }
+  for (const orphan of orphans) {
+    try {
+      await client.call<ExtensionRemoveResult>("extension.remove", { id: orphan });
+      console.log(`Removed ${stripControl(orphan)}.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      process.stderr.write(`Could not remove ${stripControl(orphan)}: ${stripControl(msg)}\n`);
+    }
+  }
 }
 
 /**

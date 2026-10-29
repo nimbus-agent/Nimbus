@@ -4852,16 +4852,19 @@ nimbus extension disable nimbus-notion
 
 ---
 
-### `nimbus extension remove <name> [--yes] [--force] [--json]`
+### `nimbus extension remove <name> [--yes] [--force] [--clean-deps] [--json]`
 
 Uninstall an extension and remove its process. Its sync stops first, and then everything it synced is purged under the id it synced under (its `ext_` id, or the legacy connector id it is bound to): every index item, the connector's scheduler and status rows, and every credential its approval granted — for an extension bound to a legacy connector that includes the legacy key (for example `readwise.token`), exactly as `nimbus connector remove readwise` would. Revoking (`nimbus extension revoke`) or disabling it stops sync and keeps the items.
 
 If other installed extensions depend on this one, the remove is refused unless `--force` is passed. With `--force`, the removal proceeds after a warning listing the affected dependents; the startup completeness guard will hard-disable those dependents on the next Gateway start via `MissingDependencyRegistry` (T2 PR 4).
 
+**Members installed only for it.** The result's `orphanedDependencies` lists the packages that came in only as dependencies (of this extension, or transitively of a starter pack it pulled in) and that no remaining extension still needs, ordered so each comes before what it depends on. A package you installed yourself is never listed, nor one another installed extension still depends on. At a terminal without `--yes` the CLI asks `Also remove <n> package(s) installed only for <id>: <ids>? [y/N]`; `--clean-deps` removes them without asking (`--clean-deps --yes` works in a script); otherwise it prints `Kept <ids>, installed only for <id>; remove them with --clean-deps.` Each listed package is removed by its own `extension.remove`, in that order, with no further prompt; one that fails is reported on stderr and the rest still go.
+
 ```bash
 nimbus extension remove nimbus-notion
 nimbus extension remove nimbus-notion --force
 nimbus extension remove nimbus-notion --yes --json
+nimbus extension remove com.example.starter --yes --clean-deps
 ```
 
 ---

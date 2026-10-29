@@ -76,6 +76,7 @@ import {
   installExtensionFromLocalDirectory,
   isPromotedInstall,
 } from "../extensions/install-from-local.ts";
+import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -453,6 +454,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
       }
+      // Before `clearDeps`: the walk starts from this id's own forward edges.
+      const orphaned = orphanedDependencies(ctx.db, id);
       clearDeps(ctx.db, id);
       // The row and grant are gone first, so no new spawn can verify; then the live child is stopped
       // and its stage root removed, and only THEN the install dir — never delete code a running
@@ -460,7 +463,7 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
       await stopAndCleanUpRemovedExtension(ctx, id, serviceId);
       removeExtensionFiles(ctx, id, installPath);
       emitGatewayEvent("extension.stateChanged", { extensionId: id, action: "remove", ok: true });
-      return { kind: "hit", value: { ok: true } };
+      return { kind: "hit", value: { ok: true, orphanedDependencies: orphaned } };
     } catch (e) {
       emitGatewayEvent("extension.stateChanged", {
         extensionId: id,
