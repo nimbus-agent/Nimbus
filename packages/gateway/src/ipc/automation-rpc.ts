@@ -1062,6 +1062,14 @@ async function handleExtensionEval(
   ctx: AutomationCtx,
 ): Promise<Hit> {
   const ids = requireEvalIds(rec);
+  // An owner who switched the extension runtime off should not have extension code executed by
+  // another door, sandboxed or not: refused before any verification or prompt.
+  if (ctx.runtimeEnabled === false) {
+    throw new AutomationRpcError(
+      -32603,
+      "ERR_EXTENSION_EVAL_RUNTIME_DISABLED: the extension runtime is off on this gateway (`[extensions] runtime = false` in nimbus.toml); nothing was evaluated",
+    );
+  }
   const { ownerGate, runGrantEnv, evalDeps, vault } = ctx;
   if (
     ownerGate === undefined ||

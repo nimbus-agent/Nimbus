@@ -1222,6 +1222,22 @@ describe("tryDispatchAutomationRpc - extension.eval routing", () => {
     expect(out.results[0]?.error?.code).toBe("ERR_EXTENSION_NOT_FOUND");
   });
 
+  test("[extensions] runtime = false reaches the handler: -32603 ERR_EXTENSION_EVAL_RUNTIME_DISABLED", async () => {
+    const ctx = makeCtx({
+      localIndex: new LocalIndex(trackedDb()),
+      connectorMesh: mesh,
+      sandboxRunner: runner,
+      sandboxDir: tmpdir(),
+      extensionsRuntimeEnabled: false,
+    });
+    await expect(
+      tryDispatchAutomationRpc(ctx, "c1", fakeSession, "extension.eval", { ids: ["a.b"] }),
+    ).rejects.toMatchObject({
+      rpcCode: -32603,
+      message: expect.stringContaining("ERR_EXTENSION_EVAL_RUNTIME_DISABLED"),
+    });
+  });
+
   test("without a sandbox runner or sandboxDir the method refuses -32603", async () => {
     for (const omit of ["sandboxRunner", "sandboxDir"] as const) {
       await expect(

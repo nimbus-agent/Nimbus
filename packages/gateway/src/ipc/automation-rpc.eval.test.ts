@@ -139,6 +139,48 @@ describe("extension.eval handler", () => {
     expect(calls).toEqual([]);
   });
 
+  test("[extensions] runtime = false is -32603 ERR_EXTENSION_EVAL_RUNTIME_DISABLED, before any verification or prompt", async () => {
+    const calls: string[] = [];
+    const deps = fakes(calls);
+    const verify = deps.verify;
+    let asked = 0;
+    const r = await code(
+      call(
+        { ids: ["a.b"] },
+        {
+          extensionsRuntimeEnabled: false,
+          evalDeps: {
+            ...deps,
+            verify: async (...args) => {
+              calls.push("verify");
+              if (verify === undefined) throw new Error("fakes() always supplies verify");
+              return await verify(...args);
+            },
+          },
+          ownerGate: async () => {
+            asked++;
+            return true;
+          },
+        },
+      ),
+    );
+    expect(r.rpc).toBe(-32603);
+    expect(r.message).toContain("ERR_EXTENSION_EVAL_RUNTIME_DISABLED");
+    expect(r.message).toContain("[extensions] runtime");
+    expect(asked).toBe(0);
+    expect(calls).toEqual([]);
+  });
+
+  test("[extensions] runtime = true evaluates as usual", async () => {
+    const calls: string[] = [];
+    const out = await call(
+      { ids: ["a.b"] },
+      { extensionsRuntimeEnabled: true, evalDeps: fakes(calls) },
+    );
+    expect((out as { value: { results: unknown[] } }).value.results).toHaveLength(1);
+    expect(calls).toEqual(["run"]);
+  });
+
   test("an approved call returns { results } in request order", async () => {
     const calls: string[] = [];
     const out = await call({ ids: [" a.b ", "c.d"] }, { evalDeps: fakes(calls) });
