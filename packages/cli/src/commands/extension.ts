@@ -485,10 +485,14 @@ async function withFreshClient(
   }
 }
 
-function postInstallIo(args: string[], deps: InstallWalkDeps): PostInstallIo {
+/** `log` writes one line; absent, the walk writes to the console. */
+function postInstallIo(
+  args: string[],
+  deps: InstallWalkDeps,
+  log: (line: string) => void = (line) => console.log(line),
+): PostInstallIo {
   const approve = (id: string): Promise<void> =>
     withFreshClient(deps, (c) => runExtensionApprove(c, [], [id]));
-  const log = (line: string): void => console.log(line);
   return {
     attended:
       !hasFlag(args, "--yes") &&
@@ -509,18 +513,22 @@ function postInstallIo(args: string[], deps: InstallWalkDeps): PostInstallIo {
   };
 }
 
-/** The walk after an install. It never fails the install: anything it throws is only logged. */
+/**
+ * The walk after an install. It never fails the install: anything it throws is only logged.
+ * `log` writes one line (the caller's stdout writer, when it has one); absent, the console.
+ */
 async function walkAfterInstall(
   args: string[],
   deps: InstallWalkDeps | undefined,
   toApprove: readonly string[],
   requirements: readonly RequirementStatusView[],
+  log: (line: string) => void = (line) => console.log(line),
 ): Promise<void> {
   if (deps === undefined) return;
   try {
-    await runPostInstallWalk(postInstallIo(args, deps), toApprove, requirements);
+    await runPostInstallWalk(postInstallIo(args, deps, log), toApprove, requirements);
   } catch (e) {
-    console.log(`(stopped walking through the install: ${stripControl(String(e))})`);
+    log(`(stopped walking through the install: ${stripControl(String(e))})`);
   }
 }
 
@@ -1354,7 +1362,10 @@ export interface UpdateApplyResultCli {
   readonly grantDropped?: boolean;
   /** An applied update that made the root a starter pack (it cannot be approved). */
   readonly rootKind?: string;
-  /** An applied downgrade: dependency-installed packages left needed by nothing, dependents first. */
+  /**
+   * An applied downgrade, or an update whose new version dropped a dependency: dependency-installed
+   * packages left needed by nothing, dependents first.
+   */
   readonly orphanedDependencies?: readonly string[];
 }
 
@@ -1444,6 +1455,8 @@ async function applyExtensionUpdate(
     const jobIdPart = res.jobId === undefined ? "" : ` (jobId=${res.jobId})`;
     opts.writeStdout(`updated ${id} to ${targetVersion}${jobIdPart}\n`);
     await reportAddedPackages(opts, res, id);
+    // What the new version no longer declares, when nothing else needs it.
+    reportKeptDependencies(opts.writeStderr, res, id);
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
@@ -1478,8 +1491,26 @@ async function reportAddedPackages(
   if (needs.length > 0) lines.push("Needs:", ...requirementLines(needs));
   if (lines.length > 0) opts.writeStdout(`${lines.join("\n")}\n`);
   if (toApprove.length > 0 || needs.length > 0) {
-    await walkAfterInstall(opts.args, opts.walk, toApprove, needs);
+    await walkAfterInstall(opts.args, opts.walk, toApprove, needs, (line) =>
+      opts.writeStdout(`${line}\n`),
+    );
   }
+}
+
+/**
+ * The `Kept …` line for the dependency-installed packages an applied update or downgrade left
+ * needed by nothing (dependents first, so the commands run in order). None ⇒ nothing printed.
+ */
+function reportKeptDependencies(
+  writeStderr: (s: string) => void,
+  res: UpdateApplyResultCli,
+  id: string,
+): void {
+  const kept = (res.orphanedDependencies ?? []).map(stripControl);
+  if (kept.length === 0) return;
+  writeStderr(
+    `Kept ${kept.join(", ")}, no longer needed by ${stripControl(id)}; remove them with: ${kept.map((k) => `nimbus extension remove ${k}`).join(" && ")}\n`,
+  );
 }
 
 export async function runExtensionUpdateWithCaller(opts: RunExtensionUpdateOpts): Promise<number> {
@@ -1565,12 +1596,7 @@ export async function runExtensionDowngradeWithCaller(
   }
   if (res.applied) {
     opts.writeStdout(`downgraded ${id} to ${toVersion}\n`);
-    const kept = (res.orphanedDependencies ?? []).map(stripControl);
-    if (kept.length > 0) {
-      opts.writeStderr(
-        `Kept ${kept.join(", ")}, no longer needed by ${stripControl(id)}; remove them with: ${kept.map((k) => `nimbus extension remove ${k}`).join(" && ")}\n`,
-      );
-    }
+    reportKeptDependencies(opts.writeStderr, res, id);
     return 0;
   }
   const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;

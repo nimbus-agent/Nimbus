@@ -357,6 +357,46 @@ describe("extension update — what it adds", () => {
       expect(made).toBe(0);
       expect(r.stdout).toContain("nimbus extension approve com.x.dep");
     });
+
+    test("the walk's own lines go to the caller's stdout writer, never straight to the console", async () => {
+      setTty(true);
+      const consoleLines: unknown[] = [];
+      const origLog = console.log;
+      console.log = (...a: unknown[]) => {
+        consoleLines.push(a);
+      };
+      let r: Awaited<ReturnType<typeof applyWith>>;
+      try {
+        r = await applyWith(
+          {
+            applied: true,
+            connectorRequirements: [{ ...REQ, interactive: false }],
+          },
+          { walk: { socketPath: "/sock", confirm: async () => true } },
+        );
+      } finally {
+        console.log = origLog;
+      }
+      expect(r.stdout).toContain("  github: connect it with: nimbus connector auth github\n");
+      expect(consoleLines).toEqual([]);
+    });
+  });
+});
+
+describe("extension update — orphans", () => {
+  test("an update that dropped a dependency prints the Kept line on stderr", async () => {
+    const r = await applyWith({ applied: true, orphanedDependencies: ["com.a", "com.b"] });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toBe("updated com.x.a to 1.1.0\n");
+    expect(r.stderr).toBe(
+      "Kept com.a, com.b, no longer needed by com.x.a; remove them with: nimbus extension remove com.a && nimbus extension remove com.b\n",
+    );
+  });
+
+  test("control characters in an orphan id are stripped", async () => {
+    const r = await applyWith({ applied: true, orphanedDependencies: ["com.evil[2Jdep"] });
+    expect(r.stderr).not.toContain("");
+    expect(r.stderr).toContain("com.evil");
   });
 });
 
