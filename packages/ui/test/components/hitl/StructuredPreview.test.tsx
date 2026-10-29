@@ -285,6 +285,53 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(needs).not.toContain("e:");
   });
 
+  it("shows each added package's publisher, fingerprint, verified badge and key-change note, as the CLI plan text does", () => {
+    const fp = "0123456789abcdef0123456789abcdef";
+    const details = autoUpdateDetails({
+      addedPackages: [
+        {
+          id: "com.example.dep",
+          version: "1.2.0",
+          registry: "main",
+          kind: "extension",
+          publisher: { id: "acme", fingerprint: fp },
+          publisherBadge: "Verified publisher: @acme (verified 2026-10-01)",
+          publisherChange: { from: ["ffff"], to: fp, via: "rotation" },
+          publisherChangeNote: "publisher key changed from ffff to 0123, vouched for by a rotation",
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+        {
+          id: "com.example.plain",
+          version: "1.0.0",
+          registry: "main",
+          kind: "extension",
+          publisher: { id: "bob", fingerprint: "fedcba9876543210fedcba9876543210" },
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+        {
+          id: "com.example.unsigned",
+          version: "1.0.0",
+          registry: "main",
+          kind: "extension",
+          publisher: null,
+          permissions: { network: [], filesystem: { read: [], write: [] } },
+        },
+      ],
+    });
+    render(<StructuredPreview details={details} action="extension.autoUpdate" />);
+    const items = screen.getAllByTestId("auto-update-added-package");
+    // The CLI's words: `publisher <id> (<16-char fingerprint>…), verified|unverified`, or `unsigned`.
+    expect(items[0]?.textContent).toContain("publisher acme (0123456789abcdef…), verified");
+    expect(items[0]?.textContent).toContain("Verified publisher: @acme (verified 2026-10-01)");
+    expect(items[0]?.textContent).toContain(
+      "publisher key changed from ffff to 0123, vouched for by a rotation",
+    );
+    expect(items[1]?.textContent).toContain("publisher bob (fedcba9876543210…), unverified");
+    expect(items[1]?.textContent).not.toContain("Verified publisher");
+    expect(items[1]?.textContent).not.toContain("key changed");
+    expect(items[2]?.textContent).toContain("unsigned");
+  });
+
   it("an update that adds nothing shows no package list and no Needs block", () => {
     render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
     expect(screen.queryByTestId("auto-update-added-packages")).toBeNull();

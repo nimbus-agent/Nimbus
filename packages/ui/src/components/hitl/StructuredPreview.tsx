@@ -96,6 +96,12 @@ type AddedPackageView =
       id: string;
       version: string;
       registry: string | null;
+      /** null: the package is unsigned (the CLI's `unsigned`). */
+      publisher: { id: string; fingerprint: string } | null;
+      /** Set only for a VERIFIED publisher: the gateway's one sentence. */
+      publisherBadge?: string;
+      /** A publisher key change, as the gateway states it. */
+      publisherChangeNote?: string;
       starterPack: boolean;
       permissions: Permissions;
     }
@@ -210,6 +216,14 @@ function readPermissions(v: unknown): Permissions {
   };
 }
 
+/** The package's publisher: id and fingerprint, or null (unsigned, or not readable as both). */
+function readAddedPublisher(v: unknown): { id: string; fingerprint: string } | null {
+  const rec = asRecord(v);
+  const id = readStringField(rec, "id");
+  const fingerprint = readStringField(rec, "fingerprint");
+  return id === undefined || fingerprint === undefined ? null : { id, fingerprint };
+}
+
 /** One view per entry of the gateway's `addedPackages`; one missing an id or version is unreadable. */
 function readAddedPackages(v: unknown): AddedPackageView[] {
   if (!Array.isArray(v)) return [];
@@ -218,15 +232,32 @@ function readAddedPackages(v: unknown): AddedPackageView[] {
     const id = readStringField(rec, "id");
     const version = readStringField(rec, "version");
     if (id === undefined || version === undefined) return { unreadable: true };
+    const badge = readStringField(rec, "publisherBadge");
+    const note = readStringField(rec, "publisherChangeNote");
     return {
       unreadable: false,
       id,
       version,
       registry: readStringField(rec, "registry") ?? null,
+      publisher: readAddedPublisher(rec["publisher"]),
+      ...(badge === undefined ? {} : { publisherBadge: badge }),
+      ...(note === undefined || note === "" ? {} : { publisherChangeNote: note }),
       starterPack: rec["kind"] === "starter-pack",
       permissions: readPermissions(rec["permissions"]),
     };
   });
+}
+
+/**
+ * The CLI plan text's publisher words: `publisher <id> (<16-char fingerprint>…), verified` (or
+ * `unverified`), or `unsigned`. 16 characters, as the CLI shows them: 4 are too few to compare.
+ */
+function addedPublisherText(
+  publisher: { id: string; fingerprint: string } | null,
+  verified: boolean,
+): string {
+  if (publisher === null) return "unsigned";
+  return `publisher ${publisher.id} (${publisher.fingerprint.slice(0, 16)}…), ${verified ? "verified" : "unverified"}`;
 }
 
 function AddedPackageItem({ p }: { readonly p: AddedPackageView }): ReactNode {
@@ -238,8 +269,15 @@ function AddedPackageItem({ p }: { readonly p: AddedPackageView }): ReactNode {
       <code>
         {p.id}@{p.version}
       </code>{" "}
-      — {p.registry === null ? "a local folder" : `registry ${p.registry}`}
+      — {p.registry === null ? "a local folder" : `registry ${p.registry}`} —{" "}
+      {addedPublisherText(p.publisher, p.publisherBadge !== undefined)}
       {p.starterPack && " — starter pack (no code to run)"}
+      {p.publisherBadge !== undefined && (
+        <div className="text-xs text-green-700">{p.publisherBadge}</div>
+      )}
+      {p.publisherChangeNote !== undefined && (
+        <div className="text-xs text-amber-700">{p.publisherChangeNote}</div>
+      )}
       <div className="text-xs">{permissionsText(p.permissions)}</div>
     </>
   );
