@@ -588,8 +588,10 @@ function assertPlanIsApproved(rootId: string, approved: UpdatePlan): void {
   const planned = approved.plan.nodes
     .filter((n) => n.newlyInstalled && n.id !== rootId)
     .map((n) => `${n.id}@${n.version}`)
-    .sort();
-  const listed = approved.addedPackages.map((a) => `${a.id}@${a.version}`).sort();
+    .sort((a, b) => a.localeCompare(b));
+  const listed = approved.addedPackages
+    .map((a) => `${a.id}@${a.version}`)
+    .sort((a, b) => a.localeCompare(b));
   if (planned.join(",") !== listed.join(",")) {
     throw new Error(
       `update_conflicts: the plan installs ${planned.join(", ") || "nothing"} but the approval listed ${listed.join(", ") || "nothing"}`,

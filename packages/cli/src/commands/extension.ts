@@ -1513,8 +1513,9 @@ function reportKeptDependencies(
 ): void {
   const kept = (res.orphanedDependencies ?? []).map(stripControl);
   if (kept.length === 0) return;
+  const removals = kept.map((k) => `nimbus extension remove ${k}`).join(" && ");
   writeStderr(
-    `Kept ${kept.join(", ")}, no longer needed by ${stripControl(id)}; remove them with: ${kept.map((k) => `nimbus extension remove ${k}`).join(" && ")}\n`,
+    `Kept ${kept.join(", ")}, no longer needed by ${stripControl(id)}; remove them with: ${removals}\n`,
   );
 }
 

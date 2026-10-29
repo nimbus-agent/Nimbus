@@ -279,17 +279,10 @@ async function resolveUpdateTarget(
     return { applied: false, reason: "cache_miss" };
   }
 
+  // The checks run in this order, each phase a step below; the first refusal wins.
   const accepted = acceptedKeyFor(params, cached);
-  if (cached.verificationStatus === "publisher_key_conflict" && accepted === undefined) {
-    return {
-      applied: false,
-      reason: "publisher_key_conflict",
-      hint: `registry ${cached.sourceRegistry} names publisher key ${cached.publisherKeyFingerprint ?? "?"}, which no rotation from a key this gateway trusts and no Nimbus verification vouches for; to apply it anyway, pass --accept-publisher-key ${cached.publisherKeyFingerprint ?? "<fingerprint>"}`,
-    };
-  }
-  if (cached.verificationStatus === "signature_failed") {
-    return { applied: false, reason: "signature_failed" };
-  }
+  const unverified = refuseUnverified(cached, accepted);
+  if (unverified !== undefined) return unverified;
 
   const installed = await deps.getInstalledVersion(id);
   if (installed === null) {
@@ -300,31 +293,66 @@ async function resolveUpdateTarget(
   }
 
   const isDowngrade = isStringSemverLess(toVersion, installed);
+  const refused = isDowngrade
+    ? await refuseDowngradeTarget(deps, id, toVersion)
+    : await refuseForwardTarget(deps, cached, installed);
+  if (refused !== undefined) return refused;
+  return {
+    cached: accepted === undefined ? cached : { ...cached, acceptedPublisherKey: accepted },
+    isDowngrade,
+    installed,
+  };
+}
+
+/** Phase 1: an update whose publisher key or signature did not verify at detection. */
+function refuseUnverified(
+  cached: AvailableUpdate,
+  accepted: string | undefined,
+): UpdateApplyResult | undefined {
+  if (cached.verificationStatus === "publisher_key_conflict" && accepted === undefined) {
+    return {
+      applied: false,
+      reason: "publisher_key_conflict",
+      hint: `registry ${cached.sourceRegistry} names publisher key ${cached.publisherKeyFingerprint ?? "?"}, which no rotation from a key this gateway trusts and no Nimbus verification vouches for; to apply it anyway, pass --accept-publisher-key ${cached.publisherKeyFingerprint ?? "<fingerprint>"}`,
+    };
+  }
+  if (cached.verificationStatus === "signature_failed") {
+    return { applied: false, reason: "signature_failed" };
+  }
+  return undefined;
+}
+
+/** Phase 2 (forward): the version it was detected against, and its source registry. */
+async function refuseForwardTarget(
+  deps: AutoUpdateRpcDeps,
+  cached: AvailableUpdate,
+  installed: string,
+): Promise<UpdateApplyResult | undefined> {
   // A forward update detected from another version than the one installed now would roll back to
   // the wrong `prev/<fromVersion>`: refused before the owner is asked (and again under the mutex).
-  if (!isDowngrade && installed !== cached.fromVersion) {
+  if (installed !== cached.fromVersion) {
     return { applied: false, reason: "cache_miss" };
   }
   // A forward update comes only from its source registry (spec § 8.3): one removed or re-pinned
   // since detection offers nothing, and saying so is clearer than a later signature failure.
-  if (!isDowngrade && deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
+  if (deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
     return {
       applied: false,
       reason: "source_registry_changed",
       hint: `source registry ${cached.sourceRegistry} was removed or re-pinned since this update was detected`,
     };
   }
-  if (isDowngrade) {
-    const ok = await deps.hasPrevVersion(id, toVersion);
-    if (!ok) {
-      return { applied: false, reason: "downgrade_unavailable" };
-    }
-  }
-  return {
-    cached: accepted === undefined ? cached : { ...cached, acceptedPublisherKey: accepted },
-    isDowngrade,
-    installed,
-  };
+  return undefined;
+}
+
+/** Phase 2 (downgrade): the previous version must still be on disk. */
+async function refuseDowngradeTarget(
+  deps: AutoUpdateRpcDeps,
+  id: string,
+  toVersion: string,
+): Promise<UpdateApplyResult | undefined> {
+  const ok = await deps.hasPrevVersion(id, toVersion);
+  return ok ? undefined : { applied: false, reason: "downgrade_unavailable" };
 }
 
 /**

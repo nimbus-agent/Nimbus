@@ -84,9 +84,10 @@ export async function resolveClosure(
     collected,
   });
 
-  if (collected !== undefined && collected.length === 1) throw collected[0];
-  if (collected !== undefined && collected.length > 1)
+  if (collected?.length === 1) throw collected[0];
+  if (collected !== undefined && collected.length > 1) {
     throw new DependencyConflictsError(collected);
+  }
   return { nodes: topoSort(resolved) };
 }
 

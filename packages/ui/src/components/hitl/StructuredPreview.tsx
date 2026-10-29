@@ -93,6 +93,8 @@ type Permissions = { network: string[]; filesystem: { read: string[]; write: str
 type AddedPackageView =
   | {
       unreadable: false;
+      /** `id@version`: stable across renders, used as the list key. */
+      key: string;
       id: string;
       version: string;
       registry: string | null;
@@ -105,7 +107,7 @@ type AddedPackageView =
       starterPack: boolean;
       permissions: Permissions;
     }
-  | { unreadable: true };
+  | { unreadable: true; key: string };
 
 /** A connector requirement the owner must act on (anything but `met`). */
 interface NeedView {
@@ -227,15 +229,20 @@ function readAddedPublisher(v: unknown): { id: string; fingerprint: string } | n
 /** One view per entry of the gateway's `addedPackages`; one missing an id or version is unreadable. */
 function readAddedPackages(v: unknown): AddedPackageView[] {
   if (!Array.isArray(v)) return [];
+  let unreadable = 0;
   return v.map((entry): AddedPackageView => {
     const rec = asRecord(entry);
     const id = readStringField(rec, "id");
     const version = readStringField(rec, "version");
-    if (id === undefined || version === undefined) return { unreadable: true };
+    if (id === undefined || version === undefined) {
+      unreadable += 1;
+      return { unreadable: true, key: `unreadable-${unreadable}` };
+    }
     const badge = readStringField(rec, "publisherBadge");
     const note = readStringField(rec, "publisherChangeNote");
     return {
       unreadable: false,
+      key: `${id}@${version}`,
       id,
       version,
       registry: readStringField(rec, "registry") ?? null,
@@ -380,10 +387,8 @@ function AddedByUpdate({ payload }: { readonly payload: AutoUpdatePayload }): Re
         >
           <h3 className="text-sm font-semibold mb-1">This update adds {added.length} package(s)</h3>
           <ul className="list-disc pl-4 text-sm">
-            {added.map((p, i) => (
-              // Entries are positional (an unreadable one has no id), and the list never reorders.
-              // biome-ignore lint/suspicious/noArrayIndexKey: static list rendered once per prompt
-              <li key={i} data-testid="auto-update-added-package">
+            {added.map((p) => (
+              <li key={p.key} data-testid="auto-update-added-package">
                 <AddedPackageItem p={p} />
               </li>
             ))}
