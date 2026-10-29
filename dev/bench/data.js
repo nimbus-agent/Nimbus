@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793263328173,
+  "lastUpdate": 1793273314017,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "45de52f8569167da4bc9322a5c4322bcce73400a",
-          "message": "refactor(quality): clear all 11 remaining Sonar cognitive-complexity findings (#1155)\n\nThe last of the Sonar board: all **11 `typescript:S3776`**\ncognitive-complexity findings, which #1152 deliberately left out because\nthey change control flow rather than being mechanical cleanups.\n\nWith this, the board is **zero** — 36 issues at the start of this sweep,\n25 in #1152, 11 here.\n\n## What changed, and why each extraction is the honest cut\n\n| file | was | extraction |\n|---|---|---|\n| `ownership/ownership-pass.ts` | **55** | `accumulateOwnerWeights` +\n`bindRootRemote` — the caller is now the per-root sequence it always\nwas: clear → aggregate → accumulate → bind → emit |\n| `premortem/premortem-pass.ts` | **45** | `writeThemeRows` — the\ntriple-nested service fan-out was the only deeply branchy region in an\notherwise linear batch loop |\n| `ipc/server/dispatchers.ts` | 17 | 18 hand-written `const x = await\ntry…(); if (x !== skipped) return x;` pairs → one ordered table + a loop\n|\n| `ipc/index-rebody-rpc.ts` | 20 | `readOptionalNonEmptyString` /\n`readOptionalPositiveInt` / `readOptionalBoolean` |\n| `ipc/index-rebody-rpc.ts` | 17 | `resyncOneService` — the loop is now\nsuccess/failure tallying |\n| `ipc/http-server.ts` | 17 | `tryBearerAuthedGet` — the four\nbearer-authed GET routes as one unit |\n| `connectors/jira-sync.ts` | 17 | `putIfNonEmpty` / `putIfDefined` /\n`nestedStringField` |\n| `connectors/elasticsearch-sync.ts` | 17 | `selectIndexableRows` +\n`fetchIndexMappings`, matching its own numbered comments |\n| `premortem/theme-llm-adapter.ts` | 17 | `collectValidThemes` — all\nseven model-output rejection rules under one name |\n| `cli/commands/clip.ts` | 20 | `parsePairArgs` / `parseScopesArgs` /\n`parseListArgs` + a `flagValue` reader |\n| `platform/assemble.ts` | 17 | `pushStops` — three repeated `if (x !==\nundefined) push(() => x.stop())` |\n\nBehaviour is unchanged throughout. Several extractions carry a comment\nrecording a rule that was previously only implicit in the shape of the\ncode:\n\n- **`readOptional*` return `undefined` for absent and THROW for\nmalformed.** That asymmetry is this endpoint's whole validation policy:\nunlike `index.reembed`'s `limit` (a local CPU bound, safe to drop),\nevery field here bounds real outbound API traffic — a silently-ignored\n`limit: \"3\"` would target *every* pending service, and a mistyped\n`dryRun` becoming a real run is the worst version of this failure.\n- **`resyncOneService` counts a missing scheduler as SUCCESS.** The\nwatermark was still cleared — the durable half — and the next scheduled\ntick does the re-walk. Reporting failure would tell an operator\nsomething broke when nothing did.\n- **`tryBearerAuthedGet` returns `null`, not 404.** It means \"not mine\",\nnot \"not found\" — these routes must be matched *before* `handleGet`'s\nunauthenticated table, or they'd be served with no token check at all.\n- **`putIfNonEmpty` vs `putIfDefined` is not cosmetic.** An empty string\nis Jira saying \"present and blank\" and must not be indexed as data; a\nnumeric `0` from `msFromIso` is a real epoch timestamp and must be kept.\n- **`PHASE4_PLATFORM_DISPATCHERS` order is the contract.** Every entry\nowns a disjoint namespace today, so order is not currently load-bearing\n— but nothing enforces that, so a reorder is a behaviour change, not\nformatting.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test packages/gateway/src packages/cli/src` — **13,091 pass, 30\nskip, 0 fail** (46,856 assertions, 905 files)\n- `bun run typecheck` — 0 errors\n\n## Note on process\n\nAn intermediate commit here (`67bbb217`) was pushed while `bun run lint`\nwas red — a formatting-only failure, fixed immediately in `89b1631c`,\nbut it should not have been pushed in that state. Flagging it rather\nthan quietly squashing it.\n\n## Still open from the original sweep\n\nNeither is in this PR: duplication 0.3% → ≤0.2%, and coverage 94.5% →\n≥95%.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Improved CLI argument handling while preserving existing validation\nand command behavior.\n* Streamlined synchronization, metadata processing, ownership,\npremortem, and platform shutdown workflows.\n* Centralized authenticated request routing and platform command\ndispatching.\n* Improved handling of incomplete search mappings so affected indices\ncan continue processing.\n* Preserved re-sync, theme extraction, and service processing behavior,\nincluding validation and failure handling.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T06:44:46+03:00",
-          "tree_id": "ff08faeb49aacace2570c8dc5e1f7c166f9f6555",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/45de52f8569167da4bc9322a5c4322bcce73400a"
-        },
-        "date": 1786506800862,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 241.10127005000467,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 242.54625324999907,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 291.596502,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a4ff6e12fbf4d53289256e4c5611369b43ee8489",
+          "message": "fix(extensions): dependency follow-ups — air-gap reuse, truthful refusals, findable orphans, complete connector commands (#1815)\n\nThese follow-ups close what #1810, #1811, #1813 and #1814 (Phase 9.5\nproject 4, extension dependencies and starter packs) left open. Each\nitem was re-checked against `main` at `f18d93184` before planning.\n\n## What changes for a user\n\n### Air gap\n\n- **Installed dependencies are reused.** A dependency already installed\nfrom the registry its declaration names is reused under\n`enforce_air_gap`. Reuse makes no network request: no index, manifest or\npackage fetch.\n- **Fetches are still refused.** Anything that would need a fetch is\nrefused with `ERR_REGISTRY_AIR_GAP`. Such refusals are no longer\nreported as \"offline\", in installs or in update planning.\n- **Wrong-registry copies are still refused.** An installed copy from a\ndifferent registry still gets `ERR_DEPENDENCY_SOURCE_MISMATCH`.\n\n### Refusals that say what happened\n\n- **A leftover directory** from an earlier failed install is named as\none, for a package or for one of its dependencies: `a directory from an\nearlier failed install is in the way at <dir>; remove it and retry`.\n- **A live install is never mistaken for a leftover.** A directory\ncounts as owned when any row has its id or its path.\n- **Same-version reinstall.** A local reinstall of an id that is already\ninstalled, and does not qualify for promotion, is refused before any\napproval prompt: `<id>@<version> is already installed; remove it first\n(nimbus extension remove <id>) to reinstall it`. Before, you were asked\nto approve and then refused with \"already installed at\".\n- **Incomplete rollbacks are reported.** When a rollback cannot finish,\nthe failure is logged as a warning and appended to the refusal, as\n`(rollback incomplete: …)`. Control, bidi and invisible characters are\nstripped from it. For updates and downgrades the same text is shown as\n`detail` on the result, and the CLI prints it.\n\n### Orphans are always findable\n\n- **The CLI and doctor.** A dependency-installed package that nothing\nneeds any more, for example one left by an interrupted update, is\nflagged with `orphaned: true` in `extension list`. `nimbus doctor` names\nit: `[warn] Extensions: <id> was installed only as a dependency and\nnothing needs it now; remove it with: nimbus extension remove <id>`.\nNothing is removed automatically.\n- **The desktop.** Removing an extension in the desktop now names the\norphans the gateway reports, with removal from the CLI. The notice\nclears on the next action and can be dismissed.\n\n### Connector fix commands work as typed\n\nThe connector-requirement fix lines are now complete commands for the 13\ntoken connectors whose auth needs more than `--token`:\n- jira, confluence, bitbucket, sentry, jenkins and grafana;\n- discord, datadog, kubernetes, aws, azure, gcp and iac.\n\nEach uses the CLI's own flag names and placeholders. A drift test walks\nthe gateway's PAT auth handlers and fails if one is added without a\ncomplete command.\n\n## Internals\n\n- **Shared modules.**\n- `FORMAT_INVISIBLE_RANGES` moved to `util/invisible-text.ts`, with a\nre-export at the `mcp-sink` path.\n- `FETCH_FAILURE_CODES` moved to a leaf module, so the pure solver no\nlonger imports registry I/O.\n\n  No security pin referenced either old path.\n- **Test hardening.**\n- The `nimbus-reg` temp-directory test uses its own injectable temp\nroot, so it no longer scans the global `tmpdir()`.\n- New tests prove control-character stripping on fix commands in\n`extension info`, the install output and doctor.\n  - The air-gap reuse tests count fetch calls, which must be zero.\n\n## Decisions made while building\n\n- **Air gap blocks requests, not reuse.** Reusing an installed copy\nmakes no request, so air gap allows it.\n- **Orphans are surfaced, never auto-removed.** Removal stays your\ndecision.\n- **Fix commands use the CLI's own placeholders**, so what is printed\nmatches what `nimbus connector auth` itself says.\n- **A dependency's leftover directory** keeps the error code\n`ERR_REGISTRY_INSTALL_REFUSED`, with the leftover wording, so an update\nfailure stays `update_conflicts`.\n\n## Review history\n\n- **The plan.** Antigravity reviewed it. That run read a stale checkout,\nso I applied only the two points that held up against `main`.\n- **Tasks 1 and 2** had per-task reviews with fix rounds.\n- **The whole branch.** A Claude reviewer found 1 Important and 4 Minor\nissues, the Important one being seven connectors missed from the\nfix-command list. Antigravity, kept to its file bundle this time, found\n6, 3 of them overlapping. One fix pass covered every item, each\nred-proved, followed by a scoped re-review.\n\n## Not in this PR\n\n- An older CLI paired with a newer gateway still reads a promotion as a\nfresh install. Nothing can be done gateway-side.\n\n## Verification\n\n- `bun run typecheck`, `typecheck:tests` (0 new), Biome and `bun run\npreflight:fast` pass, including the boundary checks.\n- `bun test packages/gateway/src packages/cli/src/commands`: 25505 pass,\n0 fail.\n- UI vitest: 1215/1215.\n- The extension and registry e2e files pass with the sandbox helper\nbuilt.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension listings and `nimbus doctor` now identify dependencies no\nlonger needed by installed extensions and provide removal guidance.\n* After removing an extension, the desktop shows a notice if dependency\npackages remain, with instructions for removing them.\n* Connector setup guidance now includes required authentication flags\nfor additional connectors.\n* **Bug Fixes**\n* In air-gap mode, installed dependencies from the declared registry are\nreused without network requests; packages that require fetching are\nrefused with a specific air-gap error.\n* Failed installs, updates, and downgrades provide more detail when\nrollback leaves files or packages behind.\n* **Documentation**\n* Updated the CLI, architecture, and changelog documentation to reflect\nthese behaviors.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T11:17:40Z",
+          "tree_id": "cb925c13ecbb44d1301c5c9250b94d14dfc7ba80",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a4ff6e12fbf4d53289256e4c5611369b43ee8489"
+        },
+        "date": 1793273310431,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 305.7365000500029,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 305.4518803999945,
             "unit": "ms"
           }
         ]
