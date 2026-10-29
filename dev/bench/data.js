@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793224630401,
+  "lastUpdate": 1793234815092,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1f893798d6466c8a860fcda2141f5832acdda9c2",
-          "message": "fix(quality): close two ReDoS regexes and clear 25 SonarCloud findings (#1152)\n\nFirst tranche of the quality sweep: **25 of the 36 open SonarCloud\nissues**, including the only two with real security impact. The\nremaining 11 are all `typescript:S3776` cognitive-complexity refactors\nand are deliberately left for a follow-up — they change control flow in\n`assemble.ts`, `ownership-pass.ts` (complexity 55) and\n`premortem-pass.ts` (45), and do not belong in the same diff as\nmechanical cleanups.\n\n## Two genuine ReDoS, and a measurement worth recording\n\n`typescript:S8786` fired on two regexes. Both turned out to be **really\nquadratic**, not false positives — but proving it took the right hostile\ninput, and my first attempt at both got it wrong in a way that would\nhave shipped a test that could never fail.\n\n| regex | site | hostile input | old | new |\n|---|---|---|---|---|\n| `/^[\\s…]+\\|[\\s…]+$/g` | `premortem/theme-identity.ts` | `\"a\" +\n\".\"×200k + \"x\"` | **20.2 s** | ~1 ms |\n| `/\\/+$/` | `ownership/repo-remote.ts` | `\"a\" + \"/\"×200k + \"x\"` | **9.1\ns** | ~1 ms |\n\nThe shape is everything. My first hostile strings put the trimmable run\nat the **start**, where the `^[…]+` alternative swallows it in one step\n— measured at **0.3 ms** against the old code. The `/\\/+$/` case was\nworse: the old code ran `.replace(/^\\/+/, \"\")` *first*, so a leading\n**or** trailing run never reached the quadratic branch at all — **0.1\nms**. Both of my initial tests would have passed against the unfixed\ncode. The committed tests use interior/leading-guarded runs that do\nreach it, and both carry a comment saying exactly why that shape is\nload-bearing.\n\nBoth call sites now use linear scans from `util/strip-affixes.ts`, which\nalready existed for precisely this reason. It gains one function,\n`stripAffixWhere`, for edge sets a literal character list cannot express\n— the theme trim needs \"any whitespace\", and a hand-written `\" \\t\\n\\r\"`\nsilently misses NBSP and the unicode space run.\n\nThese inputs are attacker-adjacent: theme labels are LLM output over\nindexed third-party text, and remote URLs come from `git remote -v` in a\nrepo the user may not control.\n\n## Nine duplicated test groups parameterized (S5976)\n\n`bitbucket`/`github`/`gitlab-sync` each had five byte-identical\nHTTP-status tests; `jira-sync` had five cursor-corruption variants;\n`jenkins-sync` had three `unsupported_url` declines; plus `flagsmith`,\n`tableau`, `resolve-by-url`. Net **−189 lines**, with each table\ncarrying the invariant the group exists to prove — e.g. that a 403 maps\nto `unauthorized` and *not* `absent`, or a permissions problem reads as\na deleted PR.\n\n**`as const` on those tables is load-bearing.** Without it the tuple\nwidens to `string`, `{status: string}` stops satisfying\n`FetchOneResult`, and `tsc` fails — while `bun test` passes. I hit\nexactly that: 3,330 tests green, `typecheck` red.\n\n## Fourteen smaller findings\n\n`S7755` `.at(-1)` ×2 · `S4138` for-of · `S5906` `toHaveLength` ×3 ·\n`S3358` nested ternary (now the shared `codeUnitCompare`, which already\nhad one home) · `S7786` `TypeError` · `S7770` bare `String` · `S6582`\noptional chain · `S7747` needless array copy · `S7763` `export … from` ·\n`S8968` `it.skipIf`.\n\nTwo are worth calling out:\n\n- **`S8968` was hiding a false pass.** The great-expectations walk test\n`return`ed early on Windows, which reports the test as **PASSED** — a\nWindows run claimed coverage it never had. `it.skipIf` reports it as\nskipped, which is the truth; the suite now shows `1 skip` there.\n- **`S1135` on `ticket-depth.ts` is a false positive.** The rule matched\nthe *status value* `\"todo\"` inside a comment, not a task marker. Rather\nthan suppress the rule I reworded the comment to name the bucket instead\nof quoting it, and said so inline — the finding is INFO-level and the\nrule is worth keeping armed.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test packages/gateway/src/connectors packages/gateway/src/index`\n— 3,330 pass, 0 fail\n- `bun test` across the touched mcp-connectors — 3,425 pass, 3 skip, 0\nfail\n- `bun run typecheck` — 0 errors\n\n## Not in this PR\n\n- 11 × `S3776` cognitive complexity — follow-up\n- Duplication 0.3% → ≤0.2% — follow-up (this PR already removes ~189\nduplicated test lines)\n- Coverage 94.5% → ≥95% — follow-up (needs 422 more covered\nlines+conditions)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T20:58:24+03:00",
-          "tree_id": "e2fe842c9a9260d60659d00573293b7fa02f4057",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1f893798d6466c8a860fcda2141f5832acdda9c2"
-        },
-        "date": 1786472058100,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.1376200499984,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.7596750999925,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 274.3663902000051,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8b637ea3cbf2f29717347e11fd485f5fda4530c2",
+          "message": "fix(deps): re2js 2.9.1 (GHSA-gg6h-894w-4m9c); accept @hono/node-server GHSA-rmxm-3fg6-px4f (serveStatic never loaded) (#1812)\n\nTwo advisories appeared on 2026-10-29. Both red the required\n**Dependency audit** check on every PR, for example #1811.\n\n## re2js: high, GHSA-gg6h-894w-4m9c (quadratic-time lookbehind)\n\n- `re2js` 2.8.6 came in through `@mastra/core` 1.74.0, which requires\n`^2.8.6`.\n- The fix, 2.9.1, is inside that range, so this is a `bun.lock`-only\nbump.\n- `bun update re2js` would also have added a root dependency, so the\nlockfile entry was edited directly. `bun install --frozen-lockfile`\npasses.\n\n## @hono/node-server: moderate, GHSA-rmxm-3fg6-px4f (`serveStatic`\ndecodes the path twice)\n\nThis one is accepted with a dated row in\n`scripts/structure-audit/accepted-advisories.ts`.\n\n**Why no upgrade today:**\n- The vulnerable copy is 1.19.17, under `@modelcontextprotocol/node`\n2.1.1, which is pinned by the root `overrides` set from #1804.\n- Its fix needs `@modelcontextprotocol/node` 2.1.2. That needs\n`@modelcontextprotocol/server` `^2.4.0`, which means moving the whole\npinned MCP set (client, core, server and node) to 2.4.0.\n- That release is six days old. Moving the set belongs in a bulk\ndependency update, not a same-day advisory fix.\n\n**Why it isn't reachable:**\n- The flaw is in `serveStatic`.\n- `@modelcontextprotocol/node`'s dist imports only `getRequestListener`\nfrom `@hono/node-server`.\n- Nothing installed imports `@hono/node-server/serve-static`.\n- The gateway and CLI import neither package directly.\n\n**When the row goes:** it is open for 30 days (`recheckBy` 2026-11-28).\nIt is deleted when the MCP set moves to 2.4.0.\n\n## Verification\n\n- All three steps of the Dependency audit job pass locally:\n  - `bun audit --audit-level high` with the accepted ignores;\n  - `audit:advisories`: 3 live advisories, all accounted for;\n  - `audit:js-licenses`.\n- `bun run preflight:fast` passes.\n- The advisory-registry tests pass: 59 of 59.\n- The engine tests pass: 747.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T00:36:44Z",
+          "tree_id": "af6802561a5d741ced67b09b102a8bda503f5ed4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8b637ea3cbf2f29717347e11fd485f5fda4530c2"
+        },
+        "date": 1793234811733,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.63101674999854,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.2713466000059,
             "unit": "ms"
           }
         ]
