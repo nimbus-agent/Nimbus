@@ -531,6 +531,8 @@ export async function planUpdate(
     // The detector's verified read of the source index, only for the registry it came from.
     ...(context.index === undefined ? {} : { index: context.index }),
     ...(context.signal === undefined ? {} : { signal: context.signal }),
+    // One detection poll's index reads, shared by all of its plans (never across polls).
+    ...(context.indexes === undefined ? {} : { indexes: context.indexes }),
   });
   let plan: InstallPlan;
   try {

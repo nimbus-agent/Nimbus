@@ -145,14 +145,24 @@ function readInstalledManifest(row: ExtensionRow): ExtensionManifest {
 
 export function createRegistryDependencyResolver(
   deps: InstallFromRegistryDeps,
-  root: { reg: RegistryRow; channel: RegistryChannel; index?: RegistryIndex; signal?: AbortSignal },
+  root: {
+    reg: RegistryRow;
+    channel: RegistryChannel;
+    index?: RegistryIndex;
+    signal?: AbortSignal;
+    /** Verified index reads shared with other resolvers (one detection poll's); absent ⇒ its own. */
+    indexes?: Map<SourceKey, Promise<RegistryIndex>>;
+  },
 ): RegistryDependencyResolver {
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
   const rootSource = keyOf(root.reg);
   const registries = new Map<SourceKey, RegistryRow>([[rootSource, root.reg]]);
-  // One verified read per registry per resolver; the root's registry reuses the root's read.
-  const indexes = new Map<SourceKey, Promise<RegistryIndex>>();
-  if (root.index !== undefined) indexes.set(rootSource, Promise.resolve(root.index));
+  // One verified read per registry per resolver (or per shared map); the root's registry reuses
+  // the root's read. A key names the root fingerprint too, so a re-pinned registry is read afresh.
+  const indexes = root.indexes ?? new Map<SourceKey, Promise<RegistryIndex>>();
+  if (root.index !== undefined && !indexes.has(rootSource)) {
+    indexes.set(rootSource, Promise.resolve(root.index));
+  }
   const verifiedById = new Map<string, VerifiedDependency>();
   const channels: readonly string[] = root.channel === "beta" ? ["stable", "beta"] : ["stable"];
 

@@ -389,6 +389,30 @@ describe("update detection plans the update through the registries", () => {
     expect(ledger("registry.index") - before).toBe(1);
   });
 
+  test("a dependency registry's index is read once per poll across every update, and again on the next poll", async () => {
+    const ROOT2 = "com.example.root2";
+    const viaLibs = { [DEP]: { range: "^1.0.0", registry: "https://libs.test/" } };
+    await addRegistry("libs", { [DEP]: [{ version: "1.0.0" }] });
+    await addRegistry("main", {
+      [ROOT]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: viaLibs }],
+      [ROOT2]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: viaLibs }],
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+    await installFromRegistry(deps(), { id: ROOT2, version: "1.0.0" });
+    const rt = runtime();
+    const before = ledger("registry.index");
+    await rt.deps.forcePoll();
+    for (const id of [ROOT, ROOT2]) {
+      expect(rt.deps.cache.get(id)?.addedPackages).toMatchObject([{ id: DEP, registry: "libs" }]);
+    }
+    // main once (the detection's read, reused by both plans) and libs once (shared by both plans).
+    expect(ledger("registry.index") - before).toBe(2);
+    // Never across polls: the next poll reads both again.
+    const second = ledger("registry.index");
+    await rt.deps.forcePoll();
+    expect(ledger("registry.index") - second).toBe(2);
+  });
+
   test("an update whose signature failed is not planned: its dependency is never fetched", async () => {
     await addRegistry("main", {
       [ROOT]: [{ version: "1.0.0" }],

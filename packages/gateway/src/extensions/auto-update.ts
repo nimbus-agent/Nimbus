@@ -1,4 +1,4 @@
-import { RegistryError } from "@nimbus-dev/registry-format";
+import { RegistryError, type RegistryIndex } from "@nimbus-dev/registry-format";
 
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import type {
@@ -14,7 +14,7 @@ import {
   isDependencyConflictError,
   isOfflineDependencyResolutionError,
 } from "./dependency-errors.ts";
-import { type ExtensionManifestForSolver, sourceKey } from "./dependency-types.ts";
+import { type ExtensionManifestForSolver, type SourceKey, sourceKey } from "./dependency-types.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
@@ -136,9 +136,16 @@ export class ExtensionAutoUpdater {
       rows.length === 0
         ? { updates: [], errors: [], dependsOn: new Map(), requires: new Map() }
         : await this.opts.collect(rows, this.abort.signal);
+    // This poll's verified index reads, shared by every update's plan: each registry is read at
+    // most once per poll (the sources `collect` already read are reused). Never kept across polls.
+    const pollIndexes = new Map<SourceKey, Promise<RegistryIndex>>(
+      [...(collected.indexes ?? new Map<SourceKey, RegistryIndex>())].map(
+        ([key, index]) => [key, Promise.resolve(index)] as const,
+      ),
+    );
     for (const found of collected.updates) {
       try {
-        await this.recordDetection(found, collected, installed); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
+        await this.recordDetection(found, collected, installed, pollIndexes); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
       } catch (e) {
         // One failed audit append must not stop the rest of the tick from being cached.
         this.opts.onTickError?.(found.id, e);
@@ -151,8 +158,9 @@ export class ExtensionAutoUpdater {
     found: AvailableUpdate,
     collected: CollectedRegistryUpdates,
     installed: readonly InstalledExtensionRow[],
+    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
   ): Promise<void> {
-    const planned = await this.computeUpdateConflicts(found, collected);
+    const planned = await this.computeUpdateConflicts(found, collected, pollIndexes);
     const oldRequires = installed.find((r) => r.id === found.id)?.manifest.requires?.connectors;
     const addedRequirements = (collected.requires.get(found.id) ?? []).filter(
       (c) => !(oldRequires ?? []).includes(c),
@@ -206,6 +214,7 @@ export class ExtensionAutoUpdater {
   private async computeUpdateConflicts(
     found: AvailableUpdate,
     collected: CollectedRegistryUpdates,
+    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
   ): Promise<Pick<AvailableUpdate, "conflicts" | "addedPackages">> {
     if (found.verificationStatus !== "verified") return {};
     const newDependsOn = collected.dependsOn.get(found.id);
@@ -219,6 +228,7 @@ export class ExtensionAutoUpdater {
       const plan = await this.opts.planUpdate(found, newManifest, {
         signal: this.abort.signal,
         ...(index === undefined ? {} : { index }),
+        indexes: pollIndexes,
       });
       return { addedPackages: plan.addedPackages };
     } catch (e) {
