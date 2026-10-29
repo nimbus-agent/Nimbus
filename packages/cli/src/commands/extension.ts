@@ -964,7 +964,8 @@ export async function runExtensionRemove(
  * After a removal: the members installed only for `id` are removed with `--clean-deps`, offered at
  * an attended terminal, and otherwise only named. Each goes through its own `extension.remove`, in
  * the gateway's order (dependents first), with no second confirmation and no further offer; one
- * that fails is reported and the rest still go.
+ * that fails is reported and the rest still go, and the command then exits 1. Every line here goes
+ * to stderr, so stdout stays the removal's JSON result.
  */
 async function handleOrphanedDependencies(
   client: IPCClient,
@@ -975,23 +976,28 @@ async function handleOrphanedDependencies(
   if (orphans.length === 0) return;
   const safeId = stripControl(id);
   const list = orphans.map((o) => stripControl(o)).join(", ");
+  const say = (line: string): void => {
+    process.stderr.write(`${line}\n`);
+  };
   if (!opts.cleanDeps) {
-    if (!opts.attended) {
-      console.log(`Kept ${list}, installed only for ${safeId}; remove them with --clean-deps.`);
+    const question = `Also remove ${orphans.length} package(s) installed only for ${safeId}: ${list}? [y/N] `;
+    if (!opts.attended || !(await opts.io.confirm(question))) {
+      say(`Kept ${list}, installed only for ${safeId}; remove them with --clean-deps.`);
       return;
     }
-    const question = `Also remove ${orphans.length} package(s) installed only for ${safeId}: ${list}? [y/N] `;
-    if (!(await opts.io.confirm(question))) return;
   }
+  let failed = 0;
   for (const orphan of orphans) {
     try {
       await client.call<ExtensionRemoveResult>("extension.remove", { id: orphan });
-      console.log(`Removed ${stripControl(orphan)}.`);
+      say(`Removed ${stripControl(orphan)}.`);
     } catch (e) {
+      failed += 1;
       const msg = e instanceof Error ? e.message : String(e);
-      process.stderr.write(`Could not remove ${stripControl(orphan)}: ${stripControl(msg)}\n`);
+      say(`Could not remove ${stripControl(orphan)}: ${stripControl(msg)}`);
     }
   }
+  if (failed > 0) process.exitCode = 1;
 }
 
 /**
@@ -1106,7 +1112,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
  * Subcommands that need no gateway. `publish` and `key` get the RAW args: `stripFlags` drops

@@ -450,12 +450,14 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
         if (ctx.mesh !== undefined) await stopExtensionBestEffort(ctx.mesh, id);
         await ctx.extensionSync.purgeBeforeRemove(id);
       }
+      // Before `clearDeps`, which takes this id's forward edges that the walk starts from. It never
+      // reads this id's own row, so it also precedes the delete; a failure offers nothing rather
+      // than leave the removal half done.
+      const orphaned = orphanedDependenciesOrNone(ctx.db, id);
       const installPath = deleteExtensionById(ctx.db, id);
       if (installPath === null) {
         throw new AutomationRpcError(-32602, "Extension not found");
       }
-      // Before `clearDeps`: the walk starts from this id's own forward edges.
-      const orphaned = orphanedDependencies(ctx.db, id);
       clearDeps(ctx.db, id);
       // The row and grant are gone first, so no new spawn can verify; then the live child is stopped
       // and its stage root removed, and only THEN the install dir — never delete code a running
@@ -506,6 +508,19 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
     }),
   }),
 };
+
+/** The removal's orphan offer; a walk that throws offers nothing and never fails the removal. */
+export function orphanedDependenciesOrNone(
+  db: Database,
+  removedId: string,
+  walk: (db: Database, removedId: string) => string[] = orphanedDependencies,
+): string[] {
+  try {
+    return walk(db, removedId);
+  } catch {
+    return [];
+  }
+}
 
 /**
  * The service id whose stage root `extension.remove` deletes: the grant's stored id, else the one

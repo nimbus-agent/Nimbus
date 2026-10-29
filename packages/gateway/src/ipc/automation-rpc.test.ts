@@ -25,7 +25,11 @@ import { newestPrevVersion, prevVersionDir } from "../extensions/version-store.t
 import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-graph.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { MockVault } from "../vault/mock.ts";
-import { AutomationRpcError, dispatchAutomationRpc } from "./automation-rpc.ts";
+import {
+  AutomationRpcError,
+  dispatchAutomationRpc,
+  orphanedDependenciesOrNone,
+} from "./automation-rpc.ts";
 
 function seededDb(): Database {
   const db = new Database(":memory:");
@@ -1121,6 +1125,49 @@ describe("extension.enable / disable / remove", () => {
     } finally {
       await rmDirWithRetry(root);
     }
+  });
+
+  test("a throwing orphan walk offers nothing and the removal still completes", async () => {
+    const db = seededDb();
+    const root = mkdtempSync(join(tmpdir(), "nimbus-ext-rm-walk-throws-"));
+    try {
+      for (const id of ["pack", "member"]) {
+        mkdirSync(join(root, id), { recursive: true });
+        seedExtensionRow(db, id, join(root, id));
+      }
+      recordInstall(
+        db,
+        "pack",
+        "1.0.0",
+        [{ id: "member", range: "^1.0.0", resolvedVersion: "1.0.0", registry: null }],
+        1,
+      );
+      // The walk reads the marker column; without it every marker read throws.
+      db.run("ALTER TABLE extension DROP COLUMN installed_as_dependency");
+      expect(() => isInstalledAsDependency(db, "member")).toThrow();
+
+      const out = await dispatchAutomationRpc({
+        method: "extension.remove",
+        params: { id: "pack" },
+        db,
+      });
+      expect((out as { value: unknown }).value).toEqual({ ok: true, orphanedDependencies: [] });
+      expect(db.query("SELECT id FROM extension WHERE id = 'pack'").get()).toBeNull();
+      // The edges went too, so the member is not left blocked by a removed dependent.
+      expect(reverseDeps(db, "member")).toHaveLength(0);
+    } finally {
+      await rmDirWithRetry(root);
+    }
+  });
+
+  test("orphanedDependenciesOrNone returns the walk's result, or none when it throws", () => {
+    const db = seededDb();
+    expect(orphanedDependenciesOrNone(db, "x", () => ["a"])).toEqual(["a"]);
+    expect(
+      orphanedDependenciesOrNone(db, "x", () => {
+        throw new Error("boom");
+      }),
+    ).toEqual([]);
   });
 
   test("remove with force:true offers the removed member's own orphans, not the pack's", async () => {
