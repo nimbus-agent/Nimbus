@@ -383,6 +383,25 @@ describe("extension update — what it adds", () => {
   });
 });
 
+describe("extension update — conflicts", () => {
+  test("an update_conflicts refusal prints one hint line per conflict", async () => {
+    const r = await applyWith({
+      applied: false,
+      reason: "update_conflicts",
+      hint: "update_conflicts: a needs registry x\nupdate_conflicts: b needs registry y",
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toBe(
+      "update failed: update_conflicts\n  hint: update_conflicts: a needs registry x\n  hint: update_conflicts: b needs registry y\n",
+    );
+  });
+
+  test("a one-line hint prints as before", async () => {
+    const r = await applyWith({ applied: false, reason: "cache_miss", hint: "re-run it" });
+    expect(r.stderr).toBe("update failed: cache_miss\n  hint: re-run it\n");
+  });
+});
+
 describe("extension update — orphans", () => {
   test("an update that dropped a dependency prints the Kept line on stderr", async () => {
     const r = await applyWith({ applied: true, orphanedDependencies: ["com.a", "com.b"] });

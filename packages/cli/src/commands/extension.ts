@@ -1459,7 +1459,12 @@ async function applyExtensionUpdate(
     reportKeptDependencies(opts.writeStderr, res, id);
     return 0;
   }
-  const hintPart = res.hint === undefined ? "" : `\n  hint: ${res.hint}`;
+  // A hint may hold several lines (`update_conflicts` is one per conflict): each gets its own.
+  const hintPart = (res.hint ?? "")
+    .split("\n")
+    .filter((line) => line !== "")
+    .map((line) => `\n  hint: ${line}`)
+    .join("");
   opts.writeStderr(`update failed: ${res.reason ?? "unknown"}${hintPart}\n`);
   return 1;
 }
