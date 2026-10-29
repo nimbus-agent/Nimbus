@@ -484,6 +484,7 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
           dependsOn: {
             "com.example.dep-old": "^1.0.0",
             "com.example.dep-url": { range: "^2.0.0", registry: "https://elsewhere.test/" },
+            "com.example.dep-other": { range: "^1.0.0", registry: "https://other.test/" },
           },
         }),
         "utf8",
@@ -520,6 +521,17 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
         addedAt: 1,
         lastIndexSha256: null,
       });
+      const otherKey = encodeBase64(generateEd25519Keypair().pubkey);
+      insertRegistry(db, {
+        name: "other",
+        url: "https://other.test/",
+        rootKey: otherKey,
+        rootFingerprint: publisherKeyFingerprint(otherKey),
+        lastSequence: 0,
+        lastGeneratedAt: "2026-10-01T00:00:00Z",
+        addedAt: 1,
+        lastIndexSha256: null,
+      });
       dbRun(
         db,
         "UPDATE extension SET source_registry = ?, source_root_fingerprint = ?, source_channel = ? WHERE id = ?",
@@ -545,6 +557,8 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
       expect(listExtensions(db).find((r) => r.id === id)?.version).toBe("1.0.0");
       expect([...forwardDeps(db, id)].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
         { id: "com.example.dep-old", range: "^1.0.0", registry: "main" },
+        // A URL naming an added registry is recorded by that registry's name; one never added, null.
+        { id: "com.example.dep-other", range: "^1.0.0", registry: "other" },
         { id: "com.example.dep-url", range: "^2.0.0", registry: null },
       ]);
     } finally {

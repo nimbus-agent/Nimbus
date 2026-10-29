@@ -219,7 +219,8 @@ export function createPerformDowngrade(deps: PerformDowngradeDeps) {
       fromVersion: update.fromVersion,
       toVersion: update.toVersion,
     });
-    // The row and the restored edges in one transaction (`dbUpdateExtensionRow`).
+    // The row and the restored edges in one transaction (`dbUpdateExtensionRow`). Without
+    // `restoredEdges` the call keeps its five arguments, as the upgrade path does with no edges.
     await (edges === undefined
       ? deps.dbUpdateExtensionRow(
           update.id,

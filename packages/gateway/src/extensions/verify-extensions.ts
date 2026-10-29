@@ -39,6 +39,7 @@ import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKeyFor } from "./publisher-keys.ts";
 import { currentSourceRegistry } from "./registry/builtin-registry.ts";
+import { resolveDependencyRegistry } from "./registry/dependency-registry.ts";
 import { getExtensionSource } from "./registry/registry-store.ts";
 import {
   errorToHardDisableReason,
@@ -56,10 +57,10 @@ export interface ExtensionMeshHandle {
 }
 
 /**
- * A promoted version's edges, built as a downgrade builds them (`declaredDependencyEdges`). An
- * undeclared registry is the extension's recorded source registry while it still exists under that
- * root key; a registry the declaration names is recorded as null, since the boot pass has no
- * registry deps to resolve it with.
+ * A promoted version's edges, named as a downgrade names them: each declaration resolved from the
+ * extension's recorded source registry (while it still exists under that root key) against the
+ * database and the built-in registry, with the air gap off, since naming contacts nothing. Null when
+ * it no longer resolves; recovery never throws over a name.
  */
 function promotedDependencyEdges(
   db: Database,
@@ -67,18 +68,26 @@ function promotedDependencyEdges(
   dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
 ): ResolvedDep[] {
   const source = getExtensionSource(db, id);
-  const sourceName =
+  const parent =
     source === undefined
-      ? null
-      : (currentSourceRegistry(
+      ? undefined
+      : currentSourceRegistry(
           { db },
           { sourceRegistry: source.registry, rootFingerprint: source.rootFingerprint },
-        )?.name ?? null);
+        );
+  const naming = { db, enforceAirGap: () => false };
   const installed = new Map(listExtensions(db).map((r) => [r.id, r.version] as const));
   return declaredDependencyEdges(
     dependsOn,
     (depId) => installed.get(depId),
-    (_depId, spec) => (spec.registry === undefined ? sourceName : null),
+    (depId, spec) => {
+      if (parent === undefined) return null;
+      try {
+        return resolveDependencyRegistry(naming, parent, depId, spec).name;
+      } catch {
+        return null;
+      }
+    },
   );
 }
 

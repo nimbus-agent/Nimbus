@@ -421,7 +421,8 @@ function assertPlanMatchesManifest(
  * The restored version's edges (amendment 10): each declared dependency's range, the version of it
  * installed now (`""` when absent), and the registry its declaration resolves to from the
  * extension's source registry — null when that registry, or the one the declaration names, no
- * longer resolves. A downgrade never fails over a registry name.
+ * longer resolves (is not added, or its root key changed). Resolved with the air gap off: recording a
+ * name contacts nothing. A downgrade never fails over a registry name.
  */
 function restoredDependencyEdges(
   fetchDeps: RegistryFetchDeps,
@@ -429,6 +430,8 @@ function restoredDependencyEdges(
   dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
 ): ResolvedDep[] {
   const parent = currentSourceRegistry(fetchDeps, update);
+  // Naming an edge contacts nothing, so the air gap (which stops a fetch) does not apply here.
+  const naming = { ...fetchDeps, enforceAirGap: () => false };
   const installed = new Map(listExtensions(fetchDeps.db).map((r) => [r.id, r.version] as const));
   return declaredDependencyEdges(
     dependsOn,
@@ -436,7 +439,7 @@ function restoredDependencyEdges(
     (depId, spec) => {
       if (parent === undefined) return null;
       try {
-        return resolveDependencyRegistry(fetchDeps, parent, depId, spec).name;
+        return resolveDependencyRegistry(naming, parent, depId, spec).name;
       } catch {
         return null;
       }

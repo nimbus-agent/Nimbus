@@ -185,6 +185,16 @@ describe("orphanedAfterEdgeChange", () => {
     expect(orphanedAfterEdgeChange(db, "root2", ["loop"])).toEqual(["loop"]);
   });
 
+  test("a dropped dependency-installed starter pack is listed before its members", () => {
+    const db = freshDb();
+    add(db, "root");
+    add(db, "pack", { asDependency: true, kind: "starter-pack" });
+    add(db, "m.a", { asDependency: true });
+    deps(db, "pack", ["m.a"]);
+    deps(db, "root", []);
+    expect(orphanedAfterEdgeChange(db, "root", ["pack"])).toEqual(["pack", "m.a"]);
+  });
+
   test("two dropped packages, one depending on the other, come out dependents first", () => {
     const db = freshDb();
     add(db, "root");

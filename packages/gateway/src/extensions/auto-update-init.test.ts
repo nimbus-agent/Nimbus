@@ -805,7 +805,10 @@ describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
    * `ROOT` at 1.1.0 (which added `dep.new`, from registry main) with `prev/1.0.0` on disk, whose
    * manifest declares `restored`. The source registry `main` is added.
    */
-  function setup(restored: Record<string, unknown>) {
+  function setup(
+    restored: Record<string, unknown>,
+    fetch: Partial<Omit<RegistryFetchDeps, "db">> = {},
+  ) {
     tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-downgrade-"));
     const extensionsDir = join(tmpRoot, "extensions");
     const db = freshDb();
@@ -861,7 +864,10 @@ describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
       verificationStatus: "verified",
       detectedAt: 1,
     };
-    const { deps } = createAutoUpdateRuntime(baseOpts(db, extensionsDir, join(tmpRoot, "data")));
+    const { deps } = createAutoUpdateRuntime({
+      ...baseOpts(db, extensionsDir, join(tmpRoot, "data")),
+      fetch: { ...NO_NETWORK, ...fetch },
+    });
     return { db, deps, update };
   }
 
@@ -911,6 +917,18 @@ describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
 
     expect(forwardDeps(db, ROOT)).toEqual([]);
     expect(outcome.orphanedDependencies).toEqual(["dep.new"]);
+  });
+
+  it("under the air gap, an official-registry dependency is still recorded by its name", async () => {
+    const official = encodeBase64(nacl.sign.keyPair().publicKey);
+    const { db, deps, update } = setup(
+      { "dep.off": { range: "^1.0.0", registry: "nimbus-official" } },
+      { enforceAirGap: () => true, builtin: { url: "https://official.test/", rootKey: official } },
+    );
+    await deps.performDowngrade(update);
+    expect(forwardDeps(db, ROOT)).toEqual([
+      { id: "dep.off", range: "^1.0.0", registry: "nimbus-official" },
+    ]);
   });
 
   it("the restored edges commit with the row: a failed row write leaves the old edges", async () => {
