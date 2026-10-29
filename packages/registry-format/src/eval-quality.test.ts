@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
 import { parseEvalQuality, readVersionQuality } from "./eval-quality.ts";
+import type { EvalQuality } from "./eval-score.ts";
 import type { RegistryVersionEntry } from "./index-format.ts";
 
-const valid = () => ({
+const valid = (): EvalQuality => ({
   scorer: 1,
   score: 66,
   cases: 3,
@@ -27,11 +28,11 @@ function refused(raw: unknown): string {
 }
 
 const mut = (f: (q: Record<string, unknown>) => void): unknown => {
-  const q = valid() as Record<string, unknown>;
+  const q = valid() as unknown as Record<string, unknown>;
   f(q);
   return q;
 };
-const rub = (q: Record<string, unknown>) => q["rubrics"] as Record<string, Record<string, unknown>>;
+const rub = (q: Record<string, unknown>) => q["rubrics"] as Record<string, unknown>;
 
 describe("parseEvalQuality", () => {
   test("a valid quality round-trips", () => {
