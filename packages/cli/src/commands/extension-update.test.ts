@@ -396,6 +396,38 @@ describe("extension update — conflicts", () => {
     );
   });
 
+  test("a failed update shows the rollback detail when the gateway sends one", async () => {
+    const r = await applyWith({
+      applied: false,
+      reason: "swap_failed",
+      detail: "rollback incomplete: /x/acme.dep",
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toBe(
+      "update failed: swap_failed\n  detail: rollback incomplete: /x/acme.dep\n",
+    );
+  });
+
+  test("a failed downgrade shows the rollback detail when the gateway sends one", async () => {
+    const captured = captureStreams();
+    const code = await runExtensionDowngradeWithCaller({
+      args: ["com.x.a", "--to", "1.0.0"],
+      caller: async () =>
+        ({
+          applied: false,
+          reason: "swap_failed",
+          detail: "rollback incomplete: com.x.a",
+        }) satisfies UpdateApplyResultCli,
+      fetchInfo: async () => ({}),
+      writeStdout: (s) => captured.stdout.push(s),
+      writeStderr: (s) => captured.stderr.push(s),
+    });
+    expect(code).toBe(1);
+    expect(captured.stderr.join("")).toBe(
+      "downgrade failed: swap_failed\n  detail: rollback incomplete: com.x.a\n",
+    );
+  });
+
   test("a one-line hint prints as before", async () => {
     const r = await applyWith({ applied: false, reason: "cache_miss", hint: "re-run it" });
     expect(r.stderr).toBe("update failed: cache_miss\n  hint: re-run it\n");

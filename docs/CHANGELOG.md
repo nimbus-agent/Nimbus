@@ -21,7 +21,8 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 - **2026-10-29 — Extension dependency follow-ups (no migration, no new invariant).** Under air gap an already-installed
   dependency from the registry its declaration names is reused with zero requests, while a fetch is refused with
   `ERR_REGISTRY_AIR_GAP`, not "offline". Install refusals now say what happened: a leftover directory, a local reinstall of an
-  installed id (before any approval), and `(rollback incomplete: …)` with each failed rollback step logged. `extension.list`
+  installed id (before any approval), and `(rollback incomplete: …)` with each failed rollback step logged (a failed update or downgrade shows it as
+  `detail`). `extension.list`
   items carry `orphaned: true` for a dependency nothing needs; `nimbus doctor` warns and names `nimbus extension remove <id>`;
   the desktop names packages left after a remove. Connector fix commands for the thirteen token connectors whose `connector auth` needs more
   than `--token` (jira, confluence, bitbucket, sentry, jenkins, grafana, discord, datadog, kubernetes, aws, azure, gcp, iac)

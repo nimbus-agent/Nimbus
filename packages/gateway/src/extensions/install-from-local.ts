@@ -35,6 +35,7 @@ import {
 } from "../automation/extension-store.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
+import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "../util/invisible-text.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import {
@@ -649,19 +650,29 @@ export function rollbackFailuresOf(e: unknown): readonly RollbackFailure[] {
   return Array.isArray(failures) ? (failures as RollbackFailure[]) : [];
 }
 
+/** C0 controls plus every invisible or bidi format character (`FORMAT_INVISIBLE_RANGES`, which covers DEL and C1). */
+const NOTE_UNSAFE_RE = rangesRegExp([[0x0000, 0x001f], ...FORMAT_INVISIBLE_RANGES]);
+
 /**
  * The rollback-incomplete note an install refusal carries to the owner: ` (rollback incomplete:
  * <path or id>, …)` naming what is left behind — the directory a failed `removeDirectory` left, else
- * the id whose row or edges remain — each once, control characters stripped (a path is
- * owner-visible text); `""` when the error carries no rollback failure.
+ * the id whose row or edges remain — each once, control and invisible format characters stripped
+ * (a path is owner-visible text, so a bidi override must not reorder it); `""` when the error
+ * carries no rollback failure.
  */
 export function rollbackIncompleteNote(e: unknown): string {
+  const detail = rollbackIncompleteDetail(e);
+  return detail === "" ? "" : ` (${detail})`;
+}
+
+/** The note without its leading space and parentheses, `rollback incomplete: <path or id>, …`; `""` when complete. */
+export function rollbackIncompleteDetail(e: unknown): string {
   const failures = rollbackFailuresOf(e);
   if (failures.length === 0) return "";
   const left = failures.map((f) =>
-    (f.step === "removeDirectory" ? f.dir : (f.id ?? f.dir)).replace(/\p{Cc}/gu, ""),
+    (f.step === "removeDirectory" ? f.dir : (f.id ?? f.dir)).replace(NOTE_UNSAFE_RE, ""),
   );
-  return ` (rollback incomplete: ${[...new Set(left)].join(", ")})`;
+  return `rollback incomplete: ${[...new Set(left)].join(", ")}`;
 }
 
 /**

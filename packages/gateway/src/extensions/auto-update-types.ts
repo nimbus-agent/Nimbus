@@ -177,6 +177,11 @@ export interface UpdateApplyResult {
   applied: boolean;
   reason?: UpdateRejectReason;
   hint?: string;
+  /**
+   * A failed update or downgrade whose rollback itself failed: `rollback incomplete: <path or id>, …`,
+   * naming what was left behind, control and invisible characters stripped (set only then).
+   */
+  detail?: string;
   jobId?: string;
   /** An applied update: the packages its approved plan added (set only when there are any). */
   addedPackages?: ReadonlyArray<{

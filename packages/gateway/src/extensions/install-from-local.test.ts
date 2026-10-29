@@ -2188,6 +2188,18 @@ describe("an incomplete rollback is named, never swallowed", () => {
     expect(rollbackIncompleteNote(e)).toBe(" (rollback incomplete: com.a, /x/b[31mad)");
   });
 
+  test("bidi overrides, zero-width spaces and line separators are stripped too", () => {
+    const e = refusedWith([
+      {
+        step: "removeDirectory",
+        id: null,
+        dir: `/x/${String.fromCodePoint(0x202e)}evil${String.fromCodePoint(0x200b)}${String.fromCodePoint(0x2028)}dir`,
+        error: new Error("EBUSY"),
+      },
+    ]);
+    expect(rollbackIncompleteNote(e)).toBe(" (rollback incomplete: /x/evildir)");
+  });
+
   test("the reporter warns with every failed step and returns the note", () => {
     const warned: unknown[][] = [];
     const logger = { warn: (...args: unknown[]) => void warned.push(args) };
