@@ -14,7 +14,7 @@
 //
 // Embeddings are skipped (startRealGateway sets NIMBUS_SKIP_EMBEDDING_RUNTIME=1).
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -72,11 +72,37 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
   const prompts: Array<{ prompt: string }> = [];
   let approve = true;
 
-  /** The `eval-*` stage directories currently under the gateway's sandbox dir. */
-  function evalStages(): string[] {
-    const root = join(gw?.sandboxDir ?? "", EXTENSION_STAGE_DIR_NAME);
-    if (!existsSync(root)) return [];
-    return readdirSync(root).filter((n) => n.startsWith("eval-"));
+  /** The root the gateway stages evals under: `<its own sandboxDir>/ext-stage`. */
+  function stageRoot(): string {
+    if (gw === undefined) throw new Error("gateway not started");
+    return join(gw.sandboxDir, EXTENSION_STAGE_DIR_NAME);
+  }
+
+  /** Every entry currently under the stage root, sorted. */
+  function stageEntries(): string[] {
+    const root = stageRoot();
+    return existsSync(root) ? readdirSync(root).sort() : [];
+  }
+
+  /**
+   * Polls the stage root while a call is in flight and records every `eval-*` entry it sees, so a
+   * stage made and removed again during the call is still caught. The approved test proves this
+   * watcher sees the gateway's real stages; the denial test relies on that.
+   */
+  function watchEvalStages(): { stop: () => string[] } {
+    const seen = new Set<string>();
+    const look = (): void => {
+      for (const n of stageEntries()) if (n.startsWith("eval-")) seen.add(n);
+    };
+    look();
+    const timer = setInterval(look, 5);
+    return {
+      stop: () => {
+        clearInterval(timer);
+        look();
+        return [...seen];
+      },
+    };
   }
 
   function outputTail(): string {
@@ -125,9 +151,19 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
     "an approved extension.eval scores the installed package: 7 cases, 5 passed, 71",
     async () => {
       const before = prompts.length;
-      const out = await client.call<{ results: EvalResult[] }>("extension.eval", {
-        ids: [EVAL_FIXTURE_ID],
-      });
+      const watch = watchEvalStages();
+      let staged: string[];
+      let out: { results: EvalResult[] };
+      try {
+        out = await client.call<{ results: EvalResult[] }>("extension.eval", {
+          ids: [EVAL_FIXTURE_ID],
+        });
+      } finally {
+        staged = watch.stop();
+      }
+      // Positive control for the denial test below: the gateway really stages under the root this
+      // file watches, and the watcher sees those stages while the call is in flight.
+      expect(staged.length).toBeGreaterThan(0);
       // Exactly ONE approval for the call, and it named the extension.
       const raised = prompts.slice(before);
       expect(raised).toHaveLength(1);
@@ -159,14 +195,13 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
   }, 60_000);
 
   test("a denied extension.eval is ERR_EXTENSION_EVAL_NOT_APPROVED and makes no stage", async () => {
-    // The approved run above staged under this root, so it exists; a stage made and removed again
-    // would still change its mtime, which a listing alone could not see.
-    const root = join(gw?.sandboxDir ?? "", EXTENSION_STAGE_DIR_NAME);
-    expect(existsSync(root)).toBe(true);
-    const stagesBefore = evalStages();
-    const mtimeBefore = statSync(root).mtimeMs;
+    // The same root the approved test above saw the gateway stage under (its positive control).
+    mkdirSync(stageRoot(), { recursive: true });
+    const entriesBefore = stageEntries();
     const before = prompts.length;
     approve = false;
+    const watch = watchEvalStages();
+    let staged: string[];
     try {
       const reply = await client.raw("extension.eval", { ids: [EVAL_FIXTURE_ID] });
       expect(reply.result).toBeUndefined();
@@ -174,15 +209,11 @@ describe.skipIf(!sandboxAvailable)("extension.eval over a real gateway", () => {
       expect(reply.error?.message).toContain("ERR_EXTENSION_EVAL_NOT_APPROVED");
     } finally {
       approve = true;
+      staged = watch.stop();
     }
     expect(prompts.length).toBe(before + 1);
-    // Nothing ran: no stage appeared, and none was made and removed.
-    expect(evalStages().filter((n) => !stagesBefore.includes(n))).toEqual([]);
-    expect(statSync(root).mtimeMs).toBe(mtimeBefore);
-    // Positive control: making an entry there DOES move the mtime on this filesystem.
-    const probe = join(root, `probe-${process.pid}`);
-    mkdirSync(probe);
-    rmSync(probe, { recursive: true, force: true });
-    expect(statSync(root).mtimeMs).not.toBe(mtimeBefore);
+    // Nothing ran: no eval stage was seen during the call, and the root's entries are unchanged.
+    expect(staged.filter((n) => !entriesBefore.includes(n))).toEqual([]);
+    expect(stageEntries()).toEqual(entriesBefore);
   }, 60_000);
 });
