@@ -29,7 +29,8 @@ import {
 import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
-import { builtinRegistryOf, resolveRegistry } from "./registry/builtin-registry.ts";
+import { currentSourceRegistry, sourceRegistryOf } from "./registry/builtin-registry.ts";
+import { planUpdate } from "./registry/install-from-registry.ts";
 import {
   FETCH_FAILURE_CODES,
   fetchRegistryBytes,
@@ -41,7 +42,6 @@ import {
   verifyRegistryManifestSignature,
   verifySignedManifest,
 } from "./registry/registry-manifest.ts";
-import type { RegistryRow } from "./registry/registry-store.ts";
 import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 import { publisherKeyConflict, publisherKeyDecision } from "./trust/publisher-key-decision.ts";
@@ -155,6 +155,9 @@ function listInstalledRows(db: Database): InstalledExtensionRow[] {
           ...(manifest.dependsOn !== undefined && {
             dependsOn: rangesOf(manifest.dependsOn),
           }),
+          ...(manifest.requires !== undefined && {
+            requires: { connectors: [...manifest.requires.connectors] },
+          }),
         },
       });
     } catch {
@@ -169,29 +172,6 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest))
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-/**
- * The update's source registry, if it still exists under the root key the update was detected with.
- * The reserved name resolves to the built-in registry configured on `fetchDeps`.
- */
-function currentSourceRegistry(
-  fetchDeps: RegistryFetchDeps,
-  update: AvailableUpdate,
-): RegistryRow | undefined {
-  const reg = resolveRegistry(fetchDeps.db, update.sourceRegistry, builtinRegistryOf(fetchDeps));
-  return reg?.rootFingerprint === update.rootFingerprint ? reg : undefined;
-}
-
-/** As above, or throws `source_registry_changed: …` (its own audit phase, not a signature failure). */
-function sourceRegistryOf(fetchDeps: RegistryFetchDeps, update: AvailableUpdate): RegistryRow {
-  const reg = currentSourceRegistry(fetchDeps, update);
-  if (reg === undefined) {
-    throw new Error(
-      `source_registry_changed: registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
-    );
-  }
-  return reg;
 }
 
 /** The key an update's manifest verified with at apply time, recorded once the swap succeeds. */
@@ -371,6 +351,20 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         },
         rows,
         signal,
+      ),
+    // Detection solves each update's dependencies through its registries (I44); nothing is
+    // installed or asked here, so the approver is never consulted.
+    planUpdate: (update, newManifest) =>
+      planUpdate(
+        {
+          db: opts.db,
+          extensionsDir: opts.extensionsDir,
+          vault: opts.vault,
+          fetch: opts.fetch,
+          approve: () => Promise.resolve(false),
+        },
+        update,
+        newManifest,
       ),
     appendAudit: wrapAudit,
     intervalHours: opts.intervalHours,

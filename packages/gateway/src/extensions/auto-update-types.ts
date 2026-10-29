@@ -1,4 +1,5 @@
-import type { DependencyConflict } from "./dependency-types.ts";
+import type { DependencyConflict, InstallPlan } from "./dependency-types.ts";
+import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -15,6 +16,47 @@ export interface InstalledExtensionManifestSlice {
     filesystem: { read: string[]; write: string[] };
   };
   dependsOn?: Readonly<Record<string, string>>;
+  /** The connectors the installed manifest requires (absent when it declares none). */
+  requires?: { readonly connectors: readonly string[] };
+}
+
+/**
+ * A package an update installs alongside the new version: a dependency the new version declares
+ * that is not installed. Field names follow `PlannedPackage` (and stay clear of the audit redactor).
+ */
+export interface AddedPackage {
+  readonly id: string;
+  readonly version: string;
+  /** The registry NAME it is fetched from (I44: the update's source, or a registry the owner added). */
+  readonly registry: string;
+  readonly registryUrl: string | null;
+}
+
+/**
+ * Why an update does not fit, one line each (`reason`). A solver conflict keeps its structured
+ * fields; a registry refusal (a dependency naming a registry the owner has not added, a key
+ * mismatch, a takedown, …) carries its code; `offline` means a registry could not be reached, so
+ * the update is neither planned nor refused yet.
+ */
+export type UpdateConflict =
+  | (DependencyConflict & { readonly reason: string })
+  | { readonly kind: "registry"; readonly code: string; readonly reason: string }
+  | {
+      readonly kind: "offline";
+      readonly id: string;
+      readonly parent: string;
+      readonly reason: string;
+    };
+
+/**
+ * An update solved through the registry-scoped resolver (`planUpdate`): the resolver holds the
+ * verified manifests the solve used (what the apply stages), the plan has the root at the new
+ * version, and `addedPackages` are its newly installed dependencies.
+ */
+export interface UpdatePlan {
+  readonly resolver: RegistryDependencyResolver;
+  readonly plan: InstallPlan;
+  readonly addedPackages: readonly AddedPackage[];
 }
 
 /**
@@ -62,7 +104,11 @@ export interface AvailableUpdate {
   /** Set by `extension.update --accept-publisher-key`: the owner accepted this exact key. */
   acceptedPublisherKey?: string;
   detectedAt: number;
-  conflicts?: readonly DependencyConflict[];
+  conflicts?: readonly UpdateConflict[];
+  /** Set when the update was planned: the dependencies it would install (possibly none). */
+  addedPackages?: readonly AddedPackage[];
+  /** The connectors the new version requires that the installed one does not. */
+  addedRequirements?: readonly string[];
   /** Set when the new version's verified manifest is a starter pack: it has no code to run. */
   toStarterPack?: true;
 }

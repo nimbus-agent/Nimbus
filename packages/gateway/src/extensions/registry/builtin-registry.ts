@@ -107,6 +107,33 @@ export function resolveRegistry(
 }
 
 /**
+ * An update's source registry, if it still exists under the root key the update was detected with
+ * (I44: updates come only from there). The reserved name resolves to the built-in registry the
+ * deps carry.
+ */
+export function currentSourceRegistry(
+  fetchDeps: { readonly db: Database; readonly builtin?: BuiltinRegistryConfig | null | undefined },
+  update: { readonly sourceRegistry: string; readonly rootFingerprint: string },
+): RegistryRow | undefined {
+  const reg = resolveRegistry(fetchDeps.db, update.sourceRegistry, builtinRegistryOf(fetchDeps));
+  return reg?.rootFingerprint === update.rootFingerprint ? reg : undefined;
+}
+
+/** As above, or throws `source_registry_changed: …` (its own audit phase, not a signature failure). */
+export function sourceRegistryOf(
+  fetchDeps: { readonly db: Database; readonly builtin?: BuiltinRegistryConfig | null | undefined },
+  update: { readonly sourceRegistry: string; readonly rootFingerprint: string },
+): RegistryRow {
+  const reg = currentSourceRegistry(fetchDeps, update);
+  if (reg === undefined) {
+    throw new Error(
+      `source_registry_changed: registry "${update.sourceRegistry}" was removed or re-pinned since the update was detected`,
+    );
+  }
+  return reg;
+}
+
+/**
  * The registries a bare `extension install <id>` searches: the owner's, plus the built-in one —
  * unless none is configured, or an owner registry already carries its root fingerprint (the same
  * trust root listed twice would trip I44's two-registries refusal for every official extension).

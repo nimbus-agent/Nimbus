@@ -21,10 +21,13 @@ import {
 } from "@nimbus-dev/registry-format";
 import { type ExtensionRow, listExtensions } from "../../automation/extension-store.ts";
 import type { NimbusVault } from "../../vault/index.ts";
+import type { AddedPackage, AvailableUpdate, UpdatePlan } from "../auto-update-types.ts";
 import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
-import { registryNameOf } from "../dependency-types.ts";
+import { assertRootConstraintsSatisfied, resolveClosure } from "../dependency-graph.ts";
+import { type ExtensionManifestForSolver, registryNameOf } from "../dependency-types.ts";
 import {
+  buildSolverInputs,
   type ExtensionInstallApprovalRequest,
   type ExtensionInstallApprover,
   ExtensionInstallNotApprovedError,
@@ -57,6 +60,7 @@ import {
   TrustBlockError,
 } from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
+import { sourceRegistryOf } from "./builtin-registry.ts";
 import { createRegistryDependencyResolver } from "./registry-dependency-fetcher.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
 import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
@@ -451,4 +455,62 @@ export async function installFromRegistry(
       /* best-effort: the extension is already committed (or the install refused) */
     }
   }
+}
+
+/**
+ * Solves an update's dependency closure through the same registry-scoped resolver a registry install
+ * uses (I44): the update's own recorded source registry, still pinned to the root key it was
+ * detected under, and each dependency from the registry its declaration resolves to among those the
+ * owner added — through the verified chain (pinned root key, index hashes, I16 signature, Vault
+ * publisher keys, I48 blocks). Nothing is installed or staged: the returned resolver holds the
+ * verified manifests, and the apply stages exactly the plan's added packages from it.
+ *
+ * The installed OLD version stays in the solver's `installed` map, so the root node is newly
+ * installed at `toVersion`, while its own old edges are dropped from the active constraints so they
+ * do not constrain the new version. Installed dependents' ranges on the root are checked first
+ * (`resolveClosure` does not check constraints on the root itself).
+ *
+ * Throws `DependencyConflictError` (a range nothing satisfies, a cycle), `RegistryError` (a
+ * dependency naming a registry the owner has not added, a source mismatch, a refused manifest),
+ * `OfflineDependencyResolutionError` (a registry could not be reached), or
+ * `source_registry_changed: …` when the source registry was removed or re-pinned.
+ */
+export async function planUpdate(
+  deps: InstallFromRegistryDeps,
+  update: Pick<
+    AvailableUpdate,
+    "id" | "toVersion" | "channel" | "sourceRegistry" | "rootFingerprint"
+  >,
+  newManifest: ExtensionManifestForSolver,
+): Promise<UpdatePlan> {
+  if (newManifest.id !== update.id || newManifest.version !== update.toVersion) {
+    throw new Error(
+      `the manifest to plan is ${newManifest.id}@${newManifest.version}, not the update's ${update.id}@${update.toVersion}`,
+    );
+  }
+  const reg = sourceRegistryOf({ ...deps.fetch, db: deps.db }, update);
+  const { installed, activeConstraints } = buildSolverInputs(deps.db);
+  const constraints = new Map(activeConstraints);
+  constraints.delete(update.id);
+  assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
+  // The channel the install TRACKS (spec § 8.1), as a registry install chooses its dependencies on.
+  const channel = getExtensionSource(deps.db, update.id)?.channel ?? update.channel;
+  const resolver = createRegistryDependencyResolver(deps, { reg, channel });
+  const plan = await resolveClosure(newManifest, resolver.rootSource, resolver.fetcher, {
+    installed,
+    activeConstraints: constraints,
+  });
+  const addedPackages: AddedPackage[] = plan.nodes.flatMap((n) =>
+    n.newlyInstalled && n.id !== update.id && n.source !== null
+      ? [
+          {
+            id: n.id,
+            version: n.version,
+            registry: registryNameOf(n.source),
+            registryUrl: resolver.registryUrl(n.source),
+          },
+        ]
+      : [],
+  );
+  return { resolver, plan, addedPackages };
 }

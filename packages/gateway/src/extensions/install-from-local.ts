@@ -483,7 +483,11 @@ function promotableLocalDependency(
     : undefined;
 }
 
-function buildSolverInputs(db: Database): {
+/**
+ * The solver's view of what is installed: each row's version and recorded source, and each
+ * readable installed manifest's ranges as an active constraint.
+ */
+export function buildSolverInputs(db: Database): {
   installed: ReadonlyMap<string, InstalledForSolver>;
   activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>;
 } {

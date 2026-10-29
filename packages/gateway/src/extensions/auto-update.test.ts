@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { describe, expect, it } from "bun:test";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type DependencySpec, RegistryError } from "@nimbus-dev/registry-format";
 
 import {
   ExtensionAutoUpdater,
@@ -9,16 +9,14 @@ import {
   type InstalledExtensionRow,
 } from "./auto-update.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import { DependencyConflictError, OfflineDependencyResolutionError } from "./dependency-errors.ts";
+import type { ExtensionManifestForSolver } from "./dependency-types.ts";
+import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 import type {
   CollectedRegistryUpdates,
   InstalledRegistryRow,
 } from "./registry/registry-update-source.ts";
-
-const dirs: string[] = [];
-afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
-});
 
 const NO_PERMISSIONS = { network: [], filesystem: { read: [], write: [] } };
 const SOURCE = { registry: "main", rootFingerprint: "f".repeat(32), channel: "stable" as const };
@@ -75,9 +73,33 @@ function update(id: string, toVersion = "1.2.0"): AvailableUpdate {
 
 function collected(
   updates: AvailableUpdate[],
-  dependsOn: Record<string, Record<string, string>> = {},
+  dependsOn: Record<string, Record<string, DependencySpec>> = {},
 ): CollectedRegistryUpdates {
-  return { updates, errors: [], dependsOn: new Map(Object.entries(dependsOn)) };
+  return {
+    updates,
+    errors: [],
+    dependsOn: new Map(Object.entries(dependsOn)),
+    requires: new Map(),
+  };
+}
+
+/** A resolver that was never asked anything: the daemon tests fake the whole plan. */
+const IDLE_RESOLVER: RegistryDependencyResolver = {
+  fetcher: {
+    targetSource: () => null,
+    listVersions: async () => [],
+    fetchManifest: async (id) => {
+      throw new Error(`${id} is not fetched in this test`);
+    },
+  },
+  rootSource: "main#test",
+  verified: () => undefined,
+  registryUrl: () => null,
+  stage: async () => [],
+};
+
+function planned(addedPackages: AddedPackage[]): UpdatePlan {
+  return { resolver: IDLE_RESOLVER, plan: { nodes: [] }, addedPackages };
 }
 
 function daemon(over: Partial<ExtensionAutoUpdaterOpts>): {
@@ -99,6 +121,7 @@ function daemon(over: Partial<ExtensionAutoUpdaterOpts>): {
     appendAudit: async (type, payload) => {
       audits.push({ type, payload });
     },
+    planUpdate: async () => planned([]),
     intervalHours: 6,
     now: () => 1,
     random: () => 0,
@@ -205,6 +228,7 @@ describe("ExtensionAutoUpdater: an offer lasts only while its source registry of
         updates: [],
         errors: [{ registry: "main", error: "ERR_REGISTRY_UNREACHABLE" }],
         dependsOn: new Map(),
+        requires: new Map(),
       },
     ]);
     await t.daemon.pollOnce();
@@ -219,6 +243,7 @@ describe("ExtensionAutoUpdater: an offer lasts only while its source registry of
         updates: [],
         errors: [{ registry: "other", error: "down" }],
         dependsOn: new Map(),
+        requires: new Map(),
       },
     ]);
     await t.daemon.pollOnce();
@@ -259,77 +284,139 @@ describe("ExtensionAutoUpdater: an offer lasts only while its source registry of
   });
 });
 
-describe("ExtensionAutoUpdater: dependency conflicts against what is installed", () => {
-  function manifestDir(id: string, version: string, dependsOn?: Record<string, string>): string {
-    const dir = mkdtempSync(join(tmpdir(), "nimbus-au-dep-"));
-    dirs.push(dir);
-    writeFileSync(
-      join(dir, "nimbus.extension.json"),
-      JSON.stringify({
-        id,
-        version,
-        entry: "dist/index.js",
-        permissions: {},
-        ...(dependsOn === undefined ? {} : { dependsOn }),
-      }),
-    );
-    return dir;
-  }
-
-  it("a new dependency that is not installed is a conflict (nothing is fetched)", async () => {
+describe("ExtensionAutoUpdater: detection plans the update's dependencies", () => {
+  /** A daemon whose `planUpdate` is `plan`, recording the manifests it was asked to plan. */
+  function planning(
+    plan: (update: AvailableUpdate, m: ExtensionManifestForSolver) => Promise<UpdatePlan>,
+    over: Partial<ExtensionAutoUpdaterOpts> = {},
+  ) {
+    const asked: ExtensionManifestForSolver[] = [];
     const t = daemon({
       listInstalled: async () => [installed("com.a")],
-      collect: async () => collected([update("com.a")], { "com.a": { "com.dep": "^1.0.0" } }),
+      collect: async () =>
+        collected([update("com.a")], {
+          "com.a": { "com.dep": { range: "^1.0.0", registry: "https://other.test/" } },
+        }),
+      planUpdate: (u, m) => {
+        asked.push(m);
+        return plan(u, m);
+      },
+      ...over,
     });
+    return { ...t, asked };
+  }
+
+  it("detection keeps the dependency's registry: the plan gets the full specs", async () => {
+    const t = planning(async () => planned([]));
     await t.daemon.pollOnce();
-    expect(t.cache.get("com.a")?.conflicts).toHaveLength(1);
-    expect(t.cache.get("com.a")?.conflicts?.[0]).toMatchObject({
-      kind: "unsatisfiable",
-      id: "com.dep",
-      availableVersions: [],
-    });
+    expect(t.asked).toEqual([
+      {
+        id: "com.a",
+        version: "1.2.0",
+        dependsOn: { "com.dep": { range: "^1.0.0", registry: "https://other.test/" } },
+      },
+    ]);
   });
 
-  it("a bump an installed dependent's range excludes is a conflict", async () => {
-    const t = daemon({
-      listInstalled: async () => [
-        installed("com.a"),
-        installed("com.user", { dependsOn: { "com.a": "~1.0.0" } }),
-      ],
-      collect: async () => collected([update("com.a")]),
-    });
-    await t.daemon.pollOnce();
-    expect(t.cache.get("com.a")?.conflicts?.[0]).toMatchObject({
-      kind: "unsatisfiable",
-      id: "com.a",
-      constraints: [{ from: "com.user", range: "~1.0.0" }],
-    });
-  });
-
-  it("an installed dependency that satisfies the new range leaves no conflict", async () => {
-    const depDir = manifestDir("com.dep", "1.4.0");
-    const t = daemon({
-      listInstalled: async () => [
-        installed("com.a"),
-        installed("com.dep", { version: "1.4.0", install_path: depDir }),
-      ],
-      collect: async () => collected([update("com.a")], { "com.a": { "com.dep": "^1.0.0" } }),
-    });
+  it("an update adding a fetchable dependency lists it as an added package, not a conflict", async () => {
+    const added = { id: "com.dep", version: "1.1.0", registry: "other", registryUrl: null };
+    const t = planning(async () => planned([added]));
     await t.daemon.pollOnce();
     expect(t.cache.get("com.a")?.conflicts).toBeUndefined();
+    expect(t.cache.get("com.a")?.addedPackages).toEqual([added]);
   });
 
-  it("an installed dependency's own on-disk dependsOn is followed to a transitive conflict", async () => {
-    const depDir = manifestDir("com.dep", "1.4.0", { "com.deeper": "^2.0.0" });
-    const t = daemon({
-      listInstalled: async () => [
-        installed("com.a"),
-        installed("com.dep", { version: "1.4.0", install_path: depDir }),
-      ],
-      collect: async () => collected([update("com.a")], { "com.a": { "com.dep": "^1.0.0" } }),
+  it("a dependency conflict is cached as a conflict with a one-line reason", async () => {
+    const t = planning(async () => {
+      throw new DependencyConflictError({
+        kind: "unsatisfiable",
+        id: "com.a",
+        constraints: [{ from: "com.user", range: "~1.0.0" }],
+        availableVersions: ["1.2.0"],
+      });
     });
     await t.daemon.pollOnce();
-    expect(t.cache.get("com.a")?.conflicts?.[0]).toMatchObject({ id: "com.deeper" });
+    const cached = t.cache.get("com.a");
+    expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts).toEqual([
+      {
+        kind: "unsatisfiable",
+        id: "com.a",
+        constraints: [{ from: "com.user", range: "~1.0.0" }],
+        availableVersions: ["1.2.0"],
+        reason: "com.a: no version satisfies ~1.0.0 (from com.user); available: 1.2.0",
+      },
+    ]);
+  });
+
+  it("a registry refusal is cached as a conflict with its code and reason", async () => {
+    const t = planning(async () => {
+      throw new RegistryError("ERR_DEPENDENCY_REGISTRY_NOT_ADDED", "com.dep comes from x;\nadd it");
+    });
+    await t.daemon.pollOnce();
+    expect(t.cache.get("com.a")?.conflicts).toEqual([
+      {
+        kind: "registry",
+        code: "ERR_DEPENDENCY_REGISTRY_NOT_ADDED",
+        reason: "ERR_DEPENDENCY_REGISTRY_NOT_ADDED: com.dep comes from x; add it",
+      },
+    ]);
+  });
+
+  it("an offline resolution is an offline conflict and caches no added packages", async () => {
+    const t = planning(async () => {
+      throw new OfflineDependencyResolutionError({ missingId: "com.dep", parent: "com.a" });
+    });
+    await t.daemon.pollOnce();
+    const cached = t.cache.get("com.a");
+    expect(cached?.addedPackages).toBeUndefined();
+    expect(cached?.conflicts).toEqual([
+      {
+        kind: "offline",
+        id: "com.dep",
+        parent: "com.a",
+        reason: "offline_dependency_resolution:com.dep (required by com.a)",
+      },
+    ]);
+  });
+
+  it("an unexpected planning failure leaves the update offered with no dependency info", async () => {
+    const t = planning(async () => {
+      throw new Error("installed manifest unreadable");
+    });
+    await t.daemon.pollOnce();
+    const cached = t.cache.get("com.a");
+    expect(cached?.toVersion).toBe("1.2.0");
+    expect(cached?.conflicts).toBeUndefined();
+    expect(cached?.addedPackages).toBeUndefined();
+  });
+
+  it("a new connector requirement is listed in addedRequirements", async () => {
+    const row = installed("com.a");
+    row.manifest.requires = { connectors: ["github"] };
+    const t = planning(async () => planned([]), {
+      listInstalled: async () => [row],
+      collect: async () => ({
+        ...collected([update("com.a")]),
+        requires: new Map([["com.a", ["github", "slack"]]]),
+      }),
+    });
+    await t.daemon.pollOnce();
+    expect(t.cache.get("com.a")?.addedRequirements).toEqual(["slack"]);
+  });
+
+  it("no new connector requirement leaves addedRequirements unset", async () => {
+    const row = installed("com.a");
+    row.manifest.requires = { connectors: ["github"] };
+    const t = planning(async () => planned([]), {
+      listInstalled: async () => [row],
+      collect: async () => ({
+        ...collected([update("com.a")]),
+        requires: new Map([["com.a", ["github"]]]),
+      }),
+    });
+    await t.daemon.pollOnce();
+    expect("addedRequirements" in (t.cache.get("com.a") ?? {})).toBe(false);
   });
 });
 

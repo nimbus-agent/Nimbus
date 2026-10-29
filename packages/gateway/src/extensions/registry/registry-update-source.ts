@@ -7,6 +7,7 @@
  */
 import type { Database } from "bun:sqlite";
 import {
+  type DependencySpec,
   isStarterPack,
   publisherKeyFingerprint,
   type RegistryChannel,
@@ -19,7 +20,6 @@ import type {
   InstalledExtensionManifestSlice,
   VerificationStatus,
 } from "../auto-update-types.ts";
-import { rangesOf } from "../manifest-support.ts";
 import { publisherKeyDecision } from "../trust/publisher-key-decision.ts";
 import { type BlockSubject, blocksFor } from "../trust/trust-blocks.ts";
 import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
@@ -49,9 +49,19 @@ export interface RegistryUpdateSourceDeps {
 export interface CollectedRegistryUpdates {
   updates: AvailableUpdate[];
   errors: Array<{ registry: string; error: string }>;
-  /** Each update's NEW `dependsOn` (absent when it declares none), for the daemon's conflict check. */
-  dependsOn: ReadonlyMap<string, Readonly<Record<string, string>>>;
+  /**
+   * Each update's NEW `dependsOn` (absent when it declares none), as full specs — a dependency's
+   * `registry` included — for the daemon's update plan.
+   */
+  dependsOn: ReadonlyMap<string, Readonly<Record<string, DependencySpec>>>;
+  /** Each update's NEW `requires.connectors` (absent when it declares none). */
+  requires: ReadonlyMap<string, readonly string[]>;
 }
+
+type CollectedOut = CollectedRegistryUpdates & {
+  dependsOn: Map<string, Readonly<Record<string, DependencySpec>>>;
+  requires: Map<string, readonly string[]>;
+};
 
 function message(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
@@ -92,7 +102,7 @@ async function detectOne(
   index: Awaited<ReturnType<typeof fetchVerifiedIndex>>,
   row: InstalledRegistryRow,
   signal: AbortSignal,
-  out: CollectedRegistryUpdates & { dependsOn: Map<string, Readonly<Record<string, string>>> },
+  out: CollectedOut,
 ): Promise<void> {
   const entry = index.extensions[row.id];
   if (entry === undefined) return;
@@ -184,7 +194,8 @@ async function detectOne(
     ...(isStarterPack(m) ? { toStarterPack: true as const } : {}),
     detectedAt: deps.now(),
   });
-  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, rangesOf(m.dependsOn));
+  if (m.dependsOn !== undefined) out.dependsOn.set(row.id, m.dependsOn);
+  if (m.requires !== undefined) out.requires.set(row.id, m.requires.connectors);
 }
 
 export async function collectRegistryUpdates(
@@ -192,10 +203,11 @@ export async function collectRegistryUpdates(
   rows: InstalledRegistryRow[],
   signal: AbortSignal,
 ): Promise<CollectedRegistryUpdates> {
-  const out = {
-    updates: [] as AvailableUpdate[],
-    errors: [] as Array<{ registry: string; error: string }>,
-    dependsOn: new Map<string, Readonly<Record<string, string>>>(),
+  const out: CollectedOut = {
+    updates: [],
+    errors: [],
+    dependsOn: new Map(),
+    requires: new Map(),
   };
   for (const [name, group] of groupByRegistry(rows)) {
     // The CURRENT registry table: a registry removed since install yields nothing, and one whose

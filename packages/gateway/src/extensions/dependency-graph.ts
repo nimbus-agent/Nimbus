@@ -81,6 +81,37 @@ export async function resolveClosure(
   return { nodes: topoSort(resolved) };
 }
 
+/**
+ * `resolveClosure` never checks what OTHER installed extensions require of the root itself, so an
+ * update first checks that every installed dependent's range still admits `toVersion`. The root's
+ * own entry in `activeConstraints` (its old edges) is ignored.
+ */
+export function assertRootConstraintsSatisfied(
+  rootId: string,
+  toVersion: string,
+  activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): void {
+  const constraintsOnRoot: Array<{ from: string; range: string }> = [];
+  for (const [dependent, depMap] of activeConstraints) {
+    if (dependent === rootId) continue;
+    const range = depMap.get(rootId);
+    if (range !== undefined) {
+      constraintsOnRoot.push({ from: dependent, range });
+    }
+  }
+  const unsatisfiedConstraints = constraintsOnRoot.filter(
+    (c) => !semver.satisfies(toVersion, c.range),
+  );
+  if (unsatisfiedConstraints.length > 0) {
+    throw new DependencyConflictError({
+      kind: "unsatisfiable",
+      id: rootId,
+      constraints: unsatisfiedConstraints,
+      availableVersions: [toVersion],
+    });
+  }
+}
+
 function describeSource(source: SourceKey | null): string {
   return source === null ? "a local folder" : registryNameOf(source);
 }
