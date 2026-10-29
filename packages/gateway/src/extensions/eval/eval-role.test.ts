@@ -2,9 +2,12 @@ import { describe, expect, test } from "bun:test";
 import type { EvalReport } from "@nimbus-dev/registry-format";
 
 import {
+  adaptEvalClient,
   defaultEvalRun,
   type EvalRoleDeps,
   type EvalRoleDocument,
+  evalServerDefs,
+  normaliseEvalReply,
   runEvalRole,
 } from "./eval-role.ts";
 import { EvalRunError } from "./eval-source.ts";
@@ -144,5 +147,64 @@ describe("defaultEvalRun", () => {
     await expect(
       defaultEvalRun({ packageDir: "also/relative", suiteFile: "x.eval.json" }),
     ).rejects.toBeInstanceOf(EvalRunError);
+  });
+});
+
+describe("error-reply adapter", () => {
+  const hidden = (content: unknown) => (o: unknown) =>
+    (o as { __c?: unknown }).__c === undefined ? undefined : content;
+
+  test("server definitions carry onToolError: return", () => {
+    const defs = evalServerDefs({ s: { command: "c", args: ["a"], env: {} } });
+    expect(Object.values(defs)[0]).toEqual({
+      command: "c",
+      args: ["a"],
+      env: {},
+      onToolError: "return",
+    });
+  });
+
+  test("a raw envelope with isError passes through unchanged", () => {
+    const raw = { content: [{ type: "text", text: "no" }], isError: true };
+    expect(normaliseEvalReply(raw, () => undefined)).toBe(raw);
+  });
+
+  test("structuredContent with hidden content normalises to {content}", () => {
+    const content = [{ type: "text", text: "hi" }];
+    expect(normaliseEvalReply({ __c: 1, x: 2 }, hidden(content))).toEqual({ content });
+  });
+
+  test("scalars and objects without hidden content pass through", () => {
+    expect(normaliseEvalReply(5, hidden([]))).toBe(5);
+    expect(normaliseEvalReply(null, hidden([]))).toBe(null);
+    const o = { y: 1 };
+    expect(normaliseEvalReply(o, () => undefined)).toBe(o);
+  });
+
+  test("adaptEvalClient normalises execute results and forwards disconnect", async () => {
+    let disconnected = 0;
+    const content = [{ type: "text", text: "hi" }];
+    const client = adaptEvalClient(
+      {
+        disconnect: async () => {
+          disconnected++;
+        },
+        listToolsWithErrors: async () => ({
+          tools: {
+            a: { execute: async () => ({ __c: 1 }) },
+            b: { description: "no execute" },
+          },
+          errors: { e: 1 },
+        }),
+      },
+      hidden(content),
+    );
+    const { tools, errors } = await client.listToolsWithErrors();
+    const [toolA, toolB] = Object.values(tools);
+    expect(errors).toEqual({ e: 1 });
+    expect(await toolA?.execute?.({})).toEqual({ content });
+    expect(toolB?.execute).toBeUndefined();
+    await client.disconnect();
+    expect(disconnected).toBe(1);
   });
 });

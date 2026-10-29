@@ -2,6 +2,7 @@ import { format } from "node:util";
 
 import type { EvalReport } from "@nimbus-dev/registry-format";
 
+import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import type { EvalMcpClient } from "./eval-runtime.ts";
 import { EvalRunError, loadEvalPackage, messageOf } from "./eval-source.ts";
 
@@ -69,15 +70,79 @@ export async function withConsoleOnStderr<T>(
   }
 }
 
+type ContentReader = (output: unknown) => unknown;
+type McpClientLike = {
+  listToolsWithErrors(): Promise<{
+    tools: Record<string, unknown>;
+    errors: Record<string, unknown>;
+  }>;
+  disconnect(): Promise<void>;
+};
+
+/**
+ * Every server is built with `onToolError: "return"`: the default ("throw") turns an `isError`
+ * reply into a thrown error, which the runtime would score as a crash and respawn over.
+ */
+export function evalServerDefs(
+  servers: Record<string, ServerSpec>,
+): Record<string, ServerSpec & { onToolError: "return" }> {
+  return Object.fromEntries(
+    Object.entries(servers).map(([k, v]) => [k, { ...v, onToolError: "return" as const }]),
+  );
+}
+
+function isEnvelope(v: unknown): boolean {
+  return typeof v === "object" && v !== null && Array.isArray((v as { content?: unknown }).content);
+}
+
+/**
+ * Normalise a tool result to an MCP envelope. A server that sent `structuredContent` gets its
+ * original `content` hidden on a non-enumerable property by `@mastra/mcp`; recover it. `isError`
+ * is lost on that path, so such a reply is judged a non-error -- a stated v1 limit.
+ */
+export function normaliseEvalReply(result: unknown, readContent: ContentReader): unknown {
+  if (isEnvelope(result)) return result;
+  if (typeof result === "object" && result !== null) {
+    const content = readContent(result);
+    if (Array.isArray(content)) return { content };
+  }
+  return result;
+}
+
+/** Wrap a client so each tool's `execute` resolves to a normalised envelope. */
+export function adaptEvalClient(client: McpClientLike, readContent: ContentReader): EvalMcpClient {
+  return {
+    disconnect: () => client.disconnect(),
+    listToolsWithErrors: async () => {
+      const listing = await client.listToolsWithErrors();
+      const tools: Awaited<ReturnType<EvalMcpClient["listToolsWithErrors"]>>["tools"] = {};
+      for (const [name, tool] of Object.entries(listing.tools)) {
+        const execute = (tool as { execute?: (i: unknown, c?: unknown) => Promise<unknown> })
+          .execute;
+        tools[name] =
+          execute === undefined
+            ? { ...(tool as object) }
+            : {
+                ...(tool as object),
+                execute: async (input, ctx) =>
+                  normaliseEvalReply(await execute.call(tool, input, ctx), readContent),
+              };
+      }
+      return { tools, errors: listing.errors };
+    },
+  };
+}
+
 /** The real run: exported so a test can drive it up to the first thing that fails. */
 export async function defaultEvalRun(args: RoleArgs): Promise<EvalRoleDocument> {
-  const [{ MCPClient }, runtime, sandbox, paths, runtimes] = await Promise.all([
-    import("@mastra/mcp"),
-    import("./eval-runtime.ts"),
-    import("../../platform/sandbox/index.ts"),
-    import("../../platform/paths.ts"),
-    import("../../exec/exec-runtimes.ts"),
-  ]);
+  const [{ MCPClient, getMcpCallToolContent }, runtime, sandbox, paths, runtimes] =
+    await Promise.all([
+      import("@mastra/mcp"),
+      import("./eval-runtime.ts"),
+      import("../../platform/sandbox/index.ts"),
+      import("../../platform/paths.ts"),
+      import("../../exec/exec-runtimes.ts"),
+    ]);
   const src = await loadEvalPackage(args.packageDir, {
     ...(args.suiteFile === undefined ? {} : { suiteFile: args.suiteFile }),
   });
@@ -87,7 +152,11 @@ export async function defaultEvalRun(args: RoleArgs): Promise<EvalRoleDocument> 
     runtimeReadPaths: runtimes.resolveRuntimeById("bun").requiredReadPaths(),
     canConfine: (p) => runner.canConfine(p),
     // MCPClient's tool type is wider than the slice an eval drives (EvalMcpClient).
-    createClient: (id, servers) => new MCPClient({ id, servers }) as unknown as EvalMcpClient,
+    createClient: (id, servers) =>
+      adaptEvalClient(
+        new MCPClient({ id, servers: evalServerDefs(servers) }) as unknown as McpClientLike,
+        getMcpCallToolContent,
+      ),
   });
   return { ok: true, extensionId: src.extensionId, version: src.version, report };
 }
