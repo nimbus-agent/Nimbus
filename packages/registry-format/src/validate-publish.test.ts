@@ -831,6 +831,27 @@ describe("validatePublish", () => {
     );
   });
 
+  test("starter pack with an evals file refused", async () => {
+    const manifest = await starterPackManifest();
+    const pkg = await rawTgz(manifest, ["evals/a.eval.json", "nimbus.extension.json"]);
+    await expectRefused(
+      validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work),
+      "ERR_REGISTRY_PACKAGE_FILE_SET",
+      "starter pack holds no evals/ files",
+    );
+  });
+
+  test("an extension package carrying evals/ passes rule 13", async () => {
+    const manifest = await signedManifest();
+    const pkg = await rawTgz(manifest, [
+      "dist/index.js",
+      "evals/a.eval.json",
+      "nimbus.extension.json",
+    ]);
+    const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
+    expect(v.entryHash).toBeDefined();
+  });
+
   test("a package holding a file outside the package file set is refused", async () => {
     const manifest = await signedManifest();
     const pkg = await rawTgz(manifest, ["dist/index.js", "nimbus.extension.json", "src/server.ts"]);
