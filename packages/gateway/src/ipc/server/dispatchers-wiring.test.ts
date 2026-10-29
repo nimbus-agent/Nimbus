@@ -622,6 +622,7 @@ describe("watcher/workflow/extension — forwarded extension deps", () => {
       forcePoll: async () => {},
       performUpgrade: async (u) => {
         upgrades.push(`${u.id}@${u.toVersion}`);
+        return { orphanedDependencies: [] };
       },
       performDowngrade: async () => ({ orphanedDependencies: [] }),
       appendAudit: async () => {},

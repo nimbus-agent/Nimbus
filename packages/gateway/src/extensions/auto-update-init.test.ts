@@ -475,6 +475,25 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.0.0");
   });
 
+  it("a retry after a failed apply re-verifies the manifest instead of reusing the failed attempt's", async () => {
+    const { runtime, regDir } = await installedFromRegistry();
+    await runtime.deps.forcePoll();
+    const cached = runtime.deps.cache.get(ID);
+    if (cached === undefined) throw new Error("no update detected");
+    // Attempt 1 re-verifies the manifest, then fails on the package bytes.
+    writeFileSync(join(regDir, "extensions", ID, "1.2.0", "package.tgz"), "tampered");
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(/sha256_mismatch/);
+    // The registry re-publishes with manifests that no longer verify: only a fresh re-verification
+    // finds out (it refuses the version the cached update names).
+    await buildTestRegistry(regDir, {
+      id: ID,
+      versions: [{ version: "1.0.0" }, { version: "1.2.0" }],
+      badManifestSignature: true,
+    });
+    await expect(runtime.deps.performUpgrade(cached)).rejects.toThrow(/^signature_failed: /);
+    expect(installedVersion()).toBe("1.0.0");
+  });
+
   it("apply refuses when the re-fetched manifest signature fails, even for a cached 'verified' update", async () => {
     const { runtime, regDir } = await installedFromRegistry();
     // The registry re-publishes its versions with manifests that no longer verify.

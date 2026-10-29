@@ -98,7 +98,7 @@ function baseDeps(): Deps {
     cache: mkCache(),
     forcePoll: async () => {},
     gate: async () => "proceed" as const,
-    performUpgrade: mock(async () => {}),
+    performUpgrade: mock(async () => ({ orphanedDependencies: [] })),
     performDowngrade: mock(async () => ({ orphanedDependencies: [] })),
     appendAudit: async () => {},
     getInstalledVersion: async () => "1.0.0",
@@ -339,7 +339,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
 
   it("calls performUpgrade on approval", async () => {
     const deps = baseDeps();
-    const performUpgrade = mock(async () => {});
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
@@ -505,6 +505,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       await new Promise<void>((res) => {
         release = res;
       });
+      return { orphanedDependencies: [] };
     };
     const first = dispatchAutoUpdateRpc(
       "extension.update",
@@ -902,7 +903,9 @@ describe("the update approval lists what the update adds (extension dependencies
   it("an update adding packages shows them in the approval before anything is fetched", async () => {
     const plan = fakePlan([DEP], { [DEP.id]: DEP_MANIFEST });
     const deps = depsAdding(plan);
-    const performUpgrade = mock(async (_u: AvailableUpdate, _p: UpdatePlan) => {});
+    const performUpgrade = mock(async (_u: AvailableUpdate, _p: UpdatePlan) => ({
+      orphanedDependencies: [],
+    }));
     deps.performUpgrade = performUpgrade;
     deps.gate = async (a) => {
       deps.asked.push(a.payload);
@@ -995,7 +998,7 @@ describe("the update approval lists what the update adds (extension dependencies
         availableVersions: ["2.0.0"],
       });
     };
-    const performUpgrade = mock(async () => {});
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     const res = await update(deps);
     expect(res["applied"]).toBe(false);
@@ -1085,7 +1088,7 @@ describe("the update approval lists what the update adds (extension dependencies
       deps.getInstalledVersion = async (id: string) => (id === "com.example.a" ? "1.0.5" : null);
       return "proceed" as const;
     };
-    const performUpgrade = mock(async () => {});
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
     expect(performUpgrade).not.toHaveBeenCalled();
@@ -1100,9 +1103,74 @@ describe("the update approval lists what the update adds (extension dependencies
       };
       return "proceed" as const;
     };
-    const performUpgrade = mock(async () => {});
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
     expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("the installed version is no longer the update's fromVersion: cache_miss, nothing applied", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    // The same version at the gate and under the mutex, but not the one the update was detected
+    // from: its rollback target (`prev/<fromVersion>`) would name the wrong version.
+    deps.getInstalledVersion = async (id: string) => (id === "com.example.a" ? "1.0.5" : null);
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+    deps.performUpgrade = performUpgrade;
+    expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+    expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  describe("an installed package the plan relies on", () => {
+    const LIB = { id: "com.example.lib", version: "2.0.0" };
+    /** A plan that adds DEP and relies on LIB, installed at 2.0.0 when it was solved. */
+    function planRelyingOnLib(): UpdatePlan {
+      const base = fakePlan([DEP], { [DEP.id]: DEP_MANIFEST });
+      const lib = { ...LIB, source: null, newlyInstalled: false, deps: [] };
+      return {
+        ...base,
+        plan: { ...base.plan, nodes: [lib, ...base.plan.nodes] } as UpdatePlan["plan"],
+      };
+    }
+    function relyingDeps(libAfterGate: string | null) {
+      const deps = depsAdding(planRelyingOnLib());
+      const at = (lib: string | null) => async (id: string) => {
+        if (id === "com.example.a") return "1.0.0";
+        return id === LIB.id ? lib : null;
+      };
+      deps.getInstalledVersion = at(LIB.version);
+      deps.gate = async () => {
+        deps.getInstalledVersion = at(libAfterGate);
+        return "proceed" as const;
+      };
+      return deps;
+    }
+
+    it("still installed at the planned version: applied", async () => {
+      const deps = relyingDeps(LIB.version);
+      expect(await update(deps)).toMatchObject({ applied: true });
+      expect(deps.performUpgrade).toHaveBeenCalled();
+    });
+
+    for (const [label, after] of [
+      ["removed", null],
+      ["moved to another version", "2.1.0"],
+    ] as const) {
+      it(`${label} since the gate: cache_miss, nothing applied`, async () => {
+        const deps = relyingDeps(after);
+        const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+        deps.performUpgrade = performUpgrade;
+        expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+        expect(performUpgrade).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  it("an update that dropped a dependency reports the orphan it left", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.performUpgrade = async () => ({ orphanedDependencies: ["dep.old", "dep.old.child"] });
+    expect(await update(deps)).toMatchObject({
+      applied: true,
+      orphanedDependencies: ["dep.old", "dep.old.child"],
+    });
   });
 });

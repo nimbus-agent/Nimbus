@@ -717,6 +717,45 @@ describe("an approved update installs the packages it adds (production wiring)",
     expect(packageRowsFor(DEP)).toBe(1);
   });
 
+  test("an update whose new version drops a dependency reports the package it left needed by nothing", async () => {
+    await installedRoot([
+      { version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } },
+      { version: "1.2.0" },
+    ]);
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(forwardDeps(db, ROOT)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+    const { result } = await update();
+    expect(result).toMatchObject({ applied: true, orphanedDependencies: [DEP] });
+    expect(versionOf(ROOT)).toBe("1.2.0");
+    expect(forwardDeps(db, ROOT)).toEqual([]);
+    // Reported, never removed: the owner removes it.
+    expect(versionOf(DEP)).toBe("1.0.0");
+  });
+
+  test("an update that keeps its dependency reports no orphan", async () => {
+    await installedRoot([
+      { version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } },
+      { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } },
+    ]);
+    const { result } = await update();
+    expect(result["applied"]).toBe(true);
+    expect("orphanedDependencies" in result).toBe(false);
+    expect(forwardDeps(db, ROOT)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+  });
+
+  test("a dependency the plan relies on that is removed while the approval is open: cache_miss", async () => {
+    await installedRoot([
+      { version: "1.0.0", dependsOn: { [DEP]: "^1.0.0" } },
+      { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } },
+    ]);
+    const { result } = await update(() => {
+      // Another terminal removed (or moved) DEP while the prompt was open.
+      db.run("UPDATE extension SET version = '1.1.0' WHERE id = ?", [DEP]);
+    });
+    expect(result).toEqual({ applied: false, reason: "cache_miss" });
+    expect(versionOf(ROOT)).toBe("1.0.0");
+  });
+
   // The POSITIVE half of "apply installs the approved set or refuses": the index changes between
   // the gate and the apply, the approved version is still listed, so the apply goes ahead and
   // installs exactly that version. The two tests after it are the refusing half.

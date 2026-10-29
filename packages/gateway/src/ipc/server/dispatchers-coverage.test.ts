@@ -1102,7 +1102,7 @@ describe("tryDispatchAutomationRpc — buildAutoUpdateDeps branches", () => {
     return {
       cache: cache ?? new AutoUpdateCache(),
       forcePoll: async () => {},
-      performUpgrade: async () => {},
+      performUpgrade: async () => ({ orphanedDependencies: [] }),
       performDowngrade: async () => ({ orphanedDependencies: [] }),
       appendAudit: async () => {},
       getInstalledVersion: async () => null,

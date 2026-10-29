@@ -417,6 +417,7 @@ describe("extension.update — the stateChanged event mirrors the outcome", () =
         gate: async () => "proceed",
         performUpgrade: async (c) => {
           upgraded.push(`${c.id}@${c.toVersion}`);
+          return { orphanedDependencies: [] };
         },
         performDowngrade: async () => ({ orphanedDependencies: [] }),
         appendAudit: async () => {},

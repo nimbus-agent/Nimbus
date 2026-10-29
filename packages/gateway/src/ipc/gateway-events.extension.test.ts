@@ -26,7 +26,7 @@ function stubAutoUpdateDeps(): AutoUpdateRpcDeps {
     cache: new AutoUpdateCache(),
     forcePoll: async () => {},
     gate: async () => "proceed",
-    performUpgrade: async () => {},
+    performUpgrade: async () => ({ orphanedDependencies: [] }),
     performDowngrade: async () => ({ orphanedDependencies: [] }),
     appendAudit: async () => {},
     getInstalledVersion: async () => null,

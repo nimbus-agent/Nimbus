@@ -26,7 +26,12 @@ import {
   type PerformUpgradeDeps,
   type UpgradeDependencies,
 } from "./auto-update-orchestrate.ts";
-import type { AvailableUpdate, DowngradeOutcome, UpdatePlan } from "./auto-update-types.ts";
+import type {
+  AvailableUpdate,
+  DowngradeOutcome,
+  UpdatePlan,
+  UpgradeOutcome,
+} from "./auto-update-types.ts";
 import {
   type ConnectorRequirementInput,
   type ConnectorRequirementStatus,
@@ -128,7 +133,7 @@ export interface AutoUpdateRuntimeBag {
    * The approval passes the plan it listed (`auto-update-rpc.ts` always does); a direct caller
    * (a test) may omit it.
    */
-  performUpgrade: (cached: AvailableUpdate, plan?: UpdatePlan) => Promise<void>;
+  performUpgrade: (cached: AvailableUpdate, plan?: UpdatePlan) => Promise<UpgradeOutcome>;
   /** Restores the previous version and its edges; reports the dependencies it left needed by nothing. */
   performDowngrade: (cached: AvailableUpdate) => Promise<DowngradeOutcome>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
@@ -448,11 +453,11 @@ function restoredDependencyEdges(
 }
 
 /**
- * The dependency-installed packages a downgrade left needed by nothing: its dropped dependencies
- * (`before` minus the restored edges), walked after the edges were rewritten. Reported, never removed;
- * a walk that throws reports nothing and never fails the committed downgrade.
+ * The dependency-installed packages an update or a downgrade left needed by nothing: its dropped
+ * dependencies (`before` minus the rewritten edges), walked after the edges were rewritten.
+ * Reported, never removed; a walk that throws reports nothing and never fails the committed change.
  */
-function orphanedAfterDowngrade(db: Database, id: string, before: readonly string[]): string[] {
+function orphanedAfterEdgeRewrite(db: Database, id: string, before: readonly string[]): string[] {
   try {
     const restored = new Set(forwardDeps(db, id).map((d) => d.id));
     return orphanedAfterEdgeChange(
@@ -642,13 +647,23 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   });
   // `plan` is the plan the owner approved; the apply installs exactly its added packages.
   const performUpgrade = withUpdateAppliedHook(
-    async (update: AvailableUpdate, plan?: UpdatePlan) => {
-      await upgrade(update, plan);
+    async (update: AvailableUpdate, plan?: UpdatePlan): Promise<UpgradeOutcome> => {
+      // The root's edges are rewritten from the new manifest: a dependency it no longer declares
+      // is reported as the downgrade reports one.
+      const before = forwardDeps(opts.db, update.id).map((d) => d.id);
+      let verified: VerifiedUpdateKey | undefined;
+      try {
+        await upgrade(update, plan);
+        verified = verifiedKeys.get(updateKey(update));
+      } finally {
+        // Applied or failed, the key this attempt verified never outlives it: the next attempt
+        // re-verifies from scratch.
+        verifiedKeys.delete(updateKey(update));
+      }
       // The new code may be signed by a rotated key: keep that key under its fingerprint and record
       // it on the row, so the boot pass and every spawn verify with it (I16).
-      const verified = verifiedKeys.get(updateKey(update));
-      verifiedKeys.delete(updateKey(update));
       if (verified !== undefined) await recordVerifyingKey(opts, update.id, verified);
+      return { orphanedDependencies: orphanedAfterEdgeRewrite(opts.db, update.id, before) };
     },
     opts.onUpdateApplied,
   );
@@ -657,7 +672,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     await downgrade(update);
     // The restored copy is signed by the key it was installed with: its declared one.
     recordDeclaredFingerprint(opts.db, update.id);
-    return { orphanedDependencies: orphanedAfterDowngrade(opts.db, update.id, before) };
+    return { orphanedDependencies: orphanedAfterEdgeRewrite(opts.db, update.id, before) };
   }, opts.onUpdateApplied);
 
   const deps: AutoUpdateRuntimeBag = {

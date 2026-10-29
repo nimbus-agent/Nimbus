@@ -15,6 +15,7 @@ import {
   type ShownAddedPackage,
   type UpdateApplyResult,
   type UpdatePlan,
+  type UpgradeOutcome,
 } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
@@ -47,8 +48,11 @@ export interface AutoUpdateRpcDeps {
     cached: AvailableUpdate,
     plan: UpdatePlan,
   ) => Promise<readonly ConnectorRequirementStatus[] | undefined>;
-  /** Applies an approved forward update with the plan its approval listed. */
-  performUpgrade: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<void>;
+  /**
+   * Applies an approved forward update with the plan its approval listed; reports the dependencies
+   * its new version no longer declares that are now needed by nothing.
+   */
+  performUpgrade: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<UpgradeOutcome>;
   /** Restores the previous version and its edges; reports the dependencies it left orphaned. */
   performDowngrade: (cached: AvailableUpdate) => Promise<DowngradeOutcome>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
@@ -340,8 +344,9 @@ function acceptedKeyFor(
 
 /**
  * Whether what the approval was planned against moved before the mutex was taken: the extension
- * is no longer at the version it had when the owner was asked, or a package the plan adds has been
- * installed since. Either way the approved plan no longer describes the apply.
+ * is no longer at the version it had when the owner was asked or at the update's `fromVersion`, a
+ * package the plan adds has been installed since, or an installed package the plan relies on was
+ * removed or is now at another version. Each way the approved plan no longer describes the apply.
  */
 async function movedSinceApproval(
   cached: AvailableUpdate,
@@ -349,16 +354,21 @@ async function movedSinceApproval(
   approved: ApprovedUpdatePlan,
   deps: AutoUpdateRpcDeps,
 ): Promise<boolean> {
-  if ((await deps.getInstalledVersion(cached.id)) !== installedAtGate) return true;
+  const installed = await deps.getInstalledVersion(cached.id);
+  if (installed !== installedAtGate || installed !== cached.fromVersion) return true;
   for (const added of approved.plan.addedPackages) {
     if ((await deps.getInstalledVersion(added.id)) !== null) return true; // NOSONAR S9382: a few reads, in plan order
+  }
+  const reliedOn = approved.plan.plan.nodes.filter((n) => !n.newlyInstalled && n.id !== cached.id);
+  for (const node of reliedOn) {
+    if ((await deps.getInstalledVersion(node.id)) !== node.version) return true; // NOSONAR S9382: a few reads, in plan order
   }
   return false;
 }
 
 /**
- * The applied result: what the approved plan added and the requirements the approval showed, or,
- * for a downgrade, the dependencies it left orphaned.
+ * The applied result: what the approved plan added and the requirements the approval showed, and
+ * the dependencies the update or downgrade left orphaned.
  */
 function appliedResult(
   cached: AvailableUpdate,
@@ -421,7 +431,7 @@ async function applyUpdateUnderMutex(
         toVersion: cached.toVersion,
       });
     } else {
-      await deps.performUpgrade(cached, approved.plan);
+      ({ orphanedDependencies: orphaned } = await deps.performUpgrade(cached, approved.plan));
       await deps.appendAudit("extension.autoUpdate.applied", {
         id: cached.id,
         fromVersion: cached.fromVersion,
