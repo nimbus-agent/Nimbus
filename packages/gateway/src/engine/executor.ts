@@ -149,6 +149,11 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // signed extension — install + run grant + credential grant together. Gate site:
   // extensions/migration/migration-engine.ts (`migrationConsentViaGate`). Never delegable (I20).
   "extension.migrate",
+  // `nimbus eval --extension`: the owner's one approval to run the eval suites of installed
+  // extensions, offline and without credentials. Gate site: extensions/installed-eval.ts, through
+  // the gate-only executor that ipc/server/dispatchers.ts builds per call. Never delegable (see
+  // tryDelegatedApproval's extension.* rule).
+  "extension.eval",
   // Adding a registry pins a trust root that later extension installs verify against. Gate site:
   // the `registry.add` handler in ipc/registry-rpc.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
@@ -289,6 +294,10 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
     const { fromRenderer: _audit, ...shown } = action.payload;
     return redactPayloadForConsentDisplay(shown) as Record<string, unknown>;
   }
+  if (action.type === "extension.eval") {
+    // Only the extensions the owner is approving, plus the fixed fact that they run offline.
+    return { extensions: action.payload["extensions"], network: "none" };
+  }
   if (action.type === "pack.install") {
     // `promptText` is the prompt body itself (printed by formatConsentPrompt); repeating it as
     // structured details would show the owner the same text twice.
@@ -354,6 +363,12 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", action.payload["promptText"]);
     return lines.join("\n");
   }
+  const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;
+  if (evalLines !== undefined) {
+    // Purpose-built rendering; a JSON Details line would repeat it.
+    lines.push("", ...evalLines, "", "runs with no network and no credentials");
+    return lines.join("\n");
+  }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
     lines.push("", `Details: ${JSON.stringify(detailsLinePayload(action))}`);
   }
@@ -363,6 +378,21 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", String(action.payload?.["planText"]));
   }
   return lines.join("\n");
+}
+
+/** One `id@version (N cases)` line per extension, or undefined when the payload is malformed. */
+function evalPromptLines(action: PlannedAction): string[] | undefined {
+  const list = action.payload?.["extensions"];
+  if (!Array.isArray(list) || list.length === 0) return undefined;
+  const out: string[] = [];
+  for (const e of list as unknown[]) {
+    const r = e as { id?: unknown; version?: unknown; cases?: unknown } | null;
+    if (typeof r?.id !== "string" || typeof r.version !== "string" || typeof r.cases !== "number") {
+      return undefined;
+    }
+    out.push(`${r.id}@${r.version} (${r.cases} cases)`);
+  }
+  return out;
 }
 
 function omitPromptText(payload: Record<string, unknown>): Record<string, unknown> {

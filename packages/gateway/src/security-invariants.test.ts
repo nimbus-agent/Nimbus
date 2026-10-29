@@ -361,6 +361,31 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(raised).toEqual(["extension.migrate"]);
   });
 
+  test("extension.eval is in the I2 HITL frozen set and a gate-only executor raises exactly it", async () => {
+    // One approval covers evaluating installed extensions offline; it must be a gated type of its
+    // own, never a reuse of `extension.run` (no run grant exists for an eval).
+    const { HITL_REQUIRED, NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("extension.eval")).toBe(true);
+    const raised: string[] = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async (prompt: string) => {
+          raised.push(prompt);
+          return false;
+        },
+      },
+      { recordAudit: () => {} },
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+    const res = await exec.execute({ type: "extension.eval", payload: { extensions: [] } });
+    expect(res.status).toBe("rejected");
+    expect(raised).toHaveLength(1);
+    expect(raised[0]).toContain("Type: extension.eval");
+  });
+
   test("extension.install is not merely listed: the IPC install REFUSES without the executor gate and installs nothing on a denial", async () => {
     // Membership alone proved nothing here for a long time: `extension.install` sat in the frozen
     // set while no code ever built an action of that type, and the only consent was a CLI-side
@@ -6261,6 +6286,7 @@ describe("I42 — every user-MCP tool call needs the local owner's approval", ()
       "extension.run",
       "extension.autoUpdate",
       "extension.migrate",
+      "extension.eval",
       "pack.install",
     ]) {
       let prompts = 0;

@@ -220,6 +220,7 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "extension.install",
       "extension.run",
       "extension.migrate",
+      "extension.eval",
       "registry.add",
       "pack.install",
       "vault.set",
