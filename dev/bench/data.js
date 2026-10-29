@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793239134663,
+  "lastUpdate": 1793249420883,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7b530dcc15930a208d63af43ad3af9dd46f44d07",
-          "message": "refactor(egress)!: remove the EgressCompleteness.tier compat shim (#1156)\n\nCloses #1057. Part 3 of 3, and the only one that could not land until\nthe other two were published.\n\n## What is removed\n\n- `tier` from `EgressCompleteness` and from `proveWindow`'s emitted\nliteral (`egress/egress-verify.ts`)\n- its assertion in `egress-verify.test.ts`\n- the tolerant optional `tier?: string` on the CLI's `ProveCompleteness`\n— documented as never read for a decision, and it was not\n- the **\"Outstanding debt this change creates\"** paragraph in\n`docs/SECURITY-INVARIANTS.md` § I29\n- the matching **\"Related debt\"** sentence in the `nimbus-egress` skill\n\nPer the repo rule, retiring a defence means deleting the row, never\nleaving drift — so the debt prose goes with the field, not after it.\n\n## Why it had to go rather than be corrected\n\n`tier: \"authorized-actions\"` was honest under exactly one precondition:\nthat `THIS_BINARY_COVERAGE` had a single non-`none` class (`task` at\n`per-call`), so \"authorized gated-connector actions, one row per call\"\nwas the whole of what the binary observed. That precondition failed\nthree separate times — `mcp`, then `http`, then `sync` — each time\ndeferred by name rather than silently, which is why the field carried a\n~40-line doc comment explaining its own overdueness.\n\nA single scalar cannot describe four classes at two granularities. It\nmisstated coverage in precisely the way the pre-vector scalar did — the\ndefect the `coverage` / `indeterminate` shape was introduced to fix.\n\n## Why this is the last commit and not the first\n\nRemoving the field is a **breaking wire change**.\n`@nimbus-dev/client@0.15.x`'s `validateEgressCompleteness` hard-throws\nwhen `tier` is absent, so a gateway that dropped it first would have\nbroken every published-client consumer, nimbus-vscode included.\n\n| step | where | state |\n|---|---|---|\n| 1 | nimbus-client#58 → **0.16.0** on npm | ✅ merged + published |\n| 2 | nimbus-vscode#89 → `^0.16.0` | ✅ open, green |\n| 3 | **this PR** | — |\n\nStep 2 was not a version bump alone: nimbus-vscode *read* the field and\nrendered it into its proof artifact as \"Completeness tier:\nauthorized-actions — every gateway-authorized outbound action in the\nwindow\". That is a totality claim which was never true for a class at\n`none`, in a document users hand to auditors, so it was replaced with a\nper-class table that marks unobserved classes explicitly.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test packages/gateway/src/egress\npackages/cli/src/commands/prove.test.ts\npackages/gateway/src/security-invariants.test.ts\npackages/gateway/src/ipc` — **1,905 pass, 17 skip, 0 fail**\n- `bun run typecheck` — 0 errors\n- `grep -rn \"tier\" packages/gateway/src/egress\npackages/cli/src/commands/prove.ts` — no matches\n\n## Scope note\n\n**I29 is untouched.** `tier` was never part of what the invariant\nenforces — `coverage` / `outboundEgressEvents` / `indeterminate` were\nalways the authoritative claim and are unchanged. No schema change, no\nmigration, no invariant renumbering. The `!` in the title marks the wire\nchange for release-please, not a change to any security property.\n\n## On the version number\n\nThe client shipped as **0.16.0**, not the 1.0.0 #1057 anticipated. The\n`Release-As: 1.0.0` trailer was placed in the PR description, per this\nrepo's convention that the squash commit is built from `PR_TITLE` +\n`PR_BODY` — but the satellite repos squash the **local** commit message\ninstead, so the trailer never reached `main` and release-please's\nconfigured `bump-minor-pre-major` applied. My error, and it changes\nnothing practically: `^0.15.x` does not resolve to `0.16.0`, so the\nbreaking change reaches no consumer without an explicit bump.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-11T19:13:36Z",
-          "tree_id": "c6f0e1db9283beffe8a7acbe8a2d2c8778aa5400",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7b530dcc15930a208d63af43ad3af9dd46f44d07"
-        },
-        "date": 1786476183144,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 288.46333634999644,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 288.633252299999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 293.89337615000113,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2f15dce125af1e6f043653b8c10a88738f7af604",
+          "message": "feat(extensions): starter packs install with their members, never run, keep explicitly installed dependencies, and offer to remove the members only they needed (#1813)\n\nThis is PR 4 of 5 of Phase 9.5 project 4, extension dependencies and\nstarter packs. The earlier PRs:\n- PR 1, #1806: the manifest format.\n- PR 2, #1810: registry dependencies in one approved plan.\n- PR 3, #1811: connector requirements and the post-install walk.\n\n## What changes for a user\n\nA **starter pack** is a registry extension with `kind: \"starter-pack\"`\nwhose manifest is only dependencies: other extensions, connector\nrequirements, or both. It has no code. Until now the gateway refused\npacks. This PR installs them.\n\n### Installing a pack\n\n- **One approval covers the whole plan.** `nimbus extension install\n<pack>` installs the pack and every member through PR 2's single plan. A\npack may depend on packs.\n- **What the install prints:** `Installed starter pack <id>@<v>.`,\nfollowed by `Added <n> package(s) it needs.` when it added any.\n- **Only code members are offered for approval** in the after-install\nwalk, dependencies first. A pack's own connector requirements are still\noffered.\n\n### A pack never runs\n\n- **Approval is refused.** `nimbus extension approve <pack>` fails with\n`ERR_EXTENSION_STARTER_PACK`, through both the owner path and the\nmigration auto-approver (I46), before any prompt. The message lists the\npack's code members to approve instead, found transitively through\nsub-packs.\n- **Spawning is refused too.** That check runs before any hashing, as a\nsecond line of defence.\n- **Run state is `pack`.** `extension list` shows `pack (no code)`, and\n`nimbus doctor` never warns that a pack is unapproved.\n- **An update that turns a code extension into a pack** removes its\napproval to run, and the update prompt says so.\n- **The catalog no longer lists packs as connectors.**\n\n### Explicitly installing something that came in as a dependency\n\nThis keeps the package from then on: it is promoted, and nothing is\nfetched or approved.\n- **Registry:** the package must have a recorded registry source, and a\nnamed `--version`, `--registry` or `--channel` must match the installed\ncopy.\n- **Local:** the id, version and manifest bytes must be the same.\n- **Anything else:** the original refusal stands.\n- **What it prints:** `<id> is already installed (it came in as a\ndependency); it is now kept even if what needed it is removed.`\n\n### Removing an extension offers the members only it needed\n\n`extension.remove` now returns `orphanedDependencies`. These are\npackages installed only as dependencies that nothing else still needs,\nfound transitively and ordered dependents first. Packages the owner\ninstalled explicitly are never included.\n\n- **At a terminal** (stdin and stdout both TTYs, no `--yes`), the CLI\nasks: `Also remove <n> package(s) installed only for <id>: <ids>?\n[y/N]`.\n- **`--clean-deps`** removes them without asking.\n- **Otherwise** it prints `Kept <ids>, installed only for <id>; remove\nthem with: nimbus extension remove <a> && …`.\n- **stdout stays the JSON result.** The question and these lines go to\nstderr.\n- **A failed orphan removal** is reported, the rest still go, and the\ncommand exits 1.\n- **Desktop:** it does not offer this yet. It is CLI only.\n\n## Internals\n\n- **V79** adds `extension.kind`, `TEXT NOT NULL DEFAULT 'extension'`,\nwritten at install and on every update or crash recovery. Every\n`ExtensionRow` read selects it.\n- **Refusal removed.** `assertManifestSupported` and its five call sites\nare gone. Entry-hash verification for a pack runs through the same\ncalls, because a pack's entry is its manifest, so the I44 pins are\nunchanged.\n- **Run-grant writers.** The grant drop on an update to a pack sits\ninside `setExtensionKind`, in the callers' transaction. The D33(c)\nrun-grant writer allowlist is unchanged, and its docs name the second\nreason.\n- **New modules:**\n  - `extensions/starter-pack-refusal.ts`;\n- `extensions/orphaned-dependencies.ts`, a fixed point over a \"removing\"\nset;\n  - `installedManifestKind` in `extensions/manifest.ts`.\n- **Install results carry `kind`:** the `registry.install` root, each of\nits `dependencies[]`, and `extension.install`.\n- **I43 behaviour test:** \"a starter pack is never granted extension.run\nand never spawned\", plus one sentence in `SECURITY-INVARIANTS.md`\n(triple rule).\n\n## Decisions made while building\n\n- **`kind` is a column (V79),** rather than re-reading the manifest\nwherever run state is computed.\n- **Promotion replaces the refusal** for a dependency-installed package.\nIt changes only what a later removal offers, so it needs no consent.\n- **The \"Kept\" line names the `nimbus extension remove` commands.** The\nplan said `--clean-deps`, which can't work once the parent is gone.\n- **Two Antigravity findings were checked and not taken:**\n- \"a pack's code members are never offered\": it read the local-install\npath; the registry path offers them;\n  - \"promotion prints no JSON\": it does.\n\n## Review history\n\n- **The plan:** Antigravity reviewed it, and all 13 of its findings were\napplied, among them `kind` in `listExtensions`, promotion before any\nfetch, and the orphan algorithm.\n- **Each task:** a task review, plus fix rounds.\n- **The whole branch:** a Claude reviewer (1 Important, 8 Minor) and\nAntigravity (6 findings, 4 of which held up). One fix pass covered all\n11 accepted items, each red-proved, then a scoped re-review.\n\n## Known follow-ups, not blocking\n\n- **An older CLI against this gateway** reads a promotion as a fresh\ninstall. It prints the install lines and starts the approval walk.\nNothing is approved without the real `extension.run` prompt.\n- **An update that turns an extension into a pack** gets its new\ndependency edges at the next boot, not when the update is applied.\nUpdates that add dependencies are PR 5.\n- **The grant drop on an update to a pack** writes no audit row and\nleaves `ext-stage/<serviceId>`. That is harmless, because a pack never\nspawns, and a sweep or a remove clears it.\n- **The desktop's remove** ignores `orphanedDependencies`.\n- **The removal's own confirmation** (existing code) still checks only\nthat stdout is a terminal, and renders on stdout. The new orphan offer\nneeds both stdin and stdout to be terminals, and writes to stderr.\n- **Same-version local reinstall.** This is existing behaviour: it\nprompts, copies nothing, and rewrites that id's dependency edges from\nthe new folder's manifest.\n\n## Verification\n\n- `bun run typecheck`, Biome and `bun run preflight:fast` pass.\n- `bun test` over the gateway's `extensions`, `ipc` and `catalog`\ndirectories, `security-invariants.test.ts` and `packages/cli/src`: 9630\npass, 34 skipped, 0 fail.\n- The I43, I44 and I46 pins pass unchanged.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Install starter packs and their dependencies through a single approval\nstep. Starter packs contain no runnable code and cannot be approved to\nrun; code-bearing members can be approved separately.\n* Promote an already-installed dependency to an explicit install when\nits source and version match, without reinstalling it.\n* Extension removal can identify orphaned dependency packages and offer\nto remove them.\n* Starter packs are labeled in extension listings and excluded from\nconnector catalogs. Updates can convert between starter packs and\nregular extensions, adjusting run approval accordingly.\n* **Documentation**\n* Updated release notes, command reference, and architecture and\nsecurity guidance for starter-pack behavior and dependency cleanup.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T04:39:32Z",
+          "tree_id": "6a7fa010928a8d5e82b8c646f74de9bc4ce8c31e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2f15dce125af1e6f043653b8c10a88738f7af604"
+        },
+        "date": 1793249416614,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 279.12472510000225,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.80790379999996,
             "unit": "ms"
           }
         ]
