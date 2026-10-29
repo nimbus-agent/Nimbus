@@ -22,7 +22,7 @@ import {
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
-import { upsertRunGrant } from "./run-grant-store.ts";
+import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { recordTrustStatements } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 import { prevVersionDir } from "./version-store.ts";
@@ -420,6 +420,16 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       verificationStatus: "verified",
     });
     if (cached === undefined) throw new Error("no update detected");
+    upsertRunGrant(db, {
+      extension_id: ID,
+      service_id: "ext_update_code",
+      version: "1.0.0",
+      tree_digest: before.tree_digest,
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
 
     await runtime.deps.performUpgrade(cached);
 
@@ -428,6 +438,8 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
       tree_digest: string;
     };
     expect(row.version).toBe("1.2.0");
+    // A code-to-code update leaves an existing grant in place (stale, not deleted).
+    expect(getRunGrant(db, ID)?.version).toBe("1.0.0");
     // A new tree digest is what leaves any I43 run grant stale: the owner must re-approve.
     expect(row.tree_digest).not.toBe(before.tree_digest);
     expect(readFileSync(join(extensionsDir, ID, "dist", "index.js"), "utf8")).toContain("1.2.0");
@@ -500,6 +512,17 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     const v = index.extensions[ID]?.versions["1.2.0"];
     if (v === undefined) throw new Error("no 1.2.0 in the re-published index");
     expect(kindOf()).toBe("extension");
+    // The owner had approved the code version to run. A pack never holds a run grant (I43).
+    upsertRunGrant(db, {
+      extension_id: ID,
+      service_id: "ext_update_pack",
+      version: "1.0.0",
+      tree_digest: "c".repeat(64),
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
     await runtime.deps.performUpgrade({
       ...cached,
       manifestHash: v.manifestSha256,
@@ -508,6 +531,7 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     });
     expect(installedVersion()).toBe("1.2.0");
     expect(kindOf()).toBe("starter-pack");
+    expect(getRunGrant(db, ID)).toBeNull();
     // A pack's entry is its manifest (spec A3): the row stores the index's entry hash.
     expect(
       (db.query("SELECT entry_hash FROM extension WHERE id = ?").get(ID) as { entry_hash: string })

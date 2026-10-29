@@ -27,6 +27,7 @@ import {
 import { readPublisherKeyFor } from "./publisher-keys.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { type ExtensionRunGrantRow, getRunGrant } from "./run-grant-store.ts";
+import { refuseStarterPack } from "./starter-pack-refusal.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import {
   blockSubjectForInstalled,
@@ -80,7 +81,10 @@ function refuse(code: ConstructorParameters<typeof ExtensionRunGrantError>[0], m
   throw new ExtensionRunGrantError(code, msg);
 }
 
-/** Steps 1–2: the row exists and is enabled, then a grant exists. */
+/**
+ * Steps 1–2: the row exists and is enabled and is not a starter pack (which has no code and never
+ * runs, whatever grant row might be present), then a grant exists.
+ */
 function requireRowAndGrant(
   db: Database,
   extensionId: string,
@@ -90,6 +94,7 @@ function requireRowAndGrant(
     refuse("ERR_EXTENSION_NOT_FOUND", `extension "${extensionId}" is not installed`);
   }
   if (row.enabled !== 1) refuse("ERR_EXTENSION_RUN_DISABLED", `${row.id} is disabled`);
+  refuseStarterPack(db, row);
   const grant = getRunGrant(db, row.id);
   if (grant === null) {
     refuse(

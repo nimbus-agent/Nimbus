@@ -14,7 +14,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
-
+import {
+  installStarterPackFixture,
+  PACK_FIXTURE,
+  TOP_PACK_REFUSAL,
+} from "../../test/helpers/starter-pack-fixture.ts";
 import { listExtensions, setExtensionTreeDigest } from "../automation/extension-store.ts";
 import { getConnectorHealth, transitionHealth } from "../connectors/health.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
@@ -624,5 +628,51 @@ describe("extension.list / extension.info report the verified publisher (R6)", (
 `,
     );
     expect((await listed(db))[0]?.verifiedPublisher).toBeNull();
+  });
+});
+
+describe("a starter pack over the automation dispatcher", () => {
+  async function packs() {
+    const fx = await installStarterPackFixture("nimbus-rpc-pack-");
+    cleanups.push(fx.cleanup);
+    return fx;
+  }
+
+  test("extension.list and extension.info carry kind, and a pack's run state is `pack`", async () => {
+    const fx = await packs();
+    const items = (await listed(fx.db)) as Array<ListItem & { kind?: string }>;
+    const byId = new Map(items.map((i) => [i.id, i]));
+    expect(byId.get(PACK_FIXTURE.topPack)?.kind).toBe("starter-pack");
+    expect(byId.get(PACK_FIXTURE.topPack)?.runState).toBe("pack");
+    expect(byId.get(PACK_FIXTURE.topPack)?.runGrant).toBeNull();
+    expect(byId.get(PACK_FIXTURE.codeA)?.kind).toBe("extension");
+    expect(byId.get(PACK_FIXTURE.codeA)?.runState).toBe("no_grant");
+    const info = (await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: PACK_FIXTURE.subPack },
+      db: fx.db,
+    })) as { value: { extension: { kind?: string; runState: string } } };
+    expect(info.value.extension.kind).toBe("starter-pack");
+    expect(info.value.extension.runState).toBe("pack");
+  });
+
+  test("extension.approveRun on a pack refuses with the member commands and never asks the owner", async () => {
+    const fx = await packs();
+    let asked = 0;
+    const err = await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: PACK_FIXTURE.topPack },
+      db: fx.db,
+      runGrantEnv: fx.env,
+      ownerGate: async () => {
+        asked++;
+        return true;
+      },
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { rpcCode?: number }).rpcCode).toBe(-32602);
+    expect((err as Error).message).toBe(`ERR_EXTENSION_STARTER_PACK: ${TOP_PACK_REFUSAL}`);
+    expect(asked).toBe(0);
+    expect(getRunGrant(fx.db, PACK_FIXTURE.topPack)).toBeNull();
   });
 });

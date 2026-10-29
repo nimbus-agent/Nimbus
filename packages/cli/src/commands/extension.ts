@@ -88,6 +88,8 @@ export function stripFlags(args: string[]): string[] {
 type ExtensionListEntry = {
   id: string;
   version: string;
+  /** V79: a starter pack has no code and never runs; absent from an older gateway. */
+  kind?: "extension" | "starter-pack";
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -185,7 +187,7 @@ export function formatExtensionListTable(
       status = r.signatureDisabled === true ? SIGNATURE_DISABLED_STATUS : "disabled";
     }
     const cells = [r.id, r.version, publisherCell(r), status];
-    if (showRun) cells.push(r.runState ?? "-");
+    if (showRun) cells.push(r.runState === undefined ? "-" : runStateLabel(r.runState));
     if (showSource) cells.push(r.sourceRegistry === undefined ? "-" : `from ${r.sourceRegistry}`);
     return cells;
   });
@@ -213,13 +215,18 @@ export function formatExtensionListTable(
   return `${lines.join("\n")}\n`;
 }
 
+/** How a run state reads to the owner: a starter pack has no code, so it never runs. */
+export function runStateLabel(state: string): string {
+  return state === "pack" ? "pack (no code)" : state;
+}
+
 /** `nimbus extension info`'s run line: the run state, and the grant behind it when there is one. */
 export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant">): string | null {
   if (e.runState === undefined) return null;
-  if (e.runGrant === undefined || e.runGrant === null) return e.runState;
+  if (e.runGrant === undefined || e.runGrant === null) return runStateLabel(e.runState);
   const at = new Date(e.runGrant.approvedAt).toISOString();
   const model = e.runGrant.modelAccess ? "yes" : "no";
-  return `${e.runState} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
+  return `${runStateLabel(e.runState)} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
 }
 
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {

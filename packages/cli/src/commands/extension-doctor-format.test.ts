@@ -317,3 +317,31 @@ describe("doctorMigrationLines next step", () => {
     expect(lines[0]).not.toContain("migrate retry");
   });
 });
+
+describe("doctorExtensionsLines — starter packs", () => {
+  // The shape the gateway's extension.list gives a pack row (automation-rpc.run-grant.test.ts,
+  // "extension.list and extension.info carry kind, and a pack's run state is `pack`").
+  const pack = { id: "fx.pack.top", kind: "starter-pack", runState: "pack", runGrant: null };
+
+  test("an installed pack raises no approval warning", () => {
+    expect(doctorExtensionsLines({ runtimeEnabled: true, extensions: [pack] })).toEqual({
+      lines: [],
+      exit: 0,
+    });
+  });
+
+  test("a pack is never counted as needing approval, whatever run state it reports", () => {
+    const out = doctorExtensionsLines({
+      runtimeEnabled: true,
+      extensions: [
+        pack,
+        { ...pack, id: "fx.pack.sub", runState: "no_grant" },
+        { id: "fx.code.a", kind: "extension", runState: "no_grant", runGrant: null },
+      ],
+    });
+    expect(out.exit).toBe(1);
+    expect(out.lines).toEqual([
+      "[warn] Extensions: 1 installed extension(s) not approved to run, or approved for an older version (fx.code.a) — nimbus extension approve <id>",
+    ]);
+  });
+});

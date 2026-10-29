@@ -3218,3 +3218,23 @@ describe("runExtensionInstall — the post-install walk", () => {
     expect(out.stdout).not.toContain("Approve each package to run");
   });
 });
+
+describe("a starter pack in extension list / info", () => {
+  test("the Run column shows `pack (no code)` for a pack", () => {
+    const formatted = formatExtensionListTable(
+      [
+        { id: "fx.pack.top", version: "1.0.0", enabled: 1, runState: "pack" },
+        { id: "fx.code.a", version: "1.0.0", enabled: 1, runState: "no_grant" },
+      ],
+      { isTty: false, noColor: true },
+    );
+    const packLine = formatted.split("\n").find((l) => l.startsWith("fx.pack.top"));
+    expect(packLine).toMatch(/\spack \(no code\)\s*$/);
+    const codeLine = formatted.split("\n").find((l) => l.startsWith("fx.code.a"));
+    expect(codeLine).toMatch(/\sno_grant\s*$/);
+  });
+
+  test("the info run line names a pack the same way", () => {
+    expect(formatRunLine({ runState: "pack", runGrant: null })).toBe("pack (no code)");
+  });
+});

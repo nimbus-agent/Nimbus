@@ -78,7 +78,10 @@ export function doctorExtensionsLines(raw: unknown): { lines: string[]; exit: nu
     isRecord(e) &&
     typeof e["id"] === "string" &&
     typeof e["runState"] === "string" &&
-    NEEDS_APPROVAL.has(e["runState"])
+    NEEDS_APPROVAL.has(e["runState"]) &&
+    // A starter pack has no code and is never approved to run (its state is `pack`); an approval
+    // warning for one would send the owner to a command the gateway refuses.
+    e["kind"] !== "starter-pack"
       ? [{ id: stripControl(e["id"]), hadModelAccess: grantHadModelAccess(e["runGrant"]) }]
       : [],
   );

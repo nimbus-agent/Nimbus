@@ -151,10 +151,15 @@ export function getExtensionKind(db: Database, id: string): ExtensionKind | unde
 /**
  * V79: records the kind of the manifest now installed for `id` (an update can replace an extension
  * with a starter pack, or the reverse). A no-op below V79, where every row reads `"extension"`.
+ *
+ * Recording `"starter-pack"` also deletes the row's run grant: a pack has no code, so it never
+ * holds one (I43), and a grant the owner gave the code it replaced must not survive. Callers run
+ * this inside the transaction that rewrites the row, so the two land together.
  */
 export function setExtensionKind(db: Database, id: string, kind: ExtensionKind): void {
   if (!hasKindColumn(db)) return;
   dbRun(db, "UPDATE extension SET kind = ? WHERE id = ?", [kind, id]);
+  if (kind === "starter-pack") deleteRunGrant(db, id);
 }
 
 export function touchExtensionVerifiedAt(db: Database, id: string, ts: number): void {

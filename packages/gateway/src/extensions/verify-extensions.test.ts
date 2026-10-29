@@ -32,6 +32,7 @@ import {
 } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { writePublisherKey, writePublisherKeyFor } from "./publisher-keys.ts";
+import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { verifyExtensionsBestEffort, verifyOneExtensionStrict } from "./verify-extensions.ts";
 import { encodeBase64, generateEd25519Keypair } from "./verify-signature.ts";
 import { prevVersionDir, prevVersionsDir, removeExtensionVersionStore } from "./version-store.ts";
@@ -440,12 +441,24 @@ describe("verifyExtensionsBestEffort crash recovery (T2 PR 3)", () => {
         last_verified_at: Date.now(),
         kind: "extension",
       });
+      // The 1.1.0 code had been approved to run; the pack recovery promotes has no code (I43).
+      upsertRunGrant(db, {
+        extension_id: id,
+        service_id: "ext_com_example_crash_kind",
+        version: "1.1.0",
+        tree_digest: "c".repeat(64),
+        permissions_json: "{}",
+        model_access: 0,
+        approved_at: 1,
+        credentials_json: "{}",
+      });
 
       await verifyExtensionsBestEffort(db, logger, undefined, undefined, undefined, extensionsDir);
 
       const row = listExtensions(db).find((r) => r.id === id);
       expect(row?.version).toBe("1.0.0");
       expect(row?.kind).toBe("starter-pack");
+      expect(getRunGrant(db, id)).toBeNull();
     } finally {
       removeExtensionVersionStore(extensionsDir, id);
       db.close();

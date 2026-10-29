@@ -19,7 +19,9 @@ export type ExtensionRunGrantErrorCode =
   | "ERR_EXTENSION_RUNTIME_DISABLED"
   | "ERR_EXTENSION_ENTRY_OUTSIDE"
   | "ERR_EXTENSION_KEY_REVOKED"
-  | "ERR_EXTENSION_TAKEN_DOWN";
+  | "ERR_EXTENSION_TAKEN_DOWN"
+  /** A starter pack has no code: it is never approved to run nor spawned. */
+  | "ERR_EXTENSION_STARTER_PACK";
 
 /** A refusal on the way to an extension run grant. The code leads the message, so a CLI shows it. */
 export class ExtensionRunGrantError extends Error {
