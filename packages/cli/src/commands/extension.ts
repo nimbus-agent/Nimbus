@@ -597,9 +597,8 @@ async function runExtensionInstallFromRegistry(
   const deps = out.dependencies ?? [];
   const rootIsPack = out.kind === "starter-pack";
   if (rootIsPack) {
-    console.log(
-      `Installed starter pack ${stripControl(out.id)}@${stripControl(out.version)} with ${deps.length} ${deps.length === 1 ? "package" : "packages"}.`,
-    );
+    console.log(`Installed starter pack ${stripControl(out.id)}@${stripControl(out.version)}.`);
+    if (deps.length > 0) console.log(`Added ${deps.length} package(s) it needs.`);
   } else {
     console.log(
       `installed ${out.id}@${out.version} from registry ${out.sourceRegistry}${root}${who}`,

@@ -3439,7 +3439,8 @@ describe("runExtensionInstall — the post-install walk", () => {
         ["acme.pack"],
         walkDeps(asked, fresh),
       );
-      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0 with 2 packages.");
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0.
+Added 2 package(s) it needs.");
       expect(out.stdout).toContain(
         "Nothing runs until you approve it: nimbus extension approve acme.dep",
       );
@@ -3469,7 +3470,8 @@ describe("runExtensionInstall — the post-install walk", () => {
         ["acme.pack"],
         walkDeps(asked, []),
       );
-      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0 with 0 packages.");
+      expect(out.stdout).toContain("Installed starter pack acme.pack@1.0.0.");
+      expect(out.stdout).not.toContain("Added ");
       expect(out.stdout).not.toContain("Nothing runs until you approve it");
       expect(asked).toEqual([]);
     });
