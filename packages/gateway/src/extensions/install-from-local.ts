@@ -681,9 +681,15 @@ function assertInstalledEntryHash(
   }
 }
 
+/** What the dependency half of the plan installer reads: the install's db, trees, Vault and resolver. */
+type PlanInstallContext = Pick<
+  InstallFromLocalOptions,
+  "db" | "extensionsDir" | "vault" | "registryPlan"
+>;
+
 /** Phase 2 of a registry plan: each newly installed dependency's package, staged under `intoDir`. */
 async function stageNewDependencies(
-  options: InstallFromLocalOptions,
+  options: PlanInstallContext,
   plan: { nodes: readonly ResolvedNode[] },
   rootId: string,
   intoDir: () => string,
@@ -703,7 +709,7 @@ async function stageNewDependencies(
 
 /** Installs one staged dependency as a registry package of the plan's channel. */
 async function installStagedDependency(
-  options: InstallFromLocalOptions,
+  options: PlanInstallContext,
   channel: RegistryChannel,
   dep: StagedDependency,
   created: CreatedPackage[],
@@ -781,6 +787,83 @@ async function installApprovedPlan(
       }
     }
   }
+}
+
+/** The options of {@link installPlanDependencies}: a registry resolution, never a local one. */
+export interface PlanDependencyOptions {
+  readonly db: Database;
+  readonly extensionsDir: string;
+  readonly vault?: NimbusVault;
+  readonly registryPlan: RegistryPlanHooks;
+  /** Where the packages are staged (default `os.tmpdir()`); a test seam. */
+  readonly planStagingRoot?: string;
+}
+
+/** What {@link installPlanDependencies} installed, in plan order, and how to undo it. */
+export interface InstalledPlanDependencies {
+  readonly installed: readonly { readonly id: string; readonly version: string }[];
+  /** Undoes every package installed here (edges, row, directory), newest first; returns what failed. */
+  rollback(): RollbackFailure[];
+}
+
+/**
+ * The dependency half of an ALREADY APPROVED plan whose root is installed elsewhere (an update's
+ * root is swapped in by the update itself): stage every newly installed dependency from the
+ * resolver that verified it, then install each in topological order through the same copy + I16
+ * path, index key and index entry hash as a registry install's dependencies. A package that is
+ * already installed (another install or update got there first) is refused before anything is
+ * staged. Records no edge and no audit row: the caller records the edges with its own row write,
+ * and calls `rollback` when that fails. Any failure here undoes every package created here; the
+ * staging directory is always removed.
+ */
+export async function installPlanDependencies(
+  options: PlanDependencyOptions,
+  plan: { nodes: readonly ResolvedNode[] },
+  rootId: string,
+): Promise<InstalledPlanDependencies> {
+  const newDeps = plan.nodes.filter((n) => n.newlyInstalled && n.id !== rootId);
+  const installedIds = new Set(listExtensions(options.db).map((r) => r.id));
+  for (const node of newDeps) {
+    if (
+      installedIds.has(node.id) ||
+      existsSync(extensionInstallDirectory(options.extensionsDir, node.id))
+    ) {
+      throw new RegistryError(
+        "ERR_REGISTRY_INSTALL_REFUSED",
+        `${node.id} is already installed; the plan that would install ${node.id}@${node.version} is out of date`,
+      );
+    }
+  }
+  const created: CreatedPackage[] = [];
+  let stagingDir: string | undefined;
+  try {
+    const staged = await stageNewDependencies(options, plan, rootId, () => {
+      stagingDir = mkdtempSync(join(options.planStagingRoot ?? tmpdir(), PLAN_STAGING_PREFIX));
+      return stagingDir;
+    });
+    // SERIAL by design, as in installApprovedPlan: topological order, fail-fast.
+    for (const node of newDeps) {
+      const dep = staged.get(node.id);
+      if (dep?.version !== node.version) {
+        throw new Error(`dependency ${node.id}@${node.version} was not staged`);
+      }
+      await installStagedDependency(options, options.registryPlan.channel, dep, created); // NOSONAR S9382: topological, fail-fast install order (see above)
+    }
+  } catch (e) {
+    throw withRollbackFailures(e, rollbackCreatedPackages(options.db, created));
+  } finally {
+    if (stagingDir !== undefined) {
+      try {
+        rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort: the staged trees are copies, never installed code */
+      }
+    }
+  }
+  return {
+    installed: newDeps.map((n) => ({ id: n.id, version: n.version })),
+    rollback: () => rollbackCreatedPackages(options.db, created),
+  };
 }
 
 /** Thrown when the owner declined (or the gate timed out); nothing was written. */

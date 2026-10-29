@@ -7704,6 +7704,80 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     for (const id of installed) expect(approved.has(id), id).toBe(true);
   });
 
+  test("behavioural: an update's new dependency comes only from the registry its declaration resolves to, verified", async () => {
+    // 1.2.0 adds DEP by bare range, so it resolves to the root's own registry. `other` carries the
+    // same DEP under the same root key: a resolver pointed anywhere else would fetch it from there.
+    const versions = {
+      [ID]: [{ version: "1.0.0" }, { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+    };
+    const { installFromRegistry } = await import("./extensions/registry/install-from-registry.ts");
+    const { getExtensionSource } = await import("./extensions/registry/registry-store.ts");
+    const { createAutoUpdateRuntime } = await import("./extensions/auto-update-init.ts");
+    const { dispatchAutoUpdateRpc, _resetAutoUpdateMutexForTests } = await import(
+      "./extensions/auto-update-rpc.ts"
+    );
+    async function updateWith(s: RemoteSetup, atGate: () => void) {
+      await installFromRegistry(
+        {
+          db: s.db,
+          extensionsDir: s.extensionsDir,
+          vault: s.vault,
+          fetch: s.fetchBag,
+          approve: async () => true,
+        },
+        { id: ID, registry: "main", version: "1.0.0" },
+      );
+      const runtime = createAutoUpdateRuntime({
+        db: s.db,
+        vault: s.vault,
+        extensionsDir: s.extensionsDir,
+        dataDir: join(s.extensionsDir, "..", "data"),
+        fetch: s.fetchBag,
+        intervalHours: 24,
+      });
+      await runtime.deps.forcePoll();
+      _resetAutoUpdateMutexForTests();
+      return (await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: ID, toVersion: "1.2.0" },
+        {
+          ...runtime.deps,
+          gate: async () => {
+            atGate();
+            return "proceed" as const;
+          },
+        },
+      )) as { applied: boolean; reason?: string };
+    }
+
+    const s = await remoteSetup({ main: versions, other: { [DEP]: [{ version: "1.0.0" }] } });
+    expect(await updateWith(s, () => {})).toMatchObject({ applied: true });
+    expect(installedIds(s.db).sort()).toEqual([DEP, ID].sort());
+    expect(getExtensionSource(s.db, DEP)?.registry).toBe("main");
+    const forDep = s.urls.filter((u) => u.includes(`/extensions/${DEP}/`));
+    expect(forDep.filter((u) => u.endsWith("/package.tgz"))).toEqual([
+      `https://main.test/extensions/${DEP}/1.0.0/package.tgz`,
+    ]);
+    expect(forDep.length).toBeGreaterThan(1);
+    for (const u of forDep) expect(u.startsWith("https://main.test/")).toBe(true);
+    expect(s.urls.some((u) => u.startsWith("https://other.test/"))).toBe(false);
+
+    // Verified: package bytes the signed index does not cover are refused at apply, and the update
+    // installs nothing (the root stays at 1.0.0).
+    const t = await remoteSetup({ main: versions });
+    const tampered = await updateWith(t, () => {
+      const pkg = join(t.extensionsDir, "..", "registry-main", "extensions", DEP, "1.0.0");
+      writeFileSync(join(pkg, "package.tgz"), "tampered");
+    });
+    expect(tampered).toMatchObject({ applied: false });
+    expect(installedIds(t.db)).toEqual([ID]);
+    expect(
+      (t.db.query("SELECT version FROM extension WHERE id = ?").get(ID) as { version: string })
+        .version,
+    ).toBe("1.0.0");
+  });
+
   test("source pin: installExtensionFromLocalDirectory asks the owner before anything is staged", async () => {
     const local = stripComments(
       await read("packages/gateway/src/extensions/install-from-local.ts"),
@@ -7721,11 +7795,45 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     const helperAt = local.indexOf("async function stageNewDependencies(");
     const helper = local.slice(helperAt, local.indexOf("\nasync function", helperAt + 1));
     expect(helper).toMatch(/\.stage\(/);
-    expect(local.match(/\bstageNewDependencies\(/g)).toHaveLength(2);
+    // Its definition and two callers: the plan installer below, and the dependency half of an
+    // update's already-approved plan (`installPlanDependencies`), whose approval is the update's
+    // own `extension.autoUpdate` prompt (pinned after this list).
+    expect(local.match(/\bstageNewDependencies\(/g)).toHaveLength(3);
     const planAt = local.indexOf("async function installApprovedPlan(");
-    const plan = local.slice(planAt, local.indexOf("\nfunction", planAt + 1));
-    expect(plan).toMatch(/await stageNewDependencies\(/);
+    const planEnd = local.indexOf("\nexport ", planAt + 1);
+    const plan = local.slice(planAt, planEnd);
+    expect(plan.match(/await stageNewDependencies\(/g)).toHaveLength(1);
     expect(plan).not.toMatch(/requireInstallApproval/);
+    const depsAt = local.indexOf("export async function installPlanDependencies(");
+    expect(depsAt).toBeGreaterThan(planEnd - 1);
+    const depsHalf = local.slice(depsAt, local.indexOf("\nexport ", depsAt + 1));
+    expect(depsHalf.match(/await stageNewDependencies\(/g)).toHaveLength(1);
+    expect(depsHalf).not.toMatch(/requireInstallApproval|installVerifiedRegistryPackage/);
+    // The dependency half is reached only through the registry installer's update step, and that
+    // step only from the update runtime's apply (after its re-verification, pinned below).
+    const prod = (await readDirFiles("packages/gateway/src")).filter(
+      (f) => !f.rel.endsWith(".test.ts"),
+    );
+    const namingHalf = prod
+      .filter((f) => /\binstallPlanDependencies\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(namingHalf).toEqual([
+      "extensions/install-from-local.ts",
+      "extensions/registry/install-from-registry.ts",
+    ]);
+    const registrySrc = stripComments(
+      await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
+    );
+    expect(registrySrc.match(/\binstallPlanDependencies\(/g)).toHaveLength(1);
+    const stepAt = registrySrc.indexOf("export async function installUpdateDependencies(");
+    expect(stepAt).toBeGreaterThan(-1);
+    expect(registrySrc.indexOf("await installPlanDependencies(")).toBeGreaterThan(stepAt);
+    const namingStep = prod
+      .filter((f) => f.rel !== "extensions/registry/install-from-registry.ts")
+      .filter((f) => /\binstallUpdateDependencies\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel);
+    expect(namingStep).toEqual(["extensions/auto-update-init.ts"]);
   });
 
   test("source pin: the migration engine's accept re-digests the stage, installs with the BUILTIN registry row, then checks the installed digest", async () => {

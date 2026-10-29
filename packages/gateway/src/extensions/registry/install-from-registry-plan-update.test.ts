@@ -7,19 +7,32 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
+import { dirname, join } from "node:path";
+import {
+  publisherKeyFingerprint,
+  RegistryError,
+  signTrustStatement,
+} from "@nimbus-dev/registry-format";
+import nacl from "tweetnacl";
 import { rmDirWithRetry } from "../../../test/helpers/rm-dir-with-retry.ts";
+import { getExtensionKind, isInstalledAsDependency } from "../../automation/extension-store.ts";
+import { CURRENT_SCHEMA_VERSION } from "../../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { MockVault } from "../../vault/mock.ts";
 import { createAutoUpdateRuntime } from "../auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "../auto-update-rpc.ts";
 import { DependencyConflictError } from "../dependency-errors.ts";
+import { forwardDeps } from "../dependency-store.ts";
 import type { ExtensionManifestForSolver } from "../dependency-types.ts";
+import { getRunGrant, upsertRunGrant } from "../run-grant-store.ts";
+import { recordTrustStatements } from "../trust/trust-store.ts";
+import { encodeBase64 } from "../verify-signature.ts";
+import { prevVersionDir, prevVersionsDir } from "../version-store.ts";
 import {
   buildMultiExtensionRegistry,
+  resignIndex,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
 import {
@@ -27,7 +40,7 @@ import {
   installFromRegistry,
   planUpdate,
 } from "./install-from-registry.ts";
-import { insertRegistry } from "./registry-store.ts";
+import { getExtensionSource, insertRegistry } from "./registry-store.ts";
 
 const NOW = Date.parse("2026-10-29T12:00:00Z");
 
@@ -578,3 +591,299 @@ function addUnservedRegistry(name: string): void {
     lastIndexSha256: null,
   });
 }
+
+describe("an approved update installs the packages it adds (production wiring)", () => {
+  const PACK_ROOT_VERSIONS: TestVersion[] = [
+    { version: "1.0.0" },
+    { version: "1.2.0", starterPack: true, dependsOn: { [DEP]: "^1.0.0" } },
+  ];
+
+  function runtime() {
+    return createAutoUpdateRuntime({
+      db,
+      vault,
+      extensionsDir: join(tmp, "extensions"),
+      dataDir: join(tmp, "data"),
+      fetch: fetchBag(),
+      intervalHours: 24,
+    });
+  }
+
+  /** ROOT 1.0.0 installed from `main`, whose 1.2.0 adds DEP (unless `rootVersions` says otherwise). */
+  async function installedRoot(
+    rootVersions: TestVersion[] = [
+      { version: "1.0.0" },
+      { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } },
+    ],
+    extra: Record<string, TestVersion[]> = {},
+  ): Promise<void> {
+    await addRegistry("main", {
+      [ROOT]: rootVersions,
+      [DEP]: [{ version: "1.0.0" }],
+      ...extra,
+    });
+    await installFromRegistry(deps(), { id: ROOT, version: "1.0.0" });
+  }
+
+  /** Detects, then applies ROOT@1.2.0 through `extension.update`; `beforeApply` runs at the gate. */
+  async function update(beforeApply: () => void | Promise<void> = () => {}) {
+    _resetAutoUpdateMutexForTests();
+    const rt = runtime();
+    await rt.deps.forcePoll();
+    let asked = 0;
+    const result = (await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ROOT, toVersion: "1.2.0" },
+      {
+        ...rt.deps,
+        gate: async () => {
+          asked++;
+          await beforeApply();
+          return "proceed" as const;
+        },
+      },
+    )) as Record<string, unknown>;
+    return { result, asked };
+  }
+
+  /** The detected ROOT@1.2.0 update and the runtime that detected it. */
+  async function detected() {
+    const rt = runtime();
+    await rt.deps.forcePoll();
+    const cached = rt.deps.cache.get(ROOT);
+    if (cached === undefined) throw new Error("no update detected");
+    return { rt, cached };
+  }
+
+  function versionOf(id: string): string | undefined {
+    return (
+      db.query("SELECT version FROM extension WHERE id = ?").get(id) as { version: string } | null
+    )?.version;
+  }
+
+  function packageRowsFor(id: string): number {
+    const row = db
+      .query(
+        "SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.package' AND payload_summary LIKE ?",
+      )
+      .get(`%${id}%`) as { n: number };
+    return row.n;
+  }
+
+  /** The installed root's entry file: which code is on disk. */
+  function rootCode(): string {
+    return readFileSync(join(tmp, "extensions", ROOT, "dist", "index.js"), "utf8");
+  }
+
+  /** Re-signs `main`'s index (next sequence) after `edit`; the package files stay served. */
+  function editMainIndex(
+    edit: (index: { extensions: Record<string, { versions: Record<string, unknown> }> }) => void,
+  ): void {
+    const path = join(tmp, "main", "index.json");
+    const index = JSON.parse(readFileSync(path, "utf8")) as {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, unknown> }>;
+    };
+    edit(index);
+    resignIndex(path, { ...index, sequence: index.sequence + 1 });
+  }
+
+  function expectNothingAdded(): void {
+    expect(versionOf(ROOT)).toBe("1.0.0");
+    expect(rootCode()).toContain("1.0.0");
+    expect(versionOf(DEP)).toBeUndefined();
+    expect(existsSync(join(tmp, "extensions", DEP))).toBe(false);
+    expect(forwardDeps(db, ROOT)).toEqual([]);
+  }
+
+  test("an approved update installs its new dependency from the registry and records the edges", async () => {
+    await installedRoot();
+    const packagesBefore = ledger("registry.package");
+    const { result, asked } = await update();
+    expect(asked).toBe(1);
+    expect(result).toMatchObject({
+      applied: true,
+      addedPackages: [{ id: DEP, version: "1.0.0", registry: "main", kind: "extension" }],
+    });
+    expect(versionOf(ROOT)).toBe("1.2.0");
+    expect(rootCode()).toContain("1.2.0");
+    expect(versionOf(DEP)).toBe("1.0.0");
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(getExtensionSource(db, DEP)).toMatchObject({ registry: "main", channel: "stable" });
+    expect(forwardDeps(db, ROOT)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+    expect(forwardDeps(db, DEP)).toEqual([]);
+    // One ledgered package download per package: the root's and the dependency's.
+    expect(ledger("registry.package") - packagesBefore).toBe(2);
+    expect(packageRowsFor(DEP)).toBe(1);
+  });
+
+  test("apply installs the approved set: a newer dependency version published after the gate is not taken", async () => {
+    await installedRoot();
+    const { result } = await update(async () => {
+      // A real, signed DEP 1.1.0 lands beside the approved 1.0.0, whose files are left as they were.
+      const dir = join(tmp, "main");
+      const before = JSON.parse(readFileSync(join(dir, "index.json"), "utf8")) as {
+        extensions: Record<string, { versions: Record<string, unknown> }>;
+      };
+      await buildMultiExtensionRegistry(dir, { [DEP]: [{ version: "1.1.0" }] });
+      editMainIndex((index) => {
+        const newer = index.extensions[DEP]?.versions["1.1.0"];
+        const approvedEntry = before.extensions[DEP]?.versions["1.0.0"];
+        if (newer === undefined || approvedEntry === undefined) throw new Error("no dep versions");
+        index.extensions = {
+          ...before.extensions,
+          [DEP]: { ...index.extensions[DEP], versions: { "1.0.0": approvedEntry, "1.1.0": newer } },
+        };
+      });
+    });
+    expect(result).toMatchObject({ applied: true, addedPackages: [{ id: DEP, version: "1.0.0" }] });
+    expect(versionOf(DEP)).toBe("1.0.0");
+    // The control: the signed index the apply re-read did list the newer 1.1.0 next to it.
+    const served = JSON.parse(readFileSync(join(tmp, "main", "index.json"), "utf8")) as {
+      extensions: Record<string, { versions: Record<string, unknown> }>;
+    };
+    expect(Object.keys(served.extensions[DEP]?.versions ?? {}).sort()).toEqual(["1.0.0", "1.1.0"]);
+    expect(served.extensions[ROOT]).toBeDefined();
+  });
+
+  test("apply refuses when the approved dependency version is taken down after the gate (I48)", async () => {
+    await installedRoot();
+    const { result } = await update(async () => {
+      const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 40);
+      const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+      const s = await signTrustStatement(
+        {
+          kind: "extension.takedown",
+          issuedAt: "2026-10-28T12:00:00Z",
+          signerKey: nimbusKey,
+          extensionId: DEP,
+          publisherId: "acme",
+          versions: ["1.0.0"],
+          reason: "malware",
+        },
+        seed,
+      );
+      recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    });
+    expect(result).toEqual({ applied: false, reason: "trust_blocked" });
+    expect(packageRowsFor(DEP)).toBe(0);
+    expectNothingAdded();
+  });
+
+  test("apply refuses when the approved dependency version is withdrawn from the index after the gate", async () => {
+    await installedRoot();
+    const { result } = await update(() =>
+      editMainIndex((index) => {
+        // The whole entry: an entry with no versions left would make the index itself invalid.
+        delete index.extensions[DEP];
+      }),
+    );
+    // The package file is still served: only the re-read index refuses it, never the resolver's memory.
+    expect(existsSync(join(tmp, "main", "extensions", DEP, "1.0.0", "package.tgz"))).toBe(true);
+    expect(result).toEqual({ applied: false, reason: "signature_failed" });
+    expect(packageRowsFor(DEP)).toBe(0);
+    expectNothingAdded();
+  });
+
+  test("a failed swap rolls back the new dependencies and keeps the old root", async () => {
+    await installedRoot();
+    // A file where the versions area must be a directory: the swap's first step fails.
+    const prev = prevVersionsDir(join(tmp, "extensions"), ROOT);
+    mkdirSync(dirname(prev), { recursive: true });
+    writeFileSync(prev, "not a directory");
+    const { result } = await update();
+    expect(result).toEqual({ applied: false, reason: "swap_failed" });
+    // The dependency was installed (downloaded) before the swap, then undone.
+    expect(packageRowsFor(DEP)).toBe(1);
+    expectNothingAdded();
+  });
+
+  test("a failed commit after the swap restores the old root, then rolls back the new dependencies", async () => {
+    await installedRoot();
+    db.run(
+      "CREATE TRIGGER no_edges BEFORE INSERT ON extension_dependency BEGIN SELECT RAISE(ABORT, 'edge write refused'); END",
+    );
+    const { result } = await update();
+    expect(result).toEqual({ applied: false, reason: "swap_failed" });
+    expect(packageRowsFor(DEP)).toBe(1);
+    expectNothingAdded();
+    // The old version went back to the install path; it is no longer parked in prev/.
+    expect(existsSync(prevVersionDir(join(tmp, "extensions"), ROOT, "1.0.0"))).toBe(false);
+  });
+
+  test("an update to a starter pack installs its members and drops the grant", async () => {
+    // The row's kind column (and the pack's grant drop) needs the current schema.
+    runIndexedSchemaMigrations(db, CURRENT_SCHEMA_VERSION);
+    await installedRoot(PACK_ROOT_VERSIONS);
+    upsertRunGrant(db, {
+      extension_id: ROOT,
+      service_id: "ext_update_pack",
+      version: "1.0.0",
+      tree_digest: "c".repeat(64),
+      permissions_json: "{}",
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+    const { result } = await update();
+    expect(result).toMatchObject({
+      applied: true,
+      addedPackages: [{ id: DEP, version: "1.0.0", kind: "extension" }],
+    });
+    expect(versionOf(ROOT)).toBe("1.2.0");
+    expect(getExtensionKind(db, ROOT)).toBe("starter-pack");
+    expect(getRunGrant(db, ROOT)).toBeNull();
+    expect(isInstalledAsDependency(db, DEP)).toBe(true);
+    expect(forwardDeps(db, ROOT)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
+  });
+
+  test("an update that declares dependencies is refused when applied without an approved plan", async () => {
+    await installedRoot();
+    const { rt, cached } = await detected();
+    await expect(rt.deps.performUpgrade(cached)).rejects.toThrow(
+      /^update_conflicts: .*no approved plan/,
+    );
+    expectNothingAdded();
+  });
+
+  test("a plan solved from other dependencies than the re-verified manifest declares is refused", async () => {
+    await installedRoot();
+    const { rt, cached } = await detected();
+    // The plan is solved as if 1.2.0 declared nothing; the manifest re-verified at apply declares DEP.
+    const { dependsOn: _declared, ...withoutDeps } = cached;
+    const plan = await rt.deps.planUpdate(withoutDeps);
+    expect(plan.addedPackages).toEqual([]);
+    await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(
+      /^update_conflicts: .*not the ones the approved plan was solved from/,
+    );
+    expectNothingAdded();
+  });
+
+  test("a package installed by someone else since the plan is refused and left in place", async () => {
+    await installedRoot();
+    const { rt, cached } = await detected();
+    const plan = await rt.deps.planUpdate(cached);
+    expect(plan.addedPackages.map((p) => p.id)).toEqual([DEP]);
+    await installFromRegistry(deps(), { id: DEP });
+    await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(
+      /^update_conflicts: .*ERR_REGISTRY_INSTALL_REFUSED/,
+    );
+    expect(versionOf(ROOT)).toBe("1.0.0");
+    // The owner's own install of DEP is untouched by the refusal.
+    expect(versionOf(DEP)).toBe("1.0.0");
+    expect(isInstalledAsDependency(db, DEP)).toBe(false);
+  });
+
+  test("a dependent that came to pin the root since the plan refuses the apply", async () => {
+    const OTHER = "com.example.other";
+    await installedRoot(undefined, {
+      [OTHER]: [{ version: "1.0.0", dependsOn: { [ROOT]: "~1.0.0" } }],
+    });
+    const { rt, cached } = await detected();
+    const plan = await rt.deps.planUpdate(cached);
+    await installFromRegistry(deps(), { id: OTHER });
+    await expect(rt.deps.performUpgrade(cached, plan)).rejects.toThrow(/^update_conflicts: /);
+    expect(versionOf(ROOT)).toBe("1.0.0");
+    expect(versionOf(DEP)).toBeUndefined();
+  });
+});

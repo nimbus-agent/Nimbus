@@ -1,6 +1,10 @@
 import type { Database } from "bun:sqlite";
 import { existsSync, readFileSync } from "node:fs";
-import { publisherKeyFingerprint, RegistryError } from "@nimbus-dev/registry-format";
+import {
+  type DependencySpec,
+  publisherKeyFingerprint,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
 import {
   listExtensions,
   selectExtensionInstallPath,
@@ -18,7 +22,9 @@ import { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   createPerformDowngrade,
   createPerformUpgrade,
+  type DependencyEdgeWrite,
   type PerformUpgradeDeps,
+  type UpgradeDependencies,
 } from "./auto-update-orchestrate.ts";
 import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
 import {
@@ -26,6 +32,7 @@ import {
   type ConnectorRequirementStatus,
   connectorRequirementStatuses,
 } from "./connector-requirements.ts";
+import { recordInstall } from "./dependency-store.ts";
 import {
   installedManifestKind,
   parseExtensionManifestJson,
@@ -35,7 +42,11 @@ import { rangesOf } from "./manifest-support.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
 import { currentSourceRegistry, sourceRegistryOf } from "./registry/builtin-registry.ts";
-import { type InstallFromRegistryDeps, planUpdate } from "./registry/install-from-registry.ts";
+import {
+  type InstallFromRegistryDeps,
+  installUpdateDependencies,
+  planUpdate,
+} from "./registry/install-from-registry.ts";
 import {
   FETCH_FAILURE_CODES,
   fetchRegistryBytes,
@@ -190,8 +201,15 @@ async function sha256OfBytes(bytes: Uint8Array): Promise<string> {
     .join("");
 }
 
-/** The key an update's manifest verified with at apply time, recorded once the swap succeeds. */
-type VerifiedUpdateKey = { publisherId: string; key: Uint8Array };
+/**
+ * The key an update's manifest verified with at apply time, recorded once the swap succeeds, and
+ * the dependencies that RE-VERIFIED manifest declares (what the apply checks the approved plan against).
+ */
+type VerifiedUpdateKey = {
+  publisherId: string;
+  key: Uint8Array;
+  dependsOn: Readonly<Record<string, DependencySpec>> | undefined;
+};
 
 function updateFailurePhase(e: unknown): "trust_blocked" | "download_failed" | "signature_failed" {
   if (e instanceof TrustBlockError) return "trust_blocked";
@@ -270,7 +288,11 @@ async function reverifyUpdateManifest(
       keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
       source: { registry: reg.name, rootFingerprint: reg.rootFingerprint },
     });
-    return { publisherId: entry.publisher.id, key: fetched.publisherKey };
+    return {
+      publisherId: entry.publisher.id,
+      key: fetched.publisherKey,
+      dependsOn: fetched.manifest.dependsOn,
+    };
   } catch (e) {
     throw new Error(`${updateFailurePhase(e)}: ${e instanceof Error ? e.message : String(e)}`);
   }
@@ -343,6 +365,52 @@ async function updateRequirementStatuses(
   }
 }
 
+const byFirst = (
+  [a]: readonly [string, ...unknown[]],
+  [b]: readonly [string, ...unknown[]],
+): number => (a < b ? -1 : Number(a > b));
+
+/** A `dependsOn` map in one canonical form (sorted ids, every spec field explicit), for comparison. */
+function canonicalDependsOn(
+  dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
+): string {
+  return JSON.stringify(
+    Object.entries(dependsOn ?? {})
+      .map(
+        ([id, spec]) =>
+          [id, spec.range, spec.registry ?? null, spec.rootKeyFingerprint ?? null] as const,
+      )
+      .sort(byFirst),
+  );
+}
+
+/**
+ * Refused unless the manifest re-verified at apply declares exactly the dependencies the approved
+ * plan was solved from (the cached specs the gate planned, and the plan root's own edges), so the
+ * owner never approves one dependency set and gets another. Returns the root's new edges.
+ */
+function assertPlanMatchesManifest(
+  update: AvailableUpdate,
+  plan: UpdatePlan,
+  declared: Readonly<Record<string, DependencySpec>> | undefined,
+): DependencyEdgeWrite {
+  const root = plan.plan.nodes.find((n) => n.id === update.id && n.version === update.toVersion);
+  const planned = JSON.stringify(
+    (root?.deps ?? []).map((d) => [d.id, d.range] as const).sort(byFirst),
+  );
+  const manifest = JSON.stringify(Object.entries(rangesOf(declared)).sort(byFirst));
+  if (
+    root === undefined ||
+    canonicalDependsOn(declared) !== canonicalDependsOn(update.dependsOn) ||
+    planned !== manifest
+  ) {
+    throw new Error(
+      `update_conflicts: the dependencies ${update.id}@${update.toVersion} declares are not the ones the approved plan was solved from`,
+    );
+  }
+  return { id: root.id, version: root.version, deps: root.deps };
+}
+
 export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRuntime {
   const cache = new AutoUpdateCache();
   const abortController = new AbortController();
@@ -370,27 +438,25 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   // One definition for the upgrade AND downgrade paths — it is the same row write either way. It
   // runs after the swap, so the manifest now installed says whether the row is a starter pack
   // (an update may turn an extension into a pack, or the reverse).
+  // The edges, when given, are written in the SAME transaction: the row and its dependency graph
+  // commit together or not at all.
   const dbUpdateExtensionRow: PerformUpgradeDeps["dbUpdateExtensionRow"] = (
     id,
     version,
     manifestHash,
     entryHash,
     treeDigest,
+    edges,
   ) =>
     Promise.try(() => {
       const installPath = selectExtensionInstallPath(opts.db, id);
       const kind = installPath === null ? null : installedManifestKind(installPath);
+      const now = Date.now();
       opts.db.transaction(() => {
-        updateExtensionRowVersion(
-          opts.db,
-          id,
-          version,
-          manifestHash,
-          entryHash,
-          Date.now(),
-          treeDigest,
-        );
+        updateExtensionRowVersion(opts.db, id, version, manifestHash, entryHash, now, treeDigest);
         if (kind !== null) setExtensionKind(opts.db, id, kind);
+        for (const edge of edges ?? [])
+          recordInstall(opts.db, edge.id, edge.version, edge.deps, now);
       })();
     });
 
@@ -432,6 +498,50 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
   const noopStop = async (_id: string): Promise<void> => {};
   const verifiedKeys = new Map<string, VerifiedUpdateKey>();
 
+  /**
+   * The apply's dependency step: an update applied without an approved plan may declare no
+   * dependency; with one, the re-verified manifest must declare what the plan was solved from, and
+   * exactly the approved packages are installed (`installUpdateDependencies`, I44). The edges are
+   * the root's NEW full set and each added package's own.
+   */
+  const installApprovedDependencies = async (
+    update: AvailableUpdate,
+    plan: UpdatePlan | undefined,
+    reverified: VerifiedUpdateKey | undefined,
+    signal: AbortSignal,
+  ): Promise<UpgradeDependencies> => {
+    if (reverified === undefined) {
+      throw new Error(
+        `signature_failed: ${updateKey(update)} was not re-verified before its apply`,
+      );
+    }
+    if (plan === undefined) {
+      if (Object.keys(reverified.dependsOn ?? {}).length > 0) {
+        throw new Error(
+          `update_conflicts: ${updateKey(update)} declares dependencies but no approved plan was given`,
+        );
+      }
+      return {
+        edges: [{ id: update.id, version: update.toVersion, deps: [] }],
+        rollback: () => [],
+      };
+    }
+    const rootEdges = assertPlanMatchesManifest(update, plan, reverified.dependsOn);
+    // Always, even when the approval listed nothing: it also refuses a plan that would install a
+    // package the approval did not list, and re-checks the root's dependents.
+    const added = await installUpdateDependencies(planDeps, update, plan, signal);
+    const installed = new Set(added.installed.map((p) => `${p.id}@${p.version}`));
+    return {
+      edges: [
+        rootEdges,
+        ...plan.plan.nodes
+          .filter((n) => installed.has(`${n.id}@${n.version}`))
+          .map((n) => ({ id: n.id, version: n.version, deps: n.deps })),
+      ],
+      rollback: () => added.rollback(),
+    };
+  };
+
   const performUpgradeDeps: PerformUpgradeDeps = {
     extensionsRoot: opts.extensionsDir,
     signal: abortController.signal,
@@ -458,6 +568,8 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     sha256OfPackage: sha256OfBytes,
     extractPackage,
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
+    installDependencies: (update, plan, signal) =>
+      installApprovedDependencies(update, plan, verifiedKeys.get(updateKey(update)), signal),
     dbUpdateExtensionRow,
   };
 
@@ -467,10 +579,10 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
     stopExtensionClient: opts.stopExtensionClient ?? noopStop,
     dbUpdateExtensionRow,
   });
-  // `_plan` is the plan the owner approved; the apply installs its added packages (PR 5 task 3).
+  // `plan` is the plan the owner approved; the apply installs exactly its added packages.
   const performUpgrade = withUpdateAppliedHook(
-    async (update: AvailableUpdate, _plan?: UpdatePlan) => {
-      await upgrade(update);
+    async (update: AvailableUpdate, plan?: UpdatePlan) => {
+      await upgrade(update, plan);
       // The new code may be signed by a rotated key: keep that key under its fingerprint and record
       // it on the row, so the boot pass and every spawn verify with it (I16).
       const verified = verifiedKeys.get(updateKey(update));
