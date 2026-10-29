@@ -13,6 +13,14 @@ import {
 import { canonicalizeUrl } from "../../util/url-canonical.ts";
 import { builtinRegistryOf, builtinRegistryRow } from "./builtin-registry.ts";
 import type { RegistryFetchDeps } from "./registry-fetch.ts";
+
+/**
+ * What resolving a declaration reads: the database, the built-in registry and the air-gap switch.
+ * Resolution contacts no registry, so a caller that only RECORDS a name may pass
+ * `enforceAirGap: () => false`; a fetch never does.
+ */
+export type DependencyRegistryDeps = Pick<RegistryFetchDeps, "db" | "builtin" | "enforceAirGap">;
+
 import { listRegistries, type RegistryRow } from "./registry-store.ts";
 
 function notAdded(depId: string, registry: string): RegistryError {
@@ -31,7 +39,7 @@ function airGapRefusal(depId: string): RegistryError {
 
 /** The registry a dependency declared by a package from `parent` must come from. */
 export function resolveDependencyRegistry(
-  deps: RegistryFetchDeps,
+  deps: DependencyRegistryDeps,
   parent: RegistryRow,
   depId: string,
   spec: DependencySpec,
@@ -56,7 +64,7 @@ export function resolveDependencyRegistry(
 }
 
 function matchRegistry(
-  deps: RegistryFetchDeps,
+  deps: DependencyRegistryDeps,
   depId: string,
   named: string,
   builtin: RegistryRow | null,

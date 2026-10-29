@@ -22,6 +22,29 @@ export class OfflineDependencyResolutionError extends Error {
   }
 }
 
+/**
+ * Every refusal a solve that collects its conflicts met (`ResolveClosureOptions.collectConflicts`):
+ * more than one, each the error that would otherwise have been thrown alone.
+ */
+export class DependencyConflictsError extends Error {
+  readonly errors: readonly unknown[];
+
+  constructor(errors: readonly unknown[]) {
+    super(`dependency_conflicts:${errors.length}`);
+    this.name = "DependencyConflictsError";
+    this.errors = errors;
+  }
+}
+
+export function isDependencyConflictsError(e: unknown): e is DependencyConflictsError {
+  return e instanceof Error && e.name === "DependencyConflictsError";
+}
+
+/** The refusals one error carries: an aggregate's, or the error itself. */
+export function conflictErrorsOf(e: unknown): readonly unknown[] {
+  return isDependencyConflictsError(e) ? e.errors : [e];
+}
+
 export class ReverseDepBlockedError extends Error {
   readonly target: string;
   readonly blockers: ReadonlyArray<{ id: string; range: string }>;
@@ -46,4 +69,21 @@ export function isOfflineDependencyResolutionError(
 
 export function isReverseDepBlockedError(e: unknown): e is ReverseDepBlockedError {
   return e instanceof Error && e.name === "ReverseDepBlockedError";
+}
+
+/** One line saying why a solve refused, for a list or a refusal message. */
+export function describeDependencyConflict(conflict: DependencyConflict): string {
+  const constraints = (conflict.constraints ?? []).map((c) => `${c.range} (from ${c.from})`);
+  switch (conflict.kind) {
+    case "cycle":
+      return `dependency cycle: ${(conflict.chain ?? [conflict.id]).join(" -> ")}`;
+    case "range_invalid":
+      return `${conflict.id}: invalid range ${constraints.join(", ")}`;
+    case "unsatisfiable": {
+      const available = conflict.availableVersions ?? [];
+      return `${conflict.id}: no version satisfies ${constraints.join(", ")}; available: ${
+        available.length === 0 ? "none" : available.join(", ")
+      }`;
+    }
+  }
 }

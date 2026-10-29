@@ -138,6 +138,20 @@ export function renderInstallPlan(plan: readonly PlannedPackage[], union: Permis
   return lines.join("\n");
 }
 
+/**
+ * The text the owner approves for an update that installs new packages (`extension.autoUpdate`):
+ * one block per added package, exactly as `renderInstallPlan` prints a newly installed one, then
+ * the permissions of the added packages together (`union`). The updated extension itself is not a
+ * block here: the update prompt states its version change and permission diff in its own fields.
+ */
+export function renderUpdatePlan(added: readonly PlannedPackage[], union: Permissions): string {
+  return [
+    `This update adds ${added.length} package(s):`,
+    ...added.flatMap(packageBlock),
+    `The added packages together: ${permissionsLine(union)}`,
+  ].join("\n");
+}
+
 /** The status shown after a connector's name, as the CLI shows it (`extension-requirements-format.ts`). */
 function requirementStatusText(s: ConnectorRequirementStatus): string {
   const fix = s.fix.map(oneLine).join(" && ");

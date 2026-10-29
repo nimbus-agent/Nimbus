@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { isStarterPack, parseExtensionManifestJson } from "@nimbus-dev/registry-format";
+import {
+  type ExtensionManifest,
+  isStarterPack,
+  parseExtensionManifestJson,
+} from "@nimbus-dev/registry-format";
 
 import type { ExtensionKind } from "../automation/extension-store.ts";
 
@@ -38,10 +42,21 @@ export function resolveExtensionManifestPath(dir: string): string | undefined {
  * update or a recovery just replaced. Throws when `dir` holds no manifest.
  */
 export function installedManifestKind(dir: string): ExtensionKind {
+  return isStarterPack(readInstalledManifest(dir)) ? "starter-pack" : "extension";
+}
+
+/**
+ * The `dependsOn` of the manifest installed in `dir` (undefined when it declares none), read for a
+ * version restored from disk. Throws when `dir` holds no manifest.
+ */
+export function installedManifestDependsOn(dir: string): ExtensionManifest["dependsOn"] {
+  return readInstalledManifest(dir).dependsOn;
+}
+
+function readInstalledManifest(dir: string): ExtensionManifest {
   const path = resolveExtensionManifestPath(dir);
   if (path === undefined) {
     throw new Error("extension manifest missing");
   }
-  const manifest = parseExtensionManifestJson(readFileSync(path, "utf8"));
-  return isStarterPack(manifest) ? "starter-pack" : "extension";
+  return parseExtensionManifestJson(readFileSync(path, "utf8"));
 }

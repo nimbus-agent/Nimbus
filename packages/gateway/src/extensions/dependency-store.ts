@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import type { DependencySpec } from "@nimbus-dev/registry-format";
 import { dbRun } from "../db/write.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import type { ResolvedDep } from "./dependency-types.ts";
@@ -45,6 +46,27 @@ export function recordInstall(
       [extensionId, dep.id, dep.range, now],
     );
   }
+}
+
+/**
+ * The edges an installed manifest's `dependsOn` declares, for a version restored from disk (a
+ * downgrade, or crash recovery promoting an older version): each dependency's range, the version of
+ * it installed now (`""` when it is absent) and the registry name `registryOf` resolves it to (null
+ * when it no longer resolves). Sorted by id.
+ */
+export function declaredDependencyEdges(
+  dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
+  installedVersionOf: (depId: string) => string | undefined,
+  registryOf: (depId: string, spec: DependencySpec) => string | null,
+): ResolvedDep[] {
+  return Object.entries(dependsOn ?? {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([depId, spec]) => ({
+      id: depId,
+      range: spec.range,
+      resolvedVersion: installedVersionOf(depId) ?? "",
+      registry: registryOf(depId, spec),
+    }));
 }
 
 export function clearDeps(db: Database, extensionId: string): void {

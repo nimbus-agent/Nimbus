@@ -19,7 +19,10 @@ function updater(overrides: Partial<ExtensionAutoUpdaterOpts>): {
   const u = new ExtensionAutoUpdater({
     cache,
     listInstalled: async () => [],
-    collect: async () => ({ updates: [], errors: [], dependsOn: new Map() }),
+    collect: async () => ({ updates: [], errors: [], dependsOn: new Map(), requires: new Map() }),
+    planUpdate: async () => {
+      throw new Error("nothing is planned in these tests");
+    },
     appendAudit: async () => {},
     intervalHours: 2,
     now: () => 1_000,

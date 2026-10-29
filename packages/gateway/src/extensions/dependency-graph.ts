@@ -1,6 +1,10 @@
 import { type DependencySpec, RegistryError } from "@nimbus-dev/registry-format";
 import semver from "semver";
-import { DependencyConflictError, OfflineDependencyResolutionError } from "./dependency-errors.ts";
+import {
+  DependencyConflictError,
+  DependencyConflictsError,
+  OfflineDependencyResolutionError,
+} from "./dependency-errors.ts";
 import {
   type DependencyConstraint,
   type ExtensionManifestForSolver,
@@ -67,6 +71,7 @@ export async function resolveClosure(
   const manifestCache: ManifestCache = new Map();
   const resolved: Map<string, ResolvedNode> = new Map();
   const initialInstalled = new Map(opts.installed);
+  const collected: unknown[] | undefined = opts.collectConflicts === true ? [] : undefined;
 
   await visit(root, rootSource, {
     pinned: initialPinned,
@@ -76,9 +81,55 @@ export async function resolveClosure(
     manifestCache,
     resolved,
     initialInstalled,
+    collected,
   });
 
+  if (collected?.length === 1) throw collected[0];
+  if (collected !== undefined && collected.length > 1) {
+    throw new DependencyConflictsError(collected);
+  }
   return { nodes: topoSort(resolved) };
+}
+
+/** A refusal a collecting solve records and moves past; anything else (a bug) still throws at once. */
+function isCollectableRefusal(e: unknown): boolean {
+  return (
+    e instanceof DependencyConflictError ||
+    e instanceof OfflineDependencyResolutionError ||
+    e instanceof RegistryError ||
+    e instanceof TrustBlockError
+  );
+}
+
+/**
+ * `resolveClosure` never checks what OTHER installed extensions require of the root itself, so an
+ * update first checks that every installed dependent's range still admits `toVersion`. The root's
+ * own entry in `activeConstraints` (its old edges) is ignored.
+ */
+export function assertRootConstraintsSatisfied(
+  rootId: string,
+  toVersion: string,
+  activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>,
+): void {
+  const constraintsOnRoot: Array<{ from: string; range: string }> = [];
+  for (const [dependent, depMap] of activeConstraints) {
+    if (dependent === rootId) continue;
+    const range = depMap.get(rootId);
+    if (range !== undefined) {
+      constraintsOnRoot.push({ from: dependent, range });
+    }
+  }
+  const unsatisfiedConstraints = constraintsOnRoot.filter(
+    (c) => !semver.satisfies(toVersion, c.range),
+  );
+  if (unsatisfiedConstraints.length > 0) {
+    throw new DependencyConflictError({
+      kind: "unsatisfiable",
+      id: rootId,
+      constraints: unsatisfiedConstraints,
+      availableVersions: [toVersion],
+    });
+  }
 }
 
 function describeSource(source: SourceKey | null): string {
@@ -198,6 +249,8 @@ type SolveContext = {
   manifestCache: ManifestCache;
   resolved: Map<string, ResolvedNode>;
   initialInstalled: ReadonlyMap<string, InstalledForSolver>;
+  /** Set ⇒ a refused dependency is recorded here and its siblings are still solved. */
+  collected: unknown[] | undefined;
 };
 
 function validatedRange(depId: string, fromId: string, spec: DependencySpec): string {
@@ -210,6 +263,47 @@ function validatedRange(depId: string, fromId: string, spec: DependencySpec): st
     });
   }
   return range;
+}
+
+/** Solves one of `current`'s dependencies: its version, its source, then its own subtree. */
+async function visitDependency(
+  current: ExtensionManifestForSolver,
+  currentSource: SourceKey | null,
+  depId: string,
+  spec: DependencySpec,
+  deps: ResolvedDep[],
+  ctx: SolveContext,
+): Promise<void> {
+  const range = validatedRange(depId, current.id, spec);
+
+  if (ctx.ancestors.has(depId)) {
+    const chain = [...ctx.ancestors, depId];
+    throw new DependencyConflictError({ kind: "cycle", id: depId, chain });
+  }
+
+  const constraintList = ctx.ranges.get(depId) ?? [];
+  constraintList.push({ from: current.id, range });
+  ctx.ranges.set(depId, constraintList);
+
+  // The FULL spec, so an object dependency's `registry` reaches the fetcher.
+  const target = ctx.fetcher.targetSource(currentSource, depId, spec);
+
+  // The three awaits below are SERIAL by design: this is a depth-first solve over shared,
+  // mutable `ctx` state, so no dependency can be resolved concurrently with another.
+  const chosen = await resolveDepCandidate(depId, current.id, target, constraintList, ctx); // NOSONAR S9382: the candidate is chosen against the ranges and pins earlier siblings' subtrees left in ctx
+  const { version, source } = chosen;
+  const depManifest = await loadDepManifest(depId, current.id, version, source, ctx); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
+
+  deps.push({
+    id: depId,
+    range,
+    resolvedVersion: chosen.version,
+    registry: target === null ? null : registryNameOf(target),
+  });
+
+  if (!ctx.resolved.has(depId)) {
+    await visit(depManifest, chosen.source, ctx); // NOSONAR S9382: depth-first recursion - cycle detection relies on ctx.ancestors holding exactly the current path, one subtree at a time
+  }
 }
 
 async function visit(
@@ -228,35 +322,12 @@ async function visit(
     const depEntries = Object.entries(current.dependsOn ?? {});
 
     for (const [depId, spec] of depEntries) {
-      const range = validatedRange(depId, current.id, spec);
-
-      if (ctx.ancestors.has(depId)) {
-        const chain = [...ctx.ancestors, depId];
-        throw new DependencyConflictError({ kind: "cycle", id: depId, chain });
-      }
-
-      const constraintList = ctx.ranges.get(depId) ?? [];
-      constraintList.push({ from: current.id, range });
-      ctx.ranges.set(depId, constraintList);
-
-      // The FULL spec, so an object dependency's `registry` reaches the fetcher.
-      const target = ctx.fetcher.targetSource(currentSource, depId, spec);
-
-      // The three awaits below are SERIAL by design: this is a depth-first solve over shared,
-      // mutable `ctx` state, so no dependency can be resolved concurrently with another.
-      const chosen = await resolveDepCandidate(depId, current.id, target, constraintList, ctx); // NOSONAR S9382: the candidate is chosen against the ranges and pins earlier siblings' subtrees left in ctx
-      const { version, source } = chosen;
-      const depManifest = await loadDepManifest(depId, current.id, version, source, ctx); // NOSONAR S9382: needs this iteration's candidate, and shares ctx.manifestCache with the rest of the solve
-
-      deps.push({
-        id: depId,
-        range,
-        resolvedVersion: chosen.version,
-        registry: target === null ? null : registryNameOf(target),
-      });
-
-      if (!ctx.resolved.has(depId)) {
-        await visit(depManifest, chosen.source, ctx); // NOSONAR S9382: depth-first recursion - cycle detection relies on ctx.ancestors holding exactly the current path, one subtree at a time
+      try {
+        await visitDependency(current, currentSource, depId, spec, deps, ctx); // NOSONAR S9382: SERIAL by design, see visitDependency
+      } catch (e) {
+        // A collecting solve records the refusal and solves the next sibling; this subtree is skipped.
+        if (ctx.collected === undefined || !isCollectableRefusal(e)) throw e;
+        ctx.collected.push(e);
       }
     }
 

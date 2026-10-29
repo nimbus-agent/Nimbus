@@ -26,7 +26,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
+import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
 import { openSeededInMemoryDb } from "../../../test/helpers/migrated-db-seed.ts";
 import { ProfileManager } from "../../config/profiles.ts";
 import { appendEgressEntry } from "../../egress/egress-ledger.ts";
@@ -295,11 +295,12 @@ describe("a non-domain error propagates unchanged — never remapped to an RPC c
       extensionsAutoUpdate: {
         cache,
         forcePoll: async () => {},
-        performUpgrade: async () => {},
-        performDowngrade: async () => {},
+        performUpgrade: async () => ({ orphanedDependencies: [] }),
+        performDowngrade: async () => ({ orphanedDependencies: [] }),
         appendAudit: async () => {},
         getInstalledVersion: () => Promise.reject(boom),
         hasPrevVersion: async () => false,
+        planUpdate: planNothing,
       },
     });
     const session = {} as Parameters<typeof tryDispatchAutomationRpc>[2];

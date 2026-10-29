@@ -34,6 +34,7 @@ import {
 } from "../../../src/extensions/version-store.ts";
 import { MockVault } from "../../../src/vault/mock.ts";
 import { setupFreshExtensionDb } from "../../fixtures/extension.ts";
+import { planNothing } from "../../helpers/empty-update-plan.ts";
 
 /** Serves a registry FOLDER over real loopback HTTP, so every request is a ledgered remote one. */
 function serveRegistryFolder(dir: string): { url: string; stop: () => void } {
@@ -340,10 +341,12 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
         getInstalledVersion: async () => "1.0.0",
         // The hand-built entry names no real registry; this test is about the mutex.
         isSourceCurrent: async () => true,
-        performUpgrade: async (): Promise<void> => {
+        planUpdate: planNothing,
+        performUpgrade: async () => {
           await new Promise<void>((r) => {
             release = r;
           });
+          return { orphanedDependencies: [] };
         },
       };
       const first = dispatchAutoUpdateRpc(

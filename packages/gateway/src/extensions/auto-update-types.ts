@@ -1,4 +1,8 @@
-import type { DependencyConflict } from "./dependency-types.ts";
+import type { DependencySpec, RegistryIndex } from "@nimbus-dev/registry-format";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import type { DependencyConflict, InstallPlan, SourceKey } from "./dependency-types.ts";
+import type { PlannedPackage } from "./install-plan-text.ts";
+import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -15,7 +19,67 @@ export interface InstalledExtensionManifestSlice {
     filesystem: { read: string[]; write: string[] };
   };
   dependsOn?: Readonly<Record<string, string>>;
+  /** The connectors the installed manifest requires (absent when it declares none). */
+  requires?: { readonly connectors: readonly string[] };
 }
+
+/**
+ * A package an update installs alongside the new version: a dependency the new version declares
+ * that is not installed. Field names follow `PlannedPackage` (and stay clear of the audit redactor).
+ */
+export interface AddedPackage {
+  readonly id: string;
+  readonly version: string;
+  /** The registry NAME it is fetched from (I44: the update's source, or a registry the owner added). */
+  readonly registry: string;
+  readonly registryUrl: string | null;
+}
+
+/**
+ * Why an update does not fit, one line each (`reason`). A solver conflict keeps its structured
+ * fields; a registry refusal (a dependency naming a registry the owner has not added, a key
+ * mismatch, a takedown, …) carries its code; `offline` means a registry could not be reached, so
+ * the update is neither planned nor refused yet.
+ */
+export type UpdateConflict =
+  | (DependencyConflict & { readonly reason: string })
+  | { readonly kind: "registry"; readonly code: string; readonly reason: string }
+  | {
+      readonly kind: "offline";
+      readonly id: string;
+      readonly parent: string;
+      readonly reason: string;
+    };
+
+/**
+ * An update solved through the registry-scoped resolver (`planUpdate`): the resolver holds the
+ * verified manifests the solve used (what the apply stages), the plan has the root at the new
+ * version, and `addedPackages` are its newly installed dependencies.
+ */
+export interface UpdatePlanContext {
+  /** The source registry's index, verified this tick, so the plan need not read it again. */
+  readonly index?: RegistryIndex;
+  /** Aborts the plan's registry requests (the daemon's stop). */
+  readonly signal?: AbortSignal;
+  /**
+   * One poll's verified index reads, by source, shared by every plan of that poll so each
+   * registry's index is read at most once per poll. Created per poll, never kept across polls.
+   */
+  readonly indexes?: Map<SourceKey, Promise<RegistryIndex>>;
+}
+
+export interface UpdatePlan {
+  readonly resolver: RegistryDependencyResolver;
+  readonly plan: InstallPlan;
+  readonly addedPackages: readonly AddedPackage[];
+}
+
+/**
+ * A package an update adds, as the owner is shown it in the `extension.autoUpdate` approval: the
+ * install plan's block (`PlannedPackage`, from the resolver's verified manifest) and its kind, so a
+ * starter pack is never offered a run approval.
+ */
+export type ShownAddedPackage = PlannedPackage & { readonly kind: "extension" | "starter-pack" };
 
 /**
  * `publisher_key_conflict`: the source registry's signed index names a publisher key that differs
@@ -62,7 +126,21 @@ export interface AvailableUpdate {
   /** Set by `extension.update --accept-publisher-key`: the owner accepted this exact key. */
   acceptedPublisherKey?: string;
   detectedAt: number;
-  conflicts?: readonly DependencyConflict[];
+  conflicts?: readonly UpdateConflict[];
+  /**
+   * Set ONLY when the update was planned: the dependencies it would install (possibly none). Absent
+   * means "not planned" (a conflict says why, or the signature/key status stops it), never "adds
+   * nothing".
+   */
+  addedPackages?: readonly AddedPackage[];
+  /** The connectors the new version requires that the installed one does not. */
+  addedRequirements?: readonly string[];
+  /**
+   * The new version's declared dependencies (full specs, registry kept), from the manifest whose
+   * hash is `manifestHash`; absent when it declares none. The approval re-plans from these, and the
+   * apply re-verifies that same manifest hash.
+   */
+  dependsOn?: Readonly<Record<string, DependencySpec>>;
   /** Set when the new version's verified manifest is a starter pack: it has no code to run. */
   toStarterPack?: true;
 }
@@ -81,7 +159,9 @@ export type AutoUpdateFailPhase =
   | "extract_failed"
   | "downgrade_unavailable"
   /** I48: the target version's key is revoked or the version is taken down (re-checked at apply). */
-  | "trust_blocked";
+  | "trust_blocked"
+  /** The update's dependencies cannot be planned (a conflict, an unadded registry, …): refused before the prompt. */
+  | "update_conflicts";
 
 /** Refused before the prompt, rejected at it, or — after approval — the phase the apply failed in. */
 export type UpdateRejectReason =
@@ -98,4 +178,37 @@ export interface UpdateApplyResult {
   reason?: UpdateRejectReason;
   hint?: string;
   jobId?: string;
+  /** An applied update: the packages its approved plan added (set only when there are any). */
+  addedPackages?: ReadonlyArray<{
+    readonly id: string;
+    readonly version: string;
+    readonly registry: string | null;
+    readonly kind: "extension" | "starter-pack";
+  }>;
+  /** An applied update: the connector requirements its approval showed (set only when there are any). */
+  connectorRequirements?: readonly ConnectorRequirementStatus[];
+  /**
+   * An applied downgrade, or a forward update whose new version no longer declares a dependency:
+   * the dependency-installed packages it left needed by nothing, dependents first (set only when
+   * there are any). Kept, never removed; the owner removes them.
+   */
+  orphanedDependencies?: readonly string[];
+  /**
+   * An applied forward update: the root had a run grant before it, which the update made stale, so
+   * the owner must approve it again (set only when true).
+   */
+  grantDropped?: boolean;
+  /** An applied forward update that turned the root into a starter pack (which cannot be approved). */
+  rootKind?: "starter-pack";
 }
+
+/** What an applied downgrade reports: the dependencies it left needed by nothing, dependents first. */
+export interface DowngradeOutcome {
+  readonly orphanedDependencies: readonly string[];
+}
+
+/**
+ * What an applied forward update reports: the dependencies its new version no longer declares that
+ * are now needed by nothing, dependents first (the same walk a downgrade reports).
+ */
+export type UpgradeOutcome = DowngradeOutcome;

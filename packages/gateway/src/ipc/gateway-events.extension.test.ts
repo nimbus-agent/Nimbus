@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, test } from "bun:test";
+import { planNothing } from "../../test/helpers/empty-update-plan.ts";
 import { AutoUpdateCache } from "../extensions/auto-update-cache.ts";
 import type { AutoUpdateRpcDeps } from "../extensions/auto-update-rpc.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -25,11 +26,12 @@ function stubAutoUpdateDeps(): AutoUpdateRpcDeps {
     cache: new AutoUpdateCache(),
     forcePoll: async () => {},
     gate: async () => "proceed",
-    performUpgrade: async () => {},
-    performDowngrade: async () => {},
+    performUpgrade: async () => ({ orphanedDependencies: [] }),
+    performDowngrade: async () => ({ orphanedDependencies: [] }),
     appendAudit: async () => {},
     getInstalledVersion: async () => null,
     hasPrevVersion: async () => false,
+    planUpdate: planNothing,
   };
 }
 

@@ -20,17 +20,38 @@ import {
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
 import { type ExtensionRow, listExtensions } from "../../automation/extension-store.ts";
+import { sha256HexEqualConstantTime } from "../../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../../vault/index.ts";
+import type {
+  AddedPackage,
+  AvailableUpdate,
+  UpdatePlan,
+  UpdatePlanContext,
+} from "../auto-update-types.ts";
 import type { ConnectorRequirementStatusesFn } from "../connector-requirements.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
-import { registryNameOf } from "../dependency-types.ts";
 import {
+  conflictErrorsOf,
+  DependencyConflictError,
+  DependencyConflictsError,
+  describeDependencyConflict,
+} from "../dependency-errors.ts";
+import { assertRootConstraintsSatisfied, resolveClosure } from "../dependency-graph.ts";
+import {
+  type ExtensionManifestForSolver,
+  type InstallPlan,
+  registryNameOf,
+} from "../dependency-types.ts";
+import {
+  buildSolverInputs,
   type ExtensionInstallApprovalRequest,
   type ExtensionInstallApprover,
   ExtensionInstallNotApprovedError,
   type InstallExtensionFromLocalResult,
+  type InstalledPlanDependencies,
   installExtensionFromLocalDirectory,
   installedDependencyRow,
+  installPlanDependencies,
   isPromotedInstall,
   type PromotedInstallResult,
   promoteInstalledDependency,
@@ -57,8 +78,13 @@ import {
   TrustBlockError,
 } from "../trust/trust-blocks.ts";
 import { decodeBase64 } from "../verify-signature.ts";
+import { currentSourceRegistry, sourceRegistryOf } from "./builtin-registry.ts";
 import { createRegistryDependencyResolver } from "./registry-dependency-fetcher.ts";
-import type { RegistryFetchDeps } from "./registry-fetch.ts";
+import {
+  FETCH_FAILURE_CODES,
+  fetchVerifiedIndex,
+  type RegistryFetchDeps,
+} from "./registry-fetch.ts";
 import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import {
   assertEmptyStagingDir,
@@ -450,5 +476,247 @@ export async function installFromRegistry(
     } catch {
       /* best-effort: the extension is already committed (or the install refused) */
     }
+  }
+}
+
+/**
+ * Solves an update's dependency closure through the same registry-scoped resolver a registry install
+ * uses (I44): the update's own recorded source registry, still pinned to the root key it was
+ * detected under, and each dependency from the registry its declaration resolves to among those the
+ * owner added — through the verified chain (pinned root key, index hashes, I16 signature, Vault
+ * publisher keys, I48 blocks). Nothing is installed or staged: the returned resolver holds the
+ * verified manifests, and the apply stages exactly the plan's added packages from it.
+ *
+ * The installed OLD version stays in the solver's `installed` map, so the root node is newly
+ * installed at `toVersion`, while its own old edges are dropped from the active constraints so they
+ * do not constrain the new version. Installed dependents' ranges on the root are checked first
+ * (`resolveClosure` does not check constraints on the root itself).
+ *
+ * Throws `DependencyConflictError` (a range nothing satisfies, a cycle), `RegistryError` (a
+ * dependency naming a registry the owner has not added, a source mismatch, a refused manifest),
+ * `OfflineDependencyResolutionError` (a registry could not be reached), or
+ * `source_registry_changed: …` when the source registry was removed or re-pinned.
+ */
+export async function planUpdate(
+  deps: InstallFromRegistryDeps,
+  update: Pick<
+    AvailableUpdate,
+    "id" | "toVersion" | "channel" | "sourceRegistry" | "rootFingerprint"
+  >,
+  newManifest: ExtensionManifestForSolver,
+  context: UpdatePlanContext = {},
+): Promise<UpdatePlan> {
+  if (newManifest.id !== update.id || newManifest.version !== update.toVersion) {
+    throw new Error(
+      `the manifest to plan is ${newManifest.id}@${newManifest.version}, not the update's ${update.id}@${update.toVersion}`,
+    );
+  }
+  const reg = sourceRegistryOf({ ...deps.fetch, db: deps.db }, update);
+  const { installed, activeConstraints } = buildSolverInputs(deps.db);
+  const constraints = new Map(activeConstraints);
+  constraints.delete(update.id);
+  // Every conflict is reported (one line each): one on the root itself does not stop the solve.
+  let rootConflict: DependencyConflictError | undefined;
+  try {
+    assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
+  } catch (e) {
+    if (!(e instanceof DependencyConflictError)) throw e;
+    rootConflict = e;
+  }
+  // The channel the install TRACKS (spec § 8.1), as a registry install chooses its dependencies on.
+  const channel = getExtensionSource(deps.db, update.id)?.channel ?? update.channel;
+  const resolver = createRegistryDependencyResolver(deps, {
+    reg,
+    channel,
+    // The detector's verified read of the source index, only for the registry it came from.
+    ...(context.index === undefined ? {} : { index: context.index }),
+    ...(context.signal === undefined ? {} : { signal: context.signal }),
+    // One detection poll's index reads, shared by all of its plans (never across polls).
+    ...(context.indexes === undefined ? {} : { indexes: context.indexes }),
+  });
+  let plan: InstallPlan;
+  try {
+    plan = await resolveClosure(newManifest, resolver.rootSource, resolver.fetcher, {
+      installed,
+      activeConstraints: constraints,
+      collectConflicts: true,
+    });
+  } catch (e) {
+    throw rootConflict === undefined
+      ? e
+      : new DependencyConflictsError([rootConflict, ...conflictErrorsOf(e)]);
+  }
+  if (rootConflict !== undefined) throw rootConflict;
+  const addedPackages: AddedPackage[] = plan.nodes.flatMap((n) =>
+    n.newlyInstalled && n.id !== update.id && n.source !== null
+      ? [
+          {
+            id: n.id,
+            version: n.version,
+            registry: registryNameOf(n.source),
+            registryUrl: resolver.registryUrl(n.source),
+          },
+        ]
+      : [],
+  );
+  return { resolver, plan, addedPackages };
+}
+
+/** `<phase>: <message>`, keeping the rollback failures the plan installer attached. */
+function phasedError(phase: string, e: unknown): Error {
+  const out = new Error(`${phase}: ${e instanceof Error ? e.message : String(e)}`, { cause: e });
+  const failures = rollbackFailuresOf(e);
+  if (failures.length > 0) Object.assign(out, { rollbackFailures: failures });
+  return out;
+}
+
+/** The audit phase of a failed dependency install (as the root's re-verification classifies it). */
+function dependencyFailurePhase(e: unknown): string {
+  if (e instanceof TrustBlockError) return "trust_blocked";
+  if (e instanceof RegistryError && FETCH_FAILURE_CODES.has(e.code)) return "download_failed";
+  if (e instanceof RegistryError && e.code === "ERR_REGISTRY_INSTALL_REFUSED") {
+    return "update_conflicts";
+  }
+  return "signature_failed";
+}
+
+/**
+ * Refused unless the plan installs exactly the packages the owner approved (`addedPackages`), no
+ * more and no other version.
+ */
+function assertPlanIsApproved(rootId: string, approved: UpdatePlan): void {
+  const planned = approved.plan.nodes
+    .filter((n) => n.newlyInstalled && n.id !== rootId)
+    .map((n) => `${n.id}@${n.version}`)
+    .sort((a, b) => a.localeCompare(b));
+  const listed = approved.addedPackages
+    .map((a) => `${a.id}@${a.version}`)
+    .sort((a, b) => a.localeCompare(b));
+  if (planned.join(",") !== listed.join(",")) {
+    throw new Error(
+      `update_conflicts: the plan installs ${planned.join(", ") || "nothing"} but the approval listed ${listed.join(", ") || "nothing"}`,
+    );
+  }
+}
+
+/**
+ * Before anything is staged, each approved package is re-checked as it stands NOW: its registry is
+ * still the one the owner added under the same root key (I44), nothing blocks it (I48), and that
+ * registry's CURRENT signed index still lists exactly the verified manifest, package and key. A
+ * version taken down or withdrawn since the approval is refused, never installed from memory.
+ */
+async function recheckApprovedPackages(
+  deps: InstallFromRegistryDeps,
+  approved: UpdatePlan,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
+  const verified = approved.addedPackages.map((a) => {
+    const v = approved.resolver.verified(a.id, a.version);
+    if (v === undefined) {
+      throw new Error(
+        `update_conflicts: ${a.id}@${a.version} has no verified manifest in the approved plan`,
+      );
+    }
+    return v;
+  });
+  for (const v of verified) {
+    try {
+      assertNotBlocked(deps.db, {
+        extensionId: v.id,
+        version: v.version,
+        publisherId: v.manifest.publisher?.id ?? null,
+        keyFingerprint: publisherKeyFingerprint(v.publisherKey),
+        source: { registry: v.reg.name, rootFingerprint: v.reg.rootFingerprint },
+      });
+    } catch (e) {
+      throw phasedError("trust_blocked", e);
+    }
+  }
+  const indexes = new Map<string, Promise<RegistryIndex>>();
+  for (const v of verified) {
+    const reg = currentSourceRegistry(fetchDeps, {
+      sourceRegistry: v.reg.name,
+      rootFingerprint: v.reg.rootFingerprint,
+    });
+    if (reg === undefined) {
+      throw new Error(
+        `source_registry_changed: registry "${v.reg.name}" of ${v.id} was removed or re-pinned since the update was approved`,
+      );
+    }
+    const key = `${reg.name}#${reg.rootFingerprint}`;
+    let read = indexes.get(key);
+    if (read === undefined) {
+      read = fetchVerifiedIndex(fetchDeps, reg, signal);
+      indexes.set(key, read);
+    }
+    let index: RegistryIndex;
+    try {
+      index = await read; // NOSONAR S9382: one verified read per registry, in plan order
+    } catch (e) {
+      throw phasedError(dependencyFailurePhase(e), e);
+    }
+    const entry = index.extensions[v.id];
+    const now = entry?.versions[v.version];
+    if (
+      entry === undefined ||
+      now === undefined ||
+      entry.publisher.key !== v.publisherKey ||
+      entry.publisher.id !== v.manifest.publisher?.id ||
+      !sha256HexEqualConstantTime(now.manifestSha256, v.vEntry.manifestSha256) ||
+      !sha256HexEqualConstantTime(now.packageSha256, v.vEntry.packageSha256) ||
+      now.package !== v.vEntry.package ||
+      !sha256HexEqualConstantTime(now.entryHash, v.vEntry.entryHash)
+    ) {
+      throw new Error(
+        `signature_failed: the index of ${reg.name} no longer lists the approved ${v.id}@${v.version}`,
+      );
+    }
+  }
+}
+
+/**
+ * The apply half of an update's plan (I44): installs exactly the packages the owner approved in
+ * the `extension.autoUpdate` prompt, each from the registry its declaration resolved to, through
+ * the resolver that verified it at the gate — re-checked first (`recheckApprovedPackages`), then
+ * staged and installed all or nothing by the plan installer. The update's root is not installed
+ * here: the caller swaps it in, records every edge with its row, and calls `rollback` on failure.
+ * Every error message starts with its audit phase.
+ */
+export async function installUpdateDependencies(
+  deps: InstallFromRegistryDeps,
+  update: Pick<AvailableUpdate, "id" | "toVersion" | "channel">,
+  approved: UpdatePlan,
+  signal?: AbortSignal,
+): Promise<InstalledPlanDependencies> {
+  assertPlanIsApproved(update.id, approved);
+  // Another extension may have come to constrain the root since the gate.
+  const { activeConstraints } = buildSolverInputs(deps.db);
+  const constraints = new Map(activeConstraints);
+  constraints.delete(update.id);
+  try {
+    assertRootConstraintsSatisfied(update.id, update.toVersion, constraints);
+  } catch (e) {
+    throw e instanceof DependencyConflictError
+      ? new Error(`update_conflicts: ${describeDependencyConflict(e.conflict)}`, { cause: e })
+      : e;
+  }
+  await recheckApprovedPackages(deps, approved, signal);
+  // The channel the install TRACKS, as `planUpdate` resolved the dependencies on.
+  const channel = getExtensionSource(deps.db, update.id)?.channel ?? update.channel;
+  try {
+    return await installPlanDependencies(
+      {
+        db: deps.db,
+        extensionsDir: deps.extensionsDir,
+        vault: deps.vault,
+        registryPlan: { resolver: approved.resolver, channel },
+        ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
+      },
+      approved.plan,
+      update.id,
+    );
+  } catch (e) {
+    throw phasedError(dependencyFailurePhase(e), e);
   }
 }

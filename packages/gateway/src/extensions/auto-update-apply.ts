@@ -133,3 +133,37 @@ export async function applyDowngradeSwap(opts: ApplyDowngradeOpts): Promise<void
     throw new Error(`swap_failed: prev rename: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+export interface UndoUpgradeOpts {
+  installPath: string;
+  extensionsDir: string;
+  id: string;
+  /** The version `applyUpgradeSwap` moved to `prev/<fromVersion>`, restored here. */
+  fromVersion: string;
+}
+
+/**
+ * Undoes a successful `applyUpgradeSwap` whose commit (the row write) then failed: the new tree is
+ * parked in the swap buffer, `prev/<fromVersion>` is moved back to the install path, and the new
+ * tree is removed. An undone update therefore CONSUMES `prev/<fromVersion>` (the old version is the
+ * install again, not a downgrade target), and older `prev/` entries the swap already dropped are
+ * not recovered.
+ *
+ * Bound, stated: when the restore rename fails, the new tree is put back and the error is thrown,
+ * so the install path is never left empty — but the NEW tree then remains under the OLD row. It
+ * does not run: its digest and hashes are not the row's, so the startup verification and every
+ * spawn's re-verification (I43) refuse it until the owner re-applies or reinstalls.
+ */
+export async function undoUpgradeSwap(opts: UndoUpgradeOpts): Promise<void> {
+  const prevPath = prevVersionDir(opts.extensionsDir, opts.id, opts.fromVersion);
+  const buffer = swapBufferDir(opts.extensionsDir, opts.id);
+  await rm(buffer, { recursive: true, force: true });
+  await rename(opts.installPath, buffer);
+  try {
+    await rename(prevPath, opts.installPath);
+  } catch (e) {
+    await rename(buffer, opts.installPath).catch(() => {});
+    throw e;
+  }
+  await rm(buffer, { recursive: true, force: true });
+}

@@ -1,25 +1,26 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import semver from "semver";
+import { RegistryError, type RegistryIndex } from "@nimbus-dev/registry-format";
 
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
-import type { AvailableUpdate, InstalledExtensionManifestSlice } from "./auto-update-types.ts";
-import { DependencyConflictError, isDependencyConflictError } from "./dependency-errors.ts";
-import { resolveClosure } from "./dependency-graph.ts";
+import type {
+  AvailableUpdate,
+  InstalledExtensionManifestSlice,
+  UpdateConflict,
+  UpdatePlan,
+  UpdatePlanContext,
+} from "./auto-update-types.ts";
 import {
-  type DependencyConflict,
-  type ExtensionManifestForSolver,
-  type InstalledForSolver,
-  type RegistryFetcher,
-  sourceKey,
-} from "./dependency-types.ts";
-import { parseExtensionManifestJson } from "./manifest.ts";
+  conflictErrorsOf,
+  describeDependencyConflict,
+  isDependencyConflictError,
+  isOfflineDependencyResolutionError,
+} from "./dependency-errors.ts";
+import { type ExtensionManifestForSolver, type SourceKey, sourceKey } from "./dependency-types.ts";
 import type { ExtensionSource } from "./registry/registry-store.ts";
 import type {
   CollectedRegistryUpdates,
   InstalledRegistryRow,
 } from "./registry/registry-update-source.ts";
+import { TrustBlockError } from "./trust/trust-blocks.ts";
 
 export interface InstalledExtensionRow {
   id: string;
@@ -43,6 +44,15 @@ export interface ExtensionAutoUpdaterOpts {
    * air-gap while a remote one is refused.
    */
   collect: (rows: InstalledRegistryRow[], signal: AbortSignal) => Promise<CollectedRegistryUpdates>;
+  /**
+   * Solves an update's dependency closure through its registries (production:
+   * `registry/install-from-registry.ts` `planUpdate`, I44). Throws on a conflict.
+   */
+  planUpdate: (
+    update: AvailableUpdate,
+    newManifest: ExtensionManifestForSolver,
+    context: UpdatePlanContext,
+  ) => Promise<UpdatePlan>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   intervalHours: number;
   now: () => number;
@@ -67,32 +77,6 @@ function registryRows(installed: readonly InstalledExtensionRow[]): InstalledReg
     });
   }
   return out;
-}
-
-function assertRootConstraintsSatisfied(
-  rootId: string,
-  toVersion: string,
-  activeConstraints: ReadonlyMap<string, Map<string, string>>,
-): void {
-  const constraintsOnRoot: Array<{ from: string; range: string }> = [];
-  for (const [dependent, depMap] of activeConstraints) {
-    if (dependent === rootId) continue;
-    const range = depMap.get(rootId);
-    if (range !== undefined) {
-      constraintsOnRoot.push({ from: dependent, range });
-    }
-  }
-  const unsatisfiedConstraints = constraintsOnRoot.filter(
-    (c) => !semver.satisfies(toVersion, c.range),
-  );
-  if (unsatisfiedConstraints.length > 0) {
-    throw new DependencyConflictError({
-      kind: "unsatisfiable",
-      id: rootId,
-      constraints: unsatisfiedConstraints,
-      availableVersions: [toVersion],
-    });
-  }
 }
 
 export class ExtensionAutoUpdater {
@@ -150,11 +134,18 @@ export class ExtensionAutoUpdater {
     const rows = registryRows(installed);
     const collected: CollectedRegistryUpdates =
       rows.length === 0
-        ? { updates: [], errors: [], dependsOn: new Map() }
+        ? { updates: [], errors: [], dependsOn: new Map(), requires: new Map() }
         : await this.opts.collect(rows, this.abort.signal);
+    // This poll's verified index reads, shared by every update's plan: each registry is read at
+    // most once per poll (the sources `collect` already read are reused). Never kept across polls.
+    const pollIndexes = new Map<SourceKey, Promise<RegistryIndex>>(
+      [...(collected.indexes ?? new Map<SourceKey, RegistryIndex>())].map(
+        ([key, index]) => [key, Promise.resolve(index)] as const,
+      ),
+    );
     for (const found of collected.updates) {
       try {
-        await this.recordDetection(found, collected, installed); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
+        await this.recordDetection(found, collected, installed, pollIndexes); // NOSONAR S9382: each new detection appends to the audit chain in a deterministic order
       } catch (e) {
         // One failed audit append must not stop the rest of the tick from being cached.
         this.opts.onTickError?.(found.id, e);
@@ -167,16 +158,20 @@ export class ExtensionAutoUpdater {
     found: AvailableUpdate,
     collected: CollectedRegistryUpdates,
     installed: readonly InstalledExtensionRow[],
+    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
   ): Promise<void> {
-    const conflicts = await this.computeUpdateConflicts(
-      found.id,
-      found.toVersion,
-      collected.dependsOn.get(found.id),
-      installed,
+    const planned = await this.computeUpdateConflicts(found, collected, pollIndexes);
+    const oldRequires = installed.find((r) => r.id === found.id)?.manifest.requires?.connectors;
+    const addedRequirements = (collected.requires.get(found.id) ?? []).filter(
+      (c) => !(oldRequires ?? []).includes(c),
     );
+    const dependsOn = collected.dependsOn.get(found.id);
     const update: AvailableUpdate = {
       ...found,
-      ...(conflicts !== undefined && conflicts.length > 0 ? { conflicts } : {}),
+      ...planned,
+      ...(addedRequirements.length > 0 ? { addedRequirements } : {}),
+      // The approval re-plans from these (`auto-update-rpc.ts`); the apply re-verifies the manifest.
+      ...(dependsOn === undefined ? {} : { dependsOn }),
     };
     const isNew = this.opts.cache.isNewDetection(update);
     this.opts.cache.upsert(update);
@@ -204,88 +199,80 @@ export class ExtensionAutoUpdater {
   }
 
   /**
-   * Whether the bump fits the dependency graph of what is ALREADY installed. Nothing is fetched:
-   * a dependency is satisfied only by an installed version (spec § 8.6 step 8), so a new dependency
-   * that is not installed is reported as a conflict rather than resolved from a registry.
+   * Whether the bump fits: the update is planned through its registries (`planUpdate`), so a new
+   * dependency a registry carries becomes an added package, while a range nothing satisfies, a
+   * dependency naming a registry the owner has not added, or a refused manifest is a conflict with
+   * a one-line reason. An unreachable registry is an `offline` conflict with no added packages, so
+   * the apply re-plans or refuses. Any other failure (an unreadable installed manifest, a source
+   * registry that changed mid-tick) is an `ERR_UPDATE_UNPLANNED` conflict: an update is never
+   * shown clean without a plan.
+   *
+   * An update whose signature failed or whose publisher key conflicts can never be applied, so it
+   * is not planned at all: no dependency registry is asked anything for it, and it carries neither
+   * conflicts nor added packages (its `verificationStatus` says why it stops).
    */
   private async computeUpdateConflicts(
-    id: string,
-    toVersion: string,
-    newDependsOn: Readonly<Record<string, string>> | undefined,
-    installed: readonly InstalledExtensionRow[],
-  ): Promise<readonly DependencyConflict[] | undefined> {
+    found: AvailableUpdate,
+    collected: CollectedRegistryUpdates,
+    pollIndexes: Map<SourceKey, Promise<RegistryIndex>>,
+  ): Promise<Pick<AvailableUpdate, "conflicts" | "addedPackages">> {
+    if (found.verificationStatus !== "verified") return {};
+    const newDependsOn = collected.dependsOn.get(found.id);
+    const index = collected.indexes?.get(sourceKey(found.sourceRegistry, found.rootFingerprint));
+    const newManifest: ExtensionManifestForSolver = {
+      id: found.id,
+      version: found.toVersion,
+      ...(newDependsOn === undefined ? {} : { dependsOn: newDependsOn }),
+    };
     try {
-      const installedMap = new Map<string, InstalledForSolver>();
-      const activeConstraints = new Map<string, Map<string, string>>();
-      const dirById = new Map<string, string>();
-      for (const r of installed) {
-        installedMap.set(r.id, {
-          version: r.version,
-          source:
-            r.source === undefined ? null : sourceKey(r.source.registry, r.source.rootFingerprint),
-        });
-        dirById.set(r.id, r.install_path);
-        if (r.manifest.dependsOn !== undefined && Object.keys(r.manifest.dependsOn).length > 0) {
-          activeConstraints.set(r.id, new Map(Object.entries(r.manifest.dependsOn)));
-        }
-      }
-      const self = installedMap.get(id);
-      installedMap.set(id, { version: toVersion, source: self?.source ?? null });
-      if (newDependsOn !== undefined && Object.keys(newDependsOn).length > 0) {
-        activeConstraints.set(id, new Map(Object.entries(newDependsOn)));
-      } else {
-        activeConstraints.delete(id);
-      }
-
-      const proposedManifest: ExtensionManifestForSolver = {
-        id,
-        version: toVersion,
-        // The update's ranges only (the conflict check compares versions): this fetcher's
-        // `targetSource` is null, so no dependency's registry is consulted (PR 5 changes updates).
-        ...(newDependsOn === undefined
-          ? {}
-          : {
-              dependsOn: Object.fromEntries(
-                Object.entries(newDependsOn).map(([depId, range]) => [depId, { range }]),
-              ),
-            }),
-      };
-      const fetcher: RegistryFetcher = {
-        targetSource: () => null,
-        listVersions: (depId: string): Promise<readonly string[]> => {
-          const v = installedMap.get(depId)?.version;
-          return Promise.resolve(v === undefined ? [] : [v]);
-        },
-        fetchManifest: async (depId: string, version: string) => {
-          if (depId === id && version === toVersion) return proposedManifest;
-          const dir = dirById.get(depId);
-          if (dir === undefined || installedMap.get(depId)?.version !== version) {
-            throw new Error(`${depId}@${version} is not installed`);
-          }
-          const parsed = parseExtensionManifestJson(
-            await readFile(join(dir, "nimbus.extension.json"), "utf8"),
-          );
-          return {
-            id: parsed.id,
-            version: parsed.version,
-            ...(parsed.dependsOn === undefined ? {} : { dependsOn: parsed.dependsOn }),
-          };
-        },
-      };
-
-      assertRootConstraintsSatisfied(id, toVersion, activeConstraints);
-      await resolveClosure(proposedManifest, self?.source ?? null, fetcher, {
-        installed: installedMap,
-        activeConstraints,
+      const plan = await this.opts.planUpdate(found, newManifest, {
+        signal: this.abort.signal,
+        ...(index === undefined ? {} : { index }),
+        indexes: pollIndexes,
       });
-      return undefined;
+      return { addedPackages: plan.addedPackages };
     } catch (e) {
-      if (isDependencyConflictError(e)) {
-        return [e.conflict];
-      }
-      // An unreadable installed manifest (or similar IO): the bump is still surfaced, with no
-      // conflict info.
-      return undefined;
+      return { conflicts: updateConflictsOf(e) };
     }
   }
+}
+
+/** One line: a reason never spans lines in a list or a refusal. */
+function oneLine(text: string): string {
+  return text
+    .split(/[\r\n]/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "")
+    .join(" ");
+}
+
+/** Every conflict a planning failure carries (a collecting solve may meet several), in order. */
+export function updateConflictsOf(e: unknown): UpdateConflict[] {
+  return conflictErrorsOf(e).map(updateConflictOf);
+}
+
+/** The `update_conflicts` refusal's text: one `update_conflicts: <reason>` line per conflict. */
+export function updateConflictsHint(e: unknown): string {
+  return updateConflictsOf(e)
+    .map((c) => `update_conflicts: ${c.reason}`)
+    .join("\n");
+}
+
+/** The conflict a planning failure is; an unclassified failure is `ERR_UPDATE_UNPLANNED`. */
+export function updateConflictOf(e: unknown): UpdateConflict {
+  if (isDependencyConflictError(e)) {
+    return { ...e.conflict, reason: oneLine(describeDependencyConflict(e.conflict)) };
+  }
+  if (isOfflineDependencyResolutionError(e)) {
+    return { kind: "offline", id: e.missingId, parent: e.parent, reason: oneLine(e.message) };
+  }
+  if (e instanceof RegistryError || e instanceof TrustBlockError) {
+    return { kind: "registry", code: e.code, reason: oneLine(e.message) };
+  }
+  const why = e instanceof Error ? e.message : String(e);
+  return {
+    kind: "registry",
+    code: "ERR_UPDATE_UNPLANNED",
+    reason: oneLine(`ERR_UPDATE_UNPLANNED: the update could not be planned: ${why}`),
+  };
 }

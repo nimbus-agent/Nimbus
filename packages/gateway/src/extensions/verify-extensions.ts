@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
+import type { DependencySpec } from "@nimbus-dev/registry-format";
 import type { Logger } from "pino";
 import semver from "semver";
 
@@ -17,7 +18,7 @@ import { appendAuditEntry } from "../db/audit-chain.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
 import type { NimbusVault } from "../vault/index.ts";
-import { forwardDeps, recordInstall } from "./dependency-store.ts";
+import { declaredDependencyEdges, forwardDeps, recordInstall } from "./dependency-store.ts";
 import type { ResolvedDep } from "./dependency-types.ts";
 import {
   hardDisablePreT2Extensions,
@@ -27,6 +28,7 @@ import {
 } from "./hard-disable.ts";
 import {
   extensionEntryRelPath,
+  installedManifestDependsOn,
   installedManifestKind,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
@@ -36,6 +38,9 @@ import { rangesOf } from "./manifest-support.ts";
 import { missingDependencyRegistry } from "./missing-dependency-registry.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { readPublisherKeyFor } from "./publisher-keys.ts";
+import { currentSourceRegistry } from "./registry/builtin-registry.ts";
+import { resolveDependencyRegistry } from "./registry/dependency-registry.ts";
+import { getExtensionSource } from "./registry/registry-store.ts";
 import {
   errorToHardDisableReason,
   type SignatureDisableReason,
@@ -49,6 +54,41 @@ function sha256HexOfBytes(buf: Buffer): string {
 
 export interface ExtensionMeshHandle {
   stopExtensionClient(extensionId: string): Promise<void>;
+}
+
+/**
+ * A promoted version's edges, named as a downgrade names them: each declaration resolved from the
+ * extension's recorded source registry (while it still exists under that root key) against the
+ * database and the built-in registry, with the air gap off, since naming contacts nothing. Null when
+ * it no longer resolves; recovery never throws over a name.
+ */
+function promotedDependencyEdges(
+  db: Database,
+  id: string,
+  dependsOn: Readonly<Record<string, DependencySpec>> | undefined,
+): ResolvedDep[] {
+  const source = getExtensionSource(db, id);
+  const parent =
+    source === undefined
+      ? undefined
+      : currentSourceRegistry(
+          { db },
+          { sourceRegistry: source.registry, rootFingerprint: source.rootFingerprint },
+        );
+  const naming = { db, enforceAirGap: () => false };
+  const installed = new Map(listExtensions(db).map((r) => [r.id, r.version] as const));
+  return declaredDependencyEdges(
+    dependsOn,
+    (depId) => installed.get(depId),
+    (depId, spec) => {
+      if (parent === undefined) return null;
+      try {
+        return resolveDependencyRegistry(naming, parent, depId, spec).name;
+      } catch {
+        return null;
+      }
+    },
+  );
 }
 
 function tryPromotePrevVersion(
@@ -71,11 +111,15 @@ function tryPromotePrevVersion(
     // planted that tree, so recovery must not make it look healthy.
     const measured = computeExtensionPackageHashes(activePath);
     const kind = installedManifestKind(activePath);
+    // The edges the promoted version declares, not the lost one's: what the lost version added is
+    // no longer depended on by this row.
+    const edges = promotedDependencyEdges(db, row.id, installedManifestDependsOn(activePath));
     // One transaction: an interruption must not leave a recovered row enabled with a NULL digest.
     db.transaction(() => {
       updateExtensionRowVersion(db, row.id, target, measured.manifestHash, measured.entryHash, now);
       setExtensionKind(db, row.id, kind);
       setExtensionEnabled(db, row.id, false);
+      recordInstall(db, row.id, target, edges, now);
     })();
     recoveredPendingRehashRegistry.mark(row.id);
     try {

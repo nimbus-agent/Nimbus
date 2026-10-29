@@ -1,12 +1,24 @@
-import { isValidSemver } from "@nimbus-dev/registry-format";
+import {
+  isStarterPack,
+  isValidSemver,
+  publisherKeyFingerprint,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
+import { updateConflictsHint } from "./auto-update.ts";
 import type { AutoUpdateCache } from "./auto-update-cache.ts";
 import {
   ACTION_TYPE_AUTO_UPDATE,
   ACTION_TYPE_DOWNGRADE,
   type AutoUpdateFailPhase,
   type AvailableUpdate,
+  type DowngradeOutcome,
+  type ShownAddedPackage,
   type UpdateApplyResult,
+  type UpdatePlan,
+  type UpgradeOutcome,
 } from "./auto-update-types.ts";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { publisherBadgeText, type VerifiedPublisher } from "./trust/verified-publisher.ts";
 
@@ -21,8 +33,28 @@ export interface AutoUpdateRpcDeps {
   cache: AutoUpdateCache;
   forcePoll: () => Promise<void>;
   gate: (action: PlannedAction) => Promise<GateResult>;
-  performUpgrade: (cached: AvailableUpdate) => Promise<void>;
-  performDowngrade: (cached: AvailableUpdate) => Promise<void>;
+  /**
+   * Solves a forward update's dependencies through its registries (`planUpdate`, I44) BEFORE the
+   * owner is asked: the approval lists every package it adds, and the same plan is handed to the
+   * apply. Throws when the update cannot be planned, which refuses it (`update_conflicts`).
+   */
+  planUpdate: (cached: AvailableUpdate) => Promise<UpdatePlan>;
+  /**
+   * Whether each connector the update newly requires (the root's added requirements and every
+   * added package's) is connected, read before the owner is asked. Absent, or throwing ⇒ none
+   * shown; requirement status never refuses an update.
+   */
+  updateRequirements?: (
+    cached: AvailableUpdate,
+    plan: UpdatePlan,
+  ) => Promise<readonly ConnectorRequirementStatus[] | undefined>;
+  /**
+   * Applies an approved forward update with the plan its approval listed; reports the dependencies
+   * its new version no longer declares that are now needed by nothing.
+   */
+  performUpgrade: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<UpgradeOutcome>;
+  /** Restores the previous version and its edges; reports the dependencies it left orphaned. */
+  performDowngrade: (cached: AvailableUpdate) => Promise<DowngradeOutcome>;
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
@@ -74,11 +106,117 @@ function publisherChangeFields(cached: AvailableUpdate): Record<string, unknown>
   };
 }
 
+/** A forward update as the owner approved it: the plan, and what its approval showed of it. */
+interface ApprovedUpdatePlan {
+  readonly plan: UpdatePlan;
+  readonly shown: readonly ShownAddedPackage[];
+  readonly requirements: readonly ConnectorRequirementStatus[];
+}
+
+/**
+ * Every package the plan adds, as the approval shows it, from the resolver's VERIFIED manifest.
+ * A package to be installed with no verified manifest refuses the update here, before the owner
+ * is asked: the approval never understates what is installed (spec § 4).
+ */
+function shownAddedPackages(plan: UpdatePlan): ShownAddedPackage[] {
+  return plan.addedPackages.map((added) => {
+    const verified = plan.resolver.verified(added.id, added.version);
+    if (verified === undefined) {
+      throw new RegistryError(
+        "ERR_REGISTRY_INSTALL_REFUSED",
+        `${added.id}@${added.version} would be installed but has no verified manifest to show in the approval`,
+      );
+    }
+    const { manifest } = verified;
+    const pc = verified.publisherChange;
+    return {
+      id: added.id,
+      version: added.version,
+      requiredBy: plan.plan.nodes.flatMap((from) =>
+        from.deps.filter((d) => d.id === added.id).map((d) => ({ from: from.id, range: d.range })),
+      ),
+      registry: added.registry,
+      registryUrl: added.registryUrl,
+      // Fingerprints only, never a `*Key`-named field (the consent display redacts those).
+      publisher:
+        manifest.publisher === undefined
+          ? null
+          : {
+              id: manifest.publisher.id,
+              fingerprint: publisherKeyFingerprint(verified.publisherKey),
+            },
+      ...(verified.verifiedPublisher === null
+        ? {}
+        : { publisherBadge: publisherBadgeText(verified.verifiedPublisher) }),
+      ...(pc === null
+        ? {}
+        : {
+            publisherChange: { ...pc.change, via: pc.via },
+            publisherChangeNote: keyChangeNote(pc.change, pc.via),
+          }),
+      permissions: manifest.permissions,
+      newlyInstalled: true,
+      kind: isStarterPack(manifest) ? "starter-pack" : "extension",
+    };
+  });
+}
+
+/**
+ * Plans a forward update for its approval, or the `update_conflicts` refusal (one line per
+ * conflict) when it cannot be planned. Nothing is fetched beyond the verified index and manifests.
+ */
+async function planForApproval(
+  cached: AvailableUpdate,
+  deps: AutoUpdateRpcDeps,
+): Promise<ApprovedUpdatePlan | UpdateApplyResult> {
+  let plan: UpdatePlan;
+  let shown: ShownAddedPackage[];
+  try {
+    plan = await deps.planUpdate(cached);
+    shown = shownAddedPackages(plan);
+  } catch (e) {
+    return {
+      applied: false,
+      reason: "update_conflicts",
+      hint: updateConflictsHint(e),
+    };
+  }
+  let requirements: readonly ConnectorRequirementStatus[] = [];
+  try {
+    requirements = (await deps.updateRequirements?.(cached, plan)) ?? [];
+  } catch {
+    // Requirement status never refuses an update: the approval then shows no `Needs:` block.
+  }
+  return { plan, shown, requirements };
+}
+
+/**
+ * The approval fields of what a forward update adds: the packages (each once, as the plan text's
+ * blocks; the desktop renders the structured list), their permissions together, the connector
+ * requirements, and the rendered `planText`. None when the update adds nothing, so such an update
+ * is asked exactly as before.
+ */
+function addedFields(approved: ApprovedUpdatePlan | undefined): Record<string, unknown> {
+  if (approved === undefined) return {};
+  const { shown, requirements } = approved;
+  const union = planPermissionsUnion(shown);
+  const planText = withNeedsBlock(
+    shown.length === 0 ? undefined : renderUpdatePlan(shown, union),
+    requirements,
+  );
+  return {
+    ...(shown.length > 0 && { addedPackages: shown, planPermissions: union }),
+    ...(requirements.length > 0 && { connectorRequirements: requirements }),
+    ...(planText !== undefined && { planText }),
+  };
+}
+
 function buildUpdateAction(
   cached: AvailableUpdate,
   isDowngrade: boolean,
   hasRunGrant: boolean,
   badge: VerifiedPublisher | null,
+  approved: ApprovedUpdatePlan | undefined,
 ): PlannedAction {
   return {
     type: isDowngrade ? ACTION_TYPE_DOWNGRADE : ACTION_TYPE_AUTO_UPDATE,
@@ -119,6 +257,7 @@ function buildUpdateAction(
       ...publisherChangeFields(cached),
       // A downgrade restores a local previous version, which the update's key does not describe.
       ...(!isDowngrade && { verifiedPublisher: badge, publisherBadge: publisherBadgeText(badge) }),
+      ...addedFields(approved),
     },
   };
 }
@@ -126,7 +265,9 @@ function buildUpdateAction(
 async function resolveUpdateTarget(
   params: Record<string, unknown>,
   deps: AutoUpdateRpcDeps,
-): Promise<{ cached: AvailableUpdate; isDowngrade: boolean } | UpdateApplyResult> {
+): Promise<
+  { cached: AvailableUpdate; isDowngrade: boolean; installed: string } | UpdateApplyResult
+> {
   const id = typeof params["id"] === "string" ? params["id"] : "";
   const toVersion = typeof params["toVersion"] === "string" ? params["toVersion"] : "";
   if (id === "" || toVersion === "") {
@@ -138,17 +279,10 @@ async function resolveUpdateTarget(
     return { applied: false, reason: "cache_miss" };
   }
 
+  // The checks run in this order, each phase a step below; the first refusal wins.
   const accepted = acceptedKeyFor(params, cached);
-  if (cached.verificationStatus === "publisher_key_conflict" && accepted === undefined) {
-    return {
-      applied: false,
-      reason: "publisher_key_conflict",
-      hint: `registry ${cached.sourceRegistry} names publisher key ${cached.publisherKeyFingerprint ?? "?"}, which no rotation from a key this gateway trusts and no Nimbus verification vouches for; to apply it anyway, pass --accept-publisher-key ${cached.publisherKeyFingerprint ?? "<fingerprint>"}`,
-    };
-  }
-  if (cached.verificationStatus === "signature_failed") {
-    return { applied: false, reason: "signature_failed" };
-  }
+  const unverified = refuseUnverified(cached, accepted);
+  if (unverified !== undefined) return unverified;
 
   const installed = await deps.getInstalledVersion(id);
   if (installed === null) {
@@ -159,25 +293,66 @@ async function resolveUpdateTarget(
   }
 
   const isDowngrade = isStringSemverLess(toVersion, installed);
+  const refused = isDowngrade
+    ? await refuseDowngradeTarget(deps, id, toVersion)
+    : await refuseForwardTarget(deps, cached, installed);
+  if (refused !== undefined) return refused;
+  return {
+    cached: accepted === undefined ? cached : { ...cached, acceptedPublisherKey: accepted },
+    isDowngrade,
+    installed,
+  };
+}
+
+/** Phase 1: an update whose publisher key or signature did not verify at detection. */
+function refuseUnverified(
+  cached: AvailableUpdate,
+  accepted: string | undefined,
+): UpdateApplyResult | undefined {
+  if (cached.verificationStatus === "publisher_key_conflict" && accepted === undefined) {
+    return {
+      applied: false,
+      reason: "publisher_key_conflict",
+      hint: `registry ${cached.sourceRegistry} names publisher key ${cached.publisherKeyFingerprint ?? "?"}, which no rotation from a key this gateway trusts and no Nimbus verification vouches for; to apply it anyway, pass --accept-publisher-key ${cached.publisherKeyFingerprint ?? "<fingerprint>"}`,
+    };
+  }
+  if (cached.verificationStatus === "signature_failed") {
+    return { applied: false, reason: "signature_failed" };
+  }
+  return undefined;
+}
+
+/** Phase 2 (forward): the version it was detected against, and its source registry. */
+async function refuseForwardTarget(
+  deps: AutoUpdateRpcDeps,
+  cached: AvailableUpdate,
+  installed: string,
+): Promise<UpdateApplyResult | undefined> {
+  // A forward update detected from another version than the one installed now would roll back to
+  // the wrong `prev/<fromVersion>`: refused before the owner is asked (and again under the mutex).
+  if (installed !== cached.fromVersion) {
+    return { applied: false, reason: "cache_miss" };
+  }
   // A forward update comes only from its source registry (spec § 8.3): one removed or re-pinned
   // since detection offers nothing, and saying so is clearer than a later signature failure.
-  if (!isDowngrade && deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
+  if (deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {
     return {
       applied: false,
       reason: "source_registry_changed",
       hint: `source registry ${cached.sourceRegistry} was removed or re-pinned since this update was detected`,
     };
   }
-  if (isDowngrade) {
-    const ok = await deps.hasPrevVersion(id, toVersion);
-    if (!ok) {
-      return { applied: false, reason: "downgrade_unavailable" };
-    }
-  }
-  return {
-    cached: accepted === undefined ? cached : { ...cached, acceptedPublisherKey: accepted },
-    isDowngrade,
-  };
+  return undefined;
+}
+
+/** Phase 2 (downgrade): the previous version must still be on disk. */
+async function refuseDowngradeTarget(
+  deps: AutoUpdateRpcDeps,
+  id: string,
+  toVersion: string,
+): Promise<UpdateApplyResult | undefined> {
+  const ok = await deps.hasPrevVersion(id, toVersion);
+  return ok ? undefined : { applied: false, reason: "downgrade_unavailable" };
 }
 
 /**
@@ -200,11 +375,70 @@ function acceptedKeyFor(
   return cached.verificationStatus === "publisher_key_conflict" ? v : undefined;
 }
 
+/**
+ * Whether what the approval was planned against moved before the mutex was taken: the extension
+ * is no longer at the version it had when the owner was asked or at the update's `fromVersion`, a
+ * package the plan adds has been installed since, or an installed package the plan relies on was
+ * removed or is now at another version. Each way the approved plan no longer describes the apply.
+ */
+async function movedSinceApproval(
+  cached: AvailableUpdate,
+  installedAtGate: string,
+  approved: ApprovedUpdatePlan,
+  deps: AutoUpdateRpcDeps,
+): Promise<boolean> {
+  const installed = await deps.getInstalledVersion(cached.id);
+  if (installed !== installedAtGate || installed !== cached.fromVersion) return true;
+  for (const added of approved.plan.addedPackages) {
+    if ((await deps.getInstalledVersion(added.id)) !== null) return true; // NOSONAR S9382: a few reads, in plan order
+  }
+  const reliedOn = approved.plan.plan.nodes.filter((n) => !n.newlyInstalled && n.id !== cached.id);
+  for (const node of reliedOn) {
+    if ((await deps.getInstalledVersion(node.id)) !== node.version) return true; // NOSONAR S9382: a few reads, in plan order
+  }
+  return false;
+}
+
+/**
+ * The applied result: what the approved plan added and the requirements the approval showed, and
+ * the dependencies the update or downgrade left orphaned.
+ */
+function appliedResult(
+  cached: AvailableUpdate,
+  approved: ApprovedUpdatePlan | undefined,
+  orphaned: readonly string[] = [],
+  grantDropped = false,
+): UpdateApplyResult {
+  const shown = approved?.shown ?? [];
+  const requirements = approved?.requirements ?? [];
+  return {
+    applied: true,
+    jobId: cached.manifestHash.slice(0, 16),
+    ...(shown.length > 0 && {
+      addedPackages: shown.map((p) => ({
+        id: p.id,
+        version: p.version,
+        registry: p.registry,
+        kind: p.kind,
+      })),
+    }),
+    ...(requirements.length > 0 && { connectorRequirements: requirements }),
+    ...(orphaned.length > 0 && { orphanedDependencies: [...orphaned] }),
+    ...(grantDropped && { grantDropped: true }),
+    ...(cached.toStarterPack === true &&
+      approved !== undefined && { rootKind: "starter-pack" as const }),
+  };
+}
+
+/** `approved` is the forward update's plan; undefined exactly for a downgrade. */
 async function applyUpdateUnderMutex(
   cached: AvailableUpdate,
-  isDowngrade: boolean,
+  installedAtGate: string,
+  approved: ApprovedUpdatePlan | undefined,
+  hadRunGrant: boolean,
   deps: AutoUpdateRpcDeps,
 ): Promise<UpdateApplyResult> {
+  const isDowngrade = approved === undefined;
   if (mutex.has(cached.id)) {
     return { applied: false, reason: "update_in_flight" };
   }
@@ -214,15 +448,23 @@ async function applyUpdateUnderMutex(
   });
   mutex.set(cached.id, slot);
   try {
-    if (isDowngrade) {
-      await deps.performDowngrade(cached);
+    if (
+      approved !== undefined &&
+      (await movedSinceApproval(cached, installedAtGate, approved, deps))
+    ) {
+      // The owner re-runs the update, and is asked about the plan as it now stands.
+      return { applied: false, reason: "cache_miss" };
+    }
+    let orphaned: readonly string[] = [];
+    if (approved === undefined) {
+      ({ orphanedDependencies: orphaned } = await deps.performDowngrade(cached));
       await deps.appendAudit("extension.downgrade.applied", {
         id: cached.id,
         fromVersion: cached.fromVersion,
         toVersion: cached.toVersion,
       });
     } else {
-      await deps.performUpgrade(cached);
+      ({ orphanedDependencies: orphaned } = await deps.performUpgrade(cached, approved.plan));
       await deps.appendAudit("extension.autoUpdate.applied", {
         id: cached.id,
         fromVersion: cached.fromVersion,
@@ -231,10 +473,7 @@ async function applyUpdateUnderMutex(
       });
     }
     deps.cache.remove(cached.id);
-    return {
-      applied: true,
-      jobId: cached.manifestHash.slice(0, 16),
-    };
+    return appliedResult(cached, approved, orphaned, !isDowngrade && hadRunGrant);
   } catch (e) {
     const phase = e instanceof Error ? extractPhase(e.message) : "internal_error";
     await deps.appendAudit(
@@ -263,17 +502,26 @@ async function handleExtensionUpdate(
   if (!("cached" in target)) {
     return target;
   }
-  const { cached, isDowngrade } = target;
+  const { cached, isDowngrade, installed } = target;
+
+  // A forward update is planned BEFORE the owner is asked, so the approval lists every package it
+  // adds (spec § 4); the same plan is what the apply gets. A downgrade installs nothing new.
+  let approved: ApprovedUpdatePlan | undefined;
+  if (!isDowngrade) {
+    const planned = await planForApproval(cached, deps);
+    if ("applied" in planned) return planned;
+    approved = planned;
+  }
 
   const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
   const gateResult = await deps.gate(
-    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps)),
+    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps), approved),
   );
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };
   }
 
-  return applyUpdateUnderMutex(cached, isDowngrade, deps);
+  return applyUpdateUnderMutex(cached, installed, approved, hasRunGrant, deps);
 }
 
 export async function dispatchAutoUpdateRpc(
@@ -317,6 +565,7 @@ function isStringSemverLess(a: string, b: string): boolean {
 function extractPhase(message: string): AutoUpdateFailPhase | "internal_error" {
   // First: a block's message quotes the statement's reason, which could contain any other word.
   if (message.startsWith("trust_blocked")) return "trust_blocked";
+  if (message.startsWith("update_conflicts")) return "update_conflicts";
   if (message.includes("source_registry_changed")) return "source_registry_changed";
   if (message.includes("sha256_mismatch")) return "sha256_mismatch";
   if (message.includes("package_hash_mismatch")) return "package_hash_mismatch";

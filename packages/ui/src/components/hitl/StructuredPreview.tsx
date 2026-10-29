@@ -84,7 +84,42 @@ interface PublisherBadge {
   text: string;
 }
 
+type Permissions = { network: string[]; filesystem: { read: string[]; write: string[] } };
+
+/**
+ * A package the update installs alongside the new version, as the gateway's plan lists it, or an
+ * entry that could not be read: it is still shown (and counted), so the list never understates.
+ */
+type AddedPackageView =
+  | {
+      unreadable: false;
+      /** `id@version`: stable across renders, used as the list key. */
+      key: string;
+      id: string;
+      version: string;
+      registry: string | null;
+      /** null: the package is unsigned (the CLI's `unsigned`). */
+      publisher: { id: string; fingerprint: string } | null;
+      /** Set only for a VERIFIED publisher: the gateway's one sentence. */
+      publisherBadge?: string;
+      /** A publisher key change, as the gateway states it. */
+      publisherChangeNote?: string;
+      starterPack: boolean;
+      permissions: Permissions;
+    }
+  | { unreadable: true; key: string };
+
+/** A connector requirement the owner must act on (anything but `met`). */
+interface NeedView {
+  connector: string;
+  text: string;
+}
+
 interface AutoUpdatePayload {
+  /** What the update adds (absent: nothing, or an older gateway). */
+  addedPackages: AddedPackageView[];
+  addedUnion?: Permissions;
+  needs: NeedView[];
   displayName?: string;
   fromVersion?: string;
   toVersion?: string;
@@ -168,12 +203,130 @@ function readNotes(details: Record<string, unknown>): string[] {
   );
 }
 
+function asRecord(v: unknown): Record<string, unknown> {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : {};
+}
+
+function readPermissions(v: unknown): Permissions {
+  const rec = asRecord(v);
+  const fs = asRecord(rec["filesystem"]);
+  return {
+    network: readStringArray(rec["network"]),
+    filesystem: { read: readStringArray(fs["read"]), write: readStringArray(fs["write"]) },
+  };
+}
+
+/** The package's publisher: id and fingerprint, or null (unsigned, or not readable as both). */
+function readAddedPublisher(v: unknown): { id: string; fingerprint: string } | null {
+  const rec = asRecord(v);
+  const id = readStringField(rec, "id");
+  const fingerprint = readStringField(rec, "fingerprint");
+  return id === undefined || fingerprint === undefined ? null : { id, fingerprint };
+}
+
+/** One view per entry of the gateway's `addedPackages`; one missing an id or version is unreadable. */
+function readAddedPackages(v: unknown): AddedPackageView[] {
+  if (!Array.isArray(v)) return [];
+  let unreadable = 0;
+  return v.map((entry): AddedPackageView => {
+    const rec = asRecord(entry);
+    const id = readStringField(rec, "id");
+    const version = readStringField(rec, "version");
+    if (id === undefined || version === undefined) {
+      unreadable += 1;
+      return { unreadable: true, key: `unreadable-${unreadable}` };
+    }
+    const badge = readStringField(rec, "publisherBadge");
+    const note = readStringField(rec, "publisherChangeNote");
+    return {
+      unreadable: false,
+      key: `${id}@${version}`,
+      id,
+      version,
+      registry: readStringField(rec, "registry") ?? null,
+      publisher: readAddedPublisher(rec["publisher"]),
+      ...(badge === undefined ? {} : { publisherBadge: badge }),
+      ...(note === undefined || note === "" ? {} : { publisherChangeNote: note }),
+      starterPack: rec["kind"] === "starter-pack",
+      permissions: readPermissions(rec["permissions"]),
+    };
+  });
+}
+
+/**
+ * The CLI plan text's publisher words: `publisher <id> (<16-char fingerprint>…), verified` (or
+ * `unverified`), or `unsigned`. 16 characters, as the CLI shows them: 4 are too few to compare.
+ */
+function addedPublisherText(
+  publisher: { id: string; fingerprint: string } | null,
+  verified: boolean,
+): string {
+  if (publisher === null) return "unsigned";
+  return `publisher ${publisher.id} (${publisher.fingerprint.slice(0, 16)}…), ${verified ? "verified" : "unverified"}`;
+}
+
+function AddedPackageItem({ p }: { readonly p: AddedPackageView }): ReactNode {
+  if (p.unreadable) {
+    return <span className="text-red-700">unreadable package entry</span>;
+  }
+  return (
+    <>
+      <code>
+        {p.id}@{p.version}
+      </code>{" "}
+      — {p.registry === null ? "a local folder" : `registry ${p.registry}`} —{" "}
+      {addedPublisherText(p.publisher, p.publisherBadge !== undefined)}
+      {p.starterPack && " — starter pack (no code to run)"}
+      {p.publisherBadge !== undefined && (
+        <div className="text-xs text-green-700">{p.publisherBadge}</div>
+      )}
+      {p.publisherChangeNote !== undefined && (
+        <div className="text-xs text-amber-700">{p.publisherChangeNote}</div>
+      )}
+      <div className="text-xs">{permissionsText(p.permissions)}</div>
+    </>
+  );
+}
+
+/** The status after a connector's name, as the CLI's `Needs:` block words it. */
+function needText(state: string, fix: readonly string[]): string {
+  const run = fix.join(" && ");
+  switch (state) {
+    case "configured_never_synced":
+      return `connected, never synced — run: ${run}`;
+    case "not_connected":
+      return `not connected — run: ${run}`;
+    case "unknown_connector":
+      return "not a connector this Nimbus knows";
+    case "unknown":
+      return "status unavailable";
+    default:
+      return state;
+  }
+}
+
+/** The connector requirements the owner must act on: every one whose state is not `met`. */
+function readNeeds(v: unknown): NeedView[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((entry) => {
+    const rec = asRecord(entry);
+    const connector = readStringField(rec, "connector");
+    const state = readStringField(rec, "state");
+    if (connector === undefined || state === undefined || state === "met") return [];
+    return [{ connector, text: needText(state, readStringArray(rec["fix"])) }];
+  });
+}
+
 function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayload {
   const added = (details["addedPermissions"] ?? {}) as Record<string, unknown>;
   const removed = (details["removedPermissions"] ?? {}) as Record<string, unknown>;
   const addedFs = (added["filesystem"] ?? {}) as Record<string, unknown>;
   const removedFs = (removed["filesystem"] ?? {}) as Record<string, unknown>;
   const out: AutoUpdatePayload = {
+    addedPackages: readAddedPackages(details["addedPackages"]),
+    needs: readNeeds(details["connectorRequirements"]),
     notes: readNotes(details),
     addedPermissions: {
       network: readStringArray(added["network"]),
@@ -204,7 +357,63 @@ function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayl
   if (signature !== undefined) out.signature = signature;
   const badge = readPublisherBadge(details);
   if (badge !== undefined) out.badge = badge;
+  if (details["planPermissions"] !== undefined) {
+    out.addedUnion = readPermissions(details["planPermissions"]);
+  }
   return out;
+}
+
+function listOrNone(values: readonly string[]): string {
+  return values.length === 0 ? "none" : values.join(", ");
+}
+
+/** One line per axis, as the CLI's plan text shows a package's permissions. */
+function permissionsText(p: Permissions): string {
+  return `network: ${listOrNone(p.network)} · read: ${listOrNone(p.filesystem.read)} · write: ${listOrNone(p.filesystem.write)}`;
+}
+
+/**
+ * What the update installs alongside the new version, and the connectors the owner must connect:
+ * the same facts the CLI's plan text shows (spec § 4), so a desktop approval never hides a package.
+ */
+function AddedByUpdate({ payload }: { readonly payload: AutoUpdatePayload }): ReactNode {
+  const added = payload.addedPackages;
+  return (
+    <>
+      {added.length > 0 && (
+        <section
+          data-testid="auto-update-added-packages"
+          className="border rounded p-2 bg-amber-50 border-amber-300"
+        >
+          <h3 className="text-sm font-semibold mb-1">This update adds {added.length} package(s)</h3>
+          <ul className="list-disc pl-4 text-sm">
+            {added.map((p) => (
+              <li key={p.key} data-testid="auto-update-added-package">
+                <AddedPackageItem p={p} />
+              </li>
+            ))}
+          </ul>
+          {payload.addedUnion !== undefined && (
+            <p data-testid="auto-update-added-union" className="text-xs mt-1">
+              The added packages together: {permissionsText(payload.addedUnion)}
+            </p>
+          )}
+        </section>
+      )}
+      {payload.needs.length > 0 && (
+        <section data-testid="auto-update-needs" className="text-sm">
+          <h3 className="font-semibold">Needs</h3>
+          <ul className="list-disc pl-4">
+            {payload.needs.map((n) => (
+              <li key={n.connector}>
+                {n.connector}: {n.text}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
+  );
 }
 
 /** The signature chip: about the SIGNATURE only; none on a key conflict (it was never checked). */
@@ -313,6 +522,7 @@ function AutoUpdatePreview({
         <SignatureChip status={payload.signature} />
       </p>
       <BadgeAndNotes badge={payload.badge} notes={payload.notes} />
+      <AddedByUpdate payload={payload} />
       {payload.changelog !== undefined && payload.changelog !== "" && (
         <details>
           <summary className="text-sm cursor-pointer">Changelog</summary>

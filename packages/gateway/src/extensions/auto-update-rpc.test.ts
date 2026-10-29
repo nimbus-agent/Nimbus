@@ -1,8 +1,63 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
+import { RegistryError } from "@nimbus-dev/registry-format";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import { DependencyConflictError } from "./dependency-errors.ts";
+import type { ExtensionManifest } from "./manifest.ts";
+import type {
+  RegistryDependencyResolver,
+  VerifiedDependency,
+} from "./registry/registry-dependency-fetcher.ts";
+
+/**
+ * A plan as `planUpdate` returns it: the root at its new version plus `added`, each verified with
+ * `manifests[id]` (a dependency without one has no verified manifest).
+ */
+function fakePlan(
+  added: readonly AddedPackage[] = [],
+  manifests: Readonly<Record<string, Partial<ExtensionManifest>>> = {},
+): UpdatePlan {
+  const verified = (id: string, version: string): VerifiedDependency | undefined => {
+    const m = manifests[id];
+    if (m === undefined) return undefined;
+    return {
+      id,
+      version,
+      reg: { name: "main", rootFingerprint: "c".repeat(32) },
+      manifest: {
+        id,
+        version,
+        permissions: { network: [], filesystem: { read: [], write: [] } },
+        ...m,
+      },
+      publisherKey: "AAAA",
+      publisherChange: null,
+      verifiedPublisher: null,
+    } as unknown as VerifiedDependency;
+  };
+  const resolver = { verified } as unknown as RegistryDependencyResolver;
+  const root = {
+    id: "com.example.a",
+    version: "1.1.0",
+    source: null,
+    newlyInstalled: true,
+    deps: added.map((a) => ({ id: a.id, range: "^1.0.0" })),
+  };
+  const nodes = [
+    ...added.map((a) => ({
+      id: a.id,
+      version: a.version,
+      source: null,
+      newlyInstalled: true,
+      deps: [],
+    })),
+    root,
+  ];
+  return { resolver, plan: { nodes } as unknown as UpdatePlan["plan"], addedPackages: added };
+}
 
 function mkCache(): AutoUpdateCache {
   const c = new AutoUpdateCache();
@@ -43,11 +98,12 @@ function baseDeps(): Deps {
     cache: mkCache(),
     forcePoll: async () => {},
     gate: async () => "proceed" as const,
-    performUpgrade: mock(async () => {}),
-    performDowngrade: mock(async () => {}),
+    performUpgrade: mock(async () => ({ orphanedDependencies: [] })),
+    performDowngrade: mock(async () => ({ orphanedDependencies: [] })),
     appendAudit: async () => {},
     getInstalledVersion: async () => "1.0.0",
     hasPrevVersion: async () => false,
+    planUpdate: async () => fakePlan(),
   };
 }
 
@@ -283,7 +339,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
 
   it("calls performUpgrade on approval", async () => {
     const deps = baseDeps();
-    const performUpgrade = mock(async () => {});
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
@@ -300,7 +356,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     const cur = deps.cache.get("com.example.a")!;
     deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
     deps.hasPrevVersion = async () => true;
-    const performDowngrade = mock(async () => {});
+    const performDowngrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performDowngrade = performDowngrade;
     const res = (await dispatchAutoUpdateRpc(
       "extension.update",
@@ -309,6 +365,45 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
     )) as { applied: boolean };
     expect(performDowngrade).toHaveBeenCalled();
     expect(res.applied).toBe(true);
+  });
+
+  it("a downgrade result names the dependencies it left orphaned, and the gate shows no plan", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    const gated: unknown[] = [];
+    deps.gate = async (action) => {
+      gated.push(action);
+      return "proceed" as const;
+    };
+    deps.performDowngrade = async () => ({ orphanedDependencies: ["dep.new", "dep.child"] });
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    );
+    expect(res).toEqual({
+      applied: true,
+      jobId: "d".repeat(16),
+      orphanedDependencies: ["dep.new", "dep.child"],
+    });
+    expect(JSON.stringify(gated)).not.toContain("planText");
+  });
+
+  it("a downgrade that orphans nothing carries no orphanedDependencies field", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.0.0" },
+      deps,
+    );
+    expect(res).toEqual({ applied: true, jobId: "d".repeat(16) });
   });
 
   it("refuses a forward update whose source registry is gone, before the gate", async () => {
@@ -410,6 +505,7 @@ describe("dispatchAutoUpdateRpc extension.update", () => {
       await new Promise<void>((res) => {
         release = res;
       });
+      return { orphanedDependencies: [] };
     };
     const first = dispatchAutoUpdateRpc(
       "extension.update",
@@ -666,6 +762,30 @@ describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension run
     );
   });
 
+  it("the applied result says the grant was dropped, and the pack case says rootKind", async () => {
+    const run = async (grant: boolean, pack: boolean) => {
+      const deps = baseDeps();
+      const cached = deps.cache.get("com.example.a");
+      if (cached === undefined) throw new Error("fixture missing");
+      if (pack) deps.cache.upsert({ ...cached, toStarterPack: true });
+      deps.hasRunGrant = async () => grant;
+      return (await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion: "1.1.0" },
+        deps,
+      )) as Record<string, unknown>;
+    };
+    const dropped = await run(true, false);
+    expect(dropped["applied"]).toBe(true);
+    expect(dropped["grantDropped"]).toBe(true);
+    expect("rootKind" in dropped).toBe(false);
+    const none = await run(false, false);
+    expect("grantDropped" in none).toBe(false);
+    const pack = await run(true, true);
+    expect(pack["grantDropped"]).toBe(true);
+    expect(pack["rootKind"]).toBe("starter-pack");
+  });
+
   it("omits the note when there is no run grant, or no way to ask", async () => {
     expect("runGrantNote" in (await askedPayload(async () => false))).toBe(false);
     expect("runGrantNote" in (await askedPayload())).toBe(false);
@@ -732,5 +852,331 @@ describe("the verified-publisher badge on updates (R6, trust layer PR 3c)", () =
     const p = await askedPayload(baseDeps());
     expect(p["verifiedPublisher"]).toBeNull();
     expect(p["publisherBadge"]).toBe("Unverified publisher");
+  });
+});
+
+describe("the update approval lists what the update adds (extension dependencies PR 5)", () => {
+  const DEP: AddedPackage = {
+    id: "com.example.dep",
+    version: "1.2.0",
+    registry: "main",
+    registryUrl: "https://main.test/",
+  };
+  const DEP_MANIFEST: Partial<ExtensionManifest> = {
+    publisher: { id: "acme", key: "AAAA" },
+    permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+    requires: { connectors: ["github"] },
+  };
+  const GITHUB: ConnectorRequirementStatus = {
+    connector: "github",
+    state: "not_connected",
+    owner: { kind: "bundled" },
+    fix: ["nimbus connector auth github"],
+    interactive: true,
+    requiredBy: ["com.example.dep"],
+  };
+  const NEEDS = "Needs:\n  github: not connected — run: nimbus connector auth github";
+
+  /** A bag whose only installed extension is the root at 1.0.0; `asked` records each approval. */
+  function depsAdding(plan: UpdatePlan): Deps & { asked: Array<Record<string, unknown>> } {
+    const asked: Array<Record<string, unknown>> = [];
+    return {
+      ...baseDeps(),
+      getInstalledVersion: async (id: string) => (id === "com.example.a" ? "1.0.0" : null),
+      planUpdate: async () => plan,
+      gate: async (a) => {
+        asked.push(a.payload);
+        return "proceed" as const;
+      },
+      asked,
+    };
+  }
+
+  function update(deps: Deps): Promise<Record<string, unknown>> {
+    return dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    ) as Promise<Record<string, unknown>>;
+  }
+
+  it("an update adding packages shows them in the approval before anything is fetched", async () => {
+    const plan = fakePlan([DEP], { [DEP.id]: DEP_MANIFEST });
+    const deps = depsAdding(plan);
+    const performUpgrade = mock(async (_u: AvailableUpdate, _p: UpdatePlan) => ({
+      orphanedDependencies: [],
+    }));
+    deps.performUpgrade = performUpgrade;
+    deps.gate = async (a) => {
+      deps.asked.push(a.payload);
+      // Asked first: nothing of the update has been fetched or applied yet.
+      expect(performUpgrade).not.toHaveBeenCalled();
+      return "proceed" as const;
+    };
+    const res = await update(deps);
+    const p = deps.asked[0] ?? {};
+    expect(p["addedPackages"]).toEqual([
+      {
+        id: DEP.id,
+        version: "1.2.0",
+        requiredBy: [{ from: "com.example.a", range: "^1.0.0" }],
+        registry: "main",
+        registryUrl: "https://main.test/",
+        publisher: { id: "acme", fingerprint: expect.any(String) },
+        permissions: DEP_MANIFEST.permissions,
+        newlyInstalled: true,
+        kind: "extension",
+      },
+    ]);
+    expect(p["planPermissions"]).toEqual({
+      network: ["api.example.com"],
+      filesystem: { read: [], write: [] },
+    });
+    expect(String(p["planText"])).toStartWith("This update adds 1 package(s):\n");
+    expect(String(p["planText"])).toContain("com.example.dep@1.2.0");
+    // The plan the owner approved is the one the apply gets.
+    expect(performUpgrade.mock.calls[0]?.[1]).toBe(plan);
+    expect(res).toMatchObject({
+      applied: true,
+      addedPackages: [{ id: DEP.id, version: "1.2.0", registry: "main", kind: "extension" }],
+    });
+  });
+
+  it("the update approval shows the new connector requirement", async () => {
+    const plan = fakePlan([DEP], { [DEP.id]: DEP_MANIFEST });
+    const deps = depsAdding(plan);
+    const seen: UpdatePlan[] = [];
+    deps.updateRequirements = async (_cached, p) => {
+      seen.push(p);
+      return [GITHUB];
+    };
+    const res = await update(deps);
+    const p = deps.asked[0] ?? {};
+    expect(seen).toEqual([plan]);
+    expect(p["connectorRequirements"]).toEqual([GITHUB]);
+    expect(String(p["planText"])).toEndWith(NEEDS);
+    expect(res["connectorRequirements"]).toEqual([GITHUB]);
+  });
+
+  it("a new requirement on the root alone is a Needs block with no package list", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.updateRequirements = async () => [{ ...GITHUB, requiredBy: ["com.example.a"] }];
+    await update(deps);
+    const p = deps.asked[0] ?? {};
+    expect("addedPackages" in p).toBe(false);
+    expect(p["planText"]).toBe(NEEDS);
+  });
+
+  it("requirement status that cannot be computed never refuses the update", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    deps.updateRequirements = async () => {
+      throw new Error("vault locked");
+    };
+    const res = await update(deps);
+    expect(res["applied"]).toBe(true);
+    expect("connectorRequirements" in (deps.asked[0] ?? {})).toBe(false);
+  });
+
+  it("an update that adds nothing asks exactly as before", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.updateRequirements = async () => [];
+    const res = await update(deps);
+    const p = deps.asked[0] ?? {};
+    for (const k of ["addedPackages", "planPermissions", "planText", "connectorRequirements"]) {
+      expect(k in p).toBe(false);
+    }
+    expect(res).toEqual({ applied: true, jobId: "d".repeat(16) });
+  });
+
+  it("a planning conflict refuses before the gate with update_conflicts", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.planUpdate = async () => {
+      throw new DependencyConflictError({
+        kind: "unsatisfiable",
+        id: "com.example.dep",
+        constraints: [{ from: "com.example.user", range: "~1.0.0" }],
+        availableVersions: ["2.0.0"],
+      });
+    };
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+    deps.performUpgrade = performUpgrade;
+    const res = await update(deps);
+    expect(res["applied"]).toBe(false);
+    expect(res["reason"]).toBe("update_conflicts");
+    expect(String(res["hint"])).toStartWith("update_conflicts: ");
+    expect(String(res["hint"])).toContain("~1.0.0");
+    expect(String(res["hint"])).not.toContain("\n");
+    expect(deps.asked).toHaveLength(0);
+    expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("a dependency naming an unadded registry refuses with its code", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.planUpdate = async () => {
+      throw new RegistryError(
+        "ERR_DEPENDENCY_REGISTRY_NOT_ADDED",
+        "com.example.dep names https://elsewhere.test/, which is not added; run: nimbus registry add",
+      );
+    };
+    const res = await update(deps);
+    expect(res["reason"]).toBe("update_conflicts");
+    expect(String(res["hint"])).toContain("ERR_DEPENDENCY_REGISTRY_NOT_ADDED");
+    expect(deps.asked).toHaveLength(0);
+  });
+
+  it("a package the plan adds without a verified manifest refuses: the approval never understates", async () => {
+    const deps = depsAdding(fakePlan([DEP]));
+    const res = await update(deps);
+    expect(res["reason"]).toBe("update_conflicts");
+    expect(String(res["hint"])).toContain("com.example.dep@1.2.0");
+    expect(deps.asked).toHaveLength(0);
+  });
+
+  it("a starter pack the update adds is shown with its kind", async () => {
+    const pack = { ...DEP_MANIFEST, kind: "starter-pack" } as Partial<ExtensionManifest>;
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: pack }));
+    const res = await update(deps);
+    const shown = deps.asked[0]?.["addedPackages"] as Array<{ kind: string }>;
+    expect(shown[0]?.kind).toBe("starter-pack");
+    expect(res["addedPackages"]).toEqual([
+      { id: DEP.id, version: "1.2.0", registry: "main", kind: "starter-pack" },
+    ]);
+  });
+
+  it("no approval field name is one the consent redactor hides", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    deps.updateRequirements = async () => [GITHUB];
+    await update(deps);
+    const names: string[] = [];
+    const walk = (v: unknown): void => {
+      if (Array.isArray(v)) {
+        for (const x of v) walk(x);
+      } else if (v !== null && typeof v === "object") {
+        for (const [k, x] of Object.entries(v)) {
+          names.push(k);
+          walk(x);
+        }
+      }
+    };
+    const p = deps.asked[0] ?? {};
+    walk({
+      addedPackages: p["addedPackages"],
+      planPermissions: p["planPermissions"],
+      connectorRequirements: p["connectorRequirements"],
+    });
+    expect(names.length).toBeGreaterThan(5);
+    const redacted = names.filter((n) =>
+      /(token|key|secret|password|credential|bearer|auth)/i.test(n),
+    );
+    expect(redacted).toEqual([]);
+  });
+
+  it("a downgrade is never planned", async () => {
+    const deps = depsAdding(fakePlan());
+    const planUpdate = mock(async () => fakePlan());
+    deps.planUpdate = planUpdate;
+    deps.getInstalledVersion = async () => "1.2.0";
+    deps.hasPrevVersion = async () => true;
+    await update(deps);
+    expect(planUpdate).not.toHaveBeenCalled();
+    expect("planText" in (deps.asked[0] ?? {})).toBe(false);
+  });
+
+  it("the installed version moved between the gate and the apply: cache_miss, nothing applied", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    deps.gate = async () => {
+      deps.getInstalledVersion = async (id: string) => (id === "com.example.a" ? "1.0.5" : null);
+      return "proceed" as const;
+    };
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+    deps.performUpgrade = performUpgrade;
+    expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+    expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("an added package installed since the gate: cache_miss, nothing applied", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    deps.gate = async () => {
+      deps.getInstalledVersion = async (id: string) => {
+        if (id === "com.example.a") return "1.0.0";
+        return id === DEP.id ? "1.2.0" : null;
+      };
+      return "proceed" as const;
+    };
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+    deps.performUpgrade = performUpgrade;
+    expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+    expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("the installed version is no longer the update's fromVersion: cache_miss before the prompt", async () => {
+    const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
+    // Not the version the update was detected from: its rollback target (`prev/<fromVersion>`)
+    // would name the wrong version, so the owner is never asked about it.
+    deps.getInstalledVersion = async (id: string) => (id === "com.example.a" ? "1.0.5" : null);
+    let gated = 0;
+    deps.gate = async () => {
+      gated++;
+      return "proceed" as const;
+    };
+    const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+    deps.performUpgrade = performUpgrade;
+    expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+    expect(gated).toBe(0);
+    expect(performUpgrade).not.toHaveBeenCalled();
+  });
+
+  describe("an installed package the plan relies on", () => {
+    const LIB = { id: "com.example.lib", version: "2.0.0" };
+    /** A plan that adds DEP and relies on LIB, installed at 2.0.0 when it was solved. */
+    function planRelyingOnLib(): UpdatePlan {
+      const base = fakePlan([DEP], { [DEP.id]: DEP_MANIFEST });
+      const lib = { ...LIB, source: null, newlyInstalled: false, deps: [] };
+      return {
+        ...base,
+        plan: { ...base.plan, nodes: [lib, ...base.plan.nodes] } as UpdatePlan["plan"],
+      };
+    }
+    function relyingDeps(libAfterGate: string | null) {
+      const deps = depsAdding(planRelyingOnLib());
+      const at = (lib: string | null) => async (id: string) => {
+        if (id === "com.example.a") return "1.0.0";
+        return id === LIB.id ? lib : null;
+      };
+      deps.getInstalledVersion = at(LIB.version);
+      deps.gate = async () => {
+        deps.getInstalledVersion = at(libAfterGate);
+        return "proceed" as const;
+      };
+      return deps;
+    }
+
+    it("still installed at the planned version: applied", async () => {
+      const deps = relyingDeps(LIB.version);
+      expect(await update(deps)).toMatchObject({ applied: true });
+      expect(deps.performUpgrade).toHaveBeenCalled();
+    });
+
+    for (const [label, after] of [
+      ["removed", null],
+      ["moved to another version", "2.1.0"],
+    ] as const) {
+      it(`${label} since the gate: cache_miss, nothing applied`, async () => {
+        const deps = relyingDeps(after);
+        const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
+        deps.performUpgrade = performUpgrade;
+        expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+        expect(performUpgrade).not.toHaveBeenCalled();
+      });
+    }
+  });
+
+  it("an update that dropped a dependency reports the orphan it left", async () => {
+    const deps = depsAdding(fakePlan());
+    deps.performUpgrade = async () => ({ orphanedDependencies: ["dep.old", "dep.old.child"] });
+    expect(await update(deps)).toMatchObject({
+      applied: true,
+      orphanedDependencies: ["dep.old", "dep.old.child"],
+    });
   });
 });

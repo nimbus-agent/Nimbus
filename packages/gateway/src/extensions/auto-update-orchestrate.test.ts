@@ -6,9 +6,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as tar from "tar";
 
+import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import { createPerformDowngrade, createPerformUpgrade } from "./auto-update-orchestrate.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
+import { sourceKey } from "./dependency-types.ts";
 import { extractPackage as realExtractPackage } from "./package-extract.ts";
+import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
 import { pendingDir as pendingVersionDir, prevVersionDir } from "./version-store.ts";
 
 const sha = (s: string): string =>
@@ -610,5 +613,197 @@ describe("createPerformDowngrade", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("createPerformUpgrade: the approved plan's dependency step", () => {
+  const ID = "com.example.a";
+  const DEP_EDGES = [{ id: "com.example.dep", version: "1.0.0", deps: [] }];
+
+  /** A plan whose resolver is never consulted by the orchestrator itself. */
+  function planAdding(ids: readonly string[]): UpdatePlan {
+    const resolver: RegistryDependencyResolver = {
+      fetcher: {
+        targetSource: () => null,
+        listVersions: () => Promise.resolve([]),
+        fetchManifest: () => Promise.reject(new Error("unused")),
+      },
+      rootSource: sourceKey("main", "c".repeat(32)),
+      verified: () => undefined,
+      registryUrl: () => null,
+      stage: () => Promise.reject(new Error("unused")),
+    };
+    return {
+      resolver,
+      plan: { nodes: [] },
+      addedPackages: ids.map((id) => ({
+        id,
+        version: "1.0.0",
+        registry: "main",
+        registryUrl: null,
+      })),
+    };
+  }
+
+  async function withInstalledRoot<T>(run: (extensionsRoot: string) => Promise<T>): Promise<T> {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-deps-"));
+    try {
+      const extRoot = join(root, "extensions", ID);
+      await mkdir(extRoot, { recursive: true });
+      await writeFile(join(extRoot, "marker.txt"), "old");
+      return await run(join(root, "extensions"));
+    } finally {
+      rmDirWithRetry(root);
+    }
+  }
+
+  const baseDeps = (extensionsRoot: string) => ({
+    extensionsRoot,
+    reverifyManifest: async () => {},
+    fetchPackage: async () => new Uint8Array([1]),
+    signal: new AbortController().signal,
+    sha256OfPackage: async () => "f".repeat(64),
+    extractPackage: async (_archive: string, destDir: string) => {
+      await writePackage(destDir, MANIFEST_V11, "entry-v1.1");
+      await writeFile(join(destDir, "marker.txt"), "new");
+      return { sourceRoot: destDir, treeDigest: "d".repeat(64) };
+    },
+    stopExtensionClient: async () => {},
+  });
+
+  it("runs after the package is measured and before the swap, and its edges commit with the row", async () => {
+    await withInstalledRoot(async (extensionsRoot) => {
+      const plan = planAdding(["com.example.dep"]);
+      let markerAtStep: string | undefined;
+      const installDependencies = mock(async (_u: AvailableUpdate, p: UpdatePlan | undefined) => {
+        expect(p).toBe(plan);
+        markerAtStep = await readFile(join(extensionsRoot, ID, "marker.txt"), "utf8");
+        return { edges: DEP_EDGES, rollback: () => [] };
+      });
+      const dbUpdateExtensionRow = mock(
+        async (
+          _id: string,
+          _version: string,
+          _manifestHash: string,
+          _entryHash: string,
+          _treeDigest: string,
+          _edges?: readonly unknown[],
+        ) => {},
+      );
+      const perform = createPerformUpgrade({
+        ...baseDeps(extensionsRoot),
+        installDependencies,
+        dbUpdateExtensionRow,
+      });
+      await perform(mkAvailable(), plan);
+      expect(installDependencies).toHaveBeenCalledTimes(1);
+      expect(markerAtStep).toBe("old");
+      expect(await readFile(join(extensionsRoot, ID, "marker.txt"), "utf8")).toBe("new");
+      expect(dbUpdateExtensionRow).toHaveBeenCalledWith(
+        ID,
+        "1.1.0",
+        sha(MANIFEST_V11),
+        sha("entry-v1.1"),
+        "d".repeat(64),
+        DEP_EDGES,
+      );
+    });
+  });
+
+  it("a refused package never reaches the dependency step", async () => {
+    await withInstalledRoot(async (extensionsRoot) => {
+      const installDependencies = mock(async () => ({ edges: [], rollback: () => [] }));
+      const perform = createPerformUpgrade({
+        ...baseDeps(extensionsRoot),
+        extractPackage: async (_archive: string, destDir: string) => {
+          await writePackage(destDir, MANIFEST_V11, "tampered-entry");
+          return { sourceRoot: destDir, treeDigest: "d".repeat(64) };
+        },
+        installDependencies,
+        dbUpdateExtensionRow: async () => {},
+      });
+      await expect(perform(mkAvailable(), planAdding(["com.example.dep"]))).rejects.toThrow(
+        /package_hash_mismatch: entry/,
+      );
+      expect(installDependencies).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a failed swap rolls the dependency step back", async () => {
+    const root = await mkdtemp(join(tmpdir(), "nimbus-orchestrate-deps-swap-"));
+    try {
+      // No install directory: the swap's first rename fails.
+      const extensionsRoot = join(root, "extensions");
+      await mkdir(extensionsRoot, { recursive: true });
+      const rollback = mock(() => []);
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformUpgrade({
+        ...baseDeps(extensionsRoot),
+        installDependencies: async () => ({ edges: DEP_EDGES, rollback }),
+        dbUpdateExtensionRow,
+      });
+      await expect(perform(mkAvailable(), planAdding(["com.example.dep"]))).rejects.toThrow(
+        /^swap_failed: /,
+      );
+      expect(rollback).toHaveBeenCalledTimes(1);
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+    } finally {
+      rmDirWithRetry(root);
+    }
+  });
+
+  it("a failed row write restores the old root, then rolls the dependency step back", async () => {
+    await withInstalledRoot(async (extensionsRoot) => {
+      const order: string[] = [];
+      const rollback = mock(() => {
+        order.push(`rollback:${existsSync(join(extensionsRoot, ID, "dist")) ? "new" : "old"}`);
+        return [];
+      });
+      const stopExtensionClient = mock(async () => {});
+      const perform = createPerformUpgrade({
+        ...baseDeps(extensionsRoot),
+        stopExtensionClient,
+        installDependencies: async () => ({ edges: DEP_EDGES, rollback }),
+        dbUpdateExtensionRow: async () => {
+          throw new Error("SQLITE_BUSY");
+        },
+      });
+      await expect(perform(mkAvailable(), planAdding(["com.example.dep"]))).rejects.toThrow(
+        /^swap_failed: SQLITE_BUSY/,
+      );
+      expect(await readFile(join(extensionsRoot, ID, "marker.txt"), "utf8")).toBe("old");
+      // The old root was back in place before the dependencies were undone.
+      expect(order).toEqual(["rollback:old"]);
+      expect(existsSync(prevVersionDir(extensionsRoot, ID, "1.0.0"))).toBe(false);
+      expect(stopExtensionClient).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a row write that fails without a dependency step still restores the old root", async () => {
+    await withInstalledRoot(async (extensionsRoot) => {
+      const perform = createPerformUpgrade({
+        ...baseDeps(extensionsRoot),
+        dbUpdateExtensionRow: async () => {
+          throw new Error("disk full");
+        },
+      });
+      await expect(perform(mkAvailable())).rejects.toThrow(/^swap_failed: disk full/);
+      expect(await readFile(join(extensionsRoot, ID, "marker.txt"), "utf8")).toBe("old");
+    });
+  });
+
+  it("without a dependency step, a plan that adds packages is refused before the swap", async () => {
+    await withInstalledRoot(async (extensionsRoot) => {
+      const dbUpdateExtensionRow = mock(async () => {});
+      const perform = createPerformUpgrade({ ...baseDeps(extensionsRoot), dbUpdateExtensionRow });
+      await expect(perform(mkAvailable(), planAdding(["com.example.dep"]))).rejects.toThrow(
+        /^update_conflicts: /,
+      );
+      expect(dbUpdateExtensionRow).not.toHaveBeenCalled();
+      expect(await readFile(join(extensionsRoot, ID, "marker.txt"), "utf8")).toBe("old");
+      // A plan that adds nothing needs no step.
+      await perform(mkAvailable(), planAdding([]));
+      expect(dbUpdateExtensionRow).toHaveBeenCalledTimes(1);
+    });
   });
 });

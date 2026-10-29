@@ -63,6 +63,13 @@ export interface InstalledForSolver {
 export interface ResolveClosureOptions {
   readonly installed: ReadonlyMap<string, InstalledForSolver>;
   readonly activeConstraints: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /**
+   * Keep solving past a dependency that is refused (a conflict, an unreachable or refusing
+   * registry, a trust block): its subtree is skipped, its siblings are still solved, and the solve
+   * throws every refusal it met — one alone, or several as a `DependencyConflictsError`. Absent ⇒
+   * the first refusal is thrown.
+   */
+  readonly collectConflicts?: boolean;
 }
 
 export interface DependencyConstraint {

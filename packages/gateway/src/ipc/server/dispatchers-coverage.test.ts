@@ -19,6 +19,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
 import { AutoUpdateCache } from "../../extensions/auto-update-cache.ts";
 import { InMemoryDiscoveryProvider } from "../../federation/discovery.ts";
 import { PeerPairing } from "../../federation/peer-pairing.ts";
@@ -1101,11 +1102,12 @@ describe("tryDispatchAutomationRpc — buildAutoUpdateDeps branches", () => {
     return {
       cache: cache ?? new AutoUpdateCache(),
       forcePoll: async () => {},
-      performUpgrade: async () => {},
-      performDowngrade: async () => {},
+      performUpgrade: async () => ({ orphanedDependencies: [] }),
+      performDowngrade: async () => ({ orphanedDependencies: [] }),
       appendAudit: async () => {},
       getInstalledVersion: async () => null,
       hasPrevVersion: async () => false,
+      planUpdate: planNothing,
     };
   }
 

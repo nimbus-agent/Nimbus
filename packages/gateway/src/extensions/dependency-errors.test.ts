@@ -1,7 +1,11 @@
 import { describe, expect, it } from "bun:test";
 import {
+  conflictErrorsOf,
   DependencyConflictError,
+  DependencyConflictsError,
+  describeDependencyConflict,
   isDependencyConflictError,
+  isDependencyConflictsError,
   isOfflineDependencyResolutionError,
   isReverseDepBlockedError,
   OfflineDependencyResolutionError,
@@ -89,5 +93,59 @@ describe("ReverseDepBlockedError", () => {
     });
     expect(e.blockers).toHaveLength(2);
     expect(e.message).toContain("2");
+  });
+});
+
+describe("describeDependencyConflict", () => {
+  it("names a cycle by its chain, or by the id alone without one", () => {
+    expect(describeDependencyConflict({ kind: "cycle", id: "a", chain: ["a", "b", "a"] })).toBe(
+      "dependency cycle: a -> b -> a",
+    );
+    expect(describeDependencyConflict({ kind: "cycle", id: "a" })).toBe("dependency cycle: a");
+  });
+
+  it("names an invalid range with its constraints, or none", () => {
+    expect(
+      describeDependencyConflict({
+        kind: "range_invalid",
+        id: "b",
+        constraints: [{ from: "a", range: "not-a-range" }],
+      }),
+    ).toBe("b: invalid range not-a-range (from a)");
+    expect(describeDependencyConflict({ kind: "range_invalid", id: "b" })).toBe(
+      "b: invalid range ",
+    );
+  });
+
+  it("lists what is available for an unsatisfiable range, or says none", () => {
+    expect(
+      describeDependencyConflict({
+        kind: "unsatisfiable",
+        id: "c",
+        constraints: [{ from: "a", range: "^2.0.0" }],
+        availableVersions: ["1.0.0", "1.1.0"],
+      }),
+    ).toBe("c: no version satisfies ^2.0.0 (from a); available: 1.0.0, 1.1.0");
+    expect(describeDependencyConflict({ kind: "unsatisfiable", id: "c" })).toBe(
+      "c: no version satisfies ; available: none",
+    );
+  });
+});
+
+describe("DependencyConflictsError", () => {
+  it("carries every refusal, and conflictErrorsOf unwraps it", () => {
+    const one = new Error("one");
+    const two = new Error("two");
+    const e = new DependencyConflictsError([one, two]);
+    expect(e.message).toBe("dependency_conflicts:2");
+    expect(isDependencyConflictsError(e)).toBe(true);
+    expect(conflictErrorsOf(e)).toEqual([one, two]);
+  });
+
+  it("conflictErrorsOf wraps a single error, and the guard refuses other errors", () => {
+    const one = new Error("one");
+    expect(conflictErrorsOf(one)).toEqual([one]);
+    expect(isDependencyConflictsError(one)).toBe(false);
+    expect(isDependencyConflictsError("x")).toBe(false);
   });
 });

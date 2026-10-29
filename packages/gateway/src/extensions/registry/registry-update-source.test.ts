@@ -362,7 +362,7 @@ describe("collectRegistryUpdates", () => {
     });
     addRegistry("main", dir, false);
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
-    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": { range: "^1.0.0" } });
     expect("toStarterPack" in (out.updates[0] ?? {})).toBe(false);
   });
 
@@ -379,10 +379,10 @@ describe("collectRegistryUpdates", () => {
     expect(out.updates.map((u) => [u.id, u.toVersion])).toEqual([["com.a", "1.2.0"]]);
     expect(out.updates[0]?.verificationStatus).toBe("verified");
     expect(out.updates[0]?.toStarterPack).toBe(true);
-    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": { range: "^1.0.0" } });
   });
 
-  test("an update adding a cross-registry dependency is offered, with the dependency's range in dependsOn", async () => {
+  test("detection keeps the dependency's registry", async () => {
     const dir = await buildRegistry("main", {
       "com.a": [
         { version: "1.0.0" },
@@ -396,7 +396,24 @@ describe("collectRegistryUpdates", () => {
     const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
     expect(out.updates.map((u) => u.toVersion)).toEqual(["1.2.0"]);
     expect(out.errors).toEqual([]);
-    expect(out.dependsOn.get("com.a")).toEqual({ "com.dep": "^1.0.0" });
+    expect(out.dependsOn.get("com.a")).toEqual({
+      "com.dep": { range: "^1.0.0", registry: "nimbus-official" },
+    });
+  });
+
+  test("the new version's connector requirements are reported", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [{ version: "1.0.0" }, { version: "1.2.0", requires: { connectors: ["github"] } }],
+      "com.b": [{ version: "1.0.0" }, { version: "1.2.0" }],
+    });
+    addRegistry("main", dir, false);
+    const out = await collectRegistryUpdates(
+      deps(),
+      [row("com.a", "main"), row("com.b", "main")],
+      signal,
+    );
+    expect(out.requires.get("com.a")).toEqual(["github"]);
+    expect(out.requires.has("com.b")).toBe(false);
   });
 });
 

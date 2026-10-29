@@ -2,8 +2,10 @@ import { describe, expect, it } from "bun:test";
 import { type DependencySpec, RegistryError } from "@nimbus-dev/registry-format";
 import fc from "fast-check";
 import {
+  conflictErrorsOf,
   DependencyConflictError,
   isDependencyConflictError,
+  isDependencyConflictsError,
   isOfflineDependencyResolutionError,
 } from "./dependency-errors.ts";
 import { resolveClosure } from "./dependency-graph.ts";
@@ -596,5 +598,59 @@ describe("resolveClosure — sources", () => {
     expect(plan.nodes.find((n) => n.id === "b")?.newlyInstalled).toBe(false);
     expect(plan.nodes.find((n) => n.id === "b")?.source).toBe(S1);
     expect(plan.nodes.find((n) => n.id === "root")?.newlyInstalled).toBe(true);
+  });
+});
+
+describe("resolveClosure — collectConflicts", () => {
+  const fetcher = makeFetcher({
+    "com.a": { "1.0.0": { id: "com.a", version: "1.0.0" } },
+    "com.b": { "1.0.0": { id: "com.b", version: "1.0.0" } },
+    "com.ok": { "1.0.0": { id: "com.ok", version: "1.0.0" } },
+  });
+  const root: ExtensionManifestForSolver = {
+    id: "com.root",
+    version: "1.0.0",
+    dependsOn: {
+      "com.a": { range: "^2.0.0" },
+      "com.ok": { range: "^1.0.0" },
+      "com.b": { range: "^3.0.0" },
+    },
+  };
+  const opts = { installed: new Map(), activeConstraints: new Map() };
+
+  it("without it, the first refusal is thrown alone", async () => {
+    const e = await resolveClosure(root, null, fetcher, opts).catch((x: unknown) => x);
+    expect(isDependencyConflictError(e) && e.conflict.id).toBe("com.a");
+  });
+
+  it("with it, every refused sibling is reported, in declaration order", async () => {
+    const e = await resolveClosure(root, null, fetcher, { ...opts, collectConflicts: true }).catch(
+      (x: unknown) => x,
+    );
+    expect(isDependencyConflictsError(e)).toBe(true);
+    const ids = conflictErrorsOf(e).map((x) => (isDependencyConflictError(x) ? x.conflict.id : x));
+    expect(ids).toEqual(["com.a", "com.b"]);
+  });
+
+  it("with it, one refusal is still thrown as itself", async () => {
+    const one = { ...root, dependsOn: { "com.a": { range: "^2.0.0" } } };
+    const e = await resolveClosure(one, null, fetcher, { ...opts, collectConflicts: true }).catch(
+      (x: unknown) => x,
+    );
+    expect(isDependencyConflictError(e)).toBe(true);
+  });
+
+  it("with it, a failure that is not a refusal still throws at once", async () => {
+    // Naming a dependency's source contacts nothing, so a throw there is a bug, not a refusal.
+    const broken: RegistryFetcher = {
+      ...fetcher,
+      targetSource: () => {
+        throw new TypeError("a bug");
+      },
+    };
+    const e = await resolveClosure(root, null, broken, { ...opts, collectConflicts: true }).catch(
+      (x: unknown) => x,
+    );
+    expect(e).toBeInstanceOf(TypeError);
   });
 });
