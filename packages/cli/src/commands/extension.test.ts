@@ -3141,7 +3141,9 @@ describe("runExtensionInstall — the post-install walk", () => {
   ] as const) {
     test(name, async () => {
       setTty(true);
-      const install = countingClient([{ id: "acme.dep", version: "1.0.0", promoted: true }]);
+      const install = countingClient([
+        { id: "acme.dep", version: "1.0.0", promoted: true, sourceRegistry: "main" },
+      ]);
       const made: string[] = [];
       const asked: string[] = [];
       await runExtensionInstall(install.client, [...args], [...rest], {
@@ -3159,6 +3161,8 @@ describe("runExtensionInstall — the post-install walk", () => {
         },
       });
       expect(out.stdout.split("\n")[0]).toBe(PROMOTE_COPY);
+      // The JSON names the registry the kept copy came from.
+      expect(out.stdout).toContain('"sourceRegistry": "main"');
       expect(out.stdout).not.toContain("Nothing runs until you approve it");
       expect(out.stdout).not.toContain("installed acme.dep");
       expect(out.stdout).not.toContain("Needs:");

@@ -321,7 +321,14 @@ async function handleInstall(
   if (isPromotedInstall(installed)) {
     return {
       kind: "hit",
-      value: { id: installed.id, version: installed.version, promoted: true },
+      value: {
+        id: installed.id,
+        version: installed.version,
+        promoted: true,
+        ...(installed.sourceRegistry === undefined
+          ? {}
+          : { sourceRegistry: installed.sourceRegistry, channel: installed.channel }),
+      },
     };
   }
   // After the install has landed, and outside its error handling: the root and every dependency

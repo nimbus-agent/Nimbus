@@ -828,7 +828,13 @@ describe("registry.install", () => {
     const out = await install({ id: "acme.dep" }, g.gate);
     expect(out).toEqual({
       kind: "hit",
-      value: { id: "acme.dep", version: "1.0.0", promoted: true },
+      value: {
+        id: "acme.dep",
+        version: "1.0.0",
+        promoted: true,
+        sourceRegistry: "main",
+        channel: "stable",
+      },
     });
     expect(g.asked).toHaveLength(1);
     expect(isInstalledAsDependency(db, "acme.dep")).toBe(false);

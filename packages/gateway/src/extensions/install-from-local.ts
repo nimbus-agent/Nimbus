@@ -77,7 +77,7 @@ import type {
   StagedDependency,
 } from "./registry/registry-dependency-fetcher.ts";
 import { registryHashMismatch } from "./registry/registry-manifest.ts";
-import { getRegistry, setExtensionSource } from "./registry/registry-store.ts";
+import { getExtensionSource, getRegistry, setExtensionSource } from "./registry/registry-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked } from "./trust/trust-blocks.ts";
@@ -423,6 +423,9 @@ export type PromotedInstallResult = {
   readonly id: string;
   readonly version: string;
   readonly promoted: true;
+  /** The registry and channel the kept copy was installed from; absent for a local copy. */
+  readonly sourceRegistry?: string;
+  readonly channel?: "stable" | "beta";
 };
 
 export function isPromotedInstall<T extends object>(
@@ -443,7 +446,13 @@ export function installedDependencyRow(db: Database, id: string): ExtensionRow |
 /** Clears the dependency marker on `row`. The marker only decides what a later removal offers, so it needs no consent. */
 export function promoteInstalledDependency(db: Database, row: ExtensionRow): PromotedInstallResult {
   setInstalledAsDependency(db, row.id, false);
-  return { id: row.id, version: row.version, promoted: true };
+  const source = getExtensionSource(db, row.id);
+  return {
+    id: row.id,
+    version: row.version,
+    promoted: true,
+    ...(source === undefined ? {} : { sourceRegistry: source.registry, channel: source.channel }),
+  };
 }
 
 /**

@@ -980,7 +980,13 @@ describe("installFromRegistry installs a dependency plan", () => {
     urls = [];
     asked = [];
     const out = await installFromRegistry(planDeps(), { id: DEP });
-    expect(out).toEqual({ id: DEP, version: "1.0.0", promoted: true });
+    expect(out).toEqual({
+      id: DEP,
+      version: "1.0.0",
+      promoted: true,
+      sourceRegistry: "main",
+      channel: "stable",
+    });
     expect(urls).toEqual([]);
     expect(egressRows()).toBe(ledgerBefore);
     expect(asked).toHaveLength(0);
@@ -990,25 +996,33 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(forwardDeps(db, ID)).toEqual([{ id: DEP, range: "^1.0.0", registry: "main" }]);
   });
 
-  test("a registry install naming the dependency's own registry and version promotes it", async () => {
+  test("a registry install naming the dependency's own registry, version and channel promotes it", async () => {
     await mainWithDep();
     await installFromRegistry(planDeps(), { id: ID, registry: "main" });
     const out = await installFromRegistry(planDeps(), {
       id: DEP,
       registry: "main",
       version: "1.0.0",
+      channel: "stable",
     });
-    expect(out).toEqual({ id: DEP, version: "1.0.0", promoted: true });
+    expect(out).toEqual({
+      id: DEP,
+      version: "1.0.0",
+      promoted: true,
+      sourceRegistry: "main",
+      channel: "stable",
+    });
     expect(isInstalledAsDependency(db, DEP)).toBe(false);
   });
 
-  test("a registry install of a dependency asking another version or registry is still refused", async () => {
+  test("a registry install of a dependency asking another version, registry or channel is still refused", async () => {
     await mainWithDep();
     await installFromRegistry(planDeps(), { id: ID, registry: "main" });
     urls = [];
     for (const req of [
       { id: DEP, version: "2.0.0" },
       { id: DEP, registry: "other" },
+      { id: DEP, channel: "beta" as const },
     ]) {
       expect(await codeOf(installFromRegistry(planDeps(), req))).toBe(
         "ERR_REGISTRY_ALREADY_INSTALLED",
