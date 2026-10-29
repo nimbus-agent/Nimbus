@@ -18,6 +18,14 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — Extension dependency follow-ups (no migration, no new invariant).** Under air gap an already-installed
+  dependency from the registry its declaration names is reused with zero requests, while a fetch is refused with
+  `ERR_REGISTRY_AIR_GAP`, not "offline". Install refusals now say what happened: a leftover directory, a local reinstall of an
+  installed id (before any approval), and `(rollback incomplete: …)` with each failed rollback step logged. `extension.list`
+  items carry `orphaned: true` for a dependency nothing needs; `nimbus doctor` warns and names `nimbus extension remove <id>`;
+  the desktop names packages left after a remove. Connector fix commands for jira, confluence, bitbucket, sentry, jenkins and
+  grafana name every required flag with the CLI's own placeholders. Detail: `architecture.md` and `cli-reference.md` § Extensions.
+
 - **2026-10-29 — Extension dependencies and starter packs PR 5: updates that add dependencies (Phase 9.5 project 4,
   complete; no migration, I44 amended, no new invariant).** An extension update whose new version adds `dependsOn`
   entries now installs them. Detection resolves the update's closure through the registry-scoped resolver
