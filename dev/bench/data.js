@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793249420883,
+  "lastUpdate": 1793263328173,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9a0c30a128a887065c4197670b8c8e81e8311a60",
-          "message": "chore: release main (#1157)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.0.0</summary>\n\n##\n[2.0.0](https://github.com/nimbus-agent/Nimbus/compare/v1.29.0...v2.0.0)\n(2026-08-11)\n\n\n### ⚠ BREAKING CHANGES\n\n* **egress:** remove the EgressCompleteness.tier compat shim\n([#1156](https://github.com/nimbus-agent/Nimbus/issues/1156))\n\n### Bug Fixes\n\n* **clips:** embed web clips locally and stop advertising discarded text\n([#1151](https://github.com/nimbus-agent/Nimbus/issues/1151))\n([0e3b183](https://github.com/nimbus-agent/Nimbus/commit/0e3b18336d1e1cb79080d09b660f20ca785c57ca))\n* **quality:** close two ReDoS regexes and clear 25 SonarCloud findings\n([#1152](https://github.com/nimbus-agent/Nimbus/issues/1152))\n([1f89379](https://github.com/nimbus-agent/Nimbus/commit/1f893798d6466c8a860fcda2141f5832acdda9c2))\n\n\n### Code Refactoring\n\n* **egress:** remove the EgressCompleteness.tier compat shim\n([#1156](https://github.com/nimbus-agent/Nimbus/issues/1156))\n([7b530dc](https://github.com/nimbus-agent/Nimbus/commit/7b530dcc15930a208d63af43ad3af9dd46f44d07))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-11T19:32:36Z",
-          "tree_id": "db6d91bfa6ac1043acb22ab2c5644bbc7ca3a27c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9a0c30a128a887065c4197670b8c8e81e8311a60"
-        },
-        "date": 1786477483773,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 338.49494090000223,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.8219168500094,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 278.80790379999996,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f18d931849a1dc1cf56b7dd47e71cca634d17eec",
+          "message": "feat(extensions): an update that adds dependencies lists them in its approval and installs them from the right registry, all or nothing (#1814)\n\nThis is PR 5 of 5, the last PR of Phase 9.5 project 4, extension\ndependencies and starter packs. With it the project is complete.\n- PR 1, #1806: the manifest format.\n- PR 2, #1810: registry dependencies, installed under one approved plan.\n- PR 3, #1811: connector requirements and the post-install walk.\n- PR 4, #1813: starter packs.\n\n## What changes for a user\n\n`nimbus extension update` now handles an update whose new version adds\ndependencies or connector requirements.\n\n**It also fixes an existing bug.** Before this PR, a new dependency that\nwas not installed showed up as an `unsatisfiable` conflict. Nothing read\nthat conflict, so the update installed without the dependency. Updates\nwith real conflicts are now refused (`update_conflicts`), with one line\nper conflict.\n\n### Detection\n\n- Update checks resolve the new version's dependency closure through the\nregistries, the same way a registry install does. Each bare range\nresolves in the extension's own registry; a named one resolves in a\nregistry you have already added.\n- A dependency that can be fetched is listed as an added package, not as\na conflict.\n- `nimbus extension update` lists `adds <ids>` and the reason for any\nconflict.\n- Background checks read each registry's verified index once per poll.\nEvery fetch is written to the egress ledger and respects the air gap.\nUpdates that could not be applied anyway (failed signature, conflicting\npublisher key) are not planned.\n\n### The approval\n\nThe `extension.autoUpdate` approval lists everything the update adds\nbefore anything is downloaded.\n\n- **The CLI prompt** shows: `This update adds <n> package(s):`, with\neach package, its registry, publisher and permissions, and the\npermission union. Then the `Needs:` block of connector requirements.\n- **The desktop preview** shows each added package with its version,\nregistry, publisher, fingerprint, verified badge, any key-change note\nand its permissions, plus the union and any connector requirement that\nis not met.\n- **Display only.** The plan text stays out of the audit row, as it does\nfor `extension.install`.\n\n### Applying the update\n\nAfter you approve, the update installs exactly the approved packages,\nall or nothing.\n\n**Checks before anything is installed:**\n- The installed version still matches what you approved. If it no longer\nmatches the version the update was detected against, the update is\nrefused with `cache_miss` before you are even asked.\n- No added package has appeared, and every reused package is still\ninstalled.\n- The re-verified manifest's dependencies equal the approved plan's.\n- Each dependency registry's signed index is read again.\n- I48 blocks are checked again, so a version withdrawn or taken down\nafter you approved fails closed.\n\n**Order of installation:**\n1. The new dependencies install after the root package passes its hash\nand claims checks, immediately before the swap.\n2. A failure anywhere up to and including the swap rolls them back.\n3. The row update and every dependency edge are written in one\ntransaction. If that transaction fails after the swap, the previous root\nis restored and the new dependencies are rolled back (`swap_failed`).\nThat restore now applies to every upgrade.\n\n**What the CLI prints:**\n- `updated <id> to <v>`;\n- one `+ <dep>@<v> from registry <r> (installed as a dependency)` line\nper added package;\n- the \"Nothing runs until you approve it\" line for the added code\npackages, plus the updated extension itself if its run approval went\nstale (`grantDropped`), unless it is now a starter pack;\n- the `Needs:` block.\n\nAn attended terminal then runs the walk that offers each approval and\neach connection, as after an install.\n\n**Dropped dependencies.** An update that drops a dependency reports the\npackage it leaves unneeded: `Kept <ids>, no longer needed by <id>;\nremove them with: …`, on stderr.\n\n### Downgrade and crash recovery\n\n- Both rewrite the dependency edges from the restored manifest. Each\nedge's registry is resolved from the database; it is `null` only when\nthat registry is no longer added, or has a different root key.\n- A downgrade reports the dependency-installed packages it leaves\nunneeded, using the same `Kept …` line. It removes nothing itself.\n\n## Internals\n\n- **Planning.** `planUpdate` lives in\n`extensions/registry/install-from-registry.ts`, because the I44 pin\nallows only that file to create a dependency resolver. It solves with\nthe old root in `installed`, without the root's own old constraints, and\nstill applies `assertRootConstraintsSatisfied`.\n- **Installing.** `installPlanDependencies` (in `install-from-local.ts`)\nand `installUpdateDependencies` (in `install-from-registry.ts`) reuse\nthe plan installer's `stageNewDependencies`, `installStagedDependency`\nand rollback. `setExtensionSource` stays in the two files the pin\nallows.\n- **Executor.** `hasPlanText` now covers `extension.autoUpdate`. With\nplan text present, the CLI Details line leaves out `addedPackages`,\n`connectorRequirements` and `planPermissions`. The desktop details and\nthe audit row keep them.\n- **Result fields.**\n- `AvailableUpdate` gains `addedPackages`, `addedRequirements`,\n`conflicts` (with one-line reasons) and `dependsOn` (full specs; the\nregistry is no longer dropped).\n- The apply result gains `addedPackages`, `connectorRequirements`,\n`grantDropped`, `rootKind` and `orphanedDependencies`.\n  - The downgrade result gains `orphanedDependencies`.\n- **New helper.** `orphanedAfterEdgeChange` in\n`orphaned-dependencies.ts`.\n- **I44, amended under the triple rule.** An update's new dependency is\nfetched only from the registry its declaration resolves to, through the\nverified chain. The behavioural test is red-proved. One source pin\nchanged: the `stageNewDependencies` call count went from 2 to 3. It is\ntightened in return: each caller makes exactly one call, the new\nfunctions name neither `requireInstallApproval` nor\n`installVerifiedRegistryPackage`, and their callers and call counts are\nfixed. Every other I44 pin is textually unchanged.\n\n## Decisions made while building\n\n- **Solve once, install that plan.** The update plan is solved at the\napproval and the same object installs at apply. Apply re-verifies but\nnever re-solves, so what you approved and what installs cannot drift.\n- **Conflicts block the apply.** An update with conflicts is refused at\napply, so a broken update is never half-applied.\n- **The desktop shows everything the CLI shows** about added packages\n(spec §4).\n- **Two Antigravity claims were checked and not taken:**\n- \"a dependency manifest may lack a publisher\": the index format\nrequires one, and `fetchRegistryManifest` checks it.\n- \"stale `verifiedKeys` lets a retry skip re-verification\":\n`reverifyManifest` always runs first. The retained entry itself was real\nand is now cleared in a `finally`.\n- **Only the first refused dependency is explored.** A refused\ndependency's own subtree is not solved, so a deeper conflict there\nappears once the outer one is fixed. This is documented.\n\n## Review history\n\n- **The plan:** Antigravity reviewed it, and all 15 of its findings were\napplied. Among them: where `planUpdate` lives, because of the pin; the\napply order and rollback; the I48 re-check at apply; and a desktop\npreview at parity with the CLI.\n- **Each task:** a task review, with fix rounds.\n- **The whole branch:** a Claude reviewer found 1 Important and 7 Minor\nissues; Antigravity found 6 (one shared). The Important one: an update\nthat drops a dependency hid the orphan it created. One fix pass covered\nthem, each red-proved except the unobservable A4. A scoped re-review\nfollowed.\n\n## Known follow-ups, not blocking\n\n- **A crash between the dependency install and the row commit** leaves\nthe new dependency-installed packages without edges. They stay visible\nin `extension list` but are never offered as orphans. A boot sweep would\nclose it.\n- **`extension.downgrade` carries no plan text.** A downgrade installs\nnothing.\n\n## Verification\n\n- `bun run typecheck`, `bun run typecheck:tests` (0 new), Biome and `bun\nrun preflight:fast` pass.\n- `bun test` over the gateway's `extensions` and `ipc` directories,\n`security-invariants.test.ts` and `packages/cli/src`: 9689 pass, 0 fail.\n- The auto-update and registry e2e and integration files pass.\n- The UI hitl vitest tests: 62 pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension updates can now install newly required dependencies after\napproval. Approval previews show added packages, permissions, publisher\ndetails, and connector requirements.\n* Update and downgrade results report dependencies that are no longer\nneeded, with guidance for manual removal.\n* **Bug Fixes**\n* Updates are blocked when dependencies cannot be resolved or approval\ndetails no longer match the current installation. Failed updates restore\nthe previous extension version and roll back newly installed packages.\n* Downgrades restore dependency records for the selected version without\nautomatically removing installed packages.\n* **Documentation**\n  * Updated CLI and security guidance for extension dependency handling.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T08:31:23Z",
+          "tree_id": "c4c58dc7c62166900950ec6ea76b9813b75c7d43",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f18d931849a1dc1cf56b7dd47e71cca634d17eec"
+        },
+        "date": 1793263324639,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 294.0010394499939,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 291.596502,
             "unit": "ms"
           }
         ]
