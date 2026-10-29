@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.10.0](https://github.com/nimbus-agent/Nimbus/compare/v10.9.0...v10.10.0) (2026-10-29)
+
+
+### Features
+
+* **eval:** nimbus eval --extension evaluates an installed extension behind one owner approval (extension.eval) ([#1821](https://github.com/nimbus-agent/Nimbus/issues/1821)) ([0a1ce6a](https://github.com/nimbus-agent/Nimbus/commit/0a1ce6a1befd5a9b1cbf835b6d3771338b50fa9c))
+* **eval:** nimbus eval --package runs an extension's eval suites in the sandbox, offline and without credentials (I49) ([#1819](https://github.com/nimbus-agent/Nimbus/issues/1819)) ([4e34677](https://github.com/nimbus-agent/Nimbus/commit/4e34677c274f03103a4a23f7ac625414a1921fff))
+* **registry-format:** eval suite format, deterministic scorer, evals/ in packages and a registry-signed quality field ([#1817](https://github.com/nimbus-agent/Nimbus/issues/1817)) ([43cb6a4](https://github.com/nimbus-agent/Nimbus/commit/43cb6a45c334d3864e9bf5c939106a169639740a))
+
 ## [10.9.0](https://github.com/nimbus-agent/Nimbus/compare/v10.8.0...v10.9.0) (2026-10-29)
 
 
