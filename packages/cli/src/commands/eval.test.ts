@@ -186,12 +186,98 @@ describe("runEval", () => {
     }
   });
 
-  test("--extension and --installed are not available yet", async () => {
-    for (const flag of ["--extension", "--installed"]) {
-      const h = harness({});
-      expect(await runEval([flag, "x"], h.deps)).toBe(2);
-      expect(h.errs[0]).toContain("not available yet");
+  test("--installed is not available yet", async () => {
+    const h = harness({});
+    expect(await runEval(["--installed"], h.deps)).toBe(2);
+    expect(h.errs[0]).toContain("not available yet");
+  });
+});
+
+function ipcEntry(): Record<string, unknown> {
+  return { id: "acme/tool", version: "1.0.0", ok: true, report: report() };
+}
+
+function extHarness(opts: { entry?: Record<string, unknown>; rpcError?: Error; tty?: boolean }) {
+  const h = harness({});
+  const rpc: { method: string; params: unknown }[] = [];
+  let connects = 0;
+  const deps: EvalCliDeps = {
+    ...h.deps,
+    isTTY: () => opts.tty ?? true,
+    withClient: async (fn) => {
+      connects += 1;
+      return await fn(async <T>(method: string, params: unknown) => {
+        rpc.push({ method, params });
+        if (opts.rpcError) throw opts.rpcError;
+        return { results: [opts.entry ?? ipcEntry()] } as T;
+      });
+    },
+  };
+  return { deps, logs: h.logs, errs: h.errs, rpc, connects: () => connects };
+}
+
+describe("runEval --extension", () => {
+  test("renders the report through the shared renderer and exits 0", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(0);
+    expect(h.rpc).toEqual([{ method: "extension.eval", params: { ids: ["acme/tool"] } }]);
+    const out = h.logs.join("\n");
+    expect(out).toContain("acme/tool 1.0.0");
+    expect(out).toContain("evals/a.eval.json: 1/2");
+    expect(out).toContain("FAIL evals/a.eval.json two: wrong text");
+    expect(out).toContain("score 50/100 (1 of 2 cases)");
+  });
+
+  test("--json prints the result entry", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "acme/tool", "--json"], h.deps)).toBe(0);
+    expect(JSON.parse(h.logs[0] ?? "")).toEqual(ipcEntry());
+  });
+
+  test("a per-id error exits 2 as `eval failed: CODE: message`", async () => {
+    const entry = {
+      id: "acme/tool",
+      version: null,
+      ok: false,
+      error: { code: "ERR_X", message: "nope" },
+    };
+    const h = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("eval failed: ERR_X: nope");
+    const j = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool", "--json"], j.deps)).toBe(2);
+    expect(JSON.parse(j.logs[0] ?? "")).toEqual(entry);
+  });
+
+  test("a denied approval exits 2", async () => {
+    const h = extHarness({ rpcError: new Error("ERR_EXTENSION_EVAL_NOT_APPROVED: denied") });
+    expect(await runEval(["--extension", "acme/tool"], h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain("ERR_EXTENSION_EVAL_NOT_APPROVED");
+  });
+
+  test("--yes / -y and non-TTY are refused before connecting", async () => {
+    for (const [args, tty] of [
+      [["--extension", "a/b", "--yes"], true],
+      [["--extension", "a/b", "-y"], true],
+      [["--extension", "a/b"], false],
+    ] as const) {
+      const h = extHarness({ tty });
+      expect(await runEval([...args], h.deps)).toBe(2);
+      expect(h.connects()).toBe(0);
+      expect(h.errs.length).toBeGreaterThan(0);
     }
+  });
+
+  test.each([
+    [["--extension"]],
+    [["--extension", "--json"]],
+    [["--extension", "a/b", "--package", "p"]],
+    [["--extension", "a/b", "--suite", "s"]],
+  ])("usage error %p", async (args) => {
+    const h = extHarness({});
+    expect(await runEval([...args], h.deps)).toBe(2);
+    expect(h.connects()).toBe(0);
+    expect(h.errs.join("\n")).toContain("usage:");
   });
 });
 

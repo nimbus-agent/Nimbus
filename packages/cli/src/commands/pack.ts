@@ -87,7 +87,7 @@ export interface PackIo {
   err(s: string): void;
 }
 
-type PackCall = <T>(method: string, params: unknown) => Promise<T>;
+export type PackCall = <T>(method: string, params: unknown) => Promise<T>;
 
 /** Gateway-sourced text: control characters dropped, but line breaks kept (the prompt is multi-line). */
 function clean(s: string): string {
@@ -293,17 +293,20 @@ const REAL_IO: PackIo = {
 /**
  * Run `fn` against the running gateway on a client whose consent handler is the DIRECT terminal
  * prompt, never an environment-selected script handler, so nothing but a person at this terminal
- * can answer a `pack.install` approval (`withGatewayIpc` binds the script handler first).
+ * can answer an owner approval (`withGatewayIpc` binds the script handler first). The request
+ * timeout is the caller's: a pack install is quick (`BATCH_RPC_TIMEOUT_MS`), an eval runs a
+ * sandboxed suite per case (`INTERACTIVE_RPC_TIMEOUT_MS`).
  */
-export async function withPackClient<T>(
+export async function withTerminalConsentClient<T>(
   fn: (call: PackCall) => Promise<T>,
+  requestTimeoutMs: number,
   paths: CliPlatformPaths = getCliPlatformPaths(),
 ): Promise<T> {
   const state = await readGatewayState(paths);
   if (state === undefined) {
     throw new Error(gatewayNotRunningMessage(paths.demo === true));
   }
-  const client = createIpcClient(state.socketPath, BATCH_RPC_TIMEOUT_MS);
+  const client = createIpcClient(state.socketPath, requestTimeoutMs);
   await client.connect();
   try {
     // Read-only verbs raise no prompt, so the handler is inert there.
@@ -312,6 +315,14 @@ export async function withPackClient<T>(
   } finally {
     await client.disconnect();
   }
+}
+
+/** The pack commands' client: the terminal-only consent client with the batch timeout. */
+export function withPackClient<T>(
+  fn: (call: PackCall) => Promise<T>,
+  paths: CliPlatformPaths = getCliPlatformPaths(),
+): Promise<T> {
+  return withTerminalConsentClient(fn, BATCH_RPC_TIMEOUT_MS, paths);
 }
 
 /** `nimbus pack install <id>` in-process (used by `nimbus init`); returns its exit code. */
