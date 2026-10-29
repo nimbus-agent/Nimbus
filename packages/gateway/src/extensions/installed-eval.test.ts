@@ -172,6 +172,24 @@ describe("evaluateInstalledExtensions (fakes)", () => {
     expect(rec.calls.at(-1)).toBe("gate");
   });
 
+  test("a gate that throws: the error propagates unchanged and nothing runs", async () => {
+    const { deps, rec } = fakeDeps();
+    const boom = new Error("consent channel closed");
+    const err = await evaluateInstalledExtensions(["a.x", "b.y"], {
+      ...deps,
+      ownerGate: async () => {
+        rec.calls.push("gate");
+        throw boom;
+      },
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBe(boom);
+    expect(rec.calls.filter((c) => c.startsWith("run:"))).toHaveLength(0);
+    expect(rec.calls.at(-1)).toBe("gate");
+  });
+
   test("a pre-consent failure is that id's error; the others are prompted and run", async () => {
     const { deps, rec } = fakeDeps({
       verifyThrows: {

@@ -801,7 +801,35 @@ describe("readVerifiedExtensionForSpawn — trust blocks (I48)", () => {
     );
   });
 
-  test("eval: a revocation of the Vault key (row with no recorded fingerprint) refuses although the run grant acknowledged it", async () => {
+  test("eval: step 6a alone — a revocation of a Vault key that differs from the installed one refuses KEY_REVOKED", async () => {
+    const f = await setup({ signed: true, approve: false });
+    // Not backfilled: the Vault read falls back to the legacy key, which is now a fresh K2. The
+    // installed manifest still names K1, so step 4a sees no block; only step 6a can see K2's.
+    f.db.run("UPDATE extension SET publisher_key_fingerprint = NULL WHERE id = ?", [f.id]);
+    const k2 = encodeBase64(generateEd25519Keypair().pubkey);
+    expect(k2).not.toBe(installedPublisherKey(f));
+    await f.vault.set("extension.publisher_key.test-pub", k2);
+    const s = await signTrustStatement(
+      {
+        kind: "key.revoke",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: NIMBUS_KEY,
+        publisherId: "test-pub",
+        keyFingerprint: publisherKeyFingerprint(k2),
+        reason: "k2 leaked",
+      },
+      NIMBUS_SEED,
+    );
+    expect(recordTrustStatements(f.db, [s], FEED, 1).inserted).toBe(1);
+    // Without 6a the signature check against K2 would refuse RUN_UNVERIFIED instead.
+    await expectCode(
+      readVerifiedExtensionForEval(f.id, deps(f)),
+      "ERR_EXTENSION_KEY_REVOKED",
+      /k2 leaked/,
+    );
+  });
+
+  test("eval: a revoked installed key that is also the Vault's legacy key (row with no recorded fingerprint) refuses at step 4a although the run grant acknowledged it", async () => {
     const f = await setup({ signed: true });
     // Not backfilled: the Vault read falls back to the legacy key, the one the revocation names.
     f.db.run("UPDATE extension SET publisher_key_fingerprint = NULL WHERE id = ?", [f.id]);
