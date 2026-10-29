@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — `nimbus eval` PR 2 of 5: the eval runtime and `nimbus eval --package` (Phase 9.5 project 5; no migration;
+  invariant I49, static rule D38).** `nimbus eval --package <dir> [--suite <file>] [--json]` runs an extension package's
+  `evals/*.eval.json` suites against its own MCP tools and prints the score; exit 0 when the eval ran, 2 on an eval or usage
+  error. It is gateway-free: the CLI spawns the gateway executable's new fifth role, `__nimbus-eval`, which loads the package
+  (install rules; I16 when signed), stages a re-digested copy and runs it in the sandbox with no network, no write grant and no
+  credentials (`extensionProcessEnv({})`), under its own sandbox id `eval.<serviceId>`, then writes exactly one JSON document to
+  stdout. Cases run one at a time, 30 s each within a 10 min run; a timed-out case or a dropped server fails that case and the
+  run continues on a fresh copy. **I49** records that extension code runs for evaluation only this way; **D38** confines the
+  eval spec builder and the unwrapped launch command, and keeps `extensions/eval/` from importing the Vault, DB, IPC, egress or
+  executor modules, naming `readCredentialEnv` or importing `@mastra/mcp` statically. Stated bounds: a reply carrying both
+  `structuredContent` and `isError` is judged a non-error, and the role evaluates (never calls) `db/` modules through
+  `extension-runtime.ts`. **Not shipped:** `--extension` and `--installed` (they exit 2, "not available yet"), the
+  `extension.eval` approval, the registry CI scoring job and any score display.
+
 - **2026-10-29 — `nimbus eval` PR 1 of 5: the eval format (Phase 9.5 project 5; no migration, no new invariant).**
   `@nimbus-dev/registry-format` gains the pure rules for extension evals: an `evals/<name>.eval.json` suite format (fixed
   inputs, network off), three deterministic rubrics (`exact`, `json-match`, `one-of`), an integer scorer
