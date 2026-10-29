@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793273314017,
+  "lastUpdate": 1793277169668,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ad6cfd9056a5dae01d5ea23fc6a6a3b726d6a86a",
-          "message": "refactor(quality): collapse the four largest duplication clusters (#1158)\n\nTargets the SonarCloud duplication metric: **0.3% → ~0.18%**, by\nremoving roughly **232 of the 492 duplicated lines**. Sonar's analysis\non this PR is the authoritative confirmation; locally jscpd moves 3.60%\n→ 3.52% (it counts differently and includes tests, so the two numbers\nare not comparable — see the note at the bottom).\n\n## What was collapsed\n\n| cluster | dup lines | change |\n|---|---|---|\n| `ipc/http-write-routes.ts` — 3 bearer-auth preludes | 117 → ~33 |\n`requireBearerAuth` takes `verifyToken` as a callback |\n| `ipc/http-write-routes.ts` — 2 brief-route preludes | ″ |\n`requireBriefRunInState(…, expected)` |\n| `connectors/lazy-mesh/phase3-config.ts` — 5 connector registrars | 70\n→ 0 | `addUrlAndSecretMcp`, generic over the service id |\n| `agents/{decisions,glossary,ownership}.ts` — `subAgent` + `decode` |\n48 → 0 | new `agents/_lib/sub-agent.ts` |\n| `agent-runs/agent-test-server.ts` + `briefs/brief-test-server.ts` | 30\n→ 0 | new `ipc/test-token-vault.ts` |\n\n## Two of these needed care, not just extraction\n\n**`phase3-config.ts` touches invariant I15 / static D10** (`every\nlazy-mesh ServerSpec via wrapServerSpec()`). I checked the rule before\nmoving anything: it is **file-scoped** — a lazy-mesh file mentioning\n`Record<string, ServerSpec>` must also contain `wrapServerSpec(` — so\nthe file still satisfies it, and `bun run audit:invariants` passes. More\nimportantly the consolidation **strengthens** the invariant's intent: a\nsixth url+secret connector added through `addUrlAndSecretMcp` *cannot*\nforget the wrap, where a sixth hand-written copy could.\n\nThe helper is generic over the service id (`<S extends\nConnectorServiceId>`) rather than taking `service: string`. My first\nattempt used `string` and `tsc` correctly rejected it — the secret-key\nparameters are checked against *that service's* own key union, and\nwidening would have typechecked a vault key that does not exist for the\nconnector being wired.\n\n**The bearer-auth collapse is I13 rejection-recording**, which is why it\nwas worth doing rather than tolerating: three copies is three places to\nforget that the recorded `reason` must track `refusal.status` — 403 is a\nreal scope gap, 500 is a misconfigured `HTTP_ROUTE_AUTH` entry, and\nlogging one as the other misreports a configuration bug as an\naccess-control event.\n\n## What I deliberately did NOT collapse\n\nSonar flags `decisions/decision-refresh.ts` ↔\n`ownership/ownership-refresh.ts` (37 + 30 lines). Their `fire()` bodies\nare near-identical — but there are **four** refreshers and **four\ndifferent `trigger()` implementations**:\n\n| refresher | `trigger()` |\n|---|---|\n| decisions | `stopped` check, clear + arm |\n| ownership | …plus `if (running) { dirty = true; return; }` |\n| glossary | `!deps.enabled \\|\\| stopped` |\n| premortem | …plus `timer.unref?.()` |\n\nThose differences are real: they change coalescing behaviour mid-pass\nand whether a pending timer holds the process open at shutdown. A shared\ndebouncer would need three option flags to preserve them, which is worse\nthan the duplication it removes — and flattening them instead would be a\nbehaviour change to four subsystems dressed up as a cleanup. Left alone\non purpose.\n\nSame reasoning applied to the seeded token JSON in the two test\nharnesses: `createSeededTokenVault` takes it as a **required** argument\nwith no default, because the agents harness deliberately seeds the\nscoped form (every agents route is agents-scoped) while the briefs\nharness deliberately seeds the legacy bare-string form (so existing\ntests prove a pre-scopes token still works). A default would have\nquietly erased one of those intents.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates, including\n`audit:invariants` and the jscpd gate)\n- `bun test packages/gateway/src packages/cli/src` — **13,091 pass, 30\nskip, 0 fail** — identical to the pre-change count, so no test was lost\nor silently skipped\n- `bun run typecheck` — 0 errors\n\n## Note on the two duplication numbers\n\nSonar reports **0.3%** and the repo's own jscpd gate reports **3.6%**\nagainst a threshold of 4. They measure different things — jscpd includes\ntest files and uses `minTokens: 50`. This PR targets the Sonar metric,\nwhich is what \"reduce duplication to 0.2\" was asked against. Driving\n*jscpd* to 0.2% would be a far larger structural effort and is not\nattempted here.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T07:09:46+03:00",
-          "tree_id": "7311ab71c7631bf099e964bfc81c18db4e634ab3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ad6cfd9056a5dae01d5ea23fc6a6a3b726d6a86a"
-        },
-        "date": 1786508480487,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 332.7083434500022,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.2543527999951,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 305.4518803999945,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d861be05cf813d0bb0534bbf6f4fcac4848c4b1e",
+          "message": "chore: release main (#1808)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.9.0</summary>\n\n##\n[10.9.0](https://github.com/nimbus-agent/Nimbus/compare/v10.8.0...v10.9.0)\n(2026-10-29)\n\n\n### Features\n\n* **extensions:** an extension's connector requirements show their\nstatus in the install approval, info, list and doctor, and an attended\ninstall offers a walk through approvals and connecting\n([#1811](https://github.com/nimbus-agent/Nimbus/issues/1811))\n([01c46ed](https://github.com/nimbus-agent/Nimbus/commit/01c46edfb1f48248fe48a750b16443300cd50364))\n* **extensions:** an update that adds dependencies lists them in its\napproval and installs them from the right registry, all or nothing\n([#1814](https://github.com/nimbus-agent/Nimbus/issues/1814))\n([f18d931](https://github.com/nimbus-agent/Nimbus/commit/f18d931849a1dc1cf56b7dd47e71cca634d17eec))\n* **extensions:** registry installs fetch their dependencies from the\nright registry, in one approved plan\n([#1810](https://github.com/nimbus-agent/Nimbus/issues/1810))\n([ac07b02](https://github.com/nimbus-agent/Nimbus/commit/ac07b0260a73575c201c2cd25b731de23708a8ec))\n* **extensions:** starter packs install with their members, never run,\nkeep explicitly installed dependencies, and offer to remove the members\nonly they needed\n([#1813](https://github.com/nimbus-agent/Nimbus/issues/1813))\n([2f15dce](https://github.com/nimbus-agent/Nimbus/commit/2f15dce125af1e6f043653b8c10a88738f7af604))\n* **registry-format:** manifest format for cross-registry dependencies,\nconnector requirements and starter packs\n([#1806](https://github.com/nimbus-agent/Nimbus/issues/1806))\n([b3affbb](https://github.com/nimbus-agent/Nimbus/commit/b3affbb509f097f07224552618ccc054e08d17d8))\n\n\n### Bug Fixes\n\n* **deps:** re2js 2.9.1 (GHSA-gg6h-894w-4m9c); accept @hono/node-server\nGHSA-rmxm-3fg6-px4f (serveStatic never loaded)\n([#1812](https://github.com/nimbus-agent/Nimbus/issues/1812))\n([8b637ea](https://github.com/nimbus-agent/Nimbus/commit/8b637ea3cbf2f29717347e11fd485f5fda4530c2))\n* **extensions:** dependency follow-ups — air-gap reuse, truthful\nrefusals, findable orphans, complete connector commands\n([#1815](https://github.com/nimbus-agent/Nimbus/issues/1815))\n([a4ff6e1](https://github.com/nimbus-agent/Nimbus/commit/a4ff6e12fbf4d53289256e4c5611369b43ee8489))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-29T14:23:16+02:00",
+          "tree_id": "3924c533bfbf69b32a997f5d7bea86af5df6b460",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d861be05cf813d0bb0534bbf6f4fcac4848c4b1e"
+        },
+        "date": 1793277165177,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 272.31743459999996,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 272.7214525499967,
             "unit": "ms"
           }
         ]
