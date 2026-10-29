@@ -39,6 +39,8 @@ export interface RegistryVersionEntry {
   packageSizeBytes: number;
   entryHash: string;
   publishedAt: string;
+  /** Registry-signed eval quality; carried RAW; read with `readVersionQuality`. */
+  readonly quality?: unknown;
 }
 
 export interface RegistryExtensionEntry {
