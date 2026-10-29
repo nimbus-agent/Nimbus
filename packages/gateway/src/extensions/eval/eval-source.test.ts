@@ -6,11 +6,11 @@ import { join } from "node:path";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../verify-signature.ts";
 import {
   discardEvalStage,
-  // biome-ignore lint/suspicious/noShadowRestrictedNames: the contract name (spec 4.6)
-  EvalError,
-  type EvalErrorCode,
+  EvalRunError,
+  type EvalRunErrorCode,
   evalFilesDigest,
   loadEvalPackage,
+  messageOf,
   stageEvalPackage,
 } from "./eval-source.ts";
 
@@ -43,12 +43,12 @@ function layout(manifest: Record<string, unknown>, withSuite = true): void {
   if (withSuite) write("evals/basic.eval.json", JSON.stringify(SUITE));
 }
 
-async function codeOf(p: Promise<unknown>): Promise<EvalErrorCode | string> {
+async function codeOf(p: Promise<unknown>): Promise<EvalRunErrorCode | string> {
   try {
     await p;
     return "no error";
   } catch (e) {
-    return e instanceof EvalError ? e.code : `other: ${String(e)}`;
+    return e instanceof EvalRunError ? e.code : `other: ${String(e)}`;
   }
 }
 
@@ -111,8 +111,8 @@ describe("loadEvalPackage", () => {
       await loadEvalPackage(pkg);
       throw new Error("expected refusal");
     } catch (e) {
-      expect(e).toBeInstanceOf(EvalError);
-      expect((e as EvalError).code).toBe("ERR_EVAL_PACKAGE_INVALID");
+      expect(e).toBeInstanceOf(EvalRunError);
+      expect((e as EvalRunError).code).toBe("ERR_EVAL_PACKAGE_INVALID");
     }
   });
 
@@ -135,6 +135,15 @@ describe("loadEvalPackage", () => {
     layout(baseManifest(), false);
     write("evals/bad.eval.json", "{ not json");
     expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_SUITE_INVALID");
+  });
+
+  test("a suite path that is a directory is refused (a non-registry read error is wrapped)", async () => {
+    layout(baseManifest(), false);
+    mkdirSync(join(pkg, "evals", "dir.eval.json"), { recursive: true });
+    // Windows cannot open a directory (a plain Error, wrapped as invalid); POSIX opens it and the
+    // registry parser refuses a non-regular suite.
+    const code = await codeOf(loadEvalPackage(pkg));
+    expect(["ERR_EVAL_PACKAGE_INVALID", "ERR_EVAL_SUITE_INVALID"]).toContain(code);
   });
 
   test("suiteFile selects one suite; an unknown one has none", async () => {
@@ -209,6 +218,14 @@ describe("stageEvalPackage", () => {
     layout(baseManifest());
     const src = await loadEvalPackage(pkg);
     const evil = { ...src, entryRel: "../escape.js" };
-    expect(() => stageEvalPackage(evil, sandbox)).toThrow(EvalError);
+    expect(() => stageEvalPackage(evil, sandbox)).toThrow(EvalRunError);
+  });
+});
+
+describe("messageOf", () => {
+  test("uses an Error's message and stringifies anything else", () => {
+    expect(messageOf(new Error("boom"))).toBe("boom");
+    expect(messageOf("plain")).toBe("plain");
+    expect(messageOf(42)).toBe("42");
   });
 });

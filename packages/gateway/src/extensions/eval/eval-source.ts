@@ -33,7 +33,7 @@ import {
 } from "../verify-signature.ts";
 import type { EvalStagedPackage } from "./eval-spawn-spec.ts";
 
-export type EvalErrorCode =
+export type EvalRunErrorCode =
   | "ERR_EVAL_PACKAGE_INVALID"
   | "ERR_EVAL_SIGNATURE_INVALID"
   | "ERR_EVAL_NO_SUITES"
@@ -43,14 +43,13 @@ export type EvalErrorCode =
   | "ERR_EVAL_RUN_TIMEOUT"
   | "ERR_EVAL_INTERNAL";
 
-// biome-ignore lint/suspicious/noShadowRestrictedNames: the name is the eval error contract (spec 4.6); it shadows only the legacy global.
-export class EvalError extends Error {
+export class EvalRunError extends Error {
   constructor(
-    readonly code: EvalErrorCode,
+    readonly code: EvalRunErrorCode,
     message: string,
   ) {
     super(message);
-    this.name = "EvalError";
+    this.name = "EvalRunError";
   }
 }
 
@@ -88,11 +87,11 @@ export function evalFilesDigest(root: string, files: readonly string[]): string 
   return hash.digest("hex");
 }
 
-function invalid(message: string): EvalError {
-  return new EvalError("ERR_EVAL_PACKAGE_INVALID", message);
+function invalid(message: string): EvalRunError {
+  return new EvalRunError("ERR_EVAL_PACKAGE_INVALID", message);
 }
 
-function messageOf(e: unknown): string {
+export function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
@@ -110,7 +109,7 @@ async function verifySigned(raw: SignedManifestShape): Promise<void> {
   try {
     await verifyManifestSignature(raw, decodeBase64(raw.publisher.key));
   } catch (e) {
-    throw new EvalError("ERR_EVAL_SIGNATURE_INVALID", `manifest signature: ${messageOf(e)}`);
+    throw new EvalRunError("ERR_EVAL_SIGNATURE_INVALID", `manifest signature: ${messageOf(e)}`);
   }
 }
 
@@ -119,12 +118,12 @@ function selectSuites(dir: string, suiteFile: string | undefined): EvalSuite[] {
   try {
     suites = loadEvalSuites(dir);
   } catch (e) {
-    if (e instanceof RegistryError) throw new EvalError("ERR_EVAL_SUITE_INVALID", e.message);
+    if (e instanceof RegistryError) throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
     throw e;
   }
   const kept = suiteFile === undefined ? suites : suites.filter((s) => s.file === suiteFile);
   if (kept.length === 0) {
-    throw new EvalError(
+    throw new EvalRunError(
       "ERR_EVAL_NO_SUITES",
       suiteFile === undefined ? "the package has no evals/*.eval.json" : `no suite ${suiteFile}`,
     );
@@ -160,7 +159,7 @@ export async function loadEvalPackage(
       suites,
     };
   } catch (e) {
-    if (e instanceof EvalError) throw e;
+    if (e instanceof EvalRunError) throw e;
     throw invalid(messageOf(e));
   }
 }
@@ -191,7 +190,7 @@ export function stageEvalPackage(src: EvalPackageSource, sandboxDir: string): Ev
     return { serviceId: src.serviceId, version: src.version, stagePath, entryPath };
   } catch (e) {
     removeBestEffort(stagePath);
-    if (e instanceof EvalError) throw e;
+    if (e instanceof EvalRunError) throw e;
     throw invalid(`the staged copy could not be made: ${messageOf(e)}`);
   }
 }
