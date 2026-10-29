@@ -8,6 +8,7 @@ import { isAbsolute, relative, resolve } from "node:path";
 import { type EvalReport, parseEvalQuality } from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
 import { INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 
 import { type PackCall, withTerminalConsentClient } from "./pack.ts";
 
@@ -329,29 +330,47 @@ interface ParsedArgs {
   bad?: string;
 }
 
+/**
+ * The flags that take a value: where the value goes, and the prefix that marks the next argument
+ * as another flag instead (`--extension` refuses `-y` as its value; a package path may start `-`).
+ */
+const VALUE_FLAGS: ReadonlyMap<string, { key: "pkg" | "suite" | "extension"; flagPrefix: string }> =
+  new Map([
+    ["--package", { key: "pkg", flagPrefix: "--" }],
+    ["--suite", { key: "suite", flagPrefix: "--" }],
+    ["--extension", { key: "extension", flagPrefix: "-" }],
+  ]);
+
+function applySwitch(out: ParsedArgs, a: string): void {
+  if (a === "--json") out.json = true;
+  else if (a === "--yes" || a === "-y") out.yes = true;
+  else if (a === "--installed") out.unavailable = a;
+  else out.bad = `unknown argument: ${a}`;
+}
+
 function parseArgs(args: readonly string[]): ParsedArgs {
   const out: ParsedArgs = { json: false, yes: false };
   for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "--json") out.json = true;
-    else if (a === "--yes" || a === "-y") out.yes = true;
-    else if (a === "--installed") out.unavailable = a;
-    else if (a === "--package" || a === "--suite" || a === "--extension") {
-      const v = args[i + 1];
-      if (v === undefined || v.startsWith(a === "--extension" ? "-" : "--")) {
-        out.bad = `${a} needs a value`;
-      } else if (a === "--package") out.pkg = v;
-      else if (a === "--extension") out.extension = v;
-      else out.suite = v;
-      i++;
-    } else out.bad = `unknown argument: ${a}`;
+    const a = args[i] ?? "";
+    const flag = VALUE_FLAGS.get(a);
+    if (flag === undefined) {
+      applySwitch(out, a);
+      continue;
+    }
+    const v = args[i + 1];
+    if (v === undefined || v.startsWith(flag.flagPrefix)) out.bad = `${a} needs a value`;
+    else out[flag.key] = v;
+    i++;
   }
   return out;
 }
 
+/** Every string in a rendered report came from the extension or the gateway: strip it. */
+const clean = stripControlChars;
+
 function renderReport(subject: { id: string; version: string; report: EvalReport }): string[] {
   const { report } = subject;
-  const lines: string[] = [`${subject.id} ${subject.version}`];
+  const lines: string[] = [`${clean(subject.id)} ${clean(subject.version)}`];
   const bySuite = new Map<string, { passed: number; total: number }>();
   for (const r of report.results) {
     const t = bySuite.get(r.suite) ?? { passed: 0, total: 0 };
@@ -359,9 +378,10 @@ function renderReport(subject: { id: string; version: string; report: EvalReport
     if (r.pass) t.passed += 1;
     bySuite.set(r.suite, t);
   }
-  for (const [suite, t] of bySuite) lines.push(`${suite}: ${t.passed}/${t.total}`);
+  for (const [suite, t] of bySuite) lines.push(`${clean(suite)}: ${t.passed}/${t.total}`);
   for (const r of report.results) {
-    if (!r.pass) lines.push(`  FAIL ${r.suite} ${r.case}: ${r.reason ?? "failed"}`);
+    if (!r.pass)
+      lines.push(`  FAIL ${clean(r.suite)} ${clean(r.case)}: ${clean(r.reason ?? "failed")}`);
   }
   lines.push(`score ${report.score}/100 (${report.passed} of ${report.cases} cases)`);
   lines.push("measured locally; a registry's published score is measured by its CI");
@@ -447,8 +467,10 @@ function interpretRoleResult(res: EvalSpawnResult): RoleOutcome {
 
 /**
  * Report an eval error and return 2. With `--json` the error is a JSON document on stdout (the
- * role's own, verbatim, when it wrote one); otherwise prose on stderr. The child's stderr tail
- * goes to stderr either way.
+ * role's own, verbatim, when it wrote one: JSON escaping already keeps it on one line); otherwise
+ * prose on stderr, control characters stripped, since the code and message can come from an
+ * extension, a registry or the gateway. The child's stderr tail goes to stderr either way, each
+ * of its lines stripped the same way.
  */
 function reportFailure(
   d: EvalCliDeps,
@@ -457,8 +479,8 @@ function reportFailure(
   tail: string,
 ): number {
   if (json) d.log(failure.document);
-  else d.err(`eval failed: ${failure.prose}`);
-  if (tail.length > 0) d.err(tail);
+  else d.err(`eval failed: ${clean(failure.prose)}`);
+  if (tail.length > 0) d.err(tail.split("\n").map(clean).join("\n"));
   return 2;
 }
 
@@ -505,7 +527,7 @@ async function runInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<number> 
     return 2;
   }
   const withClient = d.withClient ?? realWithClient;
-  const id = p.extension ?? "";
+  const id = (p.extension ?? "").trim();
   let entry: ExtensionEvalEntry | null;
   try {
     const raw = await withClient((call) => call<unknown>("extension.eval", { ids: [id] }));

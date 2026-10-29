@@ -170,6 +170,30 @@ describe("runEval", () => {
     expect(h.logs).toEqual([]);
   });
 
+  test("--package prose carries no raw control characters from the role document", async () => {
+    const evil = "\u001b[2K\u009b2J\nX";
+    const r = report();
+    const results = (r["results"] as Record<string, unknown>[]).map((x) => ({
+      ...x,
+      case: `${String(x["case"])}${evil}`,
+    }));
+    const doc = { ...okDoc(), extensionId: `acme/tool${evil}`, report: { ...r, results } };
+    const bad = { ok: false, error: { code: `ERR_X${evil}`, message: `boom${evil}` } };
+    const outputs: string[] = [];
+    for (const d of [doc, bad]) {
+      const h = harness({ stdout: enc(JSON.stringify(d)), stderr: enc(`tail${evil}\nline2`) });
+      await runEval(["--package", "p"], h.deps);
+      outputs.push(...h.logs, ...h.errs);
+    }
+    const all = outputs.join("");
+    expect(all).toContain("two");
+    expect(all).toContain("boom");
+    expect(all).not.toContain("\u001b");
+    expect(all).not.toContain("\u009b");
+    // Only the failure prints the stderr tail; it keeps its line breaks, every line stripped.
+    expect(outputs.filter((l) => l.includes("\n"))).toEqual(["tail[2K2J\nX\nline2"]);
+  });
+
   test("a launch plan failure exits 2 with its message", async () => {
     const h = harness({}, () => ({ ok: false, message: "no gateway" }));
     expect(await runEval(["--package", "p"], h.deps)).toBe(2);
@@ -253,6 +277,66 @@ describe("runEval --extension", () => {
     const j = extHarness({ entry });
     expect(await runEval(["--extension", "acme/tool", "--json"], j.deps)).toBe(2);
     expect(JSON.parse(j.logs[0] ?? "")).toEqual(entry);
+  });
+
+  test("prose output carries no raw control characters from the extension or the gateway", async () => {
+    const evil = "\u001b[2K\u009b2J\nX";
+    const hostile = (s: string): string => `${s}${evil}`;
+    const r = report();
+    const results = (r["results"] as Record<string, unknown>[]).map((x) => ({
+      ...x,
+      suite: hostile("evals/a.eval.json"),
+      case: hostile(String(x["case"])),
+      reason: x["reason"] === null ? null : hostile(String(x["reason"])),
+    }));
+    const okEntry = {
+      id: "acme/tool",
+      version: hostile("1.0.0"),
+      ok: true,
+      report: { ...r, results },
+    };
+    const failEntry = {
+      id: "acme/tool",
+      version: hostile("1.0.0"),
+      ok: false,
+      error: { code: hostile("ERR_X"), message: hostile("takedown reason") },
+    };
+    const outputs: string[] = [];
+    for (const opts of [
+      { entry: okEntry },
+      { entry: failEntry },
+      { rpcError: new Error(hostile("gateway said no")) },
+    ]) {
+      const h = extHarness(opts);
+      await runEval(["--extension", "acme/tool"], h.deps);
+      outputs.push(...h.logs, ...h.errs);
+    }
+    const all = outputs.join("");
+    expect(all).toContain("two");
+    expect(all).toContain("takedown reason");
+    expect(all).toContain("gateway said no");
+    expect(all).not.toContain("\u001b");
+    expect(all).not.toContain("\u009b");
+    expect(all).not.toContain("\n");
+  });
+
+  test("--json keeps the gateway's strings verbatim (JSON escaping is line-safe)", async () => {
+    const entry = {
+      id: "acme/tool",
+      version: null,
+      ok: false,
+      error: { code: "ERR_X", message: "a\u001b[2K\nb" },
+    };
+    const h = extHarness({ entry });
+    expect(await runEval(["--extension", "acme/tool", "--json"], h.deps)).toBe(2);
+    expect(h.logs[0]).not.toContain("\n");
+    expect(JSON.parse(h.logs[0] ?? "")).toEqual(entry);
+  });
+
+  test("the id is trimmed before it is sent and compared", async () => {
+    const h = extHarness({});
+    expect(await runEval(["--extension", "  acme/tool "], h.deps)).toBe(0);
+    expect(h.rpc).toEqual([{ method: "extension.eval", params: { ids: ["acme/tool"] } }]);
   });
 
   test("a denied approval exits 2", async () => {
