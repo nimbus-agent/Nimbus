@@ -18,6 +18,25 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-29 — Extension dependencies and starter packs PR 5: updates that add dependencies (Phase 9.5 project 4,
+  complete; no migration, I44 amended, no new invariant).** An extension update whose new version adds `dependsOn`
+  entries now installs them. Detection resolves the update's closure through the registry-scoped resolver
+  (`planUpdate`, reusing the source index; skipped for an update that cannot be applied; its fetches are ledgered).
+  A conflict (version, a dependency registry the owner has not added, registry or block failure, offline) is shown
+  with a one-line reason and refused at apply as `update_conflicts`; before, conflicts were computed and ignored. The
+  `extension.autoUpdate` approval carries `addedPackages`, `connectorRequirements`, `planPermissions` and a `planText`
+  that opens `This update adds <n> package(s):`; the CLI Details line leaves them out, and the desktop preview lists
+  each package (id@version, registry, permissions), the permission union and the requirements not met. At apply,
+  after the root's claims check and just before the swap, exactly the approved packages are installed: each
+  dependency registry's index is re-read, I48 is re-checked, and the apply refuses if the re-verified `dependsOn`
+  differs from the approved plan or a package appeared since. Any later failure rolls the dependencies back; the
+  row and all edges are written in one transaction, and a failed write restores the previous root for every upgrade
+  (`swap_failed`). A downgrade and crash-recovery promotion rewrite the edges from the restored manifest, and a
+  downgrade reports `orphanedDependencies` (CLI `Kept ...` line on stderr). `nimbus extension update` lists `adds ...`,
+  prints a `+ <dep>@<v> from registry <r> (installed as a dependency)` line per added package, the `Nothing runs
+  until you approve it` line (the updated root last when its grant went stale and it is not a pack), `Needs:` and
+  the post-install walk. The apply result gains `addedPackages`, `connectorRequirements`, `grantDropped` and
+  `rootKind`. An unattended apply path still does not exist.
 - **2026-10-29 — Extension dependencies and starter packs PR 4: starter packs (Phase 9.5 project 4; schema V79, no new
   invariant).** A `kind: "starter-pack"` package now installs. It goes through the same one-approval plan as any
   dependency closure (`nimbus extension install <id>`, the `registry.install` IPC, and a local folder install): one prompt
