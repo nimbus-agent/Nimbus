@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793277169668,
+  "lastUpdate": 1793291331453,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fb8a0c7a1caeb8ffcf292b9b1f5ca472511e6855",
-          "message": "feat(connectors): index GitHub PR reviews and size statistics (#1159)\n\n## Summary\n\nSubstrate for `nimbus negotiate` (Spine S1). GitHub PR reviews become\nfirst-class `review` items, the relationship graph gains `person\n--reviewed--> pr` edges, and the `expert` and `why` agents surface\nreviewers instead of reporting the capability as unimplemented. PR size\nstatistics are captured, and the enrichment pass now also re-fetches PRs\nthat have a real title but no stats.\n\nReviews are indexed as their own rows rather than PR metadata, because\n`index/item-store.ts` replaces `metadata` wholesale on upsert — a later\n`PullRequestEvent` would have silently clobbered reviewer data stored\nthere. `\"reviewed\"` joins `CROSS_ITEM_RELATION_TYPES` so `syncPrGraph`'s\nblanket clear cannot delete the edge, and `review` is registered in\n`ITEM_LINKED_ENTITY_TYPES` so the populator runs at all.\n\nAlso fixes a **pre-existing** secondary-rate-limit bug: a 403 carrying\n`retry-after` with non-zero `x-ratelimit-remaining` was not treated as\nrate limiting, so the sync retried straight back into the limit. GitHub\ndocuments secondary limits as returning 403 **or** 429 with\n`retry-after` independent of remaining quota.\n\nNo migration, no new security invariant, no Tauri allowlist change.\n\n## Related Issue\n\nRelates to the `nimbus negotiate` substrate work (S1 — Local Brain).\nThis is sub-project A/B of five; PR 2 (search-backed history backfill)\nfollows.\n\nCloses #\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [x] Test improvement\n- [x] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — 3,393 pass / 0 fail across\n`agents`, `graph`, `connectors`\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `audit:any` total equals baseline\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\n## Coverage (if engine/ or vault/ was changed)\n\nNeither `engine/` nor `vault/` was modified. Per-file floor (85% line /\n80% branch) verified against a full 72-shard lcov:\n\n| File | Line | Branch |\n| --- | --- | --- |\n| `connectors/github-sync.ts` | 96.9% | 89.3% |\n| `graph/graph-populator.ts` | 100% | 98.7% |\n| `graph/relationship-graph.ts` | 95.5% | 92.3% |\n| `agents/expert.ts` | 98.2% | 89.7% |\n| `agents/why.ts` | 97.5% | 82.0% |\n| `agents/ownership.ts` | 93.7% | 90.8% |\n\n`audit:coverage-floor` reports three violations locally, all in files\nthis branch does not touch (`platform/linux.ts`,\n`ipc/server/socket-listeners.ts`). Both are Linux-only paths that cannot\nexecute on a Windows host — the documented local false-violation\npattern. CI-Linux is authoritative.\n\n## Testing\n\nScoped suites plus the three touched subsystems in full. Every behaviour\nthis branch depends on structurally was **red-proved** — the guard was\nremoved, the test confirmed to fail, and the guard restored:\n\n- `\"reviewed\"` in `CROSS_ITEM_RELATION_TYPES` — without it, a PR\nre-population deletes the edge and nothing recreates it. The test\nasserts the PR entity's label actually changed first, so it cannot pass\nvacuously.\n- The resolution-aware gap probes in both agents — with the old probe,\nthe state-(b) test fails because the gap is suppressed.\n- `why`'s per-PR probe scoping — a two-PR fixture (A resolves, B broken)\nfails against a global probe.\n- The widened enrich predicate, and separately the restored\nexact-fallback narrowing — each fails when the other is reverted.\n- The 403 `retry-after` fix, with the companion \"403 without\n`retry-after` must NOT throw\" test passing before and after, so the fix\ncannot have simply widened into throwing on everything.\n\nEnd-to-end verified by driving a real `PullRequestReviewEvent` through\n`processEvent`: both items written with distinct reviewer/author person\nids, the edge emitted, and `expert` returning a populated `pr_reviewed`\nevidence stream.\n\n## Notes for Reviewers\n\n**Reviewing a PR indexes that PR**, including ones you did not author.\nDeliberate — 14 call sites inner-join `item` on\n`graph_entity.external_id`, so an edge pointing at an item-less entity\nis invisible to every existing reader. The alternative (metadata-only\nindexing) was rejected because `github` is in\n`REBODY_IMPROVABLE_SERVICES`, so `nimbus index rebody` would have\nreported those rows recoverable and never recovered them.\n\n**This indexes PRs you reviewed, never who reviewed your PRs.**\n`/users/{login}/events` reports only the authenticated user's own\nactivity.\n\n**One open question, recorded in the code and deliberately not claimed\nas fixed.** Two docstrings in `github-sync.ts` assert the events feed\nomits `title` on `PullRequestEvent` payloads. If that holds, an\nevents-path upsert still resets an enriched PR's title to the `PR #<n>`\nfallback, and the selector's exact-fallback arm re-queues it regardless\nof stats — meaning this PR's stats merge-forward closes only one of two\nre-queue arms. GitHub's documentation does not settle it (the events API\nreturns abbreviated payloads for some event types), and the covering\ntest sidesteps it by including `title` in its fixture. Pre-existing\neither way. **This PR therefore does not claim the enrichment backlog\nnow drains** — that needs verification against the live API first.\n\n**Known follow-ups, none blocking:** `review` rows compete for\n`catchup`'s per-service window quota alongside their sibling `pr` rows;\n`syncReviewGraph`'s five rejection paths are silent (a producer writing\n`pr_number` as a string would emit no edges and log nothing);\n`mergeable*` metadata fields are subject to the same wholesale\nreplacement as stats but are not merged forward (no re-queue loop\nresults, since `shouldRefreshMergeableState` has no production caller);\nand the zero-edge gap-note block is duplicated verbatim in `expert.ts`\nand `why.ts`.\n\nReviewed across eight per-task reviews plus a whole-branch pass. The\nwhole-branch pass is what caught the blocking issues — in every case the\nfalse claim lived in a file the individual task never touched, including\na gap note that instructed a command shipping in a later PR.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- GitHub pull-request reviews are now indexed and linked to the reviewed\npull requests.\n- Reviewer evidence appears in contribution insights and pull-request\nexplanations, including unresolved-data notices.\n- Pull-request statistics such as additions, deletions, changed files,\nand commits are captured and enriched when missing.\n\n- **Bug Fixes**\n- Improved handling of GitHub pagination limits and event-history gaps.\n  - Rate-limit responses now respect `retry-after` guidance.\n- Preserved pull-request statistics across updates and handled malformed\nreview data safely.\n\n- **Documentation**\n- Added documentation covering review indexing, data limitations, and\nsynchronization behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T18:04:30+03:00",
-          "tree_id": "93c34f4a33fd21ebb1f11b66a0222b1da09eadbb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fb8a0c7a1caeb8ffcf292b9b1f5ca472511e6855"
-        },
-        "date": 1786547795131,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.98071289999535,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.4348284499989,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 272.7214525499967,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "43cb6a45c334d3864e9bf5c939106a169639740a",
+          "message": "feat(registry-format): eval suite format, deterministic scorer, evals/ in packages and a registry-signed quality field (#1817)\n\nPhase 9.5 project 5 (`nimbus eval`, Phase 9 Wave 5), PR 1 of 5: **the\neval format only.** Nothing runs evals yet. There is no migration and no\nnew invariant (I49/D38 land with the first eval spawn, in PR 2).\n\n## What changes\n\n`@nimbus-dev/registry-format` gains:\n\n- **Eval suites** (`eval-suite.ts`). An extension package may carry\n`evals/<name>.eval.json`. Each file is one suite, `{ \"format\": 1,\n\"name\", \"cases\": [{ \"name\", \"tool\", \"input\", \"expect\" }] }`. The schema\nis frozen: unknown keys are refused, including a stray `weight`.\n- Caps: 20 suite files, 200 cases in total and 200 per suite, 64 KiB per\ninput, 1 MiB per suite file (checked before the file is read), and JSON\ndepth 64.\n- A suite that fails to parse makes the whole eval an error. There is\nnever a partial score.\n- `loadEvalSuites` refuses a symlinked `evals/`, an `evals` that is not\na directory, symlinked suite files, wrong-case names such as\n`x.Eval.json`, and duplicate files.\n- **Three deterministic rubrics and an integer scorer**\n(`eval-score.ts`):\n  - `exact`: the text matches exactly.\n- `json-match`: a subset pattern. Extra keys are allowed, arrays match\nby length, scalars use strict equality, a `{\"$type\": …}` marker matches\nby type, and `$$type` escapes a literal `$type` key.\n- `one-of`: matches against a set of values. Without `path`, a string\nvalue matches the raw reply text, and any value also matches the reply\nparsed as JSON. With `path`, an RFC 6901 pointer selects the value.\n- The score is `floor(100 * passed / cases)` with `scorer: 1`. **There\nare no per-case weights.** With weights, an author could publish 84/100\nwhile failing 19 of 20 cases.\n- **`evals/**` joins the package file set**, so the suite sits inside\n`packageSha256` and can't change after a registry scores it. **A starter\npack may not carry `evals/`** (rule 13).\n- **An optional `quality` field on index version entries**, written by a\nregistry. It is carried **raw** by `parseRegistryIndex`. Cleaning up a\nmalformed one there would break the index signature for every client.\n`readVersionQuality` reports `scored`, `unscored` or `invalid` with a\nreason, and never throws. `parseEvalQuality` checks that `score` agrees\nwith `passed` and `cases`.\n\nThe registry action's `dist/` is rebuilt (Bun 1.4.3), since it bundles\n`registry-format`.\n\n## Compatibility\n\n- **Older gateways:** they install packages carrying `evals/`, because\ngateway extraction enforces no file set. The index parser already\ntolerates unknown keys and the signature covers the whole document, so\nthey verify an index that has `quality` and ignore the field.\n- **Older registry actions:** a registry on an older action pin refuses\n`evals/` packages under rule 13 until it updates. The action README says\nso.\n\n## Docs\n\nThe roadmap's Wave 5 rows are corrected against the code:\n\n- `meeting-prep`, `model-health` and `rag-health` don't exist. The\nbuilt-in agent suites and the brief cost footer move to a follow-up row\nthat lists the five real agents.\n- The SDK is at 2.1.0, not 1.1.0. The format lives in `registry-format`,\nand an optional `defineEvalSuite` comes later.\n- The score is signed by the registry into the index entry, not by the\nauthor into the manifest.\n- Scores must match exactly, not \"within rounding\".\n\nThe changelog, architecture.md, the CLI reference and the\nextension-author walkthrough are updated to show the new package file\nset.\n\n## Decisions I made (please check)\n\n- Suites are JSON (`*.eval.json`), not YAML: `registry-format` runs\nunder Node in the action and has no YAML parser.\n- There are no case weights in v1, as described above.\n- `one-of` without `path` matches both string values against the raw\ntext and any value against the parsed JSON, so a plain `true` reply\nmatches `\"true\"`. A reply nested deeper than 64 with no `path` fails as\n\"value not in set\", not \"reply too deep\". Only the reason differs.\n- I rejected three review suggestions as not worth it:\n- runtime validation of `EvalReply` inside `judgeCase`, because the type\nis built by our own runner in PR 2;\n- removing the desktop tile from a Phase 9.5 acceptance line, because\nproject 6 owns that line;\n- a guard for unknown rubrics in `scoreEval`, because its input is\ntyped.\n- I removed a D11 workaround (`${where}${\".path\"}`) by rewording the\nerror message, rather than evading the guard.\n\n## Verification\n\n- `bun test packages/registry-format/src`: 598 pass, 0 fail.\n- The new modules have 100% line coverage.\n- `typecheck`, `audit:action-dist` and `bun run preflight:fast` all\npass.\n- Reviews: one per task, a final whole-branch review by Claude and\nAntigravity, and one fix wave with a scoped re-review.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension packages can now include evaluation suites under `evals/`,\nwhich are included in package archives and validated during publishing.\n* Added deterministic evaluation formats with exact-text, JSON-pattern,\nand one-of matching, plus integer scoring and per-rubric results.\n* Registry version entries can carry optional evaluation-quality\ninformation.\n* **Restrictions**\n* Starter packs cannot include evaluation suites. Registries using older\naction releases may refuse packages that contain them.\n* **Documentation**\n* Updated publishing guidance, architecture notes, changelog, and\nroadmap to clarify what evaluation support is available and what remains\nplanned.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-29T16:17:57Z",
+          "tree_id": "ea2315a24ec336a810e371e8607c9643a5272dc7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/43cb6a45c334d3864e9bf5c939106a169639740a"
+        },
+        "date": 1793291327211,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 278.6356966499998,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.8261307499997,
             "unit": "ms"
           }
         ]
