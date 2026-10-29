@@ -14,7 +14,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join, relative, resolve, sep } from "node:path";
-
 import {
   assertSafeExtensionId,
   isStarterPack,
@@ -23,6 +22,7 @@ import {
   RegistryError,
   type VersionProvenance,
 } from "@nimbus-dev/registry-format";
+import type { Logger } from "pino";
 
 import {
   deleteExtensionById,
@@ -465,10 +465,9 @@ export function promoteInstalledDependency(db: Database, row: ExtensionRow): Pro
 /**
  * A local install promotes an installed dependency only when the folder holds the SAME package: the
  * same id, version and manifest bytes (`manifest_hash`). A different package that reuses the id is
- * not taken as the owner keeping the installed one; it falls through to the ordinary install path,
- * unchanged (another version is refused as already installed; the same version still goes to the
- * owner's approval) and the marker stays. The plain local install only: a registry-driven call has
- * already refused an installed id before fetching.
+ * not taken as the owner keeping the installed one: it is refused as already installed, before any
+ * approval (see {@link assertNotAlreadyInstalledLocally}), and the marker stays. The plain local
+ * install only: a registry-driven call has already refused an installed id before fetching.
  */
 function promotableLocalDependency(
   options: InstallFromLocalOptions,
@@ -481,6 +480,23 @@ function promotableLocalDependency(
   return sha256HexEqualConstantTime(row.manifest_hash, sha256HexOfBytes(manifestBytes))
     ? row
     : undefined;
+}
+
+/**
+ * A plain local install of an id that is already installed, and that did not qualify for promotion,
+ * can only end refused (its install directory exists). Refuse it before solving and before the
+ * owner is asked, rather than after an approval it could never use.
+ */
+function assertNotAlreadyInstalledLocally(
+  options: InstallFromLocalOptions,
+  manifest: ExtensionManifest,
+): void {
+  if (options.registryPlan !== undefined || options.sourceRegistry !== undefined) return;
+  const row = listExtensions(options.db).find((r) => r.id === manifest.id);
+  if (row === undefined) return;
+  throw new Error(
+    `${row.id}@${row.version} is already installed; remove it first (nimbus extension remove ${row.id}) to reinstall it`,
+  );
 }
 
 /**
@@ -580,7 +596,15 @@ async function installRootNode(
 ): Promise<SingleInstallResult> {
   const dest = extensionInstallDirectory(options.extensionsDir, manifest.id);
   if (existsSync(dest)) {
-    throw new Error(`extension already installed at ${dest}`);
+    // A directory no extension row owns is what an earlier install left behind (a rollback that
+    // could not remove it, or a crash), not an installed extension: say which, so the owner knows
+    // removing the directory is safe.
+    const owned = listExtensions(options.db).some((r) => resolve(r.install_path) === resolve(dest));
+    throw new Error(
+      owned
+        ? `extension already installed at ${dest}`
+        : `a directory from an earlier failed install is in the way at ${dest}; remove it and retry`,
+    );
   }
 
   scanForSymlinks(sourceResolved);
@@ -623,6 +647,49 @@ export function rollbackFailuresOf(e: unknown): readonly RollbackFailure[] {
   if (typeof e !== "object" || e === null || !("rollbackFailures" in e)) return [];
   const failures: unknown = e.rollbackFailures;
   return Array.isArray(failures) ? (failures as RollbackFailure[]) : [];
+}
+
+/**
+ * The rollback-incomplete note an install refusal carries to the owner: ` (rollback incomplete:
+ * <path or id>, …)` naming what is left behind — the directory a failed `removeDirectory` left, else
+ * the id whose row or edges remain — each once, control characters stripped (a path is
+ * owner-visible text); `""` when the error carries no rollback failure.
+ */
+export function rollbackIncompleteNote(e: unknown): string {
+  const failures = rollbackFailuresOf(e);
+  if (failures.length === 0) return "";
+  const left = failures.map((f) =>
+    (f.step === "removeDirectory" ? f.dir : (f.id ?? f.dir)).replace(/\p{Cc}/gu, ""),
+  );
+  return ` (rollback incomplete: ${[...new Set(left)].join(", ")})`;
+}
+
+/**
+ * Where an install refusal is caught for the owner (an RPC result): a rollback that itself failed
+ * is logged as a warning with every failed step, and the returned note (see
+ * {@link rollbackIncompleteNote}) is appended to the message the owner sees. `""` (and no log)
+ * when the rollback was complete.
+ */
+export function reportIncompleteRollback(
+  logger: Pick<Logger, "warn">,
+  installing: string,
+  e: unknown,
+): string {
+  const note = rollbackIncompleteNote(e);
+  if (note === "") return note;
+  logger.warn(
+    {
+      installing,
+      rollbackFailures: rollbackFailuresOf(e).map((f) => ({
+        step: f.step,
+        id: f.id,
+        dir: f.dir,
+        error: f.error instanceof Error ? f.error.message : String(f.error),
+      })),
+    },
+    "extension install refused, and its rollback left packages behind",
+  );
+  return note;
 }
 
 /**
@@ -1342,6 +1409,7 @@ export async function installExtensionFromLocalDirectory(
   // solving and before the owner is asked, since it installs nothing.
   const promotable = promotableLocalDependency(options, manifest, manifestBytes);
   if (promotable !== undefined) return promoteInstalledDependency(options.db, promotable);
+  assertNotAlreadyInstalledLocally(options, manifest);
 
   const { installed: installedMap, activeConstraints } = buildSolverInputs(options.db);
 

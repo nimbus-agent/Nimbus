@@ -10,6 +10,7 @@ import {
   readRegistryReportUrl,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
+import pino, { type Logger } from "pino";
 import {
   type ConnectorRequirementStatusesFn,
   installedConnectorRequirementStatuses,
@@ -19,6 +20,7 @@ import {
   ExtensionInstallNotApprovedError,
   installedKindOf,
   isPromotedInstall,
+  reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
 import { parseExtensionManifestForRegistry } from "../extensions/manifest.ts";
 import {
@@ -90,7 +92,14 @@ export interface RegistryRpcOptions {
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
   requirementStatuses?: ConnectorRequirementStatusesFn;
+  /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }
+
+const registryRpcLog = pino({
+  name: "registry-rpc",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 type Hit = { kind: "hit"; value: unknown };
 type Miss = { kind: "miss" };
@@ -302,20 +311,27 @@ async function handleInstall(
       });
     }
   } catch (e) {
+    // A rollback that left packages behind is warned and named in the refusal (never swallowed).
+    const note = reportIncompleteRollback(o.logger ?? registryRpcLog, id, e);
+    const message = `${e instanceof Error ? e.message : String(e)}${note}`;
     emitGatewayEvent("extension.stateChanged", {
       extensionId: id,
       action: "install",
       ok: false,
-      error: e instanceof Error ? e.message : String(e),
+      error: message,
     });
     // A trust block (I48) is a registry-class refusal like the others, not invalid params.
-    if (e instanceof RegistryError || e instanceof RpcMethodError || e instanceof TrustBlockError) {
-      throw e;
+    if (e instanceof RegistryError || e instanceof TrustBlockError) {
+      // As `dispatchRegistryRpc` maps it, with the note on the message.
+      throw note === "" ? e : new RpcMethodError(-32000, message);
+    }
+    if (e instanceof RpcMethodError) {
+      throw note === "" ? e : new RpcMethodError(e.rpcCode, message, e.rpcData);
     }
     // A refusal AFTER the owner was involved is internal-class, like `extension.install`'s.
     throw new RpcMethodError(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
-      e instanceof Error ? e.message : String(e),
+      message,
     );
   }
   // A dependency kept by an explicit install: nothing was fetched or installed, only its marker moved.

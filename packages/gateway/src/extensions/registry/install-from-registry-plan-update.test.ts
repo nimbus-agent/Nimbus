@@ -462,10 +462,10 @@ describe("update detection plans the update through the registries", () => {
     ]);
   });
 
-  test("under air gap, a dependency from a remote registry is an offline conflict, never clean", async () => {
+  test("under air gap, a dependency from a remote registry is an air-gap conflict, never clean or offline", async () => {
     // The source registry is a local folder (it still answers under air gap); the dependency's
     // registry is remote, so the fetch layer refuses it with ERR_REGISTRY_AIR_GAP before any
-    // request — an unreachable registry, hence `offline`.
+    // request. That is a refusal reported as itself, not an unreachable registry.
     await addRegistry(
       "main",
       {
@@ -487,8 +487,11 @@ describe("update detection plans the update through the registries", () => {
     const cached = rt.deps.cache.get(ROOT);
     expect(cached?.toVersion).toBe("1.2.0");
     expect(cached?.addedPackages).toBeUndefined();
-    expect(cached?.conflicts?.map((c) => c.kind)).toEqual(["offline"]);
-    expect(cached?.conflicts?.[0]).toMatchObject({ kind: "offline", id: DEP, parent: ROOT });
+    expect(cached?.conflicts?.map((c) => c.kind)).toEqual(["registry"]);
+    expect(cached?.conflicts?.[0]).toMatchObject({
+      kind: "registry",
+      code: "ERR_REGISTRY_AIR_GAP",
+    });
   });
 });
 

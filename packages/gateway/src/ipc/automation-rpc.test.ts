@@ -1692,3 +1692,44 @@ describe("extension.checkForUpdates / extension.update (T2 PR 3)", () => {
     }
   });
 });
+
+describe("extension.install names an incomplete rollback", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-rollback-"));
+  });
+  afterEach(() => {
+    rmDirWithRetry(tmp);
+  });
+
+  test("a refusal whose rollback failed is warned and carries the rollback-incomplete note", async () => {
+    const src = join(tmp, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({ id: "com.example.half", version: "1.0.0", entry: "dist/index.js" }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const db = seededDb();
+    // The edge write after the row commits fails, and so does the rollback's own edge clear.
+    db.run("DROP TABLE extension_dependency");
+    const warned: unknown[] = [];
+    let err: unknown;
+    try {
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db,
+        extensionsDir: join(tmp, "installed"),
+        ownerGate: async () => true,
+        logger: { warn: (...args: unknown[]) => void warned.push(args) },
+      });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(AutomationRpcError);
+    expect((err as Error).message).toEndWith(" (rollback incomplete: com.example.half)");
+    expect(warned).toHaveLength(1);
+    db.close();
+  });
+});

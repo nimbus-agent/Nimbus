@@ -27,6 +27,7 @@ import {
   buildMultiExtensionRegistry,
   type TestVersion,
 } from "./__fixtures__/build-test-registry.ts";
+import { BUILTIN_REGISTRY_NAME, type BuiltinRegistryConfig } from "./builtin-registry.ts";
 import { type InstallFromRegistryDeps, installFromRegistry } from "./install-from-registry.ts";
 import {
   createRegistryDependencyResolver,
@@ -44,6 +45,10 @@ let vault: MockVault;
 let rootKey: string;
 /** Remote registries are served from these folders by a fake `fetchFn`: `https://<name>.test/`. */
 const served = new Map<string, string>();
+/** Whether the fake gateway is air-gapped: remote registries are then refused before any request. */
+let airGapped = false;
+/** The built-in registry these deps carry (none unless a test serves one). */
+let builtin: BuiltinRegistryConfig | null = null;
 
 beforeEach(() => {
   db = new Database(":memory:");
@@ -51,6 +56,8 @@ beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-depfetch-"));
   vault = new MockVault();
   served.clear();
+  airGapped = false;
+  builtin = null;
 });
 
 afterEach(() => {
@@ -58,18 +65,22 @@ afterEach(() => {
   rmDirWithRetry(tmp);
 });
 
-/** A remote registry `https://<name>.test/` carrying `exts`, added as an owner registry. */
+/**
+ * A registry carrying `exts`, added as an owner registry: remote (`https://<name>.test/`, served
+ * from its folder) unless `local`, whose URL is the folder itself.
+ */
 async function addRegistry(
   name: string,
   exts: Record<string, TestVersion[]>,
   extra: Parameters<typeof buildMultiExtensionRegistry>[2] = {},
+  { local = false }: { local?: boolean } = {},
 ): Promise<string> {
   const dir = join(tmp, name);
   rootKey = (await buildMultiExtensionRegistry(dir, exts, extra)).rootKey;
-  served.set(name, dir);
+  if (!local) served.set(name, dir);
   insertRegistry(db, {
     name,
-    url: `https://${name}.test/`,
+    url: local ? dir : `https://${name}.test/`,
     rootKey,
     rootFingerprint: publisherKeyFingerprint(rootKey),
     lastSequence: 0,
@@ -96,10 +107,10 @@ function deps(): InstallFromRegistryDeps {
           return new Response("missing", { status: 404 });
         }
       },
-      enforceAirGap: () => false,
+      enforceAirGap: () => airGapped,
       now: () => NOW,
       production: false,
-      builtin: null,
+      builtin,
     },
     approve: async () => true,
   };
@@ -379,6 +390,83 @@ describe("createRegistryDependencyResolver (installed manifests are re-checked)"
       version: "1.0.0",
     });
     expect(ledger("registry.manifest")).toBe(1);
+  });
+});
+
+describe("createRegistryDependencyResolver under air gap", () => {
+  const DEP = "com.dep";
+
+  /** The built-in registry, served remotely at `https://official.test/`, carrying `exts`. */
+  async function serveBuiltin(exts: Record<string, TestVersion[]>): Promise<void> {
+    const dir = join(tmp, "official");
+    const built = await buildMultiExtensionRegistry(dir, exts);
+    served.set("official", dir);
+    builtin = { url: "https://official.test/", rootKey: built.rootKey };
+  }
+
+  /** A root in a LOCAL owner registry (it answers under air gap) needing DEP from the official one. */
+  async function addLocalRoot(): Promise<void> {
+    await addRegistry(
+      "main",
+      {
+        [ROOT_ID]: [
+          {
+            version: "1.0.0",
+            dependsOn: { [DEP]: { range: "^1.0.0", registry: "nimbus-official" } },
+          },
+        ],
+      },
+      {},
+      { local: true },
+    );
+  }
+
+  test("an installed official dependency is reused with zero requests", async () => {
+    await serveBuiltin({ [DEP]: ONE });
+    await installFromRegistry(deps(), { id: DEP, registry: BUILTIN_REGISTRY_NAME });
+    await addLocalRoot();
+    airGapped = true;
+    const before = ledger();
+    const installed = await installFromRegistry(deps(), { id: ROOT_ID, registry: "main" });
+    expect(installed).toMatchObject({ id: ROOT_ID, version: "1.0.0" });
+    expect(ledger()).toBe(before);
+    const row = db.query("SELECT version FROM extension WHERE id = ?").get(ROOT_ID);
+    expect(row).toEqual({ version: "1.0.0" });
+  });
+
+  test("an official dependency that is not installed is refused as air gap, never offline", async () => {
+    await serveBuiltin({ [DEP]: ONE });
+    await addLocalRoot();
+    airGapped = true;
+    const e = await rejectionOf(installFromRegistry(deps(), { id: ROOT_ID, registry: "main" }));
+    expect(e).toBeInstanceOf(RegistryError);
+    expect((e as RegistryError).code).toBe("ERR_REGISTRY_AIR_GAP");
+    expect(e).not.toBeInstanceOf(OfflineDependencyResolutionError);
+    expect(ledger()).toBe(0);
+  });
+
+  test("a dependency installed from another registry is still a source mismatch", async () => {
+    await serveBuiltin({ [DEP]: ONE });
+    await addRegistry("other", { [DEP]: ONE });
+    await installFromRegistry(deps(), { id: DEP, registry: "other" });
+    await addLocalRoot();
+    airGapped = true;
+    const before = ledger();
+    const e = await rejectionOf(installFromRegistry(deps(), { id: ROOT_ID, registry: "main" }));
+    expect((e as RegistryError).code).toBe("ERR_DEPENDENCY_SOURCE_MISMATCH");
+    expect(ledger()).toBe(before);
+  });
+
+  test("an air-gapped owner registry refuses with the air-gap code, not as offline", async () => {
+    await addRegistry("main", { [DEP]: ONE });
+    airGapped = true;
+    const e = await rejectionOf(
+      solve(resolverFor("main"), rootNeeding({ [DEP]: { range: "^1.0.0" } })),
+    );
+    expect(e).toBeInstanceOf(RegistryError);
+    expect((e as RegistryError).code).toBe("ERR_REGISTRY_AIR_GAP");
+    expect(e).not.toBeInstanceOf(OfflineDependencyResolutionError);
+    expect(ledger()).toBe(0);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import pino, { type Logger } from "pino";
 import {
   deleteExtensionById,
   type ExtensionRow,
@@ -76,6 +77,7 @@ import {
   installExtensionFromLocalDirectory,
   installedKindOf,
   isPromotedInstall,
+  reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
 import { orphanedDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
@@ -193,7 +195,14 @@ interface AutomationCtx {
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
   requirementStatuses?: ConnectorRequirementStatusesFn;
+  /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }
+
+const automationRpcLog = pino({
+  name: "automation-rpc",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 type AutomationHandler = (
   rec: Record<string, unknown> | undefined,
@@ -894,7 +903,9 @@ async function handleExtensionInstall(
       approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    // A rollback that left packages behind is warned and named in the refusal (never swallowed).
+    const note = reportIncompleteRollback(ctx.logger ?? automationRpcLog, sourcePath, e);
+    const msg = `${e instanceof Error ? e.message : String(e)}${note}`;
     throw new AutomationRpcError(
       e instanceof ExtensionInstallNotApprovedError ? -32603 : -32602,
       msg,
@@ -1242,6 +1253,8 @@ export async function dispatchAutomationRpc(options: {
   continuityTable?: readonly ContinuityEntry[];
   /** Test seam: stands in for `connectorRequirementStatuses`; production never passes it. */
   requirementStatuses?: ConnectorRequirementStatusesFn;
+  /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
+  logger?: Pick<Logger, "warn">;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -1263,6 +1276,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.requirementStatuses !== undefined && {
       requirementStatuses: options.requirementStatuses,
     }),
+    ...(options.logger !== undefined && { logger: options.logger }),
   };
   return await handler(asRecord(options.params), ctx);
 }

@@ -18,6 +18,7 @@ import {
   type UpgradeOutcome,
 } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import { rollbackIncompleteNote } from "./install-from-local.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { publisherBadgeText, type VerifiedPublisher } from "./trust/verified-publisher.ts";
@@ -483,7 +484,8 @@ async function applyUpdateUnderMutex(
         fromVersion: cached.fromVersion,
         toVersion: cached.toVersion,
         phase,
-        message: e instanceof Error ? e.message : String(e),
+        // A rollback that left packages behind is named, never swallowed (e.g. a `swap_failed`).
+        message: `${e instanceof Error ? e.message : String(e)}${rollbackIncompleteNote(e)}`,
       },
     );
     // The owner sees the phase the audit row records (a tampered package is `sha256_mismatch`).
