@@ -3,7 +3,12 @@ import { mkdtempSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlatformInitError } from "./errors.ts";
-import { createDarwinPaths, createLinuxPaths, createWindowsPaths } from "./paths.ts";
+import {
+  createDarwinPaths,
+  createLinuxPaths,
+  createPlatformPathsForCurrentOs,
+  createWindowsPaths,
+} from "./paths.ts";
 
 // Real, unique temp root used as an arbitrary TMPDIR override value (S5443).
 const FAKE_TMPDIR = mkdtempSync(join(tmpdir(), "nimbus-paths-test-"));
@@ -316,5 +321,37 @@ describe("NIMBUS_DEMO=1 relocates every resolver into <realDataDir>/demo", () =>
     process.env["XDG_DATA_HOME"] = join(FAKE_TMPDIR, "xdg-data-two");
     const two = createLinuxPaths();
     expect(one.socketPath).not.toBe(two.socketPath);
+  });
+});
+
+describe("createPlatformPathsForCurrentOs", () => {
+  let snapshot: Record<string, string | undefined>;
+
+  beforeEach(() => {
+    snapshot = snapshotEnv();
+    clearEnv();
+    // Every arm resolves on any OS once its env is set, so each one runs on every leg.
+    process.env["APPDATA"] = join(FAKE_TMPDIR, "roaming");
+    process.env["LOCALAPPDATA"] = join(FAKE_TMPDIR, "local");
+  });
+  afterEach(() => {
+    restoreEnv(snapshot);
+  });
+
+  it("defaults to this process's platform", () => {
+    expect(createPlatformPathsForCurrentOs().sandboxDir).toBe(
+      createPlatformPathsForCurrentOs(process.platform).sandboxDir,
+    );
+  });
+
+  it("picks the function for each supported platform and throws for any other", () => {
+    expect(createPlatformPathsForCurrentOs("win32").sandboxDir).toBe(
+      createWindowsPaths().sandboxDir,
+    );
+    expect(createPlatformPathsForCurrentOs("darwin").sandboxDir).toBe(
+      createDarwinPaths().sandboxDir,
+    );
+    expect(createPlatformPathsForCurrentOs("linux").sandboxDir).toBe(createLinuxPaths().sandboxDir);
+    expect(() => createPlatformPathsForCurrentOs("freebsd")).toThrow(PlatformInitError);
   });
 });

@@ -19,6 +19,7 @@ export { runDemo } from "./demo.ts";
 export { runDeployCli } from "./deploy.ts";
 export { runDiag } from "./diag.ts";
 export { runDoctor } from "./doctor.ts";
+export { runEval } from "./eval.ts";
 export { runExec } from "./exec.ts";
 export { runExpertCli } from "./expert.ts";
 export { runExplainCmd } from "./explain.ts";

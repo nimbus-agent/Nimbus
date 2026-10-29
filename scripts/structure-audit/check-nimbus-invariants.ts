@@ -1934,23 +1934,29 @@ export function checkRunGrantTableConfinement(files: readonly FileEntry[]): Viol
 }
 
 // (a) The `__nimbus-extension` self-role sentinel is named only by `platform/runtime-layout.ts` (which
-//     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-runtime.ts`,
-//     the spawner that runs the entry from a verified, re-digested per-spawn stage
-//     (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the child's working directory) through the
-//     sandbox. `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
+//     defines it); `selfSpawn("extension", …)` is called only from `extensions/extension-launch-command.ts`
+//     (`extensionEntryCommand`, the UNWRAPPED launch command, in a dependency-free module). That
+//     module spawns nothing itself: D38(b) confines its callers to the two builders that wrap it
+//     through the sandbox — the run builder in `extension-runtime.ts`, which runs the entry from a
+//     verified, re-digested per-spawn stage (`<sandboxDir>/ext-stage/<serviceId>/<uuid>`, also the
+//     child's working directory), and the eval builder `eval/eval-spawn-spec.ts` (I49).
+//     `index.ts` dispatches via `ROLE_SENTINELS.extension`, never the literal. Scans
 //     comment-stripped source but NOT string-stripped (the sentinel IS a string literal, as with
 //     D29(a)); test files and anything outside packages/gateway/src/ are not scanned. Stated bound: a
 //     dynamically composed role string or `selfSpawn(role)` with a variable evades a text scan. That
-//     gap is covered by I43's tests rather than by this rule: the spec builders and the stager are
-//     each named only by `extension-runtime.ts` (and the stager's own module), and the spec is built
-//     once, inside `prepareSpawn`, after the verifier and the stage digest check.
+//     gap is covered by tests rather than by this rule: I43's pin names the run's spec builders only
+//     in `extension-runtime.ts` and builds the spec once, inside `prepareSpawn`, after the verifier
+//     and the stage digest check; D38(a) names the eval builder only in its module and the eval runtime.
 const D33_EXT_SENTINEL_RE = /__nimbus-extension/g;
 const D33_EXT_SENTINEL_ALLOWED: readonly string[] = [
   "packages/gateway/src/platform/runtime-layout.ts",
 ];
 const D33_EXT_SELFSPAWN_RE = /\bselfSpawn\s*\(\s*["'`]extension["'`]/g;
+// The unwrapped launch command lives in a dependency-free module (so the eval role, which imports
+// it through its spec builder, reaches no db/ module, I49); D38(b) confines ITS callers to the two
+// builders that wrap it through the sandbox: `extension-runtime.ts` and `eval/eval-spawn-spec.ts`.
 const D33_EXT_SELFSPAWN_ALLOWED: readonly string[] = [
-  "packages/gateway/src/extensions/extension-runtime.ts",
+  "packages/gateway/src/extensions/extension-launch-command.ts",
 ];
 
 export function checkExtensionRoleConfinement(files: readonly FileEntry[]): Violation[] {
@@ -2055,6 +2061,79 @@ export function checkTrustTableConfinement(files: readonly FileEntry[]): Violati
     D37_TRUST_TABLES_ALLOWED,
     "trust-tables-confined",
   );
+}
+
+// ---- D38 (the eval runtime, I49) -----------------------------------------------------------------
+// Extension code runs for evaluation only through `extensions/eval/eval-runtime.ts` under the spec
+// `buildExtensionEvalSpawnSpec` builds: no network, baseline env only. Five clauses:
+// (a) `buildExtensionEvalSpawnSpec` is named only by its module and the runtime that calls it;
+// (b) `extensionEntryCommand` (the UNWRAPPED launch command of an extension entry) only by
+//     `extensions/extension-launch-command.ts`, which defines it, `extensions/extension-runtime.ts`,
+//     which wraps it for a run, and the eval spec module, which wraps it for an eval — a third holder could launch an entry outside both specs;
+// (c) a file under `extensions/eval/` imports nothing — statically, as a type, or dynamically —
+//     whose specifier has a `vault`, `egress`, `ipc` or `db` segment (a file under it, or the bare
+//     directory) or names `engine/executor`;
+// (d) `readCredentialEnv` is never named under `extensions/eval/`;
+// (e) no file under `extensions/eval/` value-imports `@mastra/mcp` statically: the role imports it
+//     only inside its run, after console output is routed to stderr (the one-document contract).
+// Identifiers are matched as words after comments and string literals are stripped, so an aliased
+// import is caught; the import clauses read comment-stripped source (a specifier IS a string).
+// Test files and anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a
+// dynamically composed name or specifier evades a text scan, and (c) reads direct imports only —
+// the TRANSITIVE graph the role loads is pinned by I49's graph test in security-invariants.test.ts.
+const D38_EVAL_DIR = "packages/gateway/src/extensions/eval/";
+const D38_SPEC_BUILDER_RE = /\bbuildExtensionEvalSpawnSpec\b/g;
+const D38_SPEC_BUILDER_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/eval/eval-spawn-spec.ts",
+  "packages/gateway/src/extensions/eval/eval-runtime.ts",
+];
+const D38_ENTRY_COMMAND_RE = /\bextensionEntryCommand\b/g;
+const D38_ENTRY_COMMAND_ALLOWED: readonly string[] = [
+  "packages/gateway/src/extensions/extension-launch-command.ts",
+  "packages/gateway/src/extensions/extension-runtime.ts",
+  "packages/gateway/src/extensions/eval/eval-spawn-spec.ts",
+];
+const D38_CREDENTIAL_RE = /\breadCredentialEnv\b/g;
+/** Every module specifier: `from "x"`, bare `import "x"`, `import("x")`, `require("x")`. */
+const D38_SPECIFIER_RE =
+  /(?:\bfrom\s*|^\s*import\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)["'`]([^"'`]+)["'`]/gm;
+// A segment, ending in `/` or at the end of the specifier: `../../db` (a directory import) is caught.
+const D38_FORBIDDEN_SPECIFIER_RE = /(?:^|\/)(?:vault|egress|ipc|db)(?:\/|$)|engine\/executor/;
+const D38_STATIC_MASTRA_RE =
+  /^\s*(?:import|export)\s+(?!type\b)(?:[^;]*?\bfrom\s*)?["']@mastra\/mcp(?:\/[^"']*)?["']/gm;
+
+export function checkEvalConfinement(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    const push = (rule: string, src: string, index: number | undefined): void => {
+      const line = src.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    const scans: Array<[string, RegExp, readonly string[]]> = [
+      ["eval-spec-builder-confined", D38_SPEC_BUILDER_RE, D38_SPEC_BUILDER_ALLOWED],
+      ["eval-entry-command-confined", D38_ENTRY_COMMAND_RE, D38_ENTRY_COMMAND_ALLOWED],
+    ];
+    for (const [rule, re, allowed] of scans) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) push(rule, code, m.index);
+    }
+    if (!f.relPath.startsWith(D38_EVAL_DIR)) continue;
+    for (const m of commentFree.matchAll(D38_SPECIFIER_RE)) {
+      if (D38_FORBIDDEN_SPECIFIER_RE.test(m[1] ?? "")) {
+        push("eval-imports-confined", commentFree, m.index);
+      }
+    }
+    for (const m of code.matchAll(D38_CREDENTIAL_RE)) push("eval-no-credentials", code, m.index);
+    for (const m of commentFree.matchAll(D38_STATIC_MASTRA_RE)) {
+      push("eval-mcp-client-dynamic-only", commentFree, m.index);
+    }
+  }
+  return out;
 }
 
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
@@ -3089,6 +3168,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // D37 — anchored on the trust feed module, which the rule SCANS (it is not allow-listed) and which
   // reaches the feed floor only through the store.
   "packages/gateway/src/extensions/trust/trust-feed.ts",
+  // D38 — anchored on the eval role, which every clause SCANS: it sits under extensions/eval/ (so
+  // (c)(d)(e) read it) and is allow-listed by neither (a) nor (b).
+  "packages/gateway/src/extensions/eval/eval-role.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3392,7 +3474,7 @@ async function run(): Promise<void> {
     const v = checkExtensionRoleConfinement(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D33(a) the __nimbus-extension role (or selfSpawn("extension")) named outside platform/runtime-layout.ts and extensions/extension-runtime.ts — an extension entry could be spawned without the sandbox and the run grant: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D33(a) the __nimbus-extension role (or selfSpawn("extension")) named outside platform/runtime-layout.ts and extensions/extension-launch-command.ts — an extension entry could be spawned without the sandbox and the run grant: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
@@ -3420,6 +3502,25 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D37 trust_statement or trust_feed_state reached outside extensions/trust/trust-store.ts — a trust statement could be stored, or the trust feed's floor moved, without the store's authority and admission checks: ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkEvalConfinement(files);
+    const D38_CLAUSE: Readonly<Record<string, string>> = {
+      "eval-spec-builder-confined":
+        "(a) buildExtensionEvalSpawnSpec named outside extensions/eval/eval-spawn-spec.ts and eval-runtime.ts",
+      "eval-entry-command-confined":
+        "(b) extensionEntryCommand named outside extensions/extension-launch-command.ts, extension-runtime.ts and eval/eval-spawn-spec.ts",
+      "eval-imports-confined":
+        "(c) a module under extensions/eval/ imports from vault/, egress/, ipc/, db/ or engine/executor",
+      "eval-no-credentials": "(d) readCredentialEnv named under extensions/eval/",
+      "eval-mcp-client-dynamic-only": "(e) @mastra/mcp imported statically under extensions/eval/",
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D38${D38_CLAUSE[e.rule] ?? ""} — extension code could run for evaluation with network, credentials or gateway state, or the eval role's one stdout document could be corrupted (I49): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

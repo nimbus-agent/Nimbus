@@ -5023,6 +5023,21 @@ nimbus test                     # In extension root directory
 nimbus test ./nimbus-my-connector
 ```
 
+### `nimbus eval --package <dir> [--suite <file>] [--json]`
+
+Run an extension package's eval suites (`evals/*.eval.json`) against its own MCP tools, in the sandbox, and print the score. Gateway-free: no running gateway, no Vault, no index. The CLI runs the gateway executable's `__nimbus-eval` role, which loads the package (the manifest must parse under the install rules; a signed manifest must verify against the key it carries, and an unsigned author directory is allowed; a starter pack has no code and is refused), stages a copy of its package file set, and runs each case in suite order, one at a time.
+
+The extension runs with **no network, no write access and no credentials** (invariant I49): whatever `permissions.network` and `credentials` its manifest declares are not granted. A server that will not start without its credentials is an eval error, so cases must run offline. Each case has a 30 s limit and the run 10 minutes; after a case times out, it fails and the run continues on a fresh server from a fresh copy. A server that exits in the middle of a call is restarted once by the MCP client, in place, and the call retried: if it crashes again the case fails `crash` and the run continues on a fresh server from a fresh copy; if the retry answers, the case is scored on that answer. `--suite` takes the suite's path inside the package (`evals/basic.eval.json`; `evals\basic.eval.json`, `./evals/...` and an absolute path inside the package are accepted). With `--json`, an eval error is printed as a JSON document on stdout too — the role's own `{ "ok": false, "error": { "code", "message" } }`, or one the CLI writes when there is no document (`ERR_EVAL_LAUNCH`, `ERR_EVAL_WALL_CLOCK`, `ERR_EVAL_OUTPUT_TOO_LARGE`, `ERR_EVAL_NO_DOCUMENT`) — and the exit code is still 2. On Windows the sandbox helper is required, on Linux bubblewrap; without them the eval is refused, never run unconfined.
+
+`--suite <file>` runs one suite (a path under `evals/`). `--json` prints the role's document verbatim: `{ "ok": true, "extensionId", "version", "report" }`, where `report` holds the score, the case counts and one result per case. The text form prints a line per suite, each failing case with its reason, and `score N/100 (passed of cases cases)`.
+
+Exit code `0` when the eval ran, whatever the score; `2` on a usage error or an eval error (bad suite, sandbox unavailable, the server failed to start, a run over its limit), printed as `eval failed: ERR_EVAL_*: detail` with the last 64 KiB of the extension's stderr. `--extension <id>` and `--installed` are not available yet and exit `2`.
+
+```bash
+nimbus eval --package ./my-extension
+nimbus eval --package ./my-extension --suite evals/basic.eval.json --json
+```
+
 ---
 
 ## Extension Registry

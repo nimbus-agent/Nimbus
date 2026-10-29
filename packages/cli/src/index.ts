@@ -24,6 +24,7 @@ import {
   runDiag,
   runDoctor,
   runEgress,
+  runEval,
   runExec,
   runExpertCli,
   runExplainCmd,
@@ -207,6 +208,11 @@ async function dispatchCommand(command: string, args: string[]): Promise<void> {
   // `process.exitCode` at 0 no matter what a fleet run actually did.
   if (command === "fleet") {
     process.exitCode = await runFleet(args);
+    return;
+  }
+  // Not in COMMAND_HANDLERS for the same reason as `fleet`: `runEval` returns an exit code.
+  if (command === "eval") {
+    process.exitCode = await runEval(args);
     return;
   }
   const handler = COMMAND_HANDLERS[command];

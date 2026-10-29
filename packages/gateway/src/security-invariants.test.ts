@@ -8,6 +8,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
@@ -24,6 +25,7 @@ import {
   checkAgentEmitterImportConfinement,
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
+  checkEvalConfinement,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
@@ -6712,7 +6714,9 @@ describe("I43 — an installed extension's code runs only through the verified s
   test("the spec builders are named only by extension-runtime.ts, and the spec is built once, inside prepareSpawn", async () => {
     // Both builders are exported (unit tests use them) and take a plain interface, so a second
     // production caller could build a launchable spec without the verifier. D33(a) cannot see that:
-    // the sentinel and `selfSpawn("extension"` stay inside the builder. Any mention elsewhere — a
+    // the sentinel stays in `platform/runtime-layout.ts` and `selfSpawn("extension"` in
+    // `extension-launch-command.ts`, whose callers D38(b) confines to the two builders (this one
+    // and the eval builder), so a second caller of THIS builder trips neither. Any mention elsewhere — a
     // call, an import, an aliased import — fails here.
     const files = await readDirFiles("packages/gateway/src");
     const builderRe = /\b(?:buildExtensionSpawnSpec|buildExtensionRuntimeManifest)\b/;
@@ -9244,3 +9248,220 @@ const signTrustStatementDyn = async (
   s: import("@nimbus-dev/registry-format").UnsignedTrustStatement,
   seed: Uint8Array,
 ) => (await import("@nimbus-dev/registry-format")).signTrustStatement(s, seed);
+
+describe("I49 — extension code runs for evaluation only offline, without credentials", () => {
+  // The eval runtime is driven for real (a real package on disk, the real loader, stager and spec
+  // builder); only the MCP client is a fake, which RECORDS the spec it would have spawned. Nothing
+  // here spawns a process.
+  const roots: string[] = [];
+  const PLANTED: Readonly<Record<string, string>> = {
+    I49_TOKEN: "pl49a-tok",
+    GITHUB_TOKEN: "pl49b-ghp",
+    NIMBUS_I49_SECRET: "pl49c-sec",
+  };
+  const saved = new Map<string, string | undefined>();
+  beforeEach(() => {
+    for (const [k, v] of Object.entries(PLANTED)) {
+      saved.set(k, process.env[k]);
+      process.env[k] = v;
+    }
+  });
+  afterEach(() => {
+    for (const [k, v] of saved) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    saved.clear();
+    for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true });
+  });
+
+  /** A package that DECLARES a credential and a network host: neither may reach the eval spawn. */
+  function writePackage(): { pkg: string; sandboxDir: string; runtimeReadPaths: string[] } {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i49-")));
+    roots.push(root);
+    const pkg = join(root, "pkg");
+    mkdirSync(join(pkg, "dist"), { recursive: true });
+    mkdirSync(join(pkg, "evals"), { recursive: true });
+    writeFileSync(
+      join(pkg, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "com.example.i49",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+        credentials: { token: { env: "I49_TOKEN" } },
+      }),
+    );
+    writeFileSync(join(pkg, "dist", "index.js"), "export {};\n");
+    writeFileSync(
+      join(pkg, "evals", "basic.eval.json"),
+      JSON.stringify({
+        format: 1,
+        name: "basic",
+        cases: [{ name: "c1", tool: "echo", input: {}, expect: { rubric: "exact", value: "x" } }],
+      }),
+    );
+    const sandboxDir = join(root, "sandbox");
+    mkdirSync(sandboxDir, { recursive: true });
+    return { pkg, sandboxDir, runtimeReadPaths: [join(root, "bun-bin")] };
+  }
+
+  interface Captured {
+    order: string[];
+    policies: unknown[];
+    specs: { env: Record<string, string> }[];
+  }
+
+  async function runOnce(confineReason: string | null = null) {
+    const { loadEvalPackage } = await import("./extensions/eval/eval-source.ts");
+    const { runEvalSession } = await import("./extensions/eval/eval-runtime.ts");
+    const { pkg, sandboxDir, runtimeReadPaths } = writePackage();
+    const src = await loadEvalPackage(pkg);
+    const cap: Captured = { order: [], policies: [], specs: [] };
+    const run = runEvalSession(src, {
+      sandboxDir,
+      runtimeReadPaths,
+      canConfine: (p) => {
+        cap.order.push("canConfine");
+        cap.policies.push(p);
+        return confineReason;
+      },
+      createClient: (_id, servers) => {
+        cap.order.push("createClient");
+        const [key] = Object.keys(servers);
+        for (const spec of Object.values(servers)) cap.specs.push(spec);
+        return {
+          listToolsWithErrors: async () => ({
+            tools: {
+              [`${key}_echo`]: {
+                execute: async () => ({ content: [{ type: "text", text: "x" }] }),
+              },
+            },
+            errors: {},
+          }),
+          disconnect: async () => {},
+        };
+      },
+    });
+    return { run, cap, src, sandboxDir, runtimeReadPaths };
+  }
+
+  test("behavioural: a package that declares a credential and a host is evaluated with no network and baseline env only", async () => {
+    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
+      "./platform/sandbox/sandbox-policy.ts"
+    );
+    const { isExtensionBaselineEnvKey } = await import("./extensions/spawn-env.ts");
+    const { run, cap, src, sandboxDir, runtimeReadPaths } = await runOnce();
+    const report = await run;
+    expect(report.score).toBe(100);
+    // The sandbox is asked first, about the same zero-reach policy, under the eval identity.
+    expect(cap.order).toEqual(["canConfine", "createClient"]);
+    expect(cap.policies).toEqual([
+      {
+        id: `eval.${src.serviceId}`,
+        permissions: { network: [], filesystem: { read: runtimeReadPaths, write: [] } },
+      },
+    ]);
+    expect(cap.specs).toHaveLength(1);
+    const env = cap.specs[0]?.env ?? {};
+    const policy = JSON.parse(env[SANDBOX_POLICY_ENV] ?? "null") as {
+      id: string;
+      permissions: { network: unknown[]; filesystem: { read: string[]; write: string[] } };
+    };
+    expect(policy.id).toBe(`eval.${src.serviceId}`);
+    expect(policy.permissions.network).toEqual([]);
+    expect(policy.permissions.filesystem).toEqual({ read: runtimeReadPaths, write: [] });
+    // The child runs from a stage under the sandbox dir, never from the package itself.
+    const cwd = env[SANDBOX_CWD_ENV] ?? "";
+    expect(isAbsolute(cwd)).toBe(true);
+    expect(relative(sandboxDir, cwd).startsWith("..")).toBe(false);
+    // No planted secret, by name or by value; every key is a baseline key or the sandbox pair.
+    const plantedValues = Object.values(PLANTED);
+    for (const [k, v] of Object.entries(env)) {
+      expect(Object.hasOwn(PLANTED, k)).toBe(false);
+      expect(plantedValues).not.toContain(v);
+      const allowed =
+        isExtensionBaselineEnvKey(k) || k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV;
+      expect(allowed).toBe(true);
+    }
+  });
+
+  test("behavioural: a sandbox that cannot confine the eval refuses it before anything is spawned", async () => {
+    const { EvalRunError } = await import("./extensions/eval/eval-source.ts");
+    const { run, cap } = await runOnce("no sandbox here");
+    const err = await run.then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    expect((err as InstanceType<typeof EvalRunError>).code).toBe("ERR_EVAL_SANDBOX_UNAVAILABLE");
+    expect(cap.order).toEqual(["canConfine"]);
+  });
+
+  test("source pins: D38 holds on the real tree, and the spec builder takes no credential input", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    expect(
+      checkEvalConfinement(
+        files.map((f) => ({ relPath: `packages/gateway/src/${f.rel}`, contents: f.contents })),
+      ),
+    ).toEqual([]);
+    // The one env construction in the eval builder is the empty-extra call: baseline keys only.
+    const builder = stripComments(
+      await read("packages/gateway/src/extensions/eval/eval-spawn-spec.ts"),
+    );
+    expect([...builder.matchAll(/\bextensionProcessEnv\s*\(/g)]).toHaveLength(1);
+    expect(builder).toMatch(/\bextensionProcessEnv\s*\(\s*\{\s*\}\s*\)/);
+    expect(builder).toMatch(/\bnetwork:\s*\[\s*\]/);
+    expect(builder).not.toMatch(/credential/i);
+    // runEvalSession has exactly one production caller: the eval role.
+    const callers = files
+      .filter((f) => /\brunEvalSession\s*\(/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(callers).toEqual(["extensions/eval/eval-role.ts", "extensions/eval/eval-runtime.ts"]);
+  });
+
+  test("the eval role's module graph reaches no Vault, DB, IPC, egress or executor, nor the gateway", () => {
+    // Static value edges and re-exports (`import type` is erased) plus dynamic `import()` edges,
+    // from the role: the graph the role actually evaluates, including its in-run imports.
+    const EDGE_RE =
+      /^\s*(?:import|export)\s+(?!type\b)(?:[^;]*?\bfrom\s*)?["'](\.[^"']+)["']|\bimport\s*\(\s*["'](\.[^"']+)["']\s*\)/gm;
+    const isFile = (p: string): boolean => {
+      try {
+        return statSync(p).isFile();
+      } catch {
+        return false;
+      }
+    };
+    const resolveSpec = (from: string, spec: string): string | undefined => {
+      const base = resolve(from, "..", spec);
+      return [base, `${base}.ts`, join(base, "index.ts")].find(isFile);
+    };
+    /** Repo-src-relative files reached from the role. */
+    const graph = (): string[] => {
+      const seen = new Set<string>();
+      const stack = [join(SRC_ROOT, "extensions", "eval", "eval-role.ts")];
+      while (stack.length > 0) {
+        const file = stack.pop() as string;
+        if (seen.has(file)) continue;
+        seen.add(file);
+        const code = stripComments(readFileSync(file, "utf8"));
+        for (const m of code.matchAll(EDGE_RE)) {
+          const r = resolveSpec(file, (m[1] ?? m[2]) as string);
+          if (r !== undefined) stack.push(r);
+        }
+      }
+      return [...seen].map((f) => relative(SRC_ROOT, f).replaceAll("\\", "/"));
+    };
+    const rel = graph();
+    // Red-proof that the walk followed the dynamic edges: the runtime and the spec builder are in.
+    expect(rel).toContain("extensions/eval/eval-runtime.ts");
+    expect(rel).toContain("extensions/eval/eval-spawn-spec.ts");
+    expect(rel).toContain("extensions/extension-launch-command.ts");
+    expect(rel).toContain("platform/sandbox/index.ts");
+    expect(rel.filter((f) => /(^|\/)(db|vault|ipc|egress)\//.test(f))).toEqual([]);
+    expect(rel.filter((f) => f === "engine/executor.ts" || f === "gateway-main.ts")).toEqual([]);
+    // The run path's module (stores, Vault-backed credentials) is not in the eval graph at all.
+    expect(rel).not.toContain("extensions/extension-runtime.ts");
+  });
+});

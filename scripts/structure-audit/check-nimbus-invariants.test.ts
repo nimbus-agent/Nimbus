@@ -20,6 +20,7 @@ import {
   checkEgressChokepointConfinement,
   checkEmbeddingAppenderConfinement,
   checkEmbeddingConstructorConfinement,
+  checkEvalConfinement,
   checkExtensionRoleConfinement,
   checkFlatUpsertGraphEntityCoOwnedTypes,
   checkFleetClientKindConfinement,
@@ -3215,6 +3216,147 @@ describe("D37 — the trust tables are named only by the trust store and their D
   });
 });
 
+describe("D38 — extension code runs for evaluation only offline, without credentials", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const EVAL = "packages/gateway/src/extensions/eval";
+  const rules = (files: FileEntry[]): string[] => checkEvalConfinement(files).map((v) => v.rule);
+
+  test("allows the real shape: the builder in its module and the runtime, the entry command in its two modules", () => {
+    expect(
+      checkEvalConfinement([
+        file(
+          `${EVAL}/eval-spawn-spec.ts`,
+          [
+            'import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";',
+            'import { extensionEntryCommand } from "../extension-launch-command.ts";',
+            'import { extensionProcessEnv } from "../spawn-env.ts";',
+            "export function buildExtensionEvalSpawnSpec() { return extensionEntryCommand(); }",
+          ].join("\n"),
+        ),
+        file(
+          `${EVAL}/eval-runtime.ts`,
+          'import { buildExtensionEvalSpawnSpec } from "./eval-spawn-spec.ts";',
+        ),
+        file(
+          `${EVAL}/eval-role.ts`,
+          'const m = await import("@mastra/mcp");\nimport type { MCPClient } from "@mastra/mcp";',
+        ),
+        file(
+          "packages/gateway/src/extensions/extension-runtime.ts",
+          'import { readCredentialEnv } from "./extension-credentials.ts";\nexport function extensionEntryCommand() {}',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test.each([
+    ["a call", "buildExtensionEvalSpawnSpec(staged, deps)"],
+    [
+      "an aliased import",
+      'import { buildExtensionEvalSpawnSpec as b } from "./eval/eval-spawn-spec.ts";',
+    ],
+  ])("(a) FAILS on the spec builder named elsewhere: %s", (_n, src) => {
+    expect(rules([file("packages/gateway/src/extensions/extension-runtime.ts", src)])).toEqual([
+      "eval-spec-builder-confined",
+    ]);
+    // Inside extensions/eval/ too: the role may not build a spec of its own.
+    expect(rules([file(`${EVAL}/eval-role.ts`, src)])).toEqual(["eval-spec-builder-confined"]);
+  });
+
+  test("(b) FAILS on the unwrapped entry command named outside its two modules", () => {
+    const src = 'import { extensionEntryCommand } from "../extension-runtime.ts";';
+    expect(rules([file(`${EVAL}/eval-runtime.ts`, src)])).toEqual(["eval-entry-command-confined"]);
+    expect(rules([file("packages/gateway/src/extensions/run-extension-entry.ts", src)])).toEqual([
+      "eval-entry-command-confined",
+    ]);
+  });
+
+  test.each([
+    ["the Vault", 'import { readPublisherKeyFor } from "../../vault/index.ts";'],
+    ["the egress ledger", 'import { appendEgressEntry } from "../../egress/egress-ledger.ts";'],
+    ["IPC", 'import { IPCServer } from "../../ipc/server.ts";'],
+    ["the DB writer", 'import { dbRun } from "../../db/write.ts";'],
+    ["the executor", 'import { ToolExecutor } from "../../engine/executor.ts";'],
+    ["a type-only import", 'import type { NimbusVault } from "../../vault/nimbus-vault.ts";'],
+    ["a dynamic import", 'const v = await import("../../vault/index.ts");'],
+    ["a re-export", 'export { dbRun } from "../../db/write.ts";'],
+    ["a bare import", 'import "../../ipc/server.ts";'],
+    ["a bare db/ directory specifier", 'import { dbRun } from "../../db";'],
+    ["a bare vault/ directory specifier", 'const v = await import("../../vault");'],
+    ["a multi-line import", 'import {\n  dbRun,\n  dbExec,\n} from "../../db/write.ts";'],
+  ])("(c) FAILS on a module under extensions/eval/ importing %s", (_n, src) => {
+    expect(rules([file(`${EVAL}/eval-source.ts`, src)])).toEqual(["eval-imports-confined"]);
+  });
+
+  test("(c) reads only extensions/eval/, and not a look-alike segment or a comment", () => {
+    expect(
+      checkEvalConfinement([
+        file(
+          "packages/gateway/src/extensions/install-from-local.ts",
+          'import "../vault/index.ts";',
+        ),
+        file(`${EVAL}/eval-source.ts`, 'import { x } from "../../dbx/y.ts";'),
+        file(`${EVAL}/eval-source.ts`, 'import { x } from "../../dbx";'),
+        file(`${EVAL}/eval-source.ts`, 'import { x } from "../../platform/ipc-path.ts";'),
+        file(`${EVAL}/eval-source.ts`, '// import { dbRun } from "../../db/write.ts";'),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(d) FAILS on readCredentialEnv named under extensions/eval/", () => {
+    expect(
+      rules([
+        file(
+          `${EVAL}/eval-spawn-spec.ts`,
+          'import { readCredentialEnv } from "../extension-credentials.ts";',
+        ),
+      ]),
+    ).toEqual(["eval-no-credentials"]);
+    expect(
+      rules([file(`${EVAL}/eval-runtime.ts`, "const e = await readCredentialEnv(v, c);")]),
+    ).toEqual(["eval-no-credentials"]);
+  });
+
+  test.each([
+    ["a named import", 'import { MCPClient } from "@mastra/mcp";'],
+    ["a subpath import", 'import { x } from "@mastra/mcp/client";'],
+    ["a bare import", 'import "@mastra/mcp";'],
+    ["a re-export", 'export { MCPClient } from "@mastra/mcp";'],
+  ])("(e) FAILS on a static @mastra/mcp value import under extensions/eval/: %s", (_n, src) => {
+    expect(rules([file(`${EVAL}/eval-role.ts`, src)])).toEqual(["eval-mcp-client-dynamic-only"]);
+  });
+
+  test("ignores test files and comments", () => {
+    expect(
+      checkEvalConfinement([
+        file(
+          `${EVAL}/eval-role.test.ts`,
+          'import { MCPClient } from "@mastra/mcp";\nreadCredentialEnv();',
+        ),
+        file("packages/gateway/src/ipc/x.ts", "// buildExtensionEvalSpawnSpec(s)"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("the real tree is clean, and the scan really read the eval modules", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(checkEvalConfinement(files)).toEqual([]);
+    const evalFiles = files.filter(
+      (f) => f.relPath.startsWith(`${EVAL}/`) && !f.relPath.endsWith(".test.ts"),
+    );
+    expect(evalFiles.map((f) => f.relPath).sort()).toEqual([
+      `${EVAL}/eval-reply.ts`,
+      `${EVAL}/eval-role.ts`,
+      `${EVAL}/eval-runtime.ts`,
+      `${EVAL}/eval-source.ts`,
+      `${EVAL}/eval-spawn-spec.ts`,
+    ]);
+  });
+});
+
 describe("D33(b) — extension_run_grant is named only by its store and its DDL", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
 
@@ -3335,16 +3477,17 @@ describe("D33(c) — only the store and the approve/revoke path create or delete
   });
 });
 
-describe("D33(a) — the __nimbus-extension role is named only by the layout and the runtime", () => {
+describe("D33(a) — the __nimbus-extension role is named only by the layout and the launch command", () => {
   const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
   const LAYOUT = "packages/gateway/src/platform/runtime-layout.ts";
   const RUNTIME = "packages/gateway/src/extensions/extension-runtime.ts";
+  const LAUNCH = "packages/gateway/src/extensions/extension-launch-command.ts";
 
-  test("allows the literal in runtime-layout.ts and selfSpawn(extension) in extension-runtime.ts", () => {
+  test("allows the literal in runtime-layout.ts and selfSpawn(extension) in extension-launch-command.ts", () => {
     expect(
       checkExtensionRoleConfinement([
         file(LAYOUT, 'export const R = { extension: "__nimbus-extension" };'),
-        file(RUNTIME, 'selfSpawn("extension", [p]);'),
+        file(LAUNCH, 'selfSpawn("extension", [p]);'),
       ]),
     ).toEqual([]);
   });
@@ -3371,9 +3514,15 @@ describe("D33(a) — the __nimbus-extension role is named only by the layout and
     ["inner whitespace", 'selfSpawn( "extension", [p])'],
     ["whitespace before the paren", 'selfSpawn ("extension", [p])'],
     ["a comment before the paren", 'selfSpawn /* note */ ("extension", [p])'],
-  ])("FAILS on selfSpawn with %s outside extension-runtime.ts", (_n, src) => {
+  ])("FAILS on selfSpawn with %s outside extension-launch-command.ts", (_n, src) => {
     expect(
       checkExtensionRoleConfinement([file("packages/gateway/src/index.ts", src)]),
+    ).toHaveLength(1);
+  });
+
+  test("FAILS on selfSpawn(extension) in extension-runtime.ts (it holds the launch command, not the role)", () => {
+    expect(
+      checkExtensionRoleConfinement([file(RUNTIME, 'selfSpawn("extension", [p]);')]),
     ).toHaveLength(1);
   });
 
