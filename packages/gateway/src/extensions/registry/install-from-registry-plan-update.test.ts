@@ -820,8 +820,9 @@ describe("an approved update installs the packages it adds (production wiring)",
       { version: "1.2.0", dependsOn: { [DEP]: "^1.0.0" } },
     ]);
     const { result } = await update(() => {
-      // Another terminal removed (or moved) DEP while the prompt was open.
-      db.run("UPDATE extension SET version = '1.1.0' WHERE id = ?", [DEP]);
+      // Another terminal removed DEP while the prompt was open.
+      db.run("DELETE FROM extension WHERE id = ?", [DEP]);
+      expect(versionOf(DEP)).toBeUndefined();
     });
     expect(result).toEqual({ applied: false, reason: "cache_miss" });
     expect(versionOf(ROOT)).toBe("1.0.0");

@@ -300,6 +300,11 @@ async function resolveUpdateTarget(
   }
 
   const isDowngrade = isStringSemverLess(toVersion, installed);
+  // A forward update detected from another version than the one installed now would roll back to
+  // the wrong `prev/<fromVersion>`: refused before the owner is asked (and again under the mutex).
+  if (!isDowngrade && installed !== cached.fromVersion) {
+    return { applied: false, reason: "cache_miss" };
+  }
   // A forward update comes only from its source registry (spec § 8.3): one removed or re-pinned
   // since detection offers nothing, and saying so is clearer than a later signature failure.
   if (!isDowngrade && deps.isSourceCurrent !== undefined && !(await deps.isSourceCurrent(cached))) {

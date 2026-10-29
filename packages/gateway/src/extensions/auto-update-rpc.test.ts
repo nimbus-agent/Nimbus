@@ -1109,14 +1109,20 @@ describe("the update approval lists what the update adds (extension dependencies
     expect(performUpgrade).not.toHaveBeenCalled();
   });
 
-  it("the installed version is no longer the update's fromVersion: cache_miss, nothing applied", async () => {
+  it("the installed version is no longer the update's fromVersion: cache_miss before the prompt", async () => {
     const deps = depsAdding(fakePlan([DEP], { [DEP.id]: DEP_MANIFEST }));
-    // The same version at the gate and under the mutex, but not the one the update was detected
-    // from: its rollback target (`prev/<fromVersion>`) would name the wrong version.
+    // Not the version the update was detected from: its rollback target (`prev/<fromVersion>`)
+    // would name the wrong version, so the owner is never asked about it.
     deps.getInstalledVersion = async (id: string) => (id === "com.example.a" ? "1.0.5" : null);
+    let gated = 0;
+    deps.gate = async () => {
+      gated++;
+      return "proceed" as const;
+    };
     const performUpgrade = mock(async () => ({ orphanedDependencies: [] }));
     deps.performUpgrade = performUpgrade;
     expect(await update(deps)).toEqual({ applied: false, reason: "cache_miss" });
+    expect(gated).toBe(0);
     expect(performUpgrade).not.toHaveBeenCalled();
   });
 
