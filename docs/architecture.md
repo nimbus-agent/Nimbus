@@ -2247,14 +2247,20 @@ process group and every kill (the deadline, a stdout overflow) is a `SIGKILL` of
 inherits the role's stderr dies with it, and each kill bounds the run whether or not an exit follows; after the role exits,
 whatever is left in its group is killed too. The whole run has a 14-minute budget inside the job's 20 minutes; once under a
 minute is left, every further version with suites gets an `ERR_EVAL_BUDGET` entry without running, so hanging suites cannot
-turn the job red. It writes `scores.json` (`{ "<id>@<version>": { packageSha256, quality } | { packageSha256, error } }`),
-always and atomically, and uploads it as an artifact. `sign` (`needs: score`) reads that file once as untrusted input (at most
+turn the job red; a timeout whose deadline the remaining budget set says so, so a legitimate suite is not blamed. No state is
+kept across runs, so that relief is per run only: a version whose eval failed stays unsigned and is scored again on every sign
+run (a push to the default branch or a `workflow_dispatch`) until it scores or its directory is removed, and a hanging suite
+spends 12 of the 14 minutes on every one of those runs; the score summary lists such versions with that remedy. It writes `scores.json` (`{ "<id>@<version>": { packageSha256, quality } | { packageSha256, error } }`),
+always and atomically, and uploads it as an artifact. `sign` (`needs: score`) downloads the artifact into the runner's temp
+directory, never the checkout (the score job controls its contents, and extracted into the workspace it could write into the
+`.git/` of the job holding the root key), and reads that file once as untrusted input (at most
 4 MiB, into a `Map`, so a key such as `__proto__` is only ever a key): a version with suites is signed only with an entry under its own `<id>@<version>`, for its
 own `packageSha256`, whose quality `parseEvalQuality` accepts, and that quality (exactly `scorer`, `score`, `cases`,
 `passed`, `rubrics`; never the per-case `results`) becomes the entry's signed `quality`; a version without one is skipped
-with a warning and retried by a later run, and a version without `evals/` is signed with no `quality`. Because `sign` needs
+with a warning and scored again by the next sign run, and a version without `evals/` is signed with no `quality`. Because `sign` needs
 `score`, an infrastructure failure of the score job skips the whole sign run, trust requests included, until the workflow is
-re-run. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The check job scores a pull request's version the same way when given `nimbus-gateway`; it then takes no
+re-run. The score and check jobs fetch without credentials, so the registry repository must be public: in a private one the
+score job fails and every sign run is skipped. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The check job scores a pull request's version the same way when given `nimbus-gateway`; it then takes no
 `github-token` (the action refuses both together) and leaves provenance to `sign`. The compiled release binary runs the
 role: the published `v10.10.0` `nimbus-gateway-linux-x64` scores the e2e fixture package 71 (7 cases, 5 passed) under
 bubblewrap as a non-root user, the same numbers as the source e2e. The job log shows `sandbox: degraded mode (no per-host

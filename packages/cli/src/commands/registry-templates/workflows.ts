@@ -23,6 +23,14 @@ export const DOWNLOAD_ARTIFACT_ACTION =
 /** The artifact the score job uploads `scores.json` as, and the sign job downloads. */
 export const SCORES_ARTIFACT = "registry-scores";
 
+/**
+ * Where the sign job extracts that artifact: the runner's temp directory, never the workspace. The
+ * workspace is the registry checkout, `.git/` included, and the score job (which runs extension
+ * code) controls the artifact's contents: extracted there it could plant a `.git/config` or a hook
+ * that then runs inside the job holding the root key and a write token.
+ */
+export const SCORES_DIR = `\${{ runner.temp }}/registry-scores`;
+
 /** The registry action, referenced by path in the Nimbus repository. */
 export const REGISTRY_ACTION_PATH = "nimbus-agent/Nimbus/packages/github-actions/registry-action";
 
@@ -202,6 +210,9 @@ ${gatewaySetupSteps(pin)}
         uses: ${DOWNLOAD_ARTIFACT_ACTION}
         with:
           name: ${SCORES_ARTIFACT}
+          # Outside the checkout: the score job controls this artifact, and extracted into the
+          # workspace it could write into .git/ of the job that holds the root key.
+          path: ${SCORES_DIR}
 
       - name: Sign
         uses: ${actionUses(pin)}
@@ -214,6 +225,6 @@ ${gatewaySetupSteps(pin)}
           # Lets the sign job verify a version's build provenance (gh attestation verify).
           github-token: \${{ github.token }}
           # Untrusted input: each entry is bound to its version's id, version and package digest.
-          scores: scores.json
+          scores: ${SCORES_DIR}/scores.json
 `;
 }

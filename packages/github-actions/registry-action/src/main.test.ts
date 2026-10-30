@@ -168,6 +168,18 @@ describe("main", () => {
     expect(out.join("")).toContain("::error::refusing to sign: the scores input");
   });
 
+  test("sign reads an absolute scores path outside the workspace as given", async () => {
+    // The sign workflow downloads the artifact under the runner's temp dir, outside the checkout.
+    const outside = join(process.cwd(), "runner-temp", "registry-scores", "scores.json");
+    process.env["INPUT_MODE"] = "sign";
+    process.env["INPUT_ROOT-KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    process.env["GITHUB_WORKSPACE"] = join(process.cwd(), "workspace");
+    process.env["INPUT_SCORES"] = outside;
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain(`::error::refusing to sign: the scores input (${outside})`);
+  });
+
   test("check passes a set nimbus-gateway input on", async () => {
     process.env["INPUT_MODE"] = "check";
     process.env["GITHUB_BASE_REF"] = "main";

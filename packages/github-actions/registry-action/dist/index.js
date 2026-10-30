@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:7d3a4dc71a3e821feb91e18cadb8e3acb4108ab51d8a459451f4fb385937fb1e
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:512cdd930a5c4e5f231ba3cc402ae88d98d2ba1f719739ca17c4475cf8ebbbc2
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -11033,7 +11033,8 @@ function duration(ms) {
 }
 function judgeRoleRun(r, want, timeoutMs = ROLE_TIMEOUT_MS) {
   if (r.timedOut) {
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}`);
+    const why = timeoutMs < ROLE_TIMEOUT_MS ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})` : "";
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}${why}`);
   }
   if (r.overflow) {
     return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
@@ -11117,9 +11118,11 @@ var SHARED = {
   runRole: roleRunner(),
   now: Date.now
 };
+var RETRY_NOTE = "it is scored again on the next sign run (a push to the default branch or a workflow_dispatch)";
+var FAILED_REMEDY = "A version whose eval failed is not signed, so it is scored again on every sign run (a push to the default branch or a workflow_dispatch) until it scores or its directory is removed from the default branch; meanwhile each attempt spends time budget that later versions need.";
 var budgetSpent = (packageSha256) => ({
   packageSha256,
-  ...fail("ERR_EVAL_BUDGET", "not scored this run: the score job's time budget was spent; it will be scored on the next run")
+  ...fail("ERR_EVAL_BUDGET", `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}`)
 });
 function scoreWithinBudget(c, at, deps) {
   const left = at.deadline - deps.now();
@@ -11175,14 +11178,22 @@ function report(io, r) {
   const entries = Object.entries(r.scores);
   if (entries.length === 0)
     lines.push("No unsigned version with eval suites to score.");
+  const failed = [];
   for (const [ref, e] of entries) {
     if ("quality" in e) {
       const q = e.quality;
       lines.push(`- ${code(ref)}: ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`);
     } else {
-      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it`);
+      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`);
       lines.push(`- ${code(ref)}: not scored, ${code(e.error.code)} ${code(e.error.message)}`);
+      failed.push(ref);
     }
+  }
+  if (failed.length > 0) {
+    lines.push("", "**Not signed** (no score):", "");
+    for (const ref of failed)
+      lines.push(`- ${code(ref)}`);
+    lines.push("", FAILED_REMEDY);
   }
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");

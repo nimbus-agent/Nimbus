@@ -5,9 +5,12 @@
  * a process holding the role's stderr after the role is killed; these scripts reproduce that with
  * a grandchild in the role's process group.
  *
- * POSIX only: the runner's process-group kill is POSIX, and a script cannot be spawned without a
- * shell on Windows (the fake-spawn tests in `score.test.ts` run everywhere). Nothing else gates
- * them, so on Linux and macOS CI they always run; there is no silent-skip path to fail loudly on.
+ * Linux only. The action runs on ubuntu runners, so Linux is the platform these prove. Windows
+ * cannot spawn a script without a shell, and on macOS a real `child_process` spawn under the
+ * `--parallel` test run is known to hang past `--timeout` (the fake-spawn tests in `score.test.ts`
+ * run everywhere). The registry-action tests run in the Linux `Unit + Coverage` job, where nothing
+ * but the platform gates these: they need no sandbox or tool beyond `/bin/sh`, so there is no
+ * precondition that could silently skip them there.
  */
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import {
@@ -66,7 +69,7 @@ const killQuietly = (pid: number): void => {
   }
 };
 
-describe.skipIf(process.platform === "win32")("the role runner over real processes", () => {
+describe.skipIf(process.platform !== "linux")("the role runner over real processes", () => {
   let dir: string;
   let home: string;
   const spare: number[] = [];

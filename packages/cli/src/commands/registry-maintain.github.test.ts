@@ -32,6 +32,7 @@ import {
   REGISTRY_ACTION_PATH,
   ROOT_KEY_SECRET,
   SCORES_ARTIFACT,
+  SCORES_DIR,
   UPLOAD_ARTIFACT_ACTION,
 } from "./registry-templates/workflows.ts";
 
@@ -263,7 +264,8 @@ describe("registry maintain init --github", () => {
       "default-branch": "main",
       "root-key": `\${{ secrets.${ROOT_KEY_SECRET} }}`,
       "github-token": `\${{ github.token }}`,
-      scores: "scores.json",
+      // The downloaded artifact's file, outside the checkout.
+      scores: `\${{ runner.temp }}/registry-scores/scores.json`,
     });
   });
 
@@ -272,13 +274,37 @@ describe("registry maintain init --github", () => {
     const { doc } = workflow(dir, "registry-sign.yml");
     const download = usesStep(doc, "sign", "actions/download-artifact@");
     expect(download.uses).toBe(DOWNLOAD_ARTIFACT_ACTION.split(" #")[0]);
-    expect(download.with).toEqual({ name: SCORES_ARTIFACT });
+    expect(download.with).toEqual({ name: SCORES_ARTIFACT, path: SCORES_DIR });
+    // Extracted under the runner's temp dir, never into the checkout (whose .git/ the score job's
+    // artifact could otherwise write into, in the job holding the root key).
+    expect(SCORES_DIR).toBe(`\${{ runner.temp }}/registry-scores`);
+    // The sign action reads exactly the file the download put there.
+    expect(usesStep(doc, "sign", REGISTRY_ACTION_PATH).with?.["scores"]).toBe(
+      `${SCORES_DIR}/scores.json`,
+    );
     const all = steps(doc, "sign");
     expect(all.indexOf(download)).toBeLessThan(
       all.indexOf(usesStep(doc, "sign", REGISTRY_ACTION_PATH)),
     );
     // No extension code, and no shell at all, runs in the job that holds the key.
     expect(runLines(doc, "sign")).toEqual([]);
+  });
+
+  test("no step of the sign job extracts an artifact into the workspace", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-sign.yml");
+    // Any action that unpacks artifacts or caches writes files somewhere; in the job that holds the
+    // root key, that must be the runner's temp dir, never the checkout.
+    const writers = steps(doc, "sign").filter((s) =>
+      /^actions\/(?:download-artifact|cache)(?:\/restore)?@/.test(s.uses ?? ""),
+    );
+    expect(writers.length).toBeGreaterThan(0);
+    for (const s of writers) {
+      const path = String(s.with?.["path"] ?? "");
+      expect(path.startsWith(`\${{ runner.temp }}/`)).toBe(true);
+      expect(path).not.toContain("..");
+      expect(path).not.toContain("github.workspace");
+    }
   });
 
   test("the score job: no environment, read-only, no persisted credentials, no secret or token", async () => {

@@ -22,8 +22,9 @@ two workflows. It never holds a signed \`index.json\`. The published site (the s
 \`index.json\` and the files it references) lives on the \`gh-pages\` branch, written only by the
 sign workflow.
 
-The repository must stay **public**: the check workflow fetches \`gh-pages\` and the base
-branch without credentials, and GitHub Pages serves the site to every client.
+The repository must stay **public**: the check job and the sign workflow's score job fetch
+\`gh-pages\` and the base branch without credentials (a private repository fails the score job,
+which skips every sign run), and GitHub Pages serves the site to every client.
 
 ## Publishing an extension
 
@@ -95,7 +96,7 @@ export function ownerNextSteps(opts: {
 }): string {
   const secret = `${ROOT_KEY_SECRET} --env ${SIGNING_ENVIRONMENT} --repo ${REPO_PLACEHOLDER}`;
   return `Next steps (nothing has been pushed; replace ${REPO_PLACEHOLDER} with the registry repository):
-  1. Make sure the repository is public: the check workflow fetches without credentials.
+  1. Make sure the repository is public: the check and score jobs fetch without credentials.
   2. Push ${opts.site} as the gh-pages branch.
   3. Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers, and set its
      deployment branches to ${opts.defaultBranch} only (Deployment branches and tags: Selected

@@ -52,7 +52,13 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   `error` entry, never a partial score. The whole run has a 14-minute budget: each role run's
   deadline is 12 minutes or what is left of the budget, whichever is shorter, and once under a
   minute is left every further version with eval suites gets an `ERR_EVAL_BUDGET` entry without
-  running (it is scored on a later run), so hanging suites cannot fail the job. That matters
+  running, so hanging suites cannot fail the job. A timeout whose deadline the remaining budget
+  set says so (`... (the score job's remaining time budget; the cap is 12 minutes)`). No state
+  is kept across runs: `sign` never signs a version whose eval failed, so it stays unsigned and
+  every sign run (a push to the default branch or a `workflow_dispatch`) scores it again, a
+  hanging suite spending 12 of the 14 minutes each time and starving later versions, until it
+  scores or its directory is removed from the default branch. The job summary lists those
+  versions with that remedy, and each gets a warning annotation saying it. That matters
   because `sign` needs this job: a red score job (an infrastructure failure such as the apt
   install or the release download) skips the whole sign run, trust requests (takedowns, key
   revocations) included, until the workflow is re-run. Refuses a `root-key` or `github-token`
@@ -87,7 +93,7 @@ signs the result into the index entry's `quality` (above).
 | `default-branch` | no (`sign`, `score`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
 | `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. In `check`, mutually exclusive with `nimbus-gateway` (both set fails the check). |
 | `nimbus-gateway` | `score`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored; mutually exclusive with `github-token` (both set fails the check, and provenance is left to the sign job). Never pass it to a job that holds secrets. |
-| `scores` | no (`score`, `sign`) | `score`: where it writes `scores.json`, relative to the workspace; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. |
+| `scores` | no (`score`, `sign`) | A path, relative to the workspace or absolute. `score`: where it writes `scores.json`; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. Download the score job's artifact outside the checkout (`init --github` uses `path: ${{ runner.temp }}/registry-scores` and `scores: ${{ runner.temp }}/registry-scores/scores.json`): the score job controls that artifact, and extracted into the workspace it could write into `.git/` of the job holding the root key. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 
 ## Building

@@ -18,7 +18,9 @@
  * deadline or what is left of the budget, whichever is shorter, and once under a minute is left
  * every further evals candidate is an `ERR_EVAL_BUDGET` entry without running. Hanging suites,
  * which a publisher can merge on purpose, therefore cannot turn the job red; a red score job would
- * skip the whole sign run, trust requests (takedowns, key revocations) included.
+ * skip the whole sign run, trust requests (takedowns, key revocations) included. The relief is per
+ * run only: no state is kept across runs, and `sign` never signs a version whose eval failed, so
+ * every sign run scores that version again, spending its budget, until it scores or is removed.
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -411,7 +413,13 @@ export function judgeRoleRun(
   timeoutMs: number = ROLE_TIMEOUT_MS,
 ): { quality: EvalQuality } | { error: ScoreError } {
   if (r.timedOut) {
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}`);
+    // A deadline under the role's own cap was set by the score run's remaining budget: say so,
+    // so a maintainer does not blame a suite that earlier, hanging versions starved of time.
+    const why =
+      timeoutMs < ROLE_TIMEOUT_MS
+        ? ` (the score job's remaining time budget; the cap is ${duration(ROLE_TIMEOUT_MS)})`
+        : "";
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}${why}`);
   }
   if (r.overflow) {
     return fail(
@@ -551,12 +559,23 @@ interface ScoreRun {
   skipped: Skipped[];
 }
 
+/** When an unscored version is tried again: no state is kept across runs. */
+const RETRY_NOTE =
+  "it is scored again on the next sign run (a push to the default branch or a workflow_dispatch)";
+
+/**
+ * Why a failed version keeps coming back: `sign` never signs it, so it stays unsigned on the default
+ * branch, and every sign run scores it again and spends budget on it until it scores or is removed.
+ */
+const FAILED_REMEDY =
+  "A version whose eval failed is not signed, so it is scored again on every sign run (a push to the default branch or a workflow_dispatch) until it scores or its directory is removed from the default branch; meanwhile each attempt spends time budget that later versions need.";
+
 /** The entry of an evals candidate the run had no budget left for. */
 const budgetSpent = (packageSha256: string): ScoreEntry => ({
   packageSha256,
   ...fail(
     "ERR_EVAL_BUDGET",
-    "not scored this run: the score job's time budget was spent; it will be scored on the next run",
+    `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}`,
   ),
 });
 
@@ -639,6 +658,7 @@ function report(io: ActionIo, r: ScoreRun): void {
   const lines = ["## Registry score", ""];
   const entries = Object.entries(r.scores);
   if (entries.length === 0) lines.push("No unsigned version with eval suites to score.");
+  const failed: string[] = [];
   for (const [ref, e] of entries) {
     if ("quality" in e) {
       const q = e.quality;
@@ -648,10 +668,16 @@ function report(io: ActionIo, r: ScoreRun): void {
     } else {
       io.annotate(
         "warning",
-        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it`,
+        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`,
       );
       lines.push(`- ${code(ref)}: not scored, ${code(e.error.code)} ${code(e.error.message)}`);
+      failed.push(ref);
     }
+  }
+  if (failed.length > 0) {
+    lines.push("", "**Not signed** (no score):", "");
+    for (const ref of failed) lines.push(`- ${code(ref)}`);
+    lines.push("", FAILED_REMEDY);
   }
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");

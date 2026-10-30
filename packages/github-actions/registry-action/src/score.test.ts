@@ -271,13 +271,46 @@ describe("score mode", () => {
       error: {
         code: "ERR_EVAL_BUDGET",
         message:
-          "not scored this run: the score job's time budget was spent; it will be scored on the next run",
+          "not scored this run: earlier evals spent the score job's time budget; it is scored again on the next sign run (a push to the default branch or a workflow_dispatch)",
       },
     });
     const messages = Object.values(r).map((e) => ("error" in e ? e.error.message : ""));
-    expect(messages).toContain("the eval did not finish within 2 minutes");
+    // The budget, not the suite, set the second deadline: the message says so.
+    expect(messages).toContain(
+      "the eval did not finish within 2 minutes (the score job's remaining time budget; the cap is 12 minutes)",
+    );
+    // The role's own cap names no budget.
     expect(messages).toContain("the eval did not finish within 12 minutes");
     expect(readScores()).toEqual(r);
+  });
+
+  test("failed versions are listed with the remedy, in the summary and the warning", async () => {
+    await publish({ id: "acme/bad", evals: { "basic.eval.json": SUITE } });
+    await publish({ id: "acme/good", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish two");
+    await score(
+      fakeRole((ref) =>
+        ref === "acme/bad@1.0.0"
+          ? run({ code: 1, stderrTail: "boom" })
+          : run({ stdout: okDoc("acme/good", "1.0.0") }),
+      ),
+    );
+    const remedy =
+      "A version whose eval failed is not signed, so it is scored again on every sign run (a push to the default branch or a workflow_dispatch) until it scores or its directory is removed from the default branch; meanwhile each attempt spends time budget that later versions need.";
+    const summary = summaries.join("\n");
+    // Exactly the failed version is listed, followed by the remedy.
+    expect(summary).toContain(`**Not signed** (no score):\n\n- \`acme/bad@1.0.0\`\n\n${remedy}`);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("eval of acme/bad@1.0.0 failed (ERR_EVAL_ROLE_FAILED)");
+    expect(warnings[0]).toContain(remedy);
+  });
+
+  test("with no failed version the summary carries no remedy", async () => {
+    await publish({ id: "acme/good", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    await score(echoOk);
+    expect(summaries.join("\n")).not.toContain("Not signed");
+    expect(warnings).toEqual([]);
   });
 
   test("a budget with under a minute left runs nothing more", async () => {
