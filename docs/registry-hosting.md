@@ -6,8 +6,8 @@ A Nimbus extension registry is a folder of signed static files (see [architectur
 
 - `main` holds sources: `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}`, publishers' signed key statements under `statements/<statement id>.json` (a `key.rotate` or `key.revoke` sent with `nimbus extension publish --statement`; the sign run admits them into the index, and one never leaves it once signed), maintainers' block requests under `trust-requests/<name>.json` (an unsigned `key.revoke` or `extension.takedown` written by `nimbus registry maintain revoke-key|takedown --github <clone>`; the sign run signs it with the root key, once), the rules in `nimbus-registry.json`, and two workflows. It never holds a signed `index.json`. The first sign run also sets the index's `reportUrl` to this repository's issue form, where `nimbus extension report` sends users.
 - `gh-pages` holds the published site: the signed `index.json` and the files it references. Only the sign workflow writes it.
-- **Registry check** runs on every pull request to `main` with a read-only token and no secrets. It is a reviewer aid.
-- **Registry sign** runs after a merge (or by hand), behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.
+- **Registry check** runs on every pull request to `main` with a read-only token and no secrets, and scores the new version's eval suites (see [Eval scores](#eval-scores)). It is a reviewer aid.
+- **Registry sign** runs after a merge (or by hand): a `score` job with no secrets runs the unsigned versions' eval suites, then the `sign` job runs behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.
 
 ## Owner steps
 
@@ -42,7 +42,24 @@ After a merge, the **Registry sign** run waits in the `registry-signing` environ
 
 Then they approve. The run re-validates every unsigned version, skips and names any that fail (fix the directory and a later run signs it), signs the rest at `sequence + 1` and pushes `gh-pages`. Each skipped version also gets a `::warning::` annotation and a line in the run summary. The run refuses outright, signing and pushing nothing, if the `gh-pages` index does not verify against its own root key, if the `root-key` secret is not that index's root key, if `main` has no `nimbus-registry.json` or its copy loosens the one `gh-pages` last used (`requirePublisherNamespace` true to false), or if an already-signed version's `manifest.json` or `package.tgz` changed or was deleted on `main`. Runs are serialised (`concurrency: registry-sign`).
 
-**Build provenance (optional).** For a version whose manifest declares `repository` (`owner/repo`), the sign run also runs `gh attestation verify` over the package and, when a SLSA build-provenance attestation from that repository verifies, records it in the version entry (repository, commit, workflow, runner); clients then show "Provenance verified by <registry>". A failure is a warning and the version is signed anyway; the check run shows the result to the reviewer. The workflows `init --github` writes pass `github-token: ${{ github.token }}` for this; a registry created before trust layer PR 4c adds that line under `with:` in both `registry-check.yml` and `registry-sign.yml`.
+**Build provenance (optional).** For a version whose manifest declares `repository` (`owner/repo`), the sign run also runs `gh attestation verify` over the package and, when a SLSA build-provenance attestation from that repository verifies, records it in the version entry (repository, commit, workflow, runner); clients then show "Provenance verified by <registry>". A failure is a warning and the version is signed anyway. The sign workflow `init --github` writes passes `github-token: ${{ github.token }}` for this. The check workflow passes no token: it runs extension code (below), so provenance is left to the sign run.
+
+## Eval scores
+
+A version whose package holds `evals/` gets a quality score, measured by the registry and signed into the index; clients show `quality N/100 (measured by <registry>)`. Extension code runs only in jobs that hold no secret:
+
+- the sign workflow's **`score` job** runs every unsigned version's eval suites in the platform sandbox (bubblewrap, no network) with the `nimbus-gateway-linux-x64` of the pinned Nimbus release, checked against that release's `SHA256SUMS`. It has a read-only token, no environment and no persisted credentials, and uploads `scores.json` as the `registry-scores` artifact;
+- the **`sign` job** needs `score`, downloads that file and reads it as untrusted input: each entry must match its version's id, version and package digest. A version with `evals/` and no valid score is not signed (a later run retries it); a version without `evals/` is signed with no score. If the `score` job fails, `sign` does not run and nothing is signed;
+- the **check job** runs the pull request's version the same way and shows its score (or the error) in the summary.
+
+Both jobs set up the sandbox with `sudo`: install `bubblewrap` and set `kernel.apparmor_restrict_unprivileged_userns=0`, then probe bubblewrap as the runner user. On GitHub-hosted runners each job gets a fresh VM, so the change ends with the job. **On a self-hosted runner, do not lift the user-namespace restriction**: the sysctl changes the whole machine, for every later job and user on it. Run these jobs on GitHub-hosted runners, or on a dedicated, ephemeral self-hosted runner that already allows unprivileged user namespaces, and remove the `sysctl` lines.
+
+**Adopting it in an existing registry.** Do not re-run `init --github` in your registry folder: it writes a new root key. Either run it into a scratch folder with a throwaway key (`nimbus registry maintain init ./scratch --github --key ./scratch-key --site ./scratch-site`) and copy only its two workflow files, `registry-check.yml` and `registry-sign.yml` (under `.github/workflows/`), over yours, then delete the scratch folders and key; or apply the change by hand:
+
+- `registry-sign.yml`: add a `score` job before `sign` (checkout with `persist-credentials: false`, job-level `permissions: contents: read`, the two setup steps, the action with `mode: score`, `default-branch` and `nimbus-gateway: ${{ github.workspace }}/nimbus-gateway-linux-x64`, then `actions/upload-artifact` of `scores.json` with `if-no-files-found: error`); in `sign`, add `needs: score`, an `actions/download-artifact` step for `registry-scores` before the action, and `scores: scores.json` under the action's `with:`;
+- `registry-check.yml`: add the two setup steps before the action, replace `github-token: ${{ github.token }}` with `nimbus-gateway: ${{ github.workspace }}/nimbus-gateway-linux-x64` (the action refuses both together), and raise `timeout-minutes` to 20.
+
+Take the exact steps and pins from a scratch `init --github` run. A registry that does not adopt this keeps working as before: without the `scores` input, sign records no quality.
 
 ## Bounds, stated plainly
 

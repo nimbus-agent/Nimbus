@@ -22,14 +22,17 @@ import {
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
 import { parse as parseYaml } from "yaml";
-import { lintWorkflow } from "../../../../scripts/audit/workflow-lint.ts";
+import { lintWorkflow, makeBashChecker } from "../../../../scripts/audit/workflow-lint.ts";
 import { decodeBase64, encodeBase64 } from "../lib/extension-signing.ts";
 import { readIndexFile } from "../lib/registry-index.ts";
 import { type MaintainBuild, runRegistryMaintain } from "./registry-maintain.ts";
 import {
   CHECKOUT_ACTION,
+  DOWNLOAD_ARTIFACT_ACTION,
   REGISTRY_ACTION_PATH,
   ROOT_KEY_SECRET,
+  SCORES_ARTIFACT,
+  UPLOAD_ARTIFACT_ACTION,
 } from "./registry-templates/workflows.ts";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -87,13 +90,26 @@ function workflow(dir: string, name: string): { text: string; doc: Record<string
   return { text, doc: parseYaml(text) as Record<string, unknown> };
 }
 
-type Step = { uses?: string; with?: Record<string, unknown> };
+type Step = { name?: string; uses?: string; run?: string; with?: Record<string, unknown> };
 function job(doc: Record<string, unknown>, name: string): Record<string, unknown> {
   return (doc["jobs"] as Record<string, Record<string, unknown>>)[name] as Record<string, unknown>;
 }
 function steps(doc: Record<string, unknown>, name: string): Step[] {
   return job(doc, name)["steps"] as Step[];
 }
+function usesStep(doc: Record<string, unknown>, name: string, prefix: string): Step {
+  const s = steps(doc, name).find((x) => x.uses?.startsWith(prefix));
+  if (s === undefined) throw new Error(`no ${prefix} step in ${name}`);
+  return s;
+}
+/** Every non-empty line of every `run:` body in the job, trimmed. */
+function runLines(doc: Record<string, unknown>, name: string): string[] {
+  return steps(doc, name)
+    .flatMap((s) => (s.run ?? "").split("\n"))
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+}
+const GATEWAY_PATH = `\${{ github.workspace }}/nimbus-gateway-linux-x64`;
 function checkoutStep(doc: Record<string, unknown>, name: string): Step {
   const s = steps(doc, name).find((x) => x.uses?.startsWith("actions/checkout@"));
   if (s === undefined) throw new Error("no checkout step");
@@ -162,11 +178,12 @@ describe("registry maintain init --github", () => {
 
   test("every uses: in both workflows is pinned to a 40-hex SHA with a version comment", async () => {
     const { dir } = await initGithub();
+    const expected: Record<string, number> = { "registry-check.yml": 2, "registry-sign.yml": 6 };
     for (const name of ["registry-check.yml", "registry-sign.yml"]) {
       const usesLines = workflow(dir, name)
         .text.split("\n")
         .filter((l) => /^\s*-?\s*uses:/.test(l));
-      expect(usesLines).toHaveLength(2);
+      expect(usesLines).toHaveLength(expected[name] ?? -1);
       for (const line of usesLines) {
         expect(line).toMatch(/uses: [^@\s]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/);
       }
@@ -175,18 +192,22 @@ describe("registry maintain init --github", () => {
     }
   });
 
-  test("the checkout pin is one this repository's own workflows use", () => {
+  test.each([
+    ["checkout", `${CHECKOUT_ACTION} # v`],
+    ["upload-artifact", UPLOAD_ARTIFACT_ACTION],
+    ["download-artifact", DOWNLOAD_ARTIFACT_ACTION],
+  ])("the %s pin is one this repository's own workflows use", (_what, pinned) => {
+    expect(pinned).toMatch(/^actions\/[a-z-]+@[0-9a-f]{40} # v/);
     const workflows = join(import.meta.dir, "..", "..", "..", "..", ".github", "workflows");
     const own = readdirSync(workflows).filter((f) => f.endsWith(".yml"));
-    expect(
-      own.some((f) => readFileSync(join(workflows, f), "utf8").includes(CHECKOUT_ACTION)),
-    ).toBe(true);
+    expect(own.some((f) => readFileSync(join(workflows, f), "utf8").includes(pinned))).toBe(true);
   });
 
-  test("lintWorkflow finds nothing in either workflow", async () => {
+  test("lintWorkflow finds nothing in either workflow, bash syntax included where bash runs", async () => {
     const { dir } = await initGithub();
+    const bash = makeBashChecker() ?? undefined;
     for (const name of ["registry-check.yml", "registry-sign.yml"]) {
-      expect(lintWorkflow(name, workflow(dir, name).text)).toEqual([]);
+      expect(lintWorkflow(name, workflow(dir, name).text, bash)).toEqual([]);
     }
   });
 
@@ -203,8 +224,23 @@ describe("registry maintain init --github", () => {
     expect(checkoutStep(doc, "check").with?.["fetch-depth"]).toBe(0);
     expect(checkoutStep(doc, "check").with?.["persist-credentials"]).toBe(false);
     const action = steps(doc, "check").find((s) => s.uses?.startsWith(REGISTRY_ACTION_PATH));
-    // Read-only token: lets the summary say whether the version's build provenance verifies.
-    expect(action?.with).toEqual({ mode: "check", "github-token": `\${{ github.token }}` });
+    // The check job runs the pull request's eval suites, so it holds no token at all (R8);
+    // build provenance is left to the sign job.
+    expect(action?.with).toEqual({ mode: "check", "nimbus-gateway": GATEWAY_PATH });
+  });
+
+  test("the check job holds no secret or token and sets up the gateway before the check", async () => {
+    const { dir } = await initGithub();
+    const { text, doc } = workflow(dir, "registry-check.yml");
+    expect(text).not.toContain("secrets.");
+    expect(text).not.toContain("github.token");
+    expect(job(doc, "check")["timeout-minutes"]).toBe(20);
+    const names = steps(doc, "check").map((s) => s.name);
+    const check = names.indexOf("Check");
+    for (const before of ["Set up the sandbox", "Download the Nimbus gateway"]) {
+      expect(names.indexOf(before)).toBeGreaterThan(-1);
+      expect(names.indexOf(before)).toBeLessThan(check);
+    }
   });
 
   test("the sign workflow: push to main + dispatch, environment, write, serialised, keeps credentials", async () => {
@@ -213,7 +249,8 @@ describe("registry maintain init --github", () => {
     expect(doc["on"]).toEqual({ push: { branches: ["main"] }, workflow_dispatch: null });
     expect(doc["permissions"]).toEqual({ contents: "write" });
     expect(doc["concurrency"]).toEqual({ group: "registry-sign", "cancel-in-progress": false });
-    expect(Object.keys(doc["jobs"] as object)).toEqual(["sign"]);
+    expect(Object.keys(doc["jobs"] as object)).toEqual(["score", "sign"]);
+    expect(job(doc, "sign")["needs"]).toBe("score");
     expect(job(doc, "sign")["environment"]).toBe("registry-signing");
     // The action pushes gh-pages with the token the checkout persisted.
     const checkout = checkoutStep(doc, "sign");
@@ -226,8 +263,116 @@ describe("registry maintain init --github", () => {
       "default-branch": "main",
       "root-key": `\${{ secrets.${ROOT_KEY_SECRET} }}`,
       "github-token": `\${{ github.token }}`,
+      scores: "scores.json",
     });
   });
+
+  test("the sign job downloads the score job's scores.json before signing", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-sign.yml");
+    const download = usesStep(doc, "sign", "actions/download-artifact@");
+    expect(DOWNLOAD_ARTIFACT_ACTION.startsWith(download.uses ?? "-")).toBe(true);
+    expect(download.with).toEqual({ name: SCORES_ARTIFACT });
+    const all = steps(doc, "sign");
+    expect(all.indexOf(download)).toBeLessThan(
+      all.indexOf(usesStep(doc, "sign", REGISTRY_ACTION_PATH)),
+    );
+    // No extension code, and no shell at all, runs in the job that holds the key.
+    expect(runLines(doc, "sign")).toEqual([]);
+  });
+
+  test("the score job: no environment, read-only, no persisted credentials, no secret or token", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-sign.yml");
+    const score = job(doc, "score");
+    expect(score["runs-on"]).toBe("ubuntu-24.04");
+    expect(score["timeout-minutes"]).toBe(20);
+    expect(score["environment"]).toBeUndefined();
+    expect(score["needs"]).toBeUndefined();
+    expect(score["permissions"]).toEqual({ contents: "read" });
+    expect(checkoutStep(doc, "score").with?.["persist-credentials"]).toBe(false);
+    const text = JSON.stringify(score);
+    expect(text).not.toContain("secrets.");
+    expect(text).not.toContain("github.token");
+    expect(usesStep(doc, "score", REGISTRY_ACTION_PATH).with).toEqual({
+      mode: "score",
+      "default-branch": "main",
+      "nimbus-gateway": GATEWAY_PATH,
+    });
+    const upload = usesStep(doc, "score", "actions/upload-artifact@");
+    expect(UPLOAD_ARTIFACT_ACTION.startsWith(upload.uses ?? "-")).toBe(true);
+    expect(upload.with).toEqual({
+      name: SCORES_ARTIFACT,
+      path: "scores.json",
+      "if-no-files-found": "error",
+    });
+    const all = steps(doc, "score");
+    expect(all.indexOf(usesStep(doc, "score", REGISTRY_ACTION_PATH))).toBeLessThan(
+      all.indexOf(upload),
+    );
+  });
+
+  test.each([
+    ["registry-sign.yml", "score"],
+    ["registry-check.yml", "check"],
+  ])("%s %s: sudo for system changes, the smoke probe as the runner user", async (file, name) => {
+    const { dir } = await initGithub();
+    const lines = runLines(workflow(dir, file).doc, name);
+    for (const line of [
+      "sudo apt-get -o Acquire::Retries=3 update -qq < /dev/null",
+      "sudo apt-get -o Acquire::Retries=3 install -y -qq bubblewrap < /dev/null",
+      "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
+      "sudo sysctl -w kernel.unprivileged_userns_clone=1 || true",
+    ]) {
+      expect(lines).toContain(line);
+    }
+    const probes = lines.filter((l) => l.includes("--unshare-user"));
+    expect(probes).toHaveLength(1);
+    const probe = probes[0] ?? "";
+    // Root bypasses the userns restriction, so a probe under sudo would be a false green.
+    expect(probe).not.toContain("sudo");
+    expect(probe.startsWith("bwrap --unshare-user ")).toBe(true);
+    for (const part of [
+      "--unshare-net",
+      "--ro-bind /usr /usr",
+      "--ro-bind /etc /etc",
+      "--ro-bind /lib /lib",
+      "--proc /proc",
+      "--dev /dev",
+      "/usr/bin/true",
+    ]) {
+      expect(probe).toContain(part);
+    }
+    expect(lines.some((l) => l.includes("--ro-bind /lib64 /lib64"))).toBe(true);
+  });
+
+  test.each([
+    ["registry-sign.yml", "score"],
+    ["registry-check.yml", "check"],
+  ])(
+    "%s %s: downloads the pinned version's gateway, verifies only its line",
+    async (file, name) => {
+      const { dir } = await initGithub();
+      const lines = runLines(workflow(dir, file).doc, name);
+      const joined = lines.join("\n");
+      const base = "https://github.com/nimbus-agent/Nimbus/releases/download/v9.9.9";
+      expect(joined).toContain(base);
+      expect(joined).toContain("nimbus-gateway-linux-x64");
+      expect(joined).toContain("SHA256SUMS");
+      const grep = lines.indexOf(
+        "grep -E '^[0-9a-f]{64}  nimbus-gateway-linux-x64$' SHA256SUMS > CHECKSUM.txt",
+      );
+      const count = lines.indexOf('test "$(wc -l < CHECKSUM.txt)" -eq 1');
+      const verify = lines.indexOf("sha256sum -c CHECKSUM.txt");
+      const chmod = lines.indexOf("chmod +x nimbus-gateway-linux-x64");
+      expect(grep).toBeGreaterThan(-1);
+      expect(count).toBeGreaterThan(grep);
+      expect(verify).toBeGreaterThan(count);
+      expect(chmod).toBeGreaterThan(verify);
+      // Checking the whole file fails on every asset this job did not download.
+      expect(joined).not.toContain("sha256sum -c SHA256SUMS");
+    },
+  );
 
   test("never prints the root seed; prints the environment-scoped secret commands", async () => {
     const { key, site } = await initGithub();

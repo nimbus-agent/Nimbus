@@ -36,8 +36,11 @@ nimbus extension publish <extension-dir> --registry-repo <owner>/<repo>
 A publish pull request may only ADD the three files of exactly one new \`<id>@<version>\`, plus
 any \`statements/<statement id>.json\` files.
 ${namespace}The **Registry check** workflow validates it against the signed index and writes a summary for the
-reviewer. A green check is a reviewer aid, not a guarantee: a pull request can edit the check
-workflow itself, and no runtime check of the package is performed.
+reviewer. When the version holds \`evals/\`, the check also runs its eval suites in the sandbox
+and shows the score (or the error) in the summary; no other runtime check of the package is
+performed. A green check is a reviewer aid, not a guarantee: a pull request can edit the check
+workflow itself. The sign workflow scores every version with \`evals/\` again in its own \`score\`
+job, and a version with \`evals/\` and no valid score is not signed.
 
 ## Rotating or revoking a publisher key
 
