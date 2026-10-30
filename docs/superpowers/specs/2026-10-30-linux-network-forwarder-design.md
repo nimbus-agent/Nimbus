@@ -58,16 +58,21 @@ Only a policy in `per-host` mode takes this path. A no-network policy keeps toda
 
 ### Address rules
 
-A declared name can resolve to something the owner never meant to allow, such as a cloud metadata address. The wrapper resolves once, filters the answers, and connects only to an address it kept, so a name that changes its answer between check and connect gains nothing.
+A declared name can resolve to something the owner never meant to allow. An extension could declare a name it controls and point it at the owner's router, or at a cloud metadata address. So the rule depends on who chose the entry. The wrapper resolves once, filters the answers, and connects only to an address it kept, so a name that changes its answer between check and connect gains nothing.
 
-| Resolved address | Declared as a name | Declared as that literal, or `localhost` |
+- **Owner-configured:** the owner typed it. That means a host taken at spawn from the owner's connector settings (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`.
+- **Package-declared:** a first-party manifest's fixed list, or an extension's manifest.
+
+| Resolved address | Owner-configured | Package-declared |
 |---|---|---|
 | Public | Allowed | Allowed |
-| Private (RFC 1918, IPv6 unique-local) | Allowed, because a self-hosted Jenkins on a LAN name must work | Allowed |
-| Loopback | Refused | Allowed, on the declared port |
-| Link-local, including `169.254.169.254` and `fe80::/10` | Refused | Allowed |
+| Private (RFC 1918, IPv6 unique-local) | Allowed, so a self-hosted Jenkins on a LAN name works | Refused for a name. Allowed for that literal address, which the owner saw at approval |
+| Loopback | Allowed only if the entry is `localhost` or that literal, on the declared port | Refused |
+| Link-local, including `169.254.169.254` and `fe80::/10` | Refused | Refused |
 
-IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
+Link-local is refused for everyone because nothing legitimate needs it and cloud credentials live there. Package-declared loopback is refused because the gateway's own local listeners are there. IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
+
+The policy needs a new field naming the owner-configured entries, passed through `parseSandboxPolicy`. It must be set only by gateway code from the owner's settings, never read from a manifest.
 
 ### Limits
 
@@ -96,11 +101,13 @@ The nesting needs the outer `bwrap` to keep `CAP_SETFCAP`, because Linux 5.12 an
 
 ### Not yet proven, and required before this ships
 
-1. **Shutdown.** In the spike the run ended with no exit status, and I did not find out why. My guess is that the forwarder holds the inherited stdout pipe open. The forwarder must close stdio it does not use and must die with the sandbox. The wrapper must report the child's real exit code, and MCP stdio must see EOF. A test must prove all three.
+1. **Shutdown.** In the spike the run ended with no exit status, and I did not find out why. My guess, which the review shares, is that the forwarder holds the inherited stdout pipe open. The forwarder must close stdio it does not use and must die with the sandbox. The wrapper must report the child's real exit code, and MCP stdio must see EOF. A test must prove all three.
+   The spike's launcher also sets `SIGCHLD` to ignored, and that survives `exec`, so a child's own `waitpid` could get `ECHILD`. The real launcher must restore the default before it runs the inner `bwrap`, and a test must prove a child can spawn and wait for a subprocess.
 2. **A real connector** through the forwarder. So far only a Bun script has run through it.
 3. **Residual bounding set.** The child's `CapBnd` was `0x80000500`, the three kept capabilities. With `NoNewPrivs` set and the other sets at 0 it grants nothing, and I believe that is fine, but the builder should drop them in the inner `bwrap` if that works.
 4. **Forwarder confinement.** The C forwarder is outside the inner `bwrap` and handles bytes the child wrote. It should apply its own small seccomp filter once its sockets are set up.
-5. **The stub resolver.** Nothing has measured `127.0.0.53` under this layout, or how `fetch`, `node:https` and the `aws` CLI behave when it answers.
+5. **The stub resolver.** Nothing has measured `127.0.0.53` under this layout, or how `fetch`, `node:https` and the `aws` CLI behave when it answers. The spike's forwarder handles TCP only.
+   The same goes for IP literals: the spike's outer `bwrap` does not hold `CAP_NET_ADMIN`, so adding an address to loopback has not been run.
 6. **Other distros.** Only the Ubuntu 24.04 runner has run this. Before shipping, it runs on Debian and Fedora images, in privileged Docker since that is what is available, which does not prove their kernel defaults. Unprivileged namespaces being disabled entirely already fails today, and #1827's `nimbus doctor` check reports it.
 
 ## Host and port handling
@@ -134,10 +141,10 @@ The wrapper sees each connection by declared entry, so it can record host, port,
 2. **A missing launcher behaves as a missing helper does today.** This only happens on a source build, since every package ships it. The fallback stays documented, `nimbus doctor` warns, and `canConfine` refuses for a network-declaring policy.
 3. **Setup failure refuses the spawn**, whether a listener cannot bind or nesting does not work on this machine, even where plain `bwrap` does. It never falls back. `canConfine` and `nimbus doctor` run the full nested start, so they report it before the owner is asked.
 4. **A stub resolver is in scope**, because with no off switch a broken connector has to say which host it wanted, and `EAI_AGAIN` does not. Its parsing is in TypeScript, so the C code stays a byte relay.
-5. **The address rules above.** Today's whole-internet mode can reach all of these, so they only tighten. Allowing private addresses for a declared name is the deliberate gap, since refusing them would break self-hosted connectors.
+5. **The address rules above.** Today's whole-internet mode can reach all of these, so they only tighten. A connector the owner pointed at a LAN host keeps working. An extension that needs a LAN address must declare the literal, so the owner sees it at approval.
 6. **The launcher stays in C**, in the existing helper's directory. A Bun self-role would add a full runtime start to every network spawn and cannot drop capabilities without FFI.
 7. **x86-64 first.** It is the only Linux build today, and the seccomp filter is x86-64 only.
 
 ## Left to the builder
 
-The wire format between forwarder and wrapper. How `127.0.0.x` addresses are assigned. How many PRs, though I suggest the host and port fixes and audit come first, since they are useful alone. How the wrapper stops a connection when the child exits. Performance is not expected to matter, since these are API calls, but a large-file connector should be checked.
+The wire format between forwarder and wrapper, given that the socket stays in a directory only the wrapper and the outer `bwrap` can reach, and the wrapper trusts nothing the forwarder says beyond which entry to check. How `127.0.0.x` addresses are assigned. How many PRs, though I suggest the host and port fixes and audit come first, since they are useful alone. How the wrapper stops a connection when the child exits. Performance is not expected to matter, since these are API calls, but a large-file connector should be checked.
