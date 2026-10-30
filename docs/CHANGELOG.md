@@ -18,6 +18,20 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-30 — `nimbus eval` PR 5 of 5: `--installed` (Phase 9.5 project 5 complete; no migration, no new invariant).**
+  `nimbus eval --installed [--threshold <n>] [--json]` evaluates every enabled, non-starter-pack installed extension behind
+  ONE owner approval (`extension.eval`, terminal-only: no `--yes`, no non-TTY; at most 50 per run, else
+  `ERR_EVAL_TOO_MANY_EXTENSIONS`) and compares each local score with the score the extension's source registry signed for the
+  SAME version. An extension without suites reports `no eval suites`. A row with no comparison says why: local install,
+  version not in the registry, not evaluated, invalid score, or registry unreadable. A regression is registry minus local
+  above `--threshold` (integer 0 to 100, default 5); exit codes are 2 (an eval error or usage error) over 1 (a regression)
+  over 0; `--json` prints one document. **Known limits:** the comparison needs a registry that publishes scores and none does
+  today (the official registry in `nimbus-mcp-servers` publishes through its own script, not the registry action's
+  workflows, and Readwise has no eval suites), so every row currently reads `no registry score`. The CLI's IPC budget is 6
+  hours; 50 extensions at the gateway's per-run limit could take longer, and the call then fails `ERR_EVAL_IPC`. Project 5
+  shipped in 5 PRs on 2026-10-29/30: the format (#1817), the sandboxed runner `--package` (#1819, I49/D38), `extension.eval`
+  and `--extension` (#1821), registry CI scoring and the score display (#1822), and this one.
+
 - **2026-10-30 — `nimbus eval` PR 4 of 5: registry scoring and score display (Phase 9.5 project 5; no migration, no new
   invariant; I49 amended).** A registry can now measure each version's eval score itself and sign it into its index. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The registry
   action gains a `score` mode, run by a new `score` job in the sign workflow `nimbus registry maintain init --github` writes:
