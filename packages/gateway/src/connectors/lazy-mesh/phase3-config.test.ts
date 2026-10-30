@@ -2704,6 +2704,26 @@ describe("phase3AddProtonmailMcp", () => {
     expect(spec.env?.["PROTONMAIL_PASSWORD"]).toBe("bridge-pw");
     expect(spec.env?.["PROTONMAIL_MAILBOX"]).toBeUndefined();
     expect(spec.env?.["PROTONMAIL_SMTP_HOST"]).toBeUndefined();
+    const policy = readSandboxPolicy(spec) as { ownerConfiguredNetwork?: string[] };
+    expect(policy.ownerConfiguredNetwork).toEqual(["127.0.0.1:1143"]);
+  });
+
+  test("default SMTP loopback entry is labelled only when send credentials add it", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    await vault.set("protonmail.password", "bridge-pw");
+    await vault.set("protonmail.smtp_username", "smtp@proton.me");
+    await vault.set("protonmail.smtp_password", "smtp-pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["protonmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    const policy = readSandboxPolicy(spec) as ReturnType<typeof readSandboxPolicy> & {
+      ownerConfiguredNetwork?: string[];
+    };
+    expect(policy.permissions.network).toEqual(["127.0.0.1:1143", "127.0.0.1:1025"]);
+    expect(policy.ownerConfiguredNetwork).toEqual(["127.0.0.1:1143", "127.0.0.1:1025"]);
   });
 
   test("custom host/port + mailbox + full SMTP creds set every optional env + smtp host:port", async () => {

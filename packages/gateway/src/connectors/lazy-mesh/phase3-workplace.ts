@@ -302,14 +302,10 @@ export async function phase3AddProtonmailMcp(
   if (smtpUser !== "" && smtpPass !== "") {
     extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
   }
-  // The Bridge loopback default is written in code; an entry is the owner's only when its host
-  // came from a stored value.
-  const ownerConfigured: string[] = [];
-  if (storedHost !== "") ownerConfigured.push(`${host}:${String(port)}`);
-  if (storedSmtpHost !== "" && smtpUser !== "" && smtpPass !== "") {
-    ownerConfigured.push(`${smtpHost}:${String(smtpPort)}`);
-  }
-  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts, { ownerConfigured });
+  // Every entry is labelled, the 127.0.0.1 defaults too: Bridge is a local app the owner chose to use.
+  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts, {
+    ownerConfigured: extraHosts,
+  });
 
   const env: Record<string, string> = {
     PROTONMAIL_HOST: host,
