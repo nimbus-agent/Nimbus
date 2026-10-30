@@ -20,11 +20,12 @@
  * which a publisher can merge on purpose, therefore cannot turn the job red; a red score job would
  * skip the whole sign run, trust requests (takedowns, key revocations) included.
  */
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdtempSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join } from "node:path";
+import type { Readable } from "node:stream";
 import {
   type EvalQuality,
   inspectPackage,
@@ -43,7 +44,6 @@ import {
   validateUnsigned,
 } from "./candidates.ts";
 import * as gitTree from "./git-tree.ts";
-import type { ExecFileLike } from "./provenance.ts";
 import { CONFIG_FILE, PAGES_BRANCH, readConfigAt, readVerifiedIndex } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
 
@@ -126,19 +126,214 @@ function removeQuietly(rm: RemoveDir, path: string): void {
   }
 }
 
-/** Keeps the last `max` characters. */
-const tail = (s: string, max: number): string => (s.length > max ? s.slice(-max) : s);
+/** After the role exits, how long its stdout may still drain before the run resolves anyway. */
+export const ROLE_DRAIN_GRACE_MS = 2_000;
+
+/** What the role runner needs of a spawned process (a `ChildProcess` satisfies it). */
+export interface RoleChild {
+  readonly pid?: number | undefined;
+  readonly stdout: Readable | null;
+  readonly stderr: Readable | null;
+  kill(signal?: NodeJS.Signals | number): boolean;
+  on(
+    event: "exit",
+    listener: (code: number | null, signal: NodeJS.Signals | null) => void,
+  ): unknown;
+  on(event: "close", listener: () => void): unknown;
+  on(event: "error", listener: (err: Error) => void): unknown;
+}
+
+/** The options the role is spawned with. */
+export interface RoleSpawnOptions {
+  env: Record<string, string>;
+  stdio: ["ignore", "pipe", "pipe"];
+  windowsHide: boolean;
+  /** POSIX: the role leads its own process group, so the deadline can kill everything under it. */
+  detached: boolean;
+  shell: false;
+}
+
+/** Spawns the role (`node:child_process` `spawn` by default). */
+export type SpawnLike = (file: string, args: string[], opts: RoleSpawnOptions) => RoleChild;
+
+/** Sends `signal` to `pid` (a negative `pid` is a process group); throws as `process.kill` does. */
+export type KillProcess = (pid: number, signal: NodeJS.Signals) => void;
+
+const nodeSpawn: SpawnLike = (file, args, opts) => spawn(file, args, opts);
+const killProcess: KillProcess = (pid, signal) => {
+  process.kill(pid, signal);
+};
+
+const IS_WINDOWS = process.platform === "win32";
+
+/** An error's `code` (`ENOENT`, `ESRCH`), else its message. */
+function errCode(e: unknown): string {
+  if (!(e instanceof Error)) return String(e);
+  const c = (e as NodeJS.ErrnoException).code;
+  return typeof c === "string" ? c : e.message;
+}
 
 /**
- * The default `runRole`: `execFile` with the absolute gateway path and an argv array (no shell,
- * no `PATH` lookup), `windowsHide`, the deadline and the stdout cap. The environment is minimal —
+ * Kills the role and everything in its process group. On POSIX the group is the role, the
+ * sandbox wrapper under it and (through bwrap's `--die-with-parent` and pid namespace) the
+ * extension: killing the role alone would leave the wrapper holding the role's stderr open, and
+ * the run could never end. Without a group (Windows, or no pid) the role itself is killed.
+ */
+function killGroup(child: RoleChild, kill: KillProcess): void {
+  const pid = child.pid;
+  if (!IS_WINDOWS && pid !== undefined) {
+    try {
+      kill(-pid, "SIGKILL");
+      return;
+    } catch (e) {
+      if (errCode(e) === "ESRCH") return;
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
+/**
+ * After the role exits, whatever is left in its group is litter from untrusted code: killed. The
+ * kernel never hands out a pid that is still a live group's id, so this cannot reach an unrelated
+ * process while a group member lives; with none left it is `ESRCH`, ignored.
+ */
+function sweepGroup(child: RoleChild, kill: KillProcess): void {
+  if (IS_WINDOWS || child.pid === undefined) return;
+  try {
+    kill(-child.pid, "SIGKILL");
+  } catch {
+    // Nothing left in the group.
+  }
+}
+
+const asBuffer = (chunk: Buffer | string): Buffer =>
+  Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+
+/** Collects a stream up to `max` bytes; the first chunk past it calls `onOverflow`, once. */
+function collectCapped(stream: Readable | null, max: number, onOverflow: () => void): () => string {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  let over = false;
+  stream?.on("data", (chunk: Buffer | string) => {
+    if (over) return;
+    const b = asBuffer(chunk);
+    if (size + b.length > max) {
+      over = true;
+      onOverflow();
+      return;
+    }
+    chunks.push(b);
+    size += b.length;
+  });
+  stream?.on("error", () => {});
+  return () => Buffer.concat(chunks).toString("utf8");
+}
+
+/** Keeps the last `max` bytes of a stream, holding at most `max` bytes plus one chunk. */
+function collectTail(stream: Readable | null, max: number): () => Buffer {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  stream?.on("data", (chunk: Buffer | string) => {
+    const b = asBuffer(chunk);
+    chunks.push(b);
+    size += b.length;
+    while (chunks.length > 1 && size - (chunks[0]?.length ?? 0) >= max) {
+      size -= chunks.shift()?.length ?? 0;
+    }
+  });
+  stream?.on("error", () => {});
+  return () => Buffer.concat(chunks);
+}
+
+/** The last `max` bytes of `b`, as text. */
+const tailText = (b: Buffer, max: number): string =>
+  b.subarray(Math.max(0, b.length - max)).toString("utf8");
+
+/** A run whose role never started. */
+const notStarted = (why: string): RoleRun => ({
+  code: null,
+  stdout: "",
+  stderrTail: tailText(Buffer.from(why), ROLE_STDERR_TAIL_BYTES),
+  timedOut: false,
+  overflow: false,
+});
+
+/**
+ * Watches one spawned role to its end, in phases: the deadline (kill the group), stdout up to the
+ * cap (past it, kill the group), the exit (stop the deadline, sweep the group, give stdout
+ * `ROLE_DRAIN_GRACE_MS` to drain), then resolve with what was collected. The run resolves on
+ * `close` or at the end of the grace, whichever is first, and exactly once: a process still
+ * holding the role's stdio can delay it by the grace at most, never block it.
+ */
+function watchRole(
+  child: RoleChild,
+  timeoutMs: number,
+  kill: KillProcess,
+  done: (r: RoleRun) => void,
+): void {
+  const run = { code: null as number | null, timedOut: false, overflow: false, why: "" };
+  let settled = false;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => {
+    run.overflow = true;
+    killGroup(child, kill);
+  });
+  const stderr = collectTail(child.stderr, ROLE_STDERR_TAIL_BYTES);
+  const deadline = setTimeout(() => {
+    run.timedOut = true;
+    killGroup(child, kill);
+  }, timeoutMs);
+
+  const settle = (): void => {
+    if (settled) return;
+    settled = true;
+    clearTimeout(deadline);
+    clearTimeout(grace);
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    done({
+      code: run.code,
+      stdout: stdout(),
+      stderrTail: tailText(Buffer.concat([stderr(), Buffer.from(run.why)]), ROLE_STDERR_TAIL_BYTES),
+      timedOut: run.timedOut,
+      overflow: run.overflow,
+    });
+  };
+
+  child.on("exit", (code) => {
+    clearTimeout(deadline);
+    run.code = code;
+    sweepGroup(child, kill);
+    grace ??= setTimeout(settle, ROLE_DRAIN_GRACE_MS);
+  });
+  child.on("close", settle);
+  child.on("error", (e) => {
+    // A started role's later error (a failed kill, say) changes nothing: its exit still comes.
+    if (child.pid !== undefined) return;
+    run.why = `could not run the gateway: ${errCode(e)}\n`;
+    settle();
+  });
+}
+
+/**
+ * The default `runRole`: `spawn` with the absolute gateway path and an argv array (no shell, no
+ * `PATH` lookup), `windowsHide`, the deadline and the stdout cap. The environment is minimal —
  * `PATH` and a fresh `HOME` under `tmp()` — so nothing from this process (a token, a key) reaches
  * the role, and the role's sandbox directory, which it derives from `HOME`, is private to this run.
+ *
+ * On POSIX the role leads its own process group (`detached`), and the deadline or a stdout overflow
+ * kills the whole group: the sandbox wrapper under the role inherits the role's stderr, so killing
+ * the role alone would leave the run waiting on a pipe the extension keeps open.
  */
 export function roleRunner(
-  exec: ExecFileLike = execFile,
+  spawnRole: SpawnLike = nodeSpawn,
   tmp: () => string = osTmpdir,
   rm: RemoveDir = removeDir,
+  kill: KillProcess = killProcess,
 ): RunRole {
   return (gateway, packageDir, timeoutMs = ROLE_TIMEOUT_MS) =>
     new Promise((resolve) => {
@@ -148,53 +343,23 @@ export function roleRunner(
         resolve(r);
       };
       const env = { PATH: process.env["PATH"] ?? "", HOME: home };
+      let child: RoleChild;
       try {
-        exec(
-          gateway,
-          ["__nimbus-eval", "--package", packageDir, "--json"],
-          {
-            env,
-            timeout: timeoutMs,
-            maxBuffer: ROLE_STDOUT_MAX_BYTES,
-            windowsHide: true,
-          },
-          (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))),
-        );
-      } catch (e) {
-        finish({
-          code: null,
-          stdout: "",
-          stderrTail: `could not start the gateway: ${e instanceof Error ? e.message : String(e)}`,
-          timedOut: false,
-          overflow: false,
+        child = spawnRole(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
+          env,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+          detached: !IS_WINDOWS,
+          shell: false,
         });
+      } catch (e) {
+        finish(
+          notStarted(`could not start the gateway: ${e instanceof Error ? e.message : String(e)}`),
+        );
+        return;
       }
+      watchRole(child, timeoutMs, kill, finish);
     });
-}
-
-/** What `execFile`'s callback reports, as a `RoleRun`. */
-function roleRunOf(
-  err: { code?: unknown; killed?: boolean } | null,
-  stdout: string,
-  stderr: string,
-): RoleRun {
-  const stderrTail = tail(stderr, ROLE_STDERR_TAIL_BYTES);
-  if (err === null) return { code: 0, stdout, stderrTail, timedOut: false, overflow: false };
-  // A maxBuffer overflow also kills the child: test it before reading `killed` as the deadline.
-  const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-  const timedOut = !overflow && err.killed === true;
-  if (typeof err.code === "number") {
-    return { code: err.code, stdout, stderrTail, timedOut, overflow };
-  }
-  const why =
-    typeof err.code === "string" && !overflow ? `could not run the gateway: ${err.code}\n` : "";
-  return {
-    code: null,
-    stdout,
-    stderrTail: tail(`${stderrTail}${why}`, ROLE_STDERR_TAIL_BYTES),
-    timedOut,
-    overflow,
-  };
 }
 
 // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what this removes

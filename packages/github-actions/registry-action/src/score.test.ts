@@ -1,6 +1,6 @@
 /**
  * `score` over real git with a FAKE role (`runRole` injected), plus the default role runner over a
- * fake `execFile`: the argv, the minimal environment and the caps are asserted on every OS. The one
+ * fake `spawn`: the argv, the minimal environment and the caps are asserted on every OS. The one
  * test that runs the REAL `__nimbus-eval` role lives in `score.real.test.ts`.
  */
 import {
@@ -14,6 +14,7 @@ import {
   test,
 } from "bun:test";
 import { createHash } from "node:crypto";
+import { EventEmitter } from "node:events";
 import {
   existsSync,
   mkdirSync,
@@ -25,20 +26,24 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { PassThrough } from "node:stream";
 import { signIndex, validatePublish } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
-import type { ExecFileLike } from "./provenance.ts";
 import type { ActionIo } from "./report.ts";
 import {
+  type KillProcess,
+  ROLE_DRAIN_GRACE_MS,
   ROLE_STDERR_TAIL_BYTES,
   ROLE_STDOUT_MAX_BYTES,
   ROLE_TIMEOUT_MS,
   type RoleRun,
+  type RoleSpawnOptions,
   roleRunner,
   runScore,
   SCORE_RUN_BUDGET_MS,
   type ScoreDeps,
   type ScoresFile,
+  type SpawnLike,
   scoreCandidate,
   writeFileAtomic,
 } from "./score.ts";
@@ -548,43 +553,110 @@ describe("writeFileAtomic", () => {
 });
 
 describe("the default role runner", () => {
-  type Call = { file: string; args: string[]; opts: Parameters<ExecFileLike>[2] };
+  const POSIX = process.platform !== "win32";
 
-  function fakeExec(
-    reply: (
-      call: Call,
-    ) => [err: { code?: unknown; killed?: boolean } | null, stdout: string, stderr: string],
-  ): { exec: ExecFileLike; calls: Call[]; homeExisted: boolean[] } {
-    const calls: Call[] = [];
-    const homeExisted: boolean[] = [];
-    const exec: ExecFileLike = (file, args, opts, done) => {
-      const call = { file, args, opts };
-      calls.push(call);
-      homeExisted.push(existsSync(String(opts.env["HOME"])));
-      const [err, stdout, stderr] = reply(call);
-      queueMicrotask(() => done(err, stdout, stderr));
-      return undefined;
-    };
-    return { exec, calls, homeExisted };
+  type Call = { file: string; args: string[]; opts: RoleSpawnOptions };
+
+  /** A spawned process that does what the test tells it to, and records its kills. */
+  class FakeChild extends EventEmitter {
+    readonly stdout = new PassThrough();
+    readonly stderr = new PassThrough();
+    readonly kills: Array<NodeJS.Signals | number | undefined> = [];
+    exited = false;
+    constructor(readonly pid: number | undefined) {
+      super();
+    }
+    kill(signal?: NodeJS.Signals | number): boolean {
+      this.kills.push(signal);
+      return true;
+    }
+    /** Exits with `code` (or by `signal`) and, unless `holdStdio`, closes its stdio. */
+    end(code: number | null, signal: NodeJS.Signals | null = null, holdStdio = false): void {
+      this.exited = true;
+      this.emit("exit", code, signal);
+      if (holdStdio) return;
+      this.stdout.end();
+      this.stderr.end();
+      this.emit("close", code, signal);
+    }
   }
 
-  test("runs <gateway> __nimbus-eval --package <dir> --json with a minimal env and the caps", async () => {
-    const f = fakeExec(() => [null, "{}\n", ""]);
-    const r = await roleRunner(f.exec, () => scratch)("/abs/nimbus-gateway", "/work/x");
-    expect(f.calls).toHaveLength(1);
-    const call = f.calls[0];
+  interface Harness {
+    spawn: SpawnLike;
+    calls: Call[];
+    children: FakeChild[];
+    homeExisted: boolean[];
+    groupKills: Array<[number, NodeJS.Signals]>;
+    kill: KillProcess;
+  }
+
+  /** `behave` drives each spawned child; a group kill ends it by SIGKILL (holding its stdio open when told to). */
+  function harness(
+    behave: (child: FakeChild) => void,
+    o: { pid?: number | undefined; holdStdioOnKill?: boolean } = {},
+  ): Harness {
+    const h: Harness = {
+      calls: [],
+      children: [],
+      homeExisted: [],
+      groupKills: [],
+      spawn: (file, args, opts) => {
+        h.calls.push({ file, args, opts });
+        h.homeExisted.push(existsSync(opts.env["HOME"] ?? ""));
+        const child = new FakeChild("pid" in o ? o.pid : 4242);
+        h.children.push(child);
+        queueMicrotask(() => behave(child));
+        return child;
+      },
+      kill: (pid, signal) => {
+        h.groupKills.push([pid, signal]);
+        const child = h.children.find((c) => c.pid === -pid);
+        // After the role exited, the sweep finds nothing left in the group.
+        if (child === undefined || child.exited) {
+          throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        }
+        child.end(null, signal, o.holdStdioOnKill === true);
+      },
+    };
+    return h;
+  }
+
+  /** Ends a child that a Windows `child.kill` was sent to, as the OS would. */
+  function endOnChildKill(child: FakeChild, holdStdio = false): void {
+    const kill = child.kill.bind(child);
+    child.kill = (signal) => {
+      const r = kill(signal);
+      if (!child.exited) {
+        child.end(null, "SIGKILL", holdStdio);
+      }
+      return r;
+    };
+  }
+
+  const run = (h: Harness, timeoutMs?: number, rm?: (p: string) => void): Promise<RoleRun> =>
+    roleRunner(h.spawn, () => scratch, rm, h.kill)("/abs/nimbus-gateway", "/work/x", timeoutMs);
+
+  test("spawns <gateway> __nimbus-eval --package <dir> --json, minimal env, no shell, own group on POSIX", async () => {
+    const h = harness((c) => {
+      c.stdout.write("{}\n");
+      c.end(0);
+    });
+    const r = await run(h);
+    expect(h.calls).toHaveLength(1);
+    const call = h.calls[0];
     expect(call?.file).toBe("/abs/nimbus-gateway");
     expect(call?.args).toEqual(["__nimbus-eval", "--package", "/work/x", "--json"]);
     expect(Object.keys(call?.opts.env ?? {}).sort()).toEqual(["HOME", "PATH"]);
     expect(call?.opts.env["PATH"]).toBe(process.env["PATH"] ?? "");
+    expect(call?.opts.windowsHide).toBe(true);
+    expect(call?.opts.shell).toBe(false);
+    expect(call?.opts.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    expect(call?.opts.detached).toBe(POSIX);
     // A fresh private HOME under the runner's temp dir, there during the run and gone after.
     const home = String(call?.opts.env["HOME"]);
     expect(dirname(home)).toBe(scratch);
-    expect(f.homeExisted).toEqual([true]);
+    expect(h.homeExisted).toEqual([true]);
     expect(existsSync(home)).toBe(false);
-    expect(call?.opts.maxBuffer).toBe(8 * 1024 * 1024);
-    expect(call?.opts.timeout).toBe(12 * 60_000);
-    expect(call?.opts.windowsHide).toBe(true);
     expect(ROLE_STDOUT_MAX_BYTES).toBe(8 * 1024 * 1024);
     expect(ROLE_TIMEOUT_MS).toBe(12 * 60_000);
     expect(r).toEqual({
@@ -596,105 +668,237 @@ describe("the default role runner", () => {
     });
   });
 
-  test("a deadline passed to the runner replaces the role timeout, nothing else changes", async () => {
-    const f = fakeExec(() => [null, "", ""]);
-    await roleRunner(f.exec, () => scratch)("/abs/nimbus-gateway", "/work/x", 90_000);
-    const call = f.calls[0];
-    expect(call?.opts.timeout).toBe(90_000);
-    expect(call?.args).toEqual(["__nimbus-eval", "--package", "/work/x", "--json"]);
-    expect(call?.opts.maxBuffer).toBe(ROLE_STDOUT_MAX_BYTES);
-    expect(call?.opts.windowsHide).toBe(true);
-    expect(Object.keys(call?.opts.env ?? {}).sort()).toEqual(["HOME", "PATH"]);
+  test("after a clean exit the role's group is swept on POSIX, and nothing is killed on Windows", async () => {
+    const h = harness((c) => {
+      c.end(0);
+    });
+    await run(h);
+    expect(h.groupKills).toEqual(POSIX ? [[-4242, "SIGKILL"]] : []);
+    expect(h.children[0]?.kills).toEqual([]);
   });
 
   test("the secrets in this process's environment never reach the role", async () => {
     const saved = process.env["INPUT_ROOT-KEY"];
     process.env["INPUT_ROOT-KEY"] = "secret";
     try {
-      const f = fakeExec(() => [null, "", ""]);
-      await roleRunner(f.exec, () => scratch)("/g", "/d");
-      expect(JSON.stringify(f.calls[0]?.opts.env)).not.toContain("secret");
+      const h = harness((c) => {
+        c.end(0);
+      });
+      await run(h);
+      expect(JSON.stringify(h.calls[0]?.opts.env)).not.toContain("secret");
     } finally {
       if (saved === undefined) delete process.env["INPUT_ROOT-KEY"];
       else process.env["INPUT_ROOT-KEY"] = saved;
     }
   });
 
-  test("an exit code is reported with the stderr tail capped at 64 KiB", async () => {
-    const stderr = `${"a".repeat(ROLE_STDERR_TAIL_BYTES)}TAIL`;
-    const f = fakeExec(() => [{ code: 3 }, "", stderr]);
-    const r = await roleRunner(f.exec, () => scratch)("/g", "/d");
+  test("at the deadline the whole group is SIGKILLed (the role alone on Windows) and the run is a timeout", async () => {
+    // A role that never exits by itself and prints a little first.
+    const h = harness((c) => {
+      endOnChildKill(c);
+      c.stdout.write("partial");
+    });
+    const started = Date.now();
+    const r = await run(h, 100);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(r).toMatchObject({ code: null, timedOut: true, overflow: false, stdout: "partial" });
+    if (POSIX) {
+      expect(h.groupKills[0]).toEqual([-4242, "SIGKILL"]);
+      expect(h.children[0]?.kills).toEqual([]);
+    } else {
+      expect(h.groupKills).toEqual([]);
+      expect(h.children[0]?.kills).toEqual(["SIGKILL"]);
+    }
+  });
+
+  test("a process left holding the role's stdio cannot block the run: it resolves after the drain grace", async () => {
+    // The kill ends the role, but its stdio never closes (an orphan still holds the pipes).
+    const h = harness(
+      (c) => {
+        endOnChildKill(c, true);
+        c.stderr.write("held\n");
+      },
+      { holdStdioOnKill: true },
+    );
+    const started = Date.now();
+    const r = await run(h, 100);
+    const took = Date.now() - started;
+    expect(took).toBeGreaterThanOrEqual(ROLE_DRAIN_GRACE_MS - 50);
+    expect(took).toBeLessThan(ROLE_DRAIN_GRACE_MS + 10_000);
+    expect(r).toMatchObject({ code: null, timedOut: true, stderrTail: "held\n" });
+    // The streams are destroyed once the run resolves: nothing keeps reading them.
+    expect(h.children[0]?.stdout.destroyed).toBe(true);
+    expect(h.children[0]?.stderr.destroyed).toBe(true);
+    expect(ROLE_DRAIN_GRACE_MS).toBe(2_000);
+  });
+
+  test("a deadline passed to the runner replaces the role timeout", async () => {
+    const h = harness((c) => endOnChildKill(c));
+    const r = await run(h, 50);
+    expect(r.timedOut).toBe(true);
+  });
+
+  test("a role that exits in time is not a timeout, and its deadline never fires later", async () => {
+    const h = harness((c) => {
+      c.end(0);
+    });
+    const r = await run(h, 200);
+    await new Promise((res) => setTimeout(res, 400));
+    expect(r.timedOut).toBe(false);
+    expect(h.children[0]?.kills).toEqual([]);
+    expect(h.groupKills.length).toBeLessThanOrEqual(1);
+  });
+
+  test("an exit code is reported with the stderr tail capped at 64 KiB, counted in bytes", async () => {
+    const h = harness((c) => {
+      // Multibyte text first, so a character count would keep more than 64 KiB of bytes.
+      c.stderr.write("é".repeat(ROLE_STDERR_TAIL_BYTES));
+      c.stderr.write("a".repeat(ROLE_STDERR_TAIL_BYTES - 4));
+      c.stderr.write("TAIL");
+      c.end(3);
+    });
+    const r = await run(h);
     expect(r.code).toBe(3);
     expect(r.timedOut).toBe(false);
     expect(r.overflow).toBe(false);
-    expect(r.stderrTail).toHaveLength(ROLE_STDERR_TAIL_BYTES);
-    expect(r.stderrTail.endsWith("TAIL")).toBe(true);
+    expect(Buffer.byteLength(r.stderrTail)).toBe(ROLE_STDERR_TAIL_BYTES);
+    expect(r.stderrTail).toBe(`${"a".repeat(ROLE_STDERR_TAIL_BYTES - 4)}TAIL`);
     expect(ROLE_STDERR_TAIL_BYTES).toBe(64 * 1024);
   });
 
-  test("a kill at the deadline is a timeout", async () => {
-    const f = fakeExec(() => [{ code: null, killed: true }, "partial", ""]);
-    const r = await roleRunner(f.exec, () => scratch)("/g", "/d");
-    expect(r).toMatchObject({ code: null, timedOut: true, overflow: false });
+  test("stderr does not count toward the stdout cap", async () => {
+    const h = harness((c) => {
+      c.stderr.write(Buffer.alloc(ROLE_STDOUT_MAX_BYTES + 1, 0x61));
+      c.stdout.write("{}\n");
+      c.end(0);
+    });
+    const r = await run(h);
+    expect(r).toMatchObject({ code: 0, stdout: "{}\n", overflow: false });
+    expect(Buffer.byteLength(r.stderrTail)).toBe(ROLE_STDERR_TAIL_BYTES);
   });
 
-  test("stdout past the cap is an overflow, not a timeout", async () => {
-    const f = fakeExec(() => [
-      { code: "ERR_CHILD_PROCESS_STDIO_MAXBUFFER", killed: true },
-      "x",
-      "",
-    ]);
-    const r = await roleRunner(f.exec, () => scratch)("/g", "/d");
+  test("stdout past the cap kills the group and is an overflow, not a timeout", async () => {
+    const h = harness((c) => {
+      endOnChildKill(c);
+      c.stdout.write(Buffer.alloc(ROLE_STDOUT_MAX_BYTES, 0x78));
+      c.stdout.write("y");
+    });
+    const r = await run(h);
     expect(r).toMatchObject({ code: null, timedOut: false, overflow: true });
+    expect(r.stdout).toHaveLength(ROLE_STDOUT_MAX_BYTES);
+    if (POSIX) expect(h.groupKills[0]).toEqual([-4242, "SIGKILL"]);
+    else expect(h.children[0]?.kills).toEqual(["SIGKILL"]);
   });
 
-  test("a spawn failure is no exit code and says why", async () => {
-    const f = fakeExec(() => [{ code: "EACCES" }, "", ""]);
-    const r = await roleRunner(f.exec, () => scratch)("/g", "/d");
-    expect(r.code).toBeNull();
-    expect(r.stderrTail).toContain("EACCES");
+  test("a group already gone (ESRCH) is not an error, and the role is not killed again", async () => {
+    // The kill finds nothing (ESRCH), and the role exits on its own shortly after.
+    const h: Harness = harness((c) => {
+      setTimeout(() => {
+        c.end(null, "SIGKILL");
+      }, 300);
+    });
+    h.kill = (pid, signal) => {
+      h.groupKills.push([pid, signal]);
+      throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+    };
+    const r = await run(h, 50);
+    expect(r.timedOut).toBe(true);
+    expect(h.children[0]?.kills).toEqual(POSIX ? [] : ["SIGKILL"]);
+  });
+
+  test("a group kill that fails otherwise (EPERM) falls back to killing the role", async () => {
+    const h: Harness = harness((c) => endOnChildKill(c));
+    h.kill = (pid, signal) => {
+      h.groupKills.push([pid, signal]);
+      throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
+    };
+    const r = await run(h, 50);
+    expect(r.timedOut).toBe(true);
+    expect(h.children[0]?.kills).toEqual(["SIGKILL"]);
+  });
+
+  test("a spawn failure (the error event, no pid) is no exit code and says why", async () => {
+    const h = harness(
+      (c) => {
+        c.emit(
+          "error",
+          Object.assign(new Error("spawn /abs/nimbus-gateway ENOENT"), { code: "ENOENT" }),
+        );
+      },
+      { pid: undefined },
+    );
+    const r = await run(h);
+    expect(r).toMatchObject({ code: null, stdout: "", timedOut: false, overflow: false });
+    expect(r.stderrTail).toBe("could not run the gateway: ENOENT\n");
+  });
+
+  test("an error event from a started role does not end the run; its exit does", async () => {
+    const h = harness((c) => {
+      c.emit("error", new Error("kill EPERM"));
+      c.stdout.write("{}\n");
+      c.end(0);
+    });
+    const r = await run(h);
+    expect(r).toMatchObject({ code: 0, stdout: "{}\n" });
+  });
+
+  test("the run resolves exactly once, and HOME is removed exactly once", async () => {
+    const removed: string[] = [];
+    const h = harness((c) => {
+      c.end(0);
+      c.emit("close", 0, null);
+      c.emit("exit", 0, null);
+    });
+    await run(h, undefined, (p) => {
+      removed.push(p);
+      rmSync(p, { recursive: true, force: true });
+    });
+    await new Promise((res) => setTimeout(res, ROLE_DRAIN_GRACE_MS + 200));
+    expect(removed).toHaveLength(1);
   });
 
   test("a failure removing HOME still resolves the run", async () => {
-    const f = fakeExec(() => [null, "{}", ""]);
+    const h = harness((c) => {
+      c.stdout.write("{}");
+      c.end(0);
+    });
     const removed: string[] = [];
-    const r = await roleRunner(
-      f.exec,
-      () => scratch,
-      (p) => {
-        removed.push(p);
-        throw new Error("EBUSY: resource busy");
-      },
-    )("/g", "/d");
+    const r = await run(h, undefined, (p) => {
+      removed.push(p);
+      throw new Error("EBUSY: resource busy");
+    });
     expect(r).toMatchObject({ code: 0, stdout: "{}" });
-    expect(removed).toEqual([String(f.calls[0]?.opts.env["HOME"])]);
+    expect(removed).toEqual([String(h.calls[0]?.opts.env["HOME"])]);
     rmSync(removed[0] ?? "", { recursive: true, force: true });
   });
 
   test("a failure removing HOME after a synchronous throw still resolves the run", async () => {
-    const exec: ExecFileLike = () => {
+    const spawnThrows: SpawnLike = () => {
       throw new Error("spawn EINVAL");
     };
+    let home = "";
     const r = await roleRunner(
-      exec,
+      spawnThrows,
       () => scratch,
-      () => {
+      (p) => {
+        home = p;
         throw new Error("EBUSY");
       },
     )("/g", "/d");
     expect(r.code).toBeNull();
     expect(r.stderrTail).toContain("spawn EINVAL");
+    rmSync(home, { recursive: true, force: true });
   });
 
-  test("a synchronous throw from execFile is a failed run, and HOME is still removed", async () => {
+  test("a synchronous throw from spawn is a failed run, and HOME is still removed", async () => {
     let home = "";
-    const exec: ExecFileLike = (_file, _args, opts) => {
-      home = String(opts.env["HOME"]);
+    const spawnThrows: SpawnLike = (_file, _args, opts) => {
+      home = opts.env["HOME"] ?? "";
       throw new Error("spawn EINVAL");
     };
-    const r = await roleRunner(exec, () => scratch)("/g", "/d");
-    expect(r.code).toBeNull();
-    expect(r.stderrTail).toContain("spawn EINVAL");
+    const r = await roleRunner(spawnThrows, () => scratch)("/g", "/d");
+    expect(r).toMatchObject({ code: null, stdout: "", timedOut: false, overflow: false });
+    expect(r.stderrTail).toBe("could not start the gateway: spawn EINVAL");
     expect(existsSync(home)).toBe(false);
   });
 });

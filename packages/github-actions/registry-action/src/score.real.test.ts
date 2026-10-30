@@ -2,11 +2,11 @@
  * `score` with the REAL `__nimbus-eval` role: the e2e fixture package (the gateway's
  * `test/e2e/_fixtures/eval-fixture-package.ts`, the same package and suite eval-role.e2e scores)
  * is published into a real registry repository, and `runScore` runs the default role runner —
- * `execFile`, the minimal environment, the caps — against this checkout's gateway through a
+ * `spawn`, the minimal environment, the caps — against this checkout's gateway through a
  * wrapper script, so the confined extension really runs. The score must equal the e2e's numbers.
  *
  * Gated like the e2e files: only where the platform sandbox can confine a no-network policy, and
- * not on Windows (`execFile` cannot run a script wrapper there without a shell). On Linux CI an
+ * not on Windows (`spawn` cannot run a script wrapper there without a shell). On Linux CI an
  * unconfinable sandbox fails by name instead of skipping (a skip reads like a pass in a summary).
  *
  * The fixture module is imported by a computed path, so this package's test typecheck does not

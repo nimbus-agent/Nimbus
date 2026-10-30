@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:61809e6a8467c9fe227367f8b49c5f4c47e9c52ab0735dd65b077e45fd514934
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:ff386c50d9a2c005db7c49b144c1c4cc9cf481424e4d20031d7057bb023d9bb6
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -10748,7 +10748,7 @@ function code(s) {
 }
 
 // src/score.ts
-import { execFile as execFile2 } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync as existsSync2, mkdtempSync as mkdtempSync2, renameSync, rmSync as rmSync2, statSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
@@ -10871,8 +10871,127 @@ function removeQuietly(rm, path) {
     rm(path);
   } catch {}
 }
-var tail = (s, max) => s.length > max ? s.slice(-max) : s;
-function roleRunner(exec = execFile2, tmp = osTmpdir, rm = removeDir) {
+var ROLE_DRAIN_GRACE_MS = 2000;
+var nodeSpawn = (file, args, opts) => spawn(file, args, opts);
+var killProcess = (pid, signal) => {
+  process.kill(pid, signal);
+};
+var IS_WINDOWS = process.platform === "win32";
+function errCode(e) {
+  if (!(e instanceof Error))
+    return String(e);
+  const c = e.code;
+  return typeof c === "string" ? c : e.message;
+}
+function killGroup(child, kill) {
+  const pid = child.pid;
+  if (!IS_WINDOWS && pid !== undefined) {
+    try {
+      kill(-pid, "SIGKILL");
+      return;
+    } catch (e) {
+      if (errCode(e) === "ESRCH")
+        return;
+    }
+  }
+  try {
+    child.kill("SIGKILL");
+  } catch {}
+}
+function sweepGroup(child, kill) {
+  if (IS_WINDOWS || child.pid === undefined)
+    return;
+  try {
+    kill(-child.pid, "SIGKILL");
+  } catch {}
+}
+var asBuffer = (chunk) => Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+function collectCapped(stream, max, onOverflow) {
+  const chunks = [];
+  let size = 0;
+  let over = false;
+  stream?.on("data", (chunk) => {
+    if (over)
+      return;
+    const b = asBuffer(chunk);
+    if (size + b.length > max) {
+      over = true;
+      onOverflow();
+      return;
+    }
+    chunks.push(b);
+    size += b.length;
+  });
+  stream?.on("error", () => {});
+  return () => Buffer.concat(chunks).toString("utf8");
+}
+function collectTail(stream, max) {
+  const chunks = [];
+  let size = 0;
+  stream?.on("data", (chunk) => {
+    const b = asBuffer(chunk);
+    chunks.push(b);
+    size += b.length;
+    while (chunks.length > 1 && size - (chunks[0]?.length ?? 0) >= max) {
+      size -= chunks.shift()?.length ?? 0;
+    }
+  });
+  stream?.on("error", () => {});
+  return () => Buffer.concat(chunks);
+}
+var tailText = (b, max) => b.subarray(Math.max(0, b.length - max)).toString("utf8");
+var notStarted = (why) => ({
+  code: null,
+  stdout: "",
+  stderrTail: tailText(Buffer.from(why), ROLE_STDERR_TAIL_BYTES),
+  timedOut: false,
+  overflow: false
+});
+function watchRole(child, timeoutMs, kill, done) {
+  const run = { code: null, timedOut: false, overflow: false, why: "" };
+  let settled = false;
+  let grace;
+  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => {
+    run.overflow = true;
+    killGroup(child, kill);
+  });
+  const stderr = collectTail(child.stderr, ROLE_STDERR_TAIL_BYTES);
+  const deadline = setTimeout(() => {
+    run.timedOut = true;
+    killGroup(child, kill);
+  }, timeoutMs);
+  const settle = () => {
+    if (settled)
+      return;
+    settled = true;
+    clearTimeout(deadline);
+    clearTimeout(grace);
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    done({
+      code: run.code,
+      stdout: stdout(),
+      stderrTail: tailText(Buffer.concat([stderr(), Buffer.from(run.why)]), ROLE_STDERR_TAIL_BYTES),
+      timedOut: run.timedOut,
+      overflow: run.overflow
+    });
+  };
+  child.on("exit", (code) => {
+    clearTimeout(deadline);
+    run.code = code;
+    sweepGroup(child, kill);
+    grace ??= setTimeout(settle, ROLE_DRAIN_GRACE_MS);
+  });
+  child.on("close", settle);
+  child.on("error", (e) => {
+    if (child.pid !== undefined)
+      return;
+    run.why = `could not run the gateway: ${errCode(e)}
+`;
+    settle();
+  });
+}
+function roleRunner(spawnRole = nodeSpawn, tmp = osTmpdir, rm = removeDir, kill = killProcess) {
   return (gateway, packageDir, timeoutMs = ROLE_TIMEOUT_MS) => new Promise((resolve) => {
     const home = mkdtempSync2(join3(tmp(), "nimbus-eval-home-"));
     const finish = (r) => {
@@ -10880,42 +10999,21 @@ function roleRunner(exec = execFile2, tmp = osTmpdir, rm = removeDir) {
       resolve(r);
     };
     const env = { PATH: process.env["PATH"] ?? "", HOME: home };
+    let child;
     try {
-      exec(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
+      child = spawnRole(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
         env,
-        timeout: timeoutMs,
-        maxBuffer: ROLE_STDOUT_MAX_BYTES,
-        windowsHide: true
-      }, (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))));
-    } catch (e) {
-      finish({
-        code: null,
-        stdout: "",
-        stderrTail: `could not start the gateway: ${e instanceof Error ? e.message : String(e)}`,
-        timedOut: false,
-        overflow: false
+        stdio: ["ignore", "pipe", "pipe"],
+        windowsHide: true,
+        detached: !IS_WINDOWS,
+        shell: false
       });
+    } catch (e) {
+      finish(notStarted(`could not start the gateway: ${e instanceof Error ? e.message : String(e)}`));
+      return;
     }
+    watchRole(child, timeoutMs, kill, finish);
   });
-}
-function roleRunOf(err, stdout, stderr) {
-  const stderrTail = tail(stderr, ROLE_STDERR_TAIL_BYTES);
-  if (err === null)
-    return { code: 0, stdout, stderrTail, timedOut: false, overflow: false };
-  const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-  const timedOut = !overflow && err.killed === true;
-  if (typeof err.code === "number") {
-    return { code: err.code, stdout, stderrTail, timedOut, overflow };
-  }
-  const why = typeof err.code === "string" && !overflow ? `could not run the gateway: ${err.code}
-` : "";
-  return {
-    code: null,
-    stdout,
-    stderrTail: tail(`${stderrTail}${why}`, ROLE_STDERR_TAIL_BYTES),
-    timedOut,
-    overflow
-  };
 }
 var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
 var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
