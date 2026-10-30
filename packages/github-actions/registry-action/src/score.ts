@@ -94,6 +94,23 @@ export interface ScoreOptions {
   defaultBranch?: string;
 }
 
+/** Removes a directory tree; may throw (a busy file on Windows, say). */
+export type RemoveDir = (path: string) => void;
+
+const removeDir: RemoveDir = (path) => rmSync(path, { recursive: true, force: true });
+
+/**
+ * Removes a scratch directory and never throws: a directory left behind is litter, not a failed
+ * eval, and a throw here would escape a callback (leaving a promise unresolved) or a `finally`.
+ */
+function removeQuietly(rm: RemoveDir, path: string): void {
+  try {
+    rm(path);
+  } catch {
+    // Litter in the runner's temp dir; the job's workspace is discarded with the runner.
+  }
+}
+
 /** Keeps the last `max` characters. */
 const tail = (s: string, max: number): string => (s.length > max ? s.slice(-max) : s);
 
@@ -103,12 +120,16 @@ const tail = (s: string, max: number): string => (s.length > max ? s.slice(-max)
  * `PATH` and a fresh `HOME` under `tmp()` — so nothing from this process (a token, a key) reaches
  * the role, and the role's sandbox directory, which it derives from `HOME`, is private to this run.
  */
-export function roleRunner(exec: ExecFileLike = execFile, tmp: () => string = osTmpdir): RunRole {
+export function roleRunner(
+  exec: ExecFileLike = execFile,
+  tmp: () => string = osTmpdir,
+  rm: RemoveDir = removeDir,
+): RunRole {
   return (gateway, packageDir) =>
     new Promise((resolve) => {
       const home = mkdtempSync(join(tmp(), "nimbus-eval-home-"));
       const finish = (r: RoleRun): void => {
-        rmSync(home, { recursive: true, force: true });
+        removeQuietly(rm, home);
         resolve(r);
       };
       const env = { PATH: process.env["PATH"] ?? "", HOME: home };
@@ -234,7 +255,8 @@ export function judgeRoleRun(
 /**
  * Score one validated candidate: unpack its package into a fresh directory under `work` with
  * `inspectPackage` (the role is handed exactly `<dir>/x`, where that puts the files), run the role,
- * judge its output. Never throws: every failure is an error entry. The directory is removed after.
+ * judge its output. Never throws: every failure is an error entry. The directory is removed after
+ * (a failure to remove it is ignored, never thrown).
  */
 export async function scoreCandidate(
   c: {
@@ -244,6 +266,7 @@ export async function scoreCandidate(
   at: { gateway: string; work: string },
   runRole: RunRole,
   log: (line: string) => void = () => {},
+  rm: RemoveDir = removeDir,
 ): Promise<ScoreEntry> {
   const { id, version, packageSha256 } = c.verdict;
   const dir = mkdtempSync(join(at.work, "score-"));
@@ -263,7 +286,7 @@ export async function scoreCandidate(
       ),
     };
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    removeQuietly(rm, dir);
   }
 }
 
@@ -281,7 +304,7 @@ function logStderr(log: (line: string) => void, ref: string, stderrTail: string)
 }
 
 /** The `nimbus-gateway` input, refused unless it is an absolute path to an existing file. */
-function assertGateway(gateway: string): void {
+export function assertGateway(gateway: string): void {
   let ok = false;
   try {
     ok = isAbsolute(gateway) && existsSync(gateway) && statSync(gateway).isFile();
@@ -346,7 +369,7 @@ async function scoreAll(
     throw new Error(`refusing to score: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
-  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "score");
   const skipped: Skipped[] = [];
   const admission = admitStatements(git, index, mainRef, cwd, skipped);
   const extensions: Record<string, RegistryExtensionEntry> = { ...index.extensions };

@@ -8,7 +8,9 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   `statements/<statement id>.json` files (publisher-signed `key.rotate` / `key.revoke`) exactly as
   `sign` will, failing on any it would skip, then validates the new `extensions/<id>/<version>/`
   (if any: a statement-only pull request is valid) against the signed index on `gh-pages` with
-  those statements admitted, and writes a job summary for the reviewer. A green check is not the
+  those statements admitted, and writes a job summary for the reviewer. With the `nimbus-gateway`
+  input, a version whose package holds an eval suite is scored as the `score` mode scores it, and
+  the summary reports `quality N/100` or `could not score: <code>`. A green check is not the
   security boundary.
 - **`sign`** — on a push to the default branch, behind the `registry-signing` environment's
   required approval: the content boundary. Admits every `statements/` file it can (skipping and
@@ -19,7 +21,15 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   revocation reaches clients. It also signs each maintainer request under `trust-requests/`
   (an unsigned `key.revoke` / `extension.takedown`) with the root key, once per block, and sets the
   index's `reportUrl` to this repository's issue form when it has none. `check` admits a
-  request-only pull request under a `MAINTAINER REQUEST` banner.
+  request-only pull request under a `MAINTAINER REQUEST` banner. With the `scores` input it reads
+  the score job's `scores.json` once, as untrusted input: a version whose package holds an eval
+  suite is signed only with an entry under its own `<id>@<version>`, for its own `packageSha256`,
+  holding a quality `parseEvalQuality` accepts, and that quality (exactly `scorer`, `score`,
+  `cases`, `passed`, `rubrics`) becomes the entry's registry-signed `quality`. A missing, failed,
+  mismatched or invalid entry skips that version with a warning naming why (it binds nothing for
+  later versions in the run); a version without `evals/` is signed with no `quality`. A
+  `scores.json` that is unreadable, over 4 MiB or not a JSON object fails the run. Without the
+  input nothing changes.
 - **`score`** — on a push to the default branch, in its own job with NO secrets, no environment
   and a read-only token, before `sign`: runs extension code, so never in the job that holds the
   root key. Validates every unsigned extension version exactly as `sign` will and, for each whose
@@ -50,9 +60,8 @@ All five modes read the repository from the git tree, never the working director
 A package may now carry an `evals/` directory (extension eval suites, `evals/<name>.eval.json`);
 the file set the registry validates (rule 13) includes it. A registry whose workflow still pins an
 older action release refuses such a package under rule 13 until the pin is updated. A starter pack
-(`kind: "starter-pack"`) may not carry `evals/`. The `score` mode runs a package's suites (above);
-`sign` consuming `scores.json` into the registry-signed `quality` on index entries arrives in a
-later change.
+(`kind: "starter-pack"`) may not carry `evals/`. The `score` mode runs a package's suites and `sign`
+signs the result into the index entry's `quality` (above).
 
 ## Inputs
 
@@ -61,8 +70,8 @@ later change.
 | `mode` | yes | `check`, `sign`, `score`, `trust-check` or `trust-sign`. Anything else fails. |
 | `default-branch` | no (`sign`, `score`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
 | `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. |
-| `nimbus-gateway` | `score` | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. |
-| `scores` | no (`score`) | Where `score` writes `scores.json`, relative to the workspace. Empty means `scores.json`. |
+| `nimbus-gateway` | `score`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored. Never pass it to a job that holds secrets. |
+| `scores` | no (`score`, `sign`) | `score`: where it writes `scores.json`, relative to the workspace; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 
 ## Building

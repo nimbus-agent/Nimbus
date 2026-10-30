@@ -38,6 +38,7 @@ import {
   runScore,
   type ScoreDeps,
   type ScoresFile,
+  scoreCandidate,
   writeFileAtomic,
 } from "./score.ts";
 import { runSign } from "./sign.ts";
@@ -49,6 +50,8 @@ import {
   pushMaintainer,
   type RegistryRepo,
   ROOT_KEY_INPUT,
+  syncMaintainer,
+  write,
   writePublish,
 } from "./testing/registry-repo.ts";
 
@@ -369,6 +372,49 @@ describe("score mode", () => {
     expect(roleCalls).toHaveLength(1);
   });
 
+  test("a changed signed version refuses the run as score, not sign, and writes nothing", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish");
+    await runSign(
+      { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT },
+      { validate: validatePublish, sign: signIndex, git: gitTree, io, tmpdir: () => scratch },
+    );
+    syncMaintainer(repo, "main");
+    write(repo.maintainer, "extensions/acme/plain/1.0.0/package.tgz", "tampered");
+    pushMaintainer(repo, "main", "tamper");
+    const err = await score(echoOk).then(
+      () => undefined,
+      (e: unknown) => e as Error,
+    );
+    expect(err?.message).toStartWith("refusing to score: already-signed versions changed");
+    expect(err?.message).toContain("extensions/acme/plain/1.0.0/package.tgz differs");
+    expect(existsSync(out)).toBe(false);
+  });
+
+  test("scoreCandidate never throws when removing its directory fails", async () => {
+    const ext = await makeExtension(scratch, {
+      id: "acme/scored",
+      evals: { "basic.eval.json": SUITE },
+    });
+    const removed: string[] = [];
+    const entry = await scoreCandidate(
+      {
+        verdict: { id: ext.id, version: ext.version, packageSha256: sha256(ext.pkg) },
+        packageBytes: ext.pkg,
+      },
+      { gateway, work: scratch },
+      echoOk,
+      () => {},
+      (p) => {
+        removed.push(p);
+        throw new Error("EBUSY: resource busy");
+      },
+    );
+    expect(entry).toEqual({ packageSha256: sha256(ext.pkg), quality: QUALITY });
+    expect(removed).toHaveLength(1);
+    expect(dirname(removed[0] ?? "")).toBe(scratch);
+  });
+
   test("a relative nimbus-gateway path fails the mode and writes nothing", async () => {
     await expect(score(echoOk, "nimbus-gateway")).rejects.toThrow(
       'input "nimbus-gateway" must be an absolute path',
@@ -520,6 +566,37 @@ describe("the default role runner", () => {
     const r = await roleRunner(f.exec, () => scratch)("/g", "/d");
     expect(r.code).toBeNull();
     expect(r.stderrTail).toContain("EACCES");
+  });
+
+  test("a failure removing HOME still resolves the run", async () => {
+    const f = fakeExec(() => [null, "{}", ""]);
+    const removed: string[] = [];
+    const r = await roleRunner(
+      f.exec,
+      () => scratch,
+      (p) => {
+        removed.push(p);
+        throw new Error("EBUSY: resource busy");
+      },
+    )("/g", "/d");
+    expect(r).toMatchObject({ code: 0, stdout: "{}" });
+    expect(removed).toEqual([String(f.calls[0]?.opts.env["HOME"])]);
+    rmSync(removed[0] ?? "", { recursive: true, force: true });
+  });
+
+  test("a failure removing HOME after a synchronous throw still resolves the run", async () => {
+    const exec: ExecFileLike = () => {
+      throw new Error("spawn EINVAL");
+    };
+    const r = await roleRunner(
+      exec,
+      () => scratch,
+      () => {
+        throw new Error("EBUSY");
+      },
+    )("/g", "/d");
+    expect(r.code).toBeNull();
+    expect(r.stderrTail).toContain("spawn EINVAL");
   });
 
   test("a synchronous throw from execFile is a failed run, and HOME is still removed", async () => {

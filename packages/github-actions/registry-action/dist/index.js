@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:59cb692d56307d5c764467668de43b543a82312887e994edacb9936fa4a59536
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:0e589fb3d094ab4f850f6d1d0e4cc4df1a543cac6e37e49e1e12a01512c27b3f
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4234,9 +4234,9 @@ function emitAnnotation(level, message) {
 }
 
 // src/check.ts
-import { mkdtempSync as mkdtempSync2, rmSync as rmSync2 } from "node:fs";
-import { tmpdir as osTmpdir } from "node:os";
-import { join as join3 } from "node:path";
+import { mkdtempSync as mkdtempSync3, rmSync as rmSync3 } from "node:fs";
+import { tmpdir as osTmpdir2 } from "node:os";
+import { join as join4 } from "node:path";
 
 // ../../registry-format/src/caps.ts
 var MAX_MANIFEST_BYTES = 64 * 1024;
@@ -10747,8 +10747,352 @@ function code(s) {
   return `${fence}${pad}${flat}${pad}${fence}`;
 }
 
+// src/score.ts
+import { execFile as execFile2 } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync as existsSync2, mkdtempSync as mkdtempSync2, renameSync, rmSync as rmSync2, statSync, writeFileSync as writeFileSync3 } from "node:fs";
+import { tmpdir as osTmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join as join3 } from "node:path";
+
+// src/candidates.ts
+import { createHash as createHash6 } from "node:crypto";
+function extensionDirs(git, ref, cwd) {
+  const dirs = new Map;
+  const paths = new Set;
+  for (const e of git.listTreeEntries(ref, "extensions/", { cwd })) {
+    paths.add(e.path);
+    const slash = e.path.lastIndexOf("/");
+    const dir = e.path.slice(0, slash);
+    if (dir === "extensions")
+      continue;
+    const names = dirs.get(dir) ?? new Set;
+    names.add(e.path.slice(slash + 1));
+    dirs.set(dir, names);
+  }
+  return { dirs, paths };
+}
+var sha256Hex2 = (b) => createHash6("sha256").update(b).digest("hex");
+function assertSignedIntact(git, index, ref, paths, cwd, verb) {
+  const problems = [];
+  const signedDirs = new Set;
+  for (const [id, ext] of Object.entries(index.extensions)) {
+    for (const [version, v] of Object.entries(ext.versions)) {
+      signedDirs.add(`extensions/${id}/${version}`);
+      for (const [path, want] of [
+        [v.manifest, v.manifestSha256],
+        [v.package, v.packageSha256]
+      ]) {
+        if (!paths.has(path)) {
+          problems.push(`${path} is signed but was deleted`);
+        } else if (sha256Hex2(git.readBlob(ref, path, { cwd })) !== want) {
+          problems.push(`${path} differs from the signed version`);
+        }
+      }
+    }
+  }
+  if (problems.length > 0) {
+    throw new Error(`refusing to ${verb}: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`);
+  }
+  return signedDirs;
+}
+function sameFileSet(names) {
+  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
+}
+function admitStatements(git, index, ref, cwd, skipped) {
+  const files = readStatementFiles(git, ref, cwd);
+  for (const f of files.skipped)
+    skipped.push({ dir: f.path, reason: f.reason });
+  const admission = admitPublisherStatements(index, files.values);
+  for (const s of admission.skipped)
+    skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  return admission;
+}
+async function* validateUnsigned(input) {
+  const { git, ref, cwd } = input;
+  const unsigned = [...input.dirs.keys()].filter((d) => !input.signedDirs.has(d));
+  for (const dir of unsigned.sort(codeUnitCompare)) {
+    const coords = splitExtensionDir(dir);
+    const names = input.dirs.get(dir) ?? new Set;
+    if (coords === undefined || !sameFileSet(names)) {
+      yield {
+        kind: "skipped",
+        dir,
+        reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`
+      };
+      continue;
+    }
+    const candidate = readCandidate(git, ref, coords, cwd);
+    let verdict;
+    try {
+      verdict = await input.validate(candidate, input.bindings(), input.config, input.work);
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      yield { kind: "skipped", dir, reason: e.message };
+      continue;
+    }
+    yield { kind: "valid", dir, candidate, verdict };
+  }
+}
+function addVersion(extensions, v, publishedAt, provenance, quality) {
+  const base = `extensions/${v.id}/${v.version}`;
+  const existing = extensions[v.id];
+  extensions[v.id] = {
+    publisher: publisherAfterPublish(existing, v.publisher),
+    versions: {
+      ...existing?.versions,
+      [v.version]: {
+        channel: v.channel,
+        name: v.name,
+        manifest: `${base}/manifest.json`,
+        manifestSha256: v.manifestSha256,
+        package: `${base}/package.tgz`,
+        packageSha256: v.packageSha256,
+        packageSizeBytes: v.packageSizeBytes,
+        entryHash: v.entryHash,
+        publishedAt,
+        ...provenance !== undefined && { provenance },
+        ...quality !== undefined && { quality }
+      }
+    }
+  };
+}
+
+// src/score.ts
+var ROLE_TIMEOUT_MS = 12 * 60000;
+var ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
+var ROLE_STDERR_TAIL_BYTES = 64 * 1024;
+var MAX_MESSAGE_CHARS = 1000;
+var removeDir = (path) => rmSync2(path, { recursive: true, force: true });
+function removeQuietly(rm, path) {
+  try {
+    rm(path);
+  } catch {}
+}
+var tail = (s, max) => s.length > max ? s.slice(-max) : s;
+function roleRunner(exec = execFile2, tmp = osTmpdir, rm = removeDir) {
+  return (gateway, packageDir) => new Promise((resolve) => {
+    const home = mkdtempSync2(join3(tmp(), "nimbus-eval-home-"));
+    const finish = (r) => {
+      removeQuietly(rm, home);
+      resolve(r);
+    };
+    const env = { PATH: process.env["PATH"] ?? "", HOME: home };
+    try {
+      exec(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
+        env,
+        timeout: ROLE_TIMEOUT_MS,
+        maxBuffer: ROLE_STDOUT_MAX_BYTES,
+        windowsHide: true
+      }, (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))));
+    } catch (e) {
+      finish({
+        code: null,
+        stdout: "",
+        stderrTail: `could not start the gateway: ${e instanceof Error ? e.message : String(e)}`,
+        timedOut: false,
+        overflow: false
+      });
+    }
+  });
+}
+function roleRunOf(err, stdout, stderr) {
+  const stderrTail = tail(stderr, ROLE_STDERR_TAIL_BYTES);
+  if (err === null)
+    return { code: 0, stdout, stderrTail, timedOut: false, overflow: false };
+  const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  const timedOut = !overflow && err.killed === true;
+  if (typeof err.code === "number") {
+    return { code: err.code, stdout, stderrTail, timedOut, overflow };
+  }
+  const why = typeof err.code === "string" && !overflow ? `could not run the gateway: ${err.code}
+` : "";
+  return {
+    code: null,
+    stdout,
+    stderrTail: tail(`${stderrTail}${why}`, ROLE_STDERR_TAIL_BYTES),
+    timedOut,
+    overflow
+  };
+}
+var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
+var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
+var roleCode = (c) => /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
+function lastLine(s) {
+  return s.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
+}
+var fail = (code, message) => ({
+  error: { code, message: clip(message) }
+});
+function judgeRoleRun(r, want) {
+  if (r.timedOut) {
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${String(ROLE_TIMEOUT_MS / 60000)} minutes`);
+  }
+  if (r.overflow) {
+    return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
+  }
+  if (r.code !== 0) {
+    const last = lastLine(r.stderrTail);
+    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`);
+  }
+  const lines = r.stdout.split(`
+`).filter((l) => l.trim() !== "");
+  const doc = lines.length === 1 ? parseEvalRoleDocument(lines[0] ?? "") : null;
+  if (doc === null) {
+    return fail("ERR_EVAL_BAD_OUTPUT", "the eval role's output is not exactly one valid eval document");
+  }
+  if (!doc.ok)
+    return fail(roleCode(doc.error.code), doc.error.message);
+  if (doc.extensionId !== want.id || doc.version !== want.version) {
+    return fail("ERR_EVAL_IDENTITY_MISMATCH", `the eval role scored ${doc.extensionId}@${doc.version}, not ${want.id}@${want.version}`);
+  }
+  const { results: _results, ...quality } = doc.report;
+  try {
+    return { quality: parseEvalQuality(quality) };
+  } catch (e) {
+    return fail("ERR_EVAL_BAD_OUTPUT", e instanceof Error ? e.message : String(e));
+  }
+}
+async function scoreCandidate(c, at, runRole, log = () => {}, rm = removeDir) {
+  const { id, version, packageSha256 } = c.verdict;
+  const dir = mkdtempSync2(join3(at.work, "score-"));
+  try {
+    const tgz = join3(dir, "package.tgz");
+    writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
+    await inspectPackage(tgz, dir);
+    const r = await runRole(at.gateway, join3(dir, "x"));
+    logStderr(log, `${id}@${version}`, r.stderrTail);
+    return { packageSha256, ...judgeRoleRun(r, { id, version }) };
+  } catch (e) {
+    return {
+      packageSha256,
+      ...fail("ERR_EVAL_ROLE_FAILED", `the eval could not be run: ${e instanceof Error ? e.message : String(e)}`)
+    };
+  } finally {
+    removeQuietly(rm, dir);
+  }
+}
+function logStderr(log, ref, stderrTail) {
+  if (stderrTail.trim() === "")
+    return;
+  const fence = randomUUID().replaceAll("-", "");
+  log(`stderr of the eval role for ${ref} (last ${String(ROLE_STDERR_TAIL_BYTES)} bytes):`);
+  log(`::stop-commands::${fence}`);
+  log(stderrTail);
+  log(`::${fence}::`);
+}
+function assertGateway(gateway) {
+  let ok = false;
+  try {
+    ok = isAbsolute(gateway) && existsSync2(gateway) && statSync(gateway).isFile();
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    throw new Error(`input "nimbus-gateway" must be an absolute path to an existing file; got ${JSON.stringify(gateway)}`);
+  }
+}
+function writeFileAtomic(path, text, fs = { writeFileSync: writeFileSync3, renameSync }) {
+  const temp = join3(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temp, text, { flag: "wx" });
+    fs.renameSync(temp, path);
+  } catch (e) {
+    rmSync2(temp, { force: true });
+    throw e;
+  }
+}
+var SHARED = {
+  validate: validatePublish,
+  git: exports_git_tree,
+  io: GHA_IO,
+  tmpdir: osTmpdir,
+  runRole: roleRunner()
+};
+async function scoreAll(opts, deps, work) {
+  const { git } = deps;
+  const cwd = opts.workspace;
+  const mainRef = `origin/${opts.defaultBranch}`;
+  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git, cwd);
+  const config = readConfigAt(git, mainRef, cwd);
+  if (config === undefined) {
+    throw new Error(`refusing to score: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
+  }
+  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
+  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "score");
+  const skipped = [];
+  const admission = admitStatements(git, index, mainRef, cwd, skipped);
+  const extensions = { ...index.extensions };
+  const publishedAt = git.commitTime(mainRef, { cwd });
+  const scores = Object.create(null);
+  for await (const o of validateUnsigned({
+    git,
+    validate: deps.validate,
+    ref: mainRef,
+    cwd,
+    dirs,
+    signedDirs,
+    config: config.config,
+    work,
+    bindings: () => ({ ...admission.index, extensions })
+  })) {
+    if (o.kind === "skipped") {
+      skipped.push({ dir: o.dir, reason: o.reason });
+      continue;
+    }
+    const v = o.verdict;
+    if (v.hasEvals) {
+      const entry = await scoreCandidate({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work }, deps.runRole, deps.io.log);
+      scores[`${v.id}@${v.version}`] = entry;
+      if ("error" in entry)
+        continue;
+    }
+    addVersion(extensions, v, publishedAt);
+  }
+  return { scores, skipped };
+}
+function report(io, r) {
+  const lines = ["## Registry score", ""];
+  const entries = Object.entries(r.scores);
+  if (entries.length === 0)
+    lines.push("No unsigned version with eval suites to score.");
+  for (const [ref, e] of entries) {
+    if ("quality" in e) {
+      const q = e.quality;
+      lines.push(`- ${code(ref)}: ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`);
+    } else {
+      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it`);
+      lines.push(`- ${code(ref)}: not scored, ${code(e.error.code)} ${code(e.error.message)}`);
+    }
+  }
+  if (r.skipped.length > 0) {
+    lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
+    for (const s of r.skipped)
+      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
+  }
+  io.summary(lines.join(`
+`));
+  io.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
+}
+async function runScore(opts, deps = SHARED) {
+  assertGateway(opts.gateway);
+  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
+  const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-score-"));
+  let r;
+  try {
+    r = await scoreAll({ ...opts, defaultBranch }, deps, work);
+  } finally {
+    rmSync2(work, { recursive: true, force: true });
+  }
+  writeFileAtomic(opts.out, `${JSON.stringify(r.scores, null, 2)}
+`);
+  report(deps.io, r);
+  return r.scores;
+}
+
 // src/check.ts
-var SHARED = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir };
+var SHARED2 = { validate: validatePublish, git: exports_git_tree, io: GHA_IO, tmpdir: osTmpdir2 };
 var CANDIDATE_ALTERNATION = CANDIDATE_FILES.join("|").replaceAll(".", String.raw`\.`);
 var FILE_RE = new RegExp(`^(extensions/.+)/(${CANDIDATE_ALTERNATION})$`);
 var STATEMENT_RE = /^statements\/[0-9a-f]{64}\.json$/;
@@ -10839,13 +11183,26 @@ function provenanceLine(v, r) {
   const p = r.provenance;
   return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
 }
-function checkSummary(v, admitted = [], provenance) {
+function qualityLine(e) {
+  if ("quality" in e) {
+    const q = e.quality;
+    return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+  }
+  return `- **Quality:** could not score: ${code(e.error.code)} ${code(e.error.message)} (the sign job will not sign this version without a score)`;
+}
+function runtimeSentence(scored) {
+  if (scored) {
+    return "The package's eval suites were run in the platform sandbox, offline and without " + "credentials; nothing else about what the code does was checked.";
+  }
+  return "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.";
+}
+function checkSummary(v, admitted = [], provenance, score) {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.");
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), ...score === undefined ? [] : [qualityLine(score)], "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", runtimeSentence(score !== undefined));
   return lines.join(`
 `);
 }
@@ -10889,18 +11246,25 @@ async function checkProvenance(v, packageBytes, work, opts, deps) {
   if (v.repository === undefined)
     return;
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
-    pkgPath: join3(work, "provenance-check.tgz"),
+    pkgPath: join4(work, "provenance-check.tgz"),
     packageBytes,
     repository: v.repository,
     verifiedAt: new Date().toISOString()
   });
 }
-async function runCheck(opts, deps = SHARED) {
+async function checkScore(v, packageBytes, work, opts, deps) {
+  if (opts.gateway === undefined || !v.hasEvals)
+    return;
+  return scoreCandidate({ verdict: v, packageBytes }, { gateway: opts.gateway, work }, deps.runRole ?? roleRunner(), deps.io.log);
+}
+async function runCheck(opts, deps = SHARED2) {
   const { git } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
     throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
   }
+  if (opts.gateway !== undefined)
+    assertGateway(opts.gateway);
   git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
   const index = await readVerifiedIndex(git, cwd);
   const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
@@ -10921,356 +11285,20 @@ async function runCheck(opts, deps = SHARED) {
   }
   const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
   const config = effectiveConfig(git, opts.baseRef, cwd);
-  const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-check-"));
+  const work = mkdtempSync3(join4(deps.tmpdir(), "nimbus-registry-check-"));
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
     const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
-    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance));
+    const score = await checkScore(verdict, candidate.packageBytes, work, opts, deps);
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score));
     deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
-  } finally {
-    rmSync2(work, { recursive: true, force: true });
-  }
-}
-
-// src/score.ts
-import { execFile as execFile2 } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { existsSync as existsSync2, mkdtempSync as mkdtempSync3, renameSync, rmSync as rmSync3, statSync, writeFileSync as writeFileSync3 } from "node:fs";
-import { tmpdir as osTmpdir2 } from "node:os";
-import { basename, dirname, isAbsolute, join as join4 } from "node:path";
-
-// src/candidates.ts
-import { createHash as createHash6 } from "node:crypto";
-function extensionDirs(git, ref, cwd) {
-  const dirs = new Map;
-  const paths = new Set;
-  for (const e of git.listTreeEntries(ref, "extensions/", { cwd })) {
-    paths.add(e.path);
-    const slash = e.path.lastIndexOf("/");
-    const dir = e.path.slice(0, slash);
-    if (dir === "extensions")
-      continue;
-    const names = dirs.get(dir) ?? new Set;
-    names.add(e.path.slice(slash + 1));
-    dirs.set(dir, names);
-  }
-  return { dirs, paths };
-}
-var sha256Hex2 = (b) => createHash6("sha256").update(b).digest("hex");
-function assertSignedIntact(git, index, ref, paths, cwd) {
-  const problems = [];
-  const signedDirs = new Set;
-  for (const [id, ext] of Object.entries(index.extensions)) {
-    for (const [version, v] of Object.entries(ext.versions)) {
-      signedDirs.add(`extensions/${id}/${version}`);
-      for (const [path, want] of [
-        [v.manifest, v.manifestSha256],
-        [v.package, v.packageSha256]
-      ]) {
-        if (!paths.has(path)) {
-          problems.push(`${path} is signed but was deleted`);
-        } else if (sha256Hex2(git.readBlob(ref, path, { cwd })) !== want) {
-          problems.push(`${path} differs from the signed version`);
-        }
-      }
-    }
-  }
-  if (problems.length > 0) {
-    throw new Error(`refusing to sign: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`);
-  }
-  return signedDirs;
-}
-function sameFileSet(names) {
-  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
-}
-function admitStatements(git, index, ref, cwd, skipped) {
-  const files = readStatementFiles(git, ref, cwd);
-  for (const f of files.skipped)
-    skipped.push({ dir: f.path, reason: f.reason });
-  const admission = admitPublisherStatements(index, files.values);
-  for (const s of admission.skipped)
-    skipped.push({ dir: statementPath(s.id), reason: s.reason });
-  return admission;
-}
-async function* validateUnsigned(input) {
-  const { git, ref, cwd } = input;
-  const unsigned = [...input.dirs.keys()].filter((d) => !input.signedDirs.has(d));
-  for (const dir of unsigned.sort(codeUnitCompare)) {
-    const coords = splitExtensionDir(dir);
-    const names = input.dirs.get(dir) ?? new Set;
-    if (coords === undefined || !sameFileSet(names)) {
-      yield {
-        kind: "skipped",
-        dir,
-        reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`
-      };
-      continue;
-    }
-    const candidate = readCandidate(git, ref, coords, cwd);
-    let verdict;
-    try {
-      verdict = await input.validate(candidate, input.bindings(), input.config, input.work);
-    } catch (e) {
-      if (!(e instanceof RegistryError))
-        throw e;
-      yield { kind: "skipped", dir, reason: e.message };
-      continue;
-    }
-    yield { kind: "valid", dir, candidate, verdict };
-  }
-}
-function addVersion(extensions, v, publishedAt, provenance) {
-  const base = `extensions/${v.id}/${v.version}`;
-  const existing = extensions[v.id];
-  extensions[v.id] = {
-    publisher: publisherAfterPublish(existing, v.publisher),
-    versions: {
-      ...existing?.versions,
-      [v.version]: {
-        channel: v.channel,
-        name: v.name,
-        manifest: `${base}/manifest.json`,
-        manifestSha256: v.manifestSha256,
-        package: `${base}/package.tgz`,
-        packageSha256: v.packageSha256,
-        packageSizeBytes: v.packageSizeBytes,
-        entryHash: v.entryHash,
-        publishedAt,
-        ...provenance !== undefined && { provenance }
-      }
-    }
-  };
-}
-
-// src/score.ts
-var ROLE_TIMEOUT_MS = 12 * 60000;
-var ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
-var ROLE_STDERR_TAIL_BYTES = 64 * 1024;
-var MAX_MESSAGE_CHARS = 1000;
-var tail = (s, max) => s.length > max ? s.slice(-max) : s;
-function roleRunner(exec = execFile2, tmp = osTmpdir2) {
-  return (gateway, packageDir) => new Promise((resolve) => {
-    const home = mkdtempSync3(join4(tmp(), "nimbus-eval-home-"));
-    const finish = (r) => {
-      rmSync3(home, { recursive: true, force: true });
-      resolve(r);
-    };
-    const env = { PATH: process.env["PATH"] ?? "", HOME: home };
-    try {
-      exec(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
-        env,
-        timeout: ROLE_TIMEOUT_MS,
-        maxBuffer: ROLE_STDOUT_MAX_BYTES,
-        windowsHide: true
-      }, (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))));
-    } catch (e) {
-      finish({
-        code: null,
-        stdout: "",
-        stderrTail: `could not start the gateway: ${e instanceof Error ? e.message : String(e)}`,
-        timedOut: false,
-        overflow: false
-      });
-    }
-  });
-}
-function roleRunOf(err, stdout, stderr) {
-  const stderrTail = tail(stderr, ROLE_STDERR_TAIL_BYTES);
-  if (err === null)
-    return { code: 0, stdout, stderrTail, timedOut: false, overflow: false };
-  const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-  const timedOut = !overflow && err.killed === true;
-  if (typeof err.code === "number") {
-    return { code: err.code, stdout, stderrTail, timedOut, overflow };
-  }
-  const why = typeof err.code === "string" && !overflow ? `could not run the gateway: ${err.code}
-` : "";
-  return {
-    code: null,
-    stdout,
-    stderrTail: tail(`${stderrTail}${why}`, ROLE_STDERR_TAIL_BYTES),
-    timedOut,
-    overflow
-  };
-}
-var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
-var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
-var roleCode = (c) => /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
-function lastLine(s) {
-  return s.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
-}
-var fail = (code, message) => ({
-  error: { code, message: clip(message) }
-});
-function judgeRoleRun(r, want) {
-  if (r.timedOut) {
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${String(ROLE_TIMEOUT_MS / 60000)} minutes`);
-  }
-  if (r.overflow) {
-    return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
-  }
-  if (r.code !== 0) {
-    const last = lastLine(r.stderrTail);
-    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`);
-  }
-  const lines = r.stdout.split(`
-`).filter((l) => l.trim() !== "");
-  const doc = lines.length === 1 ? parseEvalRoleDocument(lines[0] ?? "") : null;
-  if (doc === null) {
-    return fail("ERR_EVAL_BAD_OUTPUT", "the eval role's output is not exactly one valid eval document");
-  }
-  if (!doc.ok)
-    return fail(roleCode(doc.error.code), doc.error.message);
-  if (doc.extensionId !== want.id || doc.version !== want.version) {
-    return fail("ERR_EVAL_IDENTITY_MISMATCH", `the eval role scored ${doc.extensionId}@${doc.version}, not ${want.id}@${want.version}`);
-  }
-  const { results: _results, ...quality } = doc.report;
-  try {
-    return { quality: parseEvalQuality(quality) };
-  } catch (e) {
-    return fail("ERR_EVAL_BAD_OUTPUT", e instanceof Error ? e.message : String(e));
-  }
-}
-async function scoreCandidate(c, at, runRole, log = () => {}) {
-  const { id, version, packageSha256 } = c.verdict;
-  const dir = mkdtempSync3(join4(at.work, "score-"));
-  try {
-    const tgz = join4(dir, "package.tgz");
-    writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
-    await inspectPackage(tgz, dir);
-    const r = await runRole(at.gateway, join4(dir, "x"));
-    logStderr(log, `${id}@${version}`, r.stderrTail);
-    return { packageSha256, ...judgeRoleRun(r, { id, version }) };
-  } catch (e) {
-    return {
-      packageSha256,
-      ...fail("ERR_EVAL_ROLE_FAILED", `the eval could not be run: ${e instanceof Error ? e.message : String(e)}`)
-    };
-  } finally {
-    rmSync3(dir, { recursive: true, force: true });
-  }
-}
-function logStderr(log, ref, stderrTail) {
-  if (stderrTail.trim() === "")
-    return;
-  const fence = randomUUID().replaceAll("-", "");
-  log(`stderr of the eval role for ${ref} (last ${String(ROLE_STDERR_TAIL_BYTES)} bytes):`);
-  log(`::stop-commands::${fence}`);
-  log(stderrTail);
-  log(`::${fence}::`);
-}
-function assertGateway(gateway) {
-  let ok = false;
-  try {
-    ok = isAbsolute(gateway) && existsSync2(gateway) && statSync(gateway).isFile();
-  } catch {
-    ok = false;
-  }
-  if (!ok) {
-    throw new Error(`input "nimbus-gateway" must be an absolute path to an existing file; got ${JSON.stringify(gateway)}`);
-  }
-}
-function writeFileAtomic(path, text, fs = { writeFileSync: writeFileSync3, renameSync }) {
-  const temp = join4(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
-  try {
-    fs.writeFileSync(temp, text, { flag: "wx" });
-    fs.renameSync(temp, path);
-  } catch (e) {
-    rmSync3(temp, { force: true });
-    throw e;
-  }
-}
-var SHARED2 = {
-  validate: validatePublish,
-  git: exports_git_tree,
-  io: GHA_IO,
-  tmpdir: osTmpdir2,
-  runRole: roleRunner()
-};
-async function scoreAll(opts, deps, work) {
-  const { git } = deps;
-  const cwd = opts.workspace;
-  const mainRef = `origin/${opts.defaultBranch}`;
-  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
-  const index = await readVerifiedIndex(git, cwd);
-  const config = readConfigAt(git, mainRef, cwd);
-  if (config === undefined) {
-    throw new Error(`refusing to score: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
-  }
-  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
-  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
-  const skipped = [];
-  const admission = admitStatements(git, index, mainRef, cwd, skipped);
-  const extensions = { ...index.extensions };
-  const publishedAt = git.commitTime(mainRef, { cwd });
-  const scores = Object.create(null);
-  for await (const o of validateUnsigned({
-    git,
-    validate: deps.validate,
-    ref: mainRef,
-    cwd,
-    dirs,
-    signedDirs,
-    config: config.config,
-    work,
-    bindings: () => ({ ...admission.index, extensions })
-  })) {
-    if (o.kind === "skipped") {
-      skipped.push({ dir: o.dir, reason: o.reason });
-      continue;
-    }
-    const v = o.verdict;
-    if (v.hasEvals) {
-      const entry = await scoreCandidate({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work }, deps.runRole, deps.io.log);
-      scores[`${v.id}@${v.version}`] = entry;
-      if ("error" in entry)
-        continue;
-    }
-    addVersion(extensions, v, publishedAt);
-  }
-  return { scores, skipped };
-}
-function report(io, r) {
-  const lines = ["## Registry score", ""];
-  const entries = Object.entries(r.scores);
-  if (entries.length === 0)
-    lines.push("No unsigned version with eval suites to score.");
-  for (const [ref, e] of entries) {
-    if ("quality" in e) {
-      const q = e.quality;
-      lines.push(`- ${code(ref)}: ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`);
-    } else {
-      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it`);
-      lines.push(`- ${code(ref)}: not scored, ${code(e.error.code)} ${code(e.error.message)}`);
-    }
-  }
-  if (r.skipped.length > 0) {
-    lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
-    for (const s of r.skipped)
-      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
-  }
-  io.summary(lines.join(`
-`));
-  io.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
-}
-async function runScore(opts, deps = SHARED2) {
-  assertGateway(opts.gateway);
-  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  const work = mkdtempSync3(join4(deps.tmpdir(), "nimbus-registry-score-"));
-  let r;
-  try {
-    r = await scoreAll({ ...opts, defaultBranch }, deps, work);
   } finally {
     rmSync3(work, { recursive: true, force: true });
   }
-  writeFileAtomic(opts.out, `${JSON.stringify(r.scores, null, 2)}
-`);
-  report(deps.io, r);
-  return r.scores;
 }
 
 // src/sign.ts
-import { mkdtempSync as mkdtempSync5, rmSync as rmSync5 } from "node:fs";
+import { closeSync as closeSync3, mkdtempSync as mkdtempSync5, openSync as openSync3, readSync as readSync2, rmSync as rmSync5 } from "node:fs";
 import { tmpdir as osTmpdir3 } from "node:os";
 import { join as join6 } from "node:path";
 
@@ -11353,6 +11381,88 @@ function parseRootKey(raw) {
   }
   return new Uint8Array(Buffer.from(s, "base64"));
 }
+var MAX_SCORES_BYTES = 4 * 1024 * 1024;
+var errorText = (e) => e instanceof Error ? e.message : String(e);
+function refuseScores(path, why) {
+  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
+}
+function readAtMost(path, max) {
+  const fd = openSync3(path, "r");
+  try {
+    const buf = Buffer.alloc(max);
+    let n = 0;
+    let got = -1;
+    while (n < max && got !== 0) {
+      got = readSync2(fd, buf, n, max - n, null);
+      n += got;
+    }
+    return buf.subarray(0, n);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function isPlainObject2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function readScores(path) {
+  let bytes;
+  try {
+    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
+  } catch (e) {
+    throw refuseScores(path, `could not be read: ${errorText(e)}`);
+  }
+  if (bytes.byteLength > MAX_SCORES_BYTES) {
+    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw refuseScores(path, "is not valid JSON");
+  }
+  if (!isPlainObject2(parsed))
+    throw refuseScores(path, "is not a JSON object");
+  return new Map(Object.entries(parsed));
+}
+var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
+function failedCode(error) {
+  const c = isPlainObject2(error) ? error["code"] : undefined;
+  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
+}
+function qualityFor(scores, v) {
+  if (scores === undefined || !v.hasEvals)
+    return { ok: true };
+  const raw = scores.get(`${v.id}@${v.version}`);
+  if (raw === undefined) {
+    return {
+      ok: false,
+      reason: "it has eval suites and scores.json has no score for it; not signed without a score"
+    };
+  }
+  if (!isPlainObject2(raw))
+    return { ok: false, reason: MALFORMED };
+  const keys = Object.keys(raw).sort(codeUnitCompare).join(",");
+  if (keys !== "packageSha256,quality" && keys !== "error,packageSha256") {
+    return { ok: false, reason: MALFORMED };
+  }
+  if (raw["packageSha256"] !== v.packageSha256) {
+    return {
+      ok: false,
+      reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
+    };
+  }
+  if (Object.hasOwn(raw, "error")) {
+    return {
+      ok: false,
+      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`
+    };
+  }
+  try {
+    return { ok: true, quality: parseEvalQuality(raw["quality"]) };
+  } catch (e) {
+    return { ok: false, reason: `its score is invalid: ${errorText(e)}; not signed` };
+  }
+}
 async function provenanceFor(v, packageBytes, at, deps, memo) {
   if (v.repository === undefined)
     return;
@@ -11371,7 +11481,26 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
   }
   return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
 }
-async function attemptSign(opts, seed, rootKey, deps, memo) {
+async function takeCandidate(o, b, run, opts, deps) {
+  const { candidate, verdict: v } = o;
+  const q = qualityFor(run.scores, v);
+  if (!q.ok) {
+    b.skipped.push({ dir: o.dir, reason: q.reason });
+    return;
+  }
+  const base = `extensions/${v.id}/${v.version}`;
+  const provenance = await provenanceFor(v, candidate.packageBytes, { work: b.work, verifiedAt: b.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run.memo);
+  addVersion(b.extensions, v, b.publishedAt, provenance, q.quality);
+  b.files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
+  b.added.push({
+    id: v.id,
+    version: v.version,
+    channel: v.channel,
+    ...q.quality !== undefined && { quality: q.quality }
+  });
+}
+async function attemptSign(opts, run, deps) {
+  const { seed, rootKey } = run;
   const { git } = deps;
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
@@ -11389,7 +11518,7 @@ async function attemptSign(opts, seed, rootKey, deps, memo) {
     throw new Error(`refusing to sign: ${opts.defaultBranch}'s ${CONFIG_FILE} loosens the rules the last signed run used (requirePublisherNamespace true -> false); loosening is a maintainer action done by hand`);
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
-  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "sign");
   const skipped = [];
   const admission = admitStatements(git, index, mainRef, cwd, skipped);
   const extensions = { ...index.extensions };
@@ -11397,6 +11526,7 @@ async function attemptSign(opts, seed, rootKey, deps, memo) {
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync5(join6(deps.tmpdir(), "nimbus-registry-sign-"));
+  const batch = { extensions, files, added, skipped, publishedAt, work };
   try {
     for await (const o of validateUnsigned({
       git,
@@ -11413,12 +11543,7 @@ async function attemptSign(opts, seed, rootKey, deps, memo) {
         skipped.push({ dir: o.dir, reason: o.reason });
         continue;
       }
-      const { candidate, verdict: v } = o;
-      const base = `extensions/${v.id}/${v.version}`;
-      const provenance = await provenanceFor(v, candidate.packageBytes, { work, verifiedAt: publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, memo);
-      addVersion(extensions, v, publishedAt, provenance);
-      files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
-      added.push({ id: v.id, version: v.version, channel: v.channel });
+      await takeCandidate(o, batch, run, opts, deps);
     }
   } finally {
     rmSync5(work, { recursive: true, force: true });
@@ -11499,6 +11624,12 @@ function commitMessage(added, statements, sequence, defaultBranch) {
 function versionRef(x) {
   return `${x.id}@${x.version}`;
 }
+function qualityNote(x) {
+  if (x.quality === undefined)
+    return "";
+  const q = x.quality;
+  return `, quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+}
 function report2(io, a, pushed) {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
@@ -11507,7 +11638,7 @@ function report2(io, a, pushed) {
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
     for (const x of a.added)
-      lines.push(`- ${code(versionRef(x))} (${x.channel})`);
+      lines.push(`- ${code(versionRef(x))} (${x.channel})${qualityNote(x)}`);
     for (const id of a.statements)
       lines.push(`- statement ${code(id)}`);
   }
@@ -11525,14 +11656,14 @@ function warnSkipped(io, a) {
   for (const s of a.skipped)
     io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
 }
-async function signLoop(opts, seed, deps) {
+async function signLoop(opts, seed, scores, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   let last;
-  const memo = new Map;
+  const run = { seed, rootKey, memo: new Map, scores };
   try {
     for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
-      last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps, memo);
+      last = await attemptSign({ ...opts, defaultBranch }, run, deps);
       if (last.commit === undefined) {
         report2(deps.io, last, false);
         return;
@@ -11555,7 +11686,8 @@ async function signLoop(opts, seed, deps) {
 async function runSign(opts, deps = SHARED3) {
   const seed = parseRootKey(opts.rootKey);
   try {
-    await signLoop(opts, seed, deps);
+    const scores = opts.scores === undefined ? undefined : readScores(opts.scores);
+    await signLoop(opts, seed, scores, deps);
   } finally {
     seed.fill(0);
   }
@@ -11818,14 +11950,18 @@ function takeGithubToken() {
   return token;
 }
 function refuseSecretsInScore() {
+  const set = [];
   for (const name of ["root-key", "github-token"]) {
     const value = getInput(name);
-    const set = value !== "";
     delete process.env[inputEnvName(name)];
-    if (set) {
+    if (value !== "") {
       maskSecret(value);
-      throw new Error(`input "${name}" must not be set in score mode: score runs extension code and holds no secrets`);
+      set.push(name);
     }
+  }
+  const [first] = set;
+  if (first !== undefined) {
+    throw new Error(`input "${first}" must not be set in score mode: score runs extension code and holds no secrets`);
   }
 }
 function scoresPath(ws, input) {
@@ -11840,7 +11976,13 @@ async function main() {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
+      const gateway = getInput("nimbus-gateway");
+      await runCheck({
+        workspace: workspace(),
+        baseRef,
+        githubToken: takeGithubToken(),
+        ...gateway !== "" && { gateway }
+      });
     } else if (mode === "score") {
       refuseSecretsInScore();
       const defaultBranch = getInput("default-branch");
@@ -11863,9 +12005,11 @@ async function main() {
     } else {
       const rootKey = takeRootKey();
       const githubToken = takeGithubToken();
+      const scores = getInput("scores");
       await runSign({
         ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
-        githubToken
+        githubToken,
+        ...scores !== "" && { scores: scoresPath(workspace(), scores) }
       });
     }
   } catch (err) {

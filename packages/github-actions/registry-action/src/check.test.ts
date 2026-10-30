@@ -12,13 +12,14 @@ import {
   setDefaultTimeout,
   test,
 } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { signIndex, validatePublish } from "../../../registry-format/src/index.ts";
 import { type CheckDeps, runCheck } from "./check.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
+import type { RoleRun, RunRole } from "./score.ts";
 import { runSign } from "./sign.ts";
 import {
   copyRegistryRepo,
@@ -435,5 +436,134 @@ describe("maintainer requests in a pull request (trust layer PR 4a)", () => {
       writePublish(ws, ext);
     });
     await expect(run()).rejects.toThrow(/maintainer request/i);
+  });
+});
+
+describe("scoring a publish (the nimbus-gateway input)", () => {
+  const SUITE = JSON.stringify({ format: 1, name: "basic", cases: [] });
+  const REPORT = {
+    scorer: 1,
+    score: 50,
+    cases: 2,
+    passed: 1,
+    rubrics: {
+      exact: { cases: 2, passed: 1 },
+      "json-match": { cases: 0, passed: 0 },
+      "one-of": { cases: 0, passed: 0 },
+    },
+    results: [
+      { suite: "basic", case: "a", rubric: "exact", pass: true, reason: null },
+      { suite: "basic", case: "b", rubric: "exact", pass: false, reason: "mismatch" },
+    ],
+  };
+
+  let roleCalls: { gateway: string; dir: string }[];
+  let gateway: string;
+
+  beforeEach(() => {
+    roleCalls = [];
+    gateway = join(tmp, "nimbus-gateway");
+    writeFileSync(gateway, "not run: the role is faked");
+  });
+
+  const role =
+    (answer: (dir: string) => RoleRun): RunRole =>
+    async (gw, dir) => {
+      roleCalls.push({ gateway: gw, dir });
+      return answer(dir);
+    };
+
+  const ok = (id: string): RoleRun => ({
+    code: 0,
+    stdout: `${JSON.stringify({ ok: true, extensionId: id, version: "1.0.0", report: REPORT })}\n`,
+    stderrTail: "",
+    timedOut: false,
+    overflow: false,
+  });
+
+  /** `check` with `runRole`; `gw` is the `nimbus-gateway` input (`null`: not set). */
+  const scored = (runRole: RunRole, gw: string | null = gateway): Promise<void> =>
+    runCheck(
+      { workspace: repo.workspace, baseRef: "main", ...(gw !== null && { gateway: gw }) },
+      { ...deps(), runRole },
+    );
+
+  test("an evals publish is scored and the summary reports the quality", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role((dir) => {
+        expect(readFileSync(join(dir, "evals", "basic.eval.json"), "utf8")).toBe(SUITE);
+        return ok("acme/echo");
+      }),
+    );
+    expect(roleCalls).toHaveLength(1);
+    expect(roleCalls[0]?.gateway).toBe(gateway);
+    const md = summaries[0] ?? "";
+    expect(md).toContain("- **Quality:** quality 50/100 (1 of 2 cases passed)");
+    expect(md).not.toContain("No runtime check of the package is performed");
+    expect(md).toContain("eval suites were run");
+  });
+
+  test("a failed eval is reported with its code, escaped, and the check still passes", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role(() => ({
+        code: 0,
+        stdout: `${JSON.stringify({ ok: false, error: { code: "ERR_EVAL_SUITE_INVALID", message: "bad `x`\n# y" } })}\n`,
+        stderrTail: "",
+        timedOut: false,
+        overflow: false,
+      })),
+    );
+    const md = summaries[0] ?? "";
+    expect(md).toContain(
+      "- **Quality:** could not score: `ERR_EVAL_SUITE_INVALID` `` bad `x` # y ``",
+    );
+    expect(md).not.toContain("No runtime check of the package is performed");
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.0.0");
+  });
+
+  test("a publish without evals/ is not scored and keeps today's summary", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => writePublish(ws, ext));
+    await scored(role(() => ok("acme/echo")));
+    expect(roleCalls).toEqual([]);
+    const md = summaries[0] ?? "";
+    expect(md).not.toContain("**Quality:**");
+    expect(md).toContain("No runtime check of the package is performed");
+  });
+
+  test("without the input an evals publish is not scored", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role(() => ok("acme/echo")),
+      null,
+    );
+    expect(roleCalls).toEqual([]);
+    const md = summaries[0] ?? "";
+    expect(md).not.toContain("**Quality:**");
+    expect(md).toContain("No runtime check of the package is performed");
+  });
+
+  test("a relative or missing nimbus-gateway fails the check before anything runs", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await expect(
+      scored(
+        role(() => ok("acme/echo")),
+        "nimbus-gateway",
+      ),
+    ).rejects.toThrow('input "nimbus-gateway" must be an absolute path to an existing file');
+    await expect(
+      scored(
+        role(() => ok("acme/echo")),
+        join(tmp, "absent"),
+      ),
+    ).rejects.toThrow('input "nimbus-gateway" must be an absolute path to an existing file');
+    expect(validated).toBe(0);
+    expect(roleCalls).toEqual([]);
   });
 });

@@ -88,16 +88,21 @@ function takeGithubToken(): string {
  * environment either way; the role gets a minimal environment of its own regardless).
  */
 function refuseSecretsInScore(): void {
+  const set: string[] = [];
+  // Every one is read, masked and dropped before the first refusal is thrown.
   for (const name of ["root-key", "github-token"]) {
     const value = getInput(name);
-    const set = value !== "";
     delete process.env[inputEnvName(name)];
-    if (set) {
+    if (value !== "") {
       maskSecret(value);
-      throw new Error(
-        `input "${name}" must not be set in score mode: score runs extension code and holds no secrets`,
-      );
+      set.push(name);
     }
+  }
+  const [first] = set;
+  if (first !== undefined) {
+    throw new Error(
+      `input "${first}" must not be set in score mode: score runs extension code and holds no secrets`,
+    );
   }
 }
 
@@ -116,7 +121,13 @@ export async function main(): Promise<void> {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
+      const gateway = getInput("nimbus-gateway");
+      await runCheck({
+        workspace: workspace(),
+        baseRef,
+        githubToken: takeGithubToken(),
+        ...(gateway !== "" && { gateway }),
+      });
     } else if (mode === "score") {
       refuseSecretsInScore();
       const defaultBranch = getInput("default-branch");
@@ -139,6 +150,8 @@ export async function main(): Promise<void> {
     } else {
       const rootKey = takeRootKey();
       const githubToken = takeGithubToken();
+      // Unlike score, sign has no default: no input means no quality is signed.
+      const scores = getInput("scores");
       await runSign({
         ...signOptions(
           workspace(),
@@ -147,6 +160,7 @@ export async function main(): Promise<void> {
           process.env["GITHUB_REPOSITORY"],
         ),
         githubToken,
+        ...(scores !== "" && { scores: scoresPath(workspace(), scores) }),
       });
     }
   } catch (err) {

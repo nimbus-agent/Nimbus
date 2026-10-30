@@ -28,12 +28,12 @@ inputs:
     default: ""
 
   nimbus-gateway:
-    description: "score: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role runs each new version's eval suites in the platform sandbox. Run score in a job with no secrets (it runs extension code)."
+    description: "score and check: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role runs a new version's eval suites in the platform sandbox (score: every unsigned version with evals/; check: the pull request's version, reported in the summary; empty means check scores nothing). Never pass it to a job that holds secrets (it runs extension code)."
     required: false
     default: ""
 
   scores:
-    description: "score: where scores.json is written (relative to the workspace); empty means scores.json."
+    description: "score: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
     required: false
     default: ""
 

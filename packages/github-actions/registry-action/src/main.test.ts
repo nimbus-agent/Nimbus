@@ -73,6 +73,7 @@ describe("main", () => {
     "INPUT_ROOT-KEY",
     "INPUT_GITHUB-TOKEN",
     "INPUT_NIMBUS-GATEWAY",
+    "INPUT_SCORES",
     "GITHUB_BASE_REF",
     "GITHUB_WORKSPACE",
   ] as const;
@@ -143,6 +144,38 @@ describe("main", () => {
       expect(process.env[`INPUT_${name.toUpperCase()}`]).toBeUndefined();
     },
   );
+
+  test("score with both secrets set drops and masks both before failing", async () => {
+    process.env["INPUT_MODE"] = "score";
+    process.env["INPUT_ROOT-KEY"] = "first-secret-value";
+    process.env["INPUT_GITHUB-TOKEN"] = "second-secret-value";
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain("::add-mask::first-secret-value");
+    expect(all).toContain("::add-mask::second-secret-value");
+    expect(all).toContain('::error::input "root-key" must not be set in score mode');
+    expect(process.env["INPUT_ROOT-KEY"]).toBeUndefined();
+    expect(process.env["INPUT_GITHUB-TOKEN"]).toBeUndefined();
+  });
+
+  test("sign passes a set scores input on, and a missing file fails the step", async () => {
+    process.env["INPUT_MODE"] = "sign";
+    process.env["INPUT_ROOT-KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    process.env["INPUT_SCORES"] = join(process.cwd(), "definitely-absent-scores.json");
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain("::error::refusing to sign: the scores input");
+  });
+
+  test("check passes a set nimbus-gateway input on", async () => {
+    process.env["INPUT_MODE"] = "check";
+    process.env["GITHUB_BASE_REF"] = "main";
+    process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
+  });
 
   test("score with a relative nimbus-gateway fails the step", async () => {
     process.env["INPUT_MODE"] = "score";

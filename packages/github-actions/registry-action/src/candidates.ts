@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import {
   admitPublisherStatements,
   codeUnitCompare,
+  type EvalQuality,
   type PublishCandidate,
   type PublishVerdict,
   publisherAfterPublish,
@@ -55,13 +56,17 @@ export function extensionDirs(
 
 const sha256Hex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
 
-/** § 11.7: every signed version is still on `ref`, byte for byte. Returns the signed dirs. */
+/**
+ * § 11.7: every signed version is still on `ref`, byte for byte. Returns the signed dirs. The
+ * refusal names the mode that refuses (`verb`: "sign" or "score").
+ */
 export function assertSignedIntact(
   git: typeof gitTree,
   index: RegistryIndex,
   ref: string,
   paths: ReadonlySet<string>,
   cwd: string,
+  verb: "sign" | "score",
 ): Set<string> {
   const problems: string[] = [];
   const signedDirs = new Set<string>();
@@ -82,7 +87,7 @@ export function assertSignedIntact(
   }
   if (problems.length > 0) {
     throw new Error(
-      `refusing to sign: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`,
+      `refusing to ${verb}: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`,
     );
   }
   return signedDirs;
@@ -167,13 +172,15 @@ export async function* validateUnsigned(
 
 /**
  * `extensions` with `v` added as a version entry (the entry `sign` writes, so later candidates are
- * validated against it). Fixed fields only; `provenance` is added explicitly when there is one.
+ * validated against it). Fixed fields only; `provenance` and `quality` (a registry-measured eval
+ * score, already validated) are added explicitly when there is one.
  */
 export function addVersion(
   extensions: Record<string, RegistryExtensionEntry>,
   v: PublishVerdict,
   publishedAt: string,
   provenance?: VersionProvenance,
+  quality?: EvalQuality,
 ): void {
   const base = `extensions/${v.id}/${v.version}`;
   const existing = extensions[v.id];
@@ -192,6 +199,7 @@ export function addVersion(
         entryHash: v.entryHash,
         publishedAt,
         ...(provenance !== undefined && { provenance }),
+        ...(quality !== undefined && { quality }),
       },
     },
   };
