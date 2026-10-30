@@ -85,6 +85,9 @@ sudo sh "${work}/install.sh"
 test -f "${PROFILE}"
 expect_allowed "with the profile"
 
+echo "Restriction on, the profile loaded, name resolution through the real runner:"
+bun --no-env-file scripts/linux/check-sandbox-dns.ts
+
 echo "Restriction on, the install block has run twice (an upgrade):"
 sudo sh "${work}/install.sh"
 expect_allowed "after a second install"

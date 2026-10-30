@@ -23,6 +23,8 @@ describe("buildDefaultSeccompFilter", () => {
   it("classifies key syscalls correctly", () => {
     expect(SYS_ALLOW).toContain("read");
     expect(SYS_ALLOW).toContain("execve");
+    // glibc's resolver: without it a child dies on its first DNS lookup on Ubuntu 24.04.
+    expect(SYS_ALLOW).toContain("sendmmsg");
     expect(SYS_BLOCK_EPERM).toContain("ptrace");
     expect(SYS_BLOCK_EPERM).toContain("mount");
     expect(SYS_BLOCK_EPERM).toContain("setuid");

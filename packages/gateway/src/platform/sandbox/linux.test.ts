@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildBwrapArgv, decideNetworkMode } from "./linux.ts";
+import { buildBwrapArgv, decideNetworkMode, resolverFileToBind } from "./linux.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd string (S5443). buildBwrapArgv
@@ -71,5 +71,58 @@ describe("buildBwrapArgv", () => {
     });
     const idx = argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/home/u/docs");
     expect(idx).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("the resolver file", () => {
+  const bindOf = (argv: readonly string[], path: string): boolean =>
+    argv.some((a, i) => a === "--ro-bind" && argv[i + 1] === path && argv[i + 2] === path);
+  const STUB = "/run/systemd/resolve/stub-resolv.conf";
+
+  it("a child with a network gets the file behind Ubuntu's symlink", () => {
+    for (const mode of ["fallback", "per-host"] as const) {
+      const argv = buildBwrapArgv(basePolicy({ network: ["a.com"] }), {
+        mode,
+        cwd: CWD,
+        resolverFile: STUB,
+      });
+      expect(bindOf(argv, STUB)).toBe(true);
+    }
+  });
+
+  it("a no-network child does not", () => {
+    const argv = buildBwrapArgv(basePolicy(), { mode: "no-net", cwd: CWD, resolverFile: STUB });
+    expect(bindOf(argv, STUB)).toBe(false);
+  });
+
+  it("nothing to bind adds nothing", () => {
+    const argv = buildBwrapArgv(basePolicy({ network: ["a.com"] }), {
+      mode: "fallback",
+      cwd: CWD,
+      resolverFile: null,
+    });
+    expect(argv).toEqual(
+      buildBwrapArgv(basePolicy({ network: ["a.com"] }), { mode: "fallback", cwd: CWD }),
+    );
+  });
+
+  it("resolverFileToBind returns a target outside the bound trees", () => {
+    expect(resolverFileToBind(() => STUB)).toBe(STUB);
+    expect(resolverFileToBind(() => "/run/NetworkManager/resolv.conf")).toBe(
+      "/run/NetworkManager/resolv.conf",
+    );
+  });
+
+  it("resolverFileToBind adds nothing for a target already bound", () => {
+    expect(resolverFileToBind(() => "/etc/resolv.conf")).toBeNull();
+    expect(resolverFileToBind(() => "/usr/lib/systemd/resolv.conf")).toBeNull();
+  });
+
+  it("resolverFileToBind adds nothing when the file cannot be resolved", () => {
+    expect(
+      resolverFileToBind(() => {
+        throw new Error("ENOENT");
+      }),
+    ).toBeNull();
   });
 });

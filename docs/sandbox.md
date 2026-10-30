@@ -66,6 +66,10 @@ For the tarball, `linux-postinstall.sh` does the same through `sudo`. An AppImag
 step: `nimbus doctor` reports the failure and prints the commands. `canConfine` runs the namespaces
 rather than `bwrap --version`, so a refused policy says why before the owner is asked to approve.
 
+A child with a network also gets the file behind `/etc/resolv.conf` bound at its own path, because
+on Ubuntu that is a symlink into `/run/systemd/resolve`, which is not otherwise bound. Only that file
+is bound, not the directory holding systemd-resolved's control socket.
+
 If the helper is missing or lacks the cap, the sandbox degrades to
 all-or-nothing network — connectors with non-empty `permissions.network`
 get full network access; connectors with empty `permissions.network` get

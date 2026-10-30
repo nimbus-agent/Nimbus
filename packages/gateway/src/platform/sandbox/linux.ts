@@ -1,5 +1,5 @@
 import { type ChildProcess, type StdioOptions, spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdtempSync, openSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
@@ -18,6 +18,8 @@ interface HelperState {
 interface BuildArgvOpts {
   mode: NetworkMode;
   cwd: string;
+  /** From {@link resolverFileToBind}. Bound only when the child has a network to resolve on. */
+  resolverFile?: string | null;
 }
 
 const HELPER_PATH =
@@ -41,6 +43,25 @@ export function decideNetworkMode(
   const hosts = policy.permissions.network;
   if (hosts.length === 0) return "no-net";
   return helper.helperAvailable ? "per-host" : "fallback";
+}
+
+/**
+ * The file `/etc/resolv.conf` really is, when binding `/etc` alone would leave it dangling.
+ *
+ * On Ubuntu it is a symlink to `/run/systemd/resolve/stub-resolv.conf`, and `/run` is not bound, so
+ * glibc found no resolver and every lookup failed. Only that one file is bound, not its directory,
+ * which also holds systemd-resolved's control socket. Null when there is nothing to add: the target
+ * is under a tree already bound, or the file cannot be resolved.
+ */
+export function resolverFileToBind(
+  realpath: (path: string) => string = realpathSync,
+): string | null {
+  try {
+    const target = realpath("/etc/resolv.conf");
+    return target.startsWith("/etc/") || target.startsWith("/usr/") ? null : target;
+  } catch {
+    return null;
+  }
 }
 
 export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): string[] {
@@ -78,6 +99,9 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
   ];
   if (existsSync("/lib64")) {
     argv.push("--ro-bind", "/lib64", "/lib64");
+  }
+  if (opts.mode !== "no-net" && opts.resolverFile !== undefined && opts.resolverFile !== null) {
+    argv.push("--ro-bind", opts.resolverFile, opts.resolverFile);
   }
   for (const p of policy.permissions.filesystem.read) {
     argv.push("--ro-bind", p, p);
@@ -233,7 +257,11 @@ export function createLinuxSandboxRunner(): SandboxRunner {
         throw new Error(`refusing to spawn: ${bwrapMissing ?? "bwrap unavailable"}`);
       }
       const mode = decideNetworkMode(opts.policy, { helperAvailable: helper.available });
-      const bwrapArgv = buildBwrapArgv(opts.policy, { mode, cwd: opts.cwd });
+      const bwrapArgv = buildBwrapArgv(opts.policy, {
+        mode,
+        cwd: opts.cwd,
+        resolverFile: resolverFileToBind(),
+      });
       bwrapArgv.push("--seccomp", "3", cmd, ...args);
 
       let spawnCmd: string;
