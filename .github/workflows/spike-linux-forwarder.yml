@@ -1,4 +1,4 @@
-# THROWAWAY, never merged. Names the syscall behind the forwarder's seccomp kill on real Ubuntu.
+# THROWAWAY, never merged. The published release on a stock runner.
 name: spike-linux-forwarder
 on:
   push:
@@ -6,9 +6,9 @@ on:
 permissions:
   contents: read
 jobs:
-  seccomp:
+  release-proof:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -16,19 +16,14 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0 (Node 24 runtime)
         with:
           bun-version: "1.4"
-      - name: Prepare
+      - name: Install the published deb
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap strace gcc libc6-dev
-          gcc -O1 -Wall -o spike-launcher spike/launcher.c
-          sudo cp spike-launcher /usr/local/bin/spike-launcher
-          sudo cp "$(which bun)" /usr/local/bin/bun
-          sudo chmod 755 /usr/local/bin/spike-launcher /usr/local/bin/bun
-          sudo ln -s "$PWD" /repo
-          sudo ln -s "$PWD/spike" /fw
-          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile nimbus-bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/nimbus-bwrap > /dev/null
-          sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap
-          ldd --version | head -1
-          cat /etc/resolv.conf | grep -v '^#'
-      - name: "Control"
-        run: /usr/local/bin/bun spike/control.ts
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          curl -fsSL -o n.deb https://github.com/nimbus-agent/Nimbus/releases/download/v10.11.1/nimbus-headless_10.11.1_amd64.deb
+          sudo apt-get install -y -qq ./n.deb 2>&1 | grep -E "AppArmor|Setting up nimbus|WARNING" || true
+          ls -l /etc/apparmor.d/nimbus-bwrap
+      - name: Doctor
+        run: |
+          nimbus doctor 2>&1 | grep -E "Sandbox|nimbus " || true
+      - name: Real connectors
+        run: bun spike/release-proof.ts
