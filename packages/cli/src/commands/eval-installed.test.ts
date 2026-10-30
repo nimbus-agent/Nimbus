@@ -60,20 +60,18 @@ const ver = (version: string, quality: unknown, extra: Record<string, unknown> =
   ...extra,
 });
 
-type Answer = unknown | Error;
-
 interface Script {
-  list?: Answer;
-  evalAnswer?: Answer;
-  evalFn?: (ids: string[]) => Answer;
-  info?: Record<string, Answer>;
+  list?: unknown;
+  evalAnswer?: unknown;
+  evalFn?: (ids: string[]) => unknown;
+  info?: Record<string, unknown>;
 }
 
 function harness(script: Script) {
   const calls: { method: string; params: Record<string, unknown> }[] = [];
   const logs: string[] = [];
   const errs: string[] = [];
-  const answer = (a: Answer): unknown => {
+  const answer = (a: unknown): unknown => {
     if (a instanceof Error) throw a;
     return a;
   };

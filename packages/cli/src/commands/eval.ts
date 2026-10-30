@@ -1,8 +1,14 @@
 /**
- * `nimbus eval --package <dir>`: run an extension package's eval suites in the sandbox and print
- * the score. Gateway-free: it spawns the gateway executable's `__nimbus-eval` role, which writes
- * exactly ONE JSON document to stdout, and renders that. The CLI never imports gateway source; the
- * document is validated by the one shared validator in `@nimbus-dev/registry-format`.
+ * `nimbus eval`, three modes:
+ * - `--package <dir>`: run an extension package's eval suites in the sandbox and print the score.
+ *   Gateway-free: it spawns the gateway executable's `__nimbus-eval` role, which writes exactly ONE
+ *   JSON document to stdout, and renders that. The document is validated by the one shared
+ *   validator in `@nimbus-dev/registry-format`.
+ * - `--extension <id>`: the running gateway evaluates one installed extension behind ONE owner
+ *   approval (`extension.eval`), answered at a terminal.
+ * - `--installed [--threshold <n>]`: every enabled installed extension behind ONE approval, each
+ *   local score compared with its source registry's signed score (`eval-installed.ts`).
+ * The CLI never imports gateway source; it reaches the gateway over IPC only.
  */
 import { isAbsolute, relative, resolve } from "node:path";
 import {
@@ -19,6 +25,7 @@ import {
   type ExtensionEvalEntry,
   evalFailureDocument,
   parseEvalResults,
+  reportInstalledFailure,
   runEvalInstalled,
 } from "./eval-installed.ts";
 import { type PackCall, withTerminalConsentClient } from "./pack.ts";
@@ -277,7 +284,9 @@ interface ParsedArgs {
   pkg?: string;
   suite?: string;
   extension?: string;
-  threshold?: string;
+  /** `--threshold`, as given; parsed once into `threshold` (or `bad`) by `parseArgs`. */
+  thresholdArg?: string;
+  threshold?: number;
   installed: boolean;
   yes: boolean;
   json: boolean;
@@ -290,12 +299,12 @@ interface ParsedArgs {
  */
 const VALUE_FLAGS: ReadonlyMap<
   string,
-  { key: "pkg" | "suite" | "extension" | "threshold"; flagPrefix: string }
+  { key: "pkg" | "suite" | "extension" | "thresholdArg"; flagPrefix: string }
 > = new Map([
   ["--package", { key: "pkg", flagPrefix: "--" }],
   ["--suite", { key: "suite", flagPrefix: "--" }],
   ["--extension", { key: "extension", flagPrefix: "-" }],
-  ["--threshold", { key: "threshold", flagPrefix: "--" }],
+  ["--threshold", { key: "thresholdArg", flagPrefix: "--" }],
 ]);
 
 function applySwitch(out: ParsedArgs, a: string): void {
@@ -319,7 +328,16 @@ function parseArgs(args: readonly string[]): ParsedArgs {
     else out[flag.key] = v;
     i++;
   }
+  applyThreshold(out);
   return out;
+}
+
+/** Parse `--threshold` once: a number, or a usage error (`bad`). A bad value never becomes a number. */
+function applyThreshold(out: ParsedArgs): void {
+  if (out.thresholdArg === undefined) return;
+  const n = parseThreshold(out.thresholdArg);
+  if (n !== null) out.threshold = n;
+  else out.bad ??= "--threshold must be a whole number from 0 to 100";
 }
 
 /** Every string in a rendered report came from the extension or the gateway: strip it. */
@@ -355,9 +373,6 @@ function parseThreshold(v: string): number | null {
 function installedUsageProblem(p: ParsedArgs): string | null {
   if (p.pkg !== undefined || p.suite !== undefined || p.extension !== undefined) {
     return `--installed cannot be combined with --package, --suite or --extension\n${USAGE}`;
-  }
-  if (p.threshold !== undefined && parseThreshold(p.threshold) === null) {
-    return `--threshold must be a whole number from 0 to 100\n${USAGE}`;
   }
   return null;
 }
@@ -505,17 +520,21 @@ async function runAllInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<numbe
   const refused = refuseNonInteractive(p, d, "--installed");
   if (refused !== null) return refused;
   const withClient = d.withClient ?? realWithClient;
-  // usageProblem has already refused a threshold parseThreshold rejects.
-  const threshold =
-    p.threshold === undefined ? DEFAULT_EVAL_THRESHOLD : (parseThreshold(p.threshold) ?? 0);
+  const opts = { threshold: p.threshold ?? DEFAULT_EVAL_THRESHOLD, json: p.json };
+  // The run's exit code, once it has one: a failure after the run (the client's disconnect) has
+  // nothing left to report, and must not print a second document.
+  const done: { code?: number } = {};
   try {
-    return await withClient((call) =>
-      runEvalInstalled({ threshold, json: p.json }, { call, log: d.log, err: d.err }),
-    );
+    await withClient(async (call) => {
+      done.code = await runEvalInstalled(opts, { call, log: d.log, err: d.err });
+    });
   } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    return reportFailure(d, p.json, cliFailure("ERR_EVAL_IPC", message), "");
+    if (done.code === undefined) {
+      const message = e instanceof Error ? e.message : String(e);
+      return reportInstalledFailure(opts, d, { kind: "failure", code: "ERR_EVAL_IPC", message });
+    }
   }
+  return done.code ?? 2;
 }
 
 /**
@@ -549,7 +568,10 @@ async function runInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<number> 
   return 0;
 }
 
-/** Returns the process exit code: 0 when the eval ran (any score), 2 on an eval or usage error. */
+/**
+ * Returns the process exit code: 2 on a usage or eval error; with `--installed`, 1 when any
+ * extension regressed against its registry's score; otherwise 0 when the eval ran (any score).
+ */
 export async function runEval(args: readonly string[], deps?: EvalCliDeps): Promise<number> {
   const d = deps ?? defaultDeps();
   const p = parseArgs(args);

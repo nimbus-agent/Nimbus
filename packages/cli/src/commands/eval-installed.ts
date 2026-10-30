@@ -294,9 +294,23 @@ function exitCodeOf(rows: readonly ResultRow[]): number {
 
 // ---------------------------------------------------------------- the run
 
-type Failure = { code: string; message: string };
+/** A whole-run failure: nothing per extension is reported. */
+export interface InstalledFailure {
+  kind: "failure";
+  code: string;
+  message: string;
+}
 
-function fail(opts: { json: boolean }, deps: InstalledRunDeps, f: Failure): number {
+/**
+ * Report a whole-run failure and return 2: the `{ ok:false, error }` document with `--json`, else
+ * `eval failed: <CODE>: <message>` on stderr, on one line, control characters dropped. The one
+ * failure format of `--installed`, the connection to the gateway included.
+ */
+export function reportInstalledFailure(
+  opts: { json: boolean },
+  deps: Pick<InstalledRunDeps, "log" | "err">,
+  f: InstalledFailure,
+): number {
   if (opts.json) deps.log(evalFailureDocument(f.code, f.message));
   else {
     // A gateway message usually already names its code (`ERR_…: detail`): name it once.
@@ -311,51 +325,55 @@ function messageOf(e: unknown): string {
 }
 
 /** Phase 1: the candidates, or a whole-run failure. Decided before any `extension.eval`. */
-async function loadCandidates(deps: InstalledRunDeps): Promise<InstalledRow[] | Failure> {
+async function loadCandidates(
+  deps: InstalledRunDeps,
+): Promise<{ kind: "candidates"; candidates: InstalledRow[] } | InstalledFailure> {
   let raw: unknown;
   try {
     raw = await deps.call<unknown>("extension.list", {});
   } catch (e) {
-    return { code: "ERR_EVAL_IPC", message: messageOf(e) };
+    return { kind: "failure", code: "ERR_EVAL_IPC", message: messageOf(e) };
   }
   const candidates = candidatesOf(raw, deps.err);
   if (candidates === null) {
-    return { code: "ERR_EVAL_BAD_RESPONSE", message: "the gateway's extension list was not valid" };
+    return {
+      kind: "failure",
+      code: "ERR_EVAL_BAD_RESPONSE",
+      message: "the gateway's extension list was not valid",
+    };
   }
   if (candidates.length > MAX_INSTALLED_EVAL) {
     return {
+      kind: "failure",
       code: "ERR_EVAL_TOO_MANY_EXTENSIONS",
       message: `${candidates.length} extensions are enabled; one run evaluates at most ${MAX_INSTALLED_EVAL} (one approval, never batched): use nimbus eval --extension <id>`,
     };
   }
-  return candidates;
+  return { kind: "candidates", candidates };
 }
 
 /** Phase 2: ONE `extension.eval` for every candidate, behind one owner approval. */
 async function evaluate(
   ids: readonly string[],
   deps: InstalledRunDeps,
-): Promise<ExtensionEvalEntry[] | Failure> {
+): Promise<{ kind: "entries"; entries: ExtensionEvalEntry[] } | InstalledFailure> {
   let raw: unknown;
   try {
     raw = await deps.call<unknown>("extension.eval", { ids: [...ids] });
   } catch (e) {
     const message = messageOf(e);
     const code = message.includes(NOT_APPROVED) ? NOT_APPROVED : "ERR_EVAL_IPC";
-    return { code, message };
+    return { kind: "failure", code, message };
   }
   const entries = parseEvalResults(raw, ids);
   if (entries === null) {
     return {
+      kind: "failure",
       code: "ERR_EVAL_BAD_RESPONSE",
       message: "the gateway's answer was not a valid result",
     };
   }
-  return entries;
-}
-
-function isFailure(v: unknown): v is Failure {
-  return isObject(v) && typeof v["code"] === "string" && typeof v["message"] === "string";
+  return { kind: "entries", entries };
 }
 
 /** Exit 2 on a whole-run failure or an eval error; else 1 on any regression; else 0. */
@@ -363,19 +381,20 @@ export async function runEvalInstalled(
   opts: { threshold: number; json: boolean },
   deps: InstalledRunDeps,
 ): Promise<number> {
-  const candidates = await loadCandidates(deps);
-  if (isFailure(candidates)) return fail(opts, deps, candidates);
+  const listed = await loadCandidates(deps);
+  if (listed.kind === "failure") return reportInstalledFailure(opts, deps, listed);
+  const { candidates } = listed;
   if (candidates.length === 0) {
     if (opts.json) deps.log(JSON.stringify({ threshold: opts.threshold, results: [] }));
     else deps.log("no installed extension to evaluate");
     return 0;
   }
-  const entries = await evaluate(
+  const evaluated = await evaluate(
     candidates.map((c) => c.id),
     deps,
   );
-  if (isFailure(entries)) return fail(opts, deps, entries);
-  const rows = await compareAll(entries, candidates, opts.threshold, deps.call);
+  if (evaluated.kind === "failure") return reportInstalledFailure(opts, deps, evaluated);
+  const rows = await compareAll(evaluated.entries, candidates, opts.threshold, deps.call);
   if (opts.json) deps.log(JSON.stringify({ threshold: opts.threshold, results: rows }));
   else renderText(rows, opts.threshold, deps);
   return exitCodeOf(rows);

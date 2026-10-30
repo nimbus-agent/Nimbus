@@ -229,15 +229,19 @@ describe("runEval --installed", () => {
     expect(h.errs.join("\n")).toContain("usage:");
   });
 
+  const NO_YES =
+    "nimbus eval --installed has no --yes: the approval must be answered by a person at a terminal.";
+  const NON_TTY =
+    "Refusing to evaluate installed extensions in non-TTY mode: the approval must be answered at a terminal.";
   test.each([
-    [["--installed", "--yes"], true],
-    [["--installed", "-y"], true],
-    [["--installed"], false],
-  ] as const)("%p (tty %p) is refused before connecting", async (args, tty) => {
+    [["--installed", "--yes"], true, NO_YES],
+    [["--installed", "-y"], true, NO_YES],
+    [["--installed"], false, NON_TTY],
+  ] as const)("%p (tty %p) is refused before connecting", async (args, tty, message) => {
     const h = extHarness({ tty });
     expect(await runEval([...args], h.deps)).toBe(2);
     expect(h.connects()).toBe(0);
-    expect(h.errs.join("\n")).toContain("installed");
+    expect(h.errs).toEqual([message]);
   });
 
   function listHarness(threshold: string[], evalRaw: unknown) {
@@ -298,6 +302,37 @@ describe("runEval --installed", () => {
       ok: false,
       error: { code: "ERR_EVAL_IPC", message: "gateway not running" },
     });
+    // Text: the same `eval failed: <CODE>: <message>` as an extension.list / extension.eval failure.
+    const t = extHarness({});
+    const textDeps: EvalCliDeps = {
+      ...t.deps,
+      withClient: async () => {
+        throw new Error("gateway not running");
+      },
+    };
+    expect(await runEval(["--installed"], textDeps)).toBe(2);
+    expect(t.errs).toEqual(["eval failed: ERR_EVAL_IPC: gateway not running"]);
+  });
+
+  test("a client failure AFTER the run returned keeps its exit code and prints no second document", async () => {
+    for (const [evalRaw, want] of [
+      [{ results: [ipcEntry()] }, 0],
+      [{ results: "bad" }, 2],
+    ] as const) {
+      const h = listHarness([], evalRaw);
+      const inner = h.deps.withClient;
+      if (inner === undefined) throw new Error("listHarness supplies withClient");
+      const deps: EvalCliDeps = {
+        ...h.deps,
+        withClient: async (fn) => {
+          await inner(fn);
+          throw new Error("disconnect failed");
+        },
+      };
+      expect(await runEval([...h.args, "--json"], deps)).toBe(want);
+      expect(h.logs.length).toBe(1);
+      expect(h.logs[0]).not.toContain("disconnect failed");
+    }
   });
 });
 
