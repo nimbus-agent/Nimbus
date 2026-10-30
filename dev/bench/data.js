@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793346549520,
+  "lastUpdate": 1793353057938,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "36dc12c171ce6f44cbbdb6c4a6ff1167b5484996",
-          "message": "docs(release): VSCE_PAT regeneration runbook + record why OIDC is blocked (#1164)\n\nFollow-up to #1031. Two changes, both about making the *next* person's\nhour shorter than mine was.\n\n## What I did NOT add, and why\n\nI set out to add a live `vsce verify-pat` probe, because the Nimbus-side\nregistry row for `VSCE_PAT` is `kind: inventory` — a calendar comparison\nagainst a hand-typed `hardDeadline`, not a real check.\n\n**It already exists.**\n`nimbus-vscode/.github/workflows/secret-health.yml` line 52 live-probes\nthe token weekly via the shared `probe-publish-token` action (`tool:\nvsce`, `namespace: nimbus-agent`). The Nimbus registry row is the\n*calendar* half; the live probe is the *other repo's* half, and both\nalready run. I checked before building and dropped the item.\n\n## 1. A regeneration runbook (`docs/credential-hygiene.md`)\n\nFive steps. Two are easy to get wrong and are called out:\n\n- **Step 2** — `VSCE_PAT` is an **environment** secret on `release`, not\na repository secret. Pasting it at repo level leaves the publish job\nreading the old value, and nothing complains until a release fails.\n- **Step 5** — update `hardDeadline` in `credential-registry.ts` to the\nnew expiry. This is the one with teeth: the date is hand-maintained, so\na stale past date makes the weekly job cry wolf, and *deleting* the\nfield instead makes it go silent straight through the next real expiry.\n\nAlso scoped the consequence honestly, because I'd been overstating it:\nan expired `VSCE_PAT` fails **only the extension publish job**. It is\nnot a merge gate and does not touch the Nimbus gateway release path.\n\n## 2. Recorded why the OIDC path is blocked\n\n`@vscode/vsce@3.9.2` supports `vsce publish --azure-credential`, which\nauthenticates as an Entra service principal and would remove this\ncredential entirely. I set it up end to end today. It does not work\nhere:\n\n- Entra app registration + GitHub OIDC federated credential\n(`repo:nimbus-agent/nimbus-vscode:environment:release`) — created fine.\n- Granting the SP rights on the `nimbus-agent` Marketplace publisher —\n**`TF14045: The identity could not be found`**.\n- Root cause: the backing ADO org (`asafgolombek`) is **MSA-backed**.\n*Organization settings → Microsoft Entra* still offers \"Connect\ndirectory\", so it has never been connected to one. A service principal\nexists only inside an Entra directory, so ADO cannot resolve it at all.\nStructural mismatch, not a permissions or spelling problem.\n\nAll Azure objects were deleted afterwards; nothing is left in the\ntenant.\n\nThe registry note previously read *\"no Entra/OIDC migration is needed\"*\n— true about the global-PAT decommission, but it reads like the option\nwas assessed and rejected. It wasn't; it's blocked. The note now says\nso, names the error, and carries an explicit **do not connect the org to\na directory** warning: that remaps sign-in for every existing user of\nthe org, which is enormous blast radius to avoid one token renewal.\n\n`OVSX_PAT` has no OIDC path either (eclipse-openvsx/openvsx#1534), so\nrotation stays the only mitigation for the Open VSX half regardless.\nRevisit when Marketplace Trusted Publishing ships\n(microsoft/vsmarketplace#1422, still open).\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun test scripts/release/credential-registry.test.ts\nscripts/release/check-secret-health.test.ts` — 78 pass, 0 fail\n- `bun run lint:markdown` — 0 issues across 129 files\n\n## Still yours\n\nThe token itself. `VSCE_PAT` expires **2026-09-20**; the runbook makes\nit a ~3-minute verified paste. ADO PATs cannot be created\nnon-interactively, and with the org MSA-backed there is no automation\npath around that today.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added a runbook for regenerating, securely storing, revoking, and\nverifying the VSCE publishing token.\n* Documented the limitations of the attempted Azure DevOps OIDC\nmigration and the planned Trusted Publishing alternative.\n* Recorded credential rotation deadlines and noted that the OVSX\npublishing token still requires rotation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T17:55:11Z",
-          "tree_id": "6e1a2ee363eace4eea91465888fe30f143f7a962",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/36dc12c171ce6f44cbbdb6c4a6ff1167b5484996"
-        },
-        "date": 1786558053847,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.6564531499971,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.67968125000186,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 285.4773020500008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c5d015721130beb46ea8c29f0135dbb5a3330c40",
+          "message": "feat(eval): nimbus eval --installed compares every installed extension's local score with its registry's, behind one approval (#1824)\n\nPR 5 of 5 of `nimbus eval`. It closes Phase 9.5 project 5.\n\n`nimbus eval --installed [--threshold <n>] [--json]` evaluates every\nenabled installed extension behind ONE owner approval. It then compares\neach local score with the score the extension's source registry signed\nfor the same version. It exits 1 when any extension's score is more than\n`--threshold` points below the registry's (default 5). This is a\nCLI-only change: the gateway's `extension.eval`, `extension.list` and\n`registry.info` already did what this needs.\n\n## Behaviour\n- **Candidates.** Enabled, non-starter-pack rows from `extension.list`.\nThey are sent to `extension.eval` together in one call (at most 50,\notherwise `ERR_EVAL_TOO_MANY_EXTENSIONS`). The gateway asks once for\nevery extension that prepared. An extension without suites reports `no\neval suites` and never reaches the prompt. With no candidates, nothing\nis called and no prompt appears.\n- **Consent.** Exactly as for `--extension`: terminal-only. `--yes` and\nnon-TTY are refused before any connection.\n- **Comparison.** For each evaluated extension that has a source\nregistry, `registry.info { id, registry }` runs after the eval call and\nuses the EVALUATED version's signed `quality.score`. \"No registry score\"\ncarries its reason:\n  - local install;\n  - version not in the registry;\n  - not evaluated;\n  - invalid score;\n  - registry unreadable.\n\n  None of these affects the exit code. A denial reads no registry.\n- **Exit codes,** highest wins:\n- 2: an eval error, a usage error, a denial, an IPC failure, a bad\ngateway answer, or more than 50 extensions;\n  - 1: a regression;\n  - 0: otherwise.\n- **Output.** Text output is a table, `id version local registry delta\nstatus`. Third-party strings are control-stripped and kept to one line,\nand error detail goes to stderr. The summary reads `threshold N: k\nregression(s) in m compared`. `--json` prints exactly one document on\nevery path.\n\n## Honest state\nThe comparison needs a registry that publishes scores, and no live\nregistry does today. The official registry in nimbus-mcp-servers\npublishes through its own script rather than the registry action's\nworkflows, and its one extension has no eval suites. So every evaluated\nrow currently reports a reason for having no registry score. The docs\nsay this wherever they describe the comparison.\n\n## Verification\n- **Unit tests.** `eval-installed.test.ts` and `eval.test.ts`: 133 pass.\nCases cover the threshold boundary, versions that differ, malformed\nanswers, a short or reordered gateway answer, denial with no registry\nread, control-sequence injection, JSON documents, and exit precedence.\n- **End to end through a real gateway.** `eval-extension.e2e.test.ts`:\none prompt listing only the extension with suites, a real sandboxed\nscore of 71, `no eval suites` for the other extension, and a denial that\nstages nothing. Results: Windows 8 pass; Docker oven/bun:1.4 with\nbubblewrap 8 pass.\n- **Full run.** `registry-format`, github-actions, `gateway/src`,\n`cli/src` and scripts: 30282 pass. The 5 failures are the\nPowerShell-script tests that need `pwsh`, which also fail locally on\nmain. `gateway/test` and `cli/test`: 3227 pass, 0 fail. `typecheck`\npasses, `typecheck:tests` reports 0 new, and `preflight:fast`,\n`audit:doc-refs` and `audit:status-drift` pass.\n- **Review.** Antigravity reviewed the plan and spec delta first: 10\nfindings, all applied. Each task then had a task review, plus a\nwhole-branch review whose fixes are in f98909681.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus eval --installed` to evaluate enabled extensions in one\nowner-approved run, with support for JSON output and configurable\nregression thresholds.\n* Results compare local evaluation scores with published registry scores\nfor the same version when available. Runs support up to 50 extensions;\nerrors take precedence in the exit status.\n  * Registry-published scores are not currently available.\n* **Documentation**\n* Updated the CLI help, reference, architecture guide, roadmap,\nchangelog, and project status to describe installed-extension evaluation\nand its limits.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-30T09:29:58Z",
+          "tree_id": "5d6e98a1de23ec31099900abd6555e88fb847fbd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c5d015721130beb46ea8c29f0135dbb5a3330c40"
+        },
+        "date": 1793353053741,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 197.8357427000015,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 193.9754534500018,
             "unit": "ms"
           }
         ]
