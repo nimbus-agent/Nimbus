@@ -110,7 +110,7 @@ function host(over: Partial<DoctorBwrapHost> = {}, files?: readonly string[]): D
 describe("createDoctorBwrapDeps", () => {
   test("the default host answers without throwing, whatever this machine is", () => {
     const real = createDoctorBwrapDeps("linux");
-    expect(typeof real.apparmorFixApplies()).toBe("boolean");
+    expect(typeof real.apparmorFixApplies("/usr/bin/bwrap")).toBe("boolean");
     const found = real.findBwrap();
     expect(found === null || typeof found === "string").toBe(true);
   });
@@ -148,7 +148,7 @@ describe("createDoctorBwrapDeps", () => {
 
   describe("apparmorFixApplies matches what the install block would do", () => {
     const applies = (h: DoctorBwrapHost): boolean =>
-      createDoctorBwrapDeps("linux", h).apparmorFixApplies();
+      createDoctorBwrapDeps("linux", h).apparmorFixApplies("/usr/bin/bwrap");
 
     test("stock Ubuntu 24.04: yes", () => {
       expect(applies(host())).toBe(true);
@@ -170,8 +170,9 @@ describe("createDoctorBwrapDeps", () => {
       expect(applies(host({}, ["/usr/bin/bwrap"]))).toBe(false);
     });
 
-    test("bwrap somewhere other than the profile's path: no", () => {
-      expect(applies(host({}, ["/etc/apparmor.d/abi/4.0"]))).toBe(false);
+    test("a bwrap other than the profile's path: no, even when /usr/bin/bwrap also exists", () => {
+      const deps = createDoctorBwrapDeps("linux", host());
+      expect(deps.apparmorFixApplies("/opt/bwrap")).toBe(false);
     });
 
     test("a bwrap profile already installed: no", () => {

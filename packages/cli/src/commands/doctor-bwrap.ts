@@ -72,7 +72,7 @@ export interface DoctorBwrapDeps {
   readonly findBwrap: () => string | null;
   readonly run: (cmd: readonly string[]) => DoctorBwrapRun;
   /** Whether the install block would act here, so the commands doctor prints can help. */
-  readonly apparmorFixApplies: () => boolean;
+  readonly apparmorFixApplies: (bwrap: string) => boolean;
 }
 
 /** The namespaces the sandbox runner asks for, minus what does not affect whether it can start. */
@@ -121,7 +121,7 @@ export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
   console.log(
     `[fail] Sandbox: bubblewrap cannot start a sandbox (${why}), so connectors, extensions and \`nimbus eval\` cannot start.`,
   );
-  if (deps.apparmorFixApplies()) {
+  if (deps.apparmorFixApplies(bwrap)) {
     console.log("  Ubuntu's AppArmor restriction is blocking it. To allow bubblewrap only, run:");
     console.log(`    ${PROFILE_PRINTF} | sudo tee ${BWRAP_APPARMOR_PROFILE_PATH} >/dev/null`);
     console.log(`    sudo apparmor_parser -r ${BWRAP_APPARMOR_PROFILE_PATH}`);
@@ -149,11 +149,12 @@ const REAL_HOST: DoctorBwrapHost = {
 };
 
 /** The same conditions as {@link bwrapApparmorInstallShell}: never offer what it would refuse. */
-function apparmorFixApplies(host: DoctorBwrapHost): boolean {
+function apparmorFixApplies(bwrap: string, host: DoctorBwrapHost): boolean {
   try {
     return (
+      // The profile names this path, so it cannot help a bwrap found anywhere else.
+      bwrap === "/usr/bin/bwrap" &&
       host.read(RESTRICT_SYSCTL_PATH).trim() === "1" &&
-      host.exists("/usr/bin/bwrap") &&
       host.exists(ABI_PATH) &&
       !EXISTING_BWRAP_PROFILES.some((p) => host.exists(p)) &&
       host.which("apparmor_parser") !== null
@@ -188,6 +189,6 @@ export function createDoctorBwrapDeps(
         return { code: null, stderr: err instanceof Error ? err.message : String(err) };
       }
     },
-    apparmorFixApplies: () => apparmorFixApplies(host),
+    apparmorFixApplies: (bwrap) => apparmorFixApplies(bwrap, host),
   };
 }
