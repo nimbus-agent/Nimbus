@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793381315205,
+  "lastUpdate": 1793383821504,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "476c7e2af026c9caf6417ec9e979539fdf8a6e51",
-          "message": "chore: release main (#1170)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.2.0</summary>\n\n##\n[2.2.0](https://github.com/nimbus-agent/Nimbus/compare/v2.1.0...v2.2.0)\n(2026-08-13)\n\n\n### Features\n\n* **agents:** nimbus negotiate — a cited contribution brief\n([#1166](https://github.com/nimbus-agent/Nimbus/issues/1166))\n([fa807e3](https://github.com/nimbus-agent/Nimbus/commit/fa807e30377ae6e121b58eacb0b304d85b73a4fe))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-13T09:17:35+03:00",
-          "tree_id": "5ac7e11e2e2478ca26ce0650fd42ab40454460bc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/476c7e2af026c9caf6417ec9e979539fdf8a6e51"
-        },
-        "date": 1786603211127,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 310.80639585000245,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.48984615000734,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 278.8134473500031,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cc8ea973622405f2b2d0b2b5b780dd552dd7dba6",
+          "message": "fix(sandbox): let a sandboxed child resolve names on Ubuntu 24.04 (#1829)\n\nOn Ubuntu 24.04, a sandboxed child with network access cannot use DNS.\n#1827 lets the child start. This PR lets it resolve a name, which every\nnetwork connector needs for its first request.\n\n## Two bugs, one behind the other\n\nBoth were measured on a GitHub `ubuntu-24.04` runner, with the AppArmor\nprofile from #1827 loaded, glibc 2.39, and Bun 1.4.\n\n**1. The seccomp filter kills the child on its first lookup.** glibc's\nresolver sends its queries with `sendmmsg`, which is not on the\nallowlist, so the child dies with exit 159 and no stderr. Tracing every\nsyscall, adding each blocked one to a test filter and retrying showed\n`sendmmsg` was the only one needed, for `fetch`, `node:https` and\n`dns.lookup`. It is now allowed. It grants nothing `sendto` and\n`sendmsg` do not already grant.\n\n**2. With that fixed, no resolver can be found.** On Ubuntu,\n`/etc/resolv.conf` is a symlink to\n`/run/systemd/resolve/stub-resolv.conf`, and `/run` is not bound, so the\nlink dangles inside the sandbox. A child with a network now gets that\none file bound at its own path, not the directory that holds\nsystemd-resolved's control socket. A no-network child does not get it.\nThe target comes from `realpath`, so other link targets are handled the\nsame way, though only the systemd-resolved case was run.\n\nThe same `bwrap` arguments and real filter with `sendmmsg` allowed,\nlooking up `api.github.com`:\n\n| | Result |\n|---|---|\n| No bind | `EAI_AGAIN` |\n| No bind, under strace | `EAI_AGAIN` |\n| File bound | `140.82.114.6` |\n\nAn earlier version of the unbound control, written differently, did\nresolve under strace. I did not find out why. The table above is the\nclean repeat.\n\n## Why CI missed it\n\nNo sandbox test did any DNS. Docker hides it too: the same filter passes\nthere, on a different glibc and resolver setup.\n\n`scripts/linux/check-sandbox-dns.ts` now resolves a reserved `.invalid`\nname through the real `createLinuxSandboxRunner`, with the restriction\non, as part of `check-bwrap-apparmor.sh`. `ENOTFOUND` proves the\nresolver answered. It also checks that a no-network child's failed\nlookup does not kill it. The name makes no outside connection.\n\n## What this does not do\n\n- It does not add per-host filtering. A connector that declares network\nstill reaches the whole internet on Linux.\n- A real connector was not run. The evidence is `fetch` and `node:https`\nfrom a sandboxed Bun child on the runner, using a test filter with\n`sendmmsg` allowed and the resolver directory bound.\n- A desktop Ubuntu install, and resolver setups other than\nsystemd-resolved, were not tested.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Linux sandboxed processes with network access can now resolve\nhostnames using the system’s configured DNS resolver.\n* DNS resolver access is limited to the resolver file; the\nsystemd-resolved control socket directory is not exposed.\n* **Documentation**\n* Updated the sandbox documentation to describe DNS resolver access for\nnetwork-enabled processes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-30T20:00:07+02:00",
+          "tree_id": "3420071a17e9354aa0ea994ee09183fffa795bcf",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cc8ea973622405f2b2d0b2b5b780dd552dd7dba6"
+        },
+        "date": 1793383816774,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 268.3540044000001,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 269.4545219000003,
             "unit": "ms"
           }
         ]
