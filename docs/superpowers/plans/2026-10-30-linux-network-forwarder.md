@@ -224,7 +224,7 @@ Parse only the header and single question, bounded by the buffer. No compression
 - Produces:
   - `interface ForwardEntry { host: string; port: number; ownerConfigured: boolean; loopbackIp: string }`
   - `planForwardEntries(policy: SandboxPolicy): ForwardEntry[]`, which throws above 252 hosts, and skips `127.0.0.53`
-  - `startForwardHost(opts: { socketPath: string; entries: readonly ForwardEntry[]; resolve: (host: string) => Promise<string[]>; connect: (ip: string, port: number) => Promise<NetSocketLike>; log: (line: string) => void; onConnection?: (e: ForwardEntry) => void; onRefusedName?: (name: string) => void }): { close(): void }`
+  - `startForwardHost(opts: { socketPath: string; entries: readonly ForwardEntry[]; resolve: (host: string) => Promise<string[]>; connect: (ip: string, port: number) => Promise<NetSocketLike>; log: (line: string) => void; now?: () => number; onConnectionClosed?: (e: ForwardEntry, stats: { startedAtMs: number; durationMs: number; bytesToHost: number; bytesFromHost: number }) => void; onRefusedName?: (name: string) => void }): { close(): void }`
 
 The wire format, one per unix connection: a 3-byte header, then the stream. Byte 0 is `T` (TCP) or `D` (DNS). Bytes 1 and 2 are the big-endian entry index, 0 for DNS. For `T`, relay until either side closes. For `D`, read a 2-byte big-endian length and the datagram, write back a 2-byte length and the reply, then close.
 
@@ -241,9 +241,9 @@ All use a real unix socket in a temp dir, with fake `resolve` and `connect`:
 // connect rejects: closes, one log line, the host stays up and takes the next connection.
 // 256 open connections, then the 257th: closed at once, and after one closes, a new one works.
 // D for an undeclared name: NXDOMAIN reply, onRefusedName called, one log line.
-// The same refused name 1000 times: at most 1 log line per name per minute. Pass the clock in.
+// The same refused name 1000 times: at most 1 log line per name per minute. Pass `now` in.
 // The log never contains relayed bytes.
-// onConnection is called once per T connection with the entry. It is the project 6 seam, and nothing in production passes it.
+// onConnectionClosed is called once per finished T connection, with the entry, start time, duration and byte counts in both directions. It is the project 6 seam, and nothing in production passes it.
 // A slow reader: the relay pauses reading rather than buffering past 1 MiB.
 // close(): the socket file is gone.
 ```
@@ -276,11 +276,11 @@ Run: `bun run verify:docker --changed`
 Follow the `linux-helper-network.test.ts` shape from draft #1826: the real binary under `bwrap`, with a real unix socket target, skipped unless the binary is built. `NIMBUS_REQUIRE_SANDBOX_HELPER=1` turns a skip into a failure.
 
 ```ts
-// bwrap --unshare-user --unshare-net --uid 0 --gid 0 --cap-add NET_BIND,SETPCAP,SETFCAP helper --socket S --listen 127.0.0.2:443:7 -- <probe>
+// bwrap --unshare-user --unshare-net --uid 0 --gid 0 --cap-add CAP_NET_BIND_SERVICE --cap-add CAP_SETPCAP --cap-add CAP_SETFCAP helper --socket S --listen 127.0.0.2:443:7 -- <probe>
 // Connecting to 127.0.0.2:443 inside: the target receives "T", 0x00, 0x07, then the bytes.
 // Sending a UDP datagram to the --dns ip:53: the target receives "D", 0, 0, the length, the datagram, and the reply reaches the sender.
 // The probe's /proc/self/fd lists no listening socket from the helper.
-// SIGCHLD disposition in the probe's /proc/self/status: SigIgn has bit 17 clear.
+// SIGCHLD (signal 17) in the probe's /proc/self/status: SigIgn has bit 16 (1 << 16) clear. Prove this test can fail: run it once with the restore removed.
 // The forwarder's stdout is closed: the test's pipe sees EOF when the probe exits, and the process exit code is the probe's.
 // Bad args: exit 2. A listener already bound: exit 3.
 // Forwarder's /proc/<pid>/status: CapEff 0, NoNewPrivs 1, Seccomp 2.
@@ -305,10 +305,10 @@ In the forwarder:
 1. `prctl(PR_SET_PDEATHSIG, SIGKILL)`, then check the parent has not already gone.
 2. Close 0, 1 and 2, opening `/dev/null` in their place, and close fd 3.
 3. Clear ambient, bounding and all capability sets, and set `PR_SET_NO_NEW_PRIVS`.
-4. Install its own seccomp allowlist, x86-64 only, killing anything else: `read`, `write`, `close`, `poll`, `ppoll`, `accept`, `accept4`, `socket`, `connect`, `sendto`, `recvfrom`, `fcntl`, `fork`, `clone`, `wait4`, `exit`, `exit_group`, `rt_sigaction`, `rt_sigreturn`, `rt_sigprocmask`, `brk`, `mmap`, `munmap`, `getpid`. Add what the test shows it needs and nothing that opens a path. `socket` is restricted to `AF_UNIX` by argument check, so a compromised forwarder cannot open a route.
-5. Relay as the spec says, one process per connection, with one poll loop, and no parsing.
+4. Install its own seccomp allowlist, x86-64 only, killing anything else: `read`, `write`, `close`, `shutdown`, `poll`, `ppoll`, `accept`, `accept4`, `socket`, `connect`, `sendto`, `recvfrom`, `fcntl`, `fork`, `clone`, `clone3`, `wait4`, `exit`, `exit_group`, `rt_sigaction`, `rt_sigreturn`, `rt_sigprocmask`, `brk`, `mmap`, `munmap`, `getpid`. Add what the test shows it needs and nothing that opens a path. `socket` is restricted to `AF_UNIX` by argument check, so a compromised forwarder cannot open a route.
+5. Relay as the spec says, one process per connection, with one poll loop, and no parsing. `PDEATHSIG` does not cross `fork`, so a relay process relies on the outer `bwrap`'s PID namespace to kill it, which the Task 8 wrapper-death test proves.
 
-The `Makefile` drops `-lcap`, and links with `-static`. Keep `-Wall -Wextra -Werror`. Delete `install_firewall_rules`, `--check-caps` and everything else that used iptables.
+The `Makefile` drops `-lcap`, and links with `-static`. Keep `-Wall -Wextra -Werror`. Delete `install_firewall_rules`, `--check-caps` and everything else that used iptables. Change `probeHelper` in `linux.ts` to call `--check` in this task. The old `--allow` spawn path is replaced in Task 8, in the same PR.
 
 - [ ] **Step 4: Run it in Docker, expect PASS, then `cppcheck` as CI runs it, then commit**
 
@@ -341,7 +341,7 @@ The `Makefile` drops `-lcap`, and links with `-static`. Keep `-Wall -Wextra -Wer
 
 - [ ] **Step 3: Implement the spawn path**
 
-In `per-host` mode: create a 0700 temp dir, write the hosts and resolv files, call `startForwardHost`, spawn the outer `bwrap`, and remove the dir and close the host on child exit. `resolvConfTarget` is the existing `resolverFileToBind() ?? "/etc/resolv.conf"`, since `/etc/resolv.conf` can be a symlink. Replace `probeHelper` with `--check`, and make `canConfine` for a network policy run a real nested start of `/usr/bin/true` once at construction. If any step of the spawn path throws, the spawn throws.
+In `per-host` mode: create a 0700 temp dir, write the hosts and resolv files, call `startForwardHost`, spawn the outer `bwrap`, and remove the dir and close the host on child exit. `resolvConfTarget` is the existing `resolverFileToBind() ?? "/etc/resolv.conf"`, since `/etc/resolv.conf` can be a symlink. Make `canConfine` for a network policy, and `isFullyActive`, use one real nested start of `/usr/bin/true`, run once at construction. If any step of the spawn path throws, the spawn throws.
 
 - [ ] **Step 4: Write the real-network test**
 
@@ -413,7 +413,7 @@ This is the PR that changes behaviour for users. Title: `feat(sandbox): ship the
 ```ts
 // I50, behavioural: a per-host argv has --unshare-net in the outer, and buildForwarderArgv is the only path in linux.ts for a per-host policy.
 // I50, source pin: net-forward-host.ts checks allowedAddresses before connect.
-// I50, static: decideNetworkMode never returns --share-net for a per-host policy outside the nested argv.
+// I50, static: `--share-net` appears in a per-host spawn only inside the inner argv built by buildForwarderArgv, whose outer has --unshare-net.
 ```
 
 - [ ] **Step 2: Run them, expect FAIL, then add the I50 row and rationale**
