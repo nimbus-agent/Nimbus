@@ -189,6 +189,50 @@ linuxTest("tarball linux-postinstall.sh prints bwrap pre-check banner", () => {
   expect(postScript).toContain("sudo pacman -S bubblewrap");
 });
 
+linuxTest(
+  ".deb installs the bubblewrap AppArmor profile, and removes it only on remove or purge",
+  () => {
+    const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+    expect(r.status).toBe(0);
+    const ctrlDir = join(workDir, "deb-ctrl");
+    mkdirSync(ctrlDir, { recursive: true });
+    const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
+    const extract = spawnSync("/usr/bin/dpkg-deb", ["-e", debPath, ctrlDir], { encoding: "utf8" });
+    expect(extract.status).toBe(0);
+    const postinst = readFileSync(join(ctrlDir, "postinst"), "utf8");
+    expect(postinst).toContain("apparmor_parser -r /etc/apparmor.d/nimbus-bwrap");
+    expect(postinst).not.toContain("sudo apparmor_parser");
+    const postrm = readFileSync(join(ctrlDir, "postrm"), "utf8");
+    expect(postrm).toContain("remove|purge)");
+    expect(postrm).toContain("apparmor_parser -R /etc/apparmor.d/nimbus-bwrap");
+    for (const script of [postinst, postrm]) {
+      const syntax = spawnSync("/bin/sh", ["-n"], { input: script, encoding: "utf8" });
+      expect(syntax.status).toBe(0);
+    }
+  },
+);
+
+linuxTest(
+  "tarball linux-postinstall.sh installs the bubblewrap AppArmor profile through sudo",
+  () => {
+    const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+    expect(r.status).toBe(0);
+    const extractDir = join(workDir, "tar-extract");
+    mkdirSync(extractDir, { recursive: true });
+    const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
+    const x = spawnSync("/usr/bin/tar", ["-xzf", tarballPath, "-C", extractDir], {
+      encoding: "utf8",
+    });
+    expect(x.status).toBe(0);
+    const postScript = readFileSync(join(extractDir, "linux-postinstall.sh"), "utf8");
+    expect(postScript).toContain("sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap");
+    const syntax = spawnSync("/bin/sh", ["-n", join(extractDir, "linux-postinstall.sh")], {
+      encoding: "utf8",
+    });
+    expect(syntax.status).toBe(0);
+  },
+);
+
 linuxTest("tarball ships nimbus-sandbox-helper when --sandbox-helper is set", () => {
   const stubHelper = join(workDir, "stub-helper");
   writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");

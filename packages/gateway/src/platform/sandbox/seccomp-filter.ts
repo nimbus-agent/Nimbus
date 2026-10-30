@@ -348,6 +348,11 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // ALREADY-OPEN fd, so it can only affect a file the bind mounts already made writable. It
   // cannot open anything, reach outside the mounts, or change what is reachable.
   "ftruncate",
+  // glibc's resolver sends its A and AAAA queries together with `sendmmsg`. Without it the KILL
+  // default SIGSYS-killed every child on its first DNS lookup on Ubuntu 24.04, with no stderr at
+  // all, so a network connector started and then died on its first request. It grants nothing
+  // `sendto` and `sendmsg` above do not: it is several of the same send on an open socket.
+  "sendmmsg",
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([

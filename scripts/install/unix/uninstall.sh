@@ -44,3 +44,10 @@ for rc in "${HOME}/.zshrc" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.p
 done
 
 echo "✓ Nimbus uninstalled."
+
+# linux-postinstall.sh may have installed this machine-wide with sudo. This script does not use
+# sudo, so it says how rather than leaving the profile behind unmentioned.
+if [ -e /etc/apparmor.d/nimbus-bwrap ]; then
+  echo "To also remove the AppArmor profile for bubblewrap:"
+  echo "  sudo apparmor_parser -R /etc/apparmor.d/nimbus-bwrap && sudo rm /etc/apparmor.d/nimbus-bwrap"
+fi

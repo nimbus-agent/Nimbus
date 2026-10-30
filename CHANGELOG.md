@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.11.1](https://github.com/nimbus-agent/Nimbus/compare/v10.11.0...v10.11.1) (2026-10-30)
+
+
+### Bug Fixes
+
+* **sandbox:** let bubblewrap start on stock Ubuntu 24.04, and detect when it cannot ([#1827](https://github.com/nimbus-agent/Nimbus/issues/1827)) ([17c7ce7](https://github.com/nimbus-agent/Nimbus/commit/17c7ce700f8dc65b7043af111959cc65b7b9feff))
+
 ## [10.11.0](https://github.com/nimbus-agent/Nimbus/compare/v10.10.0...v10.11.0) (2026-10-30)
 
 

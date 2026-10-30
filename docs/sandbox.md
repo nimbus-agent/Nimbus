@@ -56,6 +56,20 @@ at install) configures per-host iptables rules inside the netns and drops
 the cap before exec'ing the connector. `bubblewrap` is a hard install
 dependency (`.deb` `Depends:`, `.rpm` `Requires:`).
 
+**Ubuntu 23.10 and later** set `kernel.apparmor_restrict_unprivileged_userns=1`, and the bubblewrap
+package ships no AppArmor profile, so `bwrap` fails before starting its child (`setting up uid map:
+Permission denied` or `loopback: Failed RTM_NEWADDR`) and nothing sandboxed can start. The `.deb`
+installs and loads `/etc/apparmor.d/nimbus-bwrap`, a profile that lets `/usr/bin/bwrap` create user
+namespaces, and removes it on `remove` or `purge`. The kernel restriction stays on for every other
+program, but the profile applies to anything on the machine that runs `bwrap`, not only to Nimbus.
+For the tarball, `linux-postinstall.sh` does the same through `sudo`. An AppImage has no install
+step: `nimbus doctor` reports the failure and prints the commands. `canConfine` runs the namespaces
+rather than `bwrap --version`, so a refused policy says why before the owner is asked to approve.
+
+A child with a network also gets the file behind `/etc/resolv.conf` bound at its own path, because
+on Ubuntu that is a symlink into `/run/systemd/resolve`, which is not otherwise bound. Only that file
+is bound, not the directory holding systemd-resolved's control socket.
+
 If the helper is missing or lacks the cap, the sandbox degrades to
 all-or-nothing network — connectors with non-empty `permissions.network`
 get full network access; connectors with empty `permissions.network` get

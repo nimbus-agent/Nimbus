@@ -758,6 +758,14 @@ jobs:
         env:
           CI: "true"
 
+      # Everything above runs with Ubuntu's AppArmor restriction switched OFF by
+      # install-sandbox-deps.sh, which is how a stock Ubuntu 24.04 could not start any sandboxed
+      # child while CI stayed green. This step runs with it on, using the `.deb`'s own script blocks.
+      - name: Linux — bubblewrap on stock Ubuntu (AppArmor restriction on, the .deb's profile)
+        if: runner.os == 'Linux' && !cancelled()
+        shell: bash
+        run: bash scripts/linux/check-bwrap-apparmor.sh
+
       - name: JUnit test report
         uses: dorny/test-reporter@a43b3a5f7366b97d083190328d2c652e1a8b6aa2 # v3.0.0 (Node 24)
         if: always()
