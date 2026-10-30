@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.11.0](https://github.com/nimbus-agent/Nimbus/compare/v10.10.0...v10.11.0) (2026-10-30)
+
+
+### Features
+
+* **registry:** registry CI scores extension evals in a secret-free job and signs a quality score; search and info show it ([#1822](https://github.com/nimbus-agent/Nimbus/issues/1822)) ([87ec34f](https://github.com/nimbus-agent/Nimbus/commit/87ec34f87a862071e9c16153d9222ecaa45e8b4c))
+
 ## [10.10.0](https://github.com/nimbus-agent/Nimbus/compare/v10.9.0...v10.10.0) (2026-10-29)
 
 
