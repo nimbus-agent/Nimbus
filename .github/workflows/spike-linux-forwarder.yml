@@ -27,6 +27,7 @@ jobs:
       - name: "1 stock Ubuntu: what ships today, no-network sandbox"
         continue-on-error: true
         run: |
+          set +e
           sysctl kernel.apparmor_restrict_unprivileged_userns
           echo "--- bwrap --unshare-net (no-network policy)"
           bwrap --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --unshare-user --unshare-net /usr/bin/echo STARTED; echo "exit $?"
@@ -35,10 +36,12 @@ jobs:
       - name: "2 stock Ubuntu: real v10.11.0 gateway, no-network policy"
         continue-on-error: true
         run: |
+          set +e
           curl -fsSL -o gw https://github.com/nimbus-agent/Nimbus/releases/download/v10.11.0/nimbus-gateway-linux-x64
           chmod +x gw
           mkdir -p "$RUNNER_TEMP/sb"
-          NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":[],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" ./gw __nimbus-sandbox /usr/bin/echo STARTED; echo "exit $?"
+          NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":[],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" ./gw __nimbus-sandbox /usr/bin/echo STARTED; echo "no-network exit $?"
+          NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":["api.github.com"],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" ./gw __nimbus-sandbox /usr/bin/echo STARTED; echo "network-declaring exit $?"
       - name: "3 forwarder on stock Ubuntu"
         continue-on-error: true
         run: /usr/local/bin/bun-spike spike/host.ts

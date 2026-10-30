@@ -3,6 +3,8 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <linux/capability.h>
+#include <linux/filter.h>
+#include <linux/seccomp.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdio.h>
@@ -68,6 +70,16 @@ int main(int argc, char **argv) {
     }
   }
   close(l);
+  /* Variant C: apply the real seccomp filter ourselves, last thing before the payload. */
+  static char prog[65536];
+  ssize_t n = read(3, prog, sizeof prog);
+  if (n > 0) {
+    struct sock_fprog fp = {(unsigned short)(n / 8), (struct sock_filter *)prog};
+    if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &fp) != 0) { perror("seccomp"); return 5; }
+    fprintf(stderr, "launcher: seccomp installed
+");
+  }
+  close(3);
   execv(argv[5], &argv[5]);
   perror("execv");
   return 127;
