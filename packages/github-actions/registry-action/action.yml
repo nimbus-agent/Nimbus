@@ -11,10 +11,10 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
+    description: "Which job this is — one of: check | sign | score (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
-    description: "The branch pull requests merge into (sign and trust-sign). Empty means origin's HEAD."
+    description: "The branch pull requests merge into (sign, score and trust-sign). Empty means origin's HEAD."
     required: false
     default: ""
   root-key:
@@ -23,7 +23,17 @@ inputs:
     default: ""
 
   github-token:
-    description: "check and sign: the token `gh attestation verify` fetches a version's build provenance with (the workflow passes the job's github.token). Empty means no provenance is verified; nothing is refused either way."
+    description: "check and sign: the token `gh attestation verify` fetches a version's build provenance with (the workflow passes the job's github.token). Empty means no provenance is verified; nothing is refused either way. In check it is mutually exclusive with nimbus-gateway: set together, the check fails."
+    required: false
+    default: ""
+
+  nimbus-gateway:
+    description: "score and check: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role runs a new version's eval suites in the platform sandbox (score: every unsigned version with evals/; check: the pull request's version, reported in the summary; empty means check scores nothing). It runs extension code, so it is mutually exclusive with github-token in check (set together, the check fails; provenance is then left to the sign job) and score refuses root-key and github-token."
+    required: false
+    default: ""
+
+  scores:
+    description: "score: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
     required: false
     default: ""
 

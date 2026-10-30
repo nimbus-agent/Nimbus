@@ -6,9 +6,10 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { codeUnitCompare } from "./code-unit-compare.ts";
-import { EVALS_DIR } from "./eval-suite.ts";
 
 export const PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
+/** The eval suites directory (`evals/<name>.eval.json`); defined here so `eval-suite.ts` can import the file set. */
+export const EVALS_DIR = "evals";
 const DIST_DIR = "dist";
 const DOC_FILE_RE = /^(README|LICENSE)(\..+)?$/i;
 

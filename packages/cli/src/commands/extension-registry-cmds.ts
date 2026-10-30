@@ -5,6 +5,7 @@
  */
 import { provenanceNote, readVersionProvenance } from "@nimbus-dev/registry-format";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { stripControlChars as clean } from "../lib/strip-control-chars.ts";
 import {
   type VerifiedPublisherCli,
   verifiedPublisherCell,
@@ -28,6 +29,8 @@ interface SearchResult {
   blocked?: boolean;
   /** R6: Nimbus verified this publisher and vouches for the index's key. Absent from an older gateway. */
   verifiedPublisher?: VerifiedPublisherCli | null;
+  /** The offered version's registry-measured quality. Absent from an older gateway. */
+  quality?: unknown;
 }
 
 interface InfoVersion {
@@ -35,6 +38,10 @@ interface InfoVersion {
   channel: string;
   publishedAt: string;
   packageSizeBytes: number;
+  /** `{ score, cases, passed }` or null. Absent from an older gateway. */
+  quality?: unknown;
+  /** Why the registry's quality for this version is malformed; it is then not evaluated. */
+  qualityInvalid?: string;
   permissions?: {
     network: string[];
     filesystem: { read: string[]; write: string[] };
@@ -58,12 +65,39 @@ interface RemoteInfo {
  */
 function provenanceLine(out: RemoteInfo): string {
   const p = readVersionProvenance({ provenance: out.provenance });
-  return p === undefined ? "Provenance: none" : provenanceNote(p, out.registry);
+  return p === undefined ? "Provenance: none" : clean(provenanceNote(p, out.registry));
 }
 
 export const EXTENSION_SEARCH_USAGE = "Usage: nimbus extension search <query> [--json]\n";
 export const EXTENSION_INFO_REMOTE_USAGE =
   "Usage: nimbus extension info <id> --registry <name> | --remote [--json]\n";
+
+/**
+ * The score of a gateway-projected quality, or `undefined` when there is none to show. Re-checked
+ * here: this CLI may talk to an older or another gateway, and a score it cannot read is not shown.
+ */
+function scoreOf(quality: unknown): number | undefined {
+  if (typeof quality !== "object" || quality === null) return undefined;
+  const score = (quality as Record<string, unknown>)["score"];
+  if (typeof score !== "number" || !Number.isInteger(score) || score < 0 || score > 100) {
+    return undefined;
+  }
+  return score;
+}
+
+/** The search table's Quality cell: `N/100`, or an em dash when the version is not scored. */
+function qualityCell(quality: unknown): string {
+  const score = scoreOf(quality);
+  return score === undefined ? "—" : `${score}/100`;
+}
+
+/** An info version's quality line; a malformed quality (`qualityInvalid`) is not evaluated. */
+function qualityLine(v: InfoVersion, registry: string): string {
+  const score = v.qualityInvalid === undefined ? scoreOf(v.quality) : undefined;
+  return score === undefined
+    ? "not evaluated"
+    : `quality ${score}/100 (measured by ${clean(registry)})`;
+}
 
 function pad(s: string, w: number): string {
   return s + " ".repeat(Math.max(0, w - s.length));
@@ -102,20 +136,21 @@ export async function runExtensionSearch(
   } else {
     deps.stdout(
       table(
-        ["Registry", "ID", "Name", "Publisher", "Verified", "Stable", "Beta"],
+        ["Registry", "ID", "Name", "Publisher", "Verified", "Stable", "Beta", "Quality"],
         out.results.map((r) => [
-          r.registry,
-          r.id,
-          r.blocked === true ? `${r.name} [blocked]` : r.name,
-          r.publisherId,
+          clean(r.registry),
+          clean(r.id),
+          r.blocked === true ? `${clean(r.name)} [blocked]` : clean(r.name),
+          clean(r.publisherId),
           verifiedPublisherCell(r.verifiedPublisher),
-          r.latestStable ?? "-",
-          r.latestBeta ?? "-",
+          clean(r.latestStable ?? "-"),
+          clean(r.latestBeta ?? "-"),
+          qualityCell(r.quality),
         ]),
       ),
     );
   }
-  for (const e of out.errors) deps.stdout(`registry ${e.registry}: ${e.error}\n`);
+  for (const e of out.errors) deps.stdout(`registry ${clean(e.registry)}: ${clean(e.error)}\n`);
   return 0;
 }
 
@@ -146,25 +181,28 @@ export async function runExtensionInfoRemote(
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     if (!msg.includes("ERR_REGISTRY_")) throw e;
-    deps.stderr(`${msg}\n`);
+    deps.stderr(`${clean(msg)}\n`);
     return 1;
   }
   if (json) {
     deps.stdout(`${JSON.stringify(out, undefined, 2)}\n`);
     return 0;
   }
-  deps.stdout(`Extension: ${out.id}\n`);
-  deps.stdout(`Registry:  ${out.registry}\n`);
-  deps.stdout(`Publisher: ${out.publisherId}\n`);
-  deps.stdout(`  key fingerprint: ${out.publisherFingerprint}\n`);
+  deps.stdout(`Extension: ${clean(out.id)}\n`);
+  deps.stdout(`Registry:  ${clean(out.registry)}\n`);
+  deps.stdout(`Publisher: ${clean(out.publisherId)}\n`);
+  deps.stdout(`  key fingerprint: ${clean(out.publisherFingerprint)}\n`);
   deps.stdout(`  ${verifiedPublisherLine(out.verifiedPublisher)}\n`);
   deps.stdout(`${provenanceLine(out)}\n`);
   deps.stdout("Versions:\n");
   for (const v of out.versions) {
-    deps.stdout(`  ${v.version}  ${v.channel}  ${v.publishedAt}  ${v.packageSizeBytes} bytes\n`);
+    deps.stdout(
+      `  ${clean(v.version)}  ${clean(v.channel)}  ${clean(v.publishedAt)}  ${v.packageSizeBytes} bytes\n`,
+    );
+    deps.stdout(`    ${qualityLine(v, out.registry)}\n`);
     if (v.permissions !== undefined) {
       deps.stdout("Permissions (newest version, from the hash-checked manifest):\n");
-      for (const l of formatPermissions(v.permissions)) deps.stdout(`${l}\n`);
+      for (const l of formatPermissions(v.permissions)) deps.stdout(`${clean(l)}\n`);
     }
   }
   return 0;

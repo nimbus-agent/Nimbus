@@ -18,6 +18,41 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-30 — `nimbus eval` PR 4 of 5: registry scoring and score display (Phase 9.5 project 5; no migration, no new
+  invariant; I49 amended).** A registry can now measure each version's eval score itself and sign it into its index. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The registry
+  action gains a `score` mode, run by a new `score` job in the sign workflow `nimbus registry maintain init --github` writes:
+  read-only token, no environment, no secrets, no persisted credentials (spec ruling R8: extension code never runs in the job
+  that holds the root key). The job installs bubblewrap, probes it as the runner user, downloads the pinned release's
+  `nimbus-gateway-linux-x64` (checked against that one `SHA256SUMS` line) and runs each unsigned version's suites through the
+  gateway-free `__nimbus-eval` role, by absolute path with only `PATH` and a private `HOME`, writing `scores.json` always and
+  atomically. Each role run has the role's 12-minute deadline, an 8 MiB stdout cap and its own process group, which every kill
+  `SIGKILL`s whole and which is swept after the exit, so a sandboxed grandchild holding the role's stderr cannot keep the job
+  alive; the run has a 14-minute budget, past which a version gets `ERR_EVAL_BUDGET` without running, and a timeout whose
+  deadline the remaining budget set names the budget rather than the suite. No state is kept across runs: a version whose
+  eval failed is not signed, so every sign run (a push to the default branch or a `workflow_dispatch`) scores it again, and a
+  hanging suite spends 12 of the 14 minutes each time, until it scores or its directory is removed; the score summary lists
+  such versions with that remedy.
+  `sign` (`needs: score`) downloads the artifact into `${{ runner.temp }}`, never the checkout (the score job controls it,
+  and in the workspace it could write into `.git/` of the job holding the root key), and reads `scores.json` once as untrusted input (at most 4 MiB): a version with eval suites is signed
+  only with a valid score bound to its own `<id>@<version>` and package digest, and that quality (`scorer`, `score`, `cases`,
+  `passed`, `rubrics`) becomes its signed `quality`; otherwise it is skipped with a warning. A version without `evals/` is
+  signed as before, and without the `scores` input `sign` is unchanged. `check` given `nimbus-gateway` scores the pull
+  request's version and shows the score or the error; it then refuses `github-token` and leaves provenance to `sign`.
+  Display: `registry.search` results carry the offered version's (newest stable, else newest beta, else the newest
+  version) `quality` (`{ score, cases, passed }` or `null`) and
+  `registry.info` versions carry `quality` plus, for a malformed value, `qualityInvalid` (capped at 200 characters);
+  `nimbus extension search` shows a `Quality` column and `nimbus extension info --registry` shows `quality N/100 (measured by
+  <registry>)` or `not evaluated` per version. The gateway's `loadEvalPackage` now reads each package file once and derives
+  the manifest, suites and files digest from that one read, closing the suite-swap window I49 bound (3) had recorded. The
+  published `v10.10.0` `nimbus-gateway-linux-x64` was run as the score job runs it (ubuntu 24.04, bubblewrap, non-root) and
+  scored the e2e fixture package 71 (7 cases, 5 passed), the source e2e's numbers. The job log shows `sandbox: degraded mode
+  (no per-host network gating)`, which is expected: evals run with no network and no sandbox helper is installed. **Known limits:** a red score job (an
+  infrastructure failure, or a private registry repository, which the score job cannot fetch without credentials) skips the
+  whole sign run, trust requests included, until the workflow is re-run; a version whose eval keeps failing spends score budget
+  on every run until its directory is removed; existing registries
+  adopt the new workflows by hand ([`registry-hosting.md` § Eval scores](./registry-hosting.md#eval-scores)). **Not shipped:**
+  `--installed` (still exits 2) and the desktop Marketplace tile (project 6).
+
 - **2026-10-29 — `nimbus eval` PR 3 of 5: evaluating an installed extension, `nimbus eval --extension` (Phase 9.5 project 5;
   no migration; invariant I49 amended).** `nimbus eval --extension <id> [--json]` evaluates an INSTALLED extension through the
   gateway's new `extension.eval { ids }` IPC method (1 to 50 ids, one result per id in request order). Every id is verified

@@ -225,9 +225,125 @@ describe("nimbus extension search — output modes", () => {
     }));
     expect(await runExtensionSearch("acme", false, h.deps)).toBe(0);
     const [header, beta, none] = h.stdout().trimEnd().split("\n");
-    expect(header).toMatch(/^Registry\s+ID\s+Name\s+Publisher\s+Verified\s+Stable\s+Beta$/);
-    expect(beta?.split(/\s+/).slice(-2)).toEqual(["-", "0.2.0-beta.1"]);
-    expect(none?.split(/\s+/).slice(-2)).toEqual(["-", "-"]);
+    expect(header).toMatch(
+      /^Registry\s+ID\s+Name\s+Publisher\s+Verified\s+Stable\s+Beta\s+Quality$/,
+    );
+    expect(beta?.split(/\s+/).slice(-3)).toEqual(["-", "0.2.0-beta.1", "—"]);
+    expect(none?.split(/\s+/).slice(-3)).toEqual(["-", "-", "—"]);
+  });
+
+  test("the Quality column shows the offered version's score, or a dash when not scored", async () => {
+    const row = (id: string, quality: unknown) => ({
+      registry: "main",
+      id,
+      name: "Tool",
+      publisherId: "acme",
+      latestStable: "1.0.0",
+      latestBeta: null,
+      quality,
+    });
+    const h = harness(() => ({
+      results: [
+        row("acme.scored", { score: 87, cases: 8, passed: 7 }),
+        row("acme.unscored", null),
+        row("acme.malformed", { score: "87" }),
+        row("acme.fraction", { score: 87.5 }),
+        row("acme.over", { score: 101 }),
+        row("acme.under", { score: -1 }),
+        row("acme.absent", undefined),
+      ],
+      errors: [],
+    }));
+    expect(await runExtensionSearch("acme", false, h.deps)).toBe(0);
+    const [, scored, ...unshown] = h.stdout().trimEnd().split("\n");
+    expect(scored?.split(/\s+/).at(-1)).toBe("87/100");
+    expect(unshown).toHaveLength(6);
+    for (const line of unshown) expect(line.split(/\s+/).at(-1)).toBe("—");
+  });
+
+  test("third-party strings in the table lose their control characters", async () => {
+    const esc = String.fromCodePoint(0x1b);
+    const h = harness(() => ({
+      results: [
+        {
+          registry: "main",
+          id: "acme.tool",
+          name: `Tool${esc}[31m`,
+          publisherId: `acme${esc}]0;x`,
+          latestStable: "1.0.0",
+          latestBeta: null,
+        },
+      ],
+      errors: [{ registry: "gone", error: `ERR_REGISTRY_UNREACHABLE: ${esc}[2J` }],
+    }));
+    await runExtensionSearch("tool", false, h.deps);
+    expect(h.stdout()).not.toContain(esc);
+    expect(h.stdout()).toContain("Tool[31m");
+  });
+});
+
+describe("nimbus extension info --remote — quality", () => {
+  const info =
+    (versions: unknown[], registry = "main") =>
+    () => ({
+      registry,
+      id: "acme.tool",
+      publisherId: "acme",
+      publisherFingerprint: "d".repeat(32),
+      versions,
+    });
+  const version = (v: string, extra: Record<string, unknown>) => ({
+    version: v,
+    channel: "stable",
+    publishedAt: "2026-10-01T00:00:00Z",
+    packageSizeBytes: 10,
+    ...extra,
+  });
+
+  test("each version names its registry-measured score, or says it was not evaluated", async () => {
+    const h = harness(
+      info([
+        version("3.0.0", { quality: { score: 87, cases: 8, passed: 7 } }),
+        version("2.0.0", { quality: null }),
+        version("1.0.0", {}),
+      ]),
+    );
+    expect(await runExtensionInfoRemote("acme.tool", "main", false, h.deps)).toBe(0);
+    expect(h.stdout()).toContain(
+      "  3.0.0  stable  2026-10-01T00:00:00Z  10 bytes\n    quality 87/100 (measured by main)\n",
+    );
+    expect(h.stdout()).toContain(
+      "  2.0.0  stable  2026-10-01T00:00:00Z  10 bytes\n    not evaluated\n",
+    );
+    expect(h.stdout()).toContain(
+      "  1.0.0  stable  2026-10-01T00:00:00Z  10 bytes\n    not evaluated\n",
+    );
+  });
+
+  test("a malformed quality is not evaluated: never an error, a stack or a score", async () => {
+    const h = harness(
+      info([
+        version("2.0.0", {
+          quality: null,
+          qualityInvalid: "quality.score does not match passed and cases",
+        }),
+        version("1.0.0", { quality: { score: "x" } }),
+      ]),
+    );
+    expect(await runExtensionInfoRemote("acme.tool", "main", false, h.deps)).toBe(0);
+    expect(h.stdout().match(/ {4}not evaluated\n/g)).toHaveLength(2);
+    expect(h.stdout()).not.toContain("quality ");
+    expect(h.stderr()).toBe("");
+  });
+
+  test("the registry name in the quality line loses its control characters", async () => {
+    const esc = String.fromCodePoint(0x1b);
+    const h = harness(
+      info([version("1.0.0", { quality: { score: 50, cases: 2, passed: 1 } })], `main${esc}[2J`),
+    );
+    await runExtensionInfoRemote("acme.tool", undefined, false, h.deps);
+    expect(h.stdout()).not.toContain(esc);
+    expect(h.stdout()).toContain("    quality 50/100 (measured by main[2J)\n");
   });
 });
 

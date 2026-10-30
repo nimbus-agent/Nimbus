@@ -1,17 +1,19 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { main, maskSecret, parseMode, signOptions } from "./main.ts";
+import { join } from "node:path";
+import { main, maskSecret, parseMode, scoresPath, signOptions } from "./main.ts";
 
 describe("parseMode", () => {
   test("accepts check and sign", () => {
     expect(parseMode("check")).toBe("check");
     expect(parseMode("sign")).toBe("sign");
+    expect(parseMode("score")).toBe("score");
     expect(parseMode("trust-check")).toBe("trust-check");
     expect(parseMode("trust-sign")).toBe("trust-sign");
   });
 
   test.each(["", "Check", "sign ", "publish"])("refuses %p with a clear message", (raw) => {
     expect(() => parseMode(raw)).toThrow(
-      `input "mode" must be "check", "sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+      `input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
     );
   });
 });
@@ -53,8 +55,28 @@ describe("signOptions", () => {
   });
 });
 
+describe("scoresPath", () => {
+  test("defaults to scores.json in the workspace", () => {
+    expect(scoresPath(join("/ws"), "")).toBe(join("/ws", "scores.json"));
+  });
+
+  test("a relative input is under the workspace; an absolute one is kept", () => {
+    expect(scoresPath(join("/ws"), "out/s.json")).toBe(join("/ws", "out", "s.json"));
+    const abs = join(process.cwd(), "s.json");
+    expect(scoresPath(join("/ws"), abs)).toBe(abs);
+  });
+});
+
 describe("main", () => {
-  const KEYS = ["INPUT_MODE", "INPUT_ROOT-KEY", "GITHUB_BASE_REF", "GITHUB_WORKSPACE"] as const;
+  const KEYS = [
+    "INPUT_MODE",
+    "INPUT_ROOT-KEY",
+    "INPUT_GITHUB-TOKEN",
+    "INPUT_NIMBUS-GATEWAY",
+    "INPUT_SCORES",
+    "GITHUB_BASE_REF",
+    "GITHUB_WORKSPACE",
+  ] as const;
   let saved: Record<string, string | undefined>;
   let out: string[];
   let realWrite: typeof process.stdout.write;
@@ -107,12 +129,97 @@ describe("main", () => {
     expect(out.join("")).toContain("::error::check runs on pull_request");
   });
 
+  test.each(["root-key", "github-token"])(
+    "score refuses a %s input (R8: the job that runs extension code holds no secret)",
+    async (name) => {
+      const value = "definitely-secret-value";
+      process.env["INPUT_MODE"] = "score";
+      process.env[`INPUT_${name.toUpperCase()}`] = value;
+      await main();
+      expect(process.exitCode).toBe(1);
+      const all = out.join("");
+      expect(all).toContain(`::add-mask::${value}`);
+      expect(all).toContain(`::error::input "${name}" must not be set in score mode`);
+      expect(all.replace(`::add-mask::${value}`, "")).not.toContain(value);
+      expect(process.env[`INPUT_${name.toUpperCase()}`]).toBeUndefined();
+    },
+  );
+
+  test("score with both secrets set drops and masks both before failing", async () => {
+    process.env["INPUT_MODE"] = "score";
+    process.env["INPUT_ROOT-KEY"] = "first-secret-value";
+    process.env["INPUT_GITHUB-TOKEN"] = "second-secret-value";
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain("::add-mask::first-secret-value");
+    expect(all).toContain("::add-mask::second-secret-value");
+    expect(all).toContain('::error::input "root-key" must not be set in score mode');
+    expect(process.env["INPUT_ROOT-KEY"]).toBeUndefined();
+    expect(process.env["INPUT_GITHUB-TOKEN"]).toBeUndefined();
+  });
+
+  test("sign passes a set scores input on, and a missing file fails the step", async () => {
+    process.env["INPUT_MODE"] = "sign";
+    process.env["INPUT_ROOT-KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    process.env["INPUT_SCORES"] = join(process.cwd(), "definitely-absent-scores.json");
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain("::error::refusing to sign: the scores input");
+  });
+
+  test("sign reads an absolute scores path outside the workspace as given", async () => {
+    // The sign workflow downloads the artifact under the runner's temp dir, outside the checkout.
+    const outside = join(process.cwd(), "runner-temp", "registry-scores", "scores.json");
+    process.env["INPUT_MODE"] = "sign";
+    process.env["INPUT_ROOT-KEY"] = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    process.env["GITHUB_WORKSPACE"] = join(process.cwd(), "workspace");
+    process.env["INPUT_SCORES"] = outside;
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain(`::error::refusing to sign: the scores input (${outside})`);
+  });
+
+  test("check passes a set nimbus-gateway input on", async () => {
+    process.env["INPUT_MODE"] = "check";
+    process.env["GITHUB_BASE_REF"] = "main";
+    process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
+  });
+
+  test("check with nimbus-gateway refuses a github-token: masked, dropped, never printed", async () => {
+    const value = "definitely-secret-token";
+    process.env["INPUT_MODE"] = "check";
+    process.env["GITHUB_BASE_REF"] = "main";
+    process.env["INPUT_NIMBUS-GATEWAY"] = join(process.cwd(), "nimbus-gateway");
+    process.env["INPUT_GITHUB-TOKEN"] = value;
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain(`::add-mask::${value}`);
+    expect(all).toContain(
+      '::error::input "github-token" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets',
+    );
+    expect(all.replace(`::add-mask::${value}`, "")).not.toContain(value);
+    expect(process.env["INPUT_GITHUB-TOKEN"]).toBeUndefined();
+  });
+
+  test("score with a relative nimbus-gateway fails the step", async () => {
+    process.env["INPUT_MODE"] = "score";
+    process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
+  });
+
   test("an unknown mode fails the step", async () => {
     process.env["INPUT_MODE"] = "publish";
     await main();
     expect(process.exitCode).toBe(1);
     expect(out.join("")).toContain(
-      '::error::input "mode" must be "check", "sign", "trust-check" or "trust-sign"',
+      '::error::input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"',
     );
   });
 });

@@ -47,6 +47,13 @@ import {
   statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
+import {
+  assertGateway,
+  type RunRole,
+  roleRunner,
+  type ScoreEntry,
+  scoreCandidate,
+} from "./score.ts";
 
 /** Inputs `check` needs. */
 export interface CheckOptions {
@@ -56,6 +63,12 @@ export interface CheckOptions {
   baseRef: string;
   /** The `github-token` input: what `gh attestation verify` fetches attestations with. */
   githubToken?: string;
+  /**
+   * The `nimbus-gateway` input: an absolute path to a gateway executable. When set, a publish
+   * whose package holds eval suites is scored as the score job will score it; absent, nothing is.
+   * It runs extension code, so it excludes `githubToken` (R8) and provenance is not verified here.
+   */
+  gateway?: string;
 }
 
 /** What `check` reads the registry with, judges it by and reports to; injectable for tests. */
@@ -67,6 +80,8 @@ export interface CheckDeps {
   tmpdir: () => string;
   /** Verifies the version's build provenance for the summary; the default runs `gh`. */
   provenance?: VerifyPackage;
+  /** Runs the gateway's `__nimbus-eval` role; the default is score mode's `roleRunner()`. */
+  runRole?: RunRole;
 }
 
 const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO, tmpdir: osTmpdir };
@@ -194,13 +209,22 @@ function statementOnlySummary(admitted: readonly TrustStatement[]): string {
   return ["## Registry statements", "", ...statementLines(admitted)].join("\n");
 }
 
+/**
+ * What the check learned of the version's provenance: a result, `"deferred"` when this check
+ * scores (it holds no token, so the sign job verifies it), or `undefined` without a repository.
+ */
+type CheckedProvenance = ProvenanceResult | "deferred" | undefined;
+
 /** The summary line for the version's build provenance; informational, never a failure. */
-function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): string {
+function provenanceLine(v: PublishVerdict, r: CheckedProvenance): string {
   if (v.repositoryIgnored === true) {
     return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
   }
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
+  }
+  if (r === "deferred") {
+    return `- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies ${code(v.repository)} when it signs`;
   }
   if (!r?.ok) {
     return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
@@ -209,11 +233,39 @@ function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): str
   return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
 }
 
+/** The longest eval error message the summary repeats. */
+const MAX_SUMMARY_MESSAGE_CHARS = 300;
+
+/** The summary line for the eval score this check measured. */
+function qualityLine(e: ScoreEntry): string {
+  if ("quality" in e) {
+    const q = e.quality;
+    return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+  }
+  const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
+  return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
+}
+
+/** The closing sentence: what this check did and did not run. */
+function runtimeSentence(scored: boolean): string {
+  if (scored) {
+    return (
+      "The package's eval suites were run in the platform sandbox, offline and without " +
+      "credentials; nothing else about what the code does was checked."
+    );
+  }
+  return (
+    "No runtime check of the package is performed: this check validated the signature, the " +
+    "registry rules and the package's file set, not what the code does."
+  );
+}
+
 /** The reviewer's job summary for an accepted publish. */
 function checkSummary(
   v: PublishVerdict,
   admitted: readonly TrustStatement[] = [],
-  provenance?: ProvenanceResult,
+  provenance?: CheckedProvenance,
+  score?: ScoreEntry,
 ): string {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
@@ -232,6 +284,7 @@ function checkSummary(
     `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`,
     `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`,
     provenanceLine(v, provenance),
+    ...(score === undefined ? [] : [qualityLine(score)]),
     "",
     ...statementLines(admitted),
     "**Declared permissions**",
@@ -240,8 +293,7 @@ function checkSummary(
     `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`,
     `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`,
     "",
-    "No runtime check of the package is performed: this check validated the signature, the " +
-      "registry rules and the package's file set, not what the code does.",
+    runtimeSentence(score !== undefined),
   );
   return lines.join("\n");
 }
@@ -309,8 +361,9 @@ async function checkProvenance(
   work: string,
   opts: CheckOptions,
   deps: CheckDeps,
-): Promise<ProvenanceResult | undefined> {
+): Promise<CheckedProvenance> {
   if (v.repository === undefined) return undefined;
+  if (opts.gateway !== undefined) return "deferred";
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
     pkgPath: join(work, "provenance-check.tgz"),
     packageBytes,
@@ -319,12 +372,40 @@ async function checkProvenance(
   });
 }
 
+/**
+ * The version's eval score, measured as the score job will measure it, when the `nimbus-gateway`
+ * input is set and the package holds an eval suite; `undefined` otherwise. Never throws.
+ */
+async function checkScore(
+  v: PublishVerdict,
+  packageBytes: Uint8Array,
+  work: string,
+  opts: CheckOptions,
+  deps: CheckDeps,
+): Promise<ScoreEntry | undefined> {
+  if (opts.gateway === undefined || !v.hasEvals) return undefined;
+  return scoreCandidate(
+    { verdict: v, packageBytes },
+    { gateway: opts.gateway, work },
+    deps.runRole ?? roleRunner(),
+    deps.io.log,
+  );
+}
+
 /** Run the `check` mode. Throws (failing the step) on any refusal. */
 export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Promise<void> {
   const { git } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
     throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
+  }
+  if (opts.gateway !== undefined) {
+    if ((opts.githubToken ?? "") !== "") {
+      throw new Error(
+        'input "github-token" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets',
+      );
+    }
+    assertGateway(opts.gateway);
   }
   git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
   const index = await readVerifiedIndex(git, cwd);
@@ -352,7 +433,8 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
     const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
-    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance));
+    const score = await checkScore(verdict, candidate.packageBytes, work, opts, deps);
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score));
     deps.io.log(
       `check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`,
     );

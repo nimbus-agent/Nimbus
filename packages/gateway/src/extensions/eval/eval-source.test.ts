@@ -12,11 +12,18 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  listPackageFiles,
+  MAX_EVAL_SUITE_FILE_BYTES,
+  MAX_MANIFEST_BYTES,
+  readEvalPackageFiles,
+} from "@nimbus-dev/registry-format";
 
 import { encodeBase64, generateEd25519Keypair, signManifest } from "../verify-signature.ts";
 import {
   discardEvalStage,
   EVAL_STAGE_STALE_MS,
+  type EvalPackageReader,
   EvalRunError,
   type EvalRunErrorCode,
   evalFilesDigest,
@@ -149,13 +156,103 @@ describe("loadEvalPackage", () => {
     expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_SUITE_INVALID");
   });
 
-  test("a suite path that is a directory is refused (a non-registry read error is wrapped)", async () => {
+  test("a suite path that is a directory is refused", async () => {
+    layout(baseManifest(), false);
+    write("evals/dir.eval.json/inner.txt", "x");
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_SUITE_INVALID");
+  });
+
+  test("an empty directory named like a suite holds no package file, so no suite", async () => {
     layout(baseManifest(), false);
     mkdirSync(join(pkg, "evals", "dir.eval.json"), { recursive: true });
-    // Windows cannot open a directory (a plain Error, wrapped as invalid); POSIX opens it and the
-    // registry parser refuses a non-regular suite.
-    const code = await codeOf(loadEvalPackage(pkg));
-    expect(["ERR_EVAL_PACKAGE_INVALID", "ERR_EVAL_SUITE_INVALID"]).toContain(code);
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_NO_SUITES");
+  });
+
+  test("an oversized suite is ERR_EVAL_SUITE_INVALID before anything is parsed", async () => {
+    layout(baseManifest(), false);
+    write("evals/big.eval.json", " ".repeat(MAX_EVAL_SUITE_FILE_BYTES + 1));
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_SUITE_INVALID");
+  });
+
+  test("an oversized manifest is refused as an invalid package", async () => {
+    layout(baseManifest({ description: "x".repeat(MAX_MANIFEST_BYTES) }));
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_PACKAGE_INVALID");
+  });
+
+  test("each package file is read ONCE: a suite swapped after the read changes nothing", async () => {
+    layout(baseManifest());
+    const original = evalFilesDigest(pkg, listPackageFiles(pkg));
+    const swapped = JSON.stringify({ ...SUITE, name: "swapped" });
+    let reads = 0;
+    const src = await loadEvalPackage(pkg, {
+      readFiles: (dir, files) => {
+        reads++;
+        const bytes = readEvalPackageFiles(dir, files);
+        // The attacker's swap lands right after the one read; the old code read the suites and
+        // the digest separately, so either could have seen this file.
+        write("evals/basic.eval.json", swapped);
+        return bytes;
+      },
+    });
+    expect(reads).toBe(1);
+    expect(src.suites.map((s) => s.name)).toEqual(["basic"]);
+    expect(src.filesDigest).toBe(original);
+    expect(evalFilesDigest(pkg, src.files)).not.toBe(original);
+  });
+
+  describe("the reader must return exactly the listed files", () => {
+    const EVIL = new TextEncoder().encode(JSON.stringify({ ...SUITE, name: "evil" }));
+    const messageFrom = (readFiles: EvalPackageReader): Promise<string> =>
+      loadEvalPackage(pkg, { readFiles }).then(
+        () => "no error",
+        (e: unknown) => `${(e as EvalRunError).code}: ${messageOf(e)}`,
+      );
+
+    test("a listed file left out is refused", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
+        const all = readEvalPackageFiles(dir, files);
+        all.delete("README.md");
+        return all;
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read returned a different file set");
+      expect(await codeOf(loadEvalPackage(pkg, { readFiles: () => new Map() }))).toBe(
+        "ERR_EVAL_PACKAGE_INVALID",
+      );
+    });
+
+    test("an extra, undigested suite is refused, never evaluated", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
+        const all = readEvalPackageFiles(dir, files);
+        all.set("evals/evil.eval.json", EVIL);
+        return all;
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read returned a different file set");
+    });
+
+    test("a swapped key of the same count is refused", async () => {
+      layout(baseManifest());
+      const msg = await messageFrom((dir, files) => {
+        const all = readEvalPackageFiles(dir, files);
+        all.delete("README.md");
+        all.set("evals/evil.eval.json", EVIL);
+        return all;
+      });
+      expect(msg).toBe("ERR_EVAL_PACKAGE_INVALID: the package read did not return README.md");
+    });
+  });
+
+  test("the digest of the read bytes has the same line format as evalFilesDigest", async () => {
+    layout(baseManifest());
+    const src = await loadEvalPackage(pkg);
+    expect(src.filesDigest).toBe(evalFilesDigest(pkg, src.files));
+  });
+
+  test("a manifest that is not UTF-8 JSON is refused", async () => {
+    layout(baseManifest());
+    write("nimbus.extension.json", "{ nope");
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_PACKAGE_INVALID");
   });
 
   test("suiteFile selects one suite; an unknown one has none", async () => {

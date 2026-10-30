@@ -23,6 +23,11 @@ export {
   type VersionQuality,
 } from "./eval-quality.ts";
 export {
+  type EvalRoleDocument,
+  parseEvalReport,
+  parseEvalRoleDocument,
+} from "./eval-role-document.ts";
+export {
   EVAL_SCORER_VERSION,
   type EvalCaseOutcome,
   type EvalQuality,
@@ -43,11 +48,13 @@ export {
   type EvalExpect,
   type EvalRubricKind,
   type EvalSuite,
+  evalSuitesFromFiles,
   isEvalSuiteFile,
   jsonDepth,
   loadEvalSuites,
   parseEvalSuite,
   parseEvalSuites,
+  readEvalPackageFiles,
 } from "./eval-suite.ts";
 export { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 export {

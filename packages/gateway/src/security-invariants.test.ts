@@ -9601,4 +9601,24 @@ describe("I49 — extension code runs for evaluation only offline, without crede
     // The run path's module (stores, Vault-backed credentials) is not in the eval graph at all.
     expect(rel).not.toContain("extensions/extension-runtime.ts");
   });
+
+  test("static: loadEvalPackage reads every package file once — manifest, suites and filesDigest share one map (bound 3)", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/eval/eval-source.ts"));
+    const bodyOf = (name: string): string => {
+      const start = src.indexOf(`function ${name}(`);
+      expect(start).toBeGreaterThan(-1);
+      const end = src.indexOf("\n}\n", start);
+      return src.slice(start, end);
+    };
+    const load = bodyOf("loadEvalPackage");
+    expect(load).toContain("readPackageOnce(opts.readFiles ?? readEvalPackageFiles,");
+    expect(load).toContain("readManifest(dir, bytes)");
+    expect(load).toContain("selectSuites(bytes,");
+    expect(load).toContain("digestOfFileHashes(entries.");
+    // A second read of the same files is what reopened the suite-swap window.
+    expect(load).not.toContain("loadEvalSuites(");
+    expect(load).not.toContain("evalFilesDigest(");
+    expect(load).not.toContain("readFileSync(");
+    expect(bodyOf("selectSuites")).toContain("evalSuitesFromFiles(bytes)");
+  });
 });

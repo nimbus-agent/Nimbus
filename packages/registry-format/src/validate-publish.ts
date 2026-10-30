@@ -20,7 +20,7 @@ import semver from "semver";
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
-import { EVALS_DIR } from "./eval-suite.ts";
+import { EVALS_DIR, isEvalSuiteFile } from "./eval-suite.ts";
 import {
   assertCanonicalExtensionId,
   assertPublishableExtensionId,
@@ -73,6 +73,12 @@ export interface PublishVerdict {
   packageSizeBytes: number;
   /** True when the id is not in the signed index yet — a reviewer must look harder. */
   newId: boolean;
+  /**
+   * True when the package holds at least one suite file (`evals/<name>.eval.json`, from the
+   * inspected file list): the registry must then score it before signing, so `score`, `check` and
+   * `sign` read this, never re-derive it. Fixtures alone under `evals/` do not count.
+   */
+  readonly hasEvals: boolean;
   /** The manifest's declared sandbox permissions, as the gateway parses them. */
   permissions: SandboxPermissions;
   /** The manifest's well-formed `repository` (`owner/repo`), when it declares one (provenance). */
@@ -507,6 +513,7 @@ export async function validatePublish(
       packageSha256: sha256Hex(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
+      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
       permissions: m.permissions,
       ...(repository !== undefined && { repository }),
       ...(repository === undefined &&

@@ -320,6 +320,7 @@ describe("validatePublish", () => {
       packageSha256: sha256(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId: true,
+      hasEvals: false,
       permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
     });
     // Its scratch space is inside `work` and is cleaned up.
@@ -850,6 +851,24 @@ describe("validatePublish", () => {
     ]);
     const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
     expect(v.entryHash).toBeDefined();
+    expect(v.hasEvals).toBe(true);
+  });
+
+  test("hasEvals means a suite file: fixtures alone under evals/ do not count", async () => {
+    const manifest = await signedManifest();
+    const verdict = async (files: Record<string, string>) =>
+      validatePublish(
+        await candidate({ manifest, pkg: await packOf(manifest, files) }),
+        await indexOf(),
+        NS,
+        work,
+      );
+    expect((await verdict({ "evals/fixture.txt": "x" })).hasEvals).toBe(false);
+    expect((await verdict({ "evals/data/a.eval.json": "x" })).hasEvals).toBe(false);
+    expect((await verdict({ "evals/fixture.txt": "x", "evals/a.eval.json": "{}" })).hasEvals).toBe(
+      true,
+    );
+    expect((await verdict({})).hasEvals).toBe(false);
   });
 
   test("a package holding a file outside the package file set is refused", async () => {

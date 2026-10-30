@@ -317,6 +317,8 @@ type FixtureVersion = {
   repository?: string;
   /** The version entry's `provenance`, as a registry's sign job records it. */
   provenance?: unknown;
+  /** The version entry's raw `quality`, as a registry's sign job records it. */
+  quality?: unknown;
 };
 
 /** A local registry directory with a root-signed index and one manifest per version. */
@@ -353,6 +355,7 @@ function makeRegistry(
         entryHash: "b".repeat(64),
         publishedAt: "2026-10-01T00:00:00Z",
         ...(v.provenance !== undefined && { provenance: v.provenance }),
+        ...(v.quality !== undefined && { quality: v.quality }),
       };
     }
     built[id] = { publisher: { id: ext.publisherId, key: ROOT_KEY }, versions };
@@ -427,6 +430,7 @@ describe("registry.search and registry.info", () => {
         latestBeta: "1.2.0-beta.1",
         blocked: false,
         verifiedPublisher: null,
+        quality: null,
       },
       {
         registry: "second",
@@ -437,6 +441,7 @@ describe("registry.search and registry.info", () => {
         latestBeta: null,
         blocked: false,
         verifiedPublisher: null,
+        quality: null,
       },
     ]);
   });
@@ -535,6 +540,103 @@ describe("registry.search and registry.info", () => {
         7,
       ),
     ).toBeNull();
+  });
+
+  test("info projects each version's registry-measured quality; a malformed one never fails the call", async () => {
+    const quality = {
+      scorer: 1,
+      score: 66,
+      cases: 3,
+      passed: 2,
+      rubrics: {
+        exact: { cases: 1, passed: 1 },
+        "json-match": { cases: 1, passed: 1 },
+        "one-of": { cases: 1, passed: 0 },
+      },
+    };
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Tool" },
+          { version: "1.1.0", channel: "stable", name: "Tool", quality },
+          { version: "1.2.0", channel: "stable", name: "Tool", quality: { ...quality, score: 99 } },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const out = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { versions: Array<Record<string, unknown>> };
+    };
+    const [v120, v110, v100] = out.value.versions;
+    expect(v120?.["quality"]).toBeNull();
+    expect(v120?.["qualityInvalid"]).toBe("quality.score does not match passed and cases");
+    expect(v110?.["quality"]).toEqual({ score: 66, cases: 3, passed: 2 });
+    expect(v110).not.toHaveProperty("qualityInvalid");
+    expect(v100?.["quality"]).toBeNull();
+    expect(v100).not.toHaveProperty("qualityInvalid");
+  });
+
+  test("a qualityInvalid reason quoting index-chosen key names is capped at 200 characters", async () => {
+    const keys = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`k${String(i)}${"x".repeat(60)}`, 1]),
+    );
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Tool", quality: keys }],
+      },
+    });
+    pin("main", tmp);
+    const out = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { versions: Array<Record<string, unknown>> };
+    };
+    const reason = out.value.versions[0]?.["qualityInvalid"];
+    expect(out.value.versions[0]?.["quality"]).toBeNull();
+    expect(typeof reason).toBe("string");
+    expect(String(reason)).toHaveLength(200);
+    expect(String(reason)).toStartWith("quality has unexpected keys: k0");
+  });
+
+  test("search carries the offered version's quality, never a newer beta's or a malformed one", async () => {
+    const quality = (score: number, passed: number) => ({
+      scorer: 1,
+      score,
+      cases: 2,
+      passed,
+      rubrics: {
+        exact: { cases: 2, passed },
+        "json-match": { cases: 0, passed: 0 },
+        "one-of": { cases: 0, passed: 0 },
+      },
+    });
+    const search = async (versions: FixtureVersion[], sequence: number) => {
+      makeRegistry(tmp, { "acme.tool": { publisherId: "acme", versions } }, sequence);
+      const r = (await call("registry.search", { query: "tool" })) as {
+        value: { results: Array<Record<string, unknown>> };
+      };
+      return r.value.results[0];
+    };
+    pin("main", tmp);
+    const offered = await search(
+      [
+        { version: "1.0.0", channel: "stable", name: "Tool", quality: quality(50, 1) },
+        { version: "2.0.0-beta.1", channel: "beta", name: "Tool", quality: quality(100, 2) },
+      ],
+      3,
+    );
+    expect(offered?.["quality"]).toEqual({ score: 50, cases: 2, passed: 1 });
+    // Beta only: the beta is offered, so its quality is shown.
+    const betaOnly = await search(
+      [{ version: "2.0.0-beta.1", channel: "beta", name: "Tool", quality: quality(100, 2) }],
+      4,
+    );
+    expect(betaOnly?.["quality"]).toEqual({ score: 100, cases: 2, passed: 2 });
+    const malformed = await search(
+      [{ version: "1.0.0", channel: "stable", name: "Tool", quality: "87" }],
+      5,
+    );
+    expect(malformed?.["quality"]).toBeNull();
   });
 
   test("search marks an extension whose newest offered version is taken down (I48)", async () => {
@@ -654,6 +756,7 @@ describe("registry.search and registry.info", () => {
           channel: "beta",
           publishedAt: "2026-10-01T00:00:00Z",
           packageSizeBytes: 1234,
+          quality: null,
           permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
         },
         {
@@ -661,6 +764,7 @@ describe("registry.search and registry.info", () => {
           channel: "stable",
           publishedAt: "2026-10-01T00:00:00Z",
           packageSizeBytes: 1234,
+          quality: null,
         },
       ],
     });
