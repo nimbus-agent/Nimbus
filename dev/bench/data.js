@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793333566338,
+  "lastUpdate": 1793346549520,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3689401c7098644c466ac5f429279c9c73fd8983",
-          "message": "refactor(ownership): rebuild runOwnershipPass as map-then-fold (#1163)\n\nCloses the last of my own Sonar findings — and this time by changing the\nshape, not by lifting another helper out.\n\n## Why two previous attempts didn't work\n\n| attempt | result |\n|---|---|\n| #1155 — extract `accumulateOwnerWeights` + `bindRootRemote` | 55 →\n**44** |\n| #1161 — extract `emitPathOwnership` | 44 → **split across two\nfunctions, both still over 15** |\n\nEach time I pulled out the parts that were easy to *name*. That never\nmoved the score much, and it took a third look to see why: **the\ncomplexity was never in any one branch.** `runOwnershipPass` carried\n**eight mutable accumulators** —\n\n```ts\nlet rootsCovered, rootsWithRemote, filesCovered, filesExcluded,\n    ownersEmitted, entitiesReaped;\nconst servicesSeen, serviceWeights, ownerLabelsAcrossRoots;\n```\n\n— and merged into them *inside* the loop. So every helper I extracted\nstill had to hand its results back for in-place merging, and the loop\nbody stayed a junction of everything. Extraction cannot fix that; only\nchanging what a root *produces* can.\n\n## The redesign\n\n**A root now produces a value instead of mutating the caller.**\n\n```ts\ntype RootOutcome = {\n  covered, hasRemote, boundServiceId,\n  filesCovered, filesExcluded, ownersEmitted, entitiesReaped,\n  rootTotals, ownerLabels,\n};\n\nprocessRoot(db, root, deps) -> RootOutcome     // all per-root work, one unit\nfoldRootOutcomes(outcomes)   -> PassTotals     // pure, no db\nemitServiceRollup(db, totals, cfg, nowMs)      // the cross-root half\npersistPassState(db, nowMs, summary)\n```\n\nThe loop becomes a `map`, the accounting becomes a fold, and neither\nhalf branches on the other's state:\n\n```ts\nconst outcomes = opts.roots.map((root) => processRoot(db, root, {...}));\nconst folded = foldRootOutcomes(outcomes);\nclearServiceOwnershipEdges(db);\nfolded.ownersEmitted += emitServiceRollup(db, folded, cfg, opts.nowMs);\n```\n\n`emitPathOwnership` also split along its real seam — `emitFileOwnership`\nand `emitDirectoryOwnership`, over a shared `emitOwnersFor` — with an\n`EmitCtx` bundle so they take two parameters instead of seven.\n\n## Invariants preserved deliberately, not incidentally\n\n- **Everything stays inside the one `db.transaction`**, and\n`processRoot` is strictly synchronous — a transaction callback cannot\n`await`, which is why `resolveRepoRemote` remains prefetched outside.\nThe doc comment on `processRoot` says so, because that is the constraint\na future edit is most likely to break.\n- **Ordering is unchanged.** `reapOrphansForRoot` still runs last per\nroot (object-literal evaluation order puts it after both emitters).\n`clearServiceOwnershipEdges` still runs after all roots and before the\nrollup.\n- **Fold semantics match the old in-loop merge.** `serviceWeights` is\nnumeric summation — order-independent. `ownerLabelsAcrossRoots` is\nlast-write-wins over `opts.roots` order, which the `map` preserves\nexactly.\n- **`upsertGraphEntity` vs `ensureGraphEntity` is untouched.** The\nauthoritative writer of a node upserts (carrying metadata); a purely\nstructural reference create-if-absents, because an upsert from a call\nsite with no metadata would NULL what the authoritative writer just\nwrote. Both emitters keep the original comments explaining which is\nwhich and why.\n- **Only a BOUND root contributes to the rollup** — now an explicit\n`continue` in the fold with the reason stated, rather than an implicit\nconsequence of where the code sat in the loop.\n\n## Verification\n\nThis is a behaviour-preserving redesign, so the existing suite is the\nreal test — and `ownership-pass.test.ts` is unusually good at this: 37\ntests already pin multi-root passes, the service rollup, person-label\npreservation across the rollup, the no-remote path, and file-scope\nisolation between roots.\n\n- `bun test packages/gateway/src/ownership\npackages/gateway/src/agents/ownership.test.ts\npackages/gateway/src/ipc/ownership-rpc.test.ts` — **132 pass, 0 fail**\n- `bun test packages/gateway/src` — **10,923 pass, 30 skip, 0 fail**\n- `bun run preflight:fast` — PASSED (all 29 gates)\n- `bun run typecheck` — 0 errors\n\nNo test needed changing, which is the outcome you want from a refactor\nof this kind.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Refactor**\n* Improved ownership processing for clearer and more consistent results\nacross files, directories, and services.\n* Preserved ownership metadata and structural relationships during\nprocessing.\n* Consolidated ownership outcomes before generating service-level\nsummaries.\n* **Bug Fixes**\n* Improved persistence of ownership summaries after processing\ncompletes.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-12T19:45:13+03:00",
-          "tree_id": "2303a1a20e114bb6fc33290a0103f4a2cbc6ff84",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3689401c7098644c466ac5f429279c9c73fd8983"
-        },
-        "date": 1786553838409,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.26375750000045,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.067049649997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 180.47834500000425,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "87ec34f87a862071e9c16153d9222ecaa45e8b4c",
+          "message": "feat(registry): registry CI scores extension evals in a secret-free job and signs a quality score; search and info show it (#1822)\n\nPR 4 of 5 of `nimbus eval` (Phase 9.5 project 5). A registry's CI can\nnow measure each new extension version's eval score itself, in a job\nthat holds no secret, and sign that score into the version's index entry\nas `quality`. `nimbus extension search` and `nimbus extension info` show\nit, with the registry that measured it.\n\nNo live registry has adopted the new workflows yet, nimbus-mcp-servers\nincluded, so no index carries a score today and every version shows `not\nevaluated` until one does. Adopting them is a follow-up PR in that\nrepository, after the next release.\n\n## What ships\n\n**Registry action** (`packages/github-actions/registry-action`)\n- New `score` mode. For every unsigned candidate that ships\n`evals/<name>.eval.json`, validated exactly as `sign` validates it\n(shared `candidates.ts`), it runs `<gateway> __nimbus-eval --package\n<dir> --json` and writes `scores.json` atomically, always, as `{}` when\nthere is nothing to score.\n- The gateway path must be absolute. The role gets an argv array and a\nminimal env: `PATH` plus a fresh private `HOME`.\n- The role runs in its own process group, and on a deadline or a stdout\noverflow the whole group is SIGKILLed. A sandboxed grandchild that holds\nthe role's stderr can therefore not keep the job alive.\n  - Every kill bounds the run, and no kill is sent after exit.\n- Each role run has a 12-minute deadline inside a 14-minute run budget.\nVersions past the budget get `ERR_EVAL_BUDGET` and are left for a later\nrun, so hanging suites cannot turn the job red.\n  - It refuses `root-key` and `github-token` inputs (ruling R8).\n- `sign` takes an optional `scores` input, read as untrusted data:\n  - It is capped at 4 MiB and read into a `Map`.\n- Each entry is bound to the candidate's `<id>@<version>` and\n`packageSha256`.\n- What gets signed is the object `parseEvalQuality` rebuilds, never the\nraw one.\n- A version with evals and no valid score is not signed and not bound,\nand the rest of the run proceeds.\n  - Without `scores`, the entry is byte-identical to before.\n- `check` scores the PR's version when given `nimbus-gateway`. In that\nconfiguration it refuses `github-token` and leaves provenance to `sign`.\n\n**Workflow templates** (`nimbus registry maintain init --github`)\n- The sign workflow gains a `score` job:\n- It runs on `ubuntu-24.04` with `permissions: contents: read`, no\nenvironment, no secrets and `persist-credentials: false`.\n- The bubblewrap setup is inlined, and the smoke probe runs as the\nrunner user.\n- It downloads the release gateway and verifies only its own\n`SHA256SUMS` line.\n  - The upload/download-artifact actions are pinned by SHA.\n- `sign` needs `score`, and downloads the scores to `runner.temp`,\noutside the checkout, so the score job cannot write into the root-key\njob's `.git`.\n- The check workflow passes `nimbus-gateway` and no token.\n\n**Gateway and CLI**\n- `registry.info` versions carry `quality: {score, cases, passed} |\nnull`, plus `qualityInvalid` (capped at 200 characters).\n- `registry.search` carries the offered version's `quality`: the newest\nstable, else the newest beta, else the newest version.\n- A malformed `quality` never fails the call.\n- The CLI shows `quality N/100 (measured by <registry>)`, `not\nevaluated`, and a `Quality` column in search. Third-party strings pass\nthrough the control-character stripper.\n\n**registry-format**\n- One shared eval role-document validator.\n- Read-once package files: this closes I49 bound (3), the suite-swap\nwindow inside one load.\n- `PublishVerdict.hasEvals`, true when the package holds at least one\nsuite file.\n\n## Known limits (documented)\n- A red score job, from an infra failure such as apt or the release\ndownload, skips that whole sign run, trust requests included, until the\nworkflow is re-run.\n- A version whose eval failed is re-scored on every run until its\ndirectory is removed from `main`, and it spends budget later versions\nneed. The score summary names it with that remedy.\n- The registry repository must be public, because the score and check\njobs fetch without credentials.\n\n## Verification\n- **Released binary in Docker.** The published v10.10.0\n`nimbus-gateway-linux-x64`, checksum-verified the way the template does\nit, run under bubblewrap as a non-root user in ubuntu:24.04, scored the\ne2e fixture at exactly the expected numbers: 71/100, 7 cases, 5 passed.\n- **Real-role tests on Linux.** In oven/bun:1.4 with bubblewrap: the\nthree real-process tests pass (a SIGTERM-ignoring role with a\nstderr-holding grandchild, a grandchild that outlives a normal exit, and\nstdout overflow), and so does the real-role score test.\n- **Unit run on Windows** (registry-format, github-actions, gateway/src,\ncli/src, scripts): 30207 pass, 0 unexpected failures. The 5 failures are\nthe PowerShell-script tests that need `pwsh`, which also fail on main\nlocally.\n- **gateway/test and cli/test** (integration and e2e): 3224 pass, 0\nfail.\n- **Static checks:** `typecheck`, `typecheck:tests` (0 new),\n`audit:action-dist`, `preflight:fast`, `audit:doc-refs` and\n`audit:status-drift` all pass.\n- **Review.** Each task got a spec-and-quality review and a scoped\nre-review of its fixes, then a whole-branch review. Its three Important\nfindings are fixed in d99c817b0: the scores download moved outside the\ncheckout, the budget reporting was made honest, and a score-to-sign\nround-trip test was added.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Registry publishing workflows can evaluate eligible package versions\nin a separate sandboxed job and include verified quality scores in\nsigned registry listings.\n* Registry search and version details display quality scores;\nunavailable or invalid scores are labeled “not evaluated.”\n* **Bug Fixes**\n* Versions with evaluation suites are not signed when their score is\nmissing or invalid. Packages without suites retain existing behavior.\n* **Documentation**\n* Updated CLI references, registry setup guidance, security notes, and\nrelease tracking to cover quality scoring and display.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-30T07:38:37Z",
+          "tree_id": "c60ecec4c48e7af1611a3b76057c3065b7de81c4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/87ec34f87a862071e9c16153d9222ecaa45e8b4c"
+        },
+        "date": 1793346545992,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 287.3771128000015,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 285.4773020500008,
             "unit": "ms"
           }
         ]
