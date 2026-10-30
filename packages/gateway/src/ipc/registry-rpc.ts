@@ -8,6 +8,7 @@ import {
   type RegistryVersionEntry,
   readManifestRepository,
   readRegistryReportUrl,
+  readVersionQuality,
   registryIndexDigest,
 } from "@nimbus-dev/registry-format";
 import pino, { type Logger } from "pino";
@@ -463,6 +464,28 @@ function versionsNewestFirst(entry: RegistryExtensionEntry): Array<[string, Regi
   return Object.entries(entry.versions).sort(([a], [b]) => Bun.semver.order(b, a));
 }
 
+/** A version's registry-measured quality as clients see it: the totals, or `null` when not scored. */
+type QualityView = { score: number; cases: number; passed: number } | null;
+
+/**
+ * Project a version entry's RAW `quality` (signed bytes the index carries unchecked) through the
+ * format's reader. Never throws: a malformed value is `null` plus the reason, so it cannot fail a
+ * search or an info call.
+ */
+function qualityOf(v: RegistryVersionEntry): { quality: QualityView; qualityInvalid?: string } {
+  const q = readVersionQuality(v);
+  switch (q.state) {
+    case "scored":
+      return {
+        quality: { score: q.quality.score, cases: q.quality.cases, passed: q.quality.passed },
+      };
+    case "invalid":
+      return { quality: null, qualityInvalid: q.reason };
+    default:
+      return { quality: null };
+  }
+}
+
 async function handleSearch(
   rec: Record<string, unknown> | undefined,
   o: RegistryRpcOptions,
@@ -480,6 +503,8 @@ async function handleSearch(
     blocked: boolean;
     /** R6: the current Nimbus verification lists the index's key for this publisher. */
     verifiedPublisher: VerifiedPublisher | null;
+    /** The offered version's registry-measured quality, or `null` (unscored or malformed). */
+    quality: QualityView;
   }> = [];
   for (const { reg, index } of read.ok) {
     for (const [id, entry] of Object.entries(index.extensions)) {
@@ -489,9 +514,9 @@ async function handleSearch(
       const name = newest[1].name;
       const hay = [id, name, entry.publisher.id].map((v) => v.toLowerCase());
       if (!hay.some((h) => h.includes(needle))) continue;
-      const latestStable = versions.find(([, v]) => v.channel === "stable")?.[0] ?? null;
-      const latestBeta = versions.find(([, v]) => v.channel === "beta")?.[0] ?? null;
-      const offered = latestStable ?? latestBeta ?? newest[0];
+      const stable = versions.find(([, v]) => v.channel === "stable");
+      const beta = versions.find(([, v]) => v.channel === "beta");
+      const [offered, offeredEntry] = stable ?? beta ?? newest;
       const subject = {
         extensionId: id,
         version: offered,
@@ -505,10 +530,11 @@ async function handleSearch(
         id,
         name,
         publisherId: entry.publisher.id,
-        latestStable,
-        latestBeta,
+        latestStable: stable?.[0] ?? null,
+        latestBeta: beta?.[0] ?? null,
         blocked,
         verifiedPublisher: verifiedPublisherFor(o.db, subject),
+        quality: qualityOf(offeredEntry).quality,
       });
     }
   }
@@ -597,6 +623,7 @@ async function handleInfo(
         channel: v.channel,
         publishedAt: v.publishedAt,
         packageSizeBytes: v.packageSizeBytes,
+        ...qualityOf(v),
         ...(i === 0 ? { permissions: manifest.permissions } : {}),
       })),
     },
