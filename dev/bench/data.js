@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793353998958,
+  "lastUpdate": 1793381315205,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5779488c77871113aeaecb7c9fa33c2b82ab540b",
-          "message": "feat(ipc): tag agent.chunk with a client-supplied streamId and add workflow.cancel (#1165)\n\n## Summary\n\nLets a caller correlate and cancel a running workflow.\n\n`workflow.run` resolves only when the run *finishes*, so a server-minted\nstream id could never reach the client in time to filter chunks against\nor to cancel with. The client therefore supplies the id:\n\n- **`agent.chunk` echoes an optional client-supplied `streamId`** — on\nboth `workflow.run` and `agent.invoke`. Untagged chunks made two\nconcurrent streams on one connection indistinguishable.\n- **`workflow.cancel`** — a new RPC taking `{ streamId }`, returning `{\ncancelled: boolean }` where `false` means no live run of *yours* held\nthat id.\n- **Cancellation lands at the next step boundary.** The in-flight step\nalways runs to completion; the signal is deliberately not threaded into\n`executeWorkflowStep` or the LLM calls inside it. A run whose current\nstep is a long model call will not stop early — documented as a\nlimitation, not papered over.\n- **A cancelled run finalises with status `\"cancelled\"`** via the\nexisting `finalizeRun`, and that terminal status now travels in the run\nresult (`\"preview\" | \"done\" | \"error\" | \"cancelled\"`) — an IPC caller\ncannot read the `workflow_run` table, so a run cancelled after one step\nwas otherwise indistinguishable from a one-step run that completed.\n\n**Runs are registered under a per-client key**, `clientId + NUL +\nstreamId`, in the *existing* `ServerCtx.streamRegistry`. The registry is\ncreated once per server (`server.ts:68`) and shared by every session,\nwhile the id is now chosen by the caller — a bare key would let one\nclient abort another client's run, and let one client's cleanup\nunregister another's entry. Reusing an id already live for the *same*\nclient is rejected `-32602`.\n\nEvery wire change is additive: omitting `streamId` reproduces today's\nbehaviour byte-for-byte, and older clients ignore the extra params\nfield. A regression test pins that.\n\n## Related Issue\n\nRelates to the roadmap's \"run / monitor / cancel workflows\" row. Spec:\n`nimbus-vscode` →\n`docs/superpowers/specs/2026-08-12-workflow-surface-design.md`, Part 2.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only (`docs/architecture.md`)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Testing\n\n```\nbun test packages/gateway/src/ipc packages/gateway/src/automation --timeout 30000\n  1833 pass, 17 skip, 0 fail\n\nbun run lint            → exit 0 (3345 files, no fixes applied)\nbun run typecheck:no-docs → exit 0\n```\n\nCoverage was checked with `bun run test:coverage:workflow` and `bun run\naudit:coverage-floor`. The floor run on a Windows dev box reports\npre-existing violations in `ipc/server/socket-listeners.ts` and\n`platform/linux.ts` — neither file is touched by this branch, and both\nare artefacts of the unix-socket tests that skip off Linux. CI\n(ubuntu-24.04) is the authority here.\n\nBehavioural coverage added:\n\n- `agent.chunk` carries `streamId` when supplied; params are\nbyte-identical when it is not; a whitespace-only id is treated as\nabsent.\n- An aborted run stops at the next step boundary and finalises\n`cancelled`; aborted-before-the-first-step records zero steps but still\nwrites the row; an unaborted signal changes nothing.\n- `workflow.cancel` against a live id, an unknown id, and another\nclient's id with the same `streamId`; rejects\nmissing/non-string/empty/NUL-bearing ids.\n- Registration under the composite key, unregistration in `finally`\nincluding when the run throws, two clients sharing one `streamId`\nwithout colliding, and same-client reuse rejected.\n\n## Notes for Reviewers\n\nTwo review waves already landed on this branch (`7be4d05c`, `3776c93b`).\nThe security-relevant one is worth flagging: **`engine.cancelStream`\npassed the raw client `streamId` straight to `registry.cancel()` with no\nNUL guard**, even though it shares the registry that now stores\ncomposite `clientId\\0streamId` workflow keys. Since a `clientId` is not\nsecret (`triggeredBy` defaults to it and `workflow.listRuns` returns\nit), a client could forge `victimClientId\\0victimStreamId` and abort\nanother client's run through that unscoped method.\n`assertStreamIdHasNoNulByte` now guards all three parse sites.\n\nDeliberate calls worth a second opinion:\n\n- **`workflow.cancel` is a distinct method, not an overload of\n`engine.cancelStream`.** The published client documents that no workflow\ncancel exists, so a distinctly named RPC makes the capability\ndiscoverable and keeps ask-stream semantics unpolluted. The composite\nkey also means `engine.cancelStream` cannot reach a workflow run even\ngiven its raw id.\n- **The boundary check sits at the top of the step loop, not before the\nDB insert.** Checking earlier would drop the `workflow_run` row for a\nrun cancelled before its first step, so a requested-then-cancelled run\nwould vanish from history rather than appearing as `cancelled`. It would\nalso skip `finalizeRun`'s audit event and run pruning.\n- **`workflow-invoke.ts` stays type-only.** It is exact-path-excluded\nfrom the coverage floor, and a type-only file emits no `SF:` lcov record\n— runtime logic there would silently bypass the floor.\n\nThis PR ships **no user-visible value on its own**. It unblocks\n`nimbus-client` typing the family (spec Part 3), which in turn unblocks\nthe extension's run surface (Part 4).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Added optional stream IDs to correlate concurrent workflow and agent\nactivity.\n  - Added workflow cancellation through the IPC interface.\n- Workflow results now report `preview`, `done`, `error`, or `cancelled`\nstatus.\n- **Bug Fixes**\n- Cancellation is scoped correctly and cannot affect another client’s\nworkflow.\n  - Invalid, duplicate, or unsafe stream IDs are rejected.\n- In-progress steps finish before cancellation takes effect, preventing\npartial interruption.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-13T09:17:08+03:00",
-          "tree_id": "296c76e53b3743523532df0111038d9a214b63f6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5779488c77871113aeaecb7c9fa33c2b82ab540b"
-        },
-        "date": 1786602528637,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 351.6857729499992,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 392.0566759499896,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 179.31248319999432,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "17c7ce700f8dc65b7043af111959cc65b7b9feff",
+          "message": "fix(sandbox): let bubblewrap start on stock Ubuntu 24.04, and detect when it cannot (#1827)\n\nOn stock Ubuntu 24.04, nothing sandboxed can start. This PR fixes that\nfor `.deb` and tarball installs, and makes the failure visible\neverywhere else.\n\n## The bug\n\nUbuntu 23.10 and later set\n`kernel.apparmor_restrict_unprivileged_userns=1`, and the bubblewrap\npackage ships no AppArmor profile. `bwrap` then fails before it starts\nits child. The released v10.11.0 gateway's sandbox role, on a GitHub\n`ubuntu-24.04` runner with default settings:\n\n```\nno network declared:  bwrap: loopback: Failed RTM_NEWADDR: Operation not permitted   exit 1\nnetwork declared:     bwrap: setting up uid map: Permission denied                   exit 1\n```\n\nThat run used `/usr/bin/echo` as the child, not a real connector.\n\nCI never saw this because `scripts/linux/install-sandbox-deps.sh` turns\nthe restriction off before the tests run. `canConfine` did not see it\neither, because it only ran `bwrap --version`, so an owner could approve\nsomething that then failed to start.\n\n## The fix\n\n- **Profile:** `/etc/apparmor.d/nimbus-bwrap` lets `/usr/bin/bwrap`\ncreate user namespaces and names nothing else. It has one definition, in\n`doctor-bwrap.ts`.\n- **`.deb`:** `postinst` installs and loads it, and `postrm` removes it\non `remove` or `purge` only, so an upgrade keeps it.\n- **Tarball:** `linux-postinstall.sh` does the same through `sudo`.\n`install.sh` now says this script is required on Ubuntu 23.10 and later,\nand still never runs it by itself. `uninstall.sh` prints how to remove\nthe profile.\n- **`canConfine`:** it now runs the namespaces, so it refuses before the\nowner is asked, and says why.\n- **`nimbus doctor`:** a new check fails when bubblewrap cannot start,\nand prints the commands when the AppArmor fix applies. AppImage has no\ninstall step, so this is how those users get the fix.\n- **CI:** `check-bwrap-apparmor.sh` runs with the restriction ON, using\nthe `.deb`'s own script blocks. It proves that `bwrap` and `canConfine`\nfail without the profile, work with it, survive a second install, and\nfail again after removal.\n\nThe install block does nothing where the restriction does not exist,\nwhere the `userns` rule cannot parse (an older AppArmor would fail to\nload the file at every boot), or where a bwrap profile already exists.\nIt cannot fail the package install.\n\n## The security trade-off\n\nThis was the owner's decision. The kernel restriction stays on for every\nother program, but the profile applies to anything on the machine that\nruns `/usr/bin/bwrap`, not only to Nimbus, so code run through `bwrap`\ncan create user namespaces again. The alternatives were turning the\nrestriction off machine-wide, or a manual step before anything works.\n\n## What this does not do\n\n- It does not make per-host network filtering work on Linux. Connectors\nthat declare network still get the whole internet there. No released\nLinux package contains the helper, and the helper cannot start children\n(#1826). A separate spec covers that.\n- Not tested: a reboot, where AppArmor should reload the profile from\n`/etc/apparmor.d`, and a real desktop install.\n- The `.rpm` does not install the profile, because it targets distros\nwithout this restriction.\n- Linux distros other than Ubuntu are untested.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Ubuntu 23.10 and later users can set up Bubblewrap confinement through\nthe Linux installer. Debian packages configure the AppArmor profile\nautomatically; tarball users can run the post-install script.\n* The diagnostic command checks whether Bubblewrap can start a sandbox\nand provides setup guidance when needed.\n* **Bug Fixes**\n* Sandbox availability checks now verify that Bubblewrap can create a\nsandbox, rather than relying on a version check.\n* **Documentation**\n* Updated Linux setup instructions with guidance for AppImage users and\ninstructions for removing the AppArmor profile.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-30T19:17:44+02:00",
+          "tree_id": "57ae41703850190b6d7a91670120569c4289d4b3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/17c7ce700f8dc65b7043af111959cc65b7b9feff"
+        },
+        "date": 1793381311260,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 281.4776032999962,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 278.8134473500031,
             "unit": "ms"
           }
         ]
