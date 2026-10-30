@@ -207,11 +207,132 @@ describe("runEval", () => {
       expect(h.calls).toEqual([]);
     }
   });
+});
 
-  test("--installed is not available yet", async () => {
-    const h = harness({});
-    expect(await runEval(["--installed"], h.deps)).toBe(2);
-    expect(h.errs[0]).toContain("not available yet");
+describe("runEval --installed", () => {
+  test.each([
+    [["--installed", "--threshold", "abc"]],
+    [["--installed", "--package", "x"]],
+    [["--installed", "--suite", "s"]],
+    [["--installed", "--extension", "x"]],
+    [["--threshold", "5"]],
+    [["--extension", "a/b", "--threshold", "5"]],
+    [["--installed", "--threshold", "101"]],
+    [["--installed", "--threshold", "-1"]],
+    [["--installed", "--threshold", "1.5"]],
+    [["--installed", "--threshold", " 5"]],
+    [["--installed", "--threshold"]],
+  ])("usage error %p exits 2 before any client is opened", async (args) => {
+    const h = extHarness({});
+    expect(await runEval([...args], h.deps)).toBe(2);
+    expect(h.connects()).toBe(0);
+    expect(h.errs.join("\n")).toContain("usage:");
+  });
+
+  const NO_YES =
+    "nimbus eval --installed has no --yes: the approval must be answered by a person at a terminal.";
+  const NON_TTY =
+    "Refusing to evaluate installed extensions in non-TTY mode: the approval must be answered at a terminal.";
+  test.each([
+    [["--installed", "--yes"], true, NO_YES],
+    [["--installed", "-y"], true, NO_YES],
+    [["--installed"], false, NON_TTY],
+  ] as const)("%p (tty %p) is refused before connecting", async (args, tty, message) => {
+    const h = extHarness({ tty });
+    expect(await runEval([...args], h.deps)).toBe(2);
+    expect(h.connects()).toBe(0);
+    expect(h.errs).toEqual([message]);
+  });
+
+  function listHarness(threshold: string[], evalRaw: unknown) {
+    const h = extHarness({});
+    const rpc: { method: string; params: unknown }[] = [];
+    let connects = 0;
+    const deps: EvalCliDeps = {
+      ...h.deps,
+      withClient: async (fn) => {
+        connects += 1;
+        return await fn(async <T>(method: string, params: unknown) => {
+          rpc.push({ method, params });
+          if (method === "extension.list") {
+            return {
+              extensions: [{ id: "acme/tool", version: "1.0.0", enabled: 1 }],
+              runtimeEnabled: true,
+            } as T;
+          }
+          return evalRaw as T;
+        });
+      },
+    };
+    return {
+      args: ["--installed", ...threshold],
+      deps,
+      logs: h.logs,
+      rpc,
+      connects: () => connects,
+    };
+  }
+
+  test("runs list and eval inside ONE client session with the default threshold 5", async () => {
+    const h = listHarness([], { results: [ipcEntry()] });
+    expect(await runEval([...h.args, "--json"], h.deps)).toBe(0);
+    expect(h.connects()).toBe(1);
+    expect(h.rpc.map((r) => r.method)).toEqual(["extension.list", "extension.eval"]);
+    const doc = JSON.parse(h.logs[0] ?? "");
+    expect(doc.threshold).toBe(5);
+    expect(doc.results[0]).toMatchObject({ id: "acme/tool", local: 50 });
+  });
+
+  test.each([["0"], ["100"], ["007"]])("--threshold %s is accepted", async (n) => {
+    const h = listHarness(["--threshold", n], { results: [ipcEntry()] });
+    expect(await runEval([...h.args, "--json"], h.deps)).toBe(0);
+    expect(JSON.parse(h.logs[0] ?? "").threshold).toBe(Number(n));
+  });
+
+  test("a client that fails to connect is ERR_EVAL_IPC", async () => {
+    const h = extHarness({});
+    const deps: EvalCliDeps = {
+      ...h.deps,
+      withClient: async () => {
+        throw new Error("gateway not running");
+      },
+    };
+    expect(await runEval(["--installed", "--json"], deps)).toBe(2);
+    expect(JSON.parse(h.logs[0] ?? "")).toEqual({
+      ok: false,
+      error: { code: "ERR_EVAL_IPC", message: "gateway not running" },
+    });
+    // Text: the same `eval failed: <CODE>: <message>` as an extension.list / extension.eval failure.
+    const t = extHarness({});
+    const textDeps: EvalCliDeps = {
+      ...t.deps,
+      withClient: async () => {
+        throw new Error("gateway not running");
+      },
+    };
+    expect(await runEval(["--installed"], textDeps)).toBe(2);
+    expect(t.errs).toEqual(["eval failed: ERR_EVAL_IPC: gateway not running"]);
+  });
+
+  test("a client failure AFTER the run returned keeps its exit code and prints no second document", async () => {
+    for (const [evalRaw, want] of [
+      [{ results: [ipcEntry()] }, 0],
+      [{ results: "bad" }, 2],
+    ] as const) {
+      const h = listHarness([], evalRaw);
+      const inner = h.deps.withClient;
+      if (inner === undefined) throw new Error("listHarness supplies withClient");
+      const deps: EvalCliDeps = {
+        ...h.deps,
+        withClient: async (fn) => {
+          await inner(fn);
+          throw new Error("disconnect failed");
+        },
+      };
+      expect(await runEval([...h.args, "--json"], deps)).toBe(want);
+      expect(h.logs.length).toBe(1);
+      expect(h.logs[0]).not.toContain("disconnect failed");
+    }
   });
 });
 
