@@ -3,7 +3,9 @@ import {
   BWRAP_APPARMOR_PROFILE_PATH,
   bwrapApparmorInstallShell,
   bwrapApparmorRemoveShell,
+  createDoctorBwrapDeps,
   type DoctorBwrapDeps,
+  type DoctorBwrapHost,
   doctorPrintLinuxSandbox,
 } from "./doctor-bwrap.ts";
 
@@ -88,6 +90,100 @@ describe("doctorPrintLinuxSandbox", () => {
     expect(code).toBe(2);
     expect(lines[0]).toContain("exit 1");
     expect(lines.join("\n")).not.toContain("apparmor_parser");
+  });
+});
+
+const RESTRICT = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+/** A stock Ubuntu 24.04 unless a test says otherwise. */
+function host(over: Partial<DoctorBwrapHost> = {}, files?: readonly string[]): DoctorBwrapHost {
+  const present = new Set(files ?? ["/usr/bin/bwrap", "/etc/apparmor.d/abi/4.0"]);
+  return {
+    exists: (p) => present.has(p),
+    read: () => "1\n",
+    which: () => "/usr/sbin/apparmor_parser",
+    env: () => undefined,
+    ...over,
+  };
+}
+
+describe("createDoctorBwrapDeps", () => {
+  test("the default host answers without throwing, whatever this machine is", () => {
+    const real = createDoctorBwrapDeps("linux");
+    expect(typeof real.apparmorFixApplies()).toBe("boolean");
+    const found = real.findBwrap();
+    expect(found === null || typeof found === "string").toBe(true);
+  });
+
+  test("finds the first candidate, and no candidate means null", () => {
+    expect(createDoctorBwrapDeps("linux", host()).findBwrap()).toBe("/usr/bin/bwrap");
+    expect(createDoctorBwrapDeps("linux", host({}, [])).findBwrap()).toBeNull();
+  });
+
+  test("NIMBUS_BWRAP_PATH wins, and a missing override does not fall back to a candidate", () => {
+    const env = () => "/opt/bwrap";
+    expect(createDoctorBwrapDeps("linux", host({ env }, ["/opt/bwrap"])).findBwrap()).toBe(
+      "/opt/bwrap",
+    );
+    expect(createDoctorBwrapDeps("linux", host({ env })).findBwrap()).toBeNull();
+  });
+
+  test("an empty override is no override", () => {
+    const env = () => "";
+    expect(createDoctorBwrapDeps("linux", host({ env })).findBwrap()).toBe("/usr/bin/bwrap");
+  });
+
+  test("run reports the real exit code and stderr", () => {
+    const { run } = createDoctorBwrapDeps("linux", host());
+    const r = run([process.execPath, "-e", "console.error('nope'); process.exit(3)"]);
+    expect(r.code).toBe(3);
+    expect(r.stderr).toContain("nope");
+  });
+
+  test("run reports a binary that cannot start rather than throwing", () => {
+    const { run } = createDoctorBwrapDeps("linux", host());
+    const r = run(["/no/such/nimbus-binary"]);
+    expect(r.code === null || r.code !== 0).toBe(true);
+  });
+
+  describe("apparmorFixApplies matches what the install block would do", () => {
+    const applies = (h: DoctorBwrapHost): boolean =>
+      createDoctorBwrapDeps("linux", h).apparmorFixApplies();
+
+    test("stock Ubuntu 24.04: yes", () => {
+      expect(applies(host())).toBe(true);
+    });
+
+    test("restriction off: no", () => {
+      expect(applies(host({ read: () => "0\n" }))).toBe(false);
+    });
+
+    test("no such sysctl: no", () => {
+      const read = (p: string): string => {
+        expect(p).toBe(RESTRICT);
+        throw new Error("ENOENT");
+      };
+      expect(applies(host({ read }))).toBe(false);
+    });
+
+    test("an AppArmor too old for the rule: no", () => {
+      expect(applies(host({}, ["/usr/bin/bwrap"]))).toBe(false);
+    });
+
+    test("bwrap somewhere other than the profile's path: no", () => {
+      expect(applies(host({}, ["/etc/apparmor.d/abi/4.0"]))).toBe(false);
+    });
+
+    test("a bwrap profile already installed: no", () => {
+      for (const existing of ["/etc/apparmor.d/bwrap", "/etc/apparmor.d/bwrap-userns-restrict"]) {
+        const files = ["/usr/bin/bwrap", "/etc/apparmor.d/abi/4.0", existing];
+        expect(applies(host({}, files))).toBe(false);
+      }
+    });
+
+    test("no apparmor_parser: no", () => {
+      expect(applies(host({ which: () => null }))).toBe(false);
+    });
   });
 });
 

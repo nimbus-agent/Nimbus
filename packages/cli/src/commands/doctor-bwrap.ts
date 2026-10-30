@@ -20,6 +20,10 @@ const PROFILE_PRINTF =
 
 const RESTRICT_SYSCTL_PATH = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
 const ABI_PATH = "/etc/apparmor.d/abi/4.0";
+const EXISTING_BWRAP_PROFILES = [
+  "/etc/apparmor.d/bwrap",
+  "/etc/apparmor.d/bwrap-userns-restrict",
+] as const;
 
 /**
  * The shell block that installs and loads the profile. It does nothing where the restriction does
@@ -31,7 +35,7 @@ export function bwrapApparmorInstallShell(sudo: boolean): string {
   const as = sudo ? "sudo " : "";
   const path = BWRAP_APPARMOR_PROFILE_PATH;
   return `if [ -e ${RESTRICT_SYSCTL_PATH} ] && [ -x /usr/bin/bwrap ] && [ -e ${ABI_PATH} ] \\
-    && [ ! -e /etc/apparmor.d/bwrap ] && [ ! -e /etc/apparmor.d/bwrap-userns-restrict ] \\
+    && ${EXISTING_BWRAP_PROFILES.map((p) => `[ ! -e ${p} ]`).join(" && ")} \\
     && command -v apparmor_parser >/dev/null 2>&1; then
     if ${PROFILE_PRINTF} | ${as}tee ${path} >/dev/null && ${as}apparmor_parser -r ${path}; then
         echo "Installed the AppArmor profile that lets bubblewrap start: ${path}"
@@ -67,7 +71,7 @@ export interface DoctorBwrapDeps {
   /** The path of the first bwrap found, or null. */
   readonly findBwrap: () => string | null;
   readonly run: (cmd: readonly string[]) => DoctorBwrapRun;
-  /** Whether the kernel's restriction is on and the profile's syntax would load here. */
+  /** Whether the install block would act here, so the commands doctor prints can help. */
   readonly apparmorFixApplies: () => boolean;
 }
 
@@ -128,14 +132,48 @@ export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
 const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"] as const;
 const PROBE_TIMEOUT_MS = 5000;
 
+export interface DoctorBwrapHost {
+  readonly exists: (path: string) => boolean;
+  /** The file's text; throws when it cannot be read. */
+  readonly read: (path: string) => string;
+  /** The binary's path on `PATH`, or null. */
+  readonly which: (name: string) => string | null;
+  readonly env: (name: string) => string | undefined;
+}
+
+const REAL_HOST: DoctorBwrapHost = {
+  exists: existsSync,
+  read: (path) => readFileSync(path, "utf8"),
+  which: (name) => Bun.which(name),
+  env: (name) => process.env[name],
+};
+
+/** The same conditions as {@link bwrapApparmorInstallShell}: never offer what it would refuse. */
+function apparmorFixApplies(host: DoctorBwrapHost): boolean {
+  try {
+    return (
+      host.read(RESTRICT_SYSCTL_PATH).trim() === "1" &&
+      host.exists("/usr/bin/bwrap") &&
+      host.exists(ABI_PATH) &&
+      !EXISTING_BWRAP_PROFILES.some((p) => host.exists(p)) &&
+      host.which("apparmor_parser") !== null
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Production deps, with the same lookup as the gateway's runner (`platform/sandbox/linux.ts`). */
-export function createDoctorBwrapDeps(platform: string): DoctorBwrapDeps {
+export function createDoctorBwrapDeps(
+  platform: string,
+  host: DoctorBwrapHost = REAL_HOST,
+): DoctorBwrapDeps {
   return {
     platform,
     findBwrap: () => {
-      const override = process.env["NIMBUS_BWRAP_PATH"];
-      if (override !== undefined && override !== "") return existsSync(override) ? override : null;
-      return BWRAP_CANDIDATES.find((p) => existsSync(p)) ?? null;
+      const override = host.env("NIMBUS_BWRAP_PATH");
+      if (override !== undefined && override !== "") return host.exists(override) ? override : null;
+      return BWRAP_CANDIDATES.find((p) => host.exists(p)) ?? null;
     },
     run: (cmd) => {
       try {
@@ -150,12 +188,6 @@ export function createDoctorBwrapDeps(platform: string): DoctorBwrapDeps {
         return { code: null, stderr: err instanceof Error ? err.message : String(err) };
       }
     },
-    apparmorFixApplies: () => {
-      try {
-        return readFileSync(RESTRICT_SYSCTL_PATH, "utf8").trim() === "1" && existsSync(ABI_PATH);
-      } catch {
-        return false;
-      }
-    },
+    apparmorFixApplies: () => apparmorFixApplies(host),
   };
 }

@@ -10,12 +10,13 @@ set -euo pipefail
 KNOB=kernel.apparmor_restrict_unprivileged_userns
 PROFILE=/etc/apparmor.d/nimbus-bwrap
 work="$(mktemp -d)"
+initial_knob="$(sysctl -n "${KNOB}")"
 
 cleanup() {
   if [ -f "${work}/remove.sh" ]; then
     sudo sh "${work}/remove.sh" || true
   fi
-  sudo sysctl -w "${KNOB}=0" > /dev/null
+  sudo sysctl -w "${KNOB}=${initial_knob}" > /dev/null
   rm -rf "${work}"
 }
 trap cleanup EXIT
