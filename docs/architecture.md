@@ -2193,7 +2193,7 @@ same, and a suite that fails to parse is an error, never a partial score. `evals
 toward the file-set rule (rule 13); a starter pack may not carry it. A version entry in the registry index may carry an optional
 `quality` object, signed with the rest of the index by the registry root key (the party that measured the score signs it, not the
 author); `parseRegistryIndex` carries it raw and `readVersionQuality` reads it as scored, unscored or invalid. The gateway caches
-no index entries, so there is no table: a score would be read from the verified index when asked.
+no index entries, so there is no table: a score is read from the verified index when asked (below).
 
 **The eval runtime (`extensions/eval/`, invariant I49 / static D38).** `nimbus eval --package <dir>` is gateway-free: the CLI
 spawns the gateway executable's fifth role, `__nimbus-eval` (`ROLE_SENTINELS.eval`, dispatched by `index.ts` through a dynamic
@@ -2235,8 +2235,39 @@ LAN-forbidden, refused on a demo-rooted gateway, not on the Tauri allowlist, and
 approved call runs to completion (each run bounded by its 10 min deadline) even if the calling client disconnects; the
 result is then discarded.
 
-Shipped so far: the format, `--package` and `--extension`. `--installed` (every installed extension at once), the
-registry's scoring job and any display come in later PRs.
+**Registry scoring (the registry action's `score` mode, spec ruling R8).** Extension code never runs in the job that holds
+the registry root key. The sign workflow `nimbus registry maintain init --github` writes has a `score` job before `sign`
+(`contents: read`, no environment, no secrets, no persisted credentials) that installs bubblewrap, probes it as the runner
+user, downloads the pinned release's `nimbus-gateway-linux-x64` and checks it against that one line of the release's
+`SHA256SUMS`. The action (`packages/github-actions/registry-action/src/score.ts`) validates every unsigned version exactly as
+`sign` will and, for each whose package holds a suite, unpacks it into a directory of its own and spawns
+`<gateway> __nimbus-eval --package <dir> --json` by absolute path with a minimal environment (`PATH`, a private `HOME`),
+reading the one document under the role's 12-minute deadline and an 8 MiB stdout cap. On POSIX the role leads its own
+process group and every kill (the deadline, a stdout overflow) is a `SIGKILL` of the whole group, so the sandbox wrapper that
+inherits the role's stderr dies with it, and each kill bounds the run whether or not an exit follows; after the role exits,
+whatever is left in its group is killed too. The whole run has a 14-minute budget inside the job's 20 minutes; once under a
+minute is left, every further version with suites gets an `ERR_EVAL_BUDGET` entry without running, so hanging suites cannot
+turn the job red. It writes `scores.json` (`{ "<id>@<version>": { packageSha256, quality } | { packageSha256, error } }`),
+always and atomically, and uploads it as an artifact. `sign` (`needs: score`) reads that file once as untrusted input (at most
+4 MiB, into a `Map`, so a key such as `__proto__` is only ever a key): a version with suites is signed only with an entry under its own `<id>@<version>`, for its
+own `packageSha256`, whose quality `parseEvalQuality` accepts, and that quality (exactly `scorer`, `score`, `cases`,
+`passed`, `rubrics`; never the per-case `results`) becomes the entry's signed `quality`; a version without one is skipped
+with a warning and retried by a later run, and a version without `evals/` is signed with no `quality`. Because `sign` needs
+`score`, an infrastructure failure of the score job skips the whole sign run, trust requests included, until the workflow is
+re-run. The check job scores a pull request's version the same way when given `nimbus-gateway`; it then takes no
+`github-token` (the action refuses both together) and leaves provenance to `sign`. The compiled release binary runs the
+role: the published `v10.10.0` `nimbus-gateway-linux-x64` scores the e2e fixture package 71 (7 cases, 5 passed) under
+bubblewrap as a non-root user, the same numbers as the source e2e.
+
+**Display.** `registry.search` gives each result the offered version's `quality` (`{ score, cases, passed }` or `null`);
+`registry.info` gives each version `quality` and, for a value `readVersionQuality` finds malformed, `quality: null` plus
+`qualityInvalid` (the reason, capped at 200 characters, since it can quote key names whoever signed the index chose). A
+malformed score never fails a call. The CLI re-checks the score it is given and prints a `Quality` column in
+`nimbus extension search` (`N/100` or `—`) and, per version in `info --registry`, `quality N/100 (measured by <registry>)` or
+`not evaluated`. The desktop Marketplace tile is project 6.
+
+Shipped so far: the format, `--package`, `--extension`, registry scoring and the CLI display. `--installed` (every installed
+extension at once) comes in a later PR.
 
 ### Trust layer
 

@@ -38,7 +38,12 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   package holds an eval suite (`evals/<name>.eval.json`), unpacks the package into a directory of
   its own and runs `<nimbus-gateway> __nimbus-eval --package <dir> --json` (the gateway confines
   the extension in the platform sandbox with no network; 12-minute deadline, 8 MiB stdout cap,
-  a minimal environment with a private `HOME`). Writes `scores.json`,
+  a minimal environment of `PATH` and a private `HOME`; the path is spawned directly, never through
+  a shell or a `PATH` lookup). The role leads its own process group, and the deadline or a stdout
+  overflow `SIGKILL`s the whole group: the sandbox wrapper under the role inherits its stderr, so
+  killing the role alone could leave the run waiting on a pipe the extension holds open. Every
+  kill resolves that run within 5 seconds whether or not an exit follows, and once the role exits,
+  whatever is left in its group is killed too. Writes `scores.json`,
   `{ "<id>@<version>": { "packageSha256", "quality" } | { "packageSha256", "error" } }`, always
   (`{}` when there is nothing to score) and atomically. A timeout, an overflow, a non-zero exit,
   output that is not one valid eval document, or a document naming another `<id>@<version>` is an
