@@ -10,6 +10,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import {
+  bwrapApparmorInstallShell,
+  bwrapApparmorRemoveShell,
+} from "../packages/cli/src/commands/doctor-bwrap.ts";
 import { renderNfpmConfig } from "./release/nfpm-config.ts";
 
 const repoRoot = resolve(import.meta.dir, "..");
@@ -179,8 +183,9 @@ function resolveSandboxHelper(): string | null {
 const sandboxHelper = resolveSandboxHelper();
 
 /**
- * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check plus, when
- * the helper is bundled, the `setcap cap_net_admin+ep` grant for it.
+ * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check, the AppArmor
+ * profile bubblewrap needs on current Ubuntu, and, when the helper is bundled, the
+ * `setcap cap_net_admin+ep` grant for it.
  */
 function linuxPostInstallScript(hasHelper: boolean): string {
   const helperBlock = hasHelper
@@ -217,6 +222,7 @@ Install before running:
 EOF
 fi
 
+${bwrapApparmorInstallShell(true)}
 ${helperBlock}
 echo "Linux post-install checks complete."
 `;
@@ -259,6 +265,10 @@ without it.
 
 Add the bin/ directory to PATH, or symlink bin/nimbus and bin/nimbus-gateway
 into /usr/local/bin.
+
+On Ubuntu 23.10 and later, also run ./linux-postinstall.sh after install.sh. It
+asks for sudo to install the AppArmor profile bubblewrap needs there; without it
+nothing sandboxed can start. "nimbus doctor" reports this and prints the commands.
 
 ${helperNote}`,
     "utf8",
@@ -306,7 +316,9 @@ ${helperNote}`,
 
 /**
  * Build the bespoke `.deb`: real binaries under `/usr/lib/nimbus/bin`,
- * apt-channel-stamped wrappers in `/usr/local/bin`, and a `setcap` postinst.
+ * apt-channel-stamped wrappers in `/usr/local/bin`, a postinst that installs the
+ * AppArmor profile for bubblewrap and runs `setcap`, and a postrm that removes the
+ * profile.
  */
 function buildDeb(): string {
   const debName = `nimbus-headless_${version}_amd64.deb`;
@@ -365,10 +377,22 @@ if [ -x "$HELPER" ]; then
         echo "  sudo setcap cap_net_admin+ep $HELPER"
     fi
 fi
-exit 0
+${bwrapApparmorInstallShell(false)}exit 0
 `;
   writeFileSync(join(debRoot, "DEBIAN", "postinst"), postinst, "utf8");
   chmodSync(join(debRoot, "DEBIAN", "postinst"), 0o755);
+
+  // Only on remove and purge: an upgrade also runs postrm, and must keep the profile.
+  const postrm = `#!/bin/sh
+set -e
+case "$1" in
+    remove|purge)
+${bwrapApparmorRemoveShell(false)}        ;;
+esac
+exit 0
+`;
+  writeFileSync(join(debRoot, "DEBIAN", "postrm"), postrm, "utf8");
+  chmodSync(join(debRoot, "DEBIAN", "postrm"), 0o755);
 
   const debPath = join(outRoot, debName);
   const dpkg = spawnSync(DPKG_DEB_BIN, ["--build", "--root-owner-group", debRoot, debPath], {

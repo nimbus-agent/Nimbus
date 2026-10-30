@@ -6,6 +6,11 @@ import { gatewayStartCommand } from "../lib/gateway-not-running.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import { doctorCapturesLines, parseStatus } from "./captures-format.ts";
+import {
+  createDoctorBwrapDeps,
+  type DoctorBwrapDeps,
+  doctorPrintLinuxSandbox,
+} from "./doctor-bwrap.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
 import {
   doctorExtensionsLines,
@@ -400,6 +405,8 @@ export interface DoctorCoreDeps {
   readonly makeClient: (socketPath: string) => IPCClient;
   /** DI seam for `--fix-keyring` (headless Linux Secret Service fix, #1168) — see doctor-fix-keyring.ts. */
   readonly fixKeyringDeps: FixKeyringDeps;
+  /** DI seam for the Linux bubblewrap check; production passes none and gets the real probe. */
+  readonly bwrapDeps?: DoctorBwrapDeps;
 }
 
 export function worstHealthSeverity(rows: ConnectorHealthRow[]): "ok" | "warn" | "fail" {
@@ -1183,6 +1190,10 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
   console.log(`Gateway state file: ${deps.gatewayStatePath(paths)}`);
 
   exit = Math.max(exit, doctorPrintVaultCheck(paths.demo === true));
+  exit = Math.max(
+    exit,
+    doctorPrintLinuxSandbox(deps.bwrapDeps ?? createDoctorBwrapDeps(platform())),
+  );
 
   const state = await deps.readGatewayState(paths);
   if (state !== undefined && deps.isProcessAlive(state.pid)) {

@@ -474,13 +474,13 @@ WARNING: bubblewrap (bwrap) was not found. Nimbus will not start without it.
 EOF
 fi
 
-# Remote mode's extracted tree also carries linux-postinstall.sh (sandbox-helper
-# setcap + the same bubblewrap check). The cleanup trap deletes that tree on
+# Remote mode's extracted tree also carries linux-postinstall.sh (the AppArmor profile
+# bubblewrap needs on current Ubuntu, sandbox-helper setcap, the same bubblewrap check). The cleanup trap deletes that tree on
 # exit, so preserve a copy in the install dir. Never run it automatically —
 # a curl | sh installer must not chain into another script, let alone sudo.
 if [ "$FETCHED" -eq 1 ] && [ -f "${SCRIPT_DIR}/linux-postinstall.sh" ]; then
   cp "${SCRIPT_DIR}/linux-postinstall.sh" "${INSTALL_DIR}/linux-postinstall.sh"
   chmod +x "${INSTALL_DIR}/linux-postinstall.sh"
   echo
-  echo "  Optional sandbox-helper setup: ${INSTALL_DIR}/linux-postinstall.sh"
+  echo "  Required on Ubuntu 23.10 and later (asks for sudo): ${INSTALL_DIR}/linux-postinstall.sh"
 fi

@@ -115,14 +115,56 @@ function resolveBwrapPath(): string | null {
   return BWRAP_CANDIDATES.find((p) => existsSync(p)) ?? null;
 }
 
-function probeBwrap(bwrapPath: string | null): string | null {
+const BWRAP_START_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * The namespaces every spawn asks for. `--version` passes on a machine where bwrap cannot create
+ * them: Ubuntu 23.10 and later deny it through `kernel.apparmor_restrict_unprivileged_userns`
+ * unless an AppArmor profile allows it, and then `canConfine` said yes, the owner approved, and
+ * only the spawn failed.
+ */
+const BWRAP_START_PROBE_ARGV = [
+  "--unshare-user",
+  "--unshare-net",
+  "--new-session",
+  "--ro-bind",
+  "/usr",
+  "/usr",
+  "--ro-bind",
+  "/lib",
+  "/lib",
+  "--ro-bind-try",
+  "/lib64",
+  "/lib64",
+  "--proc",
+  "/proc",
+  "--dev",
+  "/dev",
+  "/usr/bin/true",
+] as const;
+
+export function probeBwrap(
+  bwrapPath: string | null,
+  run: typeof spawnSync = spawnSync,
+): string | null {
   if (bwrapPath === null) {
     return `bwrap not found at ${BWRAP_CANDIDATES.join(", ")} (set NIMBUS_BWRAP_PATH to override)`;
   }
   // Absolute path, no shell: nothing to inject into and nothing for PATH to redirect.
   // windows-console-ok: `sandbox/linux.ts` runs only on Linux, where the flag is ignored.
-  const r = spawnSync(bwrapPath, ["--version"], { encoding: "utf8" });
-  return r.error === undefined && r.status === 0 ? null : `bwrap at ${bwrapPath} is not executable`;
+  const version = run(bwrapPath, ["--version"], { encoding: "utf8" });
+  if (version.error !== undefined || version.status !== 0) {
+    return `bwrap at ${bwrapPath} is not executable`;
+  }
+  // windows-console-ok: Linux-only module.
+  const start = run(bwrapPath, [...BWRAP_START_PROBE_ARGV], {
+    encoding: "utf8",
+    timeout: BWRAP_START_PROBE_TIMEOUT_MS,
+  });
+  if (start.error === undefined && start.status === 0) return null;
+  const stderr = String(start.stderr ?? "").trim();
+  const why = stderr === "" ? (start.error?.message ?? `exit ${String(start.status)}`) : stderr;
+  return `bwrap at ${bwrapPath} cannot start a sandbox: ${why} (run \`nimbus doctor\` for the fix)`;
 }
 
 function probeHelper(): HelperState {
