@@ -11,6 +11,7 @@ import {
   describe,
   expect,
   setDefaultTimeout,
+  spyOn,
   test,
 } from "bun:test";
 import { createHash } from "node:crypto";
@@ -33,6 +34,7 @@ import type { ActionIo } from "./report.ts";
 import {
   type KillProcess,
   ROLE_DRAIN_GRACE_MS,
+  ROLE_KILL_BOUND_MS,
   ROLE_STDERR_TAIL_BYTES,
   ROLE_STDOUT_MAX_BYTES,
   ROLE_TIMEOUT_MS,
@@ -736,6 +738,66 @@ describe("the default role runner", () => {
     const h = harness((c) => endOnChildKill(c));
     const r = await run(h, 50);
     expect(r.timedOut).toBe(true);
+  });
+
+  test("with no deadline given the role gets ROLE_TIMEOUT_MS; a given one is used as is", async () => {
+    const spy = spyOn(globalThis, "setTimeout");
+    try {
+      const delays = async (timeoutMs?: number): Promise<unknown[]> => {
+        spy.mockClear();
+        await run(
+          harness((c) => c.end(0)),
+          timeoutMs,
+        );
+        return spy.mock.calls.map((call) => call[1]);
+      };
+      const omitted = await delays();
+      expect(omitted).toContain(ROLE_TIMEOUT_MS);
+      const given = await delays(90_000);
+      expect(given).toContain(90_000);
+      expect(given).not.toContain(ROLE_TIMEOUT_MS);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test("a kill that no exit follows still ends the run within ROLE_KILL_BOUND_MS, as a timeout", async () => {
+    // Neither the group kill nor the role kill ends anything: a role stuck in the kernel.
+    const h: Harness = harness(() => {});
+    h.kill = (pid, signal) => {
+      h.groupKills.push([pid, signal]);
+    };
+    const started = Date.now();
+    const r = await run(h, 50);
+    const took = Date.now() - started;
+    expect(r).toMatchObject({ code: null, timedOut: true, overflow: false });
+    expect(took).toBeGreaterThanOrEqual(ROLE_KILL_BOUND_MS - 100);
+    expect(took).toBeLessThan(ROLE_KILL_BOUND_MS + 10_000);
+    expect(ROLE_KILL_BOUND_MS).toBe(5_000);
+  });
+
+  test("an overflow kill that no exit follows still ends the run, as an overflow", async () => {
+    const h: Harness = harness((c) => {
+      c.stdout.write(Buffer.alloc(ROLE_STDOUT_MAX_BYTES + 1, 0x78));
+    });
+    h.kill = (pid, signal) => {
+      h.groupKills.push([pid, signal]);
+    };
+    const r = await run(h, 60_000);
+    expect(r).toMatchObject({ code: null, timedOut: false, overflow: true });
+  });
+
+  test("stdout past the cap after the exit is an overflow, but no kill is sent after the exit", async () => {
+    // The role exits with its stdio held open; during the drain grace the stdout floods.
+    const h = harness((c) => {
+      c.end(0, null, true);
+      c.stdout.write(Buffer.alloc(ROLE_STDOUT_MAX_BYTES + 1, 0x78));
+    });
+    const r = await run(h);
+    expect(r).toMatchObject({ code: 0, overflow: true, timedOut: false });
+    // Only the sweep at the exit itself (POSIX); nothing after it.
+    expect(h.groupKills).toEqual(POSIX ? [[-4242, "SIGKILL"]] : []);
+    expect(h.children[0]?.kills).toEqual([]);
   });
 
   test("a role that exits in time is not a timeout, and its deadline never fires later", async () => {

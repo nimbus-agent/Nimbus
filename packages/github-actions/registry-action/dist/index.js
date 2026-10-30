@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:ff386c50d9a2c005db7c49b144c1c4cc9cf481424e4d20031d7057bb023d9bb6
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:7d3a4dc71a3e821feb91e18cadb8e3acb4108ab51d8a459451f4fb385937fb1e
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -10872,6 +10872,7 @@ function removeQuietly(rm, path) {
   } catch {}
 }
 var ROLE_DRAIN_GRACE_MS = 2000;
+var ROLE_KILL_BOUND_MS = 5000;
 var nodeSpawn = (file, args, opts) => spawn(file, args, opts);
 var killProcess = (pid, signal) => {
   process.kill(pid, signal);
@@ -10950,16 +10951,18 @@ var notStarted = (why) => ({
 function watchRole(child, timeoutMs, kill, done) {
   const run = { code: null, timedOut: false, overflow: false, why: "" };
   let settled = false;
+  let exited = false;
   let grace;
-  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => {
-    run.overflow = true;
+  const killFor = (why) => {
+    run[why] = true;
+    if (exited)
+      return;
     killGroup(child, kill);
-  });
+    grace ??= setTimeout(settle, ROLE_KILL_BOUND_MS);
+  };
+  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => killFor("overflow"));
   const stderr = collectTail(child.stderr, ROLE_STDERR_TAIL_BYTES);
-  const deadline = setTimeout(() => {
-    run.timedOut = true;
-    killGroup(child, kill);
-  }, timeoutMs);
+  const deadline = setTimeout(() => killFor("timedOut"), timeoutMs);
   const settle = () => {
     if (settled)
       return;
@@ -10980,6 +10983,7 @@ function watchRole(child, timeoutMs, kill, done) {
     clearTimeout(deadline);
     run.code = code;
     sweepGroup(child, kill);
+    exited = true;
     grace ??= setTimeout(settle, ROLE_DRAIN_GRACE_MS);
   });
   child.on("close", settle);

@@ -129,6 +129,13 @@ function removeQuietly(rm: RemoveDir, path: string): void {
 /** After the role exits, how long its stdout may still drain before the run resolves anyway. */
 export const ROLE_DRAIN_GRACE_MS = 2_000;
 
+/**
+ * After a kill (the deadline, an overflow), the longest the run waits for the role's exit and
+ * stdio before resolving anyway: a role stuck in the kernel, or a kill that failed, cannot hold
+ * the run open.
+ */
+export const ROLE_KILL_BOUND_MS = 5_000;
+
 /** What the role runner needs of a spawned process (a `ChildProcess` satisfies it). */
 export interface RoleChild {
   readonly pid?: number | undefined;
@@ -265,9 +272,10 @@ const notStarted = (why: string): RoleRun => ({
 /**
  * Watches one spawned role to its end, in phases: the deadline (kill the group), stdout up to the
  * cap (past it, kill the group), the exit (stop the deadline, sweep the group, give stdout
- * `ROLE_DRAIN_GRACE_MS` to drain), then resolve with what was collected. The run resolves on
- * `close` or at the end of the grace, whichever is first, and exactly once: a process still
- * holding the role's stdio can delay it by the grace at most, never block it.
+ * `ROLE_DRAIN_GRACE_MS` to drain; no kill is sent after it, and every kill resolves the run
+ * within `ROLE_KILL_BOUND_MS` even when no exit follows), then resolve with what was collected.
+ * The run resolves on `close` or at the end of the grace, whichever is first, and exactly once:
+ * a process still holding the role's stdio can delay it by the grace at most, never block it.
  */
 function watchRole(
   child: RoleChild,
@@ -277,16 +285,19 @@ function watchRole(
 ): void {
   const run = { code: null as number | null, timedOut: false, overflow: false, why: "" };
   let settled = false;
+  let exited = false;
   let grace: ReturnType<typeof setTimeout> | undefined;
-  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => {
-    run.overflow = true;
+  // The one place a kill is sent: never after the exit (the pid is reaped; the sweep has run), and
+  // every kill bounds the run, so it resolves even when no exit or close follows.
+  const killFor = (why: "timedOut" | "overflow"): void => {
+    run[why] = true;
+    if (exited) return;
     killGroup(child, kill);
-  });
+    grace ??= setTimeout(settle, ROLE_KILL_BOUND_MS);
+  };
+  const stdout = collectCapped(child.stdout, ROLE_STDOUT_MAX_BYTES, () => killFor("overflow"));
   const stderr = collectTail(child.stderr, ROLE_STDERR_TAIL_BYTES);
-  const deadline = setTimeout(() => {
-    run.timedOut = true;
-    killGroup(child, kill);
-  }, timeoutMs);
+  const deadline = setTimeout(() => killFor("timedOut"), timeoutMs);
 
   const settle = (): void => {
     if (settled) return;
@@ -308,6 +319,7 @@ function watchRole(
     clearTimeout(deadline);
     run.code = code;
     sweepGroup(child, kill);
+    exited = true;
     grace ??= setTimeout(settle, ROLE_DRAIN_GRACE_MS);
   });
   child.on("close", settle);
