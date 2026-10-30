@@ -76,8 +76,6 @@ int main(int argc, char **argv) {
   if (n > 0) {
     struct sock_fprog fp = {(unsigned short)(n / 8), (struct sock_filter *)prog};
     if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &fp) != 0) { perror("seccomp"); return 5; }
-    fprintf(stderr, "launcher: seccomp installed
-");
   }
   close(3);
   execv(argv[5], &argv[5]);
