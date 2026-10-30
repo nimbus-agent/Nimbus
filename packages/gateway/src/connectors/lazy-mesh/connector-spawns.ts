@@ -36,6 +36,7 @@ import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
   networkEntryFromUrl,
+  siteUrlWithScheme,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
@@ -506,7 +507,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
               JIRA_BASE_URL: baseUrl,
             }),
           },
-          manifestWithConfiguredHost("jira", baseUrl),
+          manifestWithConfiguredHost("jira", siteUrlWithScheme(baseUrl)),
           ctx.sandboxCwd,
         ),
       },
@@ -638,7 +639,7 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
               CONFLUENCE_BASE_URL: baseUrl,
             }),
           },
-          manifestWithConfiguredHost("confluence", baseUrl),
+          manifestWithConfiguredHost("confluence", siteUrlWithScheme(baseUrl)),
           ctx.sandboxCwd,
         ),
       },

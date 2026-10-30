@@ -5,6 +5,7 @@ import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
   networkEntryFromUrl,
+  siteUrlWithScheme,
 } from "./first-party-manifests.ts";
 
 describe("manifestForFirstParty", () => {
@@ -56,7 +57,11 @@ describe("manifestForFirstParty", () => {
   test("apple manifest declares the static caldav.icloud.com host (imap/smtp host:port added at spawn)", () => {
     const m = manifestForFirstParty("apple");
     expect(m.id).toBe("com.nimbus.apple");
-    expect(m.permissions.network).toEqual(["caldav.icloud.com"]);
+    expect(m.permissions.network).toContain("caldav.icloud.com");
+    // The connector's own extension manifest names these ten partitions. See the manifest note.
+    expect(m.permissions.network).toContain("p01-caldav.icloud.com");
+    expect(m.permissions.network).toContain("p10-caldav.icloud.com");
+    expect(m.permissions.network).toHaveLength(11);
     expect(m.permissions.filesystem.read).toEqual([]);
     expect(m.permissions.filesystem.write).toEqual([]);
     // The non-443 IMAP/SMTP host:port endpoints are folded in at spawn.
@@ -302,5 +307,19 @@ describe("manifestWithExtraNetworkHosts", () => {
     const out = manifestWithExtraNetworkHosts("unknown-svc", ["host.example.com"], NONE);
     expect(out.id).toBe("com.nimbus.unknown-svc");
     expect(out.permissions.network).toEqual(["host.example.com"]);
+  });
+});
+
+describe("siteUrlWithScheme", () => {
+  test("a schemeless Atlassian site gets the https the connector will use", () => {
+    expect(networkEntryFromUrl(siteUrlWithScheme("acme.atlassian.net"))).toBe("acme.atlassian.net");
+    expect(networkEntryFromUrl(siteUrlWithScheme(" acme.atlassian.net/wiki "))).toBe(
+      "acme.atlassian.net",
+    );
+  });
+
+  test("a url with a scheme is kept, port and all", () => {
+    expect(siteUrlWithScheme("http://jira.corp:8080")).toBe("http://jira.corp:8080");
+    expect(networkEntryFromUrl(siteUrlWithScheme("http://jira.corp:8080"))).toBe("jira.corp:8080");
   });
 });

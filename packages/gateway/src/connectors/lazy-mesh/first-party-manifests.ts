@@ -120,8 +120,16 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["management.azure.com", "login.microsoftonline.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Execs `gcloud run` and `gcloud container`. The per-region Cloud Run host is added at spawn
+  // from `gcp.region`; a tool call naming another region is recorded in connector-host-gaps.json.
   gcp: baseManifest("com.nimbus.gcp", {
-    network: ["cloudresourcemanager.googleapis.com", "oauth2.googleapis.com"],
+    network: [
+      "cloudresourcemanager.googleapis.com",
+      "oauth2.googleapis.com",
+      "run.googleapis.com",
+      "container.googleapis.com",
+      "serviceusage.googleapis.com",
+    ],
     filesystem: { read: [], write: [] },
   }),
   // BigQuery (Tier-3, metadata-only). Execs `gcloud` to mint an access token, then
@@ -519,13 +527,24 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   // imap.mail.me.com:993 / smtp.mail.me.com:587 host:port entries are added at
   // spawn time by ensureAppleMcp via manifestWithExtraNetworkHosts (host:port
   // syntax, same as imap). caldav.icloud.com is the fixed 443 CalDAV bootstrap
-  // host declared statically here. NOTE: principal discovery redirects to a
-  // per-account p##-caldav.icloud.com partition host that cannot be enumerated
-  // statically; under strict per-host gating (the rarely-available sandbox
-  // helper) CalDAV reads degrade — in the common fallback (all-or-nothing) mode
-  // the declared hosts enable the connector. See README "Network sandbox".
+  // host declared statically here. Calendar requests go to the per-account
+  // p##-caldav.icloud.com partition that discovery returns. The ten listed are the ones the
+  // connector's own nimbus.extension.json names; an account on a higher partition has no
+  // calendar under per-host enforcement. Recorded in connector-host-gaps.json.
   apple: baseManifest("com.nimbus.apple", {
-    network: ["caldav.icloud.com"],
+    network: [
+      "caldav.icloud.com",
+      "p01-caldav.icloud.com",
+      "p02-caldav.icloud.com",
+      "p03-caldav.icloud.com",
+      "p04-caldav.icloud.com",
+      "p05-caldav.icloud.com",
+      "p06-caldav.icloud.com",
+      "p07-caldav.icloud.com",
+      "p08-caldav.icloud.com",
+      "p09-caldav.icloud.com",
+      "p10-caldav.icloud.com",
+    ],
     filesystem: { read: [], write: [] },
   }),
 
@@ -576,6 +595,15 @@ export function networkEntryFromUrl(input: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * A stored Atlassian site URL as the Jira and Confluence connectors will read it: they accept one
+ * with no scheme and assume https, and `networkEntryFromUrl` alone would return null for it.
+ */
+export function siteUrlWithScheme(input: string): string {
+  const trimmed = input.trim();
+  return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
 }
 
 /**

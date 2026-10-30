@@ -7,6 +7,7 @@
 // an unwrapped spec. Every module here that builds a spec therefore declares its own - this
 // one included, since the `add*` helpers below build specs too.
 
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
@@ -87,6 +88,35 @@ export async function readSecret<S extends ConnectorServiceId>(
   key: ConnectorSecretKeyOf<S>,
 ): Promise<string> {
   return (await readConnectorSecret(vault, serviceId, key))?.trim() ?? "";
+}
+
+/**
+ * The first-party manifest plus the host of each URL the owner stored for this connector, labelled
+ * as the owner's. An empty value means the connector uses its fixed vendor host, and adds nothing.
+ */
+export function manifestWithStoredUrls(
+  serviceId: string,
+  urls: readonly string[],
+): ExtensionManifest {
+  const hosts = urls
+    .filter((url) => url !== "")
+    .map((url) => networkEntryFromUrl(url))
+    .filter((host) => host !== null);
+  return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
+}
+
+/**
+ * The regional endpoint of each AWS service, the form the `aws` CLI calls (botocore's
+ * `{service}.{region}.{dnsSuffix}`). `services` holds endpoint prefixes, not CLI command names:
+ * SageMaker's is `api.sagemaker`, CloudWatch Logs' is `logs`. STS is included because a v2 CLI
+ * resolves an assume-role profile against the regional endpoint. With no known region this is
+ * empty, and the connector cannot reach its service where hosts are enforced: recorded in
+ * connector-host-gaps.json.
+ */
+export function awsRegionalHosts(region: string, services: readonly string[]): string[] {
+  if (region === "") return [];
+  const suffix = region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
+  return [...services, "sts"].map((service) => `${service}.${region}.${suffix}`);
 }
 
 export interface SimpleTokenSpec<S extends ConnectorServiceId> {

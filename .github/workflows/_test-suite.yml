@@ -154,6 +154,10 @@ jobs:
 
       # The three audits below guard the compiled binary. They shipped into the local preflight
       # manifest but no workflow ran them, so nothing gated a contributor's PR on them.
+      - name: Connector hosts (every host a connector names is declared or recorded)
+        # Wired here AND in preflight-gates.ts in the same commit, for the reason above.
+        run: bun run audit:connector-hosts
+
       - name: Connector registry drift (generated file vs. package exports)
         # The bundled registry is generated into a committed file. Nothing else diffs it, and
         # test:connector-boot cannot: it boots what the registry ships, so a connector missing

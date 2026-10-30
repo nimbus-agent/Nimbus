@@ -62,6 +62,7 @@ describe("connector audits are wired into CI, not just the local manifest", () =
   // apart. A set can: adding or removing a connector gate now requires saying so here.
   test("the connector gate set is exactly the expected one", () => {
     expect([...connectorGates].sort()).toEqual([
+      "audit:connector-hosts",
       "audit:connector-registry-drift",
       "audit:connector-version-skew",
     ]);

@@ -63,6 +63,14 @@ const FAST: readonly Gate[] = [
     soft: true,
   },
   {
+    // Where a sandbox enforces a connector's network list, a host its code calls and the list does
+    // not name is a connector that fails for its users. Reads the installed connector package, so
+    // a bump that adds a host fails here. Run-time hosts and CLI hosts need a recorded hand read.
+    name: "audit:connector-hosts",
+    cmd: ["bun", "run", "audit:connector-hosts"],
+    tier: "fast",
+  },
+  {
     // The bundled registry is GENERATED into a committed file and nothing else diffs it.
     // `test:connector-boot` cannot catch a connector missing FROM the registry — it boots what the
     // registry ships. A stale registry means a connector the shipped binary can never start.

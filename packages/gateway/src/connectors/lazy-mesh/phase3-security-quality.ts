@@ -3,7 +3,11 @@ import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
-import { addSimpleTokenServer, addUrlAndSecretMcp } from "./phase3-shared.ts";
+import {
+  addSimpleTokenServer,
+  addUrlAndSecretMcp,
+  manifestWithStoredUrls,
+} from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -36,7 +40,7 @@ export async function phase3AddSonarqubeMcp(
   const url = (await readConnectorSecret(vault, "sonarqube", "url"))?.trim() ?? "";
   const organization =
     (await readConnectorSecret(vault, "sonarqube", "organization"))?.trim() ?? "";
-  servers["sonarqube"] = wrap(
+  servers["sonarqube"] = wrapServerSpec(
     {
       ...connectorSpawn("sonarqube"),
       env: extensionProcessEnv({
@@ -45,7 +49,7 @@ export async function phase3AddSonarqubeMcp(
         ...(organization === "" ? {} : { SONARQUBE_ORGANIZATION: organization }),
       }),
     },
-    "sonarqube",
+    manifestWithStoredUrls("sonarqube", [url]),
     sandboxCwd,
   );
 }
@@ -85,7 +89,7 @@ export async function phase3AddWizMcp(
   }
   const apiUrl = (await readConnectorSecret(vault, "wiz", "api_url"))?.trim() ?? "";
   const authUrl = (await readConnectorSecret(vault, "wiz", "auth_url"))?.trim() ?? "";
-  servers["wiz"] = wrap(
+  servers["wiz"] = wrapServerSpec(
     {
       ...connectorSpawn("wiz"),
       env: extensionProcessEnv({
@@ -95,7 +99,7 @@ export async function phase3AddWizMcp(
         ...(authUrl === "" ? {} : { WIZ_AUTH_URL: authUrl }),
       }),
     },
-    "wiz",
+    manifestWithStoredUrls("wiz", [apiUrl, authUrl]),
     sandboxCwd,
   );
 }

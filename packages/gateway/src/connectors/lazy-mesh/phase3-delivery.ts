@@ -7,7 +7,11 @@ import {
   networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
-import { addDirManifestServer, addSimpleTokenServer } from "./phase3-shared.ts";
+import {
+  addDirManifestServer,
+  addSimpleTokenServer,
+  manifestWithStoredUrls,
+} from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -177,7 +181,7 @@ export async function phase3AddLaunchdarklyMcp(
     return;
   }
   const baseUrl = (await readConnectorSecret(vault, "launchdarkly", "base_url"))?.trim() ?? "";
-  servers["launchdarkly"] = wrap(
+  servers["launchdarkly"] = wrapServerSpec(
     {
       ...connectorSpawn("launchdarkly"),
       env: extensionProcessEnv({
@@ -185,7 +189,7 @@ export async function phase3AddLaunchdarklyMcp(
         ...(baseUrl === "" ? {} : { LAUNCHDARKLY_BASE_URL: baseUrl }),
       }),
     },
-    "launchdarkly",
+    manifestWithStoredUrls("launchdarkly", [baseUrl]),
     sandboxCwd,
   );
 }
@@ -200,7 +204,7 @@ export async function phase3AddFlagsmithMcp(
     return;
   }
   const apiBase = (await readConnectorSecret(vault, "flagsmith", "api_base"))?.trim() ?? "";
-  servers["flagsmith"] = wrap(
+  servers["flagsmith"] = wrapServerSpec(
     {
       ...connectorSpawn("flagsmith"),
       env: extensionProcessEnv({
@@ -208,7 +212,7 @@ export async function phase3AddFlagsmithMcp(
         ...(apiBase === "" ? {} : { FLAGSMITH_API_BASE: apiBase }),
       }),
     },
-    "flagsmith",
+    manifestWithStoredUrls("flagsmith", [apiBase]),
     sandboxCwd,
   );
 }

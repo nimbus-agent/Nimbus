@@ -7,7 +7,11 @@ import {
   networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
-import { addSimpleTokenServer, imapPortOrDefault } from "./phase3-shared.ts";
+import {
+  addSimpleTokenServer,
+  imapPortOrDefault,
+  manifestWithStoredUrls,
+} from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -339,8 +343,8 @@ export async function phase3AddFastmailMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // Fastmail (Tier-4 EMAIL via JMAP) — gate on the API token. The base URL is an
-  // optional non-secret override (default api.fastmail.com); the static manifest
-  // host covers the JMAP session/api endpoints, so no extra-host merge is needed.
+  // optional non-secret override (default api.fastmail.com). The connector pins the JMAP
+  // session's apiUrl to that same host, so one extra host covers it.
   const apiToken = (await readConnectorSecret(vault, "fastmail", "api_token"))?.trim() ?? "";
   if (apiToken === "") {
     return;
@@ -352,12 +356,12 @@ export async function phase3AddFastmailMcp(
     env["FASTMAIL_BASE_URL"] = baseUrl;
   }
 
-  servers["fastmail"] = wrap(
+  servers["fastmail"] = wrapServerSpec(
     {
       ...connectorSpawn("fastmail"),
       env: extensionProcessEnv(env),
     },
-    "fastmail",
+    manifestWithStoredUrls("fastmail", [baseUrl]),
     sandboxCwd,
   );
 }

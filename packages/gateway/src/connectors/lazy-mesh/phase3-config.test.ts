@@ -2985,3 +2985,174 @@ describe("GCP MCP spawns support gcloud login mode (no key file configured)", ()
     });
   }
 });
+
+describe("a host the connector calls is in its network list", () => {
+  type Add = (
+    vault: NimbusVault,
+    servers: Record<string, ServerSpec>,
+    sandboxCwd: string,
+  ) => Promise<void>;
+
+  async function spawned(
+    add: Add,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<{ network: string[]; owner: string[] | undefined }> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    const raw = servers[service]?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}";
+    const policy = JSON.parse(raw) as {
+      permissions: { network: string[] };
+      ownerConfiguredNetwork?: string[];
+    };
+    return { network: policy.permissions.network, owner: policy.ownerConfiguredNetwork };
+  }
+
+  const stored: ReadonlyArray<{
+    name: string;
+    add: Add;
+    service: string;
+    secrets: Readonly<Record<string, string>>;
+    expected: readonly string[];
+  }> = [
+    {
+      name: "a self-hosted sentry",
+      add: phase3AddSentryMcp,
+      service: "sentry",
+      secrets: {
+        "sentry.auth_token": "t",
+        "sentry.org_slug": "o",
+        "sentry.url": "https://sentry.acme.test:9000",
+      },
+      expected: ["sentry.acme.test:9000"],
+    },
+    {
+      name: "a self-hosted sonarqube",
+      add: phase3AddSonarqubeMcp,
+      service: "sonarqube",
+      secrets: { "sonarqube.token": "t", "sonarqube.url": "http://sonar.acme.test:9000" },
+      expected: ["sonar.acme.test:9000"],
+    },
+    {
+      name: "a wiz tenant's api and auth urls",
+      add: phase3AddWizMcp,
+      service: "wiz",
+      secrets: {
+        "wiz.client_id": "c",
+        "wiz.client_secret": "s",
+        "wiz.api_url": "https://api.us17.app.wiz.test/graphql",
+        "wiz.auth_url": "https://auth.gov.wiz.test/oauth/token",
+      },
+      expected: ["api.us17.app.wiz.test", "auth.gov.wiz.test"],
+    },
+    {
+      name: "a launchdarkly base url",
+      add: phase3AddLaunchdarklyMcp,
+      service: "launchdarkly",
+      secrets: { "launchdarkly.token": "t", "launchdarkly.base_url": "https://ld.acme.test" },
+      expected: ["ld.acme.test"],
+    },
+    {
+      name: "a self-hosted flagsmith",
+      add: phase3AddFlagsmithMcp,
+      service: "flagsmith",
+      secrets: { "flagsmith.token": "t", "flagsmith.api_base": "https://flags.acme.test" },
+      expected: ["flags.acme.test"],
+    },
+    {
+      name: "a fastmail base url",
+      add: phase3AddFastmailMcp,
+      service: "fastmail",
+      secrets: { "fastmail.api_token": "t", "fastmail.base_url": "https://jmap.acme.test" },
+      expected: ["jmap.acme.test"],
+    },
+  ];
+
+  for (const c of stored) {
+    test(`${c.name} is declared, and labelled as the owner's`, async () => {
+      const { network, owner } = await spawned(c.add, c.service, c.secrets);
+      for (const host of c.expected) expect(network).toContain(host);
+      expect([...(owner ?? [])].sort()).toEqual([...c.expected].sort());
+    });
+  }
+
+  test("with no stored url, sentry keeps the fixed list and no label", async () => {
+    const { network, owner } = await spawned(phase3AddSentryMcp, "sentry", {
+      "sentry.auth_token": "t",
+      "sentry.org_slug": "o",
+    });
+    expect(network).toEqual(["sentry.io"]);
+    expect(owner).toBeUndefined();
+  });
+
+  test("a datadog site declares api.<site>, built in code so not the owner's", async () => {
+    const { network, owner } = await spawned(phase3AddDatadogMcp, "datadog", {
+      "datadog.api_key": "a",
+      "datadog.app_key": "b",
+      "datadog.site": "datadoghq.eu",
+    });
+    expect(network).toContain("api.datadoghq.eu");
+    expect(owner).toBeUndefined();
+  });
+
+  const awsKeys = {
+    "aws.access_key_id": "AKIA0001",
+    "aws.secret_access_key": "SK0001",
+    "aws.default_region": "eu-west-1",
+  };
+
+  test("aws declares the regional endpoint of every service its tools call", async () => {
+    const { network, owner } = await spawned(phase3AddAwsMcp, "aws", awsKeys);
+    for (const service of ["ecs", "lambda", "ec2", "sts"]) {
+      expect(network).toContain(`${service}.eu-west-1.amazonaws.com`);
+    }
+    expect(owner).toBeUndefined();
+  });
+
+  test("a China region takes the amazonaws.com.cn suffix", async () => {
+    const { network } = await spawned(phase3AddAwsMcp, "aws", {
+      ...awsKeys,
+      "aws.default_region": "cn-north-1",
+    });
+    expect(network).toContain("ecs.cn-north-1.amazonaws.com.cn");
+  });
+
+  test("aws with no known region adds no regional host", async () => {
+    const { network } = await spawned(phase3AddAwsMcp, "aws", { "aws.profile": "dev" });
+    expect(network.filter((h) => h.split(".").length > 3)).toEqual([]);
+  });
+
+  const awsFamily: ReadonlyArray<[string, Add, string]> = [
+    ["athena", phase3AddAthenaMcp, "athena.eu-west-1.amazonaws.com"],
+    ["cloudwatch", phase3AddCloudwatchMcp, "logs.eu-west-1.amazonaws.com"],
+    ["sagemaker", phase3AddSagemakerMcp, "api.sagemaker.eu-west-1.amazonaws.com"],
+  ];
+  for (const [service, add, serviceHost] of awsFamily) {
+    test(`${service} declares its service host and regional STS`, async () => {
+      const { network } = await spawned(add, service, awsKeys);
+      expect(network).toContain(serviceHost);
+      expect(network).toContain("sts.eu-west-1.amazonaws.com");
+    });
+  }
+
+  test("gcp declares the Cloud Run host of the stored region", async () => {
+    const { network, owner } = await spawned(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": "europe-west1",
+    });
+    expect(network).toContain("europe-west1-run.googleapis.com");
+    expect(network).toContain("run.googleapis.com");
+    expect(network).toContain("container.googleapis.com");
+    expect(owner).toBeUndefined();
+  });
+
+  test("gcp with an unsafe stored region adds no regional host", async () => {
+    const { network } = await spawned(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": "-bad",
+    });
+    expect(network.filter((h) => h.endsWith("-run.googleapis.com"))).toEqual([]);
+  });
+});
