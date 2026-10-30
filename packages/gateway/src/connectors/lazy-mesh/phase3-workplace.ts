@@ -79,7 +79,9 @@ export async function phase3AddZendeskMcp(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["zendesk"] = wrapServerSpec(
     {
       ...connectorSpawn("zendesk"),
@@ -231,7 +233,10 @@ export async function phase3AddImapMcp(
   if (smtpHost !== "") {
     extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
   }
-  const manifest = manifestWithExtraNetworkHosts("imap", extraHosts);
+  // Both hosts are values the owner stored (the connector does not spawn without `imap.host`).
+  const manifest = manifestWithExtraNetworkHosts("imap", extraHosts, {
+    ownerConfigured: extraHosts,
+  });
 
   const env: Record<string, string> = {
     IMAP_HOST: host,
@@ -276,13 +281,15 @@ export async function phase3AddProtonmailMcp(
   if (username === "" || password === "") {
     return;
   }
-  const host = (await readConnectorSecret(vault, "protonmail", "imap_host"))?.trim() || "127.0.0.1";
+  const storedHost = (await readConnectorSecret(vault, "protonmail", "imap_host"))?.trim() ?? "";
+  const host = storedHost === "" ? "127.0.0.1" : storedHost;
   const portRaw = (await readConnectorSecret(vault, "protonmail", "imap_port"))?.trim() ?? "";
   const port = imapPortOrDefault(portRaw, 1143);
   const mailbox = (await readConnectorSecret(vault, "protonmail", "mailbox"))?.trim() ?? "";
 
-  const smtpHost =
-    (await readConnectorSecret(vault, "protonmail", "smtp_host"))?.trim() || "127.0.0.1";
+  const storedSmtpHost =
+    (await readConnectorSecret(vault, "protonmail", "smtp_host"))?.trim() ?? "";
+  const smtpHost = storedSmtpHost === "" ? "127.0.0.1" : storedSmtpHost;
   const smtpUser = (await readConnectorSecret(vault, "protonmail", "smtp_username"))?.trim() ?? "";
   const smtpPass = (await readConnectorSecret(vault, "protonmail", "smtp_password"))?.trim() ?? "";
   const smtpPortRaw = (await readConnectorSecret(vault, "protonmail", "smtp_port"))?.trim() ?? "";
@@ -295,7 +302,14 @@ export async function phase3AddProtonmailMcp(
   if (smtpUser !== "" && smtpPass !== "") {
     extraHosts.push(`${smtpHost}:${String(smtpPort)}`);
   }
-  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts);
+  // The Bridge loopback default is written in code; an entry is the owner's only when its host
+  // came from a stored value.
+  const ownerConfigured: string[] = [];
+  if (storedHost !== "") ownerConfigured.push(`${host}:${String(port)}`);
+  if (storedSmtpHost !== "" && smtpUser !== "" && smtpPass !== "") {
+    ownerConfigured.push(`${smtpHost}:${String(smtpPort)}`);
+  }
+  const manifest = manifestWithExtraNetworkHosts("protonmail", extraHosts, { ownerConfigured });
 
   const env: Record<string, string> = {
     PROTONMAIL_HOST: host,

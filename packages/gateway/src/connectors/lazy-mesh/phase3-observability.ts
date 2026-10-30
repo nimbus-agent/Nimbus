@@ -29,6 +29,7 @@ export async function phase3AddGrafanaMcp(
   const grafanaManifest = manifestWithExtraNetworkHosts(
     "grafana",
     grafanaHost === null ? [] : [grafanaHost],
+    { ownerConfigured: grafanaHost === null ? [] : [grafanaHost] },
   );
   servers["grafana"] = wrapServerSpec(
     {

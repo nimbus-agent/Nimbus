@@ -35,7 +35,9 @@ export async function phase3AddDbtMcp(
         ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
       }),
     },
-    manifestWithExtraNetworkHosts("dbt", apiHost === null ? [] : [apiHost]),
+    manifestWithExtraNetworkHosts("dbt", apiHost === null ? [] : [apiHost], {
+      ownerConfigured: apiHost === null ? [] : [apiHost],
+    }),
     sandboxCwd,
   );
 }
@@ -94,7 +96,9 @@ export async function phase3AddSnowflakeMcp(
     return;
   }
   const host = `${account}.snowflakecomputing.com`;
-  const manifest = manifestWithExtraNetworkHosts("snowflake", [host]);
+  const manifest = manifestWithExtraNetworkHosts("snowflake", [host], {
+    ownerConfigured: [], // <account>.snowflakecomputing.com is built in code from a validated id
+  });
   servers["snowflake"] = wrapServerSpec(
     {
       ...connectorSpawn("snowflake"),
@@ -117,7 +121,9 @@ export async function phase3AddTableauMcp(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["tableau"] = wrapServerSpec(
     {
       ...connectorSpawn("tableau"),
@@ -144,7 +150,9 @@ export async function phase3AddLookerMcp(
     return;
   }
   const host = networkEntryFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["looker"] = wrapServerSpec(
     {
       ...connectorSpawn("looker"),
@@ -201,7 +209,9 @@ export async function phase3AddSupersetMcp(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["superset"] = wrapServerSpec(
     {
       ...connectorSpawn("superset"),
@@ -295,7 +305,9 @@ export async function phase3AddBigeyeMcp(
     return;
   }
   const host = networkEntryFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["bigeye"] = wrapServerSpec(
     {
       ...connectorSpawn("bigeye"),
@@ -353,7 +365,9 @@ export async function phase3AddAirflowMcp(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["airflow"] = wrapServerSpec(
     {
       ...connectorSpawn("airflow"),
@@ -379,7 +393,9 @@ export async function phase3AddPrefectMcp(
     return;
   }
   const host = networkEntryFromUrl(apiUrl);
-  const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["prefect"] = wrapServerSpec(
     {
       ...connectorSpawn("prefect"),
@@ -404,7 +420,9 @@ export async function phase3AddDagsterMcp(
     return;
   }
   const host = networkEntryFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["dagster"] = wrapServerSpec(
     {
       ...connectorSpawn("dagster"),

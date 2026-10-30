@@ -393,9 +393,17 @@ describe("userMcpManifestFromRow", () => {
         id: "user.mcp_x",
         version: "0.0.0",
         permissions: { network: ["api.x.com"], filesystem: { read: ["/a"], write: [] } },
+        ownerConfiguredNetwork: ["api.x.com"],
         updateChannel: "stable",
       },
     });
+  });
+
+  test("every --net entry is the owner's; a row with none carries no label", () => {
+    const r = userMcpManifestFromRow(makeRow({ net_hosts_json: '["a.x.com","10.0.0.5:8080"]' }));
+    expect(r.ok && r.manifest.ownerConfiguredNetwork).toEqual(["a.x.com", "10.0.0.5:8080"]);
+    const none = userMcpManifestFromRow(makeRow({ net_hosts_json: "[]" }));
+    expect(none.ok && "ownerConfiguredNetwork" in none.manifest).toBe(false);
   });
 
   test("unparseable read_paths_json is named", () => {

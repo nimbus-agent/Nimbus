@@ -130,7 +130,9 @@ export async function chatopsTeamsBotServers(
           ...(graphToken === undefined ? {} : { MICROSOFT_OAUTH_ACCESS_TOKEN: graphToken }),
         }),
       },
-      manifestWithExtraNetworkHosts("teams", teamsBotHostsFor(opts?.serviceUrl)),
+      manifestWithExtraNetworkHosts("teams", teamsBotHostsFor(opts?.serviceUrl), {
+        ownerConfigured: [], // an allowlisted Microsoft bot-service host, chosen in code
+      }),
       sandboxCwd,
     ),
   };

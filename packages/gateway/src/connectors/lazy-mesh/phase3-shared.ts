@@ -220,7 +220,9 @@ export async function addUrlAndSecretMcp<S extends ConnectorServiceId>(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers[cfg.service] = wrapServerSpec(
     {
       ...connectorSpawn(cfg.service),

@@ -11,7 +11,6 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
@@ -37,6 +36,7 @@ import {
   stageVerifiedExtension,
 } from "./extension-stage.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
+import { type ExtensionManifest, parseExtensionManifestJson } from "./manifest.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { extensionProcessEnv } from "./spawn-env.ts";
@@ -114,6 +114,32 @@ describe("buildExtensionRuntimeManifest", () => {
     expect(m.permissions.filesystem?.write).toEqual([...v.grants.write]);
     expect(m.permissions.filesystem?.write).not.toContain(v.installPath);
     expect(m.permissions.network).toEqual(["api.example.com"]);
+  });
+});
+
+describe("an extension can never set ownerConfiguredNetwork (I43)", () => {
+  test("a manifest file naming it parses without it", () => {
+    const parsed = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        permissions: { network: ["10.0.0.1"], filesystem: { read: [], write: [] } },
+        ownerConfiguredNetwork: ["10.0.0.1"],
+      }),
+    );
+    expect((parsed as ExtensionManifest).ownerConfiguredNetwork).toBeUndefined();
+    expect("ownerConfiguredNetwork" in parsed).toBe(false);
+  });
+
+  test("neither the spawn manifest nor the spawn policy carries it", () => {
+    const { v } = realInstall();
+    const m = buildExtensionRuntimeManifest(v, runtimeReadPaths);
+    expect("ownerConfiguredNetwork" in m).toBe(false);
+    expect("ownerConfiguredNetwork" in policyFromManifest(m)).toBe(false);
+    expect(
+      "ownerConfiguredNetwork" in
+        extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
+    ).toBe(false);
   });
 });
 

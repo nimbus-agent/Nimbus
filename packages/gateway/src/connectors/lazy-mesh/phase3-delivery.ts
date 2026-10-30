@@ -224,7 +224,9 @@ export async function phase3AddArgocdMcp(
     return;
   }
   const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["argocd"] = wrapServerSpec(
     {
       ...connectorSpawn("argocd"),
@@ -246,7 +248,9 @@ export async function phase3AddFluxMcp(
     return;
   }
   const host = networkEntryFromUrl(apiUrl);
-  const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   servers["flux"] = wrapServerSpec(
     {
       ...connectorSpawn("flux"),

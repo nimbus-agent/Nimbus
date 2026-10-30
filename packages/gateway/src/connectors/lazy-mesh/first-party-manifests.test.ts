@@ -60,10 +60,11 @@ describe("manifestForFirstParty", () => {
     expect(m.permissions.filesystem.read).toEqual([]);
     expect(m.permissions.filesystem.write).toEqual([]);
     // The non-443 IMAP/SMTP host:port endpoints are folded in at spawn.
-    const spawned = manifestWithExtraNetworkHosts("apple", [
-      "imap.mail.me.com:993",
-      "smtp.mail.me.com:587",
-    ]);
+    const spawned = manifestWithExtraNetworkHosts(
+      "apple",
+      ["imap.mail.me.com:993", "smtp.mail.me.com:587"],
+      NONE,
+    );
     expect(spawned.permissions.network).toContain("caldav.icloud.com");
     expect(spawned.permissions.network).toContain("imap.mail.me.com:993");
     expect(spawned.permissions.network).toContain("smtp.mail.me.com:587");
@@ -193,9 +194,39 @@ describe("networkEntryFromUrl", () => {
   });
 });
 
+const NONE = { ownerConfigured: [] } as const;
+
 describe("manifestWithExtraNetworkHosts", () => {
+  test("labels only the owner-configured entries, normalised like the merged list", () => {
+    const out = manifestWithExtraNetworkHosts(
+      "jenkins",
+      ["Jenkins.Corp:8080", "other.example.com"],
+      {
+        ownerConfigured: ["  JENKINS.corp:8080 "],
+      },
+    );
+    expect(out.permissions.network).toEqual(["jenkins.corp:8080", "other.example.com"]);
+    expect(out.ownerConfiguredNetwork).toEqual(["jenkins.corp:8080"]);
+  });
+
+  test("never labels an entry that is not among the extra hosts", () => {
+    const out = manifestWithExtraNetworkHosts("jenkins", ["a.example.com"], {
+      ownerConfigured: ["b.example.com"],
+    });
+    expect(out.ownerConfiguredNetwork).toBeUndefined();
+  });
+
+  test("no label key at all when nothing is owner-configured", () => {
+    expect(
+      "ownerConfiguredNetwork" in manifestWithExtraNetworkHosts("jenkins", ["a.example.com"], NONE),
+    ).toBe(false);
+    expect("ownerConfiguredNetwork" in manifestWithExtraNetworkHosts("github", [], NONE)).toBe(
+      false,
+    );
+  });
+
   test("returns the base manifest verbatim when extra is empty", () => {
-    const out = manifestWithExtraNetworkHosts("github", []);
+    const out = manifestWithExtraNetworkHosts("github", [], NONE);
     expect(out.permissions.network).toEqual([
       "api.github.com",
       "uploads.github.com",
@@ -204,51 +235,63 @@ describe("manifestWithExtraNetworkHosts", () => {
   });
 
   test("appends a new host", () => {
-    const out = manifestWithExtraNetworkHosts("jenkins", ["jenkins.internal.example.com"]);
+    const out = manifestWithExtraNetworkHosts("jenkins", ["jenkins.internal.example.com"], NONE);
     expect(out.permissions.network).toEqual(["jenkins.internal.example.com"]);
   });
 
   test("extends an existing connector's network list without duplicating", () => {
-    const out = manifestWithExtraNetworkHosts("github", ["enterprise.github.example.com"]);
+    const out = manifestWithExtraNetworkHosts("github", ["enterprise.github.example.com"], NONE);
     expect(out.permissions.network).toContain("api.github.com");
     expect(out.permissions.network).toContain("enterprise.github.example.com");
     expect(out.permissions.network).toHaveLength(4);
   });
 
   test("dedupes against existing entries", () => {
-    const out = manifestWithExtraNetworkHosts("github", ["api.github.com", "uploads.github.com"]);
+    const out = manifestWithExtraNetworkHosts(
+      "github",
+      ["api.github.com", "uploads.github.com"],
+      NONE,
+    );
     expect(out.permissions.network).toHaveLength(3);
   });
 
   test("dedupes case-insensitively + trims whitespace", () => {
-    const out = manifestWithExtraNetworkHosts("github", ["  API.GITHUB.COM  ", "api.github.com"]);
+    const out = manifestWithExtraNetworkHosts(
+      "github",
+      ["  API.GITHUB.COM  ", "api.github.com"],
+      NONE,
+    );
     expect(out.permissions.network).toHaveLength(3);
   });
 
   test("treats host and host:port as separate entries", () => {
-    const out = manifestWithExtraNetworkHosts("jenkins", ["jenkins.corp", "jenkins.corp:8443"]);
+    const out = manifestWithExtraNetworkHosts(
+      "jenkins",
+      ["jenkins.corp", "jenkins.corp:8443"],
+      NONE,
+    );
     expect(out.permissions.network).toEqual(["jenkins.corp", "jenkins.corp:8443"]);
   });
 
   test("drops empty / whitespace-only entries", () => {
-    const out = manifestWithExtraNetworkHosts("jenkins", ["", "   ", "jenkins.example.com"]);
+    const out = manifestWithExtraNetworkHosts("jenkins", ["", "   ", "jenkins.example.com"], NONE);
     expect(out.permissions.network).toEqual(["jenkins.example.com"]);
   });
 
   test("lowercases extra hosts", () => {
-    const out = manifestWithExtraNetworkHosts("jenkins", ["JENKINS.EXAMPLE.COM"]);
+    const out = manifestWithExtraNetworkHosts("jenkins", ["JENKINS.EXAMPLE.COM"], NONE);
     expect(out.permissions.network).toEqual(["jenkins.example.com"]);
   });
 
   test("does not mutate the base manifest in FIRST_PARTY_MANIFESTS", () => {
     const before = [...(FIRST_PARTY_MANIFESTS["github"]?.permissions.network ?? [])];
-    manifestWithExtraNetworkHosts("github", ["mutator.example.com"]);
+    manifestWithExtraNetworkHosts("github", ["mutator.example.com"], NONE);
     const after = FIRST_PARTY_MANIFESTS["github"]?.permissions.network ?? [];
     expect(after).toEqual(before);
   });
 
   test("preserves filesystem permissions from the base manifest as a deep clone", () => {
-    const out = manifestWithExtraNetworkHosts("obsidian", ["sync.obsidian.example.com"]);
+    const out = manifestWithExtraNetworkHosts("obsidian", ["sync.obsidian.example.com"], NONE);
     expect(out.permissions.filesystem.read).toEqual([]);
     expect(out.permissions.filesystem.write).toEqual([]);
     out.permissions.filesystem.read.push("/etc");
@@ -256,7 +299,7 @@ describe("manifestWithExtraNetworkHosts", () => {
   });
 
   test("falls back through the default-deny path for unknown service ids", () => {
-    const out = manifestWithExtraNetworkHosts("unknown-svc", ["host.example.com"]);
+    const out = manifestWithExtraNetworkHosts("unknown-svc", ["host.example.com"], NONE);
     expect(out.id).toBe("com.nimbus.unknown-svc");
     expect(out.permissions.network).toEqual(["host.example.com"]);
   });

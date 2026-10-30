@@ -60,7 +60,9 @@ function manifestWithConfiguredHost(
   configuredUrl: string | null,
 ): ExtensionManifest {
   const host = configuredUrl === null ? null : networkEntryFromUrl(configuredUrl);
-  return manifestWithExtraNetworkHosts(serviceId, host === null ? [] : [host]);
+  const hosts = host === null ? [] : [host];
+  // The URL is one the owner stored for this connector (Vault), so its host is the owner's.
+  return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
 }
 
 export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void> {
@@ -703,6 +705,7 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
   const jenkinsManifest = manifestWithExtraNetworkHosts(
     "jenkins",
     jenkinsHost === null ? [] : [jenkinsHost],
+    { ownerConfigured: jenkinsHost === null ? [] : [jenkinsHost] },
   );
   ctx.setLazyClient(
     slotKey,
@@ -1132,7 +1135,12 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
     return;
   }
   const sfHost = networkEntryFromUrl(auth.instanceUrl);
-  const manifest = manifestWithExtraNetworkHosts("salesforce", sfHost === null ? [] : [sfHost]);
+  const manifest = manifestWithExtraNetworkHosts(
+    "salesforce",
+    sfHost === null ? [] : [sfHost],
+    // The instance URL arrives in the OAuth token response, so Salesforce chose it, not the owner.
+    { ownerConfigured: [] },
+  );
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1189,7 +1197,9 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const host = networkEntryFromUrl(tenantHost);
-  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host]);
+  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host], {
+    ownerConfigured: host === null ? [] : [host],
+  });
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1240,10 +1250,11 @@ export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
   }
   // iCloud IMAP/SMTP are fixed, non-443 host:port endpoints (993 / 587); add
   // them to the apple manifest's network allow-list at spawn.
-  const appleManifest = manifestWithExtraNetworkHosts("apple", [
-    "imap.mail.me.com:993",
-    "smtp.mail.me.com:587",
-  ]);
+  const appleManifest = manifestWithExtraNetworkHosts(
+    "apple",
+    ["imap.mail.me.com:993", "smtp.mail.me.com:587"],
+    { ownerConfigured: [] },
+  ); // fixed endpoints written in code
   ctx.setLazyClient(
     slotKey,
     new MCPClient({

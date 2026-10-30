@@ -578,9 +578,16 @@ export function networkEntryFromUrl(input: string): string | null {
   }
 }
 
+/**
+ * `ownerConfigured` names the entries of `extraNetworkHosts` the owner typed: a host taken from a
+ * value the owner stored for this connector. A default written in code, a host derived from a
+ * region, or one a vendor returned is NOT owner-configured, even when it passes through here. The
+ * argument is required so every call site has to decide.
+ */
 export function manifestWithExtraNetworkHosts(
   serviceId: string,
   extraNetworkHosts: readonly string[],
+  opts: { readonly ownerConfigured: readonly string[] },
 ): ExtensionManifest {
   const base = manifestForFirstParty(serviceId);
   if (extraNetworkHosts.length === 0) return base;
@@ -592,8 +599,15 @@ export function manifestWithExtraNetworkHosts(
     existing.add(lower);
     merged.push(lower);
   }
+  const extras = new Set(extraNetworkHosts.map((h) => h.toLowerCase().trim()));
+  const owned = [
+    ...new Set(
+      opts.ownerConfigured.map((h) => h.toLowerCase().trim()).filter((h) => extras.has(h)),
+    ),
+  ];
   return {
     ...base,
+    ...(owned.length === 0 ? {} : { ownerConfiguredNetwork: owned }),
     permissions: {
       network: merged,
       filesystem: {

@@ -2,9 +2,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
-  type ExtensionManifest,
   isStarterPack,
   parseExtensionManifestJson,
+  type ExtensionManifest as RegistryExtensionManifest,
 } from "@nimbus-dev/registry-format";
 
 import type { ExtensionKind } from "../automation/extension-store.ts";
@@ -12,11 +12,23 @@ import type { ExtensionKind } from "../automation/extension-store.ts";
 // The manifest model and parser live in the pure `@nimbus-dev/registry-format` workspace, shared
 // with the publishing CLI; this module adds the filesystem half (which file a directory holds).
 export {
-  type ExtensionManifest,
   extensionEntryRelPath,
   parseExtensionManifestForRegistry,
   parseExtensionManifestJson,
 } from "@nimbus-dev/registry-format";
+
+/**
+ * The registry-format manifest plus one gateway-only field. `ownerConfiguredNetwork` names the
+ * `permissions.network` entries the OWNER typed (a stored connector URL, a `--net`), as opposed to
+ * a default written in code or in a manifest. Only gateway code sets it, from the owner's
+ * settings: the parser (`parseExtensionManifestJson`) builds its result field by field and never
+ * reads it, so a manifest file cannot grant itself the label (I43: an extension's reach comes only
+ * from its approved grants). It lives here, not in `registry-format`, because that package is
+ * shared with the publishing CLI and the registry CI action.
+ */
+export type ExtensionManifest = RegistryExtensionManifest & {
+  ownerConfiguredNetwork?: readonly string[];
+};
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
 

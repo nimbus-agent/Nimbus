@@ -115,6 +115,7 @@ export async function phase3AddAthenaMcp(
   const athenaManifest = manifestWithExtraNetworkHosts(
     "athena",
     creds.region === "" ? [] : [`athena.${creds.region}.amazonaws.com`],
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["athena"] = wrapServerSpec(
     {
@@ -142,6 +143,7 @@ export async function phase3AddCloudwatchMcp(
   const cloudwatchManifest = manifestWithExtraNetworkHosts(
     "cloudwatch",
     creds.region === "" ? [] : [`logs.${creds.region}.amazonaws.com`],
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["cloudwatch"] = wrapServerSpec(
     {
@@ -170,6 +172,7 @@ export async function phase3AddSagemakerMcp(
   const sagemakerManifest = manifestWithExtraNetworkHosts(
     "sagemaker",
     creds.region === "" ? [] : [`api.sagemaker.${creds.region}.amazonaws.com`],
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["sagemaker"] = wrapServerSpec(
     {
@@ -226,9 +229,11 @@ export async function phase3AddVertexAiMcp(
   const rawRegion = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
   const region = rawRegion === "" ? VERTEX_AI_DEFAULT_REGION : rawRegion;
   const safeRegion = isSafeRegion(region) ? region : VERTEX_AI_DEFAULT_REGION;
-  const manifest = manifestWithExtraNetworkHosts("vertex_ai", [
-    `${safeRegion}-aiplatform.googleapis.com`,
-  ]);
+  const manifest = manifestWithExtraNetworkHosts(
+    "vertex_ai",
+    [`${safeRegion}-aiplatform.googleapis.com`],
+    { ownerConfigured: [] },
+  ); // a region template; the host name is built in code
   servers["vertex_ai"] = wrapServerSpec(
     {
       ...connectorSpawn("vertex-ai"),
