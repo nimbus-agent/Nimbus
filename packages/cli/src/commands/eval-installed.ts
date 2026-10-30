@@ -279,7 +279,8 @@ function tableLines(rows: readonly string[][]): string[] {
 function renderText(rows: readonly ResultRow[], threshold: number, deps: InstalledRunDeps): void {
   for (const line of tableLines(rows.map(cellsOf))) deps.log(line);
   const regressions = rows.filter((r) => r.status === "regression").length;
-  deps.log(`threshold ${threshold}: ${regressions} regression(s)`);
+  const compared = rows.filter((r) => r.registry !== null).length;
+  deps.log(`threshold ${threshold}: ${regressions} regression(s) in ${compared} compared`);
   for (const r of rows) {
     if (r.error !== undefined) {
       deps.err(`${oneLine(r.id)}: ${oneLine(r.error.code)}: ${oneLine(r.error.message)}`);

@@ -326,7 +326,7 @@ describe("runEvalInstalled", () => {
       "no registry score: local install",
     ]);
     expect(rows[3]).toEqual(["a/nosuite", "1.0.0", "—", "—", "—", "no eval suites"]);
-    expect(h.logs.at(-1)).toBe("threshold 5: 1 regression(s)");
+    expect(h.logs.at(-1)).toBe("threshold 5: 1 regression(s) in 2 compared");
     expect(h.errs).toEqual([]);
   });
 
@@ -485,6 +485,33 @@ describe("runEvalInstalled", () => {
     expect(JSON.parse(j.logs[0] ?? "").results[0].registryNote).toBe(
       "registry unreadable: ERR_REGISTRY_FETCH: down",
     );
+  });
+
+  test("a registry-sourced row without suites or with an error entry never reads the registry", async () => {
+    const h = harness({
+      list: listOf(
+        row("a/nosuite", { source_registry: "r" }),
+        row("a/broken", { source_registry: "r" }),
+      ),
+      evalAnswer: {
+        results: [
+          errEntry("a/nosuite", "ERR_EVAL_NO_SUITES"),
+          errEntry("a/broken", "ERR_EVAL_RUN"),
+        ],
+      },
+    });
+    expect(await runEvalInstalled({ threshold: 5, json: false }, h.deps)).toBe(2);
+    expect(h.methods()).toEqual(["extension.list", "extension.eval"]);
+    expect(h.methods()).not.toContain("registry.info");
+  });
+
+  test("the summary counts the rows compared: none when no registry score exists", async () => {
+    const h = harness({
+      list: listOf(row("a/local")),
+      evalAnswer: { results: [okEntry("a/local", "1.0.0", 5)] },
+    });
+    expect(await runEvalInstalled({ threshold: 5, json: false }, h.deps)).toBe(0);
+    expect(h.logs.at(-1)).toBe("threshold 5: 0 regression(s) in 0 compared");
   });
 
   test("an error entry exits 2 even when another regressed; its message follows the table on stderr", async () => {

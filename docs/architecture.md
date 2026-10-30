@@ -2235,7 +2235,18 @@ LAN-forbidden, refused on a demo-rooted gateway, not on the Tauri allowlist, and
 approved call runs to completion (each run bounded by its 10 min deadline) even if the calling client disconnects; the
 result is then discarded.
 
-**Evaluating every installed extension (`nimbus eval --installed`, CLI only).** `packages/cli/src/commands/eval-installed.ts` runs four phases over IPC, on the same terminal-only consent client as `--extension`. (1) `extension.list` yields the candidates: enabled rows that are not starter packs, at most 50 (`ERR_EVAL_TOO_MANY_EXTENSIONS`). (2) ONE `extension.eval` for all of them, so one approval; a denial is `ERR_EXTENSION_EVAL_NOT_APPROVED`, and the answer must hold exactly one entry per requested id, in order, or the run fails `ERR_EVAL_BAD_RESPONSE`. (3) Only after the eval, one `registry.info` per extension that has a source registry, sequentially: the signed score of exactly the evaluated version, else a reason (local install, version not in the registry, not evaluated, invalid score, registry unreadable). (4) Render. A regression is registry minus local above `--threshold` (default 5). Exit codes: 2 on a whole-run failure or any eval error, else 1 on a regression, else 0. The gateway gained nothing for this. The CLI's IPC budget is 6 hours, so 50 extensions at the per-run limit could outlast it and fail `ERR_EVAL_IPC`. The comparison needs a registry that publishes scores, and none does today.
+**Evaluating every installed extension (`nimbus eval --installed`, CLI only).** `packages/cli/src/commands/eval-installed.ts` runs
+four phases over IPC, on the same terminal-only consent client as `--extension`. (1) `extension.list` yields the candidates:
+enabled rows that are not starter packs, at most 50 (`ERR_EVAL_TOO_MANY_EXTENSIONS`). (2) ONE `extension.eval` for all of them, so
+one approval; a denial is `ERR_EXTENSION_EVAL_NOT_APPROVED`, and the answer must hold exactly one entry per requested id, in
+order, or the run fails `ERR_EVAL_BAD_RESPONSE`. (3) Only after the eval, one `registry.info` per evaluated extension that has a
+source registry (never for a row without suites or with an eval error), sequentially: the signed score of exactly the evaluated
+version, else a reason (local install, version not in the registry, not evaluated, invalid score, registry unreadable).
+`registry.info` checks the NEWEST version's manifest, so a missing or bad newest manifest makes an older evaluated version's score
+`registry unreadable`; this never affects the exit code. (4) Render. A regression is registry minus local above `--threshold`
+(default 5). Exit codes: 2 on a whole-run failure or any eval error, else 1 on a regression, else 0. The gateway gained nothing
+for this. The CLI's IPC budget is 6 hours, so 50 extensions at the per-run limit could outlast it and fail `ERR_EVAL_IPC`. The
+comparison needs a registry that publishes scores, and none does today.
 
 **Registry scoring (the registry action's `score` mode, spec ruling R8).** Extension code never runs in the job that holds
 the registry root key. The sign workflow `nimbus registry maintain init --github` writes has a `score` job before `sign`
@@ -2275,8 +2286,7 @@ malformed score never fails a call. The CLI re-checks the score it is given and 
 `nimbus extension search` (`N/100` or `—`) and, per version in `info --registry`, `quality N/100 (measured by <registry>)` or
 `not evaluated`. The desktop Marketplace tile is project 6.
 
-Shipped so far: the format, `--package`, `--extension`, registry scoring and the CLI display. `--installed` (every installed
-extension at once) comes in a later PR.
+Shipped: the format, `--package`, `--extension`, registry scoring and the CLI display, and `--installed` (PR 5).
 
 ### Trust layer
 

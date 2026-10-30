@@ -24,10 +24,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   `ERR_EVAL_TOO_MANY_EXTENSIONS`) and compares each local score with the score the extension's source registry signed for the
   SAME version. An extension without suites reports `no eval suites`. A row with no comparison says why: local install,
   version not in the registry, not evaluated, invalid score, or registry unreadable. A regression is registry minus local
-  above `--threshold` (integer 0 to 100, default 5); exit codes are 2 (an eval error or usage error) over 1 (a regression)
+  above `--threshold` (integer 0 to 100, default 5); exit codes are 2 (an eval error, a usage error, a denial, an IPC failure, a bad gateway answer, or more than 50 extensions) over 1 (a regression)
   over 0; `--json` prints one document. **Known limits:** the comparison needs a registry that publishes scores and none does
   today (the official registry in `nimbus-mcp-servers` publishes through its own script, not the registry action's
-  workflows, and Readwise has no eval suites), so every row currently reads `no registry score`. The CLI's IPC budget is 6
+  workflows, and Readwise has no eval suites), so every evaluated row currently reads `no registry score`. The CLI's IPC budget is 6
   hours; 50 extensions at the gateway's per-run limit could take longer, and the call then fails `ERR_EVAL_IPC`. Project 5
   shipped in 5 PRs on 2026-10-29/30: the format (#1817), the sandboxed runner `--package` (#1819, I49/D38), `extension.eval`
   and `--extension` (#1821), registry CI scoring and the score display (#1822), and this one.
