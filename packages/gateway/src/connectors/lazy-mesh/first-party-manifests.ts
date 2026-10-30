@@ -615,10 +615,16 @@ export function siteUrlWithScheme(input: string): string {
   return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
 }
 
-/** The rule an extension's own manifest is held to: an RFC 1123 hostname, and a port in range. */
-function isValidNetworkEntry(entry: string): boolean {
+/**
+ * The rule an extension's own manifest is held to (an RFC 1123 hostname, and a port in range), plus
+ * an underscore in a label, for run-time entries only. A self-hosted name such as `my_jenkins` works
+ * today and must keep working. Swapping `_` for a letter before the shared check changes nothing
+ * else: every other character still meets the shared rule, so `"`, whitespace and the rest stay
+ * refused, and an underscore in a port still fails as non-numeric.
+ */
+function isValidRuntimeEntry(entry: string): boolean {
   try {
-    validateAndNormalizePermissions({ network: [entry] });
+    validateAndNormalizePermissions({ network: [entry.replaceAll("_", "a")] });
     return true;
   } catch {
     return false;
@@ -629,7 +635,7 @@ function warnDroppedEntries(fields: {
   readonly serviceId: string;
   readonly dropped: number;
 }): void {
-  log.warn(fields, "dropped a configured network entry that is not a valid host or host:port");
+  log.warn(fields, "ignored a stored host that is not a valid hostname");
 }
 
 /**
@@ -655,7 +661,7 @@ export function manifestWithExtraNetworkHosts(
   const base = manifestForFirstParty(serviceId);
   if (extraNetworkHosts.length === 0) return base;
   const normalized = extraNetworkHosts.map((h) => h.toLowerCase().trim()).filter((h) => h !== "");
-  const valid = normalized.filter(isValidNetworkEntry);
+  const valid = normalized.filter(isValidRuntimeEntry);
   if (valid.length !== normalized.length) {
     (opts.onDropped ?? warnDroppedEntries)({
       serviceId,

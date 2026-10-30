@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 
 import {
   FIRST_PARTY_MANIFESTS,
@@ -398,5 +399,68 @@ describe("manifestWithExtraNetworkHosts drops an entry that is not a valid netwo
       onDropped: () => {},
     });
     expect(out.permissions.network).toEqual([]);
+  });
+});
+
+describe("manifestWithExtraNetworkHosts keeps an underscore in a run-time hostname", () => {
+  test("my_jenkins:8080 and my_jenkins.local survive into the list and the label", () => {
+    const hosts = ["my_jenkins:8080", "my_jenkins.local"];
+    const out = manifestWithExtraNetworkHosts("jenkins", hosts, { ownerConfigured: hosts });
+    expect(out.permissions.network).toEqual(hosts);
+    expect(out.ownerConfiguredNetwork).toEqual(hosts);
+  });
+
+  test("a stored URL with an underscore host reaches the list", () => {
+    const entry = networkEntryFromUrl("http://my_jenkins:8080");
+    expect(entry).toBe("my_jenkins:8080");
+    const out = manifestWithExtraNetworkHosts("jenkins", [entry ?? ""], NONE);
+    expect(out.permissions.network).toEqual(["my_jenkins:8080"]);
+  });
+
+  for (const bad of [
+    'my_"jenkins',
+    'my_jenkins":8080',
+    "my_ jenkins",
+    "my_\tjenkins",
+    "my_\njenkins",
+    "my_\u0001jenkins",
+    "my_(jenkins)",
+    "my_;jenkins",
+    "my_\\jenkins",
+    "my_jenkins:80_80",
+  ]) {
+    test(`${JSON.stringify(bad)} is still dropped from the list and the label`, () => {
+      const out = manifestWithExtraNetworkHosts("jenkins", [bad], {
+        ownerConfigured: [bad],
+        onDropped: () => {},
+      });
+      expect(out.permissions.network).toEqual([]);
+      expect("ownerConfiguredNetwork" in out).toBe(false);
+    });
+  }
+
+  test("the shared manifest rule still refuses an underscore", () => {
+    expect(() => validateAndNormalizePermissions({ network: ["my_jenkins"] })).toThrow();
+  });
+});
+
+describe("the log line for a dropped entry", () => {
+  test("is at warn level, names the service, and carries no value", () => {
+    const moduleUrl = new URL("./first-party-manifests.ts", import.meta.url).href;
+    const script = `const { manifestWithExtraNetworkHosts: m } = await import(${JSON.stringify(moduleUrl)});
+m("jenkins", ['secret"value.com'], { ownerConfigured: [] });`;
+    const child = Bun.spawnSync([process.execPath, "-e", script], {
+      env: { ...process.env, NIMBUS_LOG_LEVEL: "warn" },
+      stdout: "pipe",
+      stderr: "pipe",
+      windowsHide: true,
+    });
+    const stderr = child.stderr.toString();
+    const line = JSON.parse(stderr.trim()) as Record<string, unknown>;
+    expect(line["level"]).toBe(40);
+    expect(line["serviceId"]).toBe("jenkins");
+    expect(line["msg"]).toBe("ignored a stored host that is not a valid hostname");
+    expect(stderr).not.toContain("secret");
+    expect(child.stdout.toString()).toBe("");
   });
 });
