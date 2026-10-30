@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793383821504,
+  "lastUpdate": 1793384479354,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "dc79678eb3dccbb8e7902aef9bca7f8b3350c9dd",
-          "message": "chore: release main (#1171)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.2.0</summary>\n\n##\n[2.2.0](https://github.com/nimbus-agent/Nimbus/compare/v2.1.0...v2.2.0)\n(2026-08-13)\n\n\n### Features\n\n* **agents:** nimbus negotiate — a cited contribution brief\n([#1166](https://github.com/nimbus-agent/Nimbus/issues/1166))\n([fa807e3](https://github.com/nimbus-agent/Nimbus/commit/fa807e30377ae6e121b58eacb0b304d85b73a4fe))\n* **ipc:** tag agent.chunk with a client-supplied streamId and add\nworkflow.cancel\n([#1165](https://github.com/nimbus-agent/Nimbus/issues/1165))\n([5779488](https://github.com/nimbus-agent/Nimbus/commit/5779488c77871113aeaecb7c9fa33c2b82ab540b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-13T09:38:31+03:00",
-          "tree_id": "664a024bd3fe3896e49dea8cfdd8e822edf688cc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/dc79678eb3dccbb8e7902aef9bca7f8b3350c9dd"
-        },
-        "date": 1786603736114,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 244.12346379999582,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 245.575155000011,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 269.4545219000003,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2b15bbca965aeddf32f81ef36fdc63f5f6805f4f",
+          "message": "chore: release main (#1828)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.11.1</summary>\n\n##\n[10.11.1](https://github.com/nimbus-agent/Nimbus/compare/v10.11.0...v10.11.1)\n(2026-10-30)\n\n\n### Bug Fixes\n\n* **sandbox:** let bubblewrap start on stock Ubuntu 24.04, and detect\nwhen it cannot\n([#1827](https://github.com/nimbus-agent/Nimbus/issues/1827))\n([17c7ce7](https://github.com/nimbus-agent/Nimbus/commit/17c7ce700f8dc65b7043af111959cc65b7b9feff))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-30T20:00:24+02:00",
+          "tree_id": "bccf0cba51d0b76e3aea6785a94c4d185e7d9731",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2b15bbca965aeddf32f81ef36fdc63f5f6805f4f"
+        },
+        "date": 1793384475621,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 275.5653163000021,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 275.26978599999745,
             "unit": "ms"
           }
         ]
