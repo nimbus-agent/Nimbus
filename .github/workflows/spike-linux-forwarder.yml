@@ -30,9 +30,5 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap
           ldd --version | head -1
           cat /etc/resolv.conf | grep -v '^#'
-      - name: "A today's shape, real DNS"
-        continue-on-error: true
-        run: /usr/local/bin/bun spike/run.ts
-      - name: "B forwarder variant C"
-        continue-on-error: true
-        run: /usr/local/bin/bun spike/host-c.ts
+      - name: "Find the blocked syscalls"
+        run: /usr/local/bin/bun spike/find-syscalls.ts
