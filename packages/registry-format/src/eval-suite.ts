@@ -4,6 +4,7 @@
  * no gateway imports. A suite that fails to parse refuses with `ERR_REGISTRY_EVAL_SUITE_INVALID`.
  */
 import {
+  type BigIntStats,
   closeSync,
   constants,
   fstatSync,
@@ -369,14 +370,30 @@ export function readExactly(fd: number, size: number, onOverflow: () => never): 
 }
 
 /**
- * Refuse a symlink or a non-regular entry from its lstat (also where `O_NOFOLLOW` does not exist),
- * then classify, size-check and read through the ONE descriptor that opened it, so a file swapped
- * in after the lstat is never the one read (`O_NOFOLLOW` refuses a symlink on POSIX).
+ * The path, lstat'ed after the open, must be a regular file with the descriptor's own device and
+ * inode: a symlink (followed by a Windows open) or a file swapped in after the open is refused.
+ */
+function assertPathIsDescriptor(
+  full: string,
+  st: BigIntStats,
+  rel: string,
+  limit: ReadLimit,
+): void {
+  const now = lstatSync(full, { bigint: true });
+  if (now.isSymbolicLink()) limit.fail(rel, `refusing a symlink as ${limit.kind}`);
+  if (!now.isFile()) limit.fail(rel, `${limit.kind} must be a regular file`);
+  if (now.dev !== st.dev || now.ino !== st.ino) {
+    limit.fail(rel, `${limit.kind} changed while it was opened`);
+  }
+}
+
+/**
+ * Open first (`O_NOFOLLOW` refuses a symlink on POSIX), then classify, size-check and read through
+ * that ONE descriptor. Where `O_NOFOLLOW` does not exist (Windows) the path is lstat'ed AFTER the
+ * open and must be a regular file that is the very file the descriptor holds — so neither a
+ * symlink nor a file swapped in between is ever the one read.
  */
 function readNoFollow(full: string, rel: string, limit: ReadLimit): Uint8Array {
-  const pre = lstatSync(full);
-  if (pre.isSymbolicLink()) limit.fail(rel, `refusing a symlink as ${limit.kind}`);
-  if (!pre.isFile()) limit.fail(rel, `${limit.kind} must be a regular file`);
   let fd: number;
   try {
     fd = openSync(full, NO_FOLLOW_OPEN_FLAGS);
@@ -387,13 +404,15 @@ function readNoFollow(full: string, rel: string, limit: ReadLimit): Uint8Array {
     throw err;
   }
   try {
-    const st = fstatSync(fd);
+    const st = fstatSync(fd, { bigint: true });
     if (!st.isFile()) limit.fail(rel, `${limit.kind} must be a regular file`);
-    if (st.size > limit.max) {
+    assertPathIsDescriptor(full, st, rel, limit);
+    if (st.size > BigInt(limit.max)) {
       limit.fail(rel, `${limit.label} is too large (over ${limit.max} bytes)`);
     }
-    return readExactly(fd, st.size, () =>
-      limit.fail(rel, `${limit.label} grew while it was read (over ${st.size} bytes)`),
+    const size = Number(st.size);
+    return readExactly(fd, size, () =>
+      limit.fail(rel, `${limit.label} grew while it was read (over ${size} bytes)`),
     );
   } finally {
     closeSync(fd);
