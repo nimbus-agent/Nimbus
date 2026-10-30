@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
-import { manifestRefusals } from "./first-party-manifests.ts";
+import { manifestForFirstParty, manifestRefusals } from "./first-party-manifests.ts";
 import {
   buildPhase3Servers,
   phase3AddAirflowMcp,
@@ -3154,7 +3154,7 @@ describe("a host the connector calls is in its network list", () => {
       "gcp.credentials_json_path": "/tmp/k.json",
       "gcp.region": "-bad",
     });
-    expect(network.filter((h) => h.endsWith("-run.googleapis.com"))).toEqual([]);
+    expect(network).toEqual(manifestForFirstParty("gcp").permissions.network);
   });
 });
 
