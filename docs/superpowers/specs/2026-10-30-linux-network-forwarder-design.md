@@ -60,7 +60,7 @@ Only a policy in `per-host` mode takes this path. A no-network policy keeps toda
 
 A declared name can resolve to something the owner never meant to allow. An extension could declare a name it controls and point it at the owner's router, or at a cloud metadata address. So the rule depends on who chose the entry. The wrapper resolves once, filters the answers, and connects only to an address it kept, so a name that changes its answer between check and connect gains nothing.
 
-- **Owner-configured:** the owner typed it. That means a host taken at spawn from a value the owner stored for that connector (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`. A default written in code or in a manifest is not owner-configured, even when it passes through the same code.
+- **Owner-configured:** the owner typed it. That means a host taken at spawn from a value the owner stored for that connector (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`. A default written in code or in a manifest is not owner-configured, even when it passes through the same code. The one exception is protonmail's `127.0.0.1` default, since Proton Bridge is a local app the owner chose to use, and this is first-party code. No other first-party connector defaults to loopback.
 - **Package-declared:** a first-party manifest's fixed list, or an extension's manifest.
 
 | Resolved address | Owner-configured | Package-declared |
