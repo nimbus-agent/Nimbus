@@ -61,17 +61,18 @@ Only a policy in `per-host` mode takes this path. A no-network policy keeps toda
 A declared name can resolve to something the owner never meant to allow. An extension could declare a name it controls and point it at the owner's router, or at a cloud metadata address. So the rule depends on who chose the entry. The wrapper resolves once, filters the answers, and connects only to an address it kept, so a name that changes its answer between check and connect gains nothing.
 
 - **Owner-configured:** the owner typed it. That means a host taken at spawn from a value the owner stored for that connector (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`. A default written in code or in a manifest is not owner-configured, even when it passes through the same code. The one exception is protonmail's `127.0.0.1` default, since Proton Bridge is a local app the owner chose to use, and this is first-party code. No other first-party connector defaults to loopback.
-- **Package-declared:** a first-party manifest's fixed list, or an extension's manifest.
+- **First-party:** a first-party manifest's fixed list, or a host our code builds from a template, such as `logs.<region>.amazonaws.com`. Enterprises resolve these privately through AWS VPC endpoints and Snowflake PrivateLink, so a private answer must work.
+- **Package-declared:** an extension's manifest.
 
-| Resolved address | Owner-configured | Package-declared |
-|---|---|---|
-| Public | Allowed | Allowed |
-| Private (RFC 1918, `100.64.0.0/10`, IPv6 unique-local) | Allowed, so a self-hosted Jenkins on a LAN or Tailscale name works | Refused for a name. Allowed for that literal address, which the owner saw at approval |
-| Loopback | Allowed only if the entry is `localhost` or that literal, on the declared port | Refused |
-| Link-local, including `169.254.169.254` and `fe80::/10` | Refused | Refused |
-| Anything else not globally routable, including `0.0.0.0/8`, `::`, multicast and reserved ranges | Refused | Refused |
+| Resolved address | Owner-configured | First-party | Package-declared |
+|---|---|---|---|
+| Public | Allowed | Allowed | Allowed |
+| Private (RFC 1918, `100.64.0.0/10`, IPv6 unique-local) | Allowed, so a self-hosted Jenkins on a LAN or Tailscale name works | Allowed | Refused for a name. Allowed for that literal address, which the owner saw at approval |
+| Loopback | Allowed only if the entry is `localhost` or that literal, on the declared port | Refused | Refused |
+| Link-local, including `169.254.169.254` and `fe80::/10` | Refused | Refused | Refused |
+| Anything else not globally routable, including `0.0.0.0/8`, `::`, multicast and reserved ranges | Refused | Refused | Refused |
 
-"Public" means an address outside every range in this table, so a range nobody listed is refused rather than allowed. `0.0.0.0` must not count as public, because connecting to it reaches the host's loopback. Link-local is refused for everyone because nothing legitimate needs it and cloud credentials live there. Package-declared loopback is refused because the gateway's own local listeners are there. IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
+"Public" means an address outside every range in this table, so a range nobody listed is refused rather than allowed. `0.0.0.0` must not count as public, because connecting to it reaches the host's loopback. Link-local is refused for everyone because nothing legitimate needs it and cloud credentials live there. Loopback is refused for everything the owner did not configure because the gateway's own local listeners are there. IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
 
 The policy needs a new field naming the owner-configured entries, passed through `parseSandboxPolicy`. It must be set only by gateway code from the owner's settings, never read from a manifest.
 

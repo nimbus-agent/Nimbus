@@ -148,7 +148,7 @@ No release package ships the helper yet, so a user sees no change. Title: `feat(
 - Produces:
   - `type AddressClass = "public" | "private" | "loopback" | "refused"`
   - `classifyAddress(ip: string): AddressClass`
-  - `allowedAddresses(entry: { host: string; ownerConfigured: boolean }, answers: readonly string[]): string[]`
+  - `allowedAddresses(entry: { host: string; trust: "owner" | "first-party" | "package" }, answers: readonly string[]): string[]`. Replace `ownerConfigured: false` and `true` in this task's tests with `trust: "package"` and `trust: "owner"`, and add `first-party`: a private answer is kept, a loopback answer is dropped. `SandboxPolicy` gains `firstPartyPolicy?: boolean`, set by `manifestForFirstParty` and never read from a manifest file; `planForwardEntries` derives `trust` from it and `ownerConfiguredNetwork`, and `ForwardEntry.ownerConfigured` becomes `trust`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -366,7 +366,7 @@ Add the helper build and this test to `check-bwrap-apparmor.sh`, after the profi
 
 - [ ] **Step 6: Run the other distros once by hand**
 
-Run the real-network test in privileged Docker on `debian:12` and `fedora:latest`. Put the results in the PR description, saying that this does not prove their kernel defaults.
+The forwarder's generated `/etc/hosts` must accept an underscore name such as `my_jenkins`, which Task 2's door allows; add it to the real-network test. Run the real-network test in privileged Docker on `debian:12` and `fedora:latest`. Put the results in the PR description, saying that this does not prove their kernel defaults.
 
 - [ ] **Step 7: Open PR 2, and get it green and merged before PR 3**
 
