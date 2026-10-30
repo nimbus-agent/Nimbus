@@ -83,14 +83,13 @@ function takeGithubToken(): string {
 }
 
 /**
- * Ruling R8: `score` runs untrusted extension code, so its job must hold no secret. A `root-key`
- * or `github-token` handed to it is refused before anything runs (and dropped from the
- * environment either way; the role gets a minimal environment of its own regardless).
+ * Ruling R8: a job that runs untrusted extension code must hold no secret. Every input in `names`
+ * is read, masked when set and dropped from the environment BEFORE the first one set is refused
+ * with `refusal(name)`; the role gets a minimal environment of its own regardless.
  */
-function refuseSecretsInScore(): void {
+function refuseSecrets(names: readonly string[], refusal: (name: string) => string): void {
   const set: string[] = [];
-  // Every one is read, masked and dropped before the first refusal is thrown.
-  for (const name of ["root-key", "github-token"]) {
+  for (const name of names) {
     const value = getInput(name);
     delete process.env[inputEnvName(name)];
     if (value !== "") {
@@ -99,11 +98,31 @@ function refuseSecretsInScore(): void {
     }
   }
   const [first] = set;
-  if (first !== undefined) {
-    throw new Error(
-      `input "${first}" must not be set in score mode: score runs extension code and holds no secrets`,
-    );
-  }
+  if (first !== undefined) throw new Error(refusal(first));
+}
+
+/** `score` runs extension code: a `root-key` or `github-token` handed to it is refused. */
+function refuseSecretsInScore(): void {
+  refuseSecrets(
+    ["root-key", "github-token"],
+    (name) =>
+      `input "${name}" must not be set in score mode: score runs extension code and holds no secrets`,
+  );
+}
+
+/**
+ * The `check` mode's inputs. With `nimbus-gateway` set, check runs extension code, so a
+ * `github-token` is refused (and provenance is left to the sign job); without it, as before.
+ */
+function checkInputs(): { githubToken?: string; gateway?: string } {
+  const gateway = getInput("nimbus-gateway");
+  if (gateway === "") return { githubToken: takeGithubToken() };
+  refuseSecrets(
+    ["github-token"],
+    (name) =>
+      `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`,
+  );
+  return { gateway };
 }
 
 /** Where `score` writes: the `scores` input (relative to the workspace), or `scores.json`. */
@@ -121,13 +140,7 @@ export async function main(): Promise<void> {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      const gateway = getInput("nimbus-gateway");
-      await runCheck({
-        workspace: workspace(),
-        baseRef,
-        githubToken: takeGithubToken(),
-        ...(gateway !== "" && { gateway }),
-      });
+      await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
     } else if (mode === "score") {
       refuseSecretsInScore();
       const defaultBranch = getInput("default-branch");

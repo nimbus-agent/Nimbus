@@ -193,9 +193,21 @@ describe("sign with the scores input", () => {
     expect(entryOf("acme/plain")?.quality).toBeUndefined();
   });
 
-  type Case = [label: string, entry: (pkgSha: string) => unknown, reason: RegExp];
+  /** The entry is written under `acme/scored@1.0.0`; the candidate is `acme/scored@<version>`. */
+  type Case = [label: string, entry: (pkgSha: string) => unknown, reason: RegExp, version?: string];
   const cases: Case[] = [
     ["no entry", () => undefined, /no score for it/],
+    [
+      "an entry under another version of the same id",
+      (sha) => ({ packageSha256: sha, quality: QUALITY }),
+      /no score for it/,
+      "1.1.0",
+    ],
+    [
+      "an invalid quality with a very long message",
+      (sha) => ({ packageSha256: sha, quality: { ...QUALITY, ["k".repeat(5000)]: 1 } }),
+      /score is invalid: .*unexpected keys: k+; not signed$/,
+    ],
     [
       "an error entry",
       (sha) => ({ packageSha256: sha, error: { code: "ERR_EVAL_TIMEOUT", message: "slow" } }),
@@ -242,20 +254,23 @@ describe("sign with the scores input", () => {
 
   test.each(cases)(
     "%s: the evals version is skipped, the others are signed",
-    async (_l, make, why) => {
-      const p = await publish({ id: "acme/scored", evals: EVALS });
+    async (_l, make, why, version = "1.0.0") => {
+      const p = await publish({ id: "acme/scored", version, evals: EVALS });
       await publish({ id: "acme/plain" });
       merge();
       const head = originHead(repo, "gh-pages");
       const e = make(p.pkgSha);
       await sign(writeScores(e === undefined ? {} : { "acme/scored@1.0.0": e }));
       expect(originHead(repo, "gh-pages")).not.toBe(head);
-      expect(entryOf("acme/scored")).toBeUndefined();
+      expect(entryOf("acme/scored", version)).toBeUndefined();
       expect(entryOf("acme/plain")).toBeDefined();
-      const warning = warnings.find((w) => w.includes("extensions/acme/scored/1.0.0")) ?? "";
+      const dir = `extensions/acme/scored/${version}`;
+      const warning = warnings.find((w) => w.includes(dir)) ?? "";
       expect(warning).toMatch(why);
       expect(warning).not.toContain("\n");
-      expect(summaries.join("\n")).toContain("extensions/acme/scored/1.0.0");
+      // The validator's message is capped: a reason never repeats a 5000-character key.
+      expect(warning.length).toBeLessThan(700);
+      expect(summaries.join("\n")).toContain(dir);
     },
   );
 

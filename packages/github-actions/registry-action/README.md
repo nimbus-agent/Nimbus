@@ -10,7 +10,9 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   (if any: a statement-only pull request is valid) against the signed index on `gh-pages` with
   those statements admitted, and writes a job summary for the reviewer. With the `nimbus-gateway`
   input, a version whose package holds an eval suite is scored as the `score` mode scores it, and
-  the summary reports `quality N/100` or `could not score: <code>`. A green check is not the
+  the summary reports `quality N/100` or `could not score: <code>`. Scoring runs extension code, so
+  `nimbus-gateway` and `github-token` are mutually exclusive in `check` (both set fails the check),
+  and with the gateway set the summary leaves provenance to the sign job. A green check is not the
   security boundary.
 - **`sign`** — on a push to the default branch, behind the `registry-signing` environment's
   required approval: the content boundary. Admits every `statements/` file it can (skipping and
@@ -69,8 +71,8 @@ signs the result into the index entry's `quality` (above).
 | --- | --- | --- |
 | `mode` | yes | `check`, `sign`, `score`, `trust-check` or `trust-sign`. Anything else fails. |
 | `default-branch` | no (`sign`, `score`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
-| `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. |
-| `nimbus-gateway` | `score`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored. Never pass it to a job that holds secrets. |
+| `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. In `check`, mutually exclusive with `nimbus-gateway` (both set fails the check). |
+| `nimbus-gateway` | `score`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored; mutually exclusive with `github-token` (both set fails the check, and provenance is left to the sign job). Never pass it to a job that holds secrets. |
 | `scores` | no (`score`, `sign`) | `score`: where it writes `scores.json`, relative to the workspace; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 

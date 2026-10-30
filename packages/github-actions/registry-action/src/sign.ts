@@ -155,18 +155,26 @@ function refuseScores(path: string, why: string): Error {
   return new Error(`refusing to sign: the scores input (${path}) ${why}`);
 }
 
-/** At most `max` bytes of the file at `path`, however large the file is. */
+/** How much `readAtMost` reads at a time. */
+const READ_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * At most `max` bytes of the file at `path`, however large the file is, read in chunks so the
+ * memory held is what the file holds (up to `max`), never `max` up front.
+ */
 function readAtMost(path: string, max: number): Uint8Array {
   const fd = openSync(path, "r");
   try {
-    const buf = Buffer.alloc(max);
-    let n = 0;
-    let got = -1;
-    while (n < max && got !== 0) {
-      got = readSync(fd, buf, n, max - n, null);
-      n += got;
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
+      const got = readSync(fd, chunk, 0, chunk.length, null);
+      if (got === 0) break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
     }
-    return buf.subarray(0, n);
+    return Buffer.concat(chunks, total);
   } finally {
     closeSync(fd);
   }
@@ -203,6 +211,9 @@ export function readScores(path: string): Scores {
 
 /** What a candidate's `scores.json` entry decides: sign (with a quality, or none), or skip. */
 export type QualityDecision = { ok: true; quality?: EvalQuality } | { ok: false; reason: string };
+
+/** The longest validator message a skip reason repeats. */
+const MAX_REASON_DETAIL_CHARS = 300;
 
 const MALFORMED =
   "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
@@ -251,7 +262,8 @@ export function qualityFor(
   try {
     return { ok: true, quality: parseEvalQuality(raw["quality"]) };
   } catch (e) {
-    return { ok: false, reason: `its score is invalid: ${errorText(e)}; not signed` };
+    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
+    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
   }
 }
 

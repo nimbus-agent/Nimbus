@@ -177,6 +177,23 @@ describe("main", () => {
     expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
   });
 
+  test("check with nimbus-gateway refuses a github-token: masked, dropped, never printed", async () => {
+    const value = "definitely-secret-token";
+    process.env["INPUT_MODE"] = "check";
+    process.env["GITHUB_BASE_REF"] = "main";
+    process.env["INPUT_NIMBUS-GATEWAY"] = join(process.cwd(), "nimbus-gateway");
+    process.env["INPUT_GITHUB-TOKEN"] = value;
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain(`::add-mask::${value}`);
+    expect(all).toContain(
+      '::error::input "github-token" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets',
+    );
+    expect(all.replace(`::add-mask::${value}`, "")).not.toContain(value);
+    expect(process.env["INPUT_GITHUB-TOKEN"]).toBeUndefined();
+  });
+
   test("score with a relative nimbus-gateway fails the step", async () => {
     process.env["INPUT_MODE"] = "score";
     process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";

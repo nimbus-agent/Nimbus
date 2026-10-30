@@ -66,6 +66,7 @@ export interface CheckOptions {
   /**
    * The `nimbus-gateway` input: an absolute path to a gateway executable. When set, a publish
    * whose package holds eval suites is scored as the score job will score it; absent, nothing is.
+   * It runs extension code, so it excludes `githubToken` (R8) and provenance is not verified here.
    */
   gateway?: string;
 }
@@ -208,13 +209,22 @@ function statementOnlySummary(admitted: readonly TrustStatement[]): string {
   return ["## Registry statements", "", ...statementLines(admitted)].join("\n");
 }
 
+/**
+ * What the check learned of the version's provenance: a result, `"deferred"` when this check
+ * scores (it holds no token, so the sign job verifies it), or `undefined` without a repository.
+ */
+type CheckedProvenance = ProvenanceResult | "deferred" | undefined;
+
 /** The summary line for the version's build provenance; informational, never a failure. */
-function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): string {
+function provenanceLine(v: PublishVerdict, r: CheckedProvenance): string {
   if (v.repositoryIgnored === true) {
     return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
   }
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
+  }
+  if (r === "deferred") {
+    return `- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies ${code(v.repository)} when it signs`;
   }
   if (!r?.ok) {
     return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
@@ -223,13 +233,17 @@ function provenanceLine(v: PublishVerdict, r: ProvenanceResult | undefined): str
   return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
 }
 
+/** The longest eval error message the summary repeats. */
+const MAX_SUMMARY_MESSAGE_CHARS = 300;
+
 /** The summary line for the eval score this check measured. */
 function qualityLine(e: ScoreEntry): string {
   if ("quality" in e) {
     const q = e.quality;
     return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
   }
-  return `- **Quality:** could not score: ${code(e.error.code)} ${code(e.error.message)} (the sign job will not sign this version without a score)`;
+  const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
+  return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
 }
 
 /** The closing sentence: what this check did and did not run. */
@@ -250,7 +264,7 @@ function runtimeSentence(scored: boolean): string {
 function checkSummary(
   v: PublishVerdict,
   admitted: readonly TrustStatement[] = [],
-  provenance?: ProvenanceResult,
+  provenance?: CheckedProvenance,
   score?: ScoreEntry,
 ): string {
   const ref = `${v.id}@${v.version}`;
@@ -347,8 +361,9 @@ async function checkProvenance(
   work: string,
   opts: CheckOptions,
   deps: CheckDeps,
-): Promise<ProvenanceResult | undefined> {
+): Promise<CheckedProvenance> {
   if (v.repository === undefined) return undefined;
+  if (opts.gateway !== undefined) return "deferred";
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
     pkgPath: join(work, "provenance-check.tgz"),
     packageBytes,
@@ -384,7 +399,14 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
   if (opts.baseRef === "") {
     throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
   }
-  if (opts.gateway !== undefined) assertGateway(opts.gateway);
+  if (opts.gateway !== undefined) {
+    if ((opts.githubToken ?? "") !== "") {
+      throw new Error(
+        'input "github-token" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets',
+      );
+    }
+    assertGateway(opts.gateway);
+  }
   git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
   const index = await readVerifiedIndex(git, cwd);
 

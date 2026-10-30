@@ -566,4 +566,85 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     expect(validated).toBe(0);
     expect(roleCalls).toEqual([]);
   });
+
+  test("a long role error message is capped in the summary", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role(() => ({
+        code: 0,
+        stdout: `${JSON.stringify({ ok: false, error: { code: "ERR_EVAL_SUITE_INVALID", message: "m".repeat(900) } })}\n`,
+        stderrTail: "",
+        timedOut: false,
+        overflow: false,
+      })),
+    );
+    const md = summaries[0] ?? "";
+    expect(md).toContain(`\`${"m".repeat(300)}\``);
+    expect(md).not.toContain("m".repeat(301));
+    expect(md).toContain("a sign job given scores will not sign this version without one");
+  });
+
+  test("R8: with the gateway set a github-token is refused before anything runs", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await expect(
+      runCheck(
+        { workspace: repo.workspace, baseRef: "main", gateway, githubToken: "tok" },
+        { ...deps(), runRole: role(() => ok("acme/echo")) },
+      ),
+    ).rejects.toThrow('input "github-token" must not be set with "nimbus-gateway" in check mode');
+    expect(validated).toBe(0);
+    expect(roleCalls).toEqual([]);
+  });
+
+  test("with the gateway set provenance is not verified; the summary defers it to sign", async () => {
+    const ext = await makeExtension(scratch, {
+      repository: "acme/echo",
+      evals: { "basic.eval.json": SUITE },
+    });
+    openPr((ws) => writePublish(ws, ext));
+    let verified = 0;
+    await runCheck(
+      { workspace: repo.workspace, baseRef: "main", gateway },
+      {
+        ...deps(),
+        runRole: role(() => ok("acme/echo")),
+        provenance: async () => {
+          verified++;
+          return { ok: false, reason: "should not be asked" };
+        },
+      },
+    );
+    expect(verified).toBe(0);
+    expect(roleCalls).toHaveLength(1);
+    expect(summaries[0] ?? "").toContain(
+      "- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies `acme/echo` when it signs",
+    );
+  });
+
+  test("without the gateway provenance is verified exactly as before", async () => {
+    const ext = await makeExtension(scratch, {
+      repository: "acme/echo",
+      evals: { "basic.eval.json": SUITE },
+    });
+    openPr((ws) => writePublish(ws, ext));
+    let verified = 0;
+    await runCheck(
+      { workspace: repo.workspace, baseRef: "main", githubToken: "tok" },
+      {
+        ...deps(),
+        runRole: role(() => ok("acme/echo")),
+        provenance: async () => {
+          verified++;
+          return { ok: false, reason: "no attestation" };
+        },
+      },
+    );
+    expect(verified).toBe(1);
+    expect(roleCalls).toEqual([]);
+    expect(summaries[0] ?? "").toContain(
+      "- **Provenance:** none for `acme/echo` — `no attestation`",
+    );
+  });
 });

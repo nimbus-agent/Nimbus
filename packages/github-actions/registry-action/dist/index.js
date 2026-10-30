@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:0e589fb3d094ab4f850f6d1d0e4cc4df1a543cac6e37e49e1e12a01512c27b3f
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:1dea1bf84d7f7a2d587acd213c81c03bcda08fd86e4eb400d2384d41d4b2f5db
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -11177,18 +11177,23 @@ function provenanceLine(v, r) {
   if (v.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
+  if (r === "deferred") {
+    return `- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies ${code(v.repository)} when it signs`;
+  }
   if (!r?.ok) {
     return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
   }
   const p = r.provenance;
   return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
 }
+var MAX_SUMMARY_MESSAGE_CHARS = 300;
 function qualityLine(e) {
   if ("quality" in e) {
     const q = e.quality;
     return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
   }
-  return `- **Quality:** could not score: ${code(e.error.code)} ${code(e.error.message)} (the sign job will not sign this version without a score)`;
+  const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
+  return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
 }
 function runtimeSentence(scored) {
   if (scored) {
@@ -11245,6 +11250,8 @@ function checkRequestPullRequest(git, index, changes, cwd, io) {
 async function checkProvenance(v, packageBytes, work, opts, deps) {
   if (v.repository === undefined)
     return;
+  if (opts.gateway !== undefined)
+    return "deferred";
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
     pkgPath: join4(work, "provenance-check.tgz"),
     packageBytes,
@@ -11263,8 +11270,12 @@ async function runCheck(opts, deps = SHARED2) {
   if (opts.baseRef === "") {
     throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
   }
-  if (opts.gateway !== undefined)
+  if (opts.gateway !== undefined) {
+    if ((opts.githubToken ?? "") !== "") {
+      throw new Error('input "github-token" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets');
+    }
     assertGateway(opts.gateway);
+  }
   git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
   const index = await readVerifiedIndex(git, cwd);
   const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
@@ -11386,17 +11397,21 @@ var errorText = (e) => e instanceof Error ? e.message : String(e);
 function refuseScores(path, why) {
   return new Error(`refusing to sign: the scores input (${path}) ${why}`);
 }
+var READ_CHUNK_BYTES = 64 * 1024;
 function readAtMost(path, max) {
   const fd = openSync3(path, "r");
   try {
-    const buf = Buffer.alloc(max);
-    let n = 0;
-    let got = -1;
-    while (n < max && got !== 0) {
-      got = readSync2(fd, buf, n, max - n, null);
-      n += got;
+    const chunks = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
+      const got = readSync2(fd, chunk, 0, chunk.length, null);
+      if (got === 0)
+        break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
     }
-    return buf.subarray(0, n);
+    return Buffer.concat(chunks, total);
   } finally {
     closeSync3(fd);
   }
@@ -11424,6 +11439,7 @@ function readScores(path) {
     throw refuseScores(path, "is not a JSON object");
   return new Map(Object.entries(parsed));
 }
+var MAX_REASON_DETAIL_CHARS = 300;
 var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
 function failedCode(error) {
   const c = isPlainObject2(error) ? error["code"] : undefined;
@@ -11460,7 +11476,8 @@ function qualityFor(scores, v) {
   try {
     return { ok: true, quality: parseEvalQuality(raw["quality"]) };
   } catch (e) {
-    return { ok: false, reason: `its score is invalid: ${errorText(e)}; not signed` };
+    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
+    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
   }
 }
 async function provenanceFor(v, packageBytes, at, deps, memo) {
@@ -11949,9 +11966,9 @@ function takeGithubToken() {
   delete process.env[inputEnvName("github-token")];
   return token;
 }
-function refuseSecretsInScore() {
+function refuseSecrets(names, refusal) {
   const set = [];
-  for (const name of ["root-key", "github-token"]) {
+  for (const name of names) {
     const value = getInput(name);
     delete process.env[inputEnvName(name)];
     if (value !== "") {
@@ -11960,9 +11977,18 @@ function refuseSecretsInScore() {
     }
   }
   const [first] = set;
-  if (first !== undefined) {
-    throw new Error(`input "${first}" must not be set in score mode: score runs extension code and holds no secrets`);
-  }
+  if (first !== undefined)
+    throw new Error(refusal(first));
+}
+function refuseSecretsInScore() {
+  refuseSecrets(["root-key", "github-token"], (name) => `input "${name}" must not be set in score mode: score runs extension code and holds no secrets`);
+}
+function checkInputs() {
+  const gateway = getInput("nimbus-gateway");
+  if (gateway === "")
+    return { githubToken: takeGithubToken() };
+  refuseSecrets(["github-token"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
+  return { gateway };
 }
 function scoresPath(ws, input) {
   const rel = input === "" ? "scores.json" : input;
@@ -11976,13 +12002,7 @@ async function main() {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
-      const gateway = getInput("nimbus-gateway");
-      await runCheck({
-        workspace: workspace(),
-        baseRef,
-        githubToken: takeGithubToken(),
-        ...gateway !== "" && { gateway }
-      });
+      await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
     } else if (mode === "score") {
       refuseSecretsInScore();
       const defaultBranch = getInput("default-branch");
