@@ -70,6 +70,7 @@ import {
   phase3AddZendeskMcp,
   phase3AddZoteroMcp,
 } from "./phase3-config.ts";
+import { awsRegionalHosts, isSafeRegion } from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 
 let SANDBOX_CWD: string;
@@ -3154,5 +3155,98 @@ describe("a host the connector calls is in its network list", () => {
       "gcp.region": "-bad",
     });
     expect(network.filter((h) => h.endsWith("-run.googleapis.com"))).toEqual([]);
+  });
+});
+
+describe("a region is validated before any host is built from it", () => {
+  const INJECTION = 'x")) (allow network*) (host "y';
+
+  async function policyAndEnv(
+    add: (
+      vault: NimbusVault,
+      servers: Record<string, ServerSpec>,
+      sandboxCwd: string,
+    ) => Promise<void>,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<{ network: string[]; env: Record<string, string | undefined> | undefined }> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    const spec = servers[service];
+    const raw = spec?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? '{"permissions":{"network":[]}}';
+    const policy = JSON.parse(raw) as { permissions: { network: string[] } };
+    return { network: policy.permissions.network, env: spec?.env };
+  }
+
+  test("isSafeRegion takes real regions and refuses everything else", () => {
+    for (const good of ["us-east-1", "eu-west-1", "us-gov-west-1", "cn-north-1", "us-central1"]) {
+      expect(isSafeRegion(good)).toBe(true);
+    }
+    for (const bad of [
+      "",
+      'us-east-1"',
+      INJECTION,
+      "-bad",
+      "US-EAST-1",
+      "us east 1",
+      "us.east",
+      "us-east-1\n",
+      "a".repeat(65),
+    ]) {
+      expect(isSafeRegion(bad)).toBe(false);
+    }
+  });
+
+  test("awsRegionalHosts builds nothing from a bad region", () => {
+    expect(awsRegionalHosts(INJECTION, ["ecs"])).toEqual([]);
+    expect(awsRegionalHosts("", ["ecs"])).toEqual([]);
+  });
+
+  const awsFamily = [
+    ["aws", phase3AddAwsMcp],
+    ["athena", phase3AddAthenaMcp],
+    ["cloudwatch", phase3AddCloudwatchMcp],
+    ["sagemaker", phase3AddSagemakerMcp],
+  ] as const;
+  for (const [service, add] of awsFamily) {
+    test(`${service}: a stored region with a quote reaches no host and no env`, async () => {
+      const { network, env } = await policyAndEnv(add, service, {
+        "aws.profile": "dev",
+        "aws.default_region": INJECTION,
+      });
+      expect(env).toBeDefined();
+      expect(network.filter((h) => h.includes('"'))).toEqual([]);
+      expect(env?.["AWS_DEFAULT_REGION"]).toBeUndefined();
+    });
+
+    test(`${service}: keys with only a bad region count as no region, so no spawn`, async () => {
+      const { env } = await policyAndEnv(add, service, {
+        "aws.access_key_id": "AKIA0001",
+        "aws.secret_access_key": "SK0001",
+        "aws.default_region": INJECTION,
+      });
+      expect(env).toBeUndefined();
+    });
+  }
+
+  test("gcp: a stored region with a quote reaches no host", async () => {
+    const { network, env } = await policyAndEnv(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": INJECTION,
+    });
+    expect(env).toBeDefined();
+    expect(network.filter((h) => h.includes('"'))).toEqual([]);
+  });
+
+  test("vertex_ai: a stored region with a quote falls back to the default", async () => {
+    const { network, env } = await policyAndEnv(phase3AddVertexAiMcp, "vertex_ai", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": INJECTION,
+    });
+    expect(network.filter((h) => h.includes('"'))).toEqual([]);
+    expect(network).toContain("us-central1-aiplatform.googleapis.com");
+    expect(env?.["VERTEX_AI_REGION"]).toBe("us-central1");
   });
 });

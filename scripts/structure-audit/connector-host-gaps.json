@@ -37,74 +37,100 @@
       "kind": "declared at spawn",
       "reason": "Called only by the bot send, which needs bot credentials that only chatopsTeamsBotServers injects. That spawn adds this host; the regular Microsoft bundle spawn has no bot credentials and never calls it.",
       "file": "packages/gateway/src/connectors/lazy-mesh/chatops-bot-spawn.ts"
+    },
+    {
+      "connector": "apple",
+      "host": "imap.mail.me.com",
+      "kind": "declared at spawn",
+      "reason": "On a non-443 port, so ensureAppleMcp adds it as imap.mail.me.com:993.",
+      "file": "packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts"
+    },
+    {
+      "connector": "apple",
+      "host": "smtp.mail.me.com",
+      "kind": "declared at spawn",
+      "reason": "On a non-443 port, so ensureAppleMcp adds it as smtp.mail.me.com:587.",
+      "file": "packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts"
+    },
+    {
+      "connector": "datadog",
+      "host": "datadoghq.com",
+      "kind": "not called",
+      "reason": "The default DD_SITE value. The connector calls api.<site>, and api.datadoghq.com is declared."
+    },
+    {
+      "connector": "slack",
+      "host": "users.info",
+      "kind": "not called",
+      "reason": "A Slack Web API method name, passed as the path to slack.com/api/. The .info is not a TLD here."
     }
   ],
   "knownUnreachable": [
     {
       "connector": "github-actions",
       "hosts": "*.blob.core.windows.net",
-      "kind": "cannot declare",
+      "kind": "redirect only",
       "reason": "gha_run_log follows GitHub's redirect to a signed log URL on purpose. GitHub's runner docs give only this wildcard, the list has no wildcards, and an Azure-wide suffix would be the wrong grant anyway. Where hosts are enforced, gha_run_log fails; every other tool works."
     },
     {
       "connector": "onedrive",
       "hosts": "<tenant>-my.sharepoint.com and consumer OneDrive download hosts",
-      "kind": "cannot declare",
+      "kind": "redirect only",
       "reason": "onedrive_item_download fetches Graph's /content, which redirects to a per-tenant pre-authenticated URL. The tenant is unknown at spawn. Where hosts are enforced, this one tool fails; listing and metadata work."
     },
     {
       "connector": "apple",
-      "hosts": "p11-caldav.icloud.com and higher partitions",
-      "kind": "cannot declare",
-      "reason": "CalDAV discovery returns a per-account partition host, and the connector's own manifest names only p01 to p10. An account on a higher partition loses calendar tools where hosts are enforced. Mail is unaffected unless calendar.login() itself fails, since server.ts awaits it at boot with no catch."
+      "hosts": "any p##-caldav.icloud.com partition other than p01 to p10",
+      "kind": "code-called, cannot declare",
+      "reason": "The connector's calendar code calls the per-account partition host that CalDAV discovery returns, and only the ten partitions its own manifest names are declared. The real range of partitions, and how many accounts sit outside p01 to p10, is unverified. For an account outside them, every calendar tool fails where hosts are enforced. Mail is unaffected unless calendar.login() itself fails, since server.ts awaits it at boot with no catch; whether login reaches a partition host is also unverified."
     },
     {
       "connector": "gcp",
       "hosts": "<region>-run.googleapis.com for a region other than the stored gcp.region",
-      "kind": "cannot declare",
-      "reason": "The Cloud Run tools take the region as a tool argument, so the host is chosen per call. Only a stored gcp.region is declared; with none stored, or for another region, those tools fail where hosts are enforced."
+      "kind": "code-called, cannot declare",
+      "reason": "The Cloud Run tools (gcp_cloud_run_service_list, gcp_cloud_run_deploy) take the region as a tool argument, so the host is chosen per call. Only a valid stored gcp.region is declared. With none stored, or for another region, those tools fail where hosts are enforced."
     },
     {
       "connector": "gcp",
       "hosts": "the GKE cluster endpoint",
-      "kind": "cannot declare",
+      "kind": "code-called, cannot declare",
       "reason": "gcp_gke_workload_restart runs kubectl against the address get-credentials writes, which is known only per cluster and usually a bare IP. This tool fails where hosts are enforced."
     },
     {
       "connector": "vertex-ai",
       "hosts": "<region>-aiplatform.googleapis.com for a region other than the spawn region",
-      "kind": "cannot declare",
-      "reason": "A tool argument may override VERTEX_AI_REGION. Only the spawn region is declared."
+      "kind": "code-called, cannot declare",
+      "reason": "A tool argument may override VERTEX_AI_REGION, and only the spawn region is declared. Where hosts are enforced, a call naming another region fails."
     },
     {
       "connector": "aws",
       "hosts": "ecs, lambda, ec2 and sts at <region>.amazonaws.com, with no region stored",
-      "kind": "cannot declare",
-      "reason": "A profile with no aws.default_region has no region at spawn, so nothing regional can be declared and the tools fail where hosts are enforced. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. An SSO profile's portal.sso.<sso_region> hosts are never declared."
+      "kind": "code-called, cannot declare",
+      "reason": "A profile with no aws.default_region, or a stored value that is not a valid region, has no region at spawn, so nothing regional can be declared and every tool fails where hosts are enforced. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. An SSO profile's portal.sso.<sso_region> hosts are never declared."
     },
     {
       "connector": "athena",
       "hosts": "athena.<region>.amazonaws.com, with no region stored",
-      "kind": "cannot declare",
-      "reason": "Same bound as aws: no aws.default_region means no regional host at spawn."
+      "kind": "code-called, cannot declare",
+      "reason": "Same bound as aws: no aws.default_region, or a stored value that is not a valid region, means no regional host at spawn. Every tool of this connector fails where hosts are enforced."
     },
     {
       "connector": "cloudwatch",
       "hosts": "logs.<region>.amazonaws.com, with no region stored",
-      "kind": "cannot declare",
-      "reason": "Same bound as aws: no aws.default_region means no regional host at spawn."
+      "kind": "code-called, cannot declare",
+      "reason": "Same bound as aws: no aws.default_region, or a stored value that is not a valid region, means no regional host at spawn. Every tool of this connector fails where hosts are enforced."
     },
     {
       "connector": "sagemaker",
       "hosts": "api.sagemaker.<region>.amazonaws.com, with no region stored",
-      "kind": "cannot declare",
-      "reason": "Same bound as aws: no aws.default_region means no regional host at spawn."
+      "kind": "code-called, cannot declare",
+      "reason": "Same bound as aws: no aws.default_region, or a stored value that is not a valid region, means no regional host at spawn. Every tool of this connector fails where hosts are enforced."
     },
     {
       "connector": "azure",
       "hosts": "sovereign-cloud endpoints such as management.usgovcloudapi.net",
-      "kind": "cannot declare",
-      "reason": "az follows the cloud the owner set in its own config, which the gateway does not read. Only the public cloud is declared."
+      "kind": "code-called, cannot declare",
+      "reason": "az follows the cloud the owner set in its own config, which the gateway does not read. Only the public cloud is declared, so every azure tool fails on a sovereign cloud where hosts are enforced."
     },
     {
       "connector": "kubernetes",
@@ -122,195 +148,441 @@
   "handRead": {
     "airflow": {
       "reaches": "AIRFLOW_URL only.",
-      "decision": "phase3AddAirflowMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddAirflowMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["AIRFLOW_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "apple": {
       "reaches": "caldav.icloud.com, then a p##-caldav.icloud.com partition; imap.mail.me.com:993 and smtp.mail.me.com:587.",
-      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. Higher partitions are in knownUnreachable."
+      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. Higher partitions are in knownUnreachable.",
+      "covers": {
+        "env": [],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "argocd": {
       "reaches": "ARGOCD_URL only.",
-      "decision": "phase3AddArgocdMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddArgocdMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["ARGOCD_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "athena": {
       "reaches": "aws CLI to athena.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region."
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region.",
+      "covers": {
+        "env": [],
+        "cli": [
+          "aws athena",
+          "get-table-metadata",
+          "list-data-catalogs",
+          "list-databases",
+          "list-table-metadata"
+        ],
+        "dynamicUrls": []
+      }
     },
     "aws": {
       "reaches": "aws CLI to ecs, lambda and ec2 at <region>.amazonaws.com; sts for an assume-role profile.",
-      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are now added at spawn. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported."
+      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are now added at spawn. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported.",
+      "covers": {
+        "env": [],
+        "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ecs", "lambda"],
+        "dynamicUrls": []
+      }
     },
     "azure": {
       "reaches": "az CLI to management.azure.com; login.microsoftonline.com for tokens.",
-      "decision": "Both are declared. az webapp and az aks nodepool are ARM calls. az telemetry to other hosts is out of process and does not fail the command. Not run against a live tenant."
+      "decision": "Both are declared. az webapp and az aks nodepool are ARM calls. az telemetry to other hosts is out of process and does not fail the command. Not run against a live tenant.",
+      "covers": {
+        "env": [],
+        "cli": ["az", "az aks", "az webapp", "webapp"],
+        "dynamicUrls": []
+      }
     },
     "bigeye": {
       "reaches": "BIGEYE_BASE_URL only.",
-      "decision": "phase3AddBigeyeMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddBigeyeMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["BIGEYE_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "bigquery": {
       "reaches": "bigquery.googleapis.com by fetch; gcloud auth print-access-token to oauth2.googleapis.com.",
-      "decision": "All declared."
+      "decision": "All declared.",
+      "covers": {
+        "env": [],
+        "cli": ["gcloud auth"],
+        "dynamicUrls": []
+      }
     },
     "cloud-logging": {
       "reaches": "gcloud logging sinks to logging.googleapis.com; oauth2.googleapis.com for tokens.",
-      "decision": "All declared."
+      "decision": "All declared.",
+      "covers": {
+        "env": [],
+        "cli": ["gcloud logging", "sinks"],
+        "dynamicUrls": []
+      }
     },
     "cloudwatch": {
       "reaches": "aws CLI to logs.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region."
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region.",
+      "covers": {
+        "env": [],
+        "cli": ["aws logs", "describe-log-groups", "describe-log-streams"],
+        "dynamicUrls": []
+      }
     },
     "confluence": {
       "reaches": "CONFLUENCE_BASE_URL, with or without a scheme (normalizeRequiredSiteBaseUrl assumes https).",
-      "decision": "Spawn now applies the same https default, because a schemeless value previously added no host."
+      "decision": "Spawn now applies the same https default, because a schemeless value previously added no host.",
+      "covers": {
+        "env": ["CONFLUENCE_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": ["https://${}"]
+      }
     },
     "dagster": {
       "reaches": "DAGSTER_BASE_URL only.",
-      "decision": "phase3AddDagsterMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddDagsterMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["DAGSTER_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "databricks": {
       "reaches": "DATABRICKS_HOST, which must carry a scheme because the connector fetches base plus path.",
-      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's."
+      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["DATABRICKS_HOST"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "datadog": {
       "reaches": "api.<DD_SITE>, default api.datadoghq.com.",
-      "decision": "datadog.site previously added no host. Spawn now adds api.<site>; the name is built in code, so it is not labelled the owner's."
+      "decision": "datadog.site previously added no host. Spawn now adds api.<site>; the name is built in code, so it is not labelled the owner's.",
+      "covers": {
+        "env": ["DD_SITE"],
+        "cli": [],
+        "dynamicUrls": ["https://api.${}"]
+      }
     },
     "dbt": {
       "reaches": "DBT_API_BASE, default cloud.getdbt.com.",
-      "decision": "phase3AddDbtMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddDbtMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["DBT_API_BASE"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "dependencytrack": {
       "reaches": "DEPENDENCYTRACK_URL only.",
-      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's."
+      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["DEPENDENCYTRACK_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "elasticsearch": {
       "reaches": "ELASTICSEARCH_URL only.",
-      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's."
+      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["ELASTICSEARCH_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "fastmail": {
       "reaches": "FASTMAIL_BASE_URL, default api.fastmail.com; the JMAP apiUrl is pinned to that host by validateApiUrl.",
-      "decision": "fastmail.base_url previously added no host. Spawn now adds it, labelled the owner's."
+      "decision": "fastmail.base_url previously added no host. Spawn now adds it, labelled the owner's.",
+      "covers": {
+        "env": ["FASTMAIL_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "flagsmith": {
       "reaches": "FLAGSMITH_API_BASE, default api.flagsmith.com.",
-      "decision": "flagsmith.api_base previously added no host. Spawn now adds it, labelled the owner's."
+      "decision": "flagsmith.api_base previously added no host. Spawn now adds it, labelled the owner's.",
+      "covers": {
+        "env": ["FLAGSMITH_API_BASE"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "flux": {
       "reaches": "FLUX_API_URL only.",
-      "decision": "phase3AddFluxMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddFluxMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["FLUX_API_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "gcp": {
       "reaches": "gcloud run to run.googleapis.com and <region>-run.googleapis.com; gcloud container to container.googleapis.com; oauth2.googleapis.com; kubectl to a GKE endpoint.",
-      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared."
+      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared.",
+      "covers": {
+        "env": [],
+        "cli": ["gcloud", "gcloud container", "gcloud run", "kubectl rollout", "run"],
+        "dynamicUrls": []
+      }
     },
     "github-actions": {
       "reaches": "api.github.com; gha_run_log follows a redirect to Azure blob storage.",
-      "decision": "API host declared. The redirect target is in knownUnreachable."
+      "decision": "API host declared. The redirect target is in knownUnreachable.",
+      "covers": {
+        "env": [],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "gitlab": {
       "reaches": "GITLAB_API_BASE_URL, default gitlab.com.",
-      "decision": "ensureGitlabMcp adds the stored URL's host, labelled the owner's."
+      "decision": "ensureGitlabMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["GITLAB_API_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "grafana": {
       "reaches": "GRAFANA_URL only.",
-      "decision": "phase3AddGrafanaMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddGrafanaMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["GRAFANA_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "iac": {
       "reaches": "terraform, pulumi and aws CLIs; hosts depend on each workspace.",
-      "decision": "Not declarable. Empty list, so no network today. In knownUnreachable."
+      "decision": "Not declarable. Empty list, so no network today. In knownUnreachable.",
+      "covers": {
+        "env": [],
+        "cli": ["aws cloudformation", "pulumi preview", "pulumi up", "terraform"],
+        "dynamicUrls": []
+      }
     },
     "imap": {
       "reaches": "IMAP_HOST and IMAP_SMTP_HOST at their stored ports.",
-      "decision": "phase3AddImapMcp adds both host:port entries, labelled the owner's."
+      "decision": "phase3AddImapMcp adds both host:port entries, labelled the owner's.",
+      "covers": {
+        "env": ["IMAP_HOST", "IMAP_SMTP_HOST"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "jenkins": {
       "reaches": "JENKINS_BASE_URL only, crumb issuer and console text included.",
-      "decision": "ensureJenkinsMcp adds the stored URL's host, labelled the owner's."
+      "decision": "ensureJenkinsMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["JENKINS_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "jira": {
       "reaches": "JIRA_BASE_URL, with or without a scheme (normalizeRequiredSiteBaseUrl assumes https).",
-      "decision": "Spawn now applies the same https default, because a schemeless value previously added no host."
+      "decision": "Spawn now applies the same https default, because a schemeless value previously added no host.",
+      "covers": {
+        "env": ["JIRA_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": ["https://${}"]
+      }
     },
     "kubernetes": {
       "reaches": "kubectl to the cluster in the kubeconfig; exec auth plugins may reach more.",
-      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable."
+      "decision": "Not declared: no parser for the kubeconfig at spawn. Empty list, so no network today. In knownUnreachable.",
+      "covers": {
+        "env": [],
+        "cli": ["delete", "get", "kubectl", "rollout", "scale"],
+        "dynamicUrls": []
+      }
     },
     "launchdarkly": {
       "reaches": "LAUNCHDARKLY_BASE_URL, default app.launchdarkly.com.",
-      "decision": "launchdarkly.base_url previously added no host. Spawn now adds it, labelled the owner's."
+      "decision": "launchdarkly.base_url previously added no host. Spawn now adds it, labelled the owner's.",
+      "covers": {
+        "env": ["LAUNCHDARKLY_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "looker": {
       "reaches": "LOOKER_BASE_URL only, login included.",
-      "decision": "phase3AddLookerMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddLookerMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["LOOKER_BASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "metabase": {
       "reaches": "METABASE_URL only.",
-      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's."
+      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["METABASE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "mlflow": {
       "reaches": "MLFLOW_HOST, which must carry a scheme because the connector fetches base plus path.",
-      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's."
+      "decision": "addUrlAndSecretMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["MLFLOW_HOST"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "onedrive": {
       "reaches": "graph.microsoft.com; item download redirects to a per-tenant host.",
-      "decision": "API host declared. The redirect target is in knownUnreachable. nextLink is held to Graph's origin by resolveUrlWithBase."
+      "decision": "API host declared. The redirect target is in knownUnreachable. nextLink is held to Graph's origin by resolveUrlWithBase.",
+      "covers": {
+        "env": [],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "prefect": {
       "reaches": "PREFECT_API_URL only.",
-      "decision": "phase3AddPrefectMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddPrefectMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["PREFECT_API_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "protonmail": {
       "reaches": "PROTONMAIL_HOST and PROTONMAIL_SMTP_HOST, default the Bridge on 127.0.0.1.",
-      "decision": "phase3AddProtonmailMcp adds both host:port entries, labelled the owner's."
+      "decision": "phase3AddProtonmailMcp adds both host:port entries, labelled the owner's.",
+      "covers": {
+        "env": ["PROTONMAIL_HOST", "PROTONMAIL_SMTP_HOST"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "sagemaker": {
       "reaches": "aws CLI to api.sagemaker.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region."
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region.",
+      "covers": {
+        "env": [],
+        "cli": ["aws sagemaker", "describe-model", "list-models"],
+        "dynamicUrls": []
+      }
     },
     "salesforce": {
       "reaches": "SALESFORCE_INSTANCE_URL from the OAuth token response.",
-      "decision": "ensureSalesforceMcp adds it, not labelled the owner's. The token exchange runs in the gateway."
+      "decision": "ensureSalesforceMcp adds it, not labelled the owner's. The token exchange runs in the gateway.",
+      "covers": {
+        "env": ["SALESFORCE_INSTANCE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "sentry": {
       "reaches": "SENTRY_URL, default sentry.io.",
-      "decision": "sentry.url previously added no host. Spawn now adds it, labelled the owner's."
+      "decision": "sentry.url previously added no host. Spawn now adds it, labelled the owner's.",
+      "covers": {
+        "env": ["SENTRY_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "snowflake": {
       "reaches": "<account>.snowflakecomputing.com.",
-      "decision": "phase3AddSnowflakeMcp adds it from the validated account id."
+      "decision": "phase3AddSnowflakeMcp adds it from the validated account id.",
+      "covers": {
+        "env": [],
+        "cli": [],
+        "dynamicUrls": ["https://${}.snowflakecomputing.com/api/v2/statements"]
+      }
     },
     "sonarqube": {
       "reaches": "SONARQUBE_URL, default sonarcloud.io.",
-      "decision": "sonarqube.url previously added no host. Spawn now adds it, labelled the owner's."
+      "decision": "sonarqube.url previously added no host. Spawn now adds it, labelled the owner's.",
+      "covers": {
+        "env": ["SONARQUBE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "superset": {
       "reaches": "SUPERSET_URL only, login included.",
-      "decision": "phase3AddSupersetMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddSupersetMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["SUPERSET_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "tableau": {
       "reaches": "TABLEAU_URL only, sign-in included.",
-      "decision": "phase3AddTableauMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddTableauMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["TABLEAU_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "teams": {
       "reaches": "graph.microsoft.com; login.microsoftonline.com; TEAMS_BOT_SERVICE_URL for bot replies.",
-      "decision": "chatopsTeamsBotServers adds only hosts from its fixed Bot Framework set, by design. A serviceUrl outside it still fails, as it does today."
+      "decision": "chatopsTeamsBotServers adds only hosts from its fixed Bot Framework set, by design. A serviceUrl outside it still fails, as it does today.",
+      "covers": {
+        "env": ["TEAMS_BOT_SERVICE_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "vertex-ai": {
       "reaches": "gcloud ai to <region>-aiplatform.googleapis.com; oauth2.googleapis.com for tokens.",
-      "decision": "phase3AddVertexAiMcp adds the spawn region's host. A tool argument naming another region is in knownUnreachable."
+      "decision": "phase3AddVertexAiMcp adds the spawn region's host. A tool argument naming another region is in knownUnreachable.",
+      "covers": {
+        "env": [],
+        "cli": ["gcloud ai", "models"],
+        "dynamicUrls": []
+      }
     },
     "wiz": {
       "reaches": "WIZ_API_URL and WIZ_AUTH_URL, defaults api.app.wiz.io and auth.app.wiz.io.",
-      "decision": "wiz.api_url and wiz.auth_url previously added no host. Spawn now adds both, labelled the owner's."
+      "decision": "wiz.api_url and wiz.auth_url previously added no host. Spawn now adds both, labelled the owner's.",
+      "covers": {
+        "env": ["WIZ_API_URL", "WIZ_AUTH_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "workday": {
       "reaches": "WORKDAY_TENANT_HOST, an absolute URL per workday-oauth-descriptor.ts.",
-      "decision": "ensureWorkdayMcp adds it, labelled the owner's."
+      "decision": "ensureWorkdayMcp adds it, labelled the owner's.",
+      "covers": {
+        "env": ["WORKDAY_TENANT_HOST"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     },
     "zendesk": {
       "reaches": "ZENDESK_URL only.",
-      "decision": "phase3AddZendeskMcp adds the stored URL's host, labelled the owner's."
+      "decision": "phase3AddZendeskMcp adds the stored URL's host, labelled the owner's.",
+      "covers": {
+        "env": ["ZENDESK_URL"],
+        "cli": [],
+        "dynamicUrls": []
+      }
     }
   }
 }

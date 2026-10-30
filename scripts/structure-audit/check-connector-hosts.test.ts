@@ -7,7 +7,9 @@ import { dirname, join } from "node:path";
 import {
   auditConnectorHosts,
   type ConnectorHostGaps,
+  type ConnectorSignals,
   findUndeclaredHosts,
+  type HandRead,
   parseGapsFile,
   scanSource,
 } from "./check-connector-hosts.ts";
@@ -74,6 +76,45 @@ describe("findUndeclaredHosts", () => {
     expect(findUndeclaredHosts('const d = "the wss:// URL"', [])).toEqual([]);
   });
 
+  test("a bare hostname literal is a host", () => {
+    expect(findUndeclaredHosts('const c = { host: "smtp.foo.com" };', [])).toEqual([
+      "smtp.foo.com",
+    ]);
+    expect(findUndeclaredHosts('const H = "api.foo.com"; f("https://" + H);', [])).toEqual([
+      "api.foo.com",
+    ]);
+  });
+
+  test("a bare hostname matches an entry on any port, unless it states one", () => {
+    expect(findUndeclaredHosts('const h = "imap.foo.com";', ["imap.foo.com:993"])).toEqual([]);
+    expect(findUndeclaredHosts('const h = "imap.foo.com:993";', ["imap.foo.com"])).toEqual([
+      "imap.foo.com:993",
+    ]);
+  });
+
+  test("a dotted name that is not a hostname is not one", () => {
+    expect(findUndeclaredHosts('const a = "argocd.app.sync";', [])).toEqual([]);
+    expect(findUndeclaredHosts('const a = "server.ts";', [])).toEqual([]);
+    expect(findUndeclaredHosts('import x from "socket.io";', [])).toEqual([]);
+    expect(findUndeclaredHosts('// const a = "smtp.foo.com";', [])).toEqual([]);
+  });
+
+  test("a non-http scheme is read too, and a local one is not", () => {
+    expect(findUndeclaredHosts('const u = "imaps://mail.foo.com";', [])).toEqual([
+      "mail.foo.com:993",
+    ]);
+    expect(findUndeclaredHosts('const u = "ldap://dir.foo.com:636/x";', [])).toEqual([
+      "dir.foo.com:636",
+    ]);
+    expect(findUndeclaredHosts('const u = "file://server.foo.com/x";', [])).toEqual([]);
+  });
+
+  test("a scheme with no known port cannot match a bare entry", () => {
+    expect(findUndeclaredHosts('const u = "gopher://x.foo.com";', ["x.foo.com"])).toEqual([
+      "x.foo.com:?",
+    ]);
+  });
+
   test("each host is reported once, sorted", () => {
     const src = 'a("https://b.foo.com/1"); a("https://a.foo.com"); a("https://b.foo.com/2");';
     expect(findUndeclaredHosts(src, [])).toEqual(["a.foo.com", "b.foo.com"]);
@@ -81,9 +122,40 @@ describe("findUndeclaredHosts", () => {
 });
 
 describe("scanSource", () => {
-  test("flags a host the scan cannot read", () => {
-    expect(scanSource("const u = `https://${host}/v1`").dynamicUrl).toBe(true);
-    expect(scanSource('fetch("https://api.foo.com")').dynamicUrl).toBe(false);
+  test("flags a host the scan cannot read, by its shape", () => {
+    expect(scanSource("const u = `https://${host}/v1`").dynamicUrls).toEqual(["https://${}/v1"]);
+    expect(scanSource("const u = `https://api.${a}/${b}`").dynamicUrls).toEqual([
+      "https://api.${}/${}",
+    ]);
+    expect(scanSource('fetch("https://api.foo.com")').dynamicUrls).toEqual([]);
+  });
+
+  test("a URL built by concatenation is dynamic, whatever the scheme", () => {
+    expect(scanSource('const u = "https://" + host + "/v1";').dynamicUrls).toEqual(["https://"]);
+    expect(scanSource('const s = "wss://"; open(s + host);').dynamicUrls).toEqual(["wss://"]);
+    expect(scanSource('const u = "ldap://" + host;').dynamicUrls).toEqual(["ldap://"]);
+  });
+
+  test("a scheme being checked, or listed, is not building a URL", () => {
+    expect(scanSource('p.startsWith("https://")').dynamicUrls).toEqual([]);
+    expect(scanSource('const a = p === "https://";').dynamicUrls).toEqual([]);
+    expect(scanSource('const a = ["http://", "https://"];').dynamicUrls).toEqual([]);
+    expect(scanSource('const u = "file://" + path;').dynamicUrls).toEqual([]);
+  });
+
+  test("names CLI commands by their first words", () => {
+    expect(scanSource('run(["aws", "ecs", "list-services", x]);').cliCommands).toEqual(["aws ecs"]);
+    expect(scanSource('awsJson(["s3", "ls"]);').cliCommands).toEqual(["s3"]);
+    expect(scanSource('const c = ["terraform", `-chdir=${d}`, "plan"];').cliCommands).toEqual([
+      "terraform",
+    ]);
+    expect(scanSource('const c = [...base(), "scale", name];').cliCommands).toEqual(["scale"]);
+    expect(scanSource('const c = ["--flag", x];').cliCommands).toEqual([]);
+  });
+
+  test("a list of scope kinds or tool names is not a command", () => {
+    expect(scanSource('reg(s, { scopeKinds: ["cluster", "function"] });').cliCommands).toEqual([]);
+    expect(scanSource('export const X_TOOL_NAMES = ["a_list"] as const;').cliCommands).toEqual([]);
   });
 
   test("flags a host taken from an env var", () => {
@@ -133,6 +205,33 @@ describe("parseGapsFile", () => {
     ).toThrow(/kind/);
   });
 
+  test("a code-called host is its own kind, apart from a redirect", () => {
+    const record = { connector: "a", hosts: "x", reason: "r" };
+    for (const kind of ["code-called, cannot declare", "redirect only"] as const) {
+      const parsed = parseGapsFile(
+        JSON.stringify({ ...empty, knownUnreachable: [{ ...record, kind }] }),
+      );
+      expect(parsed.knownUnreachable[0]?.kind).toBe(kind);
+    }
+    expect(() =>
+      parseGapsFile(
+        JSON.stringify({ ...empty, knownUnreachable: [{ ...record, kind: "cannot declare" }] }),
+      ),
+    ).toThrow(/kind/);
+  });
+
+  test("a hand read must say what it covered", () => {
+    const read = { reaches: "x", decision: "y" };
+    expect(() => parseGapsFile(JSON.stringify({ ...empty, handRead: { a: read } }))).toThrow(
+      /covers/,
+    );
+    expect(() =>
+      parseGapsFile(
+        JSON.stringify({ ...empty, handRead: { a: { ...read, covers: { env: [], cli: [] } } } }),
+      ),
+    ).toThrow(/dynamicUrls/);
+  });
+
   test("a declared-at-spawn gap must name the file", () => {
     expect(() =>
       parseGapsFile(
@@ -173,6 +272,14 @@ describe("auditConnectorHosts", () => {
       knownUnreachable: [],
       handRead: {},
       ...over,
+    };
+  }
+
+  function covering(over: Partial<ConnectorSignals> = {}): HandRead {
+    return {
+      reaches: "foo.com",
+      decision: "declared",
+      covers: { env: [], cli: [], dynamicUrls: [], ...over },
     };
   }
 
@@ -310,18 +417,23 @@ describe("auditConnectorHosts", () => {
     expect(run(present, { foo: [] }, g).problems).toEqual([]);
   });
 
-  test("a connector that shells out needs a hand-read record", () => {
+  test("a connector that shells out needs a hand-read record that names the command", () => {
     const root = fixture({
-      "connectors/foo/src/a.ts": 'import "../../../shared/nimbus-spawn.ts";',
+      "connectors/foo/src/a.ts":
+        'import "../../../shared/nimbus-spawn.ts"; run(["aws", "ecs", "x"]);',
     });
     expect(run(root, { foo: [] }).problems.join("\n")).toContain("foo: shells out");
     expect(
-      run(
-        root,
-        { foo: [] },
-        gaps({ handRead: { foo: { reaches: "foo.com", decision: "declared" } } }),
-      ).problems,
+      run(root, { foo: [] }, gaps({ handRead: { foo: covering({ cli: ["aws ecs"] }) } })).problems,
     ).toEqual([]);
+  });
+
+  test("a shell-out with no readable command is still a signal", () => {
+    const root = fixture({
+      "connectors/foo/src/a.ts": 'import "../../../shared/nimbus-spawn.ts";',
+    });
+    const out = run(root, { foo: [] }, gaps({ handRead: { foo: covering() } })).problems;
+    expect(out.join("\n")).toContain("not readable");
   });
 
   test("a connector with a dynamic URL or a host from an env var needs a hand-read record", () => {
@@ -331,10 +443,90 @@ describe("auditConnectorHosts", () => {
     expect(run(env, { foo: [] }).problems.join("\n")).toContain("FOO_URL");
   });
 
+  test("concatenation alone now needs a hand read, where it used to pass", () => {
+    const root = fixture({
+      "connectors/foo/src/a.ts": 'const H = "api.foo.internal"; fetch("https://" + H + "/v1");',
+    });
+    expect(run(root, { foo: [] }).problems.join("\n")).toContain("foo: builds a URL");
+  });
+
+  test("a bump adding an env var fails a connector that already has a hand read", () => {
+    const root = fixture({
+      "connectors/foo/src/a.ts": 'const a = env("FOO_URL"); const b = env("FOO_ALT_URL");',
+    });
+    const out = run(
+      root,
+      { foo: [] },
+      gaps({ handRead: { foo: covering({ env: ["FOO_URL"] }) } }),
+    ).problems.join("\n");
+    expect(out).toContain("FOO_ALT_URL is new since the hand read");
+    expect(out).toContain("Read it again");
+  });
+
+  test("a bump adding a CLI service fails a connector that already has a hand read", () => {
+    const root = fixture({
+      "connectors/foo/src/a.ts":
+        'import "../../../shared/nimbus-spawn.ts"; j(["ecs", "x"]); j(["s3", "ls"]);',
+    });
+    const out = run(
+      root,
+      { foo: [] },
+      gaps({ handRead: { foo: covering({ cli: ["ecs"] }) } }),
+    ).problems.join("\n");
+    expect(out).toContain("CLI command s3 is new since the hand read");
+  });
+
+  test("a bump adding a dynamic URL fails a connector that already has a hand read", () => {
+    const root = fixture({
+      "connectors/foo/src/a.ts": "const a = `https://${h}/x`; const b = `https://up.${h}/y`;",
+    });
+    const out = run(
+      root,
+      { foo: [] },
+      gaps({ handRead: { foo: covering({ dynamicUrls: ["https://${}/x"] }) } }),
+    ).problems.join("\n");
+    expect(out).toContain("https://up.${}/y is new since the hand read");
+  });
+
+  test("a recorded signal the scan no longer sees fails as stale", () => {
+    const root = fixture({ "connectors/foo/src/a.ts": "export const a = 1;" });
+    const out = run(
+      root,
+      { foo: [] },
+      gaps({
+        handRead: {
+          foo: covering({ env: ["FOO_URL"], cli: ["aws ecs"], dynamicUrls: ["https://${}"] }),
+        },
+      }),
+    ).problems;
+    expect(out).toHaveLength(3);
+    for (const problem of out) expect(problem).toContain("stale handRead");
+  });
+
+  test("a bare host declared at spawn is excused, and checked against the file", () => {
+    const g = gaps({
+      literalGaps: [
+        {
+          connector: "foo",
+          host: "imap.foo.com",
+          kind: "declared at spawn",
+          reason: "non-443",
+          file: "spawn.ts",
+        },
+      ],
+    });
+    const root = fixture({
+      "connectors/foo/src/a.ts": 'const h = "imap.foo.com";',
+      "spawn.ts": 'const e = "imap.foo.com:993";',
+    });
+    expect(run(root, { foo: [] }, g).problems).toEqual([]);
+    expect(run(root, { foo: ["imap.foo.com:993"] }, g).problems.join("\n")).toContain("stale gap");
+  });
+
   test("a record for a connector that does not exist fails", () => {
     const root = fixture({ "connectors/foo/src/a.ts": "" });
     const g = gaps({
-      handRead: { gone: { reaches: "x", decision: "y" } },
+      handRead: { gone: covering() },
       knownUnreachable: [{ connector: "gone2", hosts: "x", kind: "redirect only", reason: "r" }],
     });
     const out = run(root, { foo: [] }, g).problems.join("\n");

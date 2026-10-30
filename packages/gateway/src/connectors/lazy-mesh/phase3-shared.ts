@@ -31,23 +31,14 @@ function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSp
 export const VERTEX_AI_DEFAULT_REGION = "us-central1";
 
 /**
- * Inline argv flag-smuggling guard for the optional Vertex AI region before it
- * is interpolated into the spawned MCP's `VERTEX_AI_REGION` env and the per-region
- * network host (the gateway cannot import the `shared/` helpers of the
- * `@nimbus-dev/connectors` package). A value that is empty, over-long,
- * `-`-prefixed, or carries control characters is rejected so the caller falls
- * back to the safe default.
+ * The guard for a region before any host name or child env value is built from it. Lowercase
+ * letters, digits and inner hyphens only, which every AWS and GCP region fits. The result reaches a
+ * network entry unvalidated (a first-party manifest skips `validateAndNormalizePermissions`), and
+ * darwin.ts writes that entry into the SBPL profile as `(host "...")`, so a `"` here would inject
+ * into the profile. A leading `-` would also smuggle a flag. Callers treat a bad value as no region.
  */
 export function isSafeRegion(value: string): boolean {
-  if (value.length === 0 || value.length > 1024 || value.startsWith("-")) {
-    return false;
-  }
-  for (let i = 0; i < value.length; i += 1) {
-    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
-      return false;
-    }
-  }
-  return true;
+  return value.length <= 64 && /^[a-z0-9][a-z0-9-]*$/.test(value);
 }
 
 /**
@@ -114,7 +105,7 @@ export function manifestWithStoredUrls(
  * connector-host-gaps.json.
  */
 export function awsRegionalHosts(region: string, services: readonly string[]): string[] {
-  if (region === "") return [];
+  if (!isSafeRegion(region)) return [];
   const suffix = region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
   return [...services, "sts"].map((service) => `${service}.${region}.${suffix}`);
 }
@@ -209,7 +200,8 @@ export interface AwsCreds {
 export async function loadAwsCreds(vault: NimbusVault): Promise<AwsCreds> {
   const ak = await readSecret(vault, "aws", "access_key_id");
   const sk = await readSecret(vault, "aws", "secret_access_key");
-  const reg = await readSecret(vault, "aws", "default_region");
+  const storedRegion = await readSecret(vault, "aws", "default_region");
+  const reg = isSafeRegion(storedRegion) ? storedRegion : "";
   const prof = await readSecret(vault, "aws", "profile");
   const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
   const env: Record<string, string> = { ...cliEnvFor("aws", process.env) };
