@@ -48,12 +48,8 @@ const inner = [
 ];
 const payload = (p: string): string[] => [BUN, "--no-env-file", p];
 
-const single = [
-  "--unshare-pid", "--unshare-uts", "--unshare-ipc", "--new-session",
-  "--chdir", cwd,
-];
 const variants: [string, string[]][] = [
-  ["C: one bwrap, today's flags, launcher applies real seccomp", [...outer, ...single, ...launcher, ...payload(join(cwd, "payload.ts"))]],
+  ["D: launcher keeps caps for the inner bwrap; only the forwarder drops", [...outer, ...launcher, ...inner, ...payload(join(cwd, "payload.ts"))]],
 ];
 for (const [label, argv] of variants) {
   console.log(`\n===== ${label}`);
