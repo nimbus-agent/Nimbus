@@ -106,6 +106,8 @@ PRIVACY & AUDIT
                               Run an extension package's eval suites in the sandbox; prints the score
   nimbus eval --extension <id> [--json]
                               Evaluate an installed extension (owner-approved, terminal only)
+  nimbus eval --installed [--threshold <n>] [--json]
+                              Evaluate every enabled extension (one approval); compare with the registry's score
   nimbus security scan        Local security scan (secrets, vulnerable deps, risky IaC)
   nimbus data export|import|delete   Encrypted bundle export/import; per-service deletion
   nimbus vault set|get|delete|list   Secrets (OS keyring only — never config, never logs)

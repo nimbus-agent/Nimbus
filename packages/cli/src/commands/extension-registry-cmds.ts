@@ -76,7 +76,7 @@ export const EXTENSION_INFO_REMOTE_USAGE =
  * The score of a gateway-projected quality, or `undefined` when there is none to show. Re-checked
  * here: this CLI may talk to an older or another gateway, and a score it cannot read is not shown.
  */
-function scoreOf(quality: unknown): number | undefined {
+export function scoreOf(quality: unknown): number | undefined {
   if (typeof quality !== "object" || quality === null) return undefined;
   const score = (quality as Record<string, unknown>)["score"];
   if (typeof score !== "number" || !Number.isInteger(score) || score < 0 || score > 100) {
