@@ -31,7 +31,7 @@ const outer = [
   "--bind", dir, dir,
   "--unshare-user", "--unshare-pid", "--unshare-net", "--die-with-parent",
   "--uid", "0", "--gid", "0",
-  "--cap-add", "CAP_NET_BIND_SERVICE", "--cap-add", "CAP_SETPCAP",
+  "--cap-add", "CAP_NET_BIND_SERVICE", "--cap-add", "CAP_SETPCAP", "--cap-add", "CAP_SETFCAP",
   "--setenv", "SPIKE_SOCK", sock,
 ];
 const launcher = ["/usr/local/bin/spike-launcher", sock, "127.0.0.2", "443", "--"];
