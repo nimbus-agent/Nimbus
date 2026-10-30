@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793353057938,
+  "lastUpdate": 1793353998958,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fa807e30377ae6e121b58eacb0b304d85b73a4fe",
-          "message": "feat(agents): nimbus negotiate — a cited contribution brief (#1166)\n\nSub-project **F** of the `nimbus negotiate` substrate (Spine S1) — the\nagent itself, reading the\nevidence the earlier substrate PRs put in the index. Follows A/B (#1159,\nPR review indexing).\n\n## What this adds\n\n`agents.negotiate` / `nimbus negotiate [--since <duration>] [--person\n<id>] [--json]` — the\nfourteenth built-in agent. A cited contribution brief for one person\nover a window, assembled\n**entirely from the local index**: no connector is opened and nothing is\nfetched live, including\nfor `--person`, which briefs a different *already-indexed* person from\nthe same local data.\n\nSix parallel `AgentCoordinator` lanes: PRs authored (with size stats\nwhere enrichment has reached\nthem), PRs reviewed, tickets opened / closed by an authored PR, code and\nservices owned, decisions\nauthored, and documents/notes/messages written.\n\n**Every item-backed lane cites its evidence.** A count with no way to\ncheck it is an assertion, not\nevidence — \"12 PRs\" reads exactly like \"40 PRs\" to someone who cannot\nopen either. Each of the five\nitem-backed lanes lists up to 5 of the actual items behind its count\n(title + `COALESCE(\ncanonical_url, url)`), ordered `modified_at DESC, id ASC` so an\nunchanged index cites the same items\nevery run. Truncation self-discloses — `NegotiateEvidence.total` carries\nthe full population, so a\ncapped list renders \"…and N more not listed\" instead of reading as\nexhaustive, the same rule\n`statsCoverage` already followed. A ref with no URL renders as plain\ntext, never an empty link and\nnever an invented one. Two deliberate omissions: ownership carries no\nrefs (it already enumerates\nthe services and directories it counted), and tickets cites only the\nissues the subject *opened* —\nciting the \"closed by an authored PR\" hop would list issues someone else\nfiled. The writing lane's\nevidence query reproduces the `personal_sources` gate exactly, so a\npersonal note can never surface\nas a citation under a brief whose `sources` block says personal docs are\noff.\n\n## Why the design is shaped the way it is\n\nThis document can end up in a compensation conversation, so **every\nfailure mode had to fail\ntoward disclosure rather than toward a confident number.** Three shapes\ncarry that:\n\n- **A `null` lane is never rendered as `0`.** Each lane-backed field is\n`… | null` and starts\n`null`; a lane that failed or was never attempted renders `_could not be\ncomputed_`. A lane that\nran and found nothing renders `0`. Collapsing those two is how a brief\nsilently understates.\n- **An unresolvable `--person` is disclosed, not briefed as zero.** An\nid matching no `person` row\nraises a `missing_user_identity` gap stating the counts are\n*structurally* zero. The\n`git:<email>` blame-alias shape gets its own arm, because it is the case\nthat *looks* like it\nworked: ownership comes back populated (it is the only lane reading\n`owns` edges, the only edges\ncarrying a `git:` external id) while the other five lanes are\nstructurally zero — three keyed\ndirectly on `item.author_id`, plus PRs authored and tickets, whose graph\nedges are built from it.\n  The two\n  arms state different facts and are deliberately not collapsed.\n- **The window is \"ACTIVE in\", not \"created in\".** `item` has no\ncreation timestamp, so every\nitem-backed lane windows on `modified_at` (GitHub's `updated_at` — last\ntouch) and the brief says\nso. Otherwise \"40 PR(s)\" under a 90-day header reads as 40 authored this\nquarter when it means 40\nauthored at any time and touched this quarter — a systematic\noverstatement of the headline\n  numbers, which is the failure direction this agent exists to avoid.\n\nOwnership carries the same **authorship-derived, not accountability**\nlabel `nimbus owners` states\nunconditionally, plus its own staleness (when the background pass last\nran, or `nimbus owners\n--refresh` if never). `decisions.unattributable` and the\nunmapped-git-identity count are stated as\nfacts about the **index**, never attributions to the subject. Incidents\nresolved, on-call shifts\nand deploys triggered are **named unconditionally as unavailable**, so\nan absent section is never\nread as a measured zero.\n\n## Personal sources are off unless configured\n\nConfluence pages and chat messages are always in scope. Obsidian notes\nand Notion pages are mined\nonly when named in `[negotiate] personal_sources` — configuration IS the\nconsent, following the\n`[glossary.terms]` precedent. The gate is per **service**, not per item\ntype, because Confluence\nand Notion both emit `type: \"page\"`. Entries are case-folded at parse\ntime; \"configured\" means the\nintersection with the recognised personal-capable services rather than a\nmerely non-empty list; and\nan entry that names nothing is echoed back as ignored — so a mis-typed\nopt-in can never render an\nundercount as complete coverage.\n\n## Surface exclusions\n\nExcluded from **both** the HTTP agent surface\n(`HTTP_EXCLUDED_AGENT_METHODS`) and the MCP tool\nsurface — for a *different* reason than `agents.preflight` /\n`agents.premortem`, which are excluded\nfor their side effects. `agents.negotiate` writes nothing, but combined\nwith `--person` an exposed\nversion would let any holder of the `agents` bearer token, or any model\ndriving the tool server,\nassemble a contribution dossier on any indexed person without the local\nowner initiating it. The\nCLI and Tauri renderer are same-machine, owner-initiated surfaces (I7's\nXSS threat model, not\n\"arbitrary network caller\"); the local HTTP API is not.\n\n`agents.negotiate` gets its **own** 365-day `sinceMs` bound rather than\nthe shared 90-day\n`MAX_SINCE_MS` — an annual review needs a year of evidence. The IPC\nvalidator **imports** that\nconstant from the agent instead of restating it: two copies drifting\napart fails silently (the IPC\naccepts a window the agent then clamps), which is exactly the silent\nclamp the explicit rejection\nexists to replace.\n\n## Scope\n\nTauri `ALLOWED_METHODS` 105 → 106 (I7). **No schema change, no\nmigration, no new invariant.**\n\n## Review round\n\nThirteen review findings, all verified against the source before acting.\nTwelve fixed; the\nthirteenth (per-lane evidence citations) turned into the citation work\ndescribed above.\n\nTwo were real defects rather than doc drift:\n\n- **`laneReviewedPrs` silently dropped reviews.** `AND\njson_valid(i.metadata)` sat in the WHERE\nclause, so a review whose metadata is NULL or corrupt was removed from\n`count` *and* from\n`otherOrUnknown` — contradicting the lane's \"every review is counted\nsomewhere\" contract and\ndisagreeing with `laneAuthoredPrs`, which keeps such rows. Measured on a\n4-row fixture: the WHERE\nform returned 2 rows, the `CASE`-in-projection form returns all 4 with\nthe unreadable ones landing\nin `otherOrUnknown`. Red-proved — the new test reports `count` 1 vs 3\nagainst the old query.\n- **Sub-day windows rendered as \"last 0d\".** `--since 1h` is valid (the\nIPC bound is an upper one\nonly) and whole-day rounding collapsed it to zero — the window clause is\na *disclosure*, so it\n  cannot itself misstate the window.\n\nPlus: a named Tauri allowlist assertion for `agents.negotiate` (the\ncount-only test stays green\nunder a one-for-one substitution), a temp-dir leak, and a fixed-epoch\ne2e constant that would have\nstarted failing on 2027-04-15. Doc fixes: the structurally-zero lane\ncount (three keyed directly on\n`item.author_id`, five in total once the two graph-derived lanes are\nincluded), the two lanes\noutside the window, the MCP exclusion missing from the CLI reference, a\nstale \"twelve agents ship\"\ninventory, the superseded Wave 5 acceptance criterion, and `HISTORICAL`\nheaders on the two\npoint-in-time review records.\n\n## Verification\n\n- `bun test packages/gateway/src/agents packages/gateway/src/ipc\npackages/cli/src/commands` — 3795\n  pass, 0 fail\n- negotiate e2e scenario — 2 pass\n- `bun run typecheck:tests` — 0 new\n- `bun run preflight` — green\n\nDocumented in `docs/cli-reference.md`, the built-in-agent table + IPC\ncatalogue in\n`docs/architecture.md`, `docs/roadmap.md`, and `docs/CHANGELOG.md`.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- Added the read-only `nimbus negotiate` command for generating cited\ncontribution briefs.\n- Reports authored and reviewed work, tickets, ownership, decisions, and\nwriting across a configurable time window.\n  - Supports `--since`, `--person`, and `--json`.\n- Clearly identifies unavailable evidence, attribution gaps, coverage\nlimits, and optional personal-source consent.\n- Available through the CLI and desktop app, with fresh results on each\nrequest.\n\n- **Documentation**\n- Added comprehensive command, architecture, roadmap, and release\ndocumentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-13T05:49:13Z",
-          "tree_id": "7c4f534cc2d8b9148dcea12e0528b0c9be20a564",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fa807e30377ae6e121b58eacb0b304d85b73a4fe"
-        },
-        "date": 1786600830128,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.1692895999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.9591112499969,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 193.9754534500018,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6471c9422f00659eb04faabb6593f79f71db3275",
+          "message": "chore: release main (#1825)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.11.0</summary>\n\n##\n[10.11.0](https://github.com/nimbus-agent/Nimbus/compare/v10.10.0...v10.11.0)\n(2026-10-30)\n\n\n### Features\n\n* **eval:** nimbus eval --installed compares every installed extension's\nlocal score with its registry's, behind one approval\n([#1824](https://github.com/nimbus-agent/Nimbus/issues/1824))\n([c5d0157](https://github.com/nimbus-agent/Nimbus/commit/c5d015721130beb46ea8c29f0135dbb5a3330c40))\n* **registry:** registry CI scores extension evals in a secret-free job\nand signs a quality score; search and info show it\n([#1822](https://github.com/nimbus-agent/Nimbus/issues/1822))\n([87ec34f](https://github.com/nimbus-agent/Nimbus/commit/87ec34f87a862071e9c16153d9222ecaa45e8b4c))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-30T11:46:54+02:00",
+          "tree_id": "50023ab5cc1ce9a51c9bcd93ec3f47ab4d334a49",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6471c9422f00659eb04faabb6593f79f71db3275"
+        },
+        "date": 1793353995489,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 176.97778945000428,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 179.31248319999432,
             "unit": "ms"
           }
         ]
