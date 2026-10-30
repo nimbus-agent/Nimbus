@@ -1,4 +1,4 @@
-# THROWAWAY, never merged. Real .deb from the fix branch on a stock runner.
+# THROWAWAY, never merged. Names the syscall behind the forwarder's seccomp kill on real Ubuntu.
 name: spike-linux-forwarder
 on:
   push:
@@ -6,44 +6,33 @@ on:
 permissions:
   contents: read
 jobs:
-  deb:
+  seccomp:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: dev/asaf/ubuntu-apparmor-bwrap
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0 (Node 24 runtime)
         with:
           bun-version: "1.4"
-      - name: Build the .deb from the fix branch, with the released v10.11.0 binaries
+      - name: Prepare
         run: |
-          B=https://github.com/nimbus-agent/Nimbus/releases/download/v10.11.0
-          mkdir bundle
-          curl -fsSL -o bundle/nimbus-gateway $B/nimbus-gateway-linux-x64
-          curl -fsSL -o bundle/nimbus $B/nimbus-cli-linux-x64
-          chmod +x bundle/*
-          bun scripts/package-linux-installers.ts --bundle bundle --out out --version 10.11.1 --skip-appimage --skip-sandbox-helper
-          ls out
-      - name: Prove it
-        run: |
-          set +e
-          G=/usr/lib/nimbus/bin/nimbus-gateway
-          P=/etc/apparmor.d/nimbus-bwrap
-          mkdir -p "$RUNNER_TEMP/sb"
-          role() {
-            NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":[],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" $G __nimbus-sandbox /usr/bin/echo STARTED 2>&1 | grep -v '"level":40'; echo "  no-network exit ${PIPESTATUS[0]}"
-            NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":["api.github.com"],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" $G __nimbus-sandbox /usr/bin/echo STARTED 2>&1 | grep -v '"level":40'; echo "  network-declaring exit ${PIPESTATUS[0]}"
-          }
-          sysctl kernel.apparmor_restrict_unprivileged_userns
-          echo "=== 1 install"; sudo apt-get install -y -qq ./out/nimbus-headless_10.11.1_amd64.deb 2>&1 | tail -3
-          ls -l $P; cat $P; role
-          echo "=== 2 reinstall, as an upgrade would"; sudo dpkg -i ./out/nimbus-headless_10.11.1_amd64.deb 2>&1 | tail -2
-          ls -l $P; role
-          echo "=== 3 remove"; sudo dpkg --remove nimbus-headless 2>&1 | tail -2
-          ls -l $P 2>&1
-          sudo apt-get install -y -qq ./out/nimbus-headless_10.11.1_amd64.deb > /dev/null 2>&1
-          echo "=== 4 reinstall then purge"; sudo dpkg --purge nimbus-headless 2>&1 | tail -1
-          ls -l $P 2>&1
-          bwrap --unshare-user --unshare-net --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev /usr/bin/true; echo "  bwrap after purge exit $?"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap strace gcc libc6-dev
+          gcc -O1 -Wall -o spike-launcher spike/launcher.c
+          sudo cp spike-launcher /usr/local/bin/spike-launcher
+          sudo cp "$(which bun)" /usr/local/bin/bun
+          sudo chmod 755 /usr/local/bin/spike-launcher /usr/local/bin/bun
+          sudo ln -s "$PWD" /repo
+          sudo ln -s "$PWD/spike" /fw
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' 'profile nimbus-bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/nimbus-bwrap > /dev/null
+          sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap
+          ldd --version | head -1
+          cat /etc/resolv.conf | grep -v '^#'
+      - name: "A today's shape, real DNS"
+        continue-on-error: true
+        run: /usr/local/bin/bun spike/run.ts
+      - name: "B forwarder variant C"
+        continue-on-error: true
+        run: /usr/local/bin/bun spike/host-c.ts
