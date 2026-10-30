@@ -48,7 +48,7 @@ Then they approve. The run re-validates every unsigned version, skips and names 
 
 A version whose package holds `evals/` gets a quality score, measured by the registry and signed into the index; clients show `quality N/100 (measured by <registry>)`. Extension code runs only in jobs that hold no secret:
 
-- the sign workflow's **`score` job** runs every unsigned version's eval suites in the platform sandbox (bubblewrap, no network) with the `nimbus-gateway-linux-x64` of the pinned Nimbus release, checked against that release's `SHA256SUMS`. It has a read-only token, no environment and no persisted credentials, and uploads `scores.json` as the `registry-scores` artifact;
+- the sign workflow's **`score` job** runs every unsigned version's eval suites in the platform sandbox (bubblewrap, no network; the job log shows `sandbox: degraded mode (no per-host network gating)`, which is expected: evals run with no network and no sandbox helper is installed) with the `nimbus-gateway-linux-x64` of the pinned Nimbus release, checked against that release's `SHA256SUMS`. It has a read-only token, no environment and no persisted credentials, and uploads `scores.json` as the `registry-scores` artifact;
 - the **`sign` job** needs `score`, downloads that file and reads it as untrusted input: each entry must match its version's id, version and package digest. A version with `evals/` and no valid score is not signed (a later run retries it); a version without `evals/` is signed with no score;
 - the **check job** runs the pull request's version the same way and shows its score (or the error) in the summary.
 

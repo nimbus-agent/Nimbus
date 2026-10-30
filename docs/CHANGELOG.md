@@ -19,7 +19,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 ## Post-Phase-6 deliveries
 
 - **2026-10-30 — `nimbus eval` PR 4 of 5: registry scoring and score display (Phase 9.5 project 5; no migration, no new
-  invariant; I49 amended).** A registry now measures each version's eval score itself and signs it into its index. The registry
+  invariant; I49 amended).** A registry can now measure each version's eval score itself and sign it into its index. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The registry
   action gains a `score` mode, run by a new `score` job in the sign workflow `nimbus registry maintain init --github` writes:
   read-only token, no environment, no secrets, no persisted credentials (spec ruling R8: extension code never runs in the job
   that holds the root key). The job installs bubblewrap, probes it as the runner user, downloads the pinned release's
@@ -33,13 +33,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `passed`, `rubrics`) becomes its signed `quality`; otherwise it is skipped with a warning. A version without `evals/` is
   signed as before, and without the `scores` input `sign` is unchanged. `check` given `nimbus-gateway` scores the pull
   request's version and shows the score or the error; it then refuses `github-token` and leaves provenance to `sign`.
-  Display: `registry.search` results carry the offered version's `quality` (`{ score, cases, passed }` or `null`) and
+  Display: `registry.search` results carry the offered version's (newest stable, else newest beta, else the newest
+  version) `quality` (`{ score, cases, passed }` or `null`) and
   `registry.info` versions carry `quality` plus, for a malformed value, `qualityInvalid` (capped at 200 characters);
   `nimbus extension search` shows a `Quality` column and `nimbus extension info --registry` shows `quality N/100 (measured by
   <registry>)` or `not evaluated` per version. The gateway's `loadEvalPackage` now reads each package file once and derives
   the manifest, suites and files digest from that one read, closing the suite-swap window I49 bound (3) had recorded. The
   published `v10.10.0` `nimbus-gateway-linux-x64` was run as the score job runs it (ubuntu 24.04, bubblewrap, non-root) and
-  scored the e2e fixture package 71 (7 cases, 5 passed), the source e2e's numbers. **Known limits:** a red score job (an
+  scored the e2e fixture package 71 (7 cases, 5 passed), the source e2e's numbers. The job log shows `sandbox: degraded mode
+  (no per-host network gating)`, which is expected: evals run with no network and no sandbox helper is installed. **Known limits:** a red score job (an
   infrastructure failure) skips the whole sign run, trust requests included, until the workflow is re-run; existing registries
   adopt the new workflows by hand ([`registry-hosting.md` § Eval scores](./registry-hosting.md#eval-scores)). **Not shipped:**
   `--installed` (still exits 2) and the desktop Marketplace tile (project 6).

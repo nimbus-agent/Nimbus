@@ -37,7 +37,9 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   root key. Validates every unsigned extension version exactly as `sign` will and, for each whose
   package holds an eval suite (`evals/<name>.eval.json`), unpacks the package into a directory of
   its own and runs `<nimbus-gateway> __nimbus-eval --package <dir> --json` (the gateway confines
-  the extension in the platform sandbox with no network; 12-minute deadline, 8 MiB stdout cap,
+  the extension in the platform sandbox with no network, and the job log's `sandbox: degraded mode
+  (no per-host network gating)` is expected: evals run with no network and no sandbox helper is
+  installed; 12-minute deadline, 8 MiB stdout cap,
   a minimal environment of `PATH` and a private `HOME`; the path is spawned directly, never through
   a shell or a `PATH` lookup). The role leads its own process group, and the deadline or a stdout
   overflow `SIGKILL`s the whole group: the sandbox wrapper under the role inherits its stderr, so

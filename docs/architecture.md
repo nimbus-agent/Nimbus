@@ -2254,12 +2254,13 @@ own `packageSha256`, whose quality `parseEvalQuality` accepts, and that quality 
 `passed`, `rubrics`; never the per-case `results`) becomes the entry's signed `quality`; a version without one is skipped
 with a warning and retried by a later run, and a version without `evals/` is signed with no `quality`. Because `sign` needs
 `score`, an infrastructure failure of the score job skips the whole sign run, trust requests included, until the workflow is
-re-run. The check job scores a pull request's version the same way when given `nimbus-gateway`; it then takes no
+re-run. No live registry has adopted the new workflows yet, `nimbus-mcp-servers` included, so no index carries a score today. The check job scores a pull request's version the same way when given `nimbus-gateway`; it then takes no
 `github-token` (the action refuses both together) and leaves provenance to `sign`. The compiled release binary runs the
 role: the published `v10.10.0` `nimbus-gateway-linux-x64` scores the e2e fixture package 71 (7 cases, 5 passed) under
-bubblewrap as a non-root user, the same numbers as the source e2e.
+bubblewrap as a non-root user, the same numbers as the source e2e. The job log shows `sandbox: degraded mode (no per-host
+network gating)`, which is expected: evals run with no network and no sandbox helper is installed.
 
-**Display.** `registry.search` gives each result the offered version's `quality` (`{ score, cases, passed }` or `null`);
+**Display.** `registry.search` gives each result the offered version's (newest stable, else newest beta, else the newest version) `quality` (`{ score, cases, passed }` or `null`);
 `registry.info` gives each version `quality` and, for a value `readVersionQuality` finds malformed, `quality: null` plus
 `qualityInvalid` (the reason, capped at 200 characters, since it can quote key names whoever signed the index chose). A
 malformed score never fails a call. The CLI re-checks the score it is given and prints a `Quality` column in
