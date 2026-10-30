@@ -457,7 +457,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     ],
   };
 
-  let roleCalls: { gateway: string; dir: string }[];
+  let roleCalls: { gateway: string; dir: string; timeoutMs: number | undefined }[];
   let gateway: string;
 
   beforeEach(() => {
@@ -468,8 +468,8 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
 
   const role =
     (answer: (dir: string) => RoleRun): RunRole =>
-    async (gw, dir) => {
-      roleCalls.push({ gateway: gw, dir });
+    async (gw, dir, timeoutMs) => {
+      roleCalls.push({ gateway: gw, dir, timeoutMs });
       return answer(dir);
     };
 
@@ -499,6 +499,8 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     );
     expect(roleCalls).toHaveLength(1);
     expect(roleCalls[0]?.gateway).toBe(gateway);
+    // check scores one version and keeps the role's own deadline; only score has a run budget.
+    expect(roleCalls[0]?.timeoutMs).toBeUndefined();
     const md = summaries[0] ?? "";
     expect(md).toContain("- **Quality:** quality 50/100 (1 of 2 cases passed)");
     expect(md).not.toContain("No runtime check of the package is performed");

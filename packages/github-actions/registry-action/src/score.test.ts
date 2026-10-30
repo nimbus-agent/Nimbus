@@ -36,6 +36,7 @@ import {
   type RoleRun,
   roleRunner,
   runScore,
+  SCORE_RUN_BUDGET_MS,
   type ScoreDeps,
   type ScoresFile,
   scoreCandidate,
@@ -111,7 +112,9 @@ let out: string;
 let summaries: string[];
 let warnings: string[];
 let logs: string[];
-let roleCalls: { gateway: string; dir: string; files: string[] }[];
+let roleCalls: { gateway: string; dir: string; files: string[]; timeoutMs: number | undefined }[];
+/** The fake clock score mode reads its run budget from. */
+let clock: number;
 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "nimbus-registry-score-"));
@@ -126,6 +129,7 @@ beforeEach(() => {
   warnings = [];
   logs = [];
   roleCalls = [];
+  clock = 1_000_000;
 });
 
 afterEach(() => {
@@ -149,8 +153,8 @@ function listFiles(dir: string, prefix = ""): string[] {
 
 /** A fake role answering per `<id>@<version>` (read from the extracted manifest). */
 function fakeRole(answer: (ref: string) => RoleRun | Promise<RoleRun>): ScoreDeps["runRole"] {
-  return async (gw, dir) => {
-    roleCalls.push({ gateway: gw, dir, files: listFiles(dir).sort() });
+  return async (gw, dir, timeoutMs) => {
+    roleCalls.push({ gateway: gw, dir, files: listFiles(dir).sort(), timeoutMs });
     const m = JSON.parse(readFileSync(join(dir, "nimbus.extension.json"), "utf8")) as {
       id: string;
       version: string;
@@ -160,7 +164,14 @@ function fakeRole(answer: (ref: string) => RoleRun | Promise<RoleRun>): ScoreDep
 }
 
 function deps(runRole: ScoreDeps["runRole"]): ScoreDeps {
-  return { git: gitTree, io, tmpdir: () => scratch, validate: validatePublish, runRole };
+  return {
+    git: gitTree,
+    io,
+    tmpdir: () => scratch,
+    validate: validatePublish,
+    runRole,
+    now: () => clock,
+  };
 }
 
 const score = (runRole: ScoreDeps["runRole"], gw = gateway): Promise<ScoresFile> =>
@@ -213,6 +224,71 @@ describe("score mode", () => {
     // The work dir is the score mode's own, and is gone afterwards.
     expect(existsSync(roleCalls[0]?.dir ?? "")).toBe(false);
     expect(summaries.join("\n")).toContain("`acme/scored@1.0.0`: 50/100 (1 of 2 cases passed)");
+  });
+
+  test("under the run budget every evals candidate runs with the full role timeout", async () => {
+    await publish({ id: "acme/one", evals: { "basic.eval.json": SUITE } });
+    await publish({ id: "acme/two", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish two");
+
+    const r = await score(echoOk);
+
+    expect(Object.values(r).every((e) => "quality" in e)).toBe(true);
+    expect(Object.keys(r).sort()).toEqual(["acme/one@1.0.0", "acme/two@1.0.0"]);
+    expect(roleCalls.map((c) => c.timeoutMs)).toEqual([ROLE_TIMEOUT_MS, ROLE_TIMEOUT_MS]);
+  });
+
+  test("hanging suites spend the run budget: later candidates get ERR_EVAL_BUDGET, unrun", async () => {
+    expect(SCORE_RUN_BUDGET_MS).toBe(14 * 60_000);
+    for (const id of ["acme/one", "acme/two", "acme/three"]) {
+      await publish({ id, evals: { "basic.eval.json": SUITE } });
+    }
+    pushMaintainer(repo, "main", "publish three");
+    // Each run hangs until the deadline it was given.
+    const hang = fakeRole(() => {
+      clock += roleCalls.at(-1)?.timeoutMs ?? 0;
+      return run({ code: null, timedOut: true });
+    });
+
+    const r = await score(hang);
+
+    // The first gets the role's own deadline; the second only what is left of the budget.
+    expect(roleCalls.map((c) => c.timeoutMs)).toEqual([ROLE_TIMEOUT_MS, 2 * 60_000]);
+    const codes = Object.values(r).map((e) => ("error" in e ? e.error.code : "quality"));
+    expect(codes.sort()).toEqual(["ERR_EVAL_BUDGET", "ERR_EVAL_TIMEOUT", "ERR_EVAL_TIMEOUT"]);
+    const spent = Object.entries(r).find(
+      ([, e]) => "error" in e && e.error.code === "ERR_EVAL_BUDGET",
+    );
+    expect(spent?.[1]).toEqual({
+      packageSha256: expect.any(String),
+      error: {
+        code: "ERR_EVAL_BUDGET",
+        message:
+          "not scored this run: the score job's time budget was spent; it will be scored on the next run",
+      },
+    });
+    const messages = Object.values(r).map((e) => ("error" in e ? e.error.message : ""));
+    expect(messages).toContain("the eval did not finish within 2 minutes");
+    expect(messages).toContain("the eval did not finish within 12 minutes");
+    expect(readScores()).toEqual(r);
+  });
+
+  test("a budget with under a minute left runs nothing more", async () => {
+    await publish({ id: "acme/one", evals: { "basic.eval.json": SUITE } });
+    await publish({ id: "acme/two", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish two");
+    // The first run returns with 59 s of the budget left.
+    const slow = fakeRole((ref) => {
+      clock += SCORE_RUN_BUDGET_MS - 59_000;
+      const [id = "", version = ""] = ref.split("@");
+      return run({ stdout: okDoc(id, version) });
+    });
+
+    const r = await score(slow);
+
+    expect(roleCalls).toHaveLength(1);
+    const codes = Object.values(r).map((e) => ("error" in e ? e.error.code : "quality"));
+    expect(codes.sort()).toEqual(["ERR_EVAL_BUDGET", "quality"]);
   });
 
   test("the quality written is exactly the report minus results", async () => {
@@ -518,6 +594,17 @@ describe("the default role runner", () => {
       timedOut: false,
       overflow: false,
     });
+  });
+
+  test("a deadline passed to the runner replaces the role timeout, nothing else changes", async () => {
+    const f = fakeExec(() => [null, "", ""]);
+    await roleRunner(f.exec, () => scratch)("/abs/nimbus-gateway", "/work/x", 90_000);
+    const call = f.calls[0];
+    expect(call?.opts.timeout).toBe(90_000);
+    expect(call?.args).toEqual(["__nimbus-eval", "--package", "/work/x", "--json"]);
+    expect(call?.opts.maxBuffer).toBe(ROLE_STDOUT_MAX_BYTES);
+    expect(call?.opts.windowsHide).toBe(true);
+    expect(Object.keys(call?.opts.env ?? {}).sort()).toEqual(["HOME", "PATH"]);
   });
 
   test("the secrets in this process's environment never reach the role", async () => {

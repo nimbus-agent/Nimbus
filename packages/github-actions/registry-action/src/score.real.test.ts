@@ -117,6 +117,7 @@ describe.skipIf(!canRun)("registry score over the real __nimbus-eval role", () =
         tmpdir: () => scratch,
         validate: validatePublish,
         runRole: roleRunner(),
+        now: Date.now,
       },
     );
 

@@ -13,6 +13,12 @@
  * non-zero exit, garbage) is an error entry, never a partial score. `scores.json` is always
  * written, `{}` when nothing was scored, through a temp sibling and a rename. `sign` reads it as
  * untrusted input bound to each candidate's `packageSha256`.
+ *
+ * The whole run has one time budget (`SCORE_RUN_BUDGET_MS`): each role run gets the role's own
+ * deadline or what is left of the budget, whichever is shorter, and once under a minute is left
+ * every further evals candidate is an `ERR_EVAL_BUDGET` entry without running. Hanging suites,
+ * which a publisher can merge on purpose, therefore cannot turn the job red; a red score job would
+ * skip the whole sign run, trust requests (takedowns, key revocations) included.
  */
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -43,6 +49,10 @@ import { type ActionIo, code, GHA_IO } from "./report.ts";
 
 /** The role's deadline: a whole package's suites, every case, under the sandbox. */
 export const ROLE_TIMEOUT_MS = 12 * 60_000;
+/** The score run's overall budget, inside the job's 20-minute timeout. */
+export const SCORE_RUN_BUDGET_MS = 14 * 60_000;
+/** Below this much budget left, no further role run is started. */
+export const SCORE_MIN_RUN_MS = 60_000;
 /** The most stdout the role may print; past it the role is killed and the eval is an error. */
 export const ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
 /** How much of the role's stderr is kept (the end of it), for the step log. */
@@ -61,8 +71,11 @@ export interface RoleRun {
   overflow: boolean;
 }
 
-/** Runs `<gateway> __nimbus-eval --package <packageDir> --json`. */
-export type RunRole = (gateway: string, packageDir: string) => Promise<RoleRun>;
+/**
+ * Runs `<gateway> __nimbus-eval --package <packageDir> --json`, killed after `timeoutMs`
+ * (`ROLE_TIMEOUT_MS` when absent).
+ */
+export type RunRole = (gateway: string, packageDir: string, timeoutMs?: number) => Promise<RoleRun>;
 
 export interface ScoreDeps {
   validate: typeof validatePublish;
@@ -71,6 +84,8 @@ export interface ScoreDeps {
   /** Where the score mode's own work directory goes. */
   tmpdir: () => string;
   runRole: RunRole;
+  /** The clock the run budget is measured with, in milliseconds. */
+  now: () => number;
 }
 
 export type ScoreError = { code: string; message: string };
@@ -125,7 +140,7 @@ export function roleRunner(
   tmp: () => string = osTmpdir,
   rm: RemoveDir = removeDir,
 ): RunRole {
-  return (gateway, packageDir) =>
+  return (gateway, packageDir, timeoutMs = ROLE_TIMEOUT_MS) =>
     new Promise((resolve) => {
       const home = mkdtempSync(join(tmp(), "nimbus-eval-home-"));
       const finish = (r: RoleRun): void => {
@@ -139,7 +154,7 @@ export function roleRunner(
           ["__nimbus-eval", "--package", packageDir, "--json"],
           {
             env,
-            timeout: ROLE_TIMEOUT_MS,
+            timeout: timeoutMs,
             maxBuffer: ROLE_STDOUT_MAX_BYTES,
             windowsHide: true,
           },
@@ -205,16 +220,21 @@ const fail = (code: string, message: string): { error: ScoreError } => ({
   error: { code, message: clip(message) },
 });
 
+/** A deadline in words: whole minutes when it is one, else seconds. */
+function duration(ms: number): string {
+  return ms % 60_000 === 0
+    ? `${String(ms / 60_000)} minutes`
+    : `${String(Math.ceil(ms / 1000))} seconds`;
+}
+
 /** The role's run, judged: a quality for exactly this `<id>@<version>`, or an error. */
 export function judgeRoleRun(
   r: RoleRun,
   want: { id: string; version: string },
+  timeoutMs: number = ROLE_TIMEOUT_MS,
 ): { quality: EvalQuality } | { error: ScoreError } {
   if (r.timedOut) {
-    return fail(
-      "ERR_EVAL_TIMEOUT",
-      `the eval did not finish within ${String(ROLE_TIMEOUT_MS / 60_000)} minutes`,
-    );
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}`);
   }
   if (r.overflow) {
     return fail(
@@ -263,7 +283,7 @@ export async function scoreCandidate(
     verdict: Pick<PublishVerdict, "id" | "version" | "packageSha256">;
     packageBytes: Uint8Array;
   },
-  at: { gateway: string; work: string },
+  at: { gateway: string; work: string; timeoutMs?: number },
   runRole: RunRole,
   log: (line: string) => void = () => {},
   rm: RemoveDir = removeDir,
@@ -274,9 +294,9 @@ export async function scoreCandidate(
     const tgz = join(dir, "package.tgz");
     writeFileSync(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runRole(at.gateway, join(dir, "x"));
+    const r = await runRole(at.gateway, join(dir, "x"), at.timeoutMs);
     logStderr(log, `${id}@${version}`, r.stderrTail);
-    return { packageSha256, ...judgeRoleRun(r, { id, version }) };
+    return { packageSha256, ...judgeRoleRun(r, { id, version }, at.timeoutMs) };
   } catch (e) {
     return {
       packageSha256,
@@ -346,6 +366,7 @@ const SHARED: ScoreDeps = {
   io: GHA_IO,
   tmpdir: osTmpdir,
   runRole: roleRunner(),
+  now: Date.now,
 };
 
 interface ScoreRun {
@@ -353,11 +374,40 @@ interface ScoreRun {
   skipped: Skipped[];
 }
 
+/** The entry of an evals candidate the run had no budget left for. */
+const budgetSpent = (packageSha256: string): ScoreEntry => ({
+  packageSha256,
+  ...fail(
+    "ERR_EVAL_BUDGET",
+    "not scored this run: the score job's time budget was spent; it will be scored on the next run",
+  ),
+});
+
+/**
+ * Score one candidate within the run's budget: the role gets its own deadline or what is left,
+ * whichever is shorter; with under `SCORE_MIN_RUN_MS` left it does not run at all.
+ */
+function scoreWithinBudget(
+  c: { verdict: PublishVerdict; packageBytes: Uint8Array },
+  at: { gateway: string; work: string; deadline: number },
+  deps: ScoreDeps,
+): Promise<ScoreEntry> {
+  const left = at.deadline - deps.now();
+  if (left < SCORE_MIN_RUN_MS) return Promise.resolve(budgetSpent(c.verdict.packageSha256));
+  return scoreCandidate(
+    c,
+    { gateway: at.gateway, work: at.work, timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) },
+    deps.runRole,
+    deps.io.log,
+  );
+}
+
 /** Validate every unsigned candidate as `sign` does and score each one with an eval suite. */
 async function scoreAll(
   opts: ScoreOptions & { defaultBranch: string },
   deps: ScoreDeps,
   work: string,
+  deadline: number,
 ): Promise<ScoreRun> {
   const { git } = deps;
   const cwd = opts.workspace;
@@ -394,11 +444,10 @@ async function scoreAll(
     const v = o.verdict;
     if (v.hasEvals) {
       // NOSONAR S9382: sequential by design - one sandboxed eval at a time, inside the validation loop
-      const entry = await scoreCandidate(
+      const entry = await scoreWithinBudget(
         { verdict: v, packageBytes: o.candidate.packageBytes },
-        { gateway: opts.gateway, work },
-        deps.runRole,
-        deps.io.log,
+        { gateway: opts.gateway, work, deadline },
+        deps,
       );
       scores[`${v.id}@${v.version}`] = entry;
       // `sign` will not sign a version with evals and no score: later candidates must not bind to it.
@@ -437,12 +486,13 @@ function report(io: ActionIo, r: ScoreRun): void {
 
 /** Run the `score` mode: write `opts.out`. Throws (failing the run) on a refusal. */
 export async function runScore(opts: ScoreOptions, deps: ScoreDeps = SHARED): Promise<ScoresFile> {
+  const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-score-"));
   let r: ScoreRun;
   try {
-    r = await scoreAll({ ...opts, defaultBranch }, deps, work);
+    r = await scoreAll({ ...opts, defaultBranch }, deps, work, deadline);
   } finally {
     rmSync(work, { recursive: true, force: true });
   }

@@ -42,7 +42,14 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   `{ "<id>@<version>": { "packageSha256", "quality" } | { "packageSha256", "error" } }`, always
   (`{}` when there is nothing to score) and atomically. A timeout, an overflow, a non-zero exit,
   output that is not one valid eval document, or a document naming another `<id>@<version>` is an
-  `error` entry, never a partial score. Refuses a `root-key` or `github-token` input.
+  `error` entry, never a partial score. The whole run has a 14-minute budget: each role run's
+  deadline is 12 minutes or what is left of the budget, whichever is shorter, and once under a
+  minute is left every further version with eval suites gets an `ERR_EVAL_BUDGET` entry without
+  running (it is scored on a later run), so hanging suites cannot fail the job. That matters
+  because `sign` needs this job: a red score job (an infrastructure failure such as the apt
+  install or the release download) skips the whole sign run, trust requests (takedowns, key
+  revocations) included, until the workflow is re-run. Refuses a `root-key` or `github-token`
+  input.
 - **`trust-check`** — on a pull request to the trust feed: the reviewer aid. Refuses a pull
   request that changes anything outside `publishers/`, `requests/` and `statements/`, or adds a
   source file the feed would not sign, and summarises what the merged result would sign under a

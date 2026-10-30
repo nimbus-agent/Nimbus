@@ -271,7 +271,7 @@ describe("registry maintain init --github", () => {
     const { dir } = await initGithub();
     const { doc } = workflow(dir, "registry-sign.yml");
     const download = usesStep(doc, "sign", "actions/download-artifact@");
-    expect(DOWNLOAD_ARTIFACT_ACTION.startsWith(download.uses ?? "-")).toBe(true);
+    expect(download.uses).toBe(DOWNLOAD_ARTIFACT_ACTION.split(" #")[0]);
     expect(download.with).toEqual({ name: SCORES_ARTIFACT });
     const all = steps(doc, "sign");
     expect(all.indexOf(download)).toBeLessThan(
@@ -300,7 +300,7 @@ describe("registry maintain init --github", () => {
       "nimbus-gateway": GATEWAY_PATH,
     });
     const upload = usesStep(doc, "score", "actions/upload-artifact@");
-    expect(UPLOAD_ARTIFACT_ACTION.startsWith(upload.uses ?? "-")).toBe(true);
+    expect(upload.uses).toBe(UPLOAD_ARTIFACT_ACTION.split(" #")[0]);
     expect(upload.with).toEqual({
       name: SCORES_ARTIFACT,
       path: "scores.json",
@@ -319,8 +319,8 @@ describe("registry maintain init --github", () => {
     const { dir } = await initGithub();
     const lines = runLines(workflow(dir, file).doc, name);
     for (const line of [
-      "sudo apt-get -o Acquire::Retries=3 update -qq < /dev/null",
-      "sudo apt-get -o Acquire::Retries=3 install -y -qq bubblewrap < /dev/null",
+      "sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 update -qq < /dev/null",
+      "sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 install -y -qq bubblewrap < /dev/null",
       "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
       "sudo sysctl -w kernel.unprivileged_userns_clone=1 || true",
     ]) {
@@ -340,6 +340,7 @@ describe("registry maintain init --github", () => {
       "--proc /proc",
       "--dev /dev",
       "/usr/bin/true",
+      `"\${lib64[@]}"`,
     ]) {
       expect(probe).toContain(part);
     }

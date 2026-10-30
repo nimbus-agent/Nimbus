@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:1dea1bf84d7f7a2d587acd213c81c03bcda08fd86e4eb400d2384d41d4b2f5db
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:61809e6a8467c9fe227367f8b49c5f4c47e9c52ab0735dd65b077e45fd514934
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -10860,6 +10860,8 @@ function addVersion(extensions, v, publishedAt, provenance, quality) {
 
 // src/score.ts
 var ROLE_TIMEOUT_MS = 12 * 60000;
+var SCORE_RUN_BUDGET_MS = 14 * 60000;
+var SCORE_MIN_RUN_MS = 60000;
 var ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
 var ROLE_STDERR_TAIL_BYTES = 64 * 1024;
 var MAX_MESSAGE_CHARS = 1000;
@@ -10871,7 +10873,7 @@ function removeQuietly(rm, path) {
 }
 var tail = (s, max) => s.length > max ? s.slice(-max) : s;
 function roleRunner(exec = execFile2, tmp = osTmpdir, rm = removeDir) {
-  return (gateway, packageDir) => new Promise((resolve) => {
+  return (gateway, packageDir, timeoutMs = ROLE_TIMEOUT_MS) => new Promise((resolve) => {
     const home = mkdtempSync2(join3(tmp(), "nimbus-eval-home-"));
     const finish = (r) => {
       removeQuietly(rm, home);
@@ -10881,7 +10883,7 @@ function roleRunner(exec = execFile2, tmp = osTmpdir, rm = removeDir) {
     try {
       exec(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
         env,
-        timeout: ROLE_TIMEOUT_MS,
+        timeout: timeoutMs,
         maxBuffer: ROLE_STDOUT_MAX_BYTES,
         windowsHide: true
       }, (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))));
@@ -10924,9 +10926,12 @@ function lastLine(s) {
 var fail = (code, message) => ({
   error: { code, message: clip(message) }
 });
-function judgeRoleRun(r, want) {
+function duration(ms) {
+  return ms % 60000 === 0 ? `${String(ms / 60000)} minutes` : `${String(Math.ceil(ms / 1000))} seconds`;
+}
+function judgeRoleRun(r, want, timeoutMs = ROLE_TIMEOUT_MS) {
   if (r.timedOut) {
-    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${String(ROLE_TIMEOUT_MS / 60000)} minutes`);
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${duration(timeoutMs)}`);
   }
   if (r.overflow) {
     return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
@@ -10960,9 +10965,9 @@ async function scoreCandidate(c, at, runRole, log = () => {}, rm = removeDir) {
     const tgz = join3(dir, "package.tgz");
     writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runRole(at.gateway, join3(dir, "x"));
+    const r = await runRole(at.gateway, join3(dir, "x"), at.timeoutMs);
     logStderr(log, `${id}@${version}`, r.stderrTail);
-    return { packageSha256, ...judgeRoleRun(r, { id, version }) };
+    return { packageSha256, ...judgeRoleRun(r, { id, version }, at.timeoutMs) };
   } catch (e) {
     return {
       packageSha256,
@@ -11007,9 +11012,20 @@ var SHARED = {
   git: exports_git_tree,
   io: GHA_IO,
   tmpdir: osTmpdir,
-  runRole: roleRunner()
+  runRole: roleRunner(),
+  now: Date.now
 };
-async function scoreAll(opts, deps, work) {
+var budgetSpent = (packageSha256) => ({
+  packageSha256,
+  ...fail("ERR_EVAL_BUDGET", "not scored this run: the score job's time budget was spent; it will be scored on the next run")
+});
+function scoreWithinBudget(c, at, deps) {
+  const left = at.deadline - deps.now();
+  if (left < SCORE_MIN_RUN_MS)
+    return Promise.resolve(budgetSpent(c.verdict.packageSha256));
+  return scoreCandidate(c, { gateway: at.gateway, work: at.work, timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) }, deps.runRole, deps.io.log);
+}
+async function scoreAll(opts, deps, work, deadline) {
   const { git } = deps;
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
@@ -11043,7 +11059,7 @@ async function scoreAll(opts, deps, work) {
     }
     const v = o.verdict;
     if (v.hasEvals) {
-      const entry = await scoreCandidate({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work }, deps.runRole, deps.io.log);
+      const entry = await scoreWithinBudget({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
       scores[`${v.id}@${v.version}`] = entry;
       if ("error" in entry)
         continue;
@@ -11076,12 +11092,13 @@ function report(io, r) {
   io.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
 }
 async function runScore(opts, deps = SHARED) {
+  const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   const work = mkdtempSync2(join3(deps.tmpdir(), "nimbus-registry-score-"));
   let r;
   try {
-    r = await scoreAll({ ...opts, defaultBranch }, deps, work);
+    r = await scoreAll({ ...opts, defaultBranch }, deps, work, deadline);
   } finally {
     rmSync2(work, { recursive: true, force: true });
   }

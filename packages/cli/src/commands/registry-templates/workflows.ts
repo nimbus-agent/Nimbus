@@ -65,8 +65,8 @@ function gatewaySetupSteps(pin: ActionPin): string {
         # restriction, so a probe under sudo would pass even if the sysctl writes did not apply.
         run: |
           sudo rm -f /etc/apt/sources.list.d/*microsoft* /etc/apt/sources.list.d/*azure*
-          sudo apt-get -o Acquire::Retries=3 update -qq < /dev/null
-          sudo apt-get -o Acquire::Retries=3 install -y -qq bubblewrap < /dev/null
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 update -qq < /dev/null
+          sudo DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a apt-get -o Acquire::Retries=3 install -y -qq bubblewrap < /dev/null
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
           lib64=()
