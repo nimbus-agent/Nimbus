@@ -19,16 +19,35 @@ jobs:
       - name: Prepare
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq bubblewrap gcc libc6-dev
+          sudo apt-get install -y -qq bubblewrap gcc libc6-dev apparmor-utils
           gcc -O1 -Wall -o spike-launcher spike/launcher.c
           sudo cp spike-launcher /usr/local/bin/spike-launcher
           sudo cp "$(which bun)" /usr/local/bin/bun-spike
           sudo chmod 755 /usr/local/bin/spike-launcher /usr/local/bin/bun-spike
-      - name: Kernel restrictions
+      - name: "1 stock Ubuntu: what ships today, no-network sandbox"
+        continue-on-error: true
         run: |
-          id
-          uname -r
-          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces 2>&1 || true
-          ls /etc/apparmor.d | grep -iE 'bwrap|unpriv' || echo "no bwrap apparmor profile"
-      - name: Forwarder spike
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          echo "--- bwrap --unshare-net (no-network policy)"
+          bwrap --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --unshare-user --unshare-net /usr/bin/echo STARTED; echo "exit $?"
+          echo "--- bwrap --share-net (whole-internet fallback)"
+          bwrap --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --unshare-user --share-net /usr/bin/echo STARTED; echo "exit $?"
+      - name: "2 stock Ubuntu: real v10.11.0 gateway, no-network policy"
+        continue-on-error: true
+        run: |
+          curl -fsSL -o gw https://github.com/nimbus-agent/Nimbus/releases/download/v10.11.0/nimbus-gateway-linux-x64
+          chmod +x gw
+          mkdir -p "$RUNNER_TEMP/sb"
+          NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":[],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" ./gw __nimbus-sandbox /usr/bin/echo STARTED; echo "exit $?"
+      - name: "3 forwarder on stock Ubuntu"
+        continue-on-error: true
+        run: /usr/local/bin/bun-spike spike/host.ts
+      - name: "4 load an AppArmor profile for bwrap only, restriction left ON"
+        run: |
+          printf 'abi <abi/4.0>,\ninclude <tunables/global>\nprofile nimbus-bwrap /usr/bin/bwrap flags=(unconfined) {\n  userns,\n}\n' | sudo tee /etc/apparmor.d/nimbus-bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap
+          sysctl kernel.apparmor_restrict_unprivileged_userns
+          bwrap --ro-bind /usr /usr --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --unshare-user --unshare-net /usr/bin/echo STARTED; echo "exit $?"
+      - name: "5 forwarder with the profile"
+        continue-on-error: true
         run: /usr/local/bin/bun-spike spike/host.ts
