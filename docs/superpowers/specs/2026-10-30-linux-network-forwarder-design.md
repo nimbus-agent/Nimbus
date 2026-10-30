@@ -53,30 +53,32 @@ Only a policy in `per-host` mode takes this path. A no-network policy keeps toda
 2. **Listeners.** The launcher binds `127.0.0.x:port` for each declared entry, on the real port, so a client's TLS name and port stay correct. Binding below 1024 needs `CAP_NET_BIND_SERVICE` in the new namespace. Entries are normalised with `parseNetworkEntry`, so a bare host means port 443.
 3. **Forwarder.** It drops all capabilities first, then relays bytes. It tells the wrapper which declared entry the connection arrived on, and knows nothing about the policy.
 4. **Enforcement** is in the wrapper, outside the sandbox. It checks the entry against the policy it parsed, resolves the name on the host, applies the address rules below, connects to the address it checked, and relays. An entry not in the policy is closed. So a compromised forwarder gains nothing.
-5. **Undeclared names.** A generated `resolv.conf` points at `127.0.0.53`, where the forwarder relays each UDP datagram, unparsed, to the wrapper. The wrapper parses it in TypeScript and answers with the mapped address for a declared name and `NXDOMAIN` for anything else. No query leaves the machine. The wrapper writes one sanitised, rate-limited stderr line naming the refused host, which is how a broken connector gets diagnosed, since the child itself only sees a failed lookup.
+5. **Undeclared names.** A generated `resolv.conf` points at `127.0.0.53`, where the forwarder relays each UDP datagram, unparsed, to the wrapper. The wrapper parses it in TypeScript. For a declared name it answers an `A` query with the mapped address and any other type with `NOERROR` and no records, so a dual-stack lookup still succeeds. For anything else it answers `NXDOMAIN`. Port 53 is UDP only, since these answers are too small to need TCP. No query leaves the machine. The wrapper writes one sanitised, rate-limited stderr line naming the refused host, which is how a broken connector gets diagnosed, since the child itself only sees a failed lookup. A direct connection to an undeclared IP uses no name and reaches nothing, so it is refused by the kernel and neither the wrapper nor the log sees it.
 6. **The child** runs under today's `buildBwrapArgv` flags, nested inside, with the real seccomp filter. It does not see the socket or the forwarder.
 
 ### Address rules
 
 A declared name can resolve to something the owner never meant to allow. An extension could declare a name it controls and point it at the owner's router, or at a cloud metadata address. So the rule depends on who chose the entry. The wrapper resolves once, filters the answers, and connects only to an address it kept, so a name that changes its answer between check and connect gains nothing.
 
-- **Owner-configured:** the owner typed it. That means a host taken at spawn from the owner's connector settings (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`.
+- **Owner-configured:** the owner typed it. That means a host taken at spawn from a value the owner stored for that connector (`manifestWithExtraNetworkHosts`), or a `--net` on `connector add --mcp`. A default written in code or in a manifest is not owner-configured, even when it passes through the same code.
 - **Package-declared:** a first-party manifest's fixed list, or an extension's manifest.
 
 | Resolved address | Owner-configured | Package-declared |
 |---|---|---|
 | Public | Allowed | Allowed |
-| Private (RFC 1918, IPv6 unique-local) | Allowed, so a self-hosted Jenkins on a LAN name works | Refused for a name. Allowed for that literal address, which the owner saw at approval |
+| Private (RFC 1918, `100.64.0.0/10`, IPv6 unique-local) | Allowed, so a self-hosted Jenkins on a LAN or Tailscale name works | Refused for a name. Allowed for that literal address, which the owner saw at approval |
 | Loopback | Allowed only if the entry is `localhost` or that literal, on the declared port | Refused |
 | Link-local, including `169.254.169.254` and `fe80::/10` | Refused | Refused |
+| Anything else not globally routable, including `0.0.0.0/8`, `::`, multicast and reserved ranges | Refused | Refused |
 
-Link-local is refused for everyone because nothing legitimate needs it and cloud credentials live there. Package-declared loopback is refused because the gateway's own local listeners are there. IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
+"Public" means an address outside every range in this table, so a range nobody listed is refused rather than allowed. `0.0.0.0` must not count as public, because connecting to it reaches the host's loopback. Link-local is refused for everyone because nothing legitimate needs it and cloud credentials live there. Package-declared loopback is refused because the gateway's own local listeners are there. IPv4-mapped IPv6 answers are judged as the IPv4 address they carry. A refusal is logged the same way as an undeclared name.
 
 The policy needs a new field naming the owner-configured entries, passed through `parseSandboxPolicy`. It must be set only by gateway code from the owner's settings, never read from a manifest.
 
 ### Limits
 
-- A policy has at most 253 distinct hosts, the size of `127.0.0.2` to `127.0.0.254`. Over that, the spawn refuses.
+- A policy has at most 252 distinct hosts: `127.0.0.2` to `127.0.0.254`, without `127.0.0.53`, which the resolver holds. Over that, the spawn refuses.
+- Every descriptor the launcher opens for its listeners is close-on-exec, so neither the inner `bwrap` nor the child inherits one.
 - The wrapper allows at most 256 open connections per child and closes any above that, so a child cannot exhaust the gateway's file descriptors. There is no idle timeout, because Slack and Discord connections are long-lived on purpose. Relays apply backpressure rather than buffering without limit.
 
 ### Measured so far
