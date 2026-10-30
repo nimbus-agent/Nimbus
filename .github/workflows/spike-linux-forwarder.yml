@@ -1,0 +1,34 @@
+# THROWAWAY, never merged. Proves the forwarder shape on a real runner.
+name: spike-linux-forwarder
+on:
+  push:
+    branches: [dev/asaf/linux-forwarder-spike]
+permissions:
+  contents: read
+jobs:
+  spike:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0 (Node 24 runtime)
+        with:
+          bun-version: "1.4"
+      - name: Prepare
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap gcc libc6-dev
+          gcc -O1 -Wall -o spike-launcher spike/launcher.c
+          sudo cp spike-launcher /usr/local/bin/spike-launcher
+          sudo cp "$(which bun)" /usr/local/bin/bun-spike
+          sudo chmod 755 /usr/local/bin/spike-launcher /usr/local/bin/bun-spike
+      - name: Kernel restrictions
+        run: |
+          id
+          uname -r
+          sysctl kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces 2>&1 || true
+          ls /etc/apparmor.d | grep -iE 'bwrap|unpriv' || echo "no bwrap apparmor profile"
+      - name: Forwarder spike
+        run: /usr/local/bin/bun-spike spike/host.ts
