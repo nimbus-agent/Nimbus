@@ -19,7 +19,7 @@ import {
   MAX_EVAL_SUITE_FILE_BYTES,
   MAX_MANIFEST_BYTES,
 } from "./caps.ts";
-import { RegistryError } from "./errors.ts";
+import { RegistryError, type RegistryErrorCode } from "./errors.ts";
 import {
   EVAL_RUBRIC_KINDS,
   evalSuitesFromFiles,
@@ -397,7 +397,7 @@ describe("loadEvalSuites", () => {
   });
 });
 
-function expectCode(fn: () => unknown, code: string, fragment: string): void {
+function expectCode(fn: () => unknown, code: RegistryErrorCode, fragment: string): void {
   let caught: unknown;
   try {
     fn();

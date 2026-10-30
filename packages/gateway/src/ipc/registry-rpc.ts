@@ -464,6 +464,12 @@ function versionsNewestFirst(entry: RegistryExtensionEntry): Array<[string, Regi
   return Object.entries(entry.versions).sort(([a], [b]) => Bun.semver.order(b, a));
 }
 
+/**
+ * The longest `qualityInvalid` reason a client is shown. The reason can quote the malformed value's
+ * own key names, which whoever wrote the signed index chose; the cap keeps a hostile one small.
+ */
+const QUALITY_INVALID_MAX_CHARS = 200;
+
 /** A version's registry-measured quality as clients see it: the totals, or `null` when not scored. */
 type QualityView = { score: number; cases: number; passed: number } | null;
 
@@ -480,7 +486,7 @@ function qualityOf(v: RegistryVersionEntry): { quality: QualityView; qualityInva
         quality: { score: q.quality.score, cases: q.quality.cases, passed: q.quality.passed },
       };
     case "invalid":
-      return { quality: null, qualityInvalid: q.reason };
+      return { quality: null, qualityInvalid: q.reason.slice(0, QUALITY_INVALID_MAX_CHARS) };
     default:
       return { quality: null };
   }

@@ -577,6 +577,27 @@ describe("registry.search and registry.info", () => {
     expect(v100).not.toHaveProperty("qualityInvalid");
   });
 
+  test("a qualityInvalid reason quoting index-chosen key names is capped at 200 characters", async () => {
+    const keys = Object.fromEntries(
+      Array.from({ length: 20 }, (_, i) => [`k${String(i)}${"x".repeat(60)}`, 1]),
+    );
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Tool", quality: keys }],
+      },
+    });
+    pin("main", tmp);
+    const out = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { versions: Array<Record<string, unknown>> };
+    };
+    const reason = out.value.versions[0]?.["qualityInvalid"];
+    expect(out.value.versions[0]?.["quality"]).toBeNull();
+    expect(typeof reason).toBe("string");
+    expect(String(reason)).toHaveLength(200);
+    expect(String(reason)).toStartWith("quality has unexpected keys: k0");
+  });
+
   test("search carries the offered version's quality, never a newer beta's or a malformed one", async () => {
     const quality = (score: number, passed: number) => ({
       scorer: 1,
