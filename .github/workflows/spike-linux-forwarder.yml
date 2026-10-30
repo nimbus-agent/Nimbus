@@ -30,5 +30,27 @@ jobs:
           sudo apparmor_parser -r /etc/apparmor.d/nimbus-bwrap
           ldd --version | head -1
           cat /etc/resolv.conf | grep -v '^#'
-      - name: "Find the blocked syscalls"
-        run: /usr/local/bin/bun spike/find-syscalls.ts
+      - name: "Resolver"
+        run: |
+          set +e
+          ls -l /etc/resolv.conf
+          readlink -f /etc/resolv.conf
+          grep -E '^hosts' /etc/nsswitch.conf
+          echo "--- inside today's argv, no /run bind"
+          bwrap --unshare-user --share-net --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev /usr/bin/sh -c 'ls -l /etc/resolv.conf; cat /etc/resolv.conf | head -3; echo "cat exit $?"; ls /run 2>&1 | head -3'
+          echo "--- who listens on 53"
+          sudo ss -lntup | grep -E ':53\b'
+          echo "--- with the stub symlink forced, on a fresh file, no /run bind"
+          sudo cp -P /etc/resolv.conf /tmp/resolv.bak
+          sudo ln -sf ../run/systemd/resolve/stub-resolv.conf /etc/resolv.conf
+          ls -l /etc/resolv.conf
+          cat > /tmp/l.ts <<'EOF'
+          const { lookup } = await import("node:dns/promises");
+          console.log(await lookup("nimbus-sandbox-check.invalid").then(() => "RESOLVED", (e) => e.code));
+          console.log(await lookup("api.github.com").then((r) => "api.github.com " + r.address, (e) => e.code));
+          process.exit(0);
+          EOF
+          mkdir -p /tmp/cw; cp /tmp/l.ts /tmp/cw/l.ts
+          bwrap --unshare-user --share-net --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --tmpfs /tmp --bind /tmp/cw /tmp/cw /usr/local/bin/bun --no-env-file /tmp/cw/l.ts; echo "no /run bind exit $?"
+          bwrap --unshare-user --share-net --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /lib /lib --ro-bind-try /lib64 /lib64 --proc /proc --dev /dev --tmpfs /tmp --bind /tmp/cw /tmp/cw --ro-bind /run/systemd/resolve/stub-resolv.conf /run/systemd/resolve/stub-resolv.conf /usr/local/bin/bun --no-env-file /tmp/cw/l.ts; echo "file bound exit $?"
+          sudo cp -P /tmp/resolv.bak /etc/resolv.conf
