@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:6b56b6c12574fdc5f9e7968bc66e23b868a2c161be072a34ee9474c317ec8e52
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:59cb692d56307d5c764467668de43b543a82312887e994edacb9936fa4a59536
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4206,6 +4206,9 @@ __export(exports_git_tree, {
   remoteDefaultBranch: () => remoteDefaultBranch
 });
 
+// src/main.ts
+import { isAbsolute as isAbsolute2, join as join7 } from "node:path";
+
 // ../shared/gha-io.ts
 import { appendFileSync } from "node:fs";
 function inputEnvName(name) {
@@ -4241,6 +4244,7 @@ var MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
 var MAX_UNPACKED_BYTES = 200 * 1024 * 1024;
 var MAX_ENTRY_COUNT = 5000;
 var MAX_ROLE_PACK_MANIFEST_BYTES = 128 * 1024;
+var MAX_EVAL_CASES = 200;
 var MAX_EVAL_INPUT_BYTES = 64 * 1024;
 var MAX_EVAL_REPLY_BYTES = 1024 * 1024;
 var MAX_EVAL_SUITE_FILE_BYTES = 1024 * 1024;
@@ -4292,6 +4296,7 @@ function isPackageFile(relPath) {
 }
 
 // ../../registry-format/src/eval-suite.ts
+var EVAL_RUBRIC_KINDS = ["exact", "json-match", "one-of"];
 var SUITE_FILE_RE = /^evals\/[^/]+\.eval\.json$/;
 var TYPE_MARKER_VALUES = new Set([
   "string",
@@ -4306,6 +4311,115 @@ function isEvalSuiteFile(relPath) {
 }
 var NO_FOLLOW_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
 var UNSAFE_SEGMENTS = new Set(["", ".", ".."]);
+
+// ../../registry-format/src/eval-score.ts
+var EVAL_SCORER_VERSION = 1;
+
+// ../../registry-format/src/eval-quality.ts
+function bad(why) {
+  return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
+}
+function plainObject(raw, what) {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw bad(`${what} must be an object`);
+  }
+  return raw;
+}
+function exactKeys(o, keys, what) {
+  const have = Object.keys(o);
+  const extra = have.filter((k) => !keys.includes(k));
+  const missing = keys.filter((k) => !have.includes(k));
+  if (extra.length > 0)
+    throw bad(`${what} has unexpected keys: ${extra.join(", ")}`);
+  if (missing.length > 0)
+    throw bad(`${what} is missing keys: ${missing.join(", ")}`);
+}
+function int(v, min, max, what) {
+  if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
+    throw bad(`${what} must be an integer from ${min} to ${max}`);
+  }
+  return v;
+}
+function parseEvalQuality(raw) {
+  const o = plainObject(raw, "quality");
+  exactKeys(o, ["scorer", "score", "cases", "passed", "rubrics"], "quality");
+  if (o["scorer"] !== EVAL_SCORER_VERSION)
+    throw bad("quality.scorer is not a known scorer");
+  const cases = int(o["cases"], 1, MAX_EVAL_CASES, "quality.cases");
+  const passed = int(o["passed"], 0, cases, "quality.passed");
+  const score = int(o["score"], 0, 100, "quality.score");
+  if (score !== Math.floor(passed * 100 / cases)) {
+    throw bad("quality.score does not match passed and cases");
+  }
+  const rubricsRaw = plainObject(o["rubrics"], "quality.rubrics");
+  exactKeys(rubricsRaw, EVAL_RUBRIC_KINDS, "quality.rubrics");
+  let sumCases = 0;
+  let sumPassed = 0;
+  const rubrics = {};
+  for (const kind of EVAL_RUBRIC_KINDS) {
+    const t = plainObject(rubricsRaw[kind], `quality.rubrics.${kind}`);
+    exactKeys(t, ["cases", "passed"], `quality.rubrics.${kind}`);
+    const c = int(t["cases"], 0, cases, `quality.rubrics.${kind}.cases`);
+    const p = int(t["passed"], 0, c, `quality.rubrics.${kind}.passed`);
+    rubrics[kind] = { cases: c, passed: p };
+    sumCases += c;
+    sumPassed += p;
+  }
+  if (sumCases !== cases || sumPassed !== passed) {
+    throw bad("quality.rubrics do not sum to the totals");
+  }
+  return { scorer: 1, score, cases, passed, rubrics };
+}
+// ../../registry-format/src/eval-role-document.ts
+function isObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isResult(v) {
+  return isObject(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
+}
+function parseEvalReport(raw) {
+  if (!isObject(raw) || !Array.isArray(raw["results"]))
+    return null;
+  if (!raw["results"].every(isResult))
+    return null;
+  const { results: _results, ...quality } = raw;
+  try {
+    parseEvalQuality(quality);
+  } catch {
+    return null;
+  }
+  const results = raw["results"];
+  if (results.length !== raw["cases"])
+    return null;
+  if (results.filter((r) => r["pass"] === true).length !== raw["passed"])
+    return null;
+  return raw;
+}
+function parseEvalRoleDocument(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!isObject(raw))
+    return null;
+  if (raw["ok"] === false) {
+    const e = raw["error"];
+    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
+      return { ok: false, error: { code: e["code"], message: e["message"] } };
+    }
+    return null;
+  }
+  if (raw["ok"] !== true)
+    return null;
+  if (typeof raw["extensionId"] !== "string" || typeof raw["version"] !== "string")
+    return null;
+  const report = parseEvalReport(raw["report"]);
+  if (report === null)
+    return null;
+  return { ok: true, extensionId: raw["extensionId"], version: raw["version"], report };
+}
 // ../../registry-format/src/extension-env.ts
 var BASELINE_KEYS = [
   "PATH",
@@ -9155,9 +9269,9 @@ var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function readManifestRepository(rawManifest) {
-  if (!isObject(rawManifest))
+  if (!isObject2(rawManifest))
     return;
   const v = rawManifest["repository"];
   return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
@@ -9185,16 +9299,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject(entry))
+  if (!isObject2(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject(result) ? result["statement"] : undefined;
-  if (!isObject(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject2(result) ? result["statement"] : undefined;
+  if (!isObject2(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject(result) ? result["signature"] : undefined;
-  const cert = isObject(signature) ? signature["certificate"] : undefined;
-  if (!isObject(cert))
+  const signature = isObject2(result) ? result["signature"] : undefined;
+  const cert = isObject2(signature) ? signature["certificate"] : undefined;
+  if (!isObject2(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -9597,7 +9711,7 @@ var PLACEHOLDER_PUBLISHER = "placeholder";
 function invalid4(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-function exactKeys(o, allowed, required) {
+function exactKeys2(o, allowed, required) {
   for (const k of Object.keys(o)) {
     if (!allowed.includes(k))
       throw invalid4(`a request has an unknown key: ${k}`);
@@ -9618,7 +9732,7 @@ function parseRegistryRequest(raw) {
     signature: PLACEHOLDER_SIGNATURE
   };
   if (o["kind"] === "key.revoke") {
-    exactKeys(o, REVOKE_KEYS, REVOKE_KEYS);
+    exactKeys2(o, REVOKE_KEYS, REVOKE_KEYS);
     const s = parseTrustStatement({ ...o, ...signer });
     return {
       kind: "key.revoke",
@@ -9628,7 +9742,7 @@ function parseRegistryRequest(raw) {
     };
   }
   if (o["kind"] === "extension.takedown") {
-    exactKeys(o, TAKEDOWN_KEYS, TAKEDOWN_REQUIRED);
+    exactKeys2(o, TAKEDOWN_KEYS, TAKEDOWN_REQUIRED);
     const explicit = o["publisherId"];
     const s = parseTrustStatement({
       ...o,
@@ -9735,7 +9849,7 @@ var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
 function invalid5(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -9743,13 +9857,13 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject2(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject3(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject2(raw))
+  if (!isObject3(raw))
     throw invalid5("a publisher file must be an object");
   for (const k of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k)) {
@@ -9772,7 +9886,7 @@ function parsePublisherFile(path, raw) {
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject2(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject3(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -10818,91 +10932,15 @@ async function runCheck(opts, deps = SHARED) {
   }
 }
 
-// src/sign.ts
-import { createHash as createHash6 } from "node:crypto";
-import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
+// src/score.ts
+import { execFile as execFile2 } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { existsSync as existsSync2, mkdtempSync as mkdtempSync3, renameSync, rmSync as rmSync3, statSync, writeFileSync as writeFileSync3 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
-import { join as join5 } from "node:path";
+import { basename, dirname, isAbsolute, join as join4 } from "node:path";
 
-// src/site-commit.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import { mkdtempSync as mkdtempSync3, rmSync as rmSync3 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join as join4 } from "node:path";
-var BOT_NAME = "github-actions[bot]";
-var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
-var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
-var BOT_ENV = {
-  GIT_AUTHOR_NAME: BOT_NAME,
-  GIT_AUTHOR_EMAIL: BOT_EMAIL,
-  GIT_COMMITTER_NAME: BOT_NAME,
-  GIT_COMMITTER_EMAIL: BOT_EMAIL
-};
-function run(args, opts) {
-  return execFileSync2("git", [...args], {
-    cwd: opts.cwd,
-    env: opts.env ?? process.env,
-    input: opts.input,
-    windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024,
-    stdio: ["pipe", "pipe", "pipe"]
-  }).toString("utf8").trim();
-}
-function commitSite(parent, files, message, cwd) {
-  const scratch = mkdtempSync3(join4(tmpdir(), "nimbus-registry-site-"));
-  try {
-    const env = { ...process.env, GIT_INDEX_FILE: join4(scratch, "index") };
-    run(["read-tree", parent], { cwd, env });
-    for (const f of files) {
-      assertSafeTreePath(f.path);
-      const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], { cwd, input: f.bytes });
-      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f.path}`], { cwd, env });
-    }
-    const tree = run(["write-tree"], { cwd, env });
-    if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd }))
-      return;
-    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], {
-      cwd,
-      env: { ...process.env, ...BOT_ENV }
-    });
-  } finally {
-    rmSync3(scratch, { recursive: true, force: true });
-  }
-}
-var NON_FAST_FORWARD = /non-fast-forward|fetch first|\[rejected\]/;
-function pushCommit(commit, branch, cwd) {
-  try {
-    run(["push", "--porcelain", "origin", `${commit}:refs/heads/${branch}`], { cwd });
-    return "pushed";
-  } catch (err) {
-    const text = [
-      err !== null && typeof err === "object" && "stderr" in err ? String(err.stderr) : "",
-      err !== null && typeof err === "object" && "stdout" in err ? String(err.stdout) : ""
-    ].join(`
-`);
-    if (NON_FAST_FORWARD.test(text))
-      return "non-fast-forward";
-    throw new Error(`git push to ${branch} failed: ${text.trim()}`);
-  }
-}
-
-// src/sign.ts
-var SHARED2 = {
-  validate: validatePublish,
-  sign: signIndex,
-  git: exports_git_tree,
-  io: GHA_IO,
-  tmpdir: osTmpdir2
-};
-var MAX_ATTEMPTS = 3;
-var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
-function parseRootKey(raw) {
-  const s = raw.trim();
-  if (!ROOT_KEY_RE.test(s)) {
-    throw new Error('input "root-key" is not a registry root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus registry maintain init` writes it');
-  }
-  return new Uint8Array(Buffer.from(s, "base64"));
-}
+// src/candidates.ts
+import { createHash as createHash6 } from "node:crypto";
 function extensionDirs(git, ref, cwd) {
   const dirs = new Map;
   const paths = new Set;
@@ -10945,13 +10983,383 @@ function assertSignedIntact(git, index, ref, paths, cwd) {
 function sameFileSet(names) {
   return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
 }
+function admitStatements(git, index, ref, cwd, skipped) {
+  const files = readStatementFiles(git, ref, cwd);
+  for (const f of files.skipped)
+    skipped.push({ dir: f.path, reason: f.reason });
+  const admission = admitPublisherStatements(index, files.values);
+  for (const s of admission.skipped)
+    skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  return admission;
+}
+async function* validateUnsigned(input) {
+  const { git, ref, cwd } = input;
+  const unsigned = [...input.dirs.keys()].filter((d) => !input.signedDirs.has(d));
+  for (const dir of unsigned.sort(codeUnitCompare)) {
+    const coords = splitExtensionDir(dir);
+    const names = input.dirs.get(dir) ?? new Set;
+    if (coords === undefined || !sameFileSet(names)) {
+      yield {
+        kind: "skipped",
+        dir,
+        reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`
+      };
+      continue;
+    }
+    const candidate = readCandidate(git, ref, coords, cwd);
+    let verdict;
+    try {
+      verdict = await input.validate(candidate, input.bindings(), input.config, input.work);
+    } catch (e) {
+      if (!(e instanceof RegistryError))
+        throw e;
+      yield { kind: "skipped", dir, reason: e.message };
+      continue;
+    }
+    yield { kind: "valid", dir, candidate, verdict };
+  }
+}
+function addVersion(extensions, v, publishedAt, provenance) {
+  const base = `extensions/${v.id}/${v.version}`;
+  const existing = extensions[v.id];
+  extensions[v.id] = {
+    publisher: publisherAfterPublish(existing, v.publisher),
+    versions: {
+      ...existing?.versions,
+      [v.version]: {
+        channel: v.channel,
+        name: v.name,
+        manifest: `${base}/manifest.json`,
+        manifestSha256: v.manifestSha256,
+        package: `${base}/package.tgz`,
+        packageSha256: v.packageSha256,
+        packageSizeBytes: v.packageSizeBytes,
+        entryHash: v.entryHash,
+        publishedAt,
+        ...provenance !== undefined && { provenance }
+      }
+    }
+  };
+}
+
+// src/score.ts
+var ROLE_TIMEOUT_MS = 12 * 60000;
+var ROLE_STDOUT_MAX_BYTES = 8 * 1024 * 1024;
+var ROLE_STDERR_TAIL_BYTES = 64 * 1024;
+var MAX_MESSAGE_CHARS = 1000;
+var tail = (s, max) => s.length > max ? s.slice(-max) : s;
+function roleRunner(exec = execFile2, tmp = osTmpdir2) {
+  return (gateway, packageDir) => new Promise((resolve) => {
+    const home = mkdtempSync3(join4(tmp(), "nimbus-eval-home-"));
+    const finish = (r) => {
+      rmSync3(home, { recursive: true, force: true });
+      resolve(r);
+    };
+    const env = { PATH: process.env["PATH"] ?? "", HOME: home };
+    try {
+      exec(gateway, ["__nimbus-eval", "--package", packageDir, "--json"], {
+        env,
+        timeout: ROLE_TIMEOUT_MS,
+        maxBuffer: ROLE_STDOUT_MAX_BYTES,
+        windowsHide: true
+      }, (err, stdout, stderr) => finish(roleRunOf(err, String(stdout), String(stderr))));
+    } catch (e) {
+      finish({
+        code: null,
+        stdout: "",
+        stderrTail: `could not start the gateway: ${e instanceof Error ? e.message : String(e)}`,
+        timedOut: false,
+        overflow: false
+      });
+    }
+  });
+}
+function roleRunOf(err, stdout, stderr) {
+  const stderrTail = tail(stderr, ROLE_STDERR_TAIL_BYTES);
+  if (err === null)
+    return { code: 0, stdout, stderrTail, timedOut: false, overflow: false };
+  const overflow = err.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+  const timedOut = !overflow && err.killed === true;
+  if (typeof err.code === "number") {
+    return { code: err.code, stdout, stderrTail, timedOut, overflow };
+  }
+  const why = typeof err.code === "string" && !overflow ? `could not run the gateway: ${err.code}
+` : "";
+  return {
+    code: null,
+    stdout,
+    stderrTail: tail(`${stderrTail}${why}`, ROLE_STDERR_TAIL_BYTES),
+    timedOut,
+    overflow
+  };
+}
+var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
+var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
+var roleCode = (c) => /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
+function lastLine(s) {
+  return s.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
+}
+var fail = (code, message) => ({
+  error: { code, message: clip(message) }
+});
+function judgeRoleRun(r, want) {
+  if (r.timedOut) {
+    return fail("ERR_EVAL_TIMEOUT", `the eval did not finish within ${String(ROLE_TIMEOUT_MS / 60000)} minutes`);
+  }
+  if (r.overflow) {
+    return fail("ERR_EVAL_OUTPUT_TOO_LARGE", `the eval role printed more than ${String(ROLE_STDOUT_MAX_BYTES)} bytes`);
+  }
+  if (r.code !== 0) {
+    const last = lastLine(r.stderrTail);
+    return fail("ERR_EVAL_ROLE_FAILED", `the eval role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`);
+  }
+  const lines = r.stdout.split(`
+`).filter((l) => l.trim() !== "");
+  const doc = lines.length === 1 ? parseEvalRoleDocument(lines[0] ?? "") : null;
+  if (doc === null) {
+    return fail("ERR_EVAL_BAD_OUTPUT", "the eval role's output is not exactly one valid eval document");
+  }
+  if (!doc.ok)
+    return fail(roleCode(doc.error.code), doc.error.message);
+  if (doc.extensionId !== want.id || doc.version !== want.version) {
+    return fail("ERR_EVAL_IDENTITY_MISMATCH", `the eval role scored ${doc.extensionId}@${doc.version}, not ${want.id}@${want.version}`);
+  }
+  const { results: _results, ...quality } = doc.report;
+  try {
+    return { quality: parseEvalQuality(quality) };
+  } catch (e) {
+    return fail("ERR_EVAL_BAD_OUTPUT", e instanceof Error ? e.message : String(e));
+  }
+}
+async function scoreCandidate(c, at, runRole, log = () => {}) {
+  const { id, version, packageSha256 } = c.verdict;
+  const dir = mkdtempSync3(join4(at.work, "score-"));
+  try {
+    const tgz = join4(dir, "package.tgz");
+    writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
+    await inspectPackage(tgz, dir);
+    const r = await runRole(at.gateway, join4(dir, "x"));
+    logStderr(log, `${id}@${version}`, r.stderrTail);
+    return { packageSha256, ...judgeRoleRun(r, { id, version }) };
+  } catch (e) {
+    return {
+      packageSha256,
+      ...fail("ERR_EVAL_ROLE_FAILED", `the eval could not be run: ${e instanceof Error ? e.message : String(e)}`)
+    };
+  } finally {
+    rmSync3(dir, { recursive: true, force: true });
+  }
+}
+function logStderr(log, ref, stderrTail) {
+  if (stderrTail.trim() === "")
+    return;
+  const fence = randomUUID().replaceAll("-", "");
+  log(`stderr of the eval role for ${ref} (last ${String(ROLE_STDERR_TAIL_BYTES)} bytes):`);
+  log(`::stop-commands::${fence}`);
+  log(stderrTail);
+  log(`::${fence}::`);
+}
+function assertGateway(gateway) {
+  let ok = false;
+  try {
+    ok = isAbsolute(gateway) && existsSync2(gateway) && statSync(gateway).isFile();
+  } catch {
+    ok = false;
+  }
+  if (!ok) {
+    throw new Error(`input "nimbus-gateway" must be an absolute path to an existing file; got ${JSON.stringify(gateway)}`);
+  }
+}
+function writeFileAtomic(path, text, fs = { writeFileSync: writeFileSync3, renameSync }) {
+  const temp = join4(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  try {
+    fs.writeFileSync(temp, text, { flag: "wx" });
+    fs.renameSync(temp, path);
+  } catch (e) {
+    rmSync3(temp, { force: true });
+    throw e;
+  }
+}
+var SHARED2 = {
+  validate: validatePublish,
+  git: exports_git_tree,
+  io: GHA_IO,
+  tmpdir: osTmpdir2,
+  runRole: roleRunner()
+};
+async function scoreAll(opts, deps, work) {
+  const { git } = deps;
+  const cwd = opts.workspace;
+  const mainRef = `origin/${opts.defaultBranch}`;
+  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git, cwd);
+  const config = readConfigAt(git, mainRef, cwd);
+  if (config === undefined) {
+    throw new Error(`refusing to score: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
+  }
+  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
+  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd);
+  const skipped = [];
+  const admission = admitStatements(git, index, mainRef, cwd, skipped);
+  const extensions = { ...index.extensions };
+  const publishedAt = git.commitTime(mainRef, { cwd });
+  const scores = Object.create(null);
+  for await (const o of validateUnsigned({
+    git,
+    validate: deps.validate,
+    ref: mainRef,
+    cwd,
+    dirs,
+    signedDirs,
+    config: config.config,
+    work,
+    bindings: () => ({ ...admission.index, extensions })
+  })) {
+    if (o.kind === "skipped") {
+      skipped.push({ dir: o.dir, reason: o.reason });
+      continue;
+    }
+    const v = o.verdict;
+    if (v.hasEvals) {
+      const entry = await scoreCandidate({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work }, deps.runRole, deps.io.log);
+      scores[`${v.id}@${v.version}`] = entry;
+      if ("error" in entry)
+        continue;
+    }
+    addVersion(extensions, v, publishedAt);
+  }
+  return { scores, skipped };
+}
+function report(io, r) {
+  const lines = ["## Registry score", ""];
+  const entries = Object.entries(r.scores);
+  if (entries.length === 0)
+    lines.push("No unsigned version with eval suites to score.");
+  for (const [ref, e] of entries) {
+    if ("quality" in e) {
+      const q = e.quality;
+      lines.push(`- ${code(ref)}: ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`);
+    } else {
+      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it`);
+      lines.push(`- ${code(ref)}: not scored, ${code(e.error.code)} ${code(e.error.message)}`);
+    }
+  }
+  if (r.skipped.length > 0) {
+    lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
+    for (const s of r.skipped)
+      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
+  }
+  io.summary(lines.join(`
+`));
+  io.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
+}
+async function runScore(opts, deps = SHARED2) {
+  assertGateway(opts.gateway);
+  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
+  const work = mkdtempSync3(join4(deps.tmpdir(), "nimbus-registry-score-"));
+  let r;
+  try {
+    r = await scoreAll({ ...opts, defaultBranch }, deps, work);
+  } finally {
+    rmSync3(work, { recursive: true, force: true });
+  }
+  writeFileAtomic(opts.out, `${JSON.stringify(r.scores, null, 2)}
+`);
+  report(deps.io, r);
+  return r.scores;
+}
+
+// src/sign.ts
+import { mkdtempSync as mkdtempSync5, rmSync as rmSync5 } from "node:fs";
+import { tmpdir as osTmpdir3 } from "node:os";
+import { join as join6 } from "node:path";
+
+// src/site-commit.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import { mkdtempSync as mkdtempSync4, rmSync as rmSync4 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join as join5 } from "node:path";
+var BOT_NAME = "github-actions[bot]";
+var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
+var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
+var BOT_ENV = {
+  GIT_AUTHOR_NAME: BOT_NAME,
+  GIT_AUTHOR_EMAIL: BOT_EMAIL,
+  GIT_COMMITTER_NAME: BOT_NAME,
+  GIT_COMMITTER_EMAIL: BOT_EMAIL
+};
+function run(args, opts) {
+  return execFileSync2("git", [...args], {
+    cwd: opts.cwd,
+    env: opts.env ?? process.env,
+    input: opts.input,
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
+    stdio: ["pipe", "pipe", "pipe"]
+  }).toString("utf8").trim();
+}
+function commitSite(parent, files, message, cwd) {
+  const scratch = mkdtempSync4(join5(tmpdir(), "nimbus-registry-site-"));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: join5(scratch, "index") };
+    run(["read-tree", parent], { cwd, env });
+    for (const f of files) {
+      assertSafeTreePath(f.path);
+      const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], { cwd, input: f.bytes });
+      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f.path}`], { cwd, env });
+    }
+    const tree = run(["write-tree"], { cwd, env });
+    if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd }))
+      return;
+    return run([...BOT_IDENTITY, "commit-tree", tree, "-p", parent, "-m", message], {
+      cwd,
+      env: { ...process.env, ...BOT_ENV }
+    });
+  } finally {
+    rmSync4(scratch, { recursive: true, force: true });
+  }
+}
+var NON_FAST_FORWARD = /non-fast-forward|fetch first|\[rejected\]/;
+function pushCommit(commit, branch, cwd) {
+  try {
+    run(["push", "--porcelain", "origin", `${commit}:refs/heads/${branch}`], { cwd });
+    return "pushed";
+  } catch (err) {
+    const text = [
+      err !== null && typeof err === "object" && "stderr" in err ? String(err.stderr) : "",
+      err !== null && typeof err === "object" && "stdout" in err ? String(err.stdout) : ""
+    ].join(`
+`);
+    if (NON_FAST_FORWARD.test(text))
+      return "non-fast-forward";
+    throw new Error(`git push to ${branch} failed: ${text.trim()}`);
+  }
+}
+
+// src/sign.ts
+var SHARED3 = {
+  validate: validatePublish,
+  sign: signIndex,
+  git: exports_git_tree,
+  io: GHA_IO,
+  tmpdir: osTmpdir3
+};
+var MAX_ATTEMPTS = 3;
+var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+function parseRootKey(raw) {
+  const s = raw.trim();
+  if (!ROOT_KEY_RE.test(s)) {
+    throw new Error('input "root-key" is not a registry root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus registry maintain init` writes it');
+  }
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
 async function provenanceFor(v, packageBytes, at, deps, memo) {
   if (v.repository === undefined)
     return;
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
     r = await verifyNeverThrowing(deps.verify, {
-      pkgPath: join5(at.work, `provenance-${v.packageSha256}.tgz`),
+      pkgPath: join6(at.work, `provenance-${v.packageSha256}.tgz`),
       packageBytes,
       repository: v.repository,
       verifiedAt: at.verifiedAt
@@ -10988,54 +11396,32 @@ async function attemptSign(opts, seed, rootKey, deps, memo) {
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
-  const work = mkdtempSync4(join5(deps.tmpdir(), "nimbus-registry-sign-"));
+  const work = mkdtempSync5(join6(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
-    for (const dir of [...dirs.keys()].filter((d) => !signedDirs.has(d)).sort(codeUnitCompare)) {
-      const coords = splitExtensionDir(dir);
-      const names = dirs.get(dir) ?? new Set;
-      if (coords === undefined || !sameFileSet(names)) {
-        skipped.push({
-          dir,
-          reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`
-        });
+    for await (const o of validateUnsigned({
+      git,
+      validate: deps.validate,
+      ref: mainRef,
+      cwd,
+      dirs,
+      signedDirs,
+      config: config.config,
+      work,
+      bindings: () => ({ ...admission.index, extensions })
+    })) {
+      if (o.kind === "skipped") {
+        skipped.push({ dir: o.dir, reason: o.reason });
         continue;
       }
-      const candidate = readCandidate(git, mainRef, coords, cwd);
-      let v;
-      try {
-        v = await deps.validate(candidate, { ...admission.index, extensions }, config.config, work);
-      } catch (e) {
-        if (!(e instanceof RegistryError))
-          throw e;
-        skipped.push({ dir, reason: e.message });
-        continue;
-      }
+      const { candidate, verdict: v } = o;
       const base = `extensions/${v.id}/${v.version}`;
       const provenance = await provenanceFor(v, candidate.packageBytes, { work, verifiedAt: publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, memo);
-      const existing = extensions[v.id];
-      extensions[v.id] = {
-        publisher: publisherAfterPublish(existing, v.publisher),
-        versions: {
-          ...existing?.versions,
-          [v.version]: {
-            channel: v.channel,
-            name: v.name,
-            manifest: `${base}/manifest.json`,
-            manifestSha256: v.manifestSha256,
-            package: `${base}/package.tgz`,
-            packageSha256: v.packageSha256,
-            packageSizeBytes: v.packageSizeBytes,
-            entryHash: v.entryHash,
-            publishedAt,
-            ...provenance !== undefined && { provenance }
-          }
-        }
-      };
+      addVersion(extensions, v, publishedAt, provenance);
       files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
       added.push({ id: v.id, version: v.version, channel: v.channel });
     }
   } finally {
-    rmSync4(work, { recursive: true, force: true });
+    rmSync5(work, { recursive: true, force: true });
   }
   const requested = await signRequests(git, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
   const reportUrl = reportUrlFor(index, opts.repository);
@@ -11100,15 +11486,6 @@ function reportUrlFor(index, repository) {
     return;
   return `https://github.com/${repository}/issues/new`;
 }
-function admitStatements(git, index, ref, cwd, skipped) {
-  const files = readStatementFiles(git, ref, cwd);
-  for (const f of files.skipped)
-    skipped.push({ dir: f.path, reason: f.reason });
-  const admission = admitPublisherStatements(index, files.values);
-  for (const s of admission.skipped)
-    skipped.push({ dir: statementPath(s.id), reason: s.reason });
-  return admission;
-}
 function commitMessage(added, statements, sequence, defaultBranch) {
   if (added.length === 0 && statements.length === 0) {
     return `Copy ${CONFIG_FILE} from ${defaultBranch}`;
@@ -11122,7 +11499,7 @@ function commitMessage(added, statements, sequence, defaultBranch) {
 function versionRef(x) {
   return `${x.id}@${x.version}`;
 }
-function report(io, a, pushed) {
+function report2(io, a, pushed) {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
   if (a.added.length === 0 && a.statements.length === 0) {
@@ -11157,12 +11534,12 @@ async function signLoop(opts, seed, deps) {
     for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
       last = await attemptSign({ ...opts, defaultBranch }, seed, rootKey, deps, memo);
       if (last.commit === undefined) {
-        report(deps.io, last, false);
+        report2(deps.io, last, false);
         return;
       }
       await deps.beforePush?.(attempt);
       if (pushCommit(last.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-        report(deps.io, last, true);
+        report2(deps.io, last, true);
         return;
       }
       deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
@@ -11175,7 +11552,7 @@ async function signLoop(opts, seed, deps) {
   warnSkipped(deps.io, last);
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
 }
-async function runSign(opts, deps = SHARED2) {
+async function runSign(opts, deps = SHARED3) {
   const seed = parseRootKey(opts.rootKey);
   try {
     await signLoop(opts, seed, deps);
@@ -11285,7 +11662,7 @@ function planLines(plan, skipped) {
 }
 
 // src/trust-check.ts
-var SHARED3 = { git: exports_git_tree, io: GHA_IO };
+var SHARED4 = { git: exports_git_tree, io: GHA_IO };
 function assertSourceOnly(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");
@@ -11294,7 +11671,7 @@ function assertSourceOnly(changes) {
     throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
   }
 }
-async function runTrustCheck(opts, deps = SHARED3) {
+async function runTrustCheck(opts, deps = SHARED4) {
   const { git } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
@@ -11329,7 +11706,7 @@ async function runTrustCheck(opts, deps = SHARED3) {
 }
 
 // src/trust-sign.ts
-var SHARED4 = { git: exports_git_tree, io: GHA_IO };
+var SHARED5 = { git: exports_git_tree, io: GHA_IO };
 var MAX_ATTEMPTS2 = 3;
 var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey2(raw) {
@@ -11359,7 +11736,7 @@ async function attemptSign2(opts, seed, rootKey, git) {
   const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: TRUST_FEED_FILE, bytes }], `Sign trust feed sequence ${String(feed.sequence)}`, cwd);
   return { commit, plan, skipped, sequence: feed.sequence };
 }
-function report2(io, a, pushed) {
+function report3(io, a, pushed) {
   for (const s of [...a.skipped, ...a.plan.skipped]) {
     io.annotate("warning", `skipped ${s.path}: ${s.reason}`);
   }
@@ -11374,19 +11751,19 @@ async function signLoop2(opts, seed, deps) {
   for (let attempt = 1;attempt <= MAX_ATTEMPTS2; attempt++) {
     const a = await attemptSign2({ ...opts, defaultBranch }, seed, rootKey, deps.git);
     if (a.commit === undefined) {
-      report2(deps.io, a, false);
+      report3(deps.io, a, false);
       return;
     }
     await deps.beforePush?.(attempt);
     if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report2(deps.io, a, true);
+      report3(deps.io, a, true);
       return;
     }
     deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
   }
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
 }
-async function runTrustSign(opts, deps = SHARED4) {
+async function runTrustSign(opts, deps = SHARED5) {
   const seed = parseRootKey2(opts.rootKey);
   try {
     await signLoop2(opts, seed, deps);
@@ -11396,12 +11773,12 @@ async function runTrustSign(opts, deps = SHARED4) {
 }
 
 // src/main.ts
-var MODES = ["check", "sign", "trust-check", "trust-sign"];
+var MODES = ["check", "sign", "score", "trust-check", "trust-sign"];
 function parseMode(raw) {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined)
     return mode;
-  throw new Error(`input "mode" must be "check", "sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
+  throw new Error(`input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
 }
 function takeRootKey() {
   const rootKey = requireInput("root-key");
@@ -11440,6 +11817,21 @@ function takeGithubToken() {
   delete process.env[inputEnvName("github-token")];
   return token;
 }
+function refuseSecretsInScore() {
+  for (const name of ["root-key", "github-token"]) {
+    const value = getInput(name);
+    const set = value !== "";
+    delete process.env[inputEnvName(name)];
+    if (set) {
+      maskSecret(value);
+      throw new Error(`input "${name}" must not be set in score mode: score runs extension code and holds no secrets`);
+    }
+  }
+}
+function scoresPath(ws, input) {
+  const rel = input === "" ? "scores.json" : input;
+  return isAbsolute2(rel) ? rel : join7(ws, rel);
+}
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -11449,6 +11841,15 @@ async function main() {
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
       await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
+    } else if (mode === "score") {
+      refuseSecretsInScore();
+      const defaultBranch = getInput("default-branch");
+      await runScore({
+        workspace: workspace(),
+        gateway: getInput("nimbus-gateway"),
+        out: scoresPath(workspace(), getInput("scores")),
+        ...defaultBranch !== "" && { defaultBranch }
+      });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {
@@ -11479,5 +11880,6 @@ export {
   main,
   maskSecret,
   parseMode,
+  scoresPath,
   signOptions
 };

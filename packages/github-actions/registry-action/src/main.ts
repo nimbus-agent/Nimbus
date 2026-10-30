@@ -1,19 +1,21 @@
+import { isAbsolute, join } from "node:path";
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
+import { runScore } from "./score.ts";
 import { runSign, type SignOptions } from "./sign.ts";
 import { runTrustCheck } from "./trust-check.ts";
 import { runTrustSign } from "./trust-sign.ts";
 
-export type Mode = "check" | "sign" | "trust-check" | "trust-sign";
+export type Mode = "check" | "sign" | "score" | "trust-check" | "trust-sign";
 
-const MODES: readonly Mode[] = ["check", "sign", "trust-check", "trust-sign"];
+const MODES: readonly Mode[] = ["check", "sign", "score", "trust-check", "trust-sign"];
 
 /** The `mode` input, refused unless it is exactly one of `MODES`. */
 export function parseMode(raw: string): Mode {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined) return mode;
   throw new Error(
-    `input "mode" must be "check", "sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+    `input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -80,6 +82,31 @@ function takeGithubToken(): string {
   return token;
 }
 
+/**
+ * Ruling R8: `score` runs untrusted extension code, so its job must hold no secret. A `root-key`
+ * or `github-token` handed to it is refused before anything runs (and dropped from the
+ * environment either way; the role gets a minimal environment of its own regardless).
+ */
+function refuseSecretsInScore(): void {
+  for (const name of ["root-key", "github-token"]) {
+    const value = getInput(name);
+    const set = value !== "";
+    delete process.env[inputEnvName(name)];
+    if (set) {
+      maskSecret(value);
+      throw new Error(
+        `input "${name}" must not be set in score mode: score runs extension code and holds no secrets`,
+      );
+    }
+  }
+}
+
+/** Where `score` writes: the `scores` input (relative to the workspace), or `scores.json`. */
+export function scoresPath(ws: string, input: string): string {
+  const rel = input === "" ? "scores.json" : input;
+  return isAbsolute(rel) ? rel : join(ws, rel);
+}
+
 function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -90,6 +117,15 @@ export async function main(): Promise<void> {
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
       await runCheck({ workspace: workspace(), baseRef, githubToken: takeGithubToken() });
+    } else if (mode === "score") {
+      refuseSecretsInScore();
+      const defaultBranch = getInput("default-branch");
+      await runScore({
+        workspace: workspace(),
+        gateway: getInput("nimbus-gateway"),
+        out: scoresPath(workspace(), getInput("scores")),
+        ...(defaultBranch !== "" && { defaultBranch }),
+      });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {

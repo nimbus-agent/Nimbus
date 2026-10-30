@@ -11,10 +11,10 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
+    description: "Which job this is — one of: check | sign | score (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
-    description: "The branch pull requests merge into (sign and trust-sign). Empty means origin's HEAD."
+    description: "The branch pull requests merge into (sign, score and trust-sign). Empty means origin's HEAD."
     required: false
     default: ""
   root-key:
@@ -24,6 +24,16 @@ inputs:
 
   github-token:
     description: "check and sign: the token `gh attestation verify` fetches a version's build provenance with (the workflow passes the job's github.token). Empty means no provenance is verified; nothing is refused either way."
+    required: false
+    default: ""
+
+  nimbus-gateway:
+    description: "score: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role runs each new version's eval suites in the platform sandbox. Run score in a job with no secrets (it runs extension code)."
+    required: false
+    default: ""
+
+  scores:
+    description: "score: where scores.json is written (relative to the workspace); empty means scores.json."
     required: false
     default: ""
 

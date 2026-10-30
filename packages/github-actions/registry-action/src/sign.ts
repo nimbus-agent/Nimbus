@@ -18,22 +18,18 @@
  * The root key is a secret. It is parsed in memory only, never written to disk, and never named in
  * a message: refusals name fingerprints of PUBLIC keys. `main.ts` masks the input before this runs.
  */
-import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  admitPublisherStatements,
   alreadyCarried,
   codeUnitCompare,
   publicKeyFromSeed,
-  publisherAfterPublish,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryIndex,
   readRegistryReportUrl,
-  type StatementAdmission,
   signIndex,
   signRegistryRequest,
   type TrustStatement,
@@ -42,6 +38,14 @@ import {
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
+import {
+  addVersion,
+  admitStatements,
+  assertSignedIntact,
+  extensionDirs,
+  type Skipped,
+  validateUnsigned,
+} from "./candidates.ts";
 import * as gitTree from "./git-tree.ts";
 import {
   ghProvenance,
@@ -50,19 +54,14 @@ import {
   verifyNeverThrowing,
 } from "./provenance.ts";
 import {
-  CANDIDATE_FILES,
   CONFIG_FILE,
   INDEX_FILE,
   loosens,
   PAGES_BRANCH,
   PAGES_REF,
-  readCandidate,
   readConfigAt,
   readRequestFiles,
-  readStatementFiles,
   readVerifiedIndex,
-  splitExtensionDir,
-  statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
 import { commitSite, pushCommit, type SiteFile } from "./site-commit.ts";
@@ -125,11 +124,6 @@ function parseRootKey(raw: string): Uint8Array {
   return new Uint8Array(Buffer.from(s, "base64"));
 }
 
-interface Skipped {
-  dir: string;
-  reason: string;
-}
-
 interface Added {
   id: string;
   version: string;
@@ -144,65 +138,6 @@ interface Attempt {
   statements: string[];
   skipped: Skipped[];
   sequence: number;
-}
-
-/** Every `extensions/<id>/<version>` on `ref` with the file names directly inside it. */
-function extensionDirs(
-  git: typeof gitTree,
-  ref: string,
-  cwd: string,
-): { dirs: Map<string, Set<string>>; paths: Set<string> } {
-  const dirs = new Map<string, Set<string>>();
-  const paths = new Set<string>();
-  for (const e of git.listTreeEntries(ref, "extensions/", { cwd })) {
-    paths.add(e.path);
-    const slash = e.path.lastIndexOf("/");
-    const dir = e.path.slice(0, slash);
-    if (dir === "extensions") continue; // e.g. `extensions/.gitkeep`
-    const names = dirs.get(dir) ?? new Set<string>();
-    names.add(e.path.slice(slash + 1));
-    dirs.set(dir, names);
-  }
-  return { dirs, paths };
-}
-
-const sha256Hex = (b: Uint8Array): string => createHash("sha256").update(b).digest("hex");
-
-/** § 11.7: every signed version is still on `ref`, byte for byte. */
-function assertSignedIntact(
-  git: typeof gitTree,
-  index: RegistryIndex,
-  ref: string,
-  paths: ReadonlySet<string>,
-  cwd: string,
-): Set<string> {
-  const problems: string[] = [];
-  const signedDirs = new Set<string>();
-  for (const [id, ext] of Object.entries(index.extensions)) {
-    for (const [version, v] of Object.entries(ext.versions)) {
-      signedDirs.add(`extensions/${id}/${version}`);
-      for (const [path, want] of [
-        [v.manifest, v.manifestSha256],
-        [v.package, v.packageSha256],
-      ] as const) {
-        if (!paths.has(path)) {
-          problems.push(`${path} is signed but was deleted`);
-        } else if (sha256Hex(git.readBlob(ref, path, { cwd })) !== want) {
-          problems.push(`${path} differs from the signed version`);
-        }
-      }
-    }
-  }
-  if (problems.length > 0) {
-    throw new Error(
-      `refusing to sign: already-signed versions changed on the default branch (a signed version is immutable): ${problems.join("; ")}`,
-    );
-  }
-  return signedDirs;
-}
-
-function sameFileSet(names: ReadonlySet<string>): boolean {
-  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
 }
 
 /** Provenance results by package digest: a push-race retry never asks `gh` twice. */
@@ -284,26 +219,22 @@ async function attemptSign(
   const files: SiteFile[] = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-sign-"));
   try {
-    for (const dir of [...dirs.keys()].filter((d) => !signedDirs.has(d)).sort(codeUnitCompare)) {
-      const coords = splitExtensionDir(dir);
-      const names = dirs.get(dir) ?? new Set<string>();
-      if (coords === undefined || !sameFileSet(names)) {
-        skipped.push({
-          dir,
-          reason: `must hold exactly ${CANDIDATE_FILES.join(", ")}; holds ${[...names].sort(codeUnitCompare).join(", ")}`,
-        });
+    for await (const o of validateUnsigned({
+      git,
+      validate: deps.validate,
+      ref: mainRef,
+      cwd,
+      dirs,
+      signedDirs,
+      config: config.config,
+      work,
+      bindings: () => ({ ...admission.index, extensions }),
+    })) {
+      if (o.kind === "skipped") {
+        skipped.push({ dir: o.dir, reason: o.reason });
         continue;
       }
-      const candidate = readCandidate(git, mainRef, coords, cwd);
-      let v: Awaited<ReturnType<typeof validatePublish>>;
-      try {
-        // Against the signed bindings plus this run's additions, so two new dirs cannot disagree.
-        v = await deps.validate(candidate, { ...admission.index, extensions }, config.config, work); // NOSONAR S9382: sequential by design - each version is validated against the bindings this run already added, so two new dirs cannot disagree
-      } catch (e) {
-        if (!(e instanceof RegistryError)) throw e;
-        skipped.push({ dir, reason: e.message });
-        continue;
-      }
+      const { candidate, verdict: v } = o;
       const base = `extensions/${v.id}/${v.version}`;
       // NOSONAR S9382: sequential by design - one gh call at a time, inside the same sequential loop as validate
       const provenance = await provenanceFor(
@@ -313,26 +244,7 @@ async function attemptSign(
         { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") },
         memo,
       );
-      const existing = extensions[v.id];
-      extensions[v.id] = {
-        publisher: publisherAfterPublish(existing, v.publisher),
-        versions: {
-          ...existing?.versions,
-          [v.version]: {
-            channel: v.channel,
-            name: v.name,
-            manifest: `${base}/manifest.json`,
-            manifestSha256: v.manifestSha256,
-            package: `${base}/package.tgz`,
-            packageSha256: v.packageSha256,
-            packageSizeBytes: v.packageSizeBytes,
-            entryHash: v.entryHash,
-            publishedAt,
-            // The entry is built from fixed fields, so provenance is added here explicitly.
-            ...(provenance !== undefined && { provenance }),
-          },
-        },
-      };
+      addVersion(extensions, v, publishedAt, provenance);
       files.push(
         { path: `${base}/manifest.json`, bytes: candidate.manifestBytes },
         { path: `${base}/package.tgz`, bytes: candidate.packageBytes },
@@ -426,21 +338,6 @@ function reportUrlFor(index: RegistryIndex, repository: string | undefined): str
   if (repository === undefined || readRegistryReportUrl(index) !== undefined) return undefined;
   if (!/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9._-]+$/.test(repository)) return undefined;
   return `https://github.com/${repository}/issues/new`;
-}
-
-/** The `statements/` files on `ref` admitted into `index`; refused files land in `skipped`. */
-function admitStatements(
-  git: typeof gitTree,
-  index: RegistryIndex,
-  ref: string,
-  cwd: string,
-  skipped: Skipped[],
-): StatementAdmission<RegistryIndex> {
-  const files = readStatementFiles(git, ref, cwd);
-  for (const f of files.skipped) skipped.push({ dir: f.path, reason: f.reason });
-  const admission = admitPublisherStatements(index, files.values);
-  for (const s of admission.skipped) skipped.push({ dir: statementPath(s.id), reason: s.reason });
-  return admission;
 }
 
 function commitMessage(

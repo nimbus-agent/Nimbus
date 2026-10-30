@@ -97,6 +97,10 @@ export interface ExtensionOpts {
   badSignature?: boolean;
   /** The manifest's `repository` (build provenance). */
   repository?: string;
+  /** Files written under `evals/` in the package, by name (e.g. `basic.eval.json`). */
+  evals?: Record<string, string>;
+  /** The package's `dist/index.js` (default: a one-line module). */
+  dist?: string;
 }
 
 /** The three files a publish adds for one extension version. */
@@ -151,7 +155,8 @@ async function buildExtension(scratch: string, o: ExtensionOpts): Promise<Publis
 
   const dir = mkdtempSync(join(scratch, "ext-"));
   write(dir, "nimbus.extension.json", manifest);
-  write(dir, "dist/index.js", "export default 1;\n");
+  write(dir, "dist/index.js", o.dist ?? "export default 1;\n");
+  for (const [name, text] of Object.entries(o.evals ?? {})) write(dir, `evals/${name}`, text);
   write(dir, "README.md", "echo\n");
   const tgz = join(dir, "..", `${dir.split(/[\\/]/).at(-1) ?? "ext"}.tgz`);
   await packExtensionDir(dir, tgz);
