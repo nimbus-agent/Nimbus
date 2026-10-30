@@ -1,7 +1,7 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { manifestWithExtraNetworkHosts, networkEntryFromUrl } from "./first-party-manifests.ts";
+import { manifestWithExtraNetworkHosts, storedUrlHosts } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import {
   addSimpleTokenServer,
@@ -21,12 +21,10 @@ export async function phase3AddGrafanaMcp(
   if (gfu === "" || gtk === "") {
     return;
   }
-  const grafanaHost = networkEntryFromUrl(gfu);
-  const grafanaManifest = manifestWithExtraNetworkHosts(
-    "grafana",
-    grafanaHost === null ? [] : [grafanaHost],
-    { ownerConfigured: grafanaHost === null ? [] : [grafanaHost] },
-  );
+  const grafanaHosts = storedUrlHosts("grafana", gfu);
+  const grafanaManifest = manifestWithExtraNetworkHosts("grafana", grafanaHosts, {
+    ownerConfigured: grafanaHosts,
+  });
   servers["grafana"] = wrapServerSpec(
     {
       ...connectorSpawn("grafana"),
@@ -97,15 +95,13 @@ export async function phase3AddDatadogMcp(
     extra["DD_SITE"] = site;
   }
   // The connector calls `api.<site>`. The name is built in code from the stored site.
-  const siteHost = site === "" ? null : networkEntryFromUrl(`https://api.${site}`);
+  const siteHosts = storedUrlHosts("datadog", site === "" ? "" : `https://api.${site}`);
   servers["datadog"] = wrapServerSpec(
     {
       ...connectorSpawn("datadog"),
       env: extensionProcessEnv(extra),
     },
-    manifestWithExtraNetworkHosts("datadog", siteHost === null ? [] : [siteHost], {
-      ownerConfigured: [],
-    }),
+    manifestWithExtraNetworkHosts("datadog", siteHosts, { ownerConfigured: [] }),
     sandboxCwd,
   );
 }

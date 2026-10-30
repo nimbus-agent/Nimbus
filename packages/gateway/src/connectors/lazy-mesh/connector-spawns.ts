@@ -35,8 +35,8 @@ import { transitionHealth } from "../health.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
-  networkEntryFromUrl,
   siteUrlWithScheme,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
@@ -60,8 +60,7 @@ function manifestWithConfiguredHost(
   serviceId: string,
   configuredUrl: string | null,
 ): ExtensionManifest {
-  const host = configuredUrl === null ? null : networkEntryFromUrl(configuredUrl);
-  const hosts = host === null ? [] : [host];
+  const hosts = configuredUrl === null ? [] : storedUrlHosts(serviceId, configuredUrl);
   // The URL is one the owner stored for this connector (Vault), so its host is the owner's.
   return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
 }
@@ -702,12 +701,10 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const base = stripTrailingSlashes(baseRaw.trim());
-  const jenkinsHost = networkEntryFromUrl(base);
-  const jenkinsManifest = manifestWithExtraNetworkHosts(
-    "jenkins",
-    jenkinsHost === null ? [] : [jenkinsHost],
-    { ownerConfigured: jenkinsHost === null ? [] : [jenkinsHost] },
-  );
+  const jenkinsHosts = storedUrlHosts("jenkins", base);
+  const jenkinsManifest = manifestWithExtraNetworkHosts("jenkins", jenkinsHosts, {
+    ownerConfigured: jenkinsHosts,
+  });
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1135,10 +1132,10 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
   if (auth.accessToken === "" || auth.instanceUrl === "") {
     return;
   }
-  const sfHost = networkEntryFromUrl(auth.instanceUrl);
+  const sfHosts = storedUrlHosts("salesforce", auth.instanceUrl);
   const manifest = manifestWithExtraNetworkHosts(
     "salesforce",
-    sfHost === null ? [] : [sfHost],
+    sfHosts,
     // The instance URL arrives in the OAuth token response, so Salesforce chose it, not the owner.
     { ownerConfigured: [] },
   );
@@ -1197,10 +1194,8 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
   if (accessToken === "") {
     return;
   }
-  const host = networkEntryFromUrl(tenantHost);
-  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host], {
-    ownerConfigured: host === null ? [] : [host],
-  });
+  const hosts = storedUrlHosts("workday", tenantHost);
+  const manifest = manifestWithExtraNetworkHosts("workday", hosts, { ownerConfigured: hosts });
   ctx.setLazyClient(
     slotKey,
     new MCPClient({

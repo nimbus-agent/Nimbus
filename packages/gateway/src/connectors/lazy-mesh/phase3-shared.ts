@@ -16,7 +16,8 @@ import { cliEnvFor } from "../local-auth/local-auth-env.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
-  networkEntryFromUrl,
+  storedUrlHosts,
+  warnRegionRefused,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -89,10 +90,7 @@ export function manifestWithStoredUrls(
   serviceId: string,
   urls: readonly string[],
 ): ExtensionManifest {
-  const hosts = urls
-    .filter((url) => url !== "")
-    .map((url) => networkEntryFromUrl(url))
-    .filter((host) => host !== null);
+  const hosts = urls.flatMap((url) => storedUrlHosts(serviceId, url));
   return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
 }
 
@@ -197,11 +195,15 @@ export interface AwsCreds {
  * build the connector env subset. Reused by the AWS-family connectors (aws,
  * athena, cloudwatch, sagemaker) that all authenticate the same way.
  */
-export async function loadAwsCreds(vault: NimbusVault): Promise<AwsCreds> {
+export async function loadAwsCreds(
+  vault: NimbusVault,
+  serviceId: string = "aws",
+): Promise<AwsCreds> {
   const ak = await readSecret(vault, "aws", "access_key_id");
   const sk = await readSecret(vault, "aws", "secret_access_key");
   const storedRegion = await readSecret(vault, "aws", "default_region");
   const reg = isSafeRegion(storedRegion) ? storedRegion : "";
+  if (storedRegion !== "" && reg === "") warnRegionRefused(serviceId);
   const prof = await readSecret(vault, "aws", "profile");
   const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
   const env: Record<string, string> = { ...cliEnvFor("aws", process.env) };
@@ -241,10 +243,8 @@ export async function addUrlAndSecretMcp<S extends ConnectorServiceId>(
   if (url === "" || credential === "") {
     return;
   }
-  const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host], {
-    ownerConfigured: host === null ? [] : [host],
-  });
+  const hosts = storedUrlHosts(cfg.service, url);
+  const manifest = manifestWithExtraNetworkHosts(cfg.service, hosts, { ownerConfigured: hosts });
   servers[cfg.service] = wrapServerSpec(
     {
       ...connectorSpawn(cfg.service),

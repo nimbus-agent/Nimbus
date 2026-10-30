@@ -4,7 +4,7 @@ import { readConnectorSecret } from "../connector-vault.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
-  networkEntryFromUrl,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import {
@@ -82,10 +82,8 @@ export async function phase3AddZendeskMcp(
   if (url === "" || email === "" || apiToken === "") {
     return;
   }
-  const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host], {
-    ownerConfigured: host === null ? [] : [host],
-  });
+  const hosts = storedUrlHosts("zendesk", url);
+  const manifest = manifestWithExtraNetworkHosts("zendesk", hosts, { ownerConfigured: hosts });
   servers["zendesk"] = wrapServerSpec(
     {
       ...connectorSpawn("zendesk"),

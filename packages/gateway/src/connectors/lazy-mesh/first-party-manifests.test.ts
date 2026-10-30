@@ -1,12 +1,14 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 
 import {
   FIRST_PARTY_MANIFESTS,
   manifestForFirstParty,
+  manifestRefusals,
   manifestWithExtraNetworkHosts,
   networkEntryFromUrl,
   siteUrlWithScheme,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 
 describe("manifestForFirstParty", () => {
@@ -195,8 +197,40 @@ describe("networkEntryFromUrl", () => {
     expect(networkEntryFromUrl("file:///etc/passwd")).toBeNull();
   });
 
-  test("IPv6 literals stay refused", () => {
+  test("an IPv6 literal yields no entry (no network is granted for it)", () => {
     expect(networkEntryFromUrl("https://[::1]:8080")).toBeNull();
+  });
+
+  test("a trailing dot is the same name as without it", () => {
+    expect(networkEntryFromUrl("https://jenkins.corp./")).toBe("jenkins.corp");
+    expect(networkEntryFromUrl("https://jenkins.corp.:8080")).toBe("jenkins.corp:8080");
+    expect(networkEntryFromUrl("http://jenkins.corp./")).toBe("jenkins.corp:80");
+  });
+});
+
+describe("storedUrlHosts", () => {
+  test("warns by service, never by value, when a non-empty URL yields no entry", () => {
+    const warn = spyOn(manifestRefusals, "warn").mockImplementation(() => {});
+    try {
+      expect(storedUrlHosts("jenkins", "https://[::1]:8080")).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const fields = warn.mock.calls[0]?.[0];
+      expect(fields).toEqual({ serviceId: "jenkins" });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("::1");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("an empty URL and a good URL stay silent", () => {
+    const warn = spyOn(manifestRefusals, "warn").mockImplementation(() => {});
+    try {
+      expect(storedUrlHosts("jenkins", "")).toEqual([]);
+      expect(storedUrlHosts("jenkins", "https://jenkins.corp:8080")).toEqual(["jenkins.corp:8080"]);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 
@@ -213,6 +247,16 @@ describe("manifestWithExtraNetworkHosts", () => {
     );
     expect(out.permissions.network).toEqual(["jenkins.corp:8080", "other.example.com"]);
     expect(out.ownerConfiguredNetwork).toEqual(["jenkins.corp:8080"]);
+  });
+
+  test("a trailing dot is dropped from the grant and from the owner label", () => {
+    const out = manifestWithExtraNetworkHosts("jenkins", ["jenkins.corp.:8080"], {
+      ownerConfigured: ["Jenkins.corp.:8080"],
+    });
+    expect(out.permissions.network).toEqual(["jenkins.corp:8080"]);
+    expect(out.ownerConfiguredNetwork).toEqual(["jenkins.corp:8080"]);
+    const bare = manifestWithExtraNetworkHosts("jenkins", ["jenkins.corp."], NONE);
+    expect(bare.permissions.network).toEqual(["jenkins.corp"]);
   });
 
   test("never labels an entry that is not among the extra hosts", () => {

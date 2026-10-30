@@ -9,6 +9,16 @@ const log = pino(
   pino.destination(2),
 );
 
+/**
+ * Where a refused or ignored stored value is reported. An object so a test can observe it; every
+ * message carries the service id and never the value, which came from the Vault.
+ */
+export const manifestRefusals = {
+  warn(fields: Record<string, unknown>, message: string): void {
+    log.warn(fields, message);
+  },
+};
+
 const DEFAULT_DENY: ExtensionManifest["permissions"] = {
   network: [],
   filesystem: { read: [], write: [] },
@@ -591,19 +601,53 @@ export function manifestForFirstParty(serviceId: string): ExtensionManifest {
 /**
  * The network-grant entry for a configured service URL: `host`, or `host:port` when the port is
  * not 443 (a bare entry means 443, see `parseNetworkEntry`). A plain-http URL with no port is
- * `host:80`, never a bare host, because a bare host would grant the wrong port. IPv6 literals and
- * hostless URLs return null.
+ * `host:80`, never a bare host, because a bare host would grant the wrong port. One trailing dot
+ * (the fully-qualified form) is the same name and is dropped. IPv6 literals and hostless URLs
+ * return null, so no network is granted for them.
  */
 export function networkEntryFromUrl(input: string): string | null {
   try {
     const url = new URL(input.trim());
-    const host = url.hostname.toLowerCase();
+    const host = url.hostname.toLowerCase().replace(/\.$/, "");
     if (host === "" || host.startsWith("[")) return null;
     const port = url.port !== "" ? url.port : url.protocol === "http:" ? "80" : "443";
     return port === "443" ? host : `${host}:${port}`;
   } catch {
     return null;
   }
+}
+
+/**
+ * The network entries (none or one) for a URL the owner stored for `serviceId`, labelled as the
+ * owner's by the caller. An empty value means the connector uses its fixed vendor host and adds
+ * nothing. A non-empty value that yields no entry (an IPv6 literal, a hostless or unparseable URL)
+ * is reported, by service and never by value, because otherwise the connector loses its network
+ * with no trace.
+ */
+export function storedUrlHosts(serviceId: string, url: string): string[] {
+  if (url.trim() === "") return [];
+  const host = networkEntryFromUrl(url);
+  if (host !== null) return [host];
+  manifestRefusals.warn(
+    { serviceId },
+    "a stored URL yielded no network entry, so the connector is granted no network for it",
+  );
+  return [];
+}
+
+/** One trailing dot on the host part of a `host` or `host:port` entry: the same name. */
+function withoutTrailingDot(entry: string): string {
+  return entry.replace(/\.(:\d+)?$/, "$1");
+}
+
+/**
+ * A region the connector will not use. Callers fall back (or drop the host); this says so.
+ */
+export function warnRegionRefused(serviceId: string): void {
+  manifestRefusals.warn(
+    { serviceId },
+    "a stored region is not a valid region name and was ignored",
+  );
 }
 
 /**
@@ -660,7 +704,9 @@ export function manifestWithExtraNetworkHosts(
 ): ExtensionManifest {
   const base = manifestForFirstParty(serviceId);
   if (extraNetworkHosts.length === 0) return base;
-  const normalized = extraNetworkHosts.map((h) => h.toLowerCase().trim()).filter((h) => h !== "");
+  const normalized = extraNetworkHosts
+    .map((h) => withoutTrailingDot(h.toLowerCase().trim()))
+    .filter((h) => h !== "");
   const valid = normalized.filter(isValidRuntimeEntry);
   if (valid.length !== normalized.length) {
     (opts.onDropped ?? warnDroppedEntries)({
@@ -678,7 +724,9 @@ export function manifestWithExtraNetworkHosts(
   const extras = new Set(valid);
   const owned = [
     ...new Set(
-      opts.ownerConfigured.map((h) => h.toLowerCase().trim()).filter((h) => extras.has(h)),
+      opts.ownerConfigured
+        .map((h) => withoutTrailingDot(h.toLowerCase().trim()))
+        .filter((h) => extras.has(h)),
     ),
   ];
   return {

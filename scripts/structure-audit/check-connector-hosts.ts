@@ -16,8 +16,12 @@
 // - a host inside a longer string that is not a URL, or split across literals with no scheme
 // - a bare scheme compared against (`startsWith`) or held in an array, both treated as not building
 //   a URL, so `["https://", host].join("")` passes
+// - a scheme held in a variable, so `${proto}://${host}` passes
+// - a `replace` call whose argument is a bare scheme (`x.replace("{s}", "https://")`), which is
+//   exempt as not building a URL
 // - an env var holding a host under any other name
 // - a CLI command built from variables, beyond the first words of an array literal
+// - a shell-out or an env signal outside a connector's own files: those come from its own files only
 // - a host a third-party package chooses, or a server redirect
 // - whether a spawn site grants a stored URL: lazy-mesh/phase3-config.test.ts covers that
 //
@@ -152,17 +156,17 @@ function networkEntry(scheme: string, authority: string): string | null {
   return port === "443" ? host : `${host}:${port}`;
 }
 
+function endsWithNetworkScheme(text: string): boolean {
+  const scheme = SCHEME_AT_END.exec(text)?.[1];
+  return scheme !== undefined && !NOT_NETWORK_SCHEMES.has(scheme.toLowerCase());
+}
+
 /**
  * `endsAtSubstitution` is true for a template piece a `${...}` follows. A host running into one may
  * be whole (`https://api.foo.com${path}`) or a fragment (`https://api.${site}`). A trailing `.`,
  * `-` or `:`, or no dot at all, means a fragment. Anything else is treated as whole, so a misread
  * template fails loudly here rather than passing silently.
  */
-function endsWithNetworkScheme(text: string): boolean {
-  const scheme = SCHEME_AT_END.exec(text)?.[1];
-  return scheme !== undefined && !NOT_NETWORK_SCHEMES.has(scheme.toLowerCase());
-}
-
 function readUrlsInText(
   text: string,
   endsAtSubstitution: boolean,

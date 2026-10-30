@@ -2,7 +2,11 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { gcloudAuthEnv, loadGcpAuthFromVault } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { manifestForFirstParty, manifestWithExtraNetworkHosts } from "./first-party-manifests.ts";
+import {
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+  warnRegionRefused,
+} from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import {
   awsRegionalHosts,
@@ -79,6 +83,7 @@ export async function phase3AddGcpMcp(
   // `gcloud run` calls `<region>-run.googleapis.com` for the region a tool call names. The stored
   // region is the one that can be known here.
   const region = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
+  if (region !== "" && !isSafeRegion(region)) warnRegionRefused("gcp");
   const gcpManifest = manifestWithExtraNetworkHosts(
     "gcp",
     isSafeRegion(region) ? [`${region}-run.googleapis.com`] : [],
@@ -124,7 +129,7 @@ export async function phase3AddAthenaMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // Athena (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "athena");
   if (!creds.ok) {
     return;
   }
@@ -152,7 +157,7 @@ export async function phase3AddCloudwatchMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // CloudWatch (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "cloudwatch");
   if (!creds.ok) {
     return;
   }
@@ -180,7 +185,7 @@ export async function phase3AddSagemakerMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "sagemaker");
   if (!creds.ok) {
     return;
   }
@@ -248,6 +253,7 @@ export async function phase3AddVertexAiMcp(
   const rawRegion = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
   const region = rawRegion === "" ? VERTEX_AI_DEFAULT_REGION : rawRegion;
   const safeRegion = isSafeRegion(region) ? region : VERTEX_AI_DEFAULT_REGION;
+  if (rawRegion !== "" && !isSafeRegion(rawRegion)) warnRegionRefused("vertex_ai");
   const manifest = manifestWithExtraNetworkHosts(
     "vertex_ai",
     [`${safeRegion}-aiplatform.googleapis.com`],

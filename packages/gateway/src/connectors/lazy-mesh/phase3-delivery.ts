@@ -4,7 +4,7 @@ import { readConnectorSecret } from "../connector-vault.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
-  networkEntryFromUrl,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import {
@@ -227,10 +227,8 @@ export async function phase3AddArgocdMcp(
   if (url === "" || tok === "") {
     return;
   }
-  const host = networkEntryFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host], {
-    ownerConfigured: host === null ? [] : [host],
-  });
+  const hosts = storedUrlHosts("argocd", url);
+  const manifest = manifestWithExtraNetworkHosts("argocd", hosts, { ownerConfigured: hosts });
   servers["argocd"] = wrapServerSpec(
     {
       ...connectorSpawn("argocd"),
@@ -251,10 +249,8 @@ export async function phase3AddFluxMcp(
   if (apiUrl === "" || tok === "") {
     return;
   }
-  const host = networkEntryFromUrl(apiUrl);
-  const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host], {
-    ownerConfigured: host === null ? [] : [host],
-  });
+  const hosts = storedUrlHosts("flux", apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("flux", hosts, { ownerConfigured: hosts });
   servers["flux"] = wrapServerSpec(
     {
       ...connectorSpawn("flux"),

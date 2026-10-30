@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { manifestRefusals } from "./first-party-manifests.ts";
 import {
   buildPhase3Servers,
   phase3AddAirflowMcp,
@@ -3311,4 +3311,65 @@ describe("a stored value cannot carry a quote into the network list", () => {
       expect(hosts.filter((h) => h.includes('"'))).toEqual([]);
     });
   }
+});
+
+describe("a refused region is reported, by service and never by value", () => {
+  async function warnsFor(run: () => Promise<void>): Promise<unknown[]> {
+    const warn = spyOn(manifestRefusals, "warn").mockImplementation(() => {});
+    try {
+      await run();
+      const text = JSON.stringify(warn.mock.calls);
+      expect(text).not.toContain("BAD REGION");
+      return warn.mock.calls.map((c) => c[0]);
+    } finally {
+      warn.mockRestore();
+    }
+  }
+
+  test("aws with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddAwsMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "aws" }]);
+  });
+
+  test("athena names athena, not aws", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddAthenaMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "athena" }]);
+  });
+
+  test("a good region is silent", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "us-east-1");
+    const servers: Record<string, ServerSpec> = {};
+    expect(await warnsFor(() => phase3AddAwsMcp(vault, servers, SANDBOX_CWD))).toEqual([]);
+  });
+
+  test("gcp with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddGcpMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "gcp" }]);
+  });
+
+  test("vertex_ai with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "vertex_ai" }]);
+  });
 });
