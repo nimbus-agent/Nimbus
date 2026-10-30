@@ -2,8 +2,9 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { manifestWithExtraNetworkHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import { generateSbplProfile } from "./darwin.ts";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { policyFromManifest, type SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd/tmpdir strings (S5443). The
 // SBPL profile is pure string generation — these paths are never written to.
@@ -186,5 +187,23 @@ describe("ancestor literals grant traversal, never a tree", () => {
     const p = built();
     const occurrences = p.split('(literal "/private/var/folders")').length - 1;
     expect(occurrences).toBe(1);
+  });
+});
+
+describe("generateSbplProfile, from a policy built by manifestWithExtraNetworkHosts", () => {
+  it("has no injected quote, whatever a stored value carried", () => {
+    const hostile = ['x")) (allow network*) (host "y', 'a"b.com:443', "a\nb.com", "a b.com"];
+    const manifest = manifestWithExtraNetworkHosts("jenkins", [...hostile, "ok.example.com:8443"], {
+      ownerConfigured: hostile,
+      onDropped: () => {},
+    });
+    const profile = generateSbplProfile({
+      cwd: CWD,
+      tmpdir: CWD_TMP,
+      policy: policyFromManifest(manifest),
+    });
+    expect(profile).toContain('(remote tcp "*:8443" (host "ok.example.com"))');
+    const hostRules = profile.split("\n").filter((line) => line.includes("(host "));
+    expect(hostRules).toEqual(['  (remote tcp "*:8443" (host "ok.example.com"))']);
   });
 });

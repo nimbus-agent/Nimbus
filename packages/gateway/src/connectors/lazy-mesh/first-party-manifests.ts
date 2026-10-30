@@ -1,4 +1,13 @@
+import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
+import pino from "pino";
+
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+
+// To stderr: a stdout line in a process with an MCP stdio channel corrupts it. See sandbox/linux.ts.
+const log = pino(
+  { name: "connector-manifests", level: process.env["NIMBUS_LOG_LEVEL"] ?? "warn" },
+  pino.destination(2),
+);
 
 const DEFAULT_DENY: ExtensionManifest["permissions"] = {
   network: [],
@@ -606,28 +615,61 @@ export function siteUrlWithScheme(input: string): string {
   return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
 }
 
+/** The rule an extension's own manifest is held to: an RFC 1123 hostname, and a port in range. */
+function isValidNetworkEntry(entry: string): boolean {
+  try {
+    validateAndNormalizePermissions({ network: [entry] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function warnDroppedEntries(fields: {
+  readonly serviceId: string;
+  readonly dropped: number;
+}): void {
+  log.warn(fields, "dropped a configured network entry that is not a valid host or host:port");
+}
+
 /**
  * `ownerConfigured` names the entries of `extraNetworkHosts` the owner typed: a host taken from a
  * value the owner stored for this connector. A default written in code, a host derived from a
  * region, or one a vendor returned is NOT owner-configured, even when it passes through here. The
  * argument is required so every call site has to decide.
+ *
+ * The one door for a run-time entry into a first-party policy, so the check lives here. These
+ * manifests skip `validateAndNormalizePermissions`, and `darwin.ts` writes each entry into the SBPL
+ * profile as `(host "...")`, so a `"` or a newline in a stored value would otherwise inject into
+ * it. `new URL` does not stop this: it keeps a `"` in a hostname. A bad entry is dropped, from the
+ * label too, and reported by service and count. Never by value: it came from the Vault.
  */
 export function manifestWithExtraNetworkHosts(
   serviceId: string,
   extraNetworkHosts: readonly string[],
-  opts: { readonly ownerConfigured: readonly string[] },
+  opts: {
+    readonly ownerConfigured: readonly string[];
+    readonly onDropped?: (fields: { readonly serviceId: string; readonly dropped: number }) => void;
+  },
 ): ExtensionManifest {
   const base = manifestForFirstParty(serviceId);
   if (extraNetworkHosts.length === 0) return base;
+  const normalized = extraNetworkHosts.map((h) => h.toLowerCase().trim()).filter((h) => h !== "");
+  const valid = normalized.filter(isValidNetworkEntry);
+  if (valid.length !== normalized.length) {
+    (opts.onDropped ?? warnDroppedEntries)({
+      serviceId,
+      dropped: normalized.length - valid.length,
+    });
+  }
   const existing = new Set(base.permissions.network);
   const merged = [...base.permissions.network];
-  for (const host of extraNetworkHosts) {
-    const lower = host.toLowerCase().trim();
-    if (lower === "" || existing.has(lower)) continue;
-    existing.add(lower);
-    merged.push(lower);
+  for (const host of valid) {
+    if (existing.has(host)) continue;
+    existing.add(host);
+    merged.push(host);
   }
-  const extras = new Set(extraNetworkHosts.map((h) => h.toLowerCase().trim()));
+  const extras = new Set(valid);
   const owned = [
     ...new Set(
       opts.ownerConfigured.map((h) => h.toLowerCase().trim()).filter((h) => extras.has(h)),

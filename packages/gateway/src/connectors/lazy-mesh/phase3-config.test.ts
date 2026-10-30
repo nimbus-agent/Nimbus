@@ -3250,3 +3250,65 @@ describe("a region is validated before any host is built from it", () => {
     expect(env?.["VERTEX_AI_REGION"]).toBe("us-central1");
   });
 });
+
+describe("a stored value cannot carry a quote into the network list", () => {
+  const QUOTED = 'x")) (allow network*) (host "y';
+
+  async function network(
+    add: (
+      vault: NimbusVault,
+      servers: Record<string, ServerSpec>,
+      sandboxCwd: string,
+    ) => Promise<void>,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<string[]> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    expect(servers[service]).toBeDefined();
+    const raw = servers[service]?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}";
+    return (JSON.parse(raw) as { permissions: { network: string[] } }).permissions.network;
+  }
+
+  const cases = [
+    [
+      "imap.host",
+      phase3AddImapMcp,
+      "imap",
+      { "imap.host": QUOTED, "imap.username": "u", "imap.password": "p" },
+    ],
+    [
+      "protonmail.imap_host",
+      phase3AddProtonmailMcp,
+      "protonmail",
+      { "protonmail.username": "u", "protonmail.password": "p", "protonmail.imap_host": QUOTED },
+    ],
+    [
+      "snowflake.account",
+      phase3AddSnowflakeMcp,
+      "snowflake",
+      { "snowflake.account": QUOTED, "snowflake.oauth_token": "t" },
+    ],
+    [
+      "datadog.site",
+      phase3AddDatadogMcp,
+      "datadog",
+      { "datadog.api_key": "a", "datadog.app_key": "b", "datadog.site": 'a"b.com' },
+    ],
+    [
+      "sentry.url",
+      phase3AddSentryMcp,
+      "sentry",
+      { "sentry.auth_token": "t", "sentry.org_slug": "o", "sentry.url": 'https://a"b.com' },
+    ],
+  ] as const;
+
+  for (const [name, add, service, secrets] of cases) {
+    test(`${name}`, async () => {
+      const hosts = await network(add, service, secrets);
+      expect(hosts.filter((h) => h.includes('"'))).toEqual([]);
+    });
+  }
+});

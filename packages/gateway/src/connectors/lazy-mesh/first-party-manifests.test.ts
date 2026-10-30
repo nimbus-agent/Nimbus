@@ -323,3 +323,80 @@ describe("siteUrlWithScheme", () => {
     expect(networkEntryFromUrl(siteUrlWithScheme("http://jira.corp:8080"))).toBe("jira.corp:8080");
   });
 });
+
+describe("manifestWithExtraNetworkHosts drops an entry that is not a valid network entry", () => {
+  const BAD = [
+    'a"b.com',
+    'a"b.com:443',
+    'x")) (allow network*) (host "y',
+    "a\nb.com",
+    "a b.com",
+    "a.com:notaport",
+    "a.com:70000",
+    "a.com:",
+  ];
+
+  for (const entry of BAD) {
+    test(`${JSON.stringify(entry)} reaches neither the list nor the label`, () => {
+      const out = manifestWithExtraNetworkHosts("jenkins", [entry, "ok.example.com"], {
+        ownerConfigured: [entry, "ok.example.com"],
+        onDropped: () => {},
+      });
+      expect(out.permissions.network).toEqual(["ok.example.com"]);
+      expect(out.ownerConfiguredNetwork).toEqual(["ok.example.com"]);
+    });
+  }
+
+  test("valid host, host:port and a loopback address survive, labelled", () => {
+    const valid = ["jenkins.corp", "jenkins.corp:8443", "127.0.0.1:1143", "jenkins:8080"];
+    const out = manifestWithExtraNetworkHosts("jenkins", valid, { ownerConfigured: valid });
+    expect(out.permissions.network).toEqual(valid);
+    expect(out.ownerConfiguredNetwork).toEqual(valid);
+  });
+
+  test("a connector whose only entry is dropped has no network and no label", () => {
+    const out = manifestWithExtraNetworkHosts("jenkins", ['a"b.com'], {
+      ownerConfigured: ['a"b.com'],
+      onDropped: () => {},
+    });
+    expect(out.permissions.network).toEqual([]);
+    expect("ownerConfiguredNetwork" in out).toBe(false);
+  });
+
+  test("the fixed list is kept when an extra is dropped", () => {
+    const out = manifestWithExtraNetworkHosts("github", ['a"b.com'], {
+      ownerConfigured: [],
+      onDropped: () => {},
+    });
+    expect(out.permissions.network).toEqual(manifestForFirstParty("github").permissions.network);
+  });
+
+  test("the drop is reported by service and count, never by value", () => {
+    const seen: unknown[] = [];
+    manifestWithExtraNetworkHosts("jenkins", ['secret"value.com', "a b", "ok.example.com"], {
+      ownerConfigured: [],
+      onDropped: (fields) => seen.push(fields),
+    });
+    expect(seen).toEqual([{ serviceId: "jenkins", dropped: 2 }]);
+    expect(JSON.stringify(seen)).not.toContain("secret");
+  });
+
+  test("nothing is reported when nothing is dropped, blanks included", () => {
+    const seen: unknown[] = [];
+    manifestWithExtraNetworkHosts("jenkins", ["", "   ", "ok.example.com"], {
+      ownerConfigured: [],
+      onDropped: (fields) => seen.push(fields),
+    });
+    expect(seen).toEqual([]);
+  });
+
+  test("a stored URL carrying a quote cannot pass through networkEntryFromUrl and in", () => {
+    const entry = networkEntryFromUrl('https://a"b.com');
+    expect(entry).not.toBeNull();
+    const out = manifestWithExtraNetworkHosts("jenkins", [entry ?? ""], {
+      ownerConfigured: [entry ?? ""],
+      onDropped: () => {},
+    });
+    expect(out.permissions.network).toEqual([]);
+  });
+});
