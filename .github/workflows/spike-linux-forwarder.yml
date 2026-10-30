@@ -25,5 +25,9 @@ jobs:
       - name: Doctor
         run: |
           nimbus doctor 2>&1 | grep -E "Sandbox|nimbus " || true
-      - name: Real connectors
-        run: bun spike/release-proof.ts
+      - name: No network
+        run: |
+          set +e
+          G=/usr/lib/nimbus/bin/nimbus-gateway
+          mkdir -p "$RUNNER_TEMP/sb"
+          NIMBUS_SANDBOX_POLICY_JSON='{"id":"s","permissions":{"network":[],"filesystem":{"read":[],"write":[]}}}' NIMBUS_SANDBOX_CWD="$RUNNER_TEMP/sb" $G __nimbus-sandbox /usr/bin/echo NO_NETWORK_STARTED 2>&1 | grep -v '"level":40'; echo "NO_NETWORK_EXIT ${PIPESTATUS[0]}"
