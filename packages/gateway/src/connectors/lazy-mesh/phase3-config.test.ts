@@ -725,7 +725,7 @@ describe("phase3AddFluxMcp", () => {
     const spec = servers["flux"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    expectSandboxed(spec, "k8s.example.com");
+    expectSandboxed(spec, "k8s.example.com:6443");
     expect(spec.env?.["FLUX_API_URL"]).toBe("https://k8s.example.com:6443");
     expect(spec.env?.["FLUX_TOKEN"]).toBe("sa-jwt-token");
   });
@@ -1882,7 +1882,7 @@ describe("phase3AddElasticsearchMcp", () => {
     const spec = servers["elasticsearch"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    expectSandboxed(spec, "my-cluster.es.example.com");
+    expectSandboxed(spec, "my-cluster.es.example.com:9243");
     expect(spec.env?.["ELASTICSEARCH_URL"]).toBe("https://my-cluster.es.example.com:9243");
     expect(spec.env?.["ELASTICSEARCH_API_KEY"]).toBe("es-key-test");
   });

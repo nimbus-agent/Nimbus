@@ -13,9 +13,9 @@ import type { ConnectorServiceId } from "../connector-catalog.ts";
 import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connector-vault.ts";
 import { cliEnvFor } from "../local-auth/local-auth-env.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -219,7 +219,7 @@ export async function addUrlAndSecretMcp<S extends ConnectorServiceId>(
   if (url === "" || credential === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host]);
   servers[cfg.service] = wrapServerSpec(
     {

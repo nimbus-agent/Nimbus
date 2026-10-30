@@ -2,9 +2,9 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { addDirManifestServer, addSimpleTokenServer } from "./phase3-shared.ts";
@@ -223,7 +223,7 @@ export async function phase3AddArgocdMcp(
   if (url === "" || tok === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("argocd", host === null ? [] : [host]);
   servers["argocd"] = wrapServerSpec(
     {
@@ -245,7 +245,7 @@ export async function phase3AddFluxMcp(
   if (apiUrl === "" || tok === "") {
     return;
   }
-  const host = hostnameFromUrl(apiUrl);
+  const host = networkEntryFromUrl(apiUrl);
   const manifest = manifestWithExtraNetworkHosts("flux", host === null ? [] : [host]);
   servers["flux"] = wrapServerSpec(
     {

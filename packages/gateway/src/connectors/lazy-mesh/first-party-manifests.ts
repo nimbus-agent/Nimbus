@@ -560,11 +560,19 @@ export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   return baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY);
 }
 
-export function hostnameFromUrl(input: string): string | null {
+/**
+ * The network-grant entry for a configured service URL: `host`, or `host:port` when the port is
+ * not 443 (a bare entry means 443, see `parseNetworkEntry`). A plain-http URL with no port is
+ * `host:80`, never a bare host, because a bare host would grant the wrong port. IPv6 literals and
+ * hostless URLs return null.
+ */
+export function networkEntryFromUrl(input: string): string | null {
   try {
     const url = new URL(input.trim());
     const host = url.hostname.toLowerCase();
-    return host === "" ? null : host;
+    if (host === "" || host.startsWith("[")) return null;
+    const port = url.port !== "" ? url.port : url.protocol === "http:" ? "80" : "443";
+    return port === "443" ? host : `${host}:${port}`;
   } catch {
     return null;
   }

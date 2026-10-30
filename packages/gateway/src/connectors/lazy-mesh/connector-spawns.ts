@@ -33,9 +33,9 @@ import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { transitionHealth } from "../health.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
@@ -59,7 +59,7 @@ function manifestWithConfiguredHost(
   serviceId: string,
   configuredUrl: string | null,
 ): ExtensionManifest {
-  const host = configuredUrl === null ? null : hostnameFromUrl(configuredUrl);
+  const host = configuredUrl === null ? null : networkEntryFromUrl(configuredUrl);
   return manifestWithExtraNetworkHosts(serviceId, host === null ? [] : [host]);
 }
 
@@ -699,7 +699,7 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const base = stripTrailingSlashes(baseRaw.trim());
-  const jenkinsHost = hostnameFromUrl(base);
+  const jenkinsHost = networkEntryFromUrl(base);
   const jenkinsManifest = manifestWithExtraNetworkHosts(
     "jenkins",
     jenkinsHost === null ? [] : [jenkinsHost],
@@ -1131,7 +1131,7 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
   if (auth.accessToken === "" || auth.instanceUrl === "") {
     return;
   }
-  const sfHost = hostnameFromUrl(auth.instanceUrl);
+  const sfHost = networkEntryFromUrl(auth.instanceUrl);
   const manifest = manifestWithExtraNetworkHosts("salesforce", sfHost === null ? [] : [sfHost]);
   ctx.setLazyClient(
     slotKey,
@@ -1188,7 +1188,7 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
   if (accessToken === "") {
     return;
   }
-  const host = hostnameFromUrl(tenantHost);
+  const host = networkEntryFromUrl(tenantHost);
   const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host]);
   ctx.setLazyClient(
     slotKey,

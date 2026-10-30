@@ -2,9 +2,9 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { addSimpleTokenServer, imapPortOrDefault } from "./phase3-shared.ts";
@@ -78,7 +78,7 @@ export async function phase3AddZendeskMcp(
   if (url === "" || email === "" || apiToken === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("zendesk", host === null ? [] : [host]);
   servers["zendesk"] = wrapServerSpec(
     {

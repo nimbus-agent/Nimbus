@@ -2,11 +2,7 @@ import { getValidMicrosoftAccessToken } from "../../auth/microsoft-access-token.
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import {
-  hostnameFromUrl,
-  manifestForFirstParty,
-  manifestWithExtraNetworkHosts,
-} from "./first-party-manifests.ts";
+import { manifestForFirstParty, manifestWithExtraNetworkHosts } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -79,9 +75,19 @@ const TEAMS_BOT_DEFAULT_SERVICE_HOST = "smba.trafficmanager.net";
  * The public-cloud default always (the connector falls back to it when no `serviceUrl` is known),
  * plus a sovereign-cloud host only when THIS activity named one from the fixed set.
  */
+/** The bare lowercase hostname, for matching against an allowlist rather than granting a port. */
+function bareHostnameOf(input: string): string | null {
+  try {
+    const host = new URL(input.trim()).hostname.toLowerCase();
+    return host === "" ? null : host;
+  } catch {
+    return null;
+  }
+}
+
 function teamsBotHostsFor(serviceUrl: string | undefined): string[] {
   const hosts = [TEAMS_BOT_DEFAULT_SERVICE_HOST];
-  const host = serviceUrl === undefined ? null : hostnameFromUrl(serviceUrl);
+  const host = serviceUrl === undefined ? null : bareHostnameOf(serviceUrl);
   if (
     host !== null &&
     host !== TEAMS_BOT_DEFAULT_SERVICE_HOST &&

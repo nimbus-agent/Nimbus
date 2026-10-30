@@ -2,9 +2,9 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { addSimpleTokenServer, addUrlAndSecretMcp } from "./phase3-shared.ts";
@@ -25,7 +25,7 @@ export async function phase3AddGrafanaMcp(
   if (gfu === "" || gtk === "") {
     return;
   }
-  const grafanaHost = hostnameFromUrl(gfu);
+  const grafanaHost = networkEntryFromUrl(gfu);
   const grafanaManifest = manifestWithExtraNetworkHosts(
     "grafana",
     grafanaHost === null ? [] : [grafanaHost],

@@ -2,9 +2,9 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { addDirManifestServer, addUrlAndSecretMcp, isSafeHostIdentifier } from "./phase3-shared.ts";
@@ -26,7 +26,7 @@ export async function phase3AddDbtMcp(
   }
   const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
   // A regional or single-tenant dbt Cloud host is not the manifest's cloud.getdbt.com.
-  const apiHost = apiBase === "" ? null : hostnameFromUrl(apiBase);
+  const apiHost = apiBase === "" ? null : networkEntryFromUrl(apiBase);
   servers["dbt"] = wrapServerSpec(
     {
       ...connectorSpawn("dbt"),
@@ -116,7 +116,7 @@ export async function phase3AddTableauMcp(
   if (url === "" || patName === "" || patSecret === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host]);
   servers["tableau"] = wrapServerSpec(
     {
@@ -143,7 +143,7 @@ export async function phase3AddLookerMcp(
   if (baseUrl === "" || clientId === "" || clientSecret === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
+  const host = networkEntryFromUrl(baseUrl);
   const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host]);
   servers["looker"] = wrapServerSpec(
     {
@@ -200,7 +200,7 @@ export async function phase3AddSupersetMcp(
   if (url === "" || user === "" || pass === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
   servers["superset"] = wrapServerSpec(
     {
@@ -294,7 +294,7 @@ export async function phase3AddBigeyeMcp(
   if (baseUrl === "" || apiKey === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
+  const host = networkEntryFromUrl(baseUrl);
   const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host]);
   servers["bigeye"] = wrapServerSpec(
     {
@@ -352,7 +352,7 @@ export async function phase3AddAirflowMcp(
   if (url === "" || username === "" || password === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
+  const host = networkEntryFromUrl(url);
   const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host]);
   servers["airflow"] = wrapServerSpec(
     {
@@ -378,7 +378,7 @@ export async function phase3AddPrefectMcp(
   if (apiUrl === "" || apiKey === "") {
     return;
   }
-  const host = hostnameFromUrl(apiUrl);
+  const host = networkEntryFromUrl(apiUrl);
   const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host]);
   servers["prefect"] = wrapServerSpec(
     {
@@ -403,7 +403,7 @@ export async function phase3AddDagsterMcp(
   if (baseUrl === "" || apiToken === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
+  const host = networkEntryFromUrl(baseUrl);
   const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host]);
   servers["dagster"] = wrapServerSpec(
     {

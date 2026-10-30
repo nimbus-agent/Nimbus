@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import {
   FIRST_PARTY_MANIFESTS,
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  networkEntryFromUrl,
 } from "./first-party-manifests.ts";
 
 describe("manifestForFirstParty", () => {
@@ -155,35 +155,41 @@ describe("manifestForFirstParty", () => {
   });
 });
 
-describe("hostnameFromUrl", () => {
-  test("extracts the hostname from a well-formed https URL", () => {
-    expect(hostnameFromUrl("https://api.github.com/repos")).toBe("api.github.com");
+describe("networkEntryFromUrl", () => {
+  test("a bare host when the port is the https default", () => {
+    expect(networkEntryFromUrl("https://jenkins.corp")).toBe("jenkins.corp");
+    expect(networkEntryFromUrl("https://api.github.com/repos")).toBe("api.github.com");
+    expect(networkEntryFromUrl("https://jenkins.corp:443/x")).toBe("jenkins.corp");
   });
 
-  test("extracts the hostname from a well-formed http URL", () => {
-    expect(hostnameFromUrl("http://localhost:9090/api")).toBe("localhost");
+  test("keeps a non-443 port", () => {
+    expect(networkEntryFromUrl("https://jenkins.corp:8443/x")).toBe("jenkins.corp:8443");
+    expect(networkEntryFromUrl("http://jenkins:8080")).toBe("jenkins:8080");
+    expect(networkEntryFromUrl("https://grafana.example.com:3000/d/abc")).toBe(
+      "grafana.example.com:3000",
+    );
+    expect(networkEntryFromUrl("http://localhost:9090/api")).toBe("localhost:9090");
   });
 
-  test("lowercases the hostname", () => {
-    expect(hostnameFromUrl("https://API.GITHUB.COM/x")).toBe("api.github.com");
+  test("plain http with no port is port 80, not a bare host", () => {
+    expect(networkEntryFromUrl("http://jenkins")).toBe("jenkins:80");
+    expect(networkEntryFromUrl("http://jenkins:80")).toBe("jenkins:80");
   });
 
-  test("trims surrounding whitespace", () => {
-    expect(hostnameFromUrl("  https://api.github.com  ")).toBe("api.github.com");
+  test("lowercases the host and trims whitespace", () => {
+    expect(networkEntryFromUrl("https://JENKINS.corp")).toBe("jenkins.corp");
+    expect(networkEntryFromUrl("  https://api.github.com  ")).toBe("api.github.com");
   });
 
-  test("returns null for an unparseable URL", () => {
-    expect(hostnameFromUrl("not a url")).toBeNull();
-    expect(hostnameFromUrl("")).toBeNull();
-    expect(hostnameFromUrl("http://")).toBeNull();
+  test("returns null for an unparseable URL or an empty host", () => {
+    expect(networkEntryFromUrl("not a url")).toBeNull();
+    expect(networkEntryFromUrl("")).toBeNull();
+    expect(networkEntryFromUrl("http://")).toBeNull();
+    expect(networkEntryFromUrl("file:///etc/passwd")).toBeNull();
   });
 
-  test("returns null when the URL's hostname is empty", () => {
-    expect(hostnameFromUrl("file:///etc/passwd")).toBeNull();
-  });
-
-  test("works for non-standard ports + paths", () => {
-    expect(hostnameFromUrl("https://grafana.example.com:3000/d/abc")).toBe("grafana.example.com");
+  test("IPv6 literals stay refused", () => {
+    expect(networkEntryFromUrl("https://[::1]:8080")).toBeNull();
   });
 });
 
@@ -217,6 +223,11 @@ describe("manifestWithExtraNetworkHosts", () => {
   test("dedupes case-insensitively + trims whitespace", () => {
     const out = manifestWithExtraNetworkHosts("github", ["  API.GITHUB.COM  ", "api.github.com"]);
     expect(out.permissions.network).toHaveLength(3);
+  });
+
+  test("treats host and host:port as separate entries", () => {
+    const out = manifestWithExtraNetworkHosts("jenkins", ["jenkins.corp", "jenkins.corp:8443"]);
+    expect(out.permissions.network).toEqual(["jenkins.corp", "jenkins.corp:8443"]);
   });
 
   test("drops empty / whitespace-only entries", () => {
