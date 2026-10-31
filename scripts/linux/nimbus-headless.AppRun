@@ -1,4 +1,25 @@
 #!/bin/sh
 # AppRun — AppImage entrypoint. Dispatches to the CLI binary with the user's args.
+#
+# Runs the CLI from a copy outside the AppImage, because the AppImage's FUSE mount lasts only as long
+# as the process this script becomes. `nimbus start` spawns a gateway and exits, and on a real AppImage
+# the mount then went away under that gateway, which crashed within a second. The copy is per build
+# and made once. A directory of its own is renamed into place when complete, so an interrupted copy or
+# two runs at once cannot leave a partial one at the final path.
 HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/nimbus" "$@"
+BIN="$HERE/usr/bin"
+CACHE="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/nimbus/appimage"
+COPY="$CACHE/$(cat "$HERE/build-id")"
+
+if [ ! -x "$COPY/nimbus" ] && mkdir -p "$CACHE" 2>/dev/null; then
+  if STAGE="$(mktemp -d "$CACHE/.stage.XXXXXX" 2>/dev/null)"; then
+    cp -p "$BIN"/* "$STAGE"/ 2>/dev/null && mv -T "$STAGE" "$COPY" 2>/dev/null
+    rm -rf "$STAGE"
+  fi
+fi
+
+if [ -x "$COPY/nimbus" ]; then
+  exec "$COPY/nimbus" "$@"
+fi
+echo "nimbus: could not copy this AppImage's binaries to $CACHE, so a gateway started here stops when this command ends." >&2
+exec "$BIN/nimbus" "$@"

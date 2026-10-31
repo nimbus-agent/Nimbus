@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -313,9 +314,13 @@ function buildDeb(): string {
     "utf8",
   );
 
+  // $2 is the version being replaced, so this prints on an upgrade and not on a first install.
   const postinst = `#!/bin/sh
 set -e
-${bwrapApparmorInstallShell(false)}exit 0
+${bwrapApparmorInstallShell(false)}if [ "$1" = "configure" ] && [ -n "$2" ]; then
+    echo "If a Nimbus gateway is running, restart it: nimbus stop, then nimbus start. Until then it keeps its old code and nimbus doctor reports its old sandbox posture."
+fi
+exit 0
 `;
   writeFileSync(join(debRoot, "DEBIAN", "postinst"), postinst, "utf8");
   chmodSync(join(debRoot, "DEBIAN", "postinst"), 0o755);
@@ -413,6 +418,15 @@ function buildRpm(nfpmBin: string): string {
   return rpmPath;
 }
 
+/** The version, and a hash of the binaries in case two builds carry one version. */
+function appImageBuildId(binDir: string): string {
+  const hash = createHash("sha256");
+  for (const name of ["nimbus", "nimbus-gateway", "nimbus-sandbox-helper"]) {
+    hash.update(readFileSync(join(binDir, name)));
+  }
+  return `${version}-${hash.digest("hex").slice(0, 16)}`;
+}
+
 /**
  * Build the `.AppImage` from a staged AppDir (AppRun + desktop entry + icon +
  * binaries) using the provided appimagetool.
@@ -439,6 +453,8 @@ function buildAppImage(toolPath: string): string {
   const appRunDst = join(appDir, "AppRun");
   copyFileSync(appRunSrc, appRunDst);
   chmodSync(appRunDst, 0o755);
+  // Names the directory AppRun copies these binaries into, so a different build gets its own copy.
+  writeFileSync(join(appDir, "build-id"), appImageBuildId(usrBin), "utf8");
 
   const desktopSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.desktop");
   const desktopContent = readFileSync(desktopSrc, "utf8").replaceAll("{{VERSION}}", version);

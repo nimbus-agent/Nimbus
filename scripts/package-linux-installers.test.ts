@@ -1,10 +1,11 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 const linuxTest = process.platform === "linux" ? test : test.skip;
 
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -118,6 +119,79 @@ linuxTest("populates AppDir with AppRun, .desktop, icon, and binaries before inv
   expect(listing).toContain("./usr/share/applications/nimbus-headless.desktop");
 });
 
+linuxTest("the AppDir names its build, so AppRun gives each build its own copy", () => {
+  const idPath = join(workDir, "captured-build-id");
+  const recordingStub = makeStub(
+    "build-id-stub",
+    `cp "$1/build-id" "${idPath}"\nprintf 'AITS' > "$2"`,
+  );
+  expect(runInstaller(["--appimagetool", recordingStub]).status).toBe(0);
+  expect(readFileSync(idPath, "utf8")).toMatch(/^0\.1\.0-rc1-[0-9a-f]{16}$/);
+});
+
+describe("AppRun", () => {
+  /** An AppDir whose `nimbus` prints where it runs from and its arguments. */
+  function makeAppDir(): { appRun: string; bin: string; cache: string } {
+    const appDir = join(workDir, "AppDir");
+    const bin = join(appDir, "usr", "bin");
+    mkdirSync(bin, { recursive: true });
+    for (const name of ["nimbus", "nimbus-gateway", "nimbus-sandbox-helper"]) {
+      writeFileSync(join(bin, name), '#!/bin/sh\necho "$0 $*"\n', "utf8");
+      chmodSync(join(bin, name), 0o755);
+    }
+    writeFileSync(join(bin, "vec0.so"), "so", "utf8");
+    writeFileSync(join(appDir, "build-id"), "1.2.3-abc", "utf8");
+    const appRun = join(appDir, "AppRun");
+    copyFileSync(join(REPO_ROOT, "scripts", "linux", "nimbus-headless.AppRun"), appRun);
+    chmodSync(appRun, 0o755);
+    return { appRun, bin, cache: join(workDir, "cache") };
+  }
+
+  const run = (appRun: string, cache: string, ...args: string[]) =>
+    spawnSync(appRun, args, {
+      encoding: "utf8",
+      env: { PATH: process.env["PATH"] ?? "", XDG_CACHE_HOME: cache },
+      windowsHide: true,
+    });
+
+  linuxTest("runs the CLI from a per-build copy that holds everything beside it", () => {
+    const { appRun, cache } = makeAppDir();
+    const copy = join(cache, "nimbus", "appimage", "1.2.3-abc");
+    const r = run(appRun, cache, "start", "--x");
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(`${join(copy, "nimbus")} start --x`);
+    expect(r.stderr).toBe("");
+    expect(readdirSync(copy).sort()).toEqual([
+      "nimbus",
+      "nimbus-gateway",
+      "nimbus-sandbox-helper",
+      "vec0.so",
+    ]);
+    expect(statSync(join(copy, "nimbus-sandbox-helper")).mode & 0o777).toBe(0o755);
+    // No stage directory is left beside it.
+    expect(readdirSync(join(cache, "nimbus", "appimage"))).toEqual(["1.2.3-abc"]);
+  });
+
+  linuxTest("copies once, so a second run uses the first copy", () => {
+    const { appRun, bin, cache } = makeAppDir();
+    run(appRun, cache);
+    writeFileSync(join(bin, "nimbus"), "#!/bin/sh\necho changed\n", "utf8");
+    const again = run(appRun, cache, "status");
+    expect(again.stdout).not.toContain("changed");
+    expect(again.stdout).toContain("status");
+  });
+
+  linuxTest("a copy that cannot be made says so, and still runs from the AppImage", () => {
+    const { appRun, bin } = makeAppDir();
+    const notADirectory = join(workDir, "a-file");
+    writeFileSync(notADirectory, "", "utf8");
+    const r = run(appRun, notADirectory, "--version");
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(`${join(bin, "nimbus")} --version`);
+    expect(r.stderr).toContain("a gateway started here stops when this command ends");
+  });
+});
+
 linuxTest("substitutes {{VERSION}} placeholder in desktop entry", () => {
   const desktopOut = join(workDir, "captured.desktop");
   const recordingStub = makeStub(
@@ -212,6 +286,9 @@ linuxTest(
     expect(extract.status).toBe(0);
     const postinst = readFileSync(join(ctrlDir, "postinst"), "utf8");
     expect(postinst).toContain("apparmor_parser -r /etc/apparmor.d/nimbus-bwrap");
+    // Printed on an upgrade only, and as an instruction: dpkg does not restart a gateway.
+    expect(postinst).toContain('= "configure" ] && [ -n "$');
+    expect(postinst).toContain("restart it: nimbus stop, then nimbus start");
     expect(postinst).not.toContain("sudo apparmor_parser");
     const postrm = readFileSync(join(ctrlDir, "postrm"), "utf8");
     expect(postrm).toContain("remove|purge)");
