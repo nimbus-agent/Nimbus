@@ -2,6 +2,7 @@ import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import {
+  isSandboxWrapperOnlyEnv,
   parseSandboxPolicy,
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
@@ -51,7 +52,7 @@ export async function runSandboxWrapper(args: readonly string[]): Promise<never>
 
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV) continue;
+    if (k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV || isSandboxWrapperOnlyEnv(k)) continue;
     if (v !== undefined) childEnv[k] = v;
   }
 

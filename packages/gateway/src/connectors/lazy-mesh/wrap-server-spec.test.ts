@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +6,7 @@ import { join } from "node:path";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
+import { sandboxWrapperOnlyEnv } from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec, wrapServerSpecInCwd } from "./wrap-server-spec.ts";
 
@@ -56,6 +57,52 @@ describe("wrapServerSpec", () => {
   test("preserves the original command + args after the sentinel", () => {
     const wrapped = wrapServerSpec(makeSpec(), makeManifest(), CWD);
     expect(wrapped.args.slice(2)).toEqual(["nimbus-gateway", "__nimbus-connector", "github"]);
+  });
+
+  test("on Linux hands the wrapper what the env allowlist drops, and nothing on other systems", () => {
+    const env = {
+      NIMBUS_SANDBOX_HELPER_PATH: "/opt/helper",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      GITHUB_PAT: "not-this",
+    };
+    expect(sandboxWrapperOnlyEnv(env, "linux")).toEqual({
+      NIMBUS_SANDBOX_HELPER_PATH: "/opt/helper",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    expect(sandboxWrapperOnlyEnv(env, "win32")).toEqual({});
+    expect(sandboxWrapperOnlyEnv(env, "darwin")).toEqual({});
+    expect(sandboxWrapperOnlyEnv({ XDG_RUNTIME_DIR: "" }, "linux")).toEqual({});
+  });
+
+  describe.skipIf(process.platform !== "linux")("the wrapper-only variables", () => {
+    const saved = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+    afterEach(() => {
+      if (saved === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
+      else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = saved;
+    });
+
+    test("a network-declaring spawn carries the helper override", () => {
+      process.env["NIMBUS_SANDBOX_HELPER_PATH"] = "/opt/helper";
+      const manifest = makeManifest({ network: ["a.example.com"] });
+      expect(wrapServerSpec(makeSpec(), manifest, CWD).env["NIMBUS_SANDBOX_HELPER_PATH"]).toBe(
+        "/opt/helper",
+      );
+    });
+
+    test("wildcards alone count as declaring", () => {
+      process.env["NIMBUS_SANDBOX_HELPER_PATH"] = "/opt/helper";
+      const manifest = { ...makeManifest(), firstPartyWildcardHosts: ["*.sharepoint.com"] };
+      expect(wrapServerSpec(makeSpec(), manifest, CWD).env["NIMBUS_SANDBOX_HELPER_PATH"]).toBe(
+        "/opt/helper",
+      );
+    });
+
+    test("a no-network spawn does not", () => {
+      process.env["NIMBUS_SANDBOX_HELPER_PATH"] = "/opt/helper";
+      expect(
+        "NIMBUS_SANDBOX_HELPER_PATH" in wrapServerSpec(makeSpec(), makeManifest(), CWD).env,
+      ).toBe(false);
+    });
   });
 
   test("preserves caller-supplied env keys", () => {

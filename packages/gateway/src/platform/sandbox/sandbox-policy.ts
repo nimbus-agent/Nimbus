@@ -72,6 +72,37 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
 export const SANDBOX_POLICY_ENV = "NIMBUS_SANDBOX_POLICY_JSON";
 export const SANDBOX_CWD_ENV = "NIMBUS_SANDBOX_CWD";
 
+/**
+ * What the Linux wrapper needs from the gateway's environment and a child never gets. The allowlist
+ * in `extensionProcessEnv` (I1) rightly drops both, and that dropped the helper override: a gateway
+ * that saw a helper reported per-host, while its wrapper found none and gave the child the whole
+ * internet. The wrapper strips them from the child's environment. Not on Windows, where `win32.ts`
+ * reads the same override and its e2e tests rely on a helper copied beside the runtime instead.
+ */
+const LINUX_WRAPPER_ONLY_ENV = ["NIMBUS_SANDBOX_HELPER_PATH", "XDG_RUNTIME_DIR"] as const;
+
+/** Whether a child under this policy has any network to reach. Wildcards alone count. */
+export function declaresNetwork(policy: SandboxPolicy): boolean {
+  return policy.permissions.network.length > 0 || (policy.firstPartyWildcardHosts?.length ?? 0) > 0;
+}
+
+export function isSandboxWrapperOnlyEnv(key: string): boolean {
+  return (LINUX_WRAPPER_ONLY_ENV as readonly string[]).includes(key);
+}
+
+export function sandboxWrapperOnlyEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  if (platform !== "linux") return {};
+  const out: Record<string, string> = {};
+  for (const key of LINUX_WRAPPER_ONLY_ENV) {
+    const value = env[key];
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
+}
+
 function strings(v: unknown, what: string): string[] {
   if (!Array.isArray(v) || v.some((e) => typeof e !== "string")) {
     throw new TypeError(`${what} must be an array of strings`);
