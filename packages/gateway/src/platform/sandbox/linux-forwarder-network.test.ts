@@ -843,6 +843,22 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           -1,
         ],
         ["sched_getscheduler", `${SYSCALL} report({ v: sys(145, 0) >= 0 });`, true],
+        // Added with the ENOSYS default. Each is called with arguments that make a real kernel
+        // answer something other than ENOSYS, so a pass means the filter let it through.
+        [
+          "flock, which survives its bad descriptor",
+          `${SYSCALL} report({ v: sys(73, -1, 8) });`,
+          -1,
+        ],
+        ["gettimeofday", `${SYSCALL} report({ v: sys(96, 0, 0) });`, 0],
+        ["getpriority", `${SYSCALL} report({ v: sys(140, 0, 0) >= 0 });`, true],
+        ["capget, which survives its null header", `${SYSCALL} report({ v: sys(125, 0, 0) });`, -1],
+        [
+          "sched_getparam, which survives its null pointer",
+          `${SYSCALL} report({ v: sys(143, 0, 0) });`,
+          -1,
+        ],
+        ["alarm, cancelling nothing", `${SYSCALL} report({ v: sys(37, 0) });`, 0],
         [
           "/bin/sh -c, as a shell-script CLI starts",
           `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
@@ -890,6 +906,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
         ["pidfd_getfd", 438],
         ["pidfd_send_signal", 424],
         ["setns", 308],
+        ["unshare", 272],
       ])(
         "%s stays killed",
         async (_name, nr) => {
@@ -903,6 +920,31 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           );
           expect(ran.exitCode).toBe(SECCOMP_KILLED_EXIT);
           expect(ran.stdout).not.toContain("survived");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "an unlisted call answers ENOSYS and the child keeps running",
+        async () => {
+          const box = newSandbox(root, "enosys");
+          const ran = await runChild(
+            ownerPolicy([declared()]),
+            box,
+            `${SYSCALL}
+             const { read } = require("bun:ffi");
+             const e = dlopen("libc.so.6", { __errno_location: { args: [], returns: "ptr" } }).symbols;
+             const first = sys(319, 0, 0); // memfd_create with a null name
+             const errno = read.i32(e.__errno_location());
+             report({ first, errno });
+             report({ after: "still running", pid: process.pid > 0 });`,
+            [],
+            { coreless: true },
+          );
+          expect(ran.exitCode).toBe(0);
+          expect(parseLast(ran.stdout)["after"]).toBe("still running");
+          const first = ran.stdout.split("\n").find((l) => l.includes("errno"));
+          expect(JSON.parse(first ?? "{}")).toEqual({ first: -1, errno: 38 });
         },
         TEST_TIMEOUT_MS,
       );

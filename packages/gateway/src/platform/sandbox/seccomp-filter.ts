@@ -1,4 +1,25 @@
-const SYSCALL_NR: Record<string, number> = {
+/**
+ * The child's seccomp filter: an x86-64 allowlist.
+ *
+ * Order of verdicts, first match wins: allow (`SYS_ALLOW`), refuse with EPERM (`SYS_BLOCK_EPERM`),
+ * kill (`SYS_KILL_ALWAYS`), and anything else answers ENOSYS ("function not implemented"). A call
+ * from another architecture is killed before any of that.
+ *
+ * Why the default is ENOSYS and not a kill. The default used to be SECCOMP_RET_KILL_PROCESS, and an
+ * allowlist can never be complete across distros and CLIs, so each call it missed killed a connector
+ * with SIGSYS, exit 159 and no stderr, which nothing could report or diagnose. That cost three
+ * separate bugs on real systems: DNS died on glibc's `sendmmsg`, every subprocess died on Bun's
+ * `pidfd_open`, and every shell script died on Fedora, where bash calls `getresuid`. ENOSYS refuses
+ * the call exactly as the kill did, so confinement is unchanged: only the failure mode differs, from
+ * a silent death to an ordinary error that a program reports or falls back from, as it does for a
+ * kernel that predates the call. Docker's default profile answers the same way.
+ *
+ * The kill stays for two things. A call from the wrong architecture is a 32-bit ABI bypass attempt
+ * (the numbers mean other calls there), not a missing entry. And `SYS_KILL_ALWAYS` lists the calls
+ * a confined child has no innocent use for and that could be an escape attempt, so loudly
+ * ending that process is the better answer than letting it carry on.
+ */
+export const SYSCALL_NR: Record<string, number> = {
   read: 0,
   write: 1,
   open: 2,
@@ -200,6 +221,49 @@ const SYSCALL_NR: Record<string, number> = {
   sched_getscheduler: 145,
   close_range: 436,
   epoll_pwait2: 441,
+  // Added with the ENOSYS default: harmless calls now allowed, and the kill list.
+  flock: 73,
+  getrusage: 98,
+  truncate: 76,
+  fallocate: 285,
+  copy_file_range: 326,
+  sendfile: 40,
+  time: 201,
+  times: 100,
+  alarm: 37,
+  setitimer: 38,
+  getitimer: 36,
+  inotify_init1: 294,
+  inotify_add_watch: 254,
+  inotify_rm_watch: 255,
+  signalfd4: 289,
+  splice: 275,
+  sched_getparam: 143,
+  ioprio_get: 252,
+  pause: 34,
+  getpriority: 140,
+  sync: 162,
+  syncfs: 306,
+  capget: 125,
+  pidfd_getfd: 438,
+  pidfd_send_signal: 424,
+  setns: 308,
+  unshare: 272,
+  move_mount: 429,
+  open_tree: 428,
+  fsopen: 430,
+  fsconfig: 431,
+  fsmount: 432,
+  fspick: 433,
+  open_by_handle_at: 304,
+  name_to_handle_at: 303,
+  acct: 163,
+  settimeofday: 164,
+  clock_settime: 227,
+  adjtimex: 159,
+  lookup_dcookie: 212,
+  nfsservctl: 180,
+  vmsplice: 278,
 };
 
 export const SYS_ALLOW: readonly string[] = Object.freeze([
@@ -325,8 +389,8 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "futimesat",
   "statx",
   "openat2",
-  // Modern-runtime calls (glibc startup + Bun event loop) — without these the KILL default
-  // SIGSYS-kills every wrapped connector on a current distro. None grant privilege: they are
+  // Modern-runtime calls (glibc startup + Bun event loop) — without these they fail with ENOSYS
+  // (before the default changed, they killed every wrapped connector) on a current distro. None grant privilege: they are
   // thread/registration (rseq, sigaltstack, membarrier), stat (newfstatat), event-loop fds
   // (eventfd2, timerfd_*), fd hygiene (close_range), scheduling (sched_setscheduler), process
   // metadata (prctl, sysinfo).
@@ -359,9 +423,9 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // ALREADY-OPEN fd, so it can only affect a file the bind mounts already made writable. It
   // cannot open anything, reach outside the mounts, or change what is reachable.
   "ftruncate",
-  // glibc's resolver sends its A and AAAA queries together with `sendmmsg`. Without it the KILL
-  // default SIGSYS-killed every child on its first DNS lookup on Ubuntu 24.04, with no stderr at
-  // all, so a network connector started and then died on its first request. It grants nothing
+  // glibc's resolver sends its A and AAAA queries together with `sendmmsg`. Without it DNS
+  // fails on its first lookup on Ubuntu 24.04 (it used to kill the child with no stderr at all), so
+  // a network connector started and then failed its first request. It grants nothing
   // `sendto` and `sendmsg` above do not: it is several of the same send on an open socket.
   "sendmmsg",
   // Bun's `child_process.spawn` and `Bun.spawn` call it on the subprocess they just started, to wait
@@ -405,6 +469,35 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // descriptor out of another process, `pidfd_send_signal` signals through a descriptor that may
   // have been handed in from outside the namespace, and `setns` enters another namespace. `ptrace`
   // stays in `SYS_BLOCK_EPERM`.
+  // Harmless calls an ordinary CLI makes, added when the default became ENOSYS. Each acts on an
+  // already-open fd, on a path the bind mounts already made reachable, on this process's own clocks,
+  // timers, signals or scheduling, or reads its own state; none opens a new route out or grants privilege.
+  "flock",
+  "getrusage",
+  "truncate",
+  "fallocate",
+  "copy_file_range",
+  "sendfile",
+  "gettimeofday",
+  "time",
+  "times",
+  "alarm",
+  "setitimer",
+  "getitimer",
+  "inotify_init1",
+  "inotify_add_watch",
+  "inotify_rm_watch",
+  "signalfd4",
+  "splice",
+  "sched_getparam",
+  "ioprio_get",
+  "pause",
+  "getpriority",
+  "sync",
+  "syncfs",
+  "capget",
+  // Left unlisted on purpose, so they answer ENOSYS: `memfd_create`, `mknodat`, `shmget`, `semget`,
+  // `mlock`, `setpriority`, `rt_sigqueueinfo`.
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
@@ -451,7 +544,34 @@ export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
   "io_uring_register",
 ]);
 
-export const SYS_KILL_DEFAULT = true;
+/**
+ * Calls a confined child has no innocent use for and that could mean an escape attempt: they reach
+ * other processes or namespaces, the mount table, kernel modules or the machine's clock and state,
+ * or are known building blocks of exploits. They are killed (SIGSYS), not refused, so an attempt
+ * ends the process loudly. Calls already in `SYS_BLOCK_EPERM` (mount, bpf, ...) stay there and answer
+ * EPERM; none is repeated here.
+ */
+export const SYS_KILL_ALWAYS: readonly string[] = Object.freeze([
+  "pidfd_getfd",
+  "pidfd_send_signal",
+  "setns",
+  "unshare",
+  "move_mount",
+  "open_tree",
+  "fsopen",
+  "fsconfig",
+  "fsmount",
+  "fspick",
+  "open_by_handle_at",
+  "name_to_handle_at",
+  "acct",
+  "settimeofday",
+  "clock_settime",
+  "adjtimex",
+  "lookup_dcookie",
+  "nfsservctl",
+  "vmsplice",
+]);
 
 const BPF_LD = 0x00,
   BPF_W = 0x00,
@@ -465,6 +585,7 @@ const SECCOMP_DATA_ARCH_OFFSET = 4;
 const AUDIT_ARCH_X86_64 = 0xc000003e;
 const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_ERRNO_EPERM = 0x00050001;
+const SECCOMP_RET_ERRNO_ENOSYS = 0x00050000 | 38;
 const SECCOMP_RET_KILL_PROCESS = 0x80000000;
 
 interface SockFilter {
@@ -495,11 +616,13 @@ function emit(filters: SockFilter[]): Buffer {
 export interface SeccompFilterOverrides {
   allowList?: readonly string[];
   blockList?: readonly string[];
+  killList?: readonly string[];
 }
 
 export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}): Buffer {
   const allowList = overrides.allowList ?? SYS_ALLOW;
   const blockList = overrides.blockList ?? SYS_BLOCK_EPERM;
+  const killList = overrides.killList ?? SYS_KILL_ALWAYS;
 
   const program: SockFilter[] = [];
   program.push(
@@ -529,6 +652,16 @@ export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}
       instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_EPERM),
     );
   }
-  program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
+  for (const name of killList) {
+    const nr = SYSCALL_NR[name];
+    if (nr === undefined) {
+      throw new Error(`unknown syscall in kill list: ${name}`);
+    }
+    program.push(
+      instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr),
+      instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    );
+  }
+  program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS));
   return emit(program);
 }
