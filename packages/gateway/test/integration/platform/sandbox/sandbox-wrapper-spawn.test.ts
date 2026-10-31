@@ -552,6 +552,90 @@ function childProcess(dir: string, name: string, body: string): { argv: string[]
 // not be blocked) but a CI failure: `!READY && !IS_CI` only suppresses the whole suite off-CI.
 // On CI with a missing prerequisite, the describe block still runs — see the CI-fail-fast branch
 // immediately inside it, which registers one loud, named failure instead of the five real tests.
+/**
+ * The per-host rule under a real `sandbox-exec`, through the real runner. Until this ran, only the
+ * generated text of the rule had been tested, so nothing knew whether `sandbox-exec` accepts it.
+ *
+ * Through the wrapper role and `spawnSync`, as the rest of this file does: the runner's own
+ * `node:child_process` spawn inside a test worker can lose its child's exit on macOS (oven-sh/bun#41024)
+ * and hang past `--timeout`. Bounded for the same reason.
+ *
+ * The second test asserts no outcome. What a declared and an undeclared connection do is what it is
+ * here to find out, so it prints both, and the macOS leg's log records the real behaviour.
+ */
+describe.skipIf(process.platform !== "darwin")("sandbox-exec: a per-host profile for real", () => {
+  const BOUND_MS = 40_000;
+
+  function run(network: readonly string[], argv: readonly string[]) {
+    const p: SandboxPolicy = {
+      ...policy(),
+      permissions: { ...policy().permissions, network: [...network] },
+    };
+    return spawnSync(process.execPath, [GATEWAY_ENTRY, "__nimbus-sandbox", ...argv], {
+      encoding: "utf8",
+      timeout: BOUND_MS,
+      env: {
+        ...process.env,
+        [SANDBOX_POLICY_ENV]: JSON.stringify(p),
+        [SANDBOX_CWD_ENV]: work,
+      },
+    });
+  }
+
+  it("accepts the profile of a policy declaring one host, and starts a child", () => {
+    const r = run(["api.github.com"], ["/usr/bin/true"]);
+    console.log(
+      `[sandbox-exec per-host] parse and start: status=${String(r.status)} stderr=${JSON.stringify(r.stderr)}`,
+    );
+    expect(r.stderr).not.toContain("sandbox-exec:");
+    expect(r.status).toBe(0);
+  }, 60_000);
+
+  it("records what a declared and an undeclared connection do", () => {
+    // `spawnSync` blocks this event loop, so neither listener accepts, and neither has to: a connect
+    // completes against the kernel's backlog. Only the sandbox can tell the two ports apart.
+    const handlers = { socket: { data() {} } };
+    const declared = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+    const undeclared = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+    try {
+      const targets = {
+        declaredLoopbackPort: ["127.0.0.1", declared.port],
+        undeclaredLoopbackPort: ["127.0.0.1", undeclared.port],
+        declaredHost: ["api.github.com", 443],
+        undeclaredHost: ["example.com", 443],
+      };
+      const body = [
+        `const targets = ${JSON.stringify(targets)};`,
+        'const net = require("net");',
+        "const dial = ([host, port]) => new Promise((done) => {",
+        "  const s = net.connect({ host, port }, () => { s.destroy(); done('connected'); });",
+        "  s.on('error', (e) => done(String(e.code ?? e.message)));",
+        "  setTimeout(() => { s.destroy(); done('timeout'); }, 5000);",
+        "});",
+        "(async () => {",
+        "  const out = {};",
+        "  for (const [name, t] of Object.entries(targets)) out[name] = await dial(t);",
+        "  process.stdout.write(JSON.stringify(out));",
+        "  process.exit(0);",
+        "})();",
+      ].join("\n");
+      const { argv } = childProcess(work, "per-host-dial", body);
+      const r = run([`127.0.0.1:${String(declared.port)}`, "api.github.com"], argv);
+      console.log(
+        `[sandbox-exec per-host] connections: status=${String(r.status)} stdout=${r.stdout} stderr=${JSON.stringify(r.stderr)}`,
+      );
+      expect(r.stderr).not.toContain("sandbox-exec:");
+      expect(r.status).toBe(0);
+      expect(Object.keys(JSON.parse(r.stdout) as object).sort()).toEqual(
+        Object.keys(targets).sort(),
+      );
+    } finally {
+      declared.stop(true);
+      undeclared.stop(true);
+    }
+  }, 60_000);
+});
+
 describe.skipIf(!READY && !IS_CI)("sandbox wrapper: real spawn on every platform", () => {
   if (IS_CI && !READY) {
     // Fix 2 (fix round 1): a skip and a pass are indistinguishable in a CI summary — that

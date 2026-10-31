@@ -113,7 +113,8 @@ describe("doctorPrintLinuxSandbox", () => {
         reason: null,
       });
       expect(code).toBe(0);
-      expect(lines.at(-1)).toBe(ENFORCED);
+      expect(lines).toContain(ENFORCED);
+      expect(lines.at(-1)).toContain("net-forward:");
     });
 
     test("a helper beside the gateway that starts, with no gateway: it can start, exit 0", () => {
@@ -296,7 +297,7 @@ describe("doctorPrintLinuxSandbox", () => {
       test("a gateway that enforces per host leaves the local result alone", () => {
         const code = doctorPrintLinuxSandbox(deps({}), { network: "per_host", reason: null });
         expect(code).toBe(0);
-        expect(lines.at(-1)).toBe(ENFORCED);
+        expect(lines).toContain(ENFORCED);
       });
 
       test("no gateway: the local probe decides", () => {

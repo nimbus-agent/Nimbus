@@ -289,10 +289,15 @@ function doctorPrintDeclaredHosts(
   }
   // This process's own start ran `/usr/bin/true` with an unused socket and no seccomp filter. It says
   // the forwarder can start, and only the gateway that spawns connectors can say more.
+  if (gateway?.network === "per_host") {
+    console.log("[ok] Sandbox: declared hosts are enforced.");
+    console.log(
+      "  If a connector still cannot reach a host, look for net-forward: lines in the gateway log.",
+    );
+    return 0;
+  }
   console.log(
-    gateway?.network === "per_host"
-      ? "[ok] Sandbox: declared hosts are enforced."
-      : "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
+    "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
   );
   return 0;
 }
