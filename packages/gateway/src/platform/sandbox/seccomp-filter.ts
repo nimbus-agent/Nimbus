@@ -188,6 +188,16 @@ const SYSCALL_NR: Record<string, number> = {
   membarrier: 324,
   rseq: 334,
   pidfd_open: 434,
+  fsync: 74,
+  fdatasync: 75,
+  kill: 62,
+  tkill: 200,
+  fadvise64: 221,
+  faccessat2: 439,
+  getgroups: 115,
+  getresuid: 118,
+  getresgid: 120,
+  sched_getscheduler: 145,
   close_range: 436,
   epoll_pwait2: 441,
 };
@@ -357,8 +367,44 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // Bun's `child_process.spawn` and `Bun.spawn` call it on the subprocess they just started, to wait
   // for it. Without it a child that ran any subprocess was SIGSYS-killed with no stderr, in every
   // network mode. Measured with strace on Bun 1.4. It grants no reach: a pidfd names a process this
-  // one can already see in its own pid namespace, and nothing here lets it signal one.
+  // one can already see in its own pid namespace.
   "pidfd_open",
+  // The rest of what an ordinary program does to its own children, which a connector's CLI is. Each
+  // one here SIGSYS-killed the child with no stderr, measured on Bun 1.4.
+  //
+  // Signals: `child.kill()` and `process.kill(pid, 0)`. Every spawn passes `--unshare-pid`, in every
+  // network mode, so a pid here names only a process in the child's own namespace, and `-1` reaches
+  // only those. `buildBwrapArgv`'s test pins that. `tgkill` is listed above.
+  "kill",
+  "tkill",
+  // Durability of a file the bind mounts already made writable. They open nothing.
+  "fsync",
+  "fdatasync",
+  // This process's own file mode mask.
+  "umask",
+  // Sessions and process groups, within the pid namespace: `detached: true`, and a shell's job
+  // control. bwrap's `--new-session` has already cut the child off the host's terminal, so a new
+  // session cannot get back to it.
+  "setsid",
+  "setpgid",
+  "getsid",
+  "getpgid",
+  // What strace showed the real CLIs call that the list above lacked. `gcloud` is a bash script, and
+  // bash tests a file with `faccessat2`, which is `faccessat` with flags and reads no more than it
+  // does. `cat` and the Python in `aws` and `az` call `fadvise64`, a read-ahead hint on an open fd.
+  "faccessat2",
+  "fadvise64",
+  // On Fedora `/usr/bin/sh` is bash, which reads its own ids and scheduler at startup, so every shell
+  // script died there before its first line, while Debian's dash passed. `id` calls `getgroups`. All
+  // four only read this process's own credentials.
+  "getresuid",
+  "getresgid",
+  "getgroups",
+  "sched_getscheduler",
+  // NOT here, on purpose, and the filter's test pins that they stay killed: `pidfd_getfd` copies a
+  // descriptor out of another process, `pidfd_send_signal` signals through a descriptor that may
+  // have been handed in from outside the namespace, and `setns` enters another namespace. `ptrace`
+  // stays in `SYS_BLOCK_EPERM`.
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 import pino from "pino";
 
@@ -618,6 +619,34 @@ export const FIRST_PARTY_WILDCARD_HOSTS: Readonly<Record<string, readonly string
   sagemaker: awsWildcards("api.sagemaker", "sts"),
 };
 
+/**
+ * Where a connector's CLI really lives, when that is outside what every sandbox binds. Microsoft's
+ * Linux package puts `az` at `/usr/bin/az`, a script over `/opt/az/bin/python3`, so the connector got
+ * exit 127 from every `az`. Added only where it exists, since binding a missing path refuses the
+ * whole spawn, and only on Linux, the only system whose package installs it there.
+ */
+const INSTALLED_CLI_TREES: Readonly<Record<string, readonly string[]>> = {
+  azure: ["/opt/az"],
+};
+
+export function withInstalledCliTrees(
+  manifest: ExtensionManifest,
+  serviceId: string,
+  exists: (path: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+): ExtensionManifest {
+  const trees = platform === "linux" ? (INSTALLED_CLI_TREES[serviceId] ?? []).filter(exists) : [];
+  if (trees.length === 0) return manifest;
+  const { filesystem } = manifest.permissions;
+  return {
+    ...manifest,
+    permissions: {
+      ...manifest.permissions,
+      filesystem: { ...filesystem, read: [...filesystem.read, ...trees] },
+    },
+  };
+}
+
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   const known = FIRST_PARTY_MANIFESTS[serviceId];
   const wildcards = FIRST_PARTY_WILDCARD_HOSTS[serviceId];
@@ -625,7 +654,10 @@ export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   // default-deny fallback: this code wrote the manifest, so its entries get the first-party address
   // rules, and only this table can name a wildcard.
   return {
-    ...(known ?? baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY)),
+    ...withInstalledCliTrees(
+      known ?? baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY),
+      serviceId,
+    ),
     firstPartyPolicy: true,
     ...(wildcards === undefined ? {} : { firstPartyWildcardHosts: [...wildcards] }),
   };

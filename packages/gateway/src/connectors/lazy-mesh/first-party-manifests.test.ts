@@ -1,6 +1,7 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { isValidWildcardHost } from "../../platform/sandbox/net-wildcard-hosts.ts";
 import {
   FIRST_PARTY_MANIFESTS,
@@ -11,6 +12,7 @@ import {
   networkEntryFromUrl,
   siteUrlWithScheme,
   storedUrlHosts,
+  withInstalledCliTrees,
 } from "./first-party-manifests.ts";
 
 describe("manifestForFirstParty", () => {
@@ -588,5 +590,24 @@ m("jenkins", ['secret"value.com'], { ownerConfigured: [] });`;
     expect(line["msg"]).toBe("ignored a stored host that is not a valid hostname");
     expect(stderr).not.toContain("secret");
     expect(child.stdout.toString()).toBe("");
+  });
+});
+
+describe("withInstalledCliTrees", () => {
+  const present = (): boolean => true;
+  const absent = (): boolean => false;
+  const base = () => FIRST_PARTY_MANIFESTS["azure"] as ExtensionManifest;
+
+  test("adds the tree where it exists on Linux", () => {
+    const out = withInstalledCliTrees(base(), "azure", present, "linux");
+    expect(out.permissions.filesystem.read).toEqual(["/opt/az"]);
+    expect(out.permissions.network).toEqual(base().permissions.network);
+  });
+  test("adds nothing where it does not, since a missing bind refuses the spawn", () => {
+    expect(withInstalledCliTrees(base(), "azure", absent, "linux")).toBe(base());
+  });
+  test("adds nothing on another system, or for another connector", () => {
+    expect(withInstalledCliTrees(base(), "azure", present, "darwin")).toBe(base());
+    expect(withInstalledCliTrees(base(), "github", present, "linux")).toBe(base());
   });
 });

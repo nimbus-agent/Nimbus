@@ -185,3 +185,67 @@ describe("buildDefaultSeccompFilter", () => {
     expect(defaultBuf).toHaveLength(expectedInstrs * 8);
   });
 });
+
+/** Runs the program the way the kernel would, for one syscall number on x86-64. */
+function verdict(program: Buffer, nr: number): "allow" | "eperm" | "kill" {
+  const ARCH = 0xc000003e;
+  let accumulator = 0;
+  let pc = 0;
+  while (pc * 8 < program.length) {
+    const code = program.readUInt16LE(pc * 8);
+    const jt = program.readUInt8(pc * 8 + 2);
+    const jf = program.readUInt8(pc * 8 + 3);
+    const k = program.readUInt32LE(pc * 8 + 4);
+    if (code === 0x20) {
+      accumulator = k === 4 ? ARCH : nr;
+      pc += 1;
+    } else if (code === 0x15) {
+      pc += 1 + (accumulator === k ? jt : jf);
+    } else if (code === 0x06) {
+      if (k === 0x7fff0000) return "allow";
+      return k === 0x00050001 ? "eperm" : "kill";
+    } else {
+      throw new Error(`unexpected BPF code ${String(code)}`);
+    }
+  }
+  throw new Error("the program fell off its end");
+}
+
+describe("what a child may do to itself, and nothing further", () => {
+  const program = buildDefaultSeccompFilter();
+
+  it.each<[string, number]>([
+    ["kill", 62],
+    ["tkill", 200],
+    ["tgkill", 234],
+    ["fsync", 74],
+    ["fdatasync", 75],
+    ["umask", 95],
+    ["setsid", 112],
+    ["setpgid", 109],
+    ["getsid", 124],
+    ["getpgid", 121],
+    ["pidfd_open", 434],
+    ["faccessat2", 439],
+    ["fadvise64", 221],
+    ["getgroups", 115],
+    ["getresuid", 118],
+    ["getresgid", 120],
+    ["sched_getscheduler", 145],
+  ])("%s is allowed", (_name, nr) => {
+    expect(verdict(program, nr)).toBe("allow");
+  });
+
+  it.each<[string, number]>([
+    ["pidfd_getfd", 438],
+    ["pidfd_send_signal", 424],
+    ["setns", 308],
+    ["unshare", 272],
+  ])("%s stays killed", (_name, nr) => {
+    expect(verdict(program, nr)).toBe("kill");
+  });
+
+  it("ptrace stays refused", () => {
+    expect(verdict(program, 101)).toBe("eperm");
+  });
+});
