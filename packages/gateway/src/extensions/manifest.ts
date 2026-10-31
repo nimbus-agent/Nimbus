@@ -28,6 +28,20 @@ export {
  */
 export type ExtensionManifest = RegistryExtensionManifest & {
   ownerConfiguredNetwork?: readonly string[];
+  /**
+   * True only for a manifest `manifestForFirstParty` built: its fixed hosts, and the hosts our code
+   * derives, get the first-party address rules. Same provenance rule as above: the parser never
+   * reads it, so a manifest file cannot claim it.
+   */
+  firstPartyPolicy?: boolean;
+  /**
+   * Wildcard host patterns (`*.sharepoint.com`) for a first-party tool that calls hosts no exact
+   * list can name. Kept apart from `permissions.network` so the macOS and Windows runners, which
+   * read only that list, can never see one. Set only from the table in `first-party-manifests.ts`;
+   * the parser never reads it, so a manifest file, an extension or a user MCP server cannot claim
+   * one (I43).
+   */
+  firstPartyWildcardHosts?: readonly string[];
 };
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";

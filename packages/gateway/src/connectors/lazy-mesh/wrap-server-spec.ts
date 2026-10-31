@@ -2,9 +2,11 @@ import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { selfSpawn } from "../../platform/runtime-layout.ts";
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
+  declaresNetwork,
   policyFromManifest,
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
+  sandboxWrapperOnlyEnv,
 } from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
 
@@ -15,6 +17,8 @@ function wrapWithCwd(spec: ServerSpec, manifest: ExtensionManifest, cwd: string)
     args,
     env: {
       ...spec.env,
+      // A child with no network needs neither, so a no-network spawn keeps exactly the baseline env.
+      ...(declaresNetwork(policyFromManifest(manifest)) ? sandboxWrapperOnlyEnv() : {}),
       [SANDBOX_POLICY_ENV]: JSON.stringify(policyFromManifest(manifest)),
       [SANDBOX_CWD_ENV]: cwd,
     },

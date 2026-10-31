@@ -14,7 +14,14 @@ import { tourRule } from "./run-tour.ts";
  * label — because silently omitting an open listener is the one failure this honesty panel cannot
  * have.
  */
-export type ListenerName = "ipc" | "http" | "lan" | "metrics" | "oauth_callback" | "mdns";
+export type ListenerName =
+  | "ipc"
+  | "http"
+  | "lan"
+  | "metrics"
+  | "oauth_callback"
+  | "mdns"
+  | "sandbox_forward";
 
 export interface ListenerReport {
   readonly name: ListenerName;
@@ -58,6 +65,7 @@ const LISTENER_LABELS: Readonly<Record<ListenerName, string>> = {
   metrics: "metrics",
   oauth_callback: "OAuth callback",
   mdns: "mDNS discovery",
+  sandbox_forward: "sandbox network",
 };
 
 /**

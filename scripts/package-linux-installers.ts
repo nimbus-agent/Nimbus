@@ -74,7 +74,7 @@ libfuse2t64 or pass --skip-appimage and build AppImage elsewhere.
 
 For the sandbox helper: unless --sandbox-helper or --skip-sandbox-helper is
 passed, the script attempts 'make -C packages/gateway/src-native/sandbox-helper'
-which requires a C99 compiler and libcap-dev. See docs/release/headless-
+which requires a C99 compiler. See docs/release/headless-
 postinst-linux-setcap.md for the runtime setcap flow.
 `);
 }
@@ -135,7 +135,7 @@ if (existsSync(outRoot)) {
 mkdirSync(outRoot, { recursive: true });
 
 /**
- * Resolve the privileged Linux sandbox helper to bundle: an explicit
+ * Resolve the Linux sandbox helper to bundle: an explicit
  * `--sandbox-helper`/bundled binary if present, else one built from
  * `src-native`, else `null` (the sandbox then runs in fallback mode).
  */
@@ -164,7 +164,7 @@ function resolveSandboxHelper(): string | null {
     console.warn(
       `package-linux-installers: ${MAKE_BIN} not available; skipping sandbox-helper bundling.\n` +
         `  Sandbox will run in fallback mode at runtime. Pass --sandbox-helper <path>\n` +
-        `  with a pre-built binary or install build-essential + libcap-dev.`,
+        `  with a pre-built binary or install build-essential.`,
     );
     return null;
   }
@@ -172,7 +172,7 @@ function resolveSandboxHelper(): string | null {
   if (make.status !== 0 || !existsSync(built)) {
     console.warn(
       "package-linux-installers: make failed for nimbus-sandbox-helper; skipping bundling.\n" +
-        "  Sandbox will run in fallback mode at runtime. Install libcap-dev and a C99\n" +
+        "  Sandbox will run in fallback mode at runtime. Install a C99\n" +
         "  compiler (build-essential) to enable per-host network filtering.",
     );
     return null;
@@ -248,7 +248,7 @@ function buildTarball(): string {
   const helperNote =
     sandboxHelper === null
       ? ""
-      : `bin/nimbus-sandbox-helper is the privileged Linux sandbox helper. After
+      : `bin/nimbus-sandbox-helper is the Linux sandbox helper. After
 running install.sh, run ./linux-postinstall.sh — it will grant the helper
 cap_net_admin+ep so the sandbox can enforce per-host network filtering
 without running the Gateway as root. See

@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -292,4 +293,26 @@ linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () =>
   const wrapper = readFileSync(wrapperOut, "utf8");
   expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");
   expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
+});
+
+// The Linux sandbox helper must not ship until its shipping PR. A workflow call without the flag
+// would build the helper (the static link now succeeds), bundle it and run setcap on it in
+// postinst. Every workflow call to the packager, release and CI alike, must pass the flag.
+test("every workflow call to the Linux packager passes --skip-sandbox-helper", () => {
+  const dir = join(REPO_ROOT, ".github", "workflows");
+  const calls: string[] = [];
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
+    const text = readFileSync(join(dir, name), "utf8");
+    // A trailing backslash continues the command onto the next line.
+    const joined = text.replace(/\\\r?\n/g, " ");
+    for (const line of joined.split(/\r?\n/)) {
+      // A call is a `bun` command line: a path filter, a comment or a grep pattern is not one.
+      if (!/^\s*bun\s.*(package-linux-installers\.ts|package:installers:linux)/.test(line))
+        continue;
+      calls.push(`${name}: ${line.trim()}`);
+      expect(line).toContain("--skip-sandbox-helper");
+    }
+  }
+  // At least the release and CI calls, so a rename of the call cannot make this pass vacuously.
+  expect(calls.length).toBeGreaterThanOrEqual(2);
 });

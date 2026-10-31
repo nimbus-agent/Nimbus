@@ -2900,8 +2900,8 @@ describe("I33 — user code executes only behind the exec gate", () => {
     const code = stripComments(
       await readFile(resolve(REPO_ROOT, "packages/gateway/src/platform/sandbox/linux.ts"), "utf8"),
     );
-    expect(code).toMatch(/canConfine[\s\S]{0,400}permissions\.network\.length === 0/);
-    expect(code).toMatch(/canConfine[\s\S]{0,400}helper\.available/);
+    expect(code).toMatch(/canConfine[\s\S]{0,500}!declaresNetwork\(policy\)/);
+    expect(code).toMatch(/canConfine[\s\S]{0,800}helper\.available/);
   });
 
   // Empty-by-construction is the property; a caller-supplied network list must be REFUSED, not
@@ -6784,6 +6784,7 @@ describe("I43 — an installed extension's code runs only through the verified s
   test("behavioural: a granted credential reaches the spec env with its Vault value; ungranted secrets and a stale mapping do not", async () => {
     const { getRunGrant, upsertRunGrant } = await import("./extensions/run-grant-store.ts");
     const { extensionProcessEnv } = await import("./extensions/spawn-env.ts");
+    const { sandboxWrapperOnlyEnv } = await import("./platform/sandbox/sandbox-policy.ts");
     const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
       "./platform/sandbox/sandbox-policy.ts"
     );
@@ -6800,6 +6801,8 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(prepared.spec.env["I43_TOKEN"]).toBe("i43-granted-value");
     const allowed = new Set([
       ...Object.keys(extensionProcessEnv({})),
+      // For the wrapper, which strips them before the child starts.
+      ...Object.keys(sandboxWrapperOnlyEnv()),
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
       "I43_TOKEN",

@@ -100,8 +100,16 @@ function agentLatencyPreviewParams(ctx: DiagnosticsRpcContext): {
     : { agentInvocationLatencyP50Ms: p.p50Ms, agentInvocationLatencyP95Ms: p.p95Ms };
 }
 
+function sandboxNetworkPosture(runner: SandboxRunner): "per_host" | "all_or_nothing" | "refusing" {
+  if (runner.isFullyActive()) return "per_host";
+  return runner.networkRefused?.() === true ? "refusing" : "all_or_nothing";
+}
+
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
-  platform_capabilities: { network: "per_host" | "all_or_nothing"; reason: string | null };
+  platform_capabilities: {
+    network: "per_host" | "all_or_nothing" | "refusing";
+    reason: string | null;
+  };
   linux_helper: { available: boolean; reason: string | null } | null;
   stale_rules_count: number;
 } {
@@ -115,9 +123,7 @@ export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
       stale_rules_count: 0,
     };
   }
-  const network: "per_host" | "all_or_nothing" = runner.isFullyActive()
-    ? "per_host"
-    : "all_or_nothing";
+  const network = sandboxNetworkPosture(runner);
   const reason = runner.degradedReason();
   const linux_helper =
     runner.platform === "linux" ? { available: runner.isFullyActive(), reason } : null;

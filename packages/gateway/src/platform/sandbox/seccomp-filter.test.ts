@@ -1,10 +1,12 @@
 import { describe, expect, it } from "bun:test";
 import {
   buildDefaultSeccompFilter,
+  CLONE_NAMESPACE_FLAGS,
   type SeccompFilterOverrides,
   SYS_ALLOW,
   SYS_BLOCK_EPERM,
-  SYS_KILL_DEFAULT,
+  SYS_KILL_ALWAYS,
+  SYSCALL_NR,
 } from "./seccomp-filter.ts";
 
 describe("buildDefaultSeccompFilter", () => {
@@ -13,11 +15,99 @@ describe("buildDefaultSeccompFilter", () => {
     expect(program.length).toBeGreaterThan(0);
   });
 
-  it("includes a BPF_RET for SECCOMP_RET_KILL_PROCESS as the catch-all", () => {
+  it("ends in SECCOMP_RET_ERRNO | ENOSYS as the catch-all", () => {
     const program = buildDefaultSeccompFilter();
     const lastInstr = program.slice(-8);
     expect(lastInstr.readUInt16LE(0)).toBe(0x06);
-    expect(lastInstr.readUInt32LE(4)).toBe(0x80000000);
+    expect(lastInstr.readUInt32LE(4)).toBe(0x00050000 | 38);
+  });
+
+  it("kills a call from the wrong architecture, not refuses it", () => {
+    const program = buildDefaultSeccompFilter();
+    expect(program.readUInt16LE(2 * 8)).toBe(0x06);
+    expect(program.readUInt32LE(2 * 8 + 4)).toBe(0x80000000);
+  });
+
+  it("answers every SYS_KILL_ALWAYS entry with SECCOMP_RET_KILL_PROCESS", () => {
+    const program = buildDefaultSeccompFilter();
+    for (const name of SYS_KILL_ALWAYS) {
+      const nr = SYSCALL_NR[name];
+      expect(nr).toBeDefined();
+      expect(verdict(program, nr ?? -1)).toBe("kill");
+    }
+  });
+
+  it("keeps the three lists disjoint", () => {
+    const seen = new Map<string, string>();
+    for (const [list, names] of [
+      ["allow", SYS_ALLOW],
+      ["eperm", SYS_BLOCK_EPERM],
+      ["kill", SYS_KILL_ALWAYS],
+    ] as const) {
+      for (const name of names) {
+        expect(`${name} in ${seen.get(name) ?? list}`).toBe(`${name} in ${list}`);
+        seen.set(name, list);
+      }
+    }
+  });
+
+  it("names only syscalls the number table knows, in every list", () => {
+    for (const names of [SYS_ALLOW, SYS_BLOCK_EPERM, SYS_KILL_ALWAYS]) {
+      expect(() =>
+        buildDefaultSeccompFilter({ allowList: names, blockList: [], killList: [] }),
+      ).not.toThrow();
+    }
+    expect(() =>
+      buildDefaultSeccompFilter({ allowList: [], blockList: [], killList: ["__no_such__"] }),
+    ).toThrow("unknown syscall in kill list: __no_such__");
+  });
+
+  it("answers an unlisted call with ENOSYS", () => {
+    const program = buildDefaultSeccompFilter();
+    expect(verdict(program, 319)).toBe("enosys"); // memfd_create
+    expect(verdict(program, 259)).toBe("enosys"); // mknodat
+  });
+
+  it("allows the harmless calls added with the ENOSYS default", () => {
+    for (const name of [
+      "flock",
+      "getrusage",
+      "truncate",
+      "fallocate",
+      "copy_file_range",
+      "sendfile",
+      "gettimeofday",
+      "time",
+      "times",
+      "alarm",
+      "setitimer",
+      "getitimer",
+      "inotify_init1",
+      "inotify_add_watch",
+      "inotify_rm_watch",
+      "signalfd4",
+      "splice",
+      "sched_getparam",
+      "ioprio_get",
+      "pause",
+      "getpriority",
+      "sync",
+      "syncfs",
+      "capget",
+    ]) {
+      expect(SYS_ALLOW).toContain(name);
+    }
+    for (const name of [
+      "memfd_create",
+      "mknodat",
+      "shmget",
+      "semget",
+      "mlock",
+      "setpriority",
+      "rt_sigqueueinfo",
+    ]) {
+      expect(SYS_ALLOW).not.toContain(name);
+    }
   });
 
   it("classifies key syscalls correctly", () => {
@@ -30,7 +120,7 @@ describe("buildDefaultSeccompFilter", () => {
     expect(SYS_BLOCK_EPERM).toContain("setuid");
     expect(SYS_BLOCK_EPERM).toContain("bpf");
     expect(SYS_BLOCK_EPERM).toContain("kexec_load");
-    expect(SYS_KILL_DEFAULT).toBe(true);
+    expect(SYS_KILL_ALWAYS).toContain("setns");
   });
 
   it("allows the modern-runtime syscalls a wrapped bun connector needs at startup", () => {
@@ -80,28 +170,29 @@ describe("buildDefaultSeccompFilter", () => {
 
   it("accepts explicit overrides and produces a correctly-sized program", () => {
     // allowList=["read"]=1 allow entry, blockList=["ptrace"]=1 block entry
-    // Header: 4 instrs, allow: 2, block: 2, catch-all: 1 => total 9 instrs => 72 bytes
+    // Header: 4 instrs, allow: 2, block: 2, clone arm: 5, catch-all: 1 => total 14 instrs => 112 bytes
     const overrides: SeccompFilterOverrides = {
       allowList: ["read"],
       blockList: ["ptrace"],
+      killList: [],
     };
     const buf = buildDefaultSeccompFilter(overrides);
-    expect(buf).toHaveLength(9 * 8);
+    expect(buf).toHaveLength(14 * 8);
   });
 
   it("produces a program with only the header+catch-all when both lists are empty", () => {
-    // Header: 4 instrs, no allow, no block, catch-all: 1 => total 5 instrs => 40 bytes
-    const overrides: SeccompFilterOverrides = { allowList: [], blockList: [] };
+    // Header: 4 instrs, no allow, no block, clone arm: 5, catch-all: 1 => total 10 instrs => 80 bytes
+    const overrides: SeccompFilterOverrides = { allowList: [], blockList: [], killList: [] };
     const buf = buildDefaultSeccompFilter(overrides);
-    expect(buf).toHaveLength(5 * 8);
-    // Last instruction must still be SECCOMP_RET_KILL_PROCESS
+    expect(buf).toHaveLength(10 * 8);
+    // Last instruction must still be SECCOMP_RET_ERRNO | ENOSYS
     const lastInstr = buf.slice(-8);
     expect(lastInstr.readUInt16LE(0)).toBe(0x06);
-    expect(lastInstr.readUInt32LE(4)).toBe(0x80000000);
+    expect(lastInstr.readUInt32LE(4)).toBe(0x00050000 | 38);
   });
 
   it("encodes the arch-check header instructions with correct BPF opcodes and constants", () => {
-    const overrides: SeccompFilterOverrides = { allowList: [], blockList: [] };
+    const overrides: SeccompFilterOverrides = { allowList: [], blockList: [], killList: [] };
     const buf = buildDefaultSeccompFilter(overrides);
 
     // Instr 0: BPF_LD|BPF_W|BPF_ABS loading arch offset (4)
@@ -129,7 +220,7 @@ describe("buildDefaultSeccompFilter", () => {
 
   it("encodes a single allow-list entry with correct SECCOMP_RET_ALLOW value", () => {
     // read = syscall nr 0
-    const overrides: SeccompFilterOverrides = { allowList: ["read"], blockList: [] };
+    const overrides: SeccompFilterOverrides = { allowList: ["read"], blockList: [], killList: [] };
     const buf = buildDefaultSeccompFilter(overrides);
 
     // Header is 4 instrs (indices 0-3); allow entry starts at index 4
@@ -146,7 +237,11 @@ describe("buildDefaultSeccompFilter", () => {
 
   it("encodes a single block-list entry with correct SECCOMP_RET_ERRNO_EPERM value", () => {
     // ptrace = syscall nr 101
-    const overrides: SeccompFilterOverrides = { allowList: [], blockList: ["ptrace"] };
+    const overrides: SeccompFilterOverrides = {
+      allowList: [],
+      blockList: ["ptrace"],
+      killList: [],
+    };
     const buf = buildDefaultSeccompFilter(overrides);
 
     // Header 4 instrs (0-3); block entry starts at index 4
@@ -162,17 +257,25 @@ describe("buildDefaultSeccompFilter", () => {
   });
 
   it("program length grows by 2 instructions per allow-list entry", () => {
-    const base = buildDefaultSeccompFilter({ allowList: [], blockList: [] });
-    const one = buildDefaultSeccompFilter({ allowList: ["read"], blockList: [] });
-    const two = buildDefaultSeccompFilter({ allowList: ["read", "write"], blockList: [] });
+    const base = buildDefaultSeccompFilter({ allowList: [], blockList: [], killList: [] });
+    const one = buildDefaultSeccompFilter({ allowList: ["read"], blockList: [], killList: [] });
+    const two = buildDefaultSeccompFilter({
+      allowList: ["read", "write"],
+      blockList: [],
+      killList: [],
+    });
     expect(one.length - base.length).toBe(2 * 8);
     expect(two.length - one.length).toBe(2 * 8);
   });
 
   it("program length grows by 2 instructions per block-list entry", () => {
-    const base = buildDefaultSeccompFilter({ allowList: [], blockList: [] });
-    const one = buildDefaultSeccompFilter({ allowList: [], blockList: ["ptrace"] });
-    const two = buildDefaultSeccompFilter({ allowList: [], blockList: ["ptrace", "mount"] });
+    const base = buildDefaultSeccompFilter({ allowList: [], blockList: [], killList: [] });
+    const one = buildDefaultSeccompFilter({ allowList: [], blockList: ["ptrace"], killList: [] });
+    const two = buildDefaultSeccompFilter({
+      allowList: [],
+      blockList: ["ptrace", "mount"],
+      killList: [],
+    });
     expect(one.length - base.length).toBe(2 * 8);
     expect(two.length - one.length).toBe(2 * 8);
   });
@@ -180,8 +283,150 @@ describe("buildDefaultSeccompFilter", () => {
   it("defaults to SYS_ALLOW and SYS_BLOCK_EPERM when called with no arguments", () => {
     // The no-arg call exercises both ?? branches taking the defaults
     const defaultBuf = buildDefaultSeccompFilter();
-    // Expected size: 4 header + 2*SYS_ALLOW.length + 2*SYS_BLOCK_EPERM.length + 1 catch-all
-    const expectedInstrs = 4 + 2 * SYS_ALLOW.length + 2 * SYS_BLOCK_EPERM.length + 1;
+    // Expected size: 4 header + 5 for the clone arm + 2*SYS_ALLOW.length + 2*SYS_BLOCK_EPERM.length + 1 catch-all
+    const expectedInstrs =
+      4 + 5 + 2 * SYS_ALLOW.length + 2 * SYS_BLOCK_EPERM.length + 2 * SYS_KILL_ALWAYS.length + 1;
     expect(defaultBuf).toHaveLength(expectedInstrs * 8);
+  });
+});
+
+/**
+ * Runs the program the way the kernel would, for one syscall number on x86-64. `arg0` is the low
+ * word of the first argument, which only the `clone` arm reads.
+ */
+function verdict(program: Buffer, nr: number, arg0 = 0): "allow" | "eperm" | "enosys" | "kill" {
+  const ARCH = 0xc000003e;
+  let accumulator = 0;
+  let pc = 0;
+  while (pc * 8 < program.length) {
+    const code = program.readUInt16LE(pc * 8);
+    const jt = program.readUInt8(pc * 8 + 2);
+    const jf = program.readUInt8(pc * 8 + 3);
+    const k = program.readUInt32LE(pc * 8 + 4);
+    if (code === 0x20) {
+      if (k === 4) accumulator = ARCH;
+      else if (k === 16) accumulator = arg0;
+      else accumulator = nr;
+      pc += 1;
+    } else if (code === 0x15) {
+      pc += 1 + (accumulator === k ? jt : jf);
+    } else if (code === 0x45) {
+      pc += 1 + ((accumulator & k) === 0 ? jf : jt);
+    } else if (code === 0x06) {
+      if (k === 0x7fff0000) return "allow";
+      if (k === 0x00050001) return "eperm";
+      return k === 0x00050000 + 38 ? "enosys" : "kill";
+    } else {
+      throw new Error(`unexpected BPF code ${String(code)}`);
+    }
+  }
+  throw new Error("the program fell off its end");
+}
+
+describe("what a child may do to itself, and nothing further", () => {
+  const program = buildDefaultSeccompFilter();
+
+  it.each<[string, number]>([
+    ["kill", 62],
+    ["tkill", 200],
+    ["tgkill", 234],
+    ["fsync", 74],
+    ["fdatasync", 75],
+    ["umask", 95],
+    ["setsid", 112],
+    ["setpgid", 109],
+    ["getsid", 124],
+    ["getpgid", 121],
+    ["pidfd_open", 434],
+    ["faccessat2", 439],
+    ["fadvise64", 221],
+    ["getgroups", 115],
+    ["getresuid", 118],
+    ["getresgid", 120],
+    ["sched_getscheduler", 145],
+    // The kernel's own call to resume a timed sleep. Answered ENOSYS, glibc aborts a Bun child.
+    ["restart_syscall", 219],
+    ["pwritev", 296],
+    ["preadv", 295],
+  ])("%s is allowed", (_name, nr) => {
+    expect(verdict(program, nr)).toBe("allow");
+  });
+
+  it.each<[string, number]>([
+    ["flock", 73],
+    ["getrusage", 98],
+    ["copy_file_range", 326],
+    ["gettimeofday", 96],
+    ["inotify_init1", 294],
+    ["capget", 125],
+  ])("%s is allowed since the ENOSYS default", (_name, nr) => {
+    expect(verdict(program, nr)).toBe("allow");
+  });
+
+  it.each<[string, number]>([
+    ["pidfd_getfd", 438],
+    ["pidfd_send_signal", 424],
+    ["setns", 308],
+    ["unshare", 272],
+  ])("%s stays killed", (_name, nr) => {
+    expect(verdict(program, nr)).toBe("kill");
+  });
+
+  it("ptrace stays refused", () => {
+    expect(verdict(program, 101)).toBe("eperm");
+  });
+});
+
+describe("clone and clone3", () => {
+  const program = buildDefaultSeccompFilter();
+  const CLONE = 56;
+  const CLONE3 = 435;
+  const SIGCHLD = 17;
+  const FLAGS: readonly [string, number][] = [
+    ["CLONE_NEWUSER", 0x10000000],
+    ["CLONE_NEWNET", 0x40000000],
+    ["CLONE_NEWNS", 0x00020000],
+    ["CLONE_NEWPID", 0x20000000],
+    ["CLONE_NEWIPC", 0x08000000],
+    ["CLONE_NEWUTS", 0x04000000],
+    ["CLONE_NEWCGROUP", 0x02000000],
+    ["CLONE_NEWTIME", 0x00000080],
+  ];
+
+  it("keeps neither in an allow, block or kill list, so the arm is their only verdict", () => {
+    for (const list of [SYS_ALLOW, SYS_BLOCK_EPERM, SYS_KILL_ALWAYS]) {
+      expect(list).not.toContain("clone");
+      expect(list).not.toContain("clone3");
+    }
+  });
+
+  it.each(FLAGS)("kills a clone carrying %s, alone or with ordinary flags", (_name, flag) => {
+    expect(verdict(program, CLONE, flag)).toBe("kill");
+    expect(verdict(program, CLONE, (flag | 0x00010f00 | SIGCHLD) >>> 0)).toBe("kill");
+  });
+
+  it("names exactly those eight flags", () => {
+    expect(CLONE_NAMESPACE_FLAGS).toBe(FLAGS.reduce((all, [, f]) => (all | f) >>> 0, 0));
+  });
+
+  it("allows a clone with none of them: a thread, a fork, a vfork", () => {
+    expect(verdict(program, CLONE, SIGCHLD)).toBe("allow");
+    expect(verdict(program, CLONE, 0)).toBe("allow");
+    // CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | CLONE_THREAD | CLONE_SYSVSEM | CLONE_SETTLS
+    expect(verdict(program, CLONE, 0x003d0f00)).toBe("allow");
+    // CLONE_VM | CLONE_VFORK | SIGCHLD
+    expect(verdict(program, CLONE, 0x4111)).toBe("allow");
+  });
+
+  it("answers clone3 with ENOSYS, since its flags are out of a filter's reach", () => {
+    expect(verdict(program, CLONE3)).toBe("enosys");
+    expect(verdict(program, CLONE3, 0x10000000)).toBe("enosys");
+  });
+
+  it("does not let the arm change another call's verdict", () => {
+    expect(verdict(program, 0, 0x10000000)).toBe("allow"); // read, whatever arg0 holds
+    expect(verdict(program, 272)).toBe("kill"); // unshare
+    expect(verdict(program, 101)).toBe("eperm"); // ptrace
+    expect(verdict(program, 319)).toBe("enosys"); // memfd_create
   });
 });

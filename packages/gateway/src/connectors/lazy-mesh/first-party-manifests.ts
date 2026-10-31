@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 import pino from "pino";
 
@@ -140,7 +141,8 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
   // Execs `gcloud run` and `gcloud container`. The per-region Cloud Run host is added at spawn
-  // from `gcp.region`; a tool call naming another region is recorded in connector-host-gaps.json.
+  // from `gcp.region`; a tool call naming another region is a Linux wildcard
+  // (FIRST_PARTY_WILDCARD_HOSTS) and still fails on macOS (connector-host-gaps.json).
   gcp: baseManifest("com.nimbus.gcp", {
     network: [
       "cloudresourcemanager.googleapis.com",
@@ -548,8 +550,9 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   // syntax, same as imap). caldav.icloud.com is the fixed 443 CalDAV bootstrap
   // host declared statically here. Calendar requests go to the per-account
   // p##-caldav.icloud.com partition that discovery returns. The ten listed are the ones the
-  // connector's own nimbus.extension.json names; an account on a higher partition has no
-  // calendar under per-host enforcement. Recorded in connector-host-gaps.json.
+  // connector's own nimbus.extension.json names; a higher partition is a Linux wildcard
+  // (FIRST_PARTY_WILDCARD_HOSTS), and on macOS that account has no calendar under per-host
+  // enforcement. Recorded in connector-host-gaps.json.
   apple: baseManifest("com.nimbus.apple", {
     network: [
       "caldav.icloud.com",
@@ -592,10 +595,72 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   }),
 };
 
+/** `service.*` on both AWS DNS suffixes, for each service. */
+function awsWildcards(...services: string[]): string[] {
+  return services.flatMap((s) => [`${s}.*.amazonaws.com`, `${s}.*.amazonaws.com.cn`]);
+}
+
+/**
+ * Hosts a first-party tool calls that no exact list can name: a redirect to a per-tenant host, or a
+ * region chosen per call. Keyed like {@link FIRST_PARTY_MANIFESTS} (`github_actions`, `vertex_ai`).
+ * Only the Linux runner reads them; macOS and Windows ignore the field, so these tools keep failing
+ * there as they do today. `*.blob.core.windows.net` covers every Azure storage account, not only
+ * GitHub's: the owner accepted that.
+ */
+export const FIRST_PARTY_WILDCARD_HOSTS: Readonly<Record<string, readonly string[]>> = {
+  github_actions: ["*.blob.core.windows.net"],
+  onedrive: ["*.sharepoint.com"],
+  gcp: ["*-run.googleapis.com"],
+  vertex_ai: ["*-aiplatform.googleapis.com"],
+  apple: ["p*-caldav.icloud.com"],
+  aws: awsWildcards("ecs", "lambda", "ec2", "sts"),
+  athena: awsWildcards("athena", "sts"),
+  cloudwatch: awsWildcards("logs", "sts"),
+  sagemaker: awsWildcards("api.sagemaker", "sts"),
+};
+
+/**
+ * Where a connector's CLI really lives, when that is outside what every sandbox binds. Microsoft's
+ * Linux package puts `az` at `/usr/bin/az`, a script over `/opt/az/bin/python3`, so the connector got
+ * exit 127 from every `az`. Added only where it exists, since binding a missing path refuses the
+ * whole spawn, and only on Linux, the only system whose package installs it there.
+ */
+const INSTALLED_CLI_TREES: Readonly<Record<string, readonly string[]>> = {
+  azure: ["/opt/az"],
+};
+
+export function withInstalledCliTrees(
+  manifest: ExtensionManifest,
+  serviceId: string,
+  exists: (path: string) => boolean = existsSync,
+  platform: NodeJS.Platform = process.platform,
+): ExtensionManifest {
+  const trees = platform === "linux" ? (INSTALLED_CLI_TREES[serviceId] ?? []).filter(exists) : [];
+  if (trees.length === 0) return manifest;
+  const { filesystem } = manifest.permissions;
+  return {
+    ...manifest,
+    permissions: {
+      ...manifest.permissions,
+      filesystem: { ...filesystem, read: [...filesystem.read, ...trees] },
+    },
+  };
+}
+
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   const known = FIRST_PARTY_MANIFESTS[serviceId];
-  if (known !== undefined) return known;
-  return baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY);
+  const wildcards = FIRST_PARTY_WILDCARD_HOSTS[serviceId];
+  // The only place `firstPartyPolicy` and `firstPartyWildcardHosts` are set, including for the
+  // default-deny fallback: this code wrote the manifest, so its entries get the first-party address
+  // rules, and only this table can name a wildcard.
+  return {
+    ...withInstalledCliTrees(
+      known ?? baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY),
+      serviceId,
+    ),
+    firstPartyPolicy: true,
+    ...(wildcards === undefined ? {} : { firstPartyWildcardHosts: [...wildcards] }),
+  };
 }
 
 /**

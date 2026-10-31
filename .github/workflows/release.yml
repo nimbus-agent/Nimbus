@@ -556,9 +556,13 @@ jobs:
           cp dist/nimbus-gateway-linux-x64/vec0.so dist/headless-bundle/vec0.so
           chmod +x dist/headless-bundle/nimbus-gateway dist/headless-bundle/nimbus
           V="${GITHUB_REF_NAME#v}"
+          # --skip-sandbox-helper: the Linux sandbox helper must not ship yet. The shipping PR
+          # removes this flag (and its twin in _test-suite.yml) with the postinst setcap removal;
+          # package-linux-installers.test.ts fails if either call loses it.
           bun scripts/package-linux-installers.ts \
             --bundle dist/headless-bundle \
             --version "$V" \
+            --skip-sandbox-helper \
             --appimagetool /tmp/appimagetool \
             --rpm \
             --nfpm /tmp/nfpm/nfpm
