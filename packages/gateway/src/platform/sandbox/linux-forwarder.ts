@@ -96,6 +96,20 @@ export function resolveHelperPath(
   return exists(INSTALLED_HELPER) ? INSTALLED_HELPER : null;
 }
 
+/**
+ * Why a SET helper override is unusable, or null. An operator who names a helper asked for that
+ * helper's filtering; one that names nothing is a refusal, never a fall back to the whole network
+ * (`--share-net`) or to a different binary.
+ */
+export function helperOverrideRefusal(
+  env: Readonly<Record<string, string | undefined>>,
+  exists: HelperLookup,
+): string | null {
+  const override = env["NIMBUS_SANDBOX_HELPER_PATH"];
+  if (override === undefined || override === "" || exists(override)) return null;
+  return `nimbus-sandbox-helper not found: NIMBUS_SANDBOX_HELPER_PATH names ${override}, which does not exist (unset it to use the installed helper)`;
+}
+
 export type RootLookup = {
   readlink(path: string): string | null;
   exists(path: string): boolean;

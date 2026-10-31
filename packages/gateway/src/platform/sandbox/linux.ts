@@ -14,6 +14,7 @@ import pino from "pino";
 
 import {
   forwarderPathRefusal,
+  helperOverrideRefusal,
   innerResolvBind,
   openForwarderSession,
   type RootLookup,
@@ -48,6 +49,8 @@ interface BuildArgvOpts {
 }
 
 const HELPER_PATH = resolveHelperPath(process.execPath, process.env, existsSync);
+/** Set when the operator named a helper that is not there: a refusal, never a fallback. */
+const HELPER_OVERRIDE_REFUSAL = helperOverrideRefusal(process.env, existsSync);
 
 // MUST log to STDERR: this module also runs inside sandbox-wrapper.ts, whose stdout IS the
 // connector's MCP stdio channel — any stdout line corrupts the JSON-RPC stream and the client
@@ -212,6 +215,8 @@ export function probeBwrap(
 const HELPER_CHECK_TIMEOUT_MS = 5000;
 
 function probeHelper(): HelperState {
+  if (HELPER_OVERRIDE_REFUSAL !== null)
+    return { available: false, reason: HELPER_OVERRIDE_REFUSAL };
   if (HELPER_PATH === null) {
     return {
       available: false,
@@ -440,6 +445,11 @@ export function createLinuxSandboxRunner(
       // Only a helper that is not there at all takes the documented fallback. One that is there and
       // fails its check, or a start the probe saw fail, refuses: it never reaches the host network.
       const mode = decideNetworkMode(opts.policy, { helperAvailable: HELPER_PATH !== null });
+      // A helper the operator named that is not there is not "no helper": the fallback would hand
+      // the child the whole network, which is what asking for a specific helper was meant to stop.
+      if (mode !== "no-net" && HELPER_OVERRIDE_REFUSAL !== null) {
+        throw new Error(`refusing to spawn: ${HELPER_OVERRIDE_REFUSAL}`);
+      }
       if (mode === "per-host" && HELPER_PATH !== null) {
         reprobeAfterTimeout();
         const failure =
@@ -470,7 +480,11 @@ export function createLinuxSandboxRunner(
       return helper.available && startFailure === null;
     },
     networkRefused(): boolean {
-      return bwrapPath === null || (HELPER_PATH !== null && !this.isFullyActive());
+      return (
+        bwrapPath === null ||
+        HELPER_OVERRIDE_REFUSAL !== null ||
+        (HELPER_PATH !== null && !this.isFullyActive())
+      );
     },
     degradedReason(): string | null {
       return bwrapMissing ?? helper.reason ?? startFailure;

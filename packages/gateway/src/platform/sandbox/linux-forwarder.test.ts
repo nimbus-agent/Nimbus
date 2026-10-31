@@ -15,6 +15,7 @@ import {
   createForwarderDir,
   ForwarderSocketPathError,
   forwarderPathRefusal,
+  helperOverrideRefusal,
   openForwarderSession,
   resolveHelperPath,
   runForwarderStartProbe,
@@ -288,6 +289,16 @@ describe("the forwarder's small rules", () => {
     expect(resolveHelperPath("/opt/gw", env, (p) => p === "/opt/nimbus-sandbox-helper")).toBe(
       "/opt/nimbus-sandbox-helper",
     );
+  });
+
+  test("a helper override that names nothing is a refusal, and an unset or empty one is not", () => {
+    const none = () => false;
+    expect(helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "/typo" }, none)).toContain("/typo");
+    expect(
+      helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "/real" }, (p) => p === "/real"),
+    ).toBe(null);
+    expect(helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "" }, none)).toBeNull();
+    expect(helperOverrideRefusal({}, none)).toBeNull();
   });
 
   test("wildcards alone declare a network, and an empty policy does not", () => {
