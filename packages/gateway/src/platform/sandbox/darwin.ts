@@ -3,9 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { parseNetworkEntry } from "@nimbus-dev/registry-format";
 import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { declaredNetworkPorts, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
 interface SbplOpts {
@@ -63,7 +62,7 @@ function ancestorLiterals(p: string): string[] {
 }
 
 export function generateSbplProfile(opts: SbplOpts): string {
-  const hosts = opts.policy.permissions.network;
+  const ports = declaredNetworkPorts(opts.policy.permissions.network);
   const fsRead = opts.policy.permissions.filesystem.read;
   const fsWrite = opts.policy.permissions.filesystem.write;
 
@@ -75,7 +74,7 @@ export function generateSbplProfile(opts: SbplOpts): string {
     "(allow mach-lookup)",
     "(allow iokit-open)",
     // Everything from here to the `file-read*` block is what a POSIX RUNTIME needs merely to
-    // reach `main()`. It is not policy — the policy is the `fsRead`/`fsWrite`/`hosts` entries
+    // reach `main()`. It is not policy — the policy is the `fsRead`/`fsWrite`/`ports` entries
     // below, which are still exactly what the extension declared.
     //
     // This profile had never launched a process. `darwin.test.ts` asserts on the generated TEXT
@@ -160,15 +159,26 @@ export function generateSbplProfile(opts: SbplOpts): string {
     ...fsWrite.map((p) => `  (subpath "${p}")`),
     ")",
   ];
-  if (hosts.length > 0) {
+  // PORTS ONLY: a declared entry opens its TCP port to every host, so here a connector's list limits
+  // ports and not hosts. The address in an SBPL `remote` filter is `*` or `localhost` and a port, with
+  // no way to name a host. The rule this replaces, `(remote tcp "*:443" (host "api.github.com"))`,
+  // made `sandbox-exec` exit 65 with "unbound variable: host", so from 2026-05-16 until this rule no
+  // child with a declared network could start on macOS; the only test checked the generated text.
+  //
+  // Only a validated number reaches the profile, never a host, so a stored value cannot inject here.
+  //
+  // An entry naming `localhost` or a loopback literal gets the same rule: `*` is every remote address,
+  // loopback included, so a second `localhost` rule would add nothing. "sandbox-exec: ports only, for
+  // real" in `sandbox-wrapper-spawn.test.ts` holds this under a real `sandbox-exec`.
+  //
+  // Per-host filtering on macOS is a later project (docs/sandbox.md#platform-asymmetry).
+  if (ports.length > 0) {
     lines.push(
-      "(allow network*",
-      ...hosts.map((h) => {
-        const { host, port } = parseNetworkEntry(h);
-        return `  (remote tcp "*:${port}" (host "${host}"))`;
-      }),
-      `  (remote udp "*:53")`,
-      ")",
+      ...ports.map((port) => `(allow network-outbound (remote tcp "*:${port}"))`),
+      `(allow network-outbound (remote udp "*:53"))`,
+      // getaddrinfo asks mDNSResponder over this socket, not UDP 53. Measured on the CI runner: with
+      // no such rule every lookup is ENOTFOUND, and with it a real fetch gets its 200.
+      `(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))`,
     );
   }
   return lines.join("\n");
@@ -217,9 +227,15 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       return child;
     },
     isFullyActive: () => true,
-    degradedReason: () => null,
+    // Nothing is missing, so `isFullyActive` stays true and no gate refuses. This is the accepted
+    // limit of the mechanism, reported the way Windows reports its own.
+    degradedReason: () =>
+      "macOS: a declared network entry opens its TCP port to every host, so the list limits ports, not hosts; see docs/sandbox.md#platform-asymmetry",
+    networkScope: () => "per_port",
     // `sandbox-exec` ships with the OS and the SBPL profile is generated per policy, so there is
-    // no optional component that could be missing — every policy is enforceable.
+    // no optional component that could be missing. A policy naming hosts is not enforced exactly,
+    // but like Windows that is the documented asymmetry, not a reason to refuse: `degradedReason`
+    // reports it, and a no-network policy is exact either way.
     canConfine: () => null,
   };
 }

@@ -892,12 +892,12 @@ Extension manifests declare their sandbox surface via a structured `permissions`
 
 #### Platform sandbox asymmetry
 
-Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Platform asymmetry"](./sandbox.md#platform-asymmetry).
+Network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Platform asymmetry"](./sandbox.md#platform-asymmetry).
 
 | OS | Network policy when `permissions.network: ["a.com"]` |
 | --- | --- |
 | Linux (helper available) | **Per-host, TCP only** — bwrap gives the child an empty network namespace; `nimbus-sandbox-helper` binds a loopback listener per declared host:port and a forwarder relays each connection over a unix socket to the sandbox wrapper outside the sandbox (`I50`), which checks the declared entry and the resolved address before it connects. Only `a.com:443` is reachable. With no helper found: **all-or-nothing** (whole internet, `nimbus doctor` `[warn]`). |
-| macOS | **Per-host** — sandbox-exec SBPL `(allow network* (remote tcp "*:443" (host "a.com")))`. A test runs the rule under real `sandbox-exec` and asserts only that it parses and a child starts ([`docs/sandbox.md` § macOS](./sandbox.md#macos)). |
+| macOS | **Per-port only** — sandbox-exec SBPL `(allow network-outbound (remote tcp "*:443"))`. Any host on a declared port is reachable, so the list limits ports, not hosts; SBPL cannot name a host. |
 | Windows | **All-or-nothing** — AppContainer `internetClient` capability; per-host filtering would require WFP callout drivers and is deferred ([`docs/sandbox.md` §"Windows platform status"](./sandbox.md#windows-platform-status)). |
 
 **Linux network path (`I50`).** `platform/sandbox/linux.ts` takes `decideNetworkMode`; a `per-host` policy goes through `linux-forwarder.ts` (`buildForwarderArgv`: an outer `bwrap` with `--unshare-net`, the helper, then the inner `bwrap`) and the wrapper-side `net-forward-host.ts` (`ForwardHost`: entry check, one resolve, `net-address-rules.ts` `allowedAddresses`, connect to a kept address; `net-dns-stub.ts` answers the child's lookups). First-party wildcard hosts come only from `FIRST_PARTY_WILDCARD_HOSTS` in `connectors/lazy-mesh/first-party-manifests.ts`. TCP only, IPv4 loopback inside; the real limits (missing helper means the whole internet, a redirect to an undeclared host fails, wildcards are Linux only) are in [`docs/sandbox.md` § Linux](./sandbox.md#linux).
@@ -1459,7 +1459,7 @@ confinement the owner consented to. It holds today through three unrelated mecha
 | Platform | Mechanism with an empty `permissions.network` | Loopback reachable? |
 |---|---|---|
 | Linux | `--unshare-net` | No — a fresh netns has its *own* loopback; the host's `127.0.0.1` is not in it. |
-| macOS | SBPL `(deny default)` with no `(allow network*)` block emitted at all | No — with no hosts there is no network allow rule, so the default denial covers loopback. |
+| macOS | SBPL `(deny default)` with no `(allow network-outbound ...)` rule emitted at all | No — with no hosts there is no network allow rule, so the default denial covers loopback. |
 | Windows | AppContainer with no `internetClient` capability | No — AppContainer blocks loopback absent an explicit `CheckNetIsolation` exemption. |
 
 Three independent implementation accidents is the most fragile way for a property to be true, which

@@ -52,9 +52,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   `*.blob.core.windows.net` covers every Azure storage account for `github_actions`; `gcp_gke_workload_restart`, Azure
   sovereign clouds, consumer OneDrive downloads, GCP workload-identity credentials (`sts.googleapis.com`) and an AWS SSO
   profile's portal hosts fail on Linux; a user MCP server run through `npx` needs `--net registry.npmjs.org` too, set by
-  `nimbus connector remove` and adding it again; wildcards do not exist on macOS or Windows, and macOS's per-host SBPL rule
-  is tested as generated text and as a real `sandbox-exec` run that parses and starts a child, with refusal logged and not
-  asserted; a policy read path at `$HOME` or `/tmp` exposes any unix
+  `nimbus connector remove` and adding it again; wildcards exist on Linux only, since macOS and Windows limit no host and need none; a policy read path at `$HOME` or `/tmp` exposes any unix
   socket there to the child and the forwarder; a container needs `docker run --init`; a raw `nimbus-gateway-linux-x64` binary
   run without the helper beside it has none (copy it there from the tarball). The `net-forward:` lines reach
   `gateway-<date>.log` under the data directory's `logs/`, name the host and not the connector, and carry no timestamp.
@@ -62,6 +60,15 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   children from the new file, so they go through the forwarder, and doctor reports its old posture; v10.12.0 and v10.13.0
   already carry `firstPartyPolicy` and `ownerConfiguredNetwork`, but a gateway from v10.11.0 or earlier does not, so until it
   restarts a private answer for a stored self-hosted URL or a first-party name is refused. See `docs/sandbox.md` § Linux and `docs/SECURITY-INVARIANTS.md` I50.
+- **2026-10-31 — macOS: a connector that declares a network can start, and the sandbox enforces ports, not hosts (no migration,
+  no new invariant).** Since 2026-05-16, in every release, no macOS child with a declared network could start: the profile
+  carried `(remote tcp "*:443" (host "api.github.com"))`, `sandbox-exec` rejected it (`unbound variable: host`, exit 65), and the
+  only test read the generated text. The profile now emits `(allow network-outbound (remote tcp "*:<port>"))` per distinct
+  declared port, and no hostname reaches it. **Bound, stated:** on macOS a declared entry allows any host on that port, loopback
+  and local-network addresses included, so a connector's list limits ports there, not hosts; per-host on macOS is a later
+  project. Diagnostics report the new `per_port` posture on macOS, `nimbus extension info` shows it, and the `extension.run`,
+  migration and `connector add --mcp` prompts say it. Tests under a real `sandbox-exec` now cover the start, a real fetch, the
+  port filter, no-network, a read outside the grants and a subprocess.
 
 - **2026-10-31 — A pull request's source branch is indexed, and `GET /v1/items/resolve` returns it (no migration, no new
   invariant).** `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read from GitHub's `head.ref`, Bitbucket's

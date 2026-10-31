@@ -100,7 +100,7 @@ export function manifestWithStoredUrls(
  * SageMaker's is `api.sagemaker`, CloudWatch Logs' is `logs`. STS is included because a v2 CLI
  * resolves an assume-role profile against the regional endpoint. With no known region this is
  * empty. Linux then falls back to the region wildcards in FIRST_PARTY_WILDCARD_HOSTS, and macOS
- * cannot reach the service where hosts are enforced: recorded in connector-host-gaps.json.
+ * needs none, since it enforces only ports: recorded in connector-host-gaps.json.
  */
 export function awsRegionalHosts(region: string, services: readonly string[]): string[] {
   if (!isSafeRegion(region)) return [];

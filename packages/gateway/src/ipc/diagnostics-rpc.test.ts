@@ -18,6 +18,7 @@ import { upsertGraphEntity, upsertGraphRelation } from "../graph/relationship-gr
 import { LocalIndex } from "../index/local-index.ts";
 import { openMigratedDb } from "../index/migrated-db-template.ts";
 import { createPackLayerStore } from "../packs/pack-layer-store.ts";
+import { createDarwinSandboxRunner } from "../platform/sandbox/darwin.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
 import { AgentLatencyRecorder } from "../telemetry/agent-latency.ts";
@@ -280,12 +281,10 @@ function makeMockRunner(opts: {
 }
 
 describe("buildSandboxDiagPayload (T2 PR 1 Task 20)", () => {
-  test("returns per_host + null reason for a fully-active macOS runner", () => {
-    const payload = buildSandboxDiagPayload(
-      makeMockRunner({ platform: "darwin", fullyActive: true, reason: null }),
-    );
-    expect(payload.platform_capabilities.network).toBe("per_host");
-    expect(payload.platform_capabilities.reason).toBeNull();
+  test("the real macOS runner reports per_port with its reason, never per_host", () => {
+    const payload = buildSandboxDiagPayload(createDarwinSandboxRunner());
+    expect(payload.platform_capabilities.network).toBe("per_port");
+    expect(payload.platform_capabilities.reason).toContain("limits ports, not hosts");
     expect(payload.linux_helper).toBeNull();
     expect(payload.stale_rules_count).toBe(0);
   });

@@ -49,8 +49,9 @@ function wrap(spec: ServerSpec, serviceId: string, ctx: MeshSpawnContext): Serve
 
 /**
  * For a connector whose MCP process calls a host taken from CONFIG rather than a fixed vendor
- * endpoint. The static manifest cannot name that host, so on a per-host sandbox (macOS, Linux with
- * the helper) the process could not reach its own API. Merges the configured URL's host into the
+ * endpoint. The static manifest cannot name that host, so on a per-host sandbox (Linux with the
+ * helper) the process could not reach its own API, and on macOS, which enforces only ports, it could
+ * not reach one on a port nothing else declared. Merges the configured URL's host into the
  * manifest; an absent or unparseable URL adds nothing, leaving the static allowlist as it was.
  *
  * Returns the MANIFEST, not a wrapped spec: each site still calls `wrapServerSpec` itself, which is
@@ -1229,7 +1230,7 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
  * the sandbox network allow-list at spawn time, mirroring phase3AddImapMcp;
  * `caldav.icloud.com` is declared statically in the apple manifest. (The
  * per-account `p##-caldav.icloud.com` partition host is resolved at runtime
- * inside server.ts; under strict per-host gating CalDAV degrades — see the apple
+ * inside server.ts; under per-host gating (Linux) CalDAV degrades — see the apple
  * manifest note.)
  */
 export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {

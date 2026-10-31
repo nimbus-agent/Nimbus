@@ -99,7 +99,7 @@ describe("buildScaffoldFiles", () => {
       "d0dc20f3dbf07159e9763e3d9be2a85716e7e9e7f127a58cf0092125d8b8749f",
     );
     expect(digest("darwin", "/w/echo")).toBe(
-      "d0dc20f3dbf07159e9763e3d9be2a85716e7e9e7f127a58cf0092125d8b8749f",
+      "4ebc36fc15940c33e8855f03cc7564c6d237083354198807efa9835aa43fe52c",
     );
     expect(digest("win32", "C:wecho")).toBe(
       // cross-platform-ok
@@ -152,6 +152,9 @@ describe("buildScaffoldFiles", () => {
     expect(win).toContain('-- "C:\\w\\echo\\dist\\echo.exe"'); // cross-platform-ok
     expect(win).toContain(String.raw`--input "{\"text\":\"hi\"}"`);
     expect(win).toContain("Windows PowerShell 5.1 mangles embedded quotes");
+    const mac = fileContent(buildScaffoldFiles("echo", "darwin", "/w/echo"), "README.md");
+    expect(mac).toContain("limits the port, not the host");
+    expect(linux).not.toContain("limits the port, not the host");
     for (const readme of [linux, win]) {
       expect(readme).not.toMatch(/connector add[^\n]*--read </);
       expect(readme).toContain("nimbus connector tools mcp_echo");
