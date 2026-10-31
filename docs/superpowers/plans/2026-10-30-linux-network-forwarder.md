@@ -207,7 +207,7 @@ expect(allowedAddresses(first, ["10.0.0.1", "127.0.0.1", "169.254.169.254"])).to
 // wildcardHostMatches("ecs.*.amazonaws.com", "ecs.us-east-1.amazonaws.com"): true. "ecs.a.b.amazonaws.com": false.
 // wildcardHostMatches("*-run.googleapis.com", "us-central1-run.googleapis.com"): true. "-run.googleapis.com": false.
 // Every pattern in the first-party table passes isValidWildcardHost, and the table equals the spec's.
-// manifestForFirstParty("github-actions").firstPartyWildcardHosts is ["*.blob.core.windows.net"], and it survives manifestWithExtraNetworkHosts.
+// manifestForFirstParty("github_actions").firstPartyWildcardHosts is ["*.blob.core.windows.net"], and it survives manifestWithExtraNetworkHosts.
 // manifestForFirstParty("slack") has no such field, and permissions.network never holds a "*".
 // parseExtensionManifest with firstPartyWildcardHosts in the file: the parsed value has no such key. Same for a user MCP manifest, and policyFromManifest of each.
 // parseSandboxPolicy round-trips the field, and throws on a non-string-array value or an invalid pattern.
@@ -217,7 +217,7 @@ expect(allowedAddresses(first, ["10.0.0.1", "127.0.0.1", "169.254.169.254"])).to
 
 - [ ] **Step 3: Implement them**
 
-The wildcard field is separate from `permissions.network`, so the macOS and Windows runners, which read only `permissions.network`, cannot see one. Edit `connector-host-gaps.json`: remove the github-actions record, narrow onedrive to consumer download hosts, remove the gcp Cloud Run, vertex-ai, apple, aws, athena, cloudwatch and sagemaker records, and keep GKE, azure, kubernetes and iac. Update the matching `handRead` decisions and the comments at `first-party-manifests.ts:143` and `:552`, and `phase3-shared.ts:103`. Every removed record's fact moves to a note that the host is a Linux wildcard and still fails on macOS. Run `bun run audit:connector-hosts`, which must pass.
+The wildcard field is separate from `permissions.network`, so the macOS and Windows runners, which read only `permissions.network`, cannot see one. Edit `connector-host-gaps.json`: remove the github-actions record (the gaps file uses the connector's hyphenated name, and `FIRST_PARTY_MANIFESTS` uses `github_actions` and `vertex_ai`), narrow onedrive to consumer download hosts, remove the gcp Cloud Run, vertex-ai, apple, aws, athena, cloudwatch and sagemaker records, and keep GKE, azure, kubernetes and iac. Update the matching `handRead` decisions and the comments at `first-party-manifests.ts:143` and `:552`, and `phase3-shared.ts:103`. Every removed record's fact moves to a note that the host is a Linux wildcard and still fails on macOS. Run `bun run audit:connector-hosts`, which must pass.
 
 - [ ] **Step 4: Run them, expect PASS, then commit**
 
@@ -227,7 +227,7 @@ The wildcard field is separate from `permissions.network`, so the macOS and Wind
 - Create: `packages/gateway/src/platform/sandbox/net-dns-stub.ts`, `net-dns-stub.test.ts`
 
 **Interfaces:**
-- Produces: `answerDnsQuery(query: Uint8Array, names: { isDeclared(name: string): boolean; addressFor(name: string): string | null }): { reply: Uint8Array | null; refusedName: string | null }`. `addressFor` runs only for an `A` query on a declared name, so an `AAAA` query takes no pool slot. Null means the pool is full
+- Produces: `answerDnsQuery(query: Uint8Array, names: { isDeclared(name: string): boolean; hasRoom(name: string): boolean; addressFor(name: string): string | null }): { reply: Uint8Array | null; refusedName: string | null }`. `addressFor` runs only for an `A` query on a declared name, so an `AAAA` query takes no pool slot. `hasRoom` is false only for a matching name with no slot when the pool is full, and then both `A` and `AAAA` answer `SERVFAIL`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -235,13 +235,13 @@ Build query bytes with a test helper. Assert on the parsed reply:
 
 ```ts
 const map = new Map([["api.github.com", "127.0.0.2"]]);
-const names = { isDeclared: (n: string) => map.has(n), addressFor: (n: string) => map.get(n) ?? null };
+const names = { isDeclared: (n: string) => map.has(n), hasRoom: () => true, addressFor: (n: string) => map.get(n) ?? null };
 // A query for a declared name: NOERROR, one A record.
 // AAAA for a declared name: NOERROR, no answers, refusedName null.
 // A for an undeclared name: NXDOMAIN, refusedName "evil.example".
 // AAAA for an undeclared name: NXDOMAIN, refusedName "evil.example".
-// A for a declared name whose addressFor returns null: SERVFAIL, refusedName is the name.
-// AAAA for a declared name: addressFor is never called.
+// A or AAAA for a declared name with hasRoom false: SERVFAIL, refusedName is the name, addressFor not called.
+// AAAA for a declared name: pass an addressFor that throws, and the reply is still NOERROR with no answers.
 // Case-insensitive: "API.GitHub.COM" reaches isDeclared as "api.github.com". The reply echoes the question's own bytes and id.
 // Malformed (too short, a compression pointer in the question, a label running past the end, QDCOUNT != 1): reply null, no throw.
 // refusedName with a control byte in a label: control bytes are stripped before it is returned.
@@ -288,12 +288,12 @@ All use a real unix socket in a temp dir, with fake `resolve` and `connect`:
 // A slow reader: the relay pauses reading rather than buffering past 1 MiB.
 // close(): the socket file is gone.
 // D, A for a name matching a wildcard: the next pool slot's address, and the same name again gets the same address.
-// D, AAAA for that name: no records, and the next new name still gets the first free slot.
+// D, AAAA first, for a matching name with no slot: no records, and an A query for a different new name then gets the first free slot.
 // D, A for a name matching no wildcard: NXDOMAIN.
 // T on a slot after its name was assigned: resolves that name and connects.
 // T on an unassigned slot: closes, connect never called.
 // An exact entry that also matches a wildcard: answered from the exact entry, no slot taken.
-// A 49th name on a 48-slot pool: SERVFAIL, one log line, and the first 48 keep working.
+// A 49th name on a 48-slot pool: SERVFAIL to both A and AAAA, one log line, and the first 48 keep working, AAAA included.
 ```
 
 - [ ] **Step 2: Run them, expect FAIL**
@@ -466,7 +466,7 @@ This is the PR that changes behaviour for users. Title: `feat(sandbox): ship the
 // I50, behavioural: a per-host argv has --unshare-net in the outer, and buildForwarderArgv is the only path in linux.ts for a per-host policy.
 // I50, source pin: net-forward-host.ts checks allowedAddresses before connect.
 // I50, static: `--share-net` appears in a per-host spawn only inside the inner argv built by buildForwarderArgv, whose outer has --unshare-net.
-// I50, source pin: `firstPartyWildcardHosts` is assigned only in first-party-manifests.ts, and the wrapper re-matches a slot's name against the wildcards before connect.
+// I50, source pin: `firstPartyWildcardHosts` values originate only in first-party-manifests.ts's table, `sandbox-policy.ts` only copies them, no manifest parser mentions the field, and the wrapper re-matches a slot's name against the wildcards before connect.
 ```
 
 - [ ] **Step 2: Run them, expect FAIL, then add the I50 row and rationale**

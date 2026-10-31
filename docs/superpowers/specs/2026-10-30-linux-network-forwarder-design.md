@@ -86,10 +86,10 @@ The owner chose this on 2026-10-31. Some first-party tools call hosts no fixed l
 
 | Connector | Wildcards |
 |---|---|
-| github-actions | `*.blob.core.windows.net` |
+| github_actions | `*.blob.core.windows.net` |
 | onedrive | `*.sharepoint.com` |
 | gcp | `*-run.googleapis.com` |
-| vertex-ai | `*-aiplatform.googleapis.com` |
+| vertex_ai | `*-aiplatform.googleapis.com` |
 | apple | `p*-caldav.icloud.com` |
 | aws | `ecs.*`, `lambda.*`, `ec2.*`, `sts.*` on `amazonaws.com` and `amazonaws.com.cn` |
 | athena | `athena.*`, `sts.*` on the same two suffixes |
@@ -98,8 +98,8 @@ The owner chose this on 2026-10-31. Some first-party tools call hosts no fixed l
 
 - **How a name is reached.** A wildcard has no entry in `/etc/hosts`, so the child's lookup reaches the stub resolver. A policy with any wildcard gets one pool of 48 extra `127.0.0.x:443` listeners, fewer if the 252-address limit leaves fewer. An `A` query for a matching name takes the next free slot, and the name keeps that slot for the child's life. A query for an exact declared name is answered from the exact map first. An `AAAA` query for a matching name answers with no records and takes no slot.
 - **A connection on a slot.** The wrapper relays only if that slot holds a name, and only after checking the name against the wildcards again. A compromised forwarder that names an unassigned slot gets a closed connection. The address rules are the first-party column.
-- **A full pool** answers `SERVFAIL` and logs the name, rate-limited like a refused name. Nothing is recycled, because a client that cached the old answer would reach a different host. A restart clears it.
-- **Limits.** `*.blob.core.windows.net` covers every Azure storage account, not only GitHub's, for the github-actions connector. The owner accepted this. A name of more than one label under a wildcard, such as a consumer OneDrive download host, still fails, as do `gcp_gke_workload_restart` and Azure sovereign clouds. These stay recorded gaps.
+- **A full pool** answers `SERVFAIL` to both `A` and `AAAA` for a matching name that holds no slot, so a dual-stack lookup sees one consistent failure, and logs the name, rate-limited like a refused name. Nothing is recycled, because a client that cached the old answer would reach a different host. A restart clears it.
+- **Limits.** `*.blob.core.windows.net` covers every Azure storage account, not only GitHub's, for the github_actions connector. The owner accepted this. A name of more than one label under a wildcard, such as a consumer OneDrive download host, still fails, as do `gcp_gke_workload_restart` and Azure sovereign clouds. These stay recorded gaps.
 - **Other OSes.** Windows ignores wildcards, since it is all-or-nothing. macOS ignores them, since SBPL has no way to write one, so these tools keep failing there as they do today.
 
 ### Limits
