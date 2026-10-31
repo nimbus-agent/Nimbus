@@ -330,7 +330,11 @@ describe("bitbucketPrMetadata (pr contract)", () => {
   test("emits exactly the keys the contract table declares", () => {
     const m = bitbucketPrMetadata(
       "acme/app",
-      prPayload({ state: "MERGED", created_on: "2026-09-30T08:00:00Z" }),
+      prPayload({
+        state: "MERGED",
+        created_on: "2026-09-30T08:00:00Z",
+        source: { branch: { name: "feat/x" } },
+      }),
       "Dana",
     );
     const canonical = Object.keys(m).filter((k) =>
@@ -338,6 +342,21 @@ describe("bitbucketPrMetadata (pr contract)", () => {
     );
     expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.bitbucket));
   });
+});
+
+test("bitbucketPrMetadata writes the source branch, and only the source branch", () => {
+  const m = bitbucketPrMetadata(
+    "a/b",
+    { id: 5, source: { branch: { name: "feat/x" } }, destination: { branch: { name: "main" } } },
+    undefined,
+  );
+  expect(m["branch"]).toBe("feat/x");
+  const noSource = bitbucketPrMetadata(
+    "a/b",
+    { id: 5, destination: { branch: { name: "main" } } },
+    undefined,
+  );
+  expect(noSource).not.toHaveProperty("branch");
 });
 
 test("bitbucketPrMetadata writes the canonical number from id", () => {

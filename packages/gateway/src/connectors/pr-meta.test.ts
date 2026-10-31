@@ -126,6 +126,14 @@ test("number is canonical: a positive integer is written, anything else omitted"
   expect(buildPrMetadata({ number: 7 }, {})).not.toHaveProperty("number");
 });
 
-test("PR_META_VERSION is 2 (canonical number)", () => {
-  expect(PR_META_VERSION).toBe(2);
+test("branch is canonical: a non-empty string is written, anything else omitted", () => {
+  expect(buildPrMetadata({}, { branch: "feat/x" })["branch"]).toBe("feat/x");
+  expect(buildPrMetadata({}, { branch: "" })).not.toHaveProperty("branch");
+  expect(buildPrMetadata({}, {})).not.toHaveProperty("branch");
+  // a raw `branch` is dropped like every canonical key, so the builder alone decides it
+  expect(buildPrMetadata({ branch: "raw" }, {})).not.toHaveProperty("branch");
+});
+
+test("PR_META_VERSION is 3 (canonical branch)", () => {
+  expect(PR_META_VERSION).toBe(3);
 });

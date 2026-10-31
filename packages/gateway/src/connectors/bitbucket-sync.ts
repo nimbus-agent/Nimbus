@@ -108,6 +108,11 @@ function bitbucketPrExternalId(repoFull: string, id: number): string {
   return `${repoFull}#${String(id)}`;
 }
 
+function prSourceBranch(pr: Record<string, unknown>): string | undefined {
+  const branch = asRecord(asRecord(pr["source"])?.["branch"]);
+  return branch === undefined ? undefined : stringField(branch, "name");
+}
+
 /**
  * The full `pr` metadata for one Bitbucket pull request. Bitbucket's PR resource carries no merge
  * timestamp (`updated_on` is the last change of any kind, not the merge), so `merged_at` is never
@@ -127,6 +132,7 @@ export function bitbucketPrMetadata(
       openedAtMs: canonicalEpochMs(stringField(pr, "created_on")),
       repo: repoFull,
       number: numberField(pr, "id"),
+      branch: prSourceBranch(pr),
     },
   );
 }

@@ -70,6 +70,7 @@ export type GitlabEventUpsertFields = {
     readonly state?: string | undefined;
     readonly createdAt?: string | undefined;
     readonly mergedAt?: string | undefined;
+    readonly sourceBranch?: string | undefined;
   };
 };
 
@@ -101,11 +102,13 @@ function storedPrFields(stored: Record<string, unknown> | null): PrFields {
   const state =
     st === "open" || st === "merged" || st === "closed" || st === "unknown" ? st : undefined;
   const raw = stored["state_raw"];
+  const branch = stored["branch"];
   return {
     state,
     stateRaw: typeof raw === "string" ? raw : undefined,
     openedAtMs: canonicalEpochMs(stored["opened_at_ms"]),
     mergedAtMs: canonicalEpochMs(stored["merged_at"]),
+    branch: typeof branch === "string" ? branch : undefined,
   };
 }
 
@@ -168,6 +171,7 @@ export function gitlabMrMetadata(
         mergedAtMs: canonicalEpochMs(f.mr.mergedAt) ?? prior.mergedAtMs,
         repo: f.pathWithNamespace,
         number: f.iid,
+        branch: f.mr.sourceBranch ?? prior.branch,
       }),
     );
   }
@@ -184,6 +188,7 @@ export function gitlabMrMetadata(
       mergedAtMs: transition === "merged" ? (eventMs ?? prior.mergedAtMs) : undefined,
       repo: f.pathWithNamespace,
       number: f.iid,
+      branch: prior.branch,
     }),
   );
 }

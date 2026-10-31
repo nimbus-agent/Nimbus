@@ -861,6 +861,7 @@ describe("extractPrMetadataForIndex (pr contract)", () => {
         merged: true,
         created_at: "2026-10-01T09:00:00Z",
         merged_at: "2026-10-02T09:00:00Z",
+        head: { ref: "feat/x" },
       }),
     );
     const canonical = Object.keys(m).filter((k) => PR_EMITTED_KEYS.github.has(k as CanonicalPrKey));
@@ -880,6 +881,28 @@ test("upsertPr carries opened_at_ms forward when an events payload omits created
   expect((JSON.parse(row.metadata) as Record<string, unknown>)["opened_at_ms"]).toBe(
     Date.parse("2026-10-01T09:00:00Z"),
   );
+  db.close();
+});
+
+test("extractPrMetadataForIndex writes the source branch from head.ref", () => {
+  const m = extractPrMetadataForIndex("a/b", { number: 3, head: { ref: "feat/x" } });
+  expect(m["branch"]).toBe("feat/x");
+  expect(extractPrMetadataForIndex("a/b", { number: 3 })).not.toHaveProperty("branch");
+  expect(extractPrMetadataForIndex("a/b", { number: 3, head: null })).not.toHaveProperty("branch");
+  expect(extractPrMetadataForIndex("a/b", { number: 3, base: { ref: "main" } })).not.toHaveProperty(
+    "branch",
+  );
+});
+
+test("upsertPr carries the branch forward when a later payload omits head", () => {
+  const db = createMemoryIndexDb();
+  const ctx = ctxWithPat(db, "pat");
+  upsertPr(ctx, "acme/app", prPayload({ head: { ref: "feat/x" } }), Date.now());
+  upsertPr(ctx, "acme/app", prPayload({ head: undefined }), Date.now());
+  const row = db
+    .query("SELECT metadata FROM item WHERE service = 'github' AND type = 'pr'")
+    .get() as { metadata: string };
+  expect((JSON.parse(row.metadata) as Record<string, unknown>)["branch"]).toBe("feat/x");
   db.close();
 });
 

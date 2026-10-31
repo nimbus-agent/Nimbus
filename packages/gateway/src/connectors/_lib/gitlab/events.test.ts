@@ -1336,15 +1336,40 @@ test("gitlabMrMetadata — fetchOne uses the MR resource's own fields", () => {
       ...mrBase,
       actionName: "merged",
       eventCreatedAt: T_MERGE,
-      mr: { state: "merged", createdAt: T_OPEN, mergedAt: T_MERGE },
+      mr: { state: "merged", createdAt: T_OPEN, mergedAt: T_MERGE, sourceBranch: "feat/x" },
     },
     null,
   );
   expect(m["state"]).toBe("merged");
   expect(m["opened_at_ms"]).toBe(Date.parse(T_OPEN));
   expect(m["merged_at"]).toBe(Date.parse(T_MERGE));
+  expect(m["branch"]).toBe("feat/x");
   const canonical = Object.keys(m).filter((k) => PR_EMITTED_KEYS.gitlab.has(k as CanonicalPrKey));
   expect(new Set(canonical)).toEqual(new Set(PR_EMITTED_KEYS.gitlab));
+});
+
+// The events feed never carries the branch, and `upsertIndexedItem` replaces metadata wholesale,
+// so every event after a fetchOne has to carry it or the next sync erases it.
+test.each([
+  ["a transition event", "merged"],
+  ["a non-transition event", "approved"],
+])("gitlabMrMetadata — %s keeps the stored branch", (_label, actionName) => {
+  const stored = gitlabMrMetadata(
+    {
+      ...mrBase,
+      actionName: "opened",
+      eventCreatedAt: T_OPEN,
+      mr: { state: "opened", createdAt: T_OPEN, sourceBranch: "feat/x" },
+    },
+    null,
+  );
+  const next = gitlabMrMetadata({ ...mrBase, actionName, eventCreatedAt: T_MERGE }, stored);
+  expect(next["branch"]).toBe("feat/x");
+});
+
+test("gitlabMrMetadata — an event with no stored row has no branch to claim", () => {
+  const m = gitlabMrMetadata({ ...mrBase, actionName: "opened", eventCreatedAt: T_OPEN }, null);
+  expect(m).not.toHaveProperty("branch");
 });
 
 describeWithFetchRestore("events sync — accepted then approved", () => {
