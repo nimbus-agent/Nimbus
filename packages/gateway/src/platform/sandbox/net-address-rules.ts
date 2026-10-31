@@ -26,6 +26,11 @@ function parseIpv4(s: string): number[] | null {
   return out;
 }
 
+/** True when `s` is a dotted-quad IPv4 address by the same rule the address checks use. */
+export function isIpv4Literal(s: string): boolean {
+  return parseIpv4(s) !== null;
+}
+
 /** The 16 bytes of an IPv6 address (with `::` and an embedded dotted-quad tail), or null. */
 function parseIpv6(s: string): number[] | null {
   if (!s.includes(":") || s.includes("%")) return null;
