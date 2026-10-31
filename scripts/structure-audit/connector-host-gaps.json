@@ -70,7 +70,7 @@
       "connector": "onedrive",
       "hosts": "consumer OneDrive download hosts",
       "kind": "redirect only",
-      "reason": "onedrive_item_download fetches Graph's /content, which redirects to a pre-authenticated URL. A per-tenant <tenant>-my.sharepoint.com host is a Linux wildcard (*.sharepoint.com), and still fails on macOS. A consumer OneDrive download host has more than one label under any wildcard, so it fails where hosts are enforced on every OS. Listing and metadata work."
+      "reason": "onedrive_item_download fetches Graph's /content, which redirects to a pre-authenticated URL. A per-tenant <tenant>-my.sharepoint.com host is a Linux wildcard (*.sharepoint.com); macOS enforces only ports, so 443 reaches it there. A consumer OneDrive download host has more than one label under any wildcard, so it fails on Linux with the helper, the one place hosts are enforced. Listing and metadata work."
     },
     {
       "connector": "gcp",
@@ -109,7 +109,7 @@
     },
     "apple": {
       "reaches": "caldav.icloud.com, then a p##-caldav.icloud.com partition; imap.mail.me.com:993 and smtp.mail.me.com:587.",
-      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. A higher partition is a Linux wildcard (p*-caldav.icloud.com); on macOS an account outside p01 to p10 still has no calendar, and whether login reaches a partition host is unverified. The real range of partitions is unverified. Mail is unaffected unless calendar.login() itself fails, since server.ts awaits it at boot with no catch.",
+      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. A higher partition is a Linux wildcard (p*-caldav.icloud.com); macOS enforces only ports, so 443 reaches it there. Whether login reaches a partition host is unverified. The real range of partitions is unverified. Mail is unaffected unless calendar.login() itself fails, since server.ts awaits it at boot with no catch.",
       "covers": {
         "env": [],
         "cli": [],
@@ -127,7 +127,7 @@
     },
     "athena": {
       "reaches": "aws CLI to athena.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region.",
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there.",
       "covers": {
         "env": [],
         "cli": [
@@ -142,7 +142,7 @@
     },
     "aws": {
       "reaches": "aws CLI to ecs, lambda and ec2 at <region>.amazonaws.com; sts for an assume-role profile.",
-      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared.",
+      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared.",
       "covers": {
         "env": [],
         "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ecs", "lambda"],
@@ -187,7 +187,7 @@
     },
     "cloudwatch": {
       "reaches": "aws CLI to logs.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region.",
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there.",
       "covers": {
         "env": [],
         "cli": ["aws logs", "describe-log-groups", "describe-log-streams"],
@@ -286,7 +286,7 @@
     },
     "gcp": {
       "reaches": "gcloud run to run.googleapis.com and <region>-run.googleapis.com; gcloud container to container.googleapis.com; oauth2.googleapis.com; kubectl to a GKE endpoint.",
-      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. A Cloud Run call naming another region, or any call with no stored region, is a Linux wildcard (*-run.googleapis.com); on macOS it still fails. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared. The GKE endpoint is in knownUnreachable.",
+      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. A Cloud Run call naming another region, or any call with no stored region, is a Linux wildcard (*-run.googleapis.com); macOS enforces only ports, so 443 reaches it there. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared. The GKE endpoint is in knownUnreachable.",
       "covers": {
         "env": [],
         "cli": ["gcloud", "gcloud container", "gcloud run", "kubectl rollout", "run"],
@@ -295,7 +295,7 @@
     },
     "github-actions": {
       "reaches": "api.github.com; gha_run_log follows a redirect to Azure blob storage.",
-      "decision": "API host declared. The redirect target <account>.blob.core.windows.net is a Linux wildcard (*.blob.core.windows.net, which covers every Azure storage account, accepted by the owner); on macOS gha_run_log still fails.",
+      "decision": "API host declared. The redirect target <account>.blob.core.windows.net is a Linux wildcard (*.blob.core.windows.net, which covers every Azure storage account, accepted by the owner); macOS enforces only ports, so 443 reaches it there.",
       "covers": {
         "env": [],
         "cli": [],
@@ -403,7 +403,7 @@
     },
     "onedrive": {
       "reaches": "graph.microsoft.com; item download redirects to a per-tenant host.",
-      "decision": "API host declared. The per-tenant <tenant>-my.sharepoint.com redirect target is a Linux wildcard (*.sharepoint.com); on macOS onedrive_item_download still fails. A consumer download host is in knownUnreachable. nextLink is held to Graph's origin by resolveUrlWithBase.",
+      "decision": "API host declared. The per-tenant <tenant>-my.sharepoint.com redirect target is a Linux wildcard (*.sharepoint.com); macOS enforces only ports, so 443 reaches it there. A consumer download host is in knownUnreachable. nextLink is held to Graph's origin by resolveUrlWithBase.",
       "covers": {
         "env": [],
         "cli": [],
@@ -430,7 +430,7 @@
     },
     "sagemaker": {
       "reaches": "aws CLI to api.sagemaker.<region>.amazonaws.com; sts for credentials.",
-      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region.",
+      "decision": "Endpoint prefix read from the CLI's botocore service model. Service host and regional STS are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there.",
       "covers": {
         "env": [],
         "cli": ["aws sagemaker", "describe-model", "list-models"],
@@ -502,7 +502,7 @@
     },
     "vertex-ai": {
       "reaches": "gcloud ai to <region>-aiplatform.googleapis.com; oauth2.googleapis.com for tokens.",
-      "decision": "phase3AddVertexAiMcp adds the spawn region's host. A tool argument naming another region is a Linux wildcard (*-aiplatform.googleapis.com); on macOS that call still fails.",
+      "decision": "phase3AddVertexAiMcp adds the spawn region's host. A tool argument naming another region is a Linux wildcard (*-aiplatform.googleapis.com); macOS enforces only ports, so 443 reaches it there.",
       "covers": {
         "env": [],
         "cli": ["gcloud ai", "models"],

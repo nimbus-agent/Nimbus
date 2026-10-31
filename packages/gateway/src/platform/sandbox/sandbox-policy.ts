@@ -1,4 +1,4 @@
-import type { SandboxPermissions } from "@nimbus-dev/registry-format";
+import { parseNetworkEntry, type SandboxPermissions } from "@nimbus-dev/registry-format";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { isValidWildcardHost } from "./net-wildcard-hosts.ts";
 
@@ -84,6 +84,20 @@ const LINUX_WRAPPER_ONLY_ENV = ["NIMBUS_SANDBOX_HELPER_PATH", "XDG_RUNTIME_DIR"]
 /** Whether a child under this policy has any network to reach. Wildcards alone count. */
 export function declaresNetwork(policy: SandboxPolicy): boolean {
   return policy.permissions.network.length > 0 || (policy.firstPartyWildcardHosts?.length ?? 0) > 0;
+}
+
+/**
+ * The distinct TCP ports a network list declares, ascending: the whole of what the macOS profile
+ * enforces (`darwin.ts`), and what a macOS consent prompt has to name. A bare host is 443. An entry
+ * whose port is not an integer in 1..65535 contributes nothing, so it opens nothing.
+ */
+export function declaredNetworkPorts(network: readonly string[]): number[] {
+  const ports = new Set<number>();
+  for (const entry of network) {
+    const { port } = parseNetworkEntry(entry);
+    if (Number.isInteger(port) && port >= 1 && port <= 65_535) ports.add(port);
+  }
+  return [...ports].sort((a, b) => a - b);
 }
 
 export function isSandboxWrapperOnlyEnv(key: string): boolean {

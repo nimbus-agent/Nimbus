@@ -126,6 +126,10 @@ function buildReadme(name: string, platform: NodeJS.Platform, absDir: string): s
   const winNote = isWin
     ? "\nOn Windows, any `--net` grant is all-or-nothing: it opens the network entirely rather than per host.\n"
     : "";
+  const macNote =
+    platform === "darwin"
+      ? "\nOn macOS, a `--net` grant limits the port, not the host: the server can reach any host on a declared port.\n"
+      : "";
   return `# ${name}
 
 A minimal MCP server with one \`echo\` tool, ready to register with Nimbus.
@@ -160,7 +164,7 @@ nimbus connector add --mcp mcp_${name} -- "${binary}"
 
 By default the server runs confined, with no extra access. Add \`--read <dir>\` for
 directories it must read, and \`--net <host>\` for hosts it must reach.
-${winNote}
+${winNote}${macNote}
 ## Calling it
 
 \`\`\`

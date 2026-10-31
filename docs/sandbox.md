@@ -21,7 +21,9 @@ Every extension declares a `permissions` object in its
 
 The Gateway's `SandboxRunner` enforces these at the OS level — kernel
 namespaces / sandbox profiles / AppContainer — so that even a fully
-compromised extension cannot reach hosts or paths outside the declaration.
+compromised extension cannot reach paths outside the declaration, or hosts
+outside it where the OS can filter by host. [macOS limits ports, not hosts,
+and Windows does neither](#platform-asymmetry).
 
 ### Per-host ports {#per-host-ports}
 
@@ -41,9 +43,10 @@ or `587` — while everything else keeps the HTTPS-only default:
       }
     }
 
-Enforcement is per-host **and** per-port on Linux (helper) and macOS; the
-bare-host form is identical to the pre-Tier-4 behaviour (TCP/443). On Windows
-the port is not enforced (all-or-nothing `internetClient`, as for hosts — see
+Enforcement is per-host **and** per-port on Linux (helper). macOS enforces the
+port only: any host on a declared port is reachable. The bare-host form is
+identical to the pre-Tier-4 behaviour (TCP/443). On Windows the port is not
+enforced (all-or-nothing `internetClient`, as for hosts — see
 [#platform-asymmetry](#platform-asymmetry)).
 
 ## Per-OS implementation
@@ -94,9 +97,20 @@ convenience but runs in the documented fallback mode.
 
 ### macOS
 
-`sandbox-exec` runs each extension under a per-spawn SBPL profile that
-allows only the declared hosts and paths. macOS 14 (Sonoma) + macOS 15
-(Sequoia) verified during PR 1's spike. If `sandbox-exec` is unavailable
+`sandbox-exec` runs each extension under a per-spawn SBPL profile that allows
+only the declared paths and the declared **ports**. SBPL's network address is
+`*` or `localhost` and a port, so it cannot name a host: a declared entry opens
+its port to every host, loopback and local-network addresses included, and a
+connector's list limits ports here, not hosts. Per-host filtering on macOS is a
+later project. A policy with no network gets no network, loopback included. A
+policy with a network can also reach `mDNSResponder`, because that is how macOS
+resolves names, so it can look up any name.
+
+**Connectors that declared a network could not start on macOS before this
+fix.** From 2026-05-16 the profile carried a rule `sandbox-exec` rejects
+(`unbound variable: host`, exit 65), and the only test read the generated text.
+
+If `sandbox-exec` is unavailable
 on a future macOS version, Nimbus falls back to an `EndpointSecurity`
 client (deferred to a follow-up).
 
@@ -283,10 +297,11 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 ### Stated bounds
 
 - **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
+- **macOS network is by port for a user MCP.** A `--net` host opens its port to every host. The approval prompt says so.
 - **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
 - **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so its manifest grants it read and write on `dataDir` explicitly. It is NOT excepted from the per-policy directory: it runs in its own leaf under `sandboxDir` like every other spawn. The exception is that explicit `dataDir` GRANT, not its working directory.
 - **On Windows a command binary located inside the data directory is accepted.** The overlap check covers the `--read` grants and the directory granted automatically for the binary; Linux and macOS grant the binary’s directory and so refuse one inside a protected directory, but Windows grants none, so nothing is checked for the binary’s own location there. Registering a binary under the data directory is still an owner-approved act (the prompt shows its path), and the server does not gain a grant on that directory by it.
-- **A user MCP server's own network traffic is not in the egress ledger.** Its `--net` traffic leaves through the per-host grant approved at registration, and Nimbus records none of it. The ledger records each `mcp_*` tool call the owner approves (I29, at the executor), and no `sync.run` row for the server's scheduled keep-alive, which makes no request of its own.
+- **A user MCP server's own network traffic is not in the egress ledger.** Its `--net` traffic leaves through the network grant approved at registration, and Nimbus records none of it. The ledger records each `mcp_*` tool call the owner approves (I29, at the executor), and no `sync.run` row for the server's scheduled keep-alive, which makes no request of its own.
 - **No IPv6 host literals.** `--net` does not accept them.
 - **A Windows `--read` on a directory the user cannot change the ACL of** (for example under `C:\Program Files`) is not caught at registration; it fails at spawn time and appears as the connector's health error.
 - **The I15 source guard against a `dataDir`/`configDir` working directory is spelling-based.** A renamed alias would evade it; capability is the real defense.
@@ -301,17 +316,19 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 | -- | ----------------------------------------------------- |
 | Linux (helper available) | Per-host + per-port: only `a.com:443` and `b.com:993` reachable |
 | Linux (helper missing) | All-or-nothing: full network |
-| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching) |
+| macOS | Per-port only: any host on 443 or 993, loopback and local-network addresses included (SBPL `remote tcp "*:port"`) |
 | Windows | All-or-nothing (AppContainer `internetClient`; port not enforced) |
 
 Windows per-host filtering would require Windows Filtering Platform
 (WFP) callout drivers (kernel-mode signing, Windows hardware program
-enrollment); deferred to a tracked follow-up. The asymmetry is surfaced
-on three operator-visible surfaces:
+enrollment); deferred to a tracked follow-up. macOS per-host filtering is a
+later project too: SBPL cannot name a host, so it needs a mechanism of its own.
+The asymmetry is surfaced on these operator-visible surfaces:
 
-- `nimbus diag --json` → `sandbox.platform_capabilities`
+- `nimbus diag --json` → `sandbox.platform_capabilities` (`per_port` on macOS)
 - `nimbus extension info <id>` → "Network isolation:" line
-- Gateway-startup structured log
+- The consent prompts: `extension.run`, the migration prompt and `connector add --mcp`
+- Gateway-startup structured log, only for a runner that is not fully active, so not on macOS
 
 ## Pre-T2 extensions
 

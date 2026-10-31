@@ -565,7 +565,9 @@ describe("approveExtensionRun", () => {
     expect(win["network"]).toEqual(["readwise.io"]);
     expect(win["networkAccess"]).toBe("network access (Windows cannot limit this to readwise.io)");
     expect(payloadOn("linux")["networkAccess"]).toBe("network access to readwise.io");
-    expect(payloadOn("darwin")["networkAccess"]).toBe("network access to readwise.io");
+    expect(payloadOn("darwin")["networkAccess"]).toBe(
+      "network access to any host on port 443 (macOS cannot limit this to readwise.io)",
+    );
     // The consent display shows it: no redactor drops the field.
     expect(redactPayloadForConsentDisplay(win)).toMatchObject({
       networkAccess: "network access (Windows cannot limit this to readwise.io)",

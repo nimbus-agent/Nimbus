@@ -1,12 +1,16 @@
 import { afterAll, describe, expect, it } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
+import { lookup } from "node:dns/promises";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
+import { manifestForFirstParty } from "../../../../src/connectors/lazy-mesh/first-party-manifests.ts";
 import { canonicalPath } from "../../../../src/platform/sandbox/canonical-path.ts";
 import { generateSbplProfile } from "../../../../src/platform/sandbox/darwin.ts";
 import {
+  policyFromManifest,
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
   type SandboxPolicy,
@@ -23,6 +27,7 @@ import {
  */
 
 const GATEWAY_ENTRY = resolve(import.meta.dir, "../../../../src/index.ts");
+const REPO_ROOT = realpathSync(resolve(import.meta.dir, "../../../../../.."));
 
 /**
  * On Windows the helper must exist for the spawn to be permitted at all (I15 fail-closed).
@@ -547,6 +552,471 @@ function childProcess(dir: string, name: string, body: string): { argv: string[]
   writeFileSync(scriptPath, body);
   return { argv: [process.execPath, scriptPath] };
 }
+
+/**
+ * The macOS network rule under a real `sandbox-exec`, through the real wrapper. Until this ran, only
+ * the generated text had been tested, and that text was a profile `sandbox-exec` rejects: exit 65,
+ * `unbound variable: host`, for every child with a declared network since 2026-05-16.
+ *
+ * Through the wrapper role and `spawnSync`, bounded, as the rest of this file does: the runner's own
+ * `node:child_process` spawn inside a test worker can lose its child's exit on macOS
+ * (oven-sh/bun#41024) and hang past `--timeout`.
+ *
+ * Every run logs in full, because this leg runs on a machine nobody can log into. The denials
+ * themselves cannot be read: see `bisectMissingRule` for the three ways of asking the kernel that
+ * failed. So `reportNetworkCandidates` asks the profile instead, and names what a failing fetch needs.
+ *
+ * Public addresses are resolved by this process and dialled as literals, so the port filter is
+ * measured whether or not a child can do DNS. An unsandboxed dial to the same address is the control:
+ * without it, a port the network itself drops would pass as a port the sandbox refused.
+ */
+describe.skipIf(process.platform !== "darwin")("sandbox-exec: ports only, for real", () => {
+  const TAG = "[sandbox-exec ports]";
+  const BOUND_MS = 40_000;
+  const TEST_MS = 90_000;
+  const DIAL_MS = 8_000;
+  const CANDIDATE_BOUND_MS = 25_000;
+  const CANDIDATES_BUDGET_MS = 150_000;
+  const CANDIDATES_TEST_MS = 240_000;
+  const CONNECTOR_DRIVER_MS = 70_000;
+  const CONNECTOR_BOUND_MS = 85_000;
+  const STDERR_TAIL_CHARS = 2000;
+  const SCRIPT_FAILED_CODE = 78;
+  const MDNS_SOCKET = "/private/var/run/mDNSResponder";
+  const MDNS_UNIX_SOCKET_RULE = `(allow network-outbound (remote unix-socket (path-literal "${MDNS_SOCKET}")))`;
+  const MDNS_LITERAL_RULE = `(allow network-outbound (literal "${MDNS_SOCKET}"))`;
+  const CONNECTED = "connected";
+
+  type SpawnResult = SpawnSyncReturns<string>;
+  type Outcomes = Record<string, string | number>;
+
+  function policyWith(network: readonly string[]): SandboxPolicy {
+    return { ...policy(), permissions: { ...policy().permissions, network: [...network] } };
+  }
+
+  function log(label: string, r: SpawnResult): void {
+    console.log(
+      `${TAG} ${label}: status=${String(r.status)} signal=${String(r.signal)} error=${String(r.error?.message)} stdout=${JSON.stringify(r.stdout)} stderr=${JSON.stringify(r.stderr)}`,
+    );
+  }
+
+  function run(label: string, network: readonly string[], argv: readonly string[]): SpawnResult {
+    const r = spawnSync(process.execPath, [GATEWAY_ENTRY, "__nimbus-sandbox", ...argv], {
+      encoding: "utf8",
+      timeout: BOUND_MS,
+      env: {
+        ...process.env,
+        [SANDBOX_POLICY_ENV]: JSON.stringify(policyWith(network)),
+        [SANDBOX_CWD_ENV]: work,
+      },
+    });
+    log(label, r);
+    return r;
+  }
+
+  function outcomes(r: SpawnResult): Outcomes {
+    try {
+      return JSON.parse(r.stdout) as Outcomes;
+    } catch {
+      return {};
+    }
+  }
+
+  /** A child that dials each `name: [host, port]` and prints what happened to each. */
+  function dialChild(name: string, targets: Record<string, readonly [string, number]>): string[] {
+    const body = [
+      `const targets = ${JSON.stringify(targets)};`,
+      'const net = require("net");',
+      "const dial = ([host, port]) => new Promise((done) => {",
+      `  const s = net.connect({ host, port }, () => { s.destroy(); done("${CONNECTED}"); });`,
+      "  s.on('error', (e) => done(String(e.code ?? e.message)));",
+      `  setTimeout(() => { s.destroy(); done("timeout"); }, ${String(DIAL_MS)});`,
+      "});",
+      "(async () => {",
+      "  const out = {};",
+      "  for (const [n, t] of Object.entries(targets)) out[n] = await dial(t);",
+      "  process.stdout.write(JSON.stringify(out));",
+      "  process.exit(0);",
+      "})();",
+    ].join("\n");
+    return childProcess(work, name, body).argv;
+  }
+
+  /** The same dial, outside the sandbox: whether the network itself lets this through. */
+  function hostDial(host: string, port: number): Promise<string> {
+    return new Promise((done) => {
+      const s = connect({ host, port }, () => {
+        s.destroy();
+        done(CONNECTED);
+      });
+      s.on("error", (e: NodeJS.ErrnoException) => done(String(e.code ?? e.message)));
+      setTimeout(() => {
+        s.destroy();
+        done("timeout");
+      }, DIAL_MS);
+    });
+  }
+
+  /**
+   * The address for a public name, once this machine can reach it on `port` with no sandbox. Null
+   * means offline: a skip with a loud line on a contributor's machine, and a failure on CI, where a
+   * skip would read as a pass.
+   */
+  async function reachableAddress(name: string, port: number): Promise<string | null> {
+    let address: string;
+    try {
+      ({ address } = await lookup(name, { family: 4 }));
+    } catch (error) {
+      if (IS_CI) expect.unreachable(`this runner cannot resolve ${name}: ${String(error)}`);
+      console.log(`${TAG} SKIPPED, NOT PROVED: cannot resolve ${name}`);
+      return null;
+    }
+    const control = await hostDial(address, port);
+    console.log(`${TAG} control, no sandbox: ${name} ${address}:${String(port)} ${control}`);
+    if (control === CONNECTED) return address;
+    if (IS_CI) expect.unreachable(`this runner cannot reach ${name}:${String(port)} at all`);
+    console.log(`${TAG} SKIPPED, NOT PROVED: no route to ${name}:${String(port)}`);
+    return null;
+  }
+
+  /**
+   * Why a fetch failed, when it did: the real profile plus one candidate rule at a time, with each
+   * whole result printed. Which row first turns `fetch` into a status is what the profile needs, and
+   * the two spellings of the mDNSResponder rule show which one this macOS accepts. Nothing here
+   * reaches production: each profile lives in a temp dir for one spawn.
+   *
+   * `mach-lookup` and `sysctl-read` are not candidates because the profile already grants them
+   * unscoped, and neither are `/private/etc` (`ssl`, `hosts`) or `/private/var/run` (`resolv.conf`),
+   * for the same reason.
+   */
+  function reportNetworkCandidates(argv: readonly string[], network: readonly string[]): void {
+    const candidates: ReadonlyArray<readonly [string, string]> = [
+      ["the profile as generated", ""],
+      ["mDNSResponder, as a unix socket", MDNS_UNIX_SOCKET_RULE],
+      ["mDNSResponder, as a literal", MDNS_LITERAL_RULE],
+      ["system sockets", "(allow system-socket)"],
+      ["mDNSResponder and system sockets", `${MDNS_UNIX_SOCKET_RULE}\n(allow system-socket)`],
+      ["every outbound connection", "(allow network-outbound)"],
+      ["every network operation, bind and inbound too", "(allow network*)"],
+      ["every read", '(allow file-read* (subpath "/"))'],
+      [
+        "all network, system sockets, every read and write",
+        '(allow network*)\n(allow system-socket)\n(allow file-read* (subpath "/"))\n(allow file-write* (subpath "/"))',
+      ],
+      ["no sandbox at all: the control", "(allow default)"],
+    ];
+    const dir = canonicalPath(mkdtempSync(join(tmpdir(), "nimbus-sandbox-candidates-")));
+    try {
+      const base = generateSbplProfile({ cwd: work, tmpdir: dir, policy: policyWith(network) });
+      const deadline = Date.now() + CANDIDATES_BUDGET_MS;
+      console.log(`${TAG} candidates for a failing fetch, generated profile:\n${base}`);
+      for (const [label, rule] of candidates) {
+        if (Date.now() > deadline) {
+          console.log(`${TAG} candidate budget spent, the rest did not run`);
+          break;
+        }
+        const profilePath = join(dir, "candidate.sb");
+        writeFileSync(profilePath, `${base}\n${rule}\n`);
+        const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, ...argv], {
+          encoding: "utf8",
+          cwd: work,
+          timeout: CANDIDATE_BOUND_MS,
+          env: { ...process.env, TMPDIR: dir, TMP: dir, TEMP: dir },
+        });
+        log(`candidate: ${label}`, r);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it(
+    "records which network forms sandbox-exec accepts, and rejects the old one",
+    () => {
+      const forms: ReadonlyArray<readonly [string, string]> = [
+        ["tcp, any host", '(allow network-outbound (remote tcp "*:443"))'],
+        ["udp, any host", '(allow network-outbound (remote udp "*:53"))'],
+        ["tcp, localhost", '(allow network-outbound (remote tcp "localhost:443"))'],
+        ["ip, any host", '(allow network-outbound (remote ip "*:443"))'],
+        ["tcp, a hostname", '(allow network-outbound (remote tcp "api.github.com:443"))'],
+        ["tcp, a loopback literal", '(allow network-outbound (remote tcp "127.0.0.1:443"))'],
+        ["mDNSResponder, as a unix socket", MDNS_UNIX_SOCKET_RULE],
+        ["mDNSResponder, as a literal", MDNS_LITERAL_RULE],
+        ["system sockets", "(allow system-socket)"],
+        ["the old host filter", '(allow network* (remote tcp "*:443" (host "api.github.com")))'],
+      ];
+      const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-forms-"));
+      try {
+        const statuses = new Map<string, number | null>();
+        for (const [label, form] of forms) {
+          const profilePath = join(dir, "form.sb");
+          writeFileSync(profilePath, `(version 1)\n(allow default)\n${form}\n`);
+          const r = spawnSync("/usr/bin/sandbox-exec", ["-f", profilePath, "/usr/bin/true"], {
+            encoding: "utf8",
+            timeout: BOUND_MS,
+          });
+          log(`form: ${label}: ${form}`, r);
+          statuses.set(label, r.status);
+        }
+        expect(statuses.get("tcp, any host")).toBe(0);
+        expect(statuses.get("udp, any host")).toBe(0);
+        expect(statuses.get("the old host filter")).not.toBe(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    TEST_MS,
+  );
+
+  it(
+    "parses the profile of a declared host and starts a child",
+    () => {
+      const r = run("parse and start", ["api.github.com"], ["/usr/bin/true"]);
+      expect(r.stderr).not.toContain("sandbox-exec:");
+      expect(r.status).toBe(0);
+    },
+    TEST_MS,
+  );
+
+  it(
+    "gets an HTTP status from a declared host, with real DNS and TLS",
+    async () => {
+      const body = [
+        'const dns = require("dns");',
+        "const step = async (fn) => {",
+        "  const timer = new Promise((done) => setTimeout(() => done('timeout'), 12000));",
+        "  try { return await Promise.race([fn(), timer]); }",
+        "  catch (e) { return String(e.code ?? e.name) + ': ' + String(e.message); }",
+        "};",
+        "(async () => {",
+        "  const lookup = await step(() => dns.promises.lookup('api.github.com').then((a) => a.address));",
+        "  const status = await step(() => fetch('https://api.github.com/').then((r) => r.status));",
+        "  process.stdout.write(JSON.stringify({ lookup, status }));",
+        "  process.exit(0);",
+        "})();",
+      ].join("\n");
+      const { argv } = childProcess(work, "ports-fetch", body);
+      const network = ["api.github.com"];
+      if ((await reachableAddress("api.github.com", 443)) === null) return;
+      const r = run("fetch a declared host", network, argv);
+      const { status } = outcomes(r);
+      if (typeof status !== "number") reportNetworkCandidates(argv, network);
+      expect(r.stderr).not.toContain("sandbox-exec:");
+      expect(r.status).toBe(0);
+      expect(status).toBeNumber();
+      expect(status).toBeGreaterThanOrEqual(100);
+      expect(status).toBeLessThan(600);
+    },
+    CANDIDATES_TEST_MS,
+  );
+
+  it(
+    "refuses an undeclared port on a public host, and allows any host on a declared one",
+    async () => {
+      const github = await reachableAddress("api.github.com", 80);
+      const other = await reachableAddress("example.com", 443);
+      if (github === null || other === null) return;
+      const argv = dialChild("ports-filter", {
+        declaredPort: [github, 443],
+        undeclaredPort: [github, 80],
+        // The stated bound: the list names api.github.com, and this other host is reachable anyway.
+        undeclaredHostOnDeclaredPort: [other, 443],
+      });
+      const r = run("port filter", ["api.github.com"], argv);
+      const seen = outcomes(r);
+      expect(r.status).toBe(0);
+      expect(seen["declaredPort"]).toBe(CONNECTED);
+      expect(seen["undeclaredPort"]).toBeDefined();
+      expect(seen["undeclaredPort"]).not.toBe(CONNECTED);
+      expect(seen["undeclaredHostOnDeclaredPort"]).toBe(CONNECTED);
+    },
+    TEST_MS,
+  );
+
+  it(
+    "reaches a declared loopback port under *:port, and refuses an undeclared one",
+    () => {
+      // `spawnSync` blocks this event loop, so no listener accepts, and none has to: a connect completes
+      // against the kernel's backlog. Only the sandbox can tell the ports apart.
+      const handlers = { socket: { data() {} } };
+      const literal = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+      const named = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+      const undeclared = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+      try {
+        const argv = dialChild("ports-loopback", {
+          loopbackLiteralEntry: ["127.0.0.1", literal.port],
+          localhostEntry: ["127.0.0.1", named.port],
+          undeclaredPort: ["127.0.0.1", undeclared.port],
+        });
+        const network = [`127.0.0.1:${String(literal.port)}`, `localhost:${String(named.port)}`];
+        const r = run("loopback", network, argv);
+        const seen = outcomes(r);
+        expect(r.status).toBe(0);
+        expect(seen["loopbackLiteralEntry"]).toBe(CONNECTED);
+        expect(seen["localhostEntry"]).toBe(CONNECTED);
+        expect(seen["undeclaredPort"]).toBeDefined();
+        expect(seen["undeclaredPort"]).not.toBe(CONNECTED);
+      } finally {
+        literal.stop(true);
+        named.stop(true);
+        undeclared.stop(true);
+      }
+    },
+    TEST_MS,
+  );
+
+  it(
+    "still gives a no-network policy no network, loopback included",
+    async () => {
+      const github = await reachableAddress("api.github.com", 443);
+      const handlers = { socket: { data() {} } };
+      const local = Bun.listen({ hostname: "127.0.0.1", port: 0, ...handlers });
+      try {
+        const argv = dialChild("ports-no-network", {
+          loopback: ["127.0.0.1", local.port],
+          ...(github === null ? {} : { publicHost: [github, 443] as const }),
+        });
+        const r = run("no network", [], argv);
+        const seen = outcomes(r);
+        expect(r.status).toBe(0);
+        expect(seen["loopback"]).toBeDefined();
+        expect(seen["loopback"]).not.toBe(CONNECTED);
+        if (github !== null) {
+          expect(seen["publicHost"]).toBeDefined();
+          expect(seen["publicHost"]).not.toBe(CONNECTED);
+        }
+      } finally {
+        local.stop(true);
+      }
+    },
+    TEST_MS,
+  );
+
+  it(
+    "still refuses a read outside the grants, with a network declared",
+    () => {
+      const body = [
+        "try {",
+        `  require("fs").readFileSync(${JSON.stringify(join(outside, "secret.txt"))});`,
+        `  process.exit(${String(UNEXPECTED_SUCCESS_CODE)});`,
+        "} catch (e) {",
+        "  process.stdout.write(String(e.code));",
+        `  process.exit(e.code === "EPERM" || e.code === "EACCES" ? ${String(DENIED_CODE)} : ${String(SCRIPT_FAILED_CODE)});`,
+        "}",
+      ].join("\n");
+      const { argv } = childProcess(work, "ports-peek", body);
+      const r = run("read outside the grants", ["api.github.com"], argv);
+      expect(r.status).toBe(DENIED_CODE);
+    },
+    TEST_MS,
+  );
+
+  it(
+    "starts a subprocess and waits for it, with a network declared",
+    () => {
+      const body = [
+        'const { spawn, spawnSync } = require("child_process");',
+        'const sync = spawnSync("/usr/bin/true");',
+        "const out = { sync: sync.status, syncError: String(sync.error) };",
+        "const finish = (async_) => {",
+        "  process.stdout.write(JSON.stringify({ ...out, async: async_ }));",
+        `  process.exit(sync.status === 0 ? 0 : ${String(SCRIPT_FAILED_CODE)});`,
+        "};",
+        'const child = spawn("/usr/bin/true");',
+        'child.on("exit", (code) => finish(code));',
+        'child.on("error", (e) => finish(String(e.message)));',
+        'setTimeout(() => finish("timeout"), 10000);',
+      ].join("\n");
+      const { argv } = childProcess(work, "ports-subprocess", body);
+      const r = run("subprocess", ["api.github.com"], argv);
+      expect(r.status).toBe(0);
+      expect(outcomes(r)["sync"]).toBe(0);
+    },
+    TEST_MS,
+  );
+
+  it(
+    "runs a real connector: its own tool call gets GitHub's answer to a bad token",
+    async () => {
+      if ((await reachableAddress("api.github.com", 443)) === null) return;
+      const secret = "not-a-real-token";
+      const manifest = manifestForFirstParty("github");
+      const fromManifest = policyFromManifest(manifest);
+      const connectorPolicy: SandboxPolicy = {
+        ...fromManifest,
+        permissions: {
+          network: fromManifest.permissions.network,
+          filesystem: {
+            // A source checkout has to read itself; a compiled gateway carries all this in its binary.
+            read: [
+              ...fromManifest.permissions.filesystem.read,
+              ...policy().permissions.filesystem.read,
+              REPO_ROOT,
+            ],
+            write: fromManifest.permissions.filesystem.write,
+          },
+        },
+      };
+      // The driver holds stdin open for the whole exchange, which `spawnSync`'s `input` cannot, and it
+      // is its own process, so this test's worker never owns an async child.
+      const driver = [
+        'const { spawn } = require("child_process");',
+        `const entry = ${JSON.stringify(GATEWAY_ENTRY)};`,
+        "const child = spawn(process.execPath, [entry, '__nimbus-sandbox', process.execPath, entry, '__nimbus-connector', 'github'], { stdio: ['pipe', 'pipe', 'pipe'] });",
+        "let stderr = '';",
+        "let tools = -1;",
+        "const finish = (code, text) => {",
+        `  process.stdout.write(JSON.stringify({ text, tools, stderr: stderr.slice(-${String(STDERR_TAIL_CHARS)}) }));`,
+        "  child.kill();",
+        "  process.exit(code);",
+        "};",
+        `setTimeout(() => finish(3, 'timed out'), ${String(CONNECTOR_DRIVER_MS)});`,
+        "child.on('exit', (code) => finish(4, 'exited early, code ' + String(code)));",
+        "child.stderr.on('data', (d) => { stderr += d.toString(); });",
+        "const send = (m) => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...m }) + '\\n');",
+        "let buffered = '';",
+        "child.stdout.on('data', (d) => {",
+        "  buffered += d.toString();",
+        "  const lines = buffered.split('\\n');",
+        "  buffered = lines.pop() ?? '';",
+        "  for (const line of lines) {",
+        "    let m;",
+        "    try { m = JSON.parse(line); } catch { continue; }",
+        "    if (m.id === 1) {",
+        "      send({ method: 'notifications/initialized' });",
+        "      send({ id: 2, method: 'tools/list' });",
+        "    } else if (m.id === 2) {",
+        "      tools = m.result?.tools?.length ?? 0;",
+        "      send({ id: 3, method: 'tools/call', params: { name: 'github_repo_list', arguments: {} } });",
+        "    } else if (m.id === 3) {",
+        "      finish(0, m.result?.content?.[0]?.text ?? line);",
+        "    }",
+        "  }",
+        "});",
+        "send({ id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'sandbox-ports-test', version: '1' } } });",
+      ].join("\n");
+      const { argv } = childProcess(work, "ports-connector-driver", driver);
+      const [command = process.execPath, ...args] = argv;
+      const r = spawnSync(command, args, {
+        encoding: "utf8",
+        timeout: CONNECTOR_BOUND_MS,
+        env: {
+          ...process.env,
+          GITHUB_PAT: secret,
+          [SANDBOX_POLICY_ENV]: JSON.stringify(connectorPolicy),
+          [SANDBOX_CWD_ENV]: join(work, "connector"),
+        },
+      });
+      log("real connector", r);
+      const answer = JSON.parse(r.stdout) as { text: string; tools: number; stderr: string };
+      expect(answer.tools).toBeGreaterThan(0);
+      expect(answer.text).toMatch(/GitHub \d{3}/);
+      expect(answer.stderr).not.toContain(secret);
+      expect(r.status).toBe(0);
+    },
+    CONNECTOR_BOUND_MS + TEST_MS,
+  );
+});
 
 // A missing prerequisite is a local-dev convenience skip (a contributor without `bwrap` should
 // not be blocked) but a CI failure: `!READY && !IS_CI` only suppresses the whole suite off-CI.

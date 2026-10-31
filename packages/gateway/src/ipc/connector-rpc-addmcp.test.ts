@@ -28,6 +28,9 @@ import { defaultUserMcpRealpath, defaultUserMcpWhich } from "./connector-rpc-han
 const WIN_NETWORK_NOTE =
   "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed.";
 
+const DARWIN_NETWORK_NOTE =
+  "macOS limits network access by port, not host: this server can reach any host on the declared ports, not only the ones listed.";
+
 let db: Database;
 let localIndex: LocalIndex;
 let vault: NimbusVault;
@@ -251,6 +254,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
     netHosts: ["api.example.com:443"],
     modelAccess: true,
     ...(process.platform === "win32" ? { networkNote: WIN_NETWORK_NOTE } : {}),
+    ...(process.platform === "darwin" ? { networkNote: DARWIN_NETWORK_NOTE } : {}),
   };
 
   test("the gate is called once with exactly the resolved payload; approval stores the grants", async () => {
@@ -437,6 +441,15 @@ describe("buildAddMcpConsentPayload — the platform is passed in, not read", ()
 
   test("win32 without hosts carries no note", () => {
     const payload = buildAddMcpConsentPayload({ ...resolved, netHosts: [] }, "win32");
+    expect("networkNote" in payload).toBe(false);
+  });
+
+  test("darwin with hosts says the list limits ports, not hosts", () => {
+    expect(buildAddMcpConsentPayload(resolved, "darwin")["networkNote"]).toBe(DARWIN_NETWORK_NOTE);
+  });
+
+  test("darwin without hosts carries no note", () => {
+    const payload = buildAddMcpConsentPayload({ ...resolved, netHosts: [] }, "darwin");
     expect("networkNote" in payload).toBe(false);
   });
 

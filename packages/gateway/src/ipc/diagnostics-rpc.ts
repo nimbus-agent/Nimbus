@@ -100,14 +100,16 @@ function agentLatencyPreviewParams(ctx: DiagnosticsRpcContext): {
     : { agentInvocationLatencyP50Ms: p.p50Ms, agentInvocationLatencyP95Ms: p.p95Ms };
 }
 
-function sandboxNetworkPosture(runner: SandboxRunner): "per_host" | "all_or_nothing" | "refusing" {
-  if (runner.isFullyActive()) return "per_host";
+type SandboxNetworkPosture = "per_host" | "per_port" | "all_or_nothing" | "refusing";
+
+function sandboxNetworkPosture(runner: SandboxRunner): SandboxNetworkPosture {
+  if (runner.isFullyActive()) return runner.networkScope?.() ?? "per_host";
   return runner.networkRefused?.() === true ? "refusing" : "all_or_nothing";
 }
 
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {
   platform_capabilities: {
-    network: "per_host" | "all_or_nothing" | "refusing";
+    network: SandboxNetworkPosture;
     reason: string | null;
   };
   linux_helper: { available: boolean; reason: string | null } | null;

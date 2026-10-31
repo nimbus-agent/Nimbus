@@ -44,6 +44,10 @@ export { ConnectorRpcError } from "./connector-rpc-shared.ts";
 const WIN32_USER_MCP_NETWORK_NOTE =
   "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed.";
 
+/** The same prompt on macOS: the profile filters by port and cannot name a host. */
+const DARWIN_USER_MCP_NETWORK_NOTE =
+  "macOS limits network access by port, not host: this server can reach any host on the declared ports, not only the ones listed.";
+
 /**
  * Extracted from the `connector.adoptLocalAuth` case below and exported so the WIRING — which
  * exact Vault key the gcloud consent clause's "will this clear a stored key?" question reads —
@@ -104,8 +108,9 @@ export function buildAddMcpConsentPayload(
     netHosts: resolved.netHosts,
     modelAccess: resolved.modelAccess,
   };
-  if (platform === "win32" && resolved.netHosts.length > 0) {
-    payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
+  if (resolved.netHosts.length > 0) {
+    if (platform === "win32") payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
+    if (platform === "darwin") payload["networkNote"] = DARWIN_USER_MCP_NETWORK_NOTE;
   }
   return payload;
 }

@@ -8,6 +8,16 @@ describe("formatNetworkIsolationLine", () => {
     expect(line).toBe("Network isolation: per-host");
   });
 
+  test("renders 'per-port' with the reason, never per-host", () => {
+    const line = formatNetworkIsolationLine({
+      network: "per_port",
+      reason: "macOS: the list limits ports, not hosts",
+    });
+    expect(line).toBe(
+      "Network isolation: per-port, any host on a declared port (macOS: the list limits ports, not hosts)",
+    );
+  });
+
   test("renders 'Degraded - all-or-nothing' with the reason in parens", () => {
     const line = formatNetworkIsolationLine({
       network: "all_or_nothing",
