@@ -107,8 +107,8 @@ jobs:
           sudo apt-get install -y -qq libsecret-tools
 
           curl -fsSL "$BASE/nimbus_amd64.deb" -o /tmp/nimbus.deb
-          # apt, NOT `dpkg -i` — the package depends on bubblewrap and
-          # libcap2-bin, and dpkg does not resolve those. Documented as apt
+          # apt, NOT `dpkg -i` — the package depends on bubblewrap, and dpkg
+          # does not resolve that. Documented as apt
           # because `dpkg -i` was verified to fail on a clean ubuntu:24.04.
           sudo apt-get install -y /tmp/nimbus.deb
 

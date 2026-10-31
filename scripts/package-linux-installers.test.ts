@@ -11,6 +11,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -20,6 +21,7 @@ let workDir: string;
 let bundleDir: string;
 let outDir: string;
 let stubToolPath: string;
+let stubHelperPath: string;
 
 const REPO_ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Z]:)/, "$1");
 
@@ -30,7 +32,13 @@ function makeStub(name: string, body: string): string {
   return p;
 }
 
+const HELPER_FILE = "nimbus-sandbox-helper";
+
 function runInstaller(extraArgs: string[]) {
+  return runInstallerRaw(["--sandbox-helper", stubHelperPath, ...extraArgs]);
+}
+
+function runInstallerRaw(extraArgs: string[]) {
   return spawnSync(
     process.execPath,
     [
@@ -60,6 +68,10 @@ beforeEach(() => {
   chmodSync(join(bundleDir, "nimbus"), 0o755);
 
   stubToolPath = makeStub("stub-appimagetool", `OUT="$2"\nprintf 'AITS' > "$OUT"`);
+  // Mode 644 on purpose: every layout must set 755 itself, not inherit it from the source.
+  stubHelperPath = join(workDir, "stub-helper");
+  writeFileSync(stubHelperPath, "#!/bin/sh\nexit 0\n", "utf8");
+  chmodSync(stubHelperPath, 0o644);
 });
 
 afterEach(() => {
@@ -67,19 +79,19 @@ afterEach(() => {
 });
 
 linuxTest("produces .deb with expected name", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb"))).toBe(true);
 });
 
 linuxTest("produces tarball with expected name", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz"))).toBe(true);
 });
 
 linuxTest("produces .AppImage with stubbed appimagetool", () => {
-  const r = runInstaller(["--appimagetool", stubToolPath, "--skip-sandbox-helper"]);
+  const r = runInstaller(["--appimagetool", stubToolPath]);
   expect(r.status).toBe(0);
   const appImage = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.AppImage");
   expect(existsSync(appImage)).toBe(true);
@@ -94,7 +106,7 @@ linuxTest("populates AppDir with AppRun, .desktop, icon, and binaries before inv
     `APPDIR="$1"\n(cd "$APPDIR" && find . -type f | sort) > "${listingPath}"\nprintf 'AITS' > "$2"`,
   );
 
-  const r = runInstaller(["--appimagetool", recordingStub, "--skip-sandbox-helper"]);
+  const r = runInstaller(["--appimagetool", recordingStub]);
   expect(r.status).toBe(0);
 
   const listing = readFileSync(listingPath, "utf8");
@@ -113,7 +125,7 @@ linuxTest("substitutes {{VERSION}} placeholder in desktop entry", () => {
     `APPDIR="$1"\ncp "$APPDIR/nimbus-headless.desktop" "${desktopOut}"\nprintf 'AITS' > "$2"`,
   );
 
-  runInstaller(["--appimagetool", recordingStub, "--skip-sandbox-helper"]);
+  runInstaller(["--appimagetool", recordingStub]);
 
   const desktop = readFileSync(desktopOut, "utf8");
   expect(desktop).toContain("X-AppImage-Version=0.1.0-rc1");
@@ -121,7 +133,7 @@ linuxTest("substitutes {{VERSION}} placeholder in desktop entry", () => {
 });
 
 linuxTest("tarball contains install.sh and uninstall.sh", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
   expect(existsSync(tarballPath)).toBe(true);
@@ -134,46 +146,44 @@ linuxTest("tarball contains install.sh and uninstall.sh", () => {
 });
 
 linuxTest("AppImage output dir contains sibling install.sh and uninstall.sh", () => {
-  const r = runInstaller(["--appimagetool", stubToolPath, "--skip-sandbox-helper"]);
+  const r = runInstaller(["--appimagetool", stubToolPath]);
   expect(r.status).toBe(0);
   expect(existsSync(join(outDir, "install.sh"))).toBe(true);
   expect(existsSync(join(outDir, "uninstall.sh"))).toBe(true);
 });
 
-linuxTest(".deb DEBIAN/control declares bubblewrap + libcap2-bin as Depends", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+linuxTest(".deb DEBIAN/control depends on bubblewrap, and on no libcap", () => {
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
   expect(existsSync(debPath)).toBe(true);
   const info = spawnSync("/usr/bin/dpkg-deb", ["-I", debPath], { encoding: "utf8" });
   expect(info.status).toBe(0);
-  expect(info.stdout).toMatch(/Depends:\s*bubblewrap,\s*libcap2-bin/);
+  expect(info.stdout).toMatch(/Depends:\s*bubblewrap\n/);
+  expect(info.stdout).not.toContain("libcap");
+  expect(info.stdout).not.toContain("cap_net_admin");
 });
 
-linuxTest(".deb postinst runs setcap on nimbus-sandbox-helper", () => {
-  const stubHelper = join(workDir, "stub-helper");
-  writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");
-  chmodSync(stubHelper, 0o755);
-
-  const r = runInstaller(["--skip-appimage", "--sandbox-helper", stubHelper]);
+linuxTest(".deb ships the helper at mode 755, and no script of it sets a capability", () => {
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
-  expect(existsSync(debPath)).toBe(true);
   const ctrlDir = join(workDir, "deb-ctrl");
   mkdirSync(ctrlDir, { recursive: true });
   const extract = spawnSync("/usr/bin/dpkg-deb", ["-e", debPath, ctrlDir], { encoding: "utf8" });
   expect(extract.status).toBe(0);
-  const postinst = readFileSync(join(ctrlDir, "postinst"), "utf8");
-  expect(postinst).toContain("setcap cap_net_admin+ep");
-  expect(postinst).toContain("/usr/lib/nimbus/bin/nimbus-sandbox-helper");
-
+  for (const script of ["postinst", "postrm"]) {
+    expect(readFileSync(join(ctrlDir, script), "utf8")).not.toContain("setcap");
+  }
   const contents = spawnSync("/usr/bin/dpkg-deb", ["-c", debPath], { encoding: "utf8" });
   expect(contents.status).toBe(0);
-  expect(contents.stdout).toContain("./usr/lib/nimbus/bin/nimbus-sandbox-helper");
+  expect(contents.stdout).toMatch(
+    /-rwxr-xr-x \S+ +\d+ .*\.\/usr\/lib\/nimbus\/bin\/nimbus-sandbox-helper\n/,
+  );
 });
 
 linuxTest("tarball linux-postinstall.sh prints bwrap pre-check banner", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
   expect(existsSync(tarballPath)).toBe(true);
@@ -193,7 +203,7 @@ linuxTest("tarball linux-postinstall.sh prints bwrap pre-check banner", () => {
 linuxTest(
   ".deb installs the bubblewrap AppArmor profile, and removes it only on remove or purge",
   () => {
-    const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+    const r = runInstaller(["--skip-appimage"]);
     expect(r.status).toBe(0);
     const ctrlDir = join(workDir, "deb-ctrl");
     mkdirSync(ctrlDir, { recursive: true });
@@ -216,7 +226,7 @@ linuxTest(
 linuxTest(
   "tarball linux-postinstall.sh installs the bubblewrap AppArmor profile through sudo",
   () => {
-    const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+    const r = runInstaller(["--skip-appimage"]);
     expect(r.status).toBe(0);
     const extractDir = join(workDir, "tar-extract");
     mkdirSync(extractDir, { recursive: true });
@@ -234,21 +244,121 @@ linuxTest(
   },
 );
 
-linuxTest("tarball ships nimbus-sandbox-helper when --sandbox-helper is set", () => {
-  const stubHelper = join(workDir, "stub-helper");
-  writeFileSync(stubHelper, "#!/bin/sh\nexit 0\n", "utf8");
-  chmodSync(stubHelper, 0o755);
-
-  const r = runInstaller(["--skip-appimage", "--sandbox-helper", stubHelper]);
+linuxTest("tarball ships the helper at mode 755, and its post-install sets no capability", () => {
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
-  const tarList = spawnSync("/usr/bin/tar", ["-tzf", tarballPath], { encoding: "utf8" });
+  const tarList = spawnSync("/usr/bin/tar", ["-tvzf", tarballPath], { encoding: "utf8" });
   expect(tarList.status).toBe(0);
-  expect(tarList.stdout).toContain("bin/nimbus-sandbox-helper");
+  expect(tarList.stdout).toMatch(/-rwxr-xr-x .* bin\/nimbus-sandbox-helper\n/);
+  const extractDir = join(workDir, "tar-extract");
+  mkdirSync(extractDir, { recursive: true });
+  const x = spawnSync("/usr/bin/tar", ["-xzf", tarballPath, "-C", extractDir], {
+    encoding: "utf8",
+  });
+  expect(x.status).toBe(0);
+  const postScript = readFileSync(join(extractDir, "linux-postinstall.sh"), "utf8");
+  expect(postScript).not.toContain("setcap");
+  expect(postScript).not.toContain("libcap");
+  // The AppArmor block stays: without it nothing sandboxed starts on current Ubuntu.
+  expect(postScript).toContain("apparmor_parser -r");
+  const readme = readFileSync(join(extractDir, "README.txt"), "utf8");
+  expect(readme).not.toContain("setcap");
+  expect(readme).not.toContain("cap_net_admin");
+});
+
+linuxTest(
+  "install.sh puts the tarball's helper beside the gateway, and uninstall.sh removes it",
+  () => {
+    const r = runInstaller(["--skip-appimage"]);
+    expect(r.status).toBe(0);
+    const extractDir = join(workDir, "tar-extract");
+    mkdirSync(extractDir, { recursive: true });
+    const tarballPath = join(outDir, "nimbus-headless-linux-amd64-v0.1.0-rc1.tar.gz");
+    expect(spawnSync("/usr/bin/tar", ["-xzf", tarballPath, "-C", extractDir]).status).toBe(0);
+    const home = join(workDir, "home");
+    mkdirSync(home);
+    const env = { PATH: "/usr/bin:/bin", HOME: home };
+    const installed = spawnSync("/bin/sh", [join(extractDir, "install.sh"), "--yes"], {
+      env,
+      encoding: "utf8",
+    });
+    expect(installed.status).toBe(0);
+    const helper = join(home, ".local", "bin", HELPER_FILE);
+    expect(statSync(helper).mode & 0o7777).toBe(0o755);
+    expect(existsSync(join(home, ".local", "bin", "nimbus-gateway"))).toBe(true);
+    const removed = spawnSync("/bin/sh", [join(extractDir, "uninstall.sh"), "--yes"], {
+      env,
+      encoding: "utf8",
+    });
+    expect(removed.status).toBe(0);
+    expect(existsSync(helper)).toBe(false);
+  },
+);
+
+linuxTest("AppImage carries the helper beside the gateway at mode 755", () => {
+  const listingPath = join(workDir, "appdir-modes.txt");
+  const recordingStub = makeStub(
+    "mode-recording-stub",
+    `APPDIR="$1"\n(cd "$APPDIR" && find usr/bin -type f -printf '%m %p\\n' | sort -k2) > "${listingPath}"\nprintf 'AITS' > "$2"`,
+  );
+  const r = runInstaller(["--appimagetool", recordingStub]);
+  expect(r.status).toBe(0);
+  const listing = readFileSync(listingPath, "utf8");
+  expect(listing).toContain("755 usr/bin/nimbus-gateway");
+  expect(listing).toContain("755 usr/bin/nimbus-sandbox-helper");
+});
+
+linuxTest(".rpm ships the helper at mode 755, with no install script and no libcap", () => {
+  const capture = join(workDir, "captured-nfpm.yaml");
+  const modeCapture = join(workDir, "captured-helper-mode");
+  const nfpmStub = makeStub(
+    "helper-recording-nfpm",
+    `prev=""\nfor a in "$@"; do\n` +
+      `  if [ "$prev" = "-f" ]; then cp "$a" "${capture}"; stat -c %a "$(dirname "$a")/bin/${HELPER_FILE}" > "${modeCapture}"; fi\n` +
+      `  if [ "$prev" = "-t" ]; then printf 'RPM' > "$a"; fi\n` +
+      `  prev="$a"\ndone`,
+  );
+  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
+  expect(r.status).toBe(0);
+  const cfg = readFileSync(capture, "utf8");
+  expect(cfg).toContain("dst: /usr/lib/nimbus/bin/nimbus-sandbox-helper");
+  expect(cfg).not.toContain("libcap");
+  expect(cfg).not.toContain("postinstall");
+  expect(readFileSync(modeCapture, "utf8").trim()).toBe("755");
+});
+
+linuxTest("a helper the bundle carries is used, with nothing built", () => {
+  writeFileSync(join(bundleDir, HELPER_FILE), "#!/bin/sh\necho bundled\n", "utf8");
+  const failingMake = makeStub("make-must-not-run", "exit 1");
+  const r = runInstallerRaw(["--skip-appimage", "--make", failingMake]);
+  expect(r.status).toBe(0);
+});
+
+linuxTest("a build with no helper fails: make fails, and nothing is packaged", () => {
+  const failingMake = makeStub("failing-make", "exit 1");
+  const r = runInstallerRaw(["--skip-appimage", "--make", failingMake]);
+  expect(r.status).toBe(1);
+  expect(r.stderr).toContain("could not build nimbus-sandbox-helper");
+  expect(existsSync(join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb"))).toBe(false);
+});
+
+test("a build with no helper fails: --sandbox-helper naming nothing", () => {
+  const r = runInstallerRaw(["--skip-appimage", "--sandbox-helper", join(workDir, "no-such")]);
+  expect(r.status).toBe(1);
+  expect(r.stderr).toContain("--sandbox-helper not found");
+});
+
+test("the packager has no way left to skip the helper", () => {
+  const source = readFileSync(join(REPO_ROOT, "scripts", "package-linux-installers.ts"), "utf8");
+  expect(source).not.toContain("skip-sandbox-helper");
+  expect(source).not.toContain("setcap");
+  expect(source).not.toContain("libcap");
+  expect(source).not.toContain("cap_net_admin");
 });
 
 linuxTest(".deb wrappers stamp the apt channel + disable the self-updater", () => {
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper"]);
+  const r = runInstaller(["--skip-appimage"]);
   expect(r.status).toBe(0);
   const debPath = join(outDir, "nimbus-headless_0.1.0-rc1_amd64.deb");
   const extractDir = join(workDir, "deb-data");
@@ -267,7 +377,7 @@ linuxTest("--rpm renders an nfpm config and invokes the nfpm binary (stubbed)", 
     `printf '%s\\n' "$@" > "${argvLog}"\n` +
       `prev=""\nfor a in "$@"; do\n  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n  prev="$a"\ndone`,
   );
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper", "--rpm", "--nfpm", nfpmStub]);
+  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
   expect(r.status).toBe(0);
   const rpmPath = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.rpm");
   expect(existsSync(rpmPath)).toBe(true);
@@ -288,21 +398,22 @@ linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () =>
       `  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n` +
       `  prev="$a"\ndone`,
   );
-  const r = runInstaller(["--skip-appimage", "--skip-sandbox-helper", "--rpm", "--nfpm", nfpmStub]);
+  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
   expect(r.status).toBe(0);
   const wrapper = readFileSync(wrapperOut, "utf8");
   expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");
   expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
 });
 
-// The Linux sandbox helper must not ship until its shipping PR. A workflow call without the flag
-// would build the helper (the static link now succeeds), bundle it and run setcap on it in
-// postinst. Every workflow call to the packager, release and CI alike, must pass the flag.
-test("every workflow call to the Linux packager passes --skip-sandbox-helper", () => {
+// Every package ships the helper, since a package without one hands a connector that declares a
+// network the whole internet. The packager refuses a build with no helper, so a call only has to
+// stay free of the old flag, which no longer exists.
+test("every workflow call to the Linux packager ships the helper", () => {
   const dir = join(REPO_ROOT, ".github", "workflows");
   const calls: string[] = [];
   for (const name of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
     const text = readFileSync(join(dir, name), "utf8");
+    expect(text).not.toContain("--skip-sandbox-helper");
     // A trailing backslash continues the command onto the next line.
     const joined = text.replace(/\\\r?\n/g, " ");
     for (const line of joined.split(/\r?\n/)) {
@@ -310,9 +421,15 @@ test("every workflow call to the Linux packager passes --skip-sandbox-helper", (
       if (!/^\s*bun\s.*(package-linux-installers\.ts|package:installers:linux)/.test(line))
         continue;
       calls.push(`${name}: ${line.trim()}`);
-      expect(line).toContain("--skip-sandbox-helper");
     }
   }
   // At least the release and CI calls, so a rename of the call cannot make this pass vacuously.
   expect(calls.length).toBeGreaterThanOrEqual(2);
+});
+
+test("the release job builds the helper with make and checks that it is static", () => {
+  const release = readFileSync(join(REPO_ROOT, ".github", "workflows", "release.yml"), "utf8");
+  expect(release).toContain("make -C packages/gateway/src-native/sandbox-helper");
+  expect(release).toMatch(/file "\$HELPER" \| grep -q 'statically linked'/);
+  expect(release).toContain('cp "$HELPER" dist/headless-bundle/nimbus-sandbox-helper');
 });

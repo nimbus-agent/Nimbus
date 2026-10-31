@@ -2,9 +2,9 @@
 
 AppContainer helper for the extension sandbox on Windows (I15).
 
-Unlike the Linux helper, this one is **unprivileged**. `CreateAppContainerProfile`
+This helper is **unprivileged**. `CreateAppContainerProfile`
 is a per-user API and ACL edits inside the user's own profile need no elevation —
-there is no install-time `setcap` equivalent, and no privilege step is added by
+no privilege step is added by
 installing Nimbus on Windows. `--check-caps` accordingly probes that AppContainer
 profile creation **works** on this machine, not that a capability is **held**.
 

@@ -32,8 +32,8 @@ curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbu
 # Verify BEFORE installing — this step is yours, nothing does it for you
 gpg --verify /tmp/nimbus.deb.asc /tmp/nimbus.deb
 
-# Install with apt, NOT `dpkg -i` — the package depends on bubblewrap and
-# libcap2-bin, and dpkg will not resolve those for you.
+# Install with apt, NOT `dpkg -i` — the package depends on bubblewrap, and dpkg
+# will not resolve that for you.
 sudo apt install /tmp/nimbus.deb
 ```
 

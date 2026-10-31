@@ -365,5 +365,4 @@ boundary.
 ## See also
 
 - `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant; §I42 — user-MCP tool calls need owner approval.
-- `docs/release/headless-postinst-linux-setcap.md` — Linux installer setcap flow.
 - The PR 1 design spec for the architectural rationale.

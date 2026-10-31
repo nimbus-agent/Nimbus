@@ -1,9 +1,8 @@
 /*
  * nimbus-sandbox-helper (Windows) — AppContainer helper for the extension sandbox (I15).
  *
- * UNPRIVILEGED, unlike the Linux helper: CreateAppContainerProfile is a per-user API and ACL
- * edits inside the user's own profile need no elevation. There is no install-time setcap
- * equivalent, and --check-caps probes that profile creation WORKS rather than that a
+ * UNPRIVILEGED: CreateAppContainerProfile is a per-user API and ACL edits inside the user's own
+ * profile need no elevation, and --check-caps probes that profile creation WORKS rather than that a
  * capability is HELD.
  *
  * stderr is the authoritative failure channel; see README.md for the exit-code contract.

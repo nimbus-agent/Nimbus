@@ -427,6 +427,17 @@ for cand in "${SCRIPT_DIR}/vec0.so" "${SCRIPT_DIR}/vec0.dylib" \
   fi
 done
 
+# The Linux sandbox helper, which enforces a connector's declared hosts. Same rule, same directory:
+# the gateway looks for it beside its own executable. Absent from the macOS archives, which do not
+# use it, and the loop is then a no-op.
+for cand in "${SCRIPT_DIR}/nimbus-sandbox-helper" "${SCRIPT_DIR}/bin/nimbus-sandbox-helper"; do
+  if [ -f "$cand" ]; then
+    cp "$cand" "${INSTALL_DIR}/nimbus-sandbox-helper"
+    chmod 755 "${INSTALL_DIR}/nimbus-sandbox-helper"
+    break
+  fi
+done
+
 # The full SQLite build that extension needs in order to load on macOS (#1505). Same rule, same
 # directory, same reason — the gateway resolves it beside its own executable — and the same
 # optionality: absent, the user keeps everything except semantic search, and `nimbus doctor` says
@@ -475,7 +486,7 @@ EOF
 fi
 
 # Remote mode's extracted tree also carries linux-postinstall.sh (the AppArmor profile
-# bubblewrap needs on current Ubuntu, sandbox-helper setcap, the same bubblewrap check). The cleanup trap deletes that tree on
+# bubblewrap needs on current Ubuntu, the same bubblewrap check). The cleanup trap deletes that tree on
 # exit, so preserve a copy in the install dir. Never run it automatically —
 # a curl | sh installer must not chain into another script, let alone sudo.
 if [ "$FETCHED" -eq 1 ] && [ -f "${SCRIPT_DIR}/linux-postinstall.sh" ]; then
