@@ -4,8 +4,8 @@
  * honest if a listener that is not actually open is absent, never reported "closed": `live()`
  * calls each registered PROBE fresh on every read, so it can never report a stale snapshot.
  *
- * Each of the five listen sites the static rule D31 polices (`ipc`, `http`, `lan`, `metrics`,
- * `oauth_callback`) registers a probe right after its own `listen`/`serve` call succeeds and
+ * Each of the six listen sites the static rule D31 polices (`ipc`, `http`, `lan`, `metrics`,
+ * `oauth_callback`, `sandbox_forward`) registers a probe right after its own `listen`/`serve` call succeeds and
  * unregisters on every stop path (success, error, and — for `oauth_callback` — timeout). A probe
  * returning `null` means "not listening right now" without the caller having to remember to
  * unregister eagerly; `live()` also treats a THROWING probe as `null` rather than letting one

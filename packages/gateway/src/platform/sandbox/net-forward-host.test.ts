@@ -7,6 +7,7 @@ import {
   createRefusalLog,
   type ForwardConnectionStats,
   type ForwardEntry,
+  ForwardHost,
   type ForwardHostOptions,
   type NetSocketHandlers,
   type NetSocketLike,
@@ -101,6 +102,40 @@ describe("planForwardEntries", () => {
     expect(() => planForwardEntries(policy(["127.0.0.53"]))).toThrow(/resolver/);
     expect(() => planForwardEntries(policy(["127.0.0.53:53"]))).toThrow(/resolver/);
     expect(() => planForwardEntries(policy(["127.0.0.53."]))).toThrow(/resolver/);
+  });
+
+  test("a literal no trust level may reach throws, however it is spelled", () => {
+    for (const refused of [
+      "0.0.0.0",
+      "0.1.2.3",
+      "0.0.0.0.",
+      "169.254.169.254",
+      "192.0.0.1",
+      "192.0.2.1",
+      "198.18.0.1",
+      "198.51.100.1",
+      "203.0.113.1",
+      "224.0.0.1",
+      "240.0.0.1",
+      "255.255.255.255",
+    ]) {
+      expect(() => planForwardEntries(policy([refused]))).toThrow(/no entry may reach/);
+      expect(() => planForwardEntries(policy([`${refused}:8080`]))).toThrow(/no entry may reach/);
+    }
+  });
+
+  test("a loopback, private or public literal is planned, for the trust rules to judge", () => {
+    for (const literal of [
+      "127.0.0.1",
+      "127.0.0.2",
+      "10.0.0.1",
+      "172.16.0.1",
+      "192.168.1.5",
+      "100.64.0.1",
+      "8.8.8.8",
+    ]) {
+      expect(planForwardEntries(policy([literal]))[0]?.loopbackIp).toBe(literal);
+    }
   });
 
   test("never assigns 127.0.0.53, and reaches 127.0.0.254 at exactly 252 hosts", () => {
@@ -206,6 +241,7 @@ describe("createRefusalLog", () => {
     const note = createRefusalLog(
       (l) => lines.push(l),
       () => 0,
+      Number.POSITIVE_INFINITY,
     );
     for (let i = 0; i < 1024; i += 1) note(`n${String(i)}`, null, "r");
     note("n0", null, "r");
@@ -214,6 +250,52 @@ describe("createRefusalLog", () => {
     expect(lines).toHaveLength(1025);
     note("n0", null, "r");
     expect(lines).toHaveLength(1026);
+  });
+
+  test("2000 distinct names: 60 lines and one notice, then logging resumes a minute later", () => {
+    const lines: string[] = [];
+    let at = 0;
+    const note = createRefusalLog(
+      (l) => lines.push(l),
+      () => at,
+    );
+    for (let i = 0; i < 2000; i += 1) note(`n${String(i)}`, null, "r");
+    expect(lines).toHaveLength(61);
+    expect(lines[59]).toBe("net-forward: n59: r");
+    expect(lines[60]).toBe("net-forward: further refusals suppressed this minute");
+    at += 60_000;
+    for (let i = 2000; i < 2100; i += 1) note(`n${String(i)}`, null, "r");
+    expect(lines).toHaveLength(61 + 61);
+    expect(lines[61]).toBe("net-forward: n2000: r");
+    expect(lines.at(-1)).toBe("net-forward: further refusals suppressed this minute");
+  });
+
+  test("a name the budget held back was not recorded, so it can log inside its own minute", () => {
+    const lines: string[] = [];
+    let at = 0;
+    const note = createRefusalLog(
+      (l) => lines.push(l),
+      () => at,
+    );
+    for (let i = 0; i < 60; i += 1) note(`n${String(i)}`, null, "r");
+    at = 59_000;
+    note("held-back", null, "r");
+    expect(lines.at(-1)).toBe("net-forward: further refusals suppressed this minute");
+    at = 60_000;
+    note("held-back", null, "r");
+    expect(lines.at(-1)).toBe("net-forward: held-back: r");
+  });
+
+  test("a repeat inside a name's minute spends none of the budget", () => {
+    const lines: string[] = [];
+    const note = createRefusalLog(
+      (l) => lines.push(l),
+      () => 0,
+    );
+    for (let i = 0; i < 1000; i += 1) note("same", null, "r");
+    for (let i = 0; i < 59; i += 1) note(`n${String(i)}`, null, "r");
+    expect(lines).toHaveLength(60);
+    expect(lines.join("\n")).not.toContain("suppressed");
   });
 
   test("a line holds the name, the port and the reason", () => {
@@ -368,7 +450,102 @@ function parseDnsReply(frame: Buffer): DnsReply {
 
 const SLOW = 60_000;
 
-describe.skipIf(process.platform === "win32")("startForwardHost", () => {
+/** A unix side for driving `ForwardHost` with no socket at all. */
+function fakeSide(over: { close?: () => void } = {}) {
+  const side = {
+    closeCount: 0,
+    write: (data: Uint8Array): number => data.length,
+    shutdownWrite: (): void => undefined,
+    close: (): void => {
+      side.closeCount += 1;
+      over.close?.();
+    },
+    pause: (): void => undefined,
+    resume: (): void => undefined,
+  };
+  return side;
+}
+
+describe("ForwardHost, with no socket", () => {
+  const ENTRY: ForwardEntry = {
+    host: "api.example.com",
+    port: 443,
+    trust: "package",
+    loopbackIp: "127.0.0.2",
+  };
+  const base = {
+    socketPath: "unused",
+    entries: [ENTRY],
+    resolve: () => Promise.resolve(["93.184.216.34"]),
+    log: () => undefined,
+  };
+
+  test("a dial in flight holds its slot after the child's side closes", async () => {
+    let dials = 0;
+    const host = new ForwardHost({
+      ...base,
+      connect: () => {
+        dials += 1;
+        return new Promise<NetSocketLike>(() => undefined);
+      },
+    });
+    const conns = Array.from({ length: 256 }, () => {
+      const conn = host.accept(fakeSide());
+      if (conn === null) throw new Error("turned away below the cap");
+      conn.onData(tcpHeader(0));
+      return conn;
+    });
+    await waitFor("every dial in flight", () => dials === 256);
+    for (const conn of conns) conn.onClose();
+    expect(host.accept(fakeSide())).toBeNull();
+  });
+
+  /** A relay running over a fake side and a fake remote, and what it reported on closing. */
+  async function relayOver(side: ReturnType<typeof fakeSide>, remote: FakeRemote) {
+    const reports: ForwardConnectionStats[] = [];
+    const host = new ForwardHost({
+      ...base,
+      connect: () => Promise.resolve(remote),
+      onConnectionClosed: (_entry, stats) => reports.push(stats),
+    });
+    const conn = host.accept(side);
+    if (conn === null) throw new Error("turned away");
+    conn.onData(tcpHeader(0));
+    await waitFor("the relay", () => remote.handlers !== null);
+    return { host, conn, reports };
+  }
+
+  test("a remote whose close throws still closes the child's side and reports", async () => {
+    const side = fakeSide();
+    const remote = new FakeRemote();
+    remote.close = () => {
+      remote.closeCount += 1;
+      throw new Error("remote close");
+    };
+    const { host, conn, reports } = await relayOver(side, remote);
+    host.closeConn(conn);
+    expect(remote.closeCount).toBe(1);
+    expect(side.closeCount).toBe(1);
+    expect(reports).toHaveLength(1);
+  });
+
+  test("a child's side whose close throws still closes the remote and reports", async () => {
+    const side = fakeSide({
+      close: () => {
+        throw new Error("side close");
+      },
+    });
+    const remote = new FakeRemote();
+    const { host, conn, reports } = await relayOver(side, remote);
+    host.closeConn(conn);
+    expect(remote.closeCount).toBe(1);
+    expect(side.closeCount).toBe(1);
+    expect(reports).toHaveLength(1);
+  });
+});
+
+// This code runs only on Linux, so the real-socket tests do too.
+describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
   let dir: string;
   let socketPath: string;
   let stop: (() => void) | null;
@@ -507,18 +684,20 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
     SLOW,
   );
 
-  test(
-    "T with an index past the end closes, and connect is never called",
-    async () => {
-      const h = start();
-      const c = await h.client();
-      c.socket.write(tcpHeader(1));
-      await waitFor("the close", c.isClosed);
-      expect(h.resolves).toEqual([]);
-      expect(h.connects).toEqual([]);
-    },
-    SLOW,
-  );
+  for (const index of [1, 0xffff]) {
+    test(
+      `T with index ${String(index)}, past the end, closes, and connect is never called`,
+      async () => {
+        const h = start();
+        const c = await h.client();
+        c.socket.write(tcpHeader(index));
+        await waitFor("the close", c.isClosed);
+        expect(h.resolves).toEqual([]);
+        expect(h.connects).toEqual([]);
+      },
+      SLOW,
+    );
+  }
 
   test(
     "a byte stream that is neither T nor D closes",
@@ -683,7 +862,7 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
   );
 
   test(
-    "a dial in flight holds its slot after the child hangs up, and its late socket is closed",
+    "a dial that settles after the child hung up leaves its socket closed and its slot free",
     async () => {
       const pending: ((r: NetSocketLike) => void)[] = [];
       const h = start({
@@ -699,9 +878,6 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
       await waitFor("every dial in flight", () => pending.length === 256);
       for (const c of open) c.socket.terminate();
       await waitFor("the child's closes seen", () => open.every((c) => c.isClosed()));
-      await Bun.sleep(20);
-      const over = await h.client();
-      await waitFor("no slot free while the dials run", over.isClosed);
 
       const late = pending.map(() => new FakeRemote());
       pending.forEach((settle, i) => {
@@ -1164,9 +1340,9 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
   test(
     "a relayed connection has no timeout, however short the header bound",
     async () => {
-      const h = start({ headerTimeoutMs: 20 });
+      const h = start({ headerTimeoutMs: 500 });
       const { c, remote } = await relay(h);
-      await Bun.sleep(100);
+      await Bun.sleep(1000);
       expect(c.isClosed()).toBe(false);
       c.socket.write("still here");
       await waitFor("bytes at the host", () => remote.text() === "still here");
@@ -1179,7 +1355,7 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
     async () => {
       const lookups: ((v: string[]) => void)[] = [];
       const h = start({
-        headerTimeoutMs: 20,
+        headerTimeoutMs: 500,
         resolve: () =>
           new Promise((resolve) => {
             lookups.push(resolve);
@@ -1188,7 +1364,7 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
       const c = await h.client();
       c.socket.write(tcpHeader(0));
       await waitFor("the lookup", () => lookups.length > 0);
-      await Bun.sleep(100);
+      await Bun.sleep(1000);
       expect(c.isClosed()).toBe(false);
       lookups[0]?.(["93.184.216.34"]);
       await waitFor("the remote", () => h.remotes.length === 1);
@@ -1239,12 +1415,17 @@ describe.skipIf(process.platform === "win32")("startForwardHost", () => {
     test(
       "a stream past the longest datagram closes",
       async () => {
-        const h = start();
+        // The bound is out of reach, so only the length rule can close this.
+        const h = start({ headerTimeoutMs: 600_000 });
         const c = await h.client();
-        const big = new Uint8Array(1024 * 1024);
-        big.set([0x44, 0, 0, 0xff, 0xff]);
-        c.socket.write(big);
-        await waitFor("the close", c.isClosed);
+        c.socket.write(Uint8Array.from([0x44, 0, 0, 0xff, 0xff]));
+        const chunk = new Uint8Array(16 * 1024);
+        const deadline = Date.now() + 45_000;
+        while (!c.isClosed()) {
+          if (Date.now() > deadline) throw new Error("the host never closed the long stream");
+          c.socket.write(chunk);
+          await Bun.sleep(1);
+        }
         expect(c.bytes().length).toBe(0);
       },
       SLOW,

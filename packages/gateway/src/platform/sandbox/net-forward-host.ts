@@ -18,7 +18,12 @@ import { mkdirSync, rmSync, statSync } from "node:fs";
 import { dirname } from "node:path";
 import { parseNetworkEntry } from "@nimbus-dev/registry-format";
 import { registerListener } from "../../locality/listener-registry.ts";
-import { allowedAddresses, type EntryTrust, isIpv4Literal } from "./net-address-rules.ts";
+import {
+  allowedAddresses,
+  classifyAddress,
+  type EntryTrust,
+  isIpv4Literal,
+} from "./net-address-rules.ts";
 import { answerDnsQuery, type DnsNames } from "./net-dns-stub.ts";
 import { wildcardHostMatches } from "./net-wildcard-hosts.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
@@ -93,7 +98,6 @@ const HIGH_WATER_BYTES = 1024 * 1024;
 const DEFAULT_HEADER_TIMEOUT_MS = 5000;
 const HEADER_LENGTH = 3;
 const DNS_LENGTH_PREFIX = 2;
-const MAX_DATAGRAM_LENGTH = 65535;
 const KIND_TCP = 0x54; // "T"
 const KIND_DNS = 0x44; // "D"
 const RCODE_MASK = 0x0f;
@@ -101,6 +105,7 @@ const RCODE_SERVFAIL = 2;
 
 const REFUSAL_LOG_WINDOW_MS = 60_000;
 const MAX_TRACKED_REFUSED_NAMES = 1024;
+const REFUSAL_LINES_PER_MINUTE = 60;
 const MAX_LOGGED_NAME_LENGTH = 255;
 
 /** Case-insensitive, with one trailing dot dropped. */
@@ -127,6 +132,9 @@ function parsePlannedEntry(raw: string, policy: SandboxPolicy): PlannedEntry {
   }
   if (host === RESOLVER_ADDRESS) {
     throw new Error(`network entry names the sandbox's resolver address: ${raw}`);
+  }
+  if (isIpv4Literal(host) && classifyAddress(host) === "refused") {
+    throw new Error(`network entry names an address no entry may reach: ${raw}`);
   }
   return { host, port, trust: trustFor(raw, policy) };
 }
@@ -175,10 +183,11 @@ export function planForwardEntries(policy: SandboxPolicy): ForwardEntry[] {
   const nextAddress = addressAllocator(new Set([...hosts].filter(isIpv4Literal)));
   const ipByHost = new Map<string, string>();
   for (const host of hosts) ipByHost.set(host, isIpv4Literal(host) ? host : nextAddress());
-  const entries: ForwardEntry[] = planned.map((p) => ({
-    ...p,
-    loopbackIp: ipByHost.get(p.host) ?? RESOLVER_ADDRESS,
-  }));
+  const entries: ForwardEntry[] = planned.map((p) => {
+    const loopbackIp = ipByHost.get(p.host);
+    if (loopbackIp === undefined) throw new Error(`no address was assigned to ${p.host}`);
+    return { ...p, loopbackIp };
+  });
   if (!hasWildcards) return entries;
   const slots = Math.min(POOL_SIZE, MAX_HOSTS - hosts.size);
   for (let i = 0; i < slots; i += 1) {
@@ -199,16 +208,41 @@ function sanitiseName(name: string): string {
 /**
  * At most one line per name per minute. The map is bounded, oldest first, because a hostile child
  * can send unlimited distinct names. A name evicted that way may log again inside its minute.
+ *
+ * All names share a budget per minute, for the same reason. The first line over it says so once,
+ * and a name it holds back is not recorded, so that name can log later. `linesPerMinute` is an
+ * override for tests, which reach the map's bound only with the budget out of the way.
  */
 export function createRefusalLog(
   log: (line: string) => void,
   now: () => number,
+  linesPerMinute = REFUSAL_LINES_PER_MINUTE,
 ): (name: string, port: number | null, reason: string) => void {
   const lastLoggedAt = new Map<string, number>();
+  let budgetStartedAt = Number.NEGATIVE_INFINITY;
+  let linesInBudget = 0;
+  let toldSuppressed = false;
+  const withinBudget = (at: number): boolean => {
+    if (at - budgetStartedAt >= REFUSAL_LOG_WINDOW_MS) {
+      budgetStartedAt = at;
+      linesInBudget = 0;
+      toldSuppressed = false;
+    }
+    if (linesInBudget < linesPerMinute) {
+      linesInBudget += 1;
+      return true;
+    }
+    if (!toldSuppressed) {
+      toldSuppressed = true;
+      log("net-forward: further refusals suppressed this minute");
+    }
+    return false;
+  };
   return (name, port, reason) => {
     const at = now();
     const last = lastLoggedAt.get(name);
     if (last !== undefined && at - last < REFUSAL_LOG_WINDOW_MS) return;
+    if (!withinBudget(at)) return;
     lastLoggedAt.delete(name);
     lastLoggedAt.set(name, at);
     if (lastLoggedAt.size > MAX_TRACKED_REFUSED_NAMES) {
@@ -367,11 +401,21 @@ function replaceHeld(conn: Conn, bytes: Uint8Array): void {
   conn.heldBytes = bytes.length;
 }
 
+/** One side failing to close must not stop the other side closing or the report being made. */
+function attemptClose(socket: ByteSocket | null): void {
+  try {
+    socket?.close();
+  } catch {
+    // Nothing more can be done for this socket.
+  }
+}
+
 function ignore(): void {
   // A phase with nothing to do for this event.
 }
 
-class ForwardHost {
+/** Exported for tests only, which drive a connection with no socket. Production uses `startForwardHost`. */
+export class ForwardHost {
   private readonly conns = new Set<Conn>();
   private readonly names: NameTable;
   private readonly now: () => number;
@@ -435,8 +479,8 @@ class ForwardHost {
     conn.closing = true;
     this.clearBound(conn);
     conn.held = [];
-    conn.remote?.close();
-    conn.side.close();
+    attemptClose(conn.remote);
+    attemptClose(conn.side);
     this.release(conn);
     conn.reportClosed?.();
   }
@@ -483,10 +527,6 @@ class ForwardHost {
 
   /** Acts once the whole frame is in. A frame with anything after its datagram is refused. */
   private readDnsFrame(conn: Conn): void {
-    if (conn.heldBytes > DNS_LENGTH_PREFIX + MAX_DATAGRAM_LENGTH) {
-      this.closeConn(conn);
-      return;
-    }
     if (conn.dnsLength === null) {
       if (conn.heldBytes < DNS_LENGTH_PREFIX) return;
       const prefix = mergeHeld(conn);

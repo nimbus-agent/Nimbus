@@ -2797,7 +2797,8 @@ export function checkSqliteRuntimeInit(files: readonly FileEntry[]): Violation[]
 // visibly broken, the same failure shape D30's `ensureFullSqlite()` gap was.
 //
 // STATED BOUND: this rule polices exactly the three CALL SHAPES named below, in a GATEWAY-PROCESS
-// file — it cannot see two other kinds of open socket. One: a socket a LIBRARY opens internally
+// file (the scan goes by path, so it also covers `platform/sandbox/net-forward-host.ts`, which runs
+// in the `__nimbus-sandbox` wrapper rather than the gateway) — it cannot see two other kinds of open socket. One: a socket a LIBRARY opens internally
 // (today: `bonjour-service`'s `new Bonjour()` inside `federation/mdns-discovery-provider.ts`,
 // which binds UDP 5353 multicast). That registration is by HAND, proven only by its own test, and
 // is outside this rule's reach the same way D27(b)'s `media_grant` table confinement and D29(c)'s
@@ -3146,7 +3147,7 @@ export const RULE_ANCHORS: readonly string[] = [
   // by virtue of defining `ensureFullSqlite` and whose presence would therefore prove nothing.
   // Same shape as the D23/D28/D29 anchors above.
   "packages/gateway/src/embedding/embedding-worker.ts",
-  // D31 — anchored on one of the five real listen sites, a file the rule SCANS: it carries a real
+  // D31 — anchored on one of the six real listen sites, a file the rule SCANS: it carries a real
   // `Bun.serve(` call AND names `registerListener`, so the rule has to read it and confirm the
   // registration is there rather than reporting clean on an empty scan. Not
   // `locality/listener-registry.ts`, which the rule does not exempt by name (D31 has no
