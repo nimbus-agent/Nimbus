@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793422164518,
+  "lastUpdate": 1793443587234,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "292ab0626e13a83a6bcb275c0eecc64b64e36169",
-          "message": "chore: release main (#1173)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.3.0</summary>\n\n##\n[2.3.0](https://github.com/nimbus-agent/Nimbus/compare/v2.2.0...v2.3.0)\n(2026-08-13)\n\n\n### Features\n\n* **connectors:** index Sentry issues, and make the published installers\nable to install\n([#1172](https://github.com/nimbus-agent/Nimbus/issues/1172))\n([ea37e0d](https://github.com/nimbus-agent/Nimbus/commit/ea37e0d0ca904aa9ea229146692ef945b4c80df3))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-13T21:46:48+03:00",
-          "tree_id": "f52636434227cfb198f4ccfc3011be0c3abd7bec",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/292ab0626e13a83a6bcb275c0eecc64b64e36169"
-        },
-        "date": 1786647348339,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 254.77349059999543,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 254.8774605999919,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.7420001499901,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "669fe4c4fcada7cf49b5c29a74bf2ebfdeec1bad",
+          "message": "chore(deps): accept two dev-only glob and minimatch advisories (#1835)\n\n`Dependency audit` is a required check, and it went red on `main` with\nno change to the repo, so every open PR inherits it (#1833).\n`audit:advisories` reports two new moderate advisories nobody has\njudged:\n\n| Advisory | Package | Installed | Reached through |\n|---|---|---|---|\n| GHSA-3g3m-2fjr-6pw4 | `glob` | 10.5.0 | `babel-plugin-istanbul` >\n`test-exclude` |\n| GHSA-g3hv-75wg-m249 | `minimatch` | 10.2.6, 9.0.9 | `test-exclude`,\n`glob`, `@stryker-mutator/core` |\n\nThis PR accepts both, with a re-check by 2026-11-30.\n\n**Why not upgrade.** Each fix sits a major above what its dependents\naccept: `test-exclude` needs `glob` ^10 and `minimatch` ^10, and Stryker\npins `minimatch` ~10.2.4. Overriding a major under the coverage\ninstrumenter risks the coverage gate, for no reachable benefit.\n\n**Why it is safe to accept.** Both are developer tools, and nothing that\nships contains either package.\n- The `glob` flaw needs a caller that passes an AbortSignal, and\n`test-exclude` passes none.\n- The `minimatch` flaw needs a hostile pattern, and every pattern here\ncomes from this repo's own coverage and mutation config.\n\nI read those call sites and did not run an exploit.\n\n## Testing\n\n`bun run audit:advisories` passes, with 5 live advisories accounted for\nby 5 rows, and the registry's own 59 tests pass.\n\nThe title is `chore`, so this cuts no release.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-31T10:35:54Z",
+          "tree_id": "5c42384e39b5854c072a8bab91061c4c6f2938c7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/669fe4c4fcada7cf49b5c29a74bf2ebfdeec1bad"
+        },
+        "date": 1793443583485,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 294.2647940000032,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.2415613999994,
             "unit": "ms"
           }
         ]
