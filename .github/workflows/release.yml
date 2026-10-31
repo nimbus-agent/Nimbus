@@ -558,8 +558,10 @@ jobs:
           # The sandbox helper. Static, so one build runs on every Linux target, whatever its libc.
           make -C packages/gateway/src-native/sandbox-helper
           HELPER=packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
-          file "$HELPER"
-          file "$HELPER" | grep -q 'statically linked'
+          # Captured, then matched with a here-string: no pipe, so no SIGPIPE under pipefail.
+          helper_kind="$(file "$HELPER")"
+          echo "$helper_kind"
+          grep -q 'statically linked' <<< "$helper_kind"
           cp "$HELPER" dist/headless-bundle/nimbus-sandbox-helper
           V="${GITHUB_REF_NAME#v}"
           bun scripts/package-linux-installers.ts \

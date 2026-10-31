@@ -421,6 +421,15 @@ test("every workflow call to the Linux packager ships the helper", () => {
       if (!/^\s*bun\s.*(package-linux-installers\.ts|package:installers:linux)/.test(line))
         continue;
       calls.push(`${name}: ${line.trim()}`);
+      // What the call is allowed to do about the helper. It may not name a helper of its own (that
+      // flag is for tests, which pass a stub) or a `make` of its own, so what ships is what the
+      // packager builds or the bundle carries. A call that names a bundle must be in a workflow
+      // that puts the helper into that very bundle.
+      expect(line).not.toMatch(/--sandbox-helper|--make\s/);
+      const bundle = /--bundle\s+(\S+)/.exec(line)?.[1];
+      if (bundle !== undefined) {
+        expect(text).toContain(`${bundle}/nimbus-sandbox-helper`);
+      }
     }
   }
   // At least the release and CI calls, so a rename of the call cannot make this pass vacuously.
@@ -430,6 +439,19 @@ test("every workflow call to the Linux packager ships the helper", () => {
 test("the release job builds the helper with make and checks that it is static", () => {
   const release = readFileSync(join(REPO_ROOT, ".github", "workflows", "release.yml"), "utf8");
   expect(release).toContain("make -C packages/gateway/src-native/sandbox-helper");
-  expect(release).toMatch(/file "\$HELPER" \| grep -q 'statically linked'/);
+  // Captured, then matched with a here-string: a pipe into `grep -q` dies of SIGPIPE under pipefail.
+  expect(release).toContain('helper_kind="$(file "$HELPER")"');
+  expect(release).toContain("grep -q 'statically linked' <<< \"$helper_kind\"");
+  expect(release).not.toContain('file "$HELPER" | grep');
   expect(release).toContain('cp "$HELPER" dist/headless-bundle/nimbus-sandbox-helper');
+});
+
+// `lister | grep -q` under `bash -eo pipefail` dies of SIGPIPE when grep exits on its match while the
+// lister is still writing. A package of this size fails every time (5 of 5 on the Packaging job).
+test("no workflow pipes a package listing into grep", () => {
+  const dir = join(REPO_ROOT, ".github", "workflows");
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
+    const text = readFileSync(join(dir, name), "utf8");
+    expect(text).not.toMatch(/(?:dpkg-deb\s+-c|rpm\s+-qlp?|tar\s+-t\S*)\s[^\n|]*\|\s*grep/);
+  }
 });
