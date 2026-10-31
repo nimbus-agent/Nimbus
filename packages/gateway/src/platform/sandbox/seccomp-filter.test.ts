@@ -344,6 +344,8 @@ describe("what a child may do to itself, and nothing further", () => {
     ["getresuid", 118],
     ["getresgid", 120],
     ["sched_getscheduler", 145],
+    // The kernel's own call to resume a timed sleep. Answered ENOSYS, glibc aborts a Bun child.
+    ["restart_syscall", 219],
   ])("%s is allowed", (_name, nr) => {
     expect(verdict(program, nr)).toBe("allow");
   });

@@ -65,7 +65,14 @@ function helperBuilt(): boolean {
 
 type Ran = { exitCode: number; stdout: string; stderr: string; elapsedMs: number };
 
-const NO_CORE_THEN_EXEC = 'ulimit -c 0; exec "$0" "$@"';
+/** Says what the child printed when the exit is wrong: an exit code alone hides a crash's reason. */
+function expectExit(ran: Ran, expected: number): void {
+  if (ran.exitCode === expected) return;
+  throw new Error(
+    `child exited ${String(ran.exitCode)}, expected ${String(expected)}\nstdout: ${ran.stdout}\nstderr: ${ran.stderr}`,
+  );
+}
+
 /** 128 + SIGSYS: how the filter's kill shows at the wrapper. */
 const SECCOMP_KILLED_EXIT = 159;
 const REAL_NETWORK_URL = "https://us-central1-run.googleapis.com/";
@@ -129,7 +136,6 @@ function wrapped(
   box: Sandbox,
   body: string,
   extra: readonly string[] = [],
-  opts: { coreless?: boolean } = {},
 ): Wrapped {
   const script = join(box.cwd, "child.js");
   writeFileSync(script, childProgram(body));
@@ -140,12 +146,12 @@ function wrapped(
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] = HELPER;
   process.env["XDG_RUNTIME_DIR"] = box.socketParent;
   try {
-    const child = [realExecPath, "--no-env-file", script, ...extra];
-    // A seccomp kill dumps Bun's core first, which takes 16 s and proves nothing more.
-    const argv =
-      opts.coreless === true ? ["/usr/bin/sh", "-c", NO_CORE_THEN_EXEC, ...child] : child;
     const spec = wrapServerSpecInCwd(
-      { command: argv[0] ?? "", args: argv.slice(1), env: extensionProcessEnv({}) },
+      {
+        command: realExecPath,
+        args: ["--no-env-file", script, ...extra],
+        env: extensionProcessEnv({}),
+      },
       manifestOf(policy),
       box.cwd,
     );
@@ -167,10 +173,9 @@ async function runChild(
   box: Sandbox,
   body: string,
   extra: readonly string[] = [],
-  opts: { coreless?: boolean } = {},
 ): Promise<Ran> {
   const startedAt = Date.now();
-  const spawned = wrapped(policy, box, body, extra, opts);
+  const spawned = wrapped(policy, box, body, extra);
   // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
   const proc = Bun.spawn(spawned.argv, {
     env: spawned.env,
@@ -582,7 +587,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
         async () => {
           const box = newSandbox(root, "exit");
           const ran = await runChild(ownerPolicy([declared()]), box, "process.exit(7);");
-          expect(ran.exitCode).toBe(7);
+          expectExit(ran, 7);
           expect(readdirSync(box.socketParent)).toEqual([]);
         },
         TEST_TIMEOUT_MS,
@@ -602,7 +607,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
              report({ opened: true });
              process.exit(4);`,
           );
-          expect(ran.exitCode).toBe(4);
+          expectExit(ran, 4);
           expect(ran.stdout).toContain('"opened":true');
           // Far under the run timeout, which is what a held pipe would run into.
           expect(ran.elapsedMs).toBeLessThan(RUN_TIMEOUT_MS - 10_000);
@@ -755,7 +760,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
              });
              process.exit(5);`,
           );
-          expect(ran.exitCode).toBe(5);
+          expectExit(ran, 5);
           expect(ran.elapsedMs).toBeLessThan(RUN_TIMEOUT_MS - 10_000);
         },
         TEST_TIMEOUT_MS,
@@ -784,10 +789,24 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
     });
 
     describe("what the child's filter lets an ordinary program do", () => {
-      /** A raw syscall from the child, for the calls no JavaScript API makes on its own. */
-      const SYSCALL = `const { dlopen } = require("bun:ffi");
+      const SYS_PRCTL = 157;
+      const PR_GET_DUMPABLE = 3;
+      const PR_SET_DUMPABLE = 4;
+      /**
+       * Comes first in every row. `sys` makes a raw syscall from the child, for the calls no JavaScript
+       * API makes on its own.
+       *
+       * A killed or aborted child must not dump core. On Ubuntu `core_pattern` pipes to apport, and each
+       * dump took about 24 s on the runner. `ulimit -c 0` does not stop that: the kernel starts a pipe
+       * handler whatever RLIMIT_CORE says, and passes the limit on for the handler to read. A process
+       * that is not dumpable never gets as far as the handler. exec resets the flag, so the child must
+       * set it itself, here in its own body, and not in a shell in front of it.
+       */
+      const NOT_DUMPABLE = `const { dlopen } = require("bun:ffi");
         const libc = dlopen("libc.so.6", { syscall: { args: ["i64", "i64", "i64", "i64"], returns: "i64" } }).symbols;
-        const sys = (nr, a = 0, b = 0, c = 0) => Number(libc.syscall(nr, a, b, c));`;
+        const sys = (nr, a = 0, b = 0, c = 0) => Number(libc.syscall(nr, a, b, c));
+        if (sys(${String(SYS_PRCTL)}, ${String(PR_SET_DUMPABLE)}, 0) !== 0) throw new Error("prctl(PR_SET_DUMPABLE) failed");`;
+      const inChild = (body: string): string => `${NOT_DUMPABLE} ${body}`;
       const SYS_GETTID = 186;
 
       const ALLOWED: readonly [string, string, unknown][] = [
@@ -800,7 +819,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           "SIGTERM",
         ],
         ["process.kill(pid, 0)", `report({ v: process.kill(process.pid, 0) });`, true],
-        ["tkill", `${SYSCALL} report({ v: sys(200, sys(${String(SYS_GETTID)}), 0) });`, 0],
+        ["tkill", `report({ v: sys(200, sys(${String(SYS_GETTID)}), 0) });`, 0],
         [
           "fsync",
           `const fd = fs.openSync("f", "w"); fs.fsyncSync(fd); fs.closeSync(fd); report({ v: "ok" });`,
@@ -818,47 +837,23 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
            report({ v: await new Promise((r) => c.once("exit", r)) });`,
           3,
         ],
-        ["setpgid", `${SYSCALL} report({ v: sys(109, 0, 0) });`, 0],
-        [
-          "faccessat2, which survives its bad pointer",
-          `${SYSCALL} report({ v: sys(439, -100, 0, 0) });`,
-          -1,
-        ],
-        [
-          "fadvise64, which survives its bad descriptor",
-          `${SYSCALL} report({ v: sys(221, -1, 0, 0) });`,
-          -1,
-        ],
-        ["getpgid", `${SYSCALL} report({ v: sys(121, 0) > 0 });`, true],
-        ["getsid", `${SYSCALL} report({ v: sys(124, 0) > 0 });`, true],
-        ["getgroups", `${SYSCALL} report({ v: sys(115, 0, 0) >= 0 });`, true],
-        [
-          "getresuid, which survives its bad pointers",
-          `${SYSCALL} report({ v: sys(118, 0, 0, 0) });`,
-          -1,
-        ],
-        [
-          "getresgid, which survives its bad pointers",
-          `${SYSCALL} report({ v: sys(120, 0, 0, 0) });`,
-          -1,
-        ],
-        ["sched_getscheduler", `${SYSCALL} report({ v: sys(145, 0) >= 0 });`, true],
+        ["setpgid", `report({ v: sys(109, 0, 0) });`, 0],
+        ["faccessat2, which survives its bad pointer", `report({ v: sys(439, -100, 0, 0) });`, -1],
+        ["fadvise64, which survives its bad descriptor", `report({ v: sys(221, -1, 0, 0) });`, -1],
+        ["getpgid", `report({ v: sys(121, 0) > 0 });`, true],
+        ["getsid", `report({ v: sys(124, 0) > 0 });`, true],
+        ["getgroups", `report({ v: sys(115, 0, 0) >= 0 });`, true],
+        ["getresuid, which survives its bad pointers", `report({ v: sys(118, 0, 0, 0) });`, -1],
+        ["getresgid, which survives its bad pointers", `report({ v: sys(120, 0, 0, 0) });`, -1],
+        ["sched_getscheduler", `report({ v: sys(145, 0) >= 0 });`, true],
         // Added with the ENOSYS default. Each is called with arguments that make a real kernel
         // answer something other than ENOSYS, so a pass means the filter let it through.
-        [
-          "flock, which survives its bad descriptor",
-          `${SYSCALL} report({ v: sys(73, -1, 8) });`,
-          -1,
-        ],
-        ["gettimeofday", `${SYSCALL} report({ v: sys(96, 0, 0) });`, 0],
-        ["getpriority", `${SYSCALL} report({ v: sys(140, 0, 0) >= 0 });`, true],
-        ["capget, which survives its null header", `${SYSCALL} report({ v: sys(125, 0, 0) });`, -1],
-        [
-          "sched_getparam, which survives its null pointer",
-          `${SYSCALL} report({ v: sys(143, 0, 0) });`,
-          -1,
-        ],
-        ["alarm, cancelling nothing", `${SYSCALL} report({ v: sys(37, 0) });`, 0],
+        ["flock, which survives its bad descriptor", `report({ v: sys(73, -1, 8) });`, -1],
+        ["gettimeofday", `report({ v: sys(96, 0, 0) });`, 0],
+        ["getpriority", `report({ v: sys(140, 0, 0) >= 0 });`, true],
+        ["capget, which survives its null header", `report({ v: sys(125, 0, 0) });`, -1],
+        ["sched_getparam, which survives its null pointer", `report({ v: sys(143, 0, 0) });`, -1],
+        ["alarm, cancelling nothing", `report({ v: sys(37, 0) });`, 0],
         [
           "/bin/sh -c, as a shell-script CLI starts",
           `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
@@ -888,12 +883,33 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
         ],
         [
           "clone3 answering ENOSYS rather than killing",
-          `${SYSCALL}
+          `
            const { read } = require("bun:ffi");
            const e = dlopen("libc.so.6", { __errno_location: { args: [], returns: "ptr" } }).symbols;
            const first = sys(435, 0, 0);
            report({ v: [first, read.i32(e.__errno_location())] });`,
           [-1, 38],
+        ],
+        [
+          "restart_syscall, which with nothing to resume answers EINTR and not ENOSYS",
+          `const { read } = require("bun:ffi");
+           const e = dlopen("libc.so.6", { __errno_location: { args: [], returns: "ptr" } }).symbols;
+           const first = sys(219);
+           report({ v: [first, read.i32(e.__errno_location())] });`,
+          [-1, 4],
+        ],
+        [
+          // Only the kernel makes this call for real, and a stop and a continue with no handler make it
+          // do so on demand. `sleep` exits 1 if its nanosleep answers ENOSYS.
+          "a sleep stopped and continued, whose sleep resumes through restart_syscall",
+          `const c = require("node:child_process").spawnSync("/usr/bin/sh", ["-c", "/usr/bin/sleep 2 & p=$!; /usr/bin/sleep 0.5; kill -STOP $p; /usr/bin/sleep 0.2; kill -CONT $p; wait $p; echo $?"], { encoding: "utf8" });
+           report({ v: c.stdout.trim() });`,
+          "0",
+        ],
+        [
+          "the prelude every row starts with, which turns off core dumps",
+          `report({ v: sys(${String(SYS_PRCTL)}, ${String(PR_GET_DUMPABLE)}) });`,
+          0,
         ],
         [
           "a shell's own pipeline and job control",
@@ -907,8 +923,8 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
         "%s",
         async (name, body, expected) => {
           const box = newSandbox(root, `allow-${name.replaceAll(/[^a-z]/g, "").slice(0, 12)}`);
-          const ran = await runChild(ownerPolicy([declared()]), box, body, [], { coreless: true });
-          expect(ran.exitCode).toBe(0);
+          const ran = await runChild(ownerPolicy([declared()]), box, inChild(body));
+          expectExit(ran, 0);
           expect(parseLast(ran.stdout)["v"]).toEqual(expected);
         },
         TEST_TIMEOUT_MS,
@@ -921,12 +937,10 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const ran = await runChild(
             policyOf([]),
             box,
-            `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
-             report({ v: c.stdout.trim() });`,
-            [],
-            { coreless: true },
+            inChild(`const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
+             report({ v: c.stdout.trim() });`),
           );
-          expect(ran.exitCode).toBe(0);
+          expectExit(ran, 0);
           expect(parseLast(ran.stdout)["v"]).toBe("from-sh");
         },
         TEST_TIMEOUT_MS,
@@ -944,11 +958,9 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const ran = await runChild(
             ownerPolicy([declared()]),
             box,
-            `${SYSCALL} report({ survived: true, v: sys(${String(nr)}) });`,
-            [],
-            { coreless: true },
+            inChild(`report({ survived: true, v: sys(${String(nr)}) });`),
           );
-          expect(ran.exitCode).toBe(SECCOMP_KILLED_EXIT);
+          expectExit(ran, SECCOMP_KILLED_EXIT);
           expect(ran.stdout).not.toContain("survived");
         },
         TEST_TIMEOUT_MS,
@@ -970,11 +982,9 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const ran = await runChild(
             ownerPolicy([declared()]),
             box,
-            `${SYSCALL} report({ survived: true, v: sys(56, ${String(flag)}) });`,
-            [],
-            { coreless: true },
+            inChild(`report({ survived: true, v: sys(56, ${String(flag)}) });`),
           );
-          expect(ran.exitCode).toBe(SECCOMP_KILLED_EXIT);
+          expectExit(ran, SECCOMP_KILLED_EXIT);
           expect(ran.stdout).not.toContain("survived");
         },
         TEST_TIMEOUT_MS,
@@ -987,17 +997,15 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const ran = await runChild(
             ownerPolicy([declared()]),
             box,
-            `${SYSCALL}
+            inChild(`
              const { read } = require("bun:ffi");
              const e = dlopen("libc.so.6", { __errno_location: { args: [], returns: "ptr" } }).symbols;
              const first = sys(319, 0, 0); // memfd_create with a null name
              const errno = read.i32(e.__errno_location());
              report({ first, errno });
-             report({ after: "still running", pid: process.pid > 0 });`,
-            [],
-            { coreless: true },
+             report({ after: "still running", pid: process.pid > 0 });`),
           );
-          expect(ran.exitCode).toBe(0);
+          expectExit(ran, 0);
           expect(parseLast(ran.stdout)["after"]).toBe("still running");
           const first = ran.stdout.split("\n").find((l) => l.includes("errno"));
           expect(JSON.parse(first ?? "{}")).toEqual({ first: -1, errno: 38 });
@@ -1012,11 +1020,9 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const ran = await runChild(
             ownerPolicy([declared()]),
             box,
-            `${SYSCALL} report({ v: sys(101, 0, process.ppid) });`,
-            [],
-            { coreless: true },
+            inChild(`report({ v: sys(101, 0, process.ppid) });`),
           );
-          expect(ran.exitCode).toBe(0);
+          expectExit(ran, 0);
           expect(parseLast(ran.stdout)["v"]).toBe(-1);
         },
         TEST_TIMEOUT_MS,
@@ -1417,7 +1423,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
         async () => {
           const network = Array.from({ length: 253 }, (_v, i) => `h${String(i)}.example.com`);
           const ran = await wrapperRefusal(policyOf(network), "too-many");
-          expect(ran.exitCode).toBe(2);
+          expectExit(ran, 2);
           expect(ran.stderr).toContain("at most 252");
         },
         TEST_TIMEOUT_MS,
@@ -1430,7 +1436,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
             policyOf([], { firstPartyWildcardHosts: [FIRST_PARTY_WILDCARD] }),
             "not-first-party",
           );
-          expect(ran.exitCode).toBe(2);
+          expectExit(ran, 2);
           expect(ran.stderr).toContain("first-party");
         },
         TEST_TIMEOUT_MS,
@@ -1448,7 +1454,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
             }),
             "wide",
           );
-          expect(ran.exitCode).toBe(2);
+          expectExit(ran, 2);
           expect(ran.stderr).toContain("runtime directory");
         },
         TEST_TIMEOUT_MS,

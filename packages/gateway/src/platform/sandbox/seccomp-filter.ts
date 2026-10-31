@@ -40,6 +40,7 @@ export const SYSCALL_NR: Record<string, number> = {
   rt_sigaction: 13,
   rt_sigprocmask: 14,
   rt_sigreturn: 15,
+  restart_syscall: 219,
   ioctl: 16,
   pread64: 17,
   pwrite64: 18,
@@ -286,6 +287,14 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "rt_sigaction",
   "rt_sigprocmask",
   "rt_sigreturn",
+  // No program asks for this one: the kernel makes it, through the filter, to resume a timed sleep
+  // (`futex`, `nanosleep`, `poll`) that a signal woke with nothing to run. A thread is woken that way
+  // when another thread takes the signal first, or by a stop and continue. Answered ENOSYS, the sleep
+  // itself seemed to fail: when a Bun child's subprocess exited, one thread took the SIGCHLD and another
+  // woke for nothing, and in about 1 run in 500 glibc read that ENOSYS as fatal and aborted ("The futex
+  // facility returned an unexpected error code", exit 134). It takes no arguments and grants nothing:
+  // it continues only a call the filter already allowed, with what the kernel saved.
+  "restart_syscall",
   "ioctl",
   "pread64",
   "pwrite64",
