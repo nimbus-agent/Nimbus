@@ -2,6 +2,18 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.12.0](https://github.com/nimbus-agent/Nimbus/compare/v10.11.1...v10.12.0) (2026-10-31)
+
+
+### Features
+
+* **sandbox:** enforce declared hosts on Linux through a local forwarder ([#1834](https://github.com/nimbus-agent/Nimbus/issues/1834)) ([e6908ed](https://github.com/nimbus-agent/Nimbus/commit/e6908edbbb6de62a7e370c17db0589dc45004061))
+
+
+### Bug Fixes
+
+* **connectors:** keep the port of a self-hosted connector's URL, and declare every host a connector calls ([#1830](https://github.com/nimbus-agent/Nimbus/issues/1830)) ([eb9bc7e](https://github.com/nimbus-agent/Nimbus/commit/eb9bc7eb97897effe9d5629198e45794b7c1441f))
+
 ## [10.11.1](https://github.com/nimbus-agent/Nimbus/compare/v10.11.0...v10.11.1) (2026-10-30)
 
 
