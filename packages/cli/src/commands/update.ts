@@ -65,7 +65,7 @@ export async function runUpdateApply(client: IPCClient): Promise<void> {
         "This gateway cannot install updates on this platform yet — nothing was downloaded or installed.",
       );
       console.error(
-        "Run `nimbus update --check` to see the latest version, then download the release manually.",
+        "Run `nimbus update --check` to see the latest version, then re-run install.sh (install.ps1 on Windows) from the new release. Replacing only the gateway binary leaves out files that ship beside it, such as the Linux sandbox helper.",
       );
       process.exitCode = 1;
       return;

@@ -140,7 +140,9 @@ describe("runUpdateApply", () => {
       await runUpdateApply(client);
       expect(process.exitCode).toBe(1);
       expect(out.stderr).toContain("cannot install updates");
-      expect(out.stderr).toContain("download the release manually");
+      expect(out.stderr).toContain("re-run install.sh");
+      expect(out.stderr).toContain("sandbox helper");
+      expect(out.stderr).not.toContain("download the release manually");
       expect(out.stdout).not.toContain("Update installed.");
       expect(out.stdout).not.toMatch(/restart/i);
     });
