@@ -1,7 +1,7 @@
 /**
  * `nimbus doctor` runs its own copy of the gateway's per-host start, because the CLI may not import
  * the gateway. A copy drifts: a capability added to one and not the other makes doctor print
- * "declared hosts are enforced" on a machine where the gateway refuses. This file is the one place
+ * "the network forwarder can start here" on a machine where the gateway refuses. This file is the one place
  * that may import both, and it fails when the two disagree.
  */
 import { describe, expect, test } from "bun:test";

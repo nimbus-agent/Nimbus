@@ -502,7 +502,19 @@ describe("runDoctor — the sandbox line and the running gateway", () => {
     expect(process.exitCode).toBe(2);
   });
 
-  it("a gateway that enforces leaves the local result standing", async () => {
+  it("a gateway whose snapshot carries no posture cannot claim enforcement", async () => {
+    const mock = createMockIpcClient([
+      { uptime: 1000 },
+      { ok: true, errors: [], warnings: [] },
+      { index: { totalItems: 1 }, connectorHealth: [] },
+    ]);
+    await runDoctor([], makeDeps({ ...live, makeClient: () => mock.client, bwrapDeps: LOCAL_OK }));
+    expect(sandboxLines()[1]).toBe(
+      "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
+    );
+  });
+
+  it("a gateway that enforces is what the enforced line reports", async () => {
     const mock = createMockIpcClient([
       { uptime: 1000 },
       { ok: true, errors: [], warnings: [] },
@@ -528,7 +540,10 @@ describe("runDoctor — the sandbox line and the running gateway", () => {
 
   it("no gateway: the local probe alone", async () => {
     await runDoctor([], makeDeps({ bwrapDeps: LOCAL_OK }));
-    expect(sandboxLines()).toHaveLength(2);
+    expect(sandboxLines()).toEqual([
+      "[ok] Sandbox: bubblewrap can start sandboxed children.",
+      "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
+    ]);
     expect(out.stdout).toContain("[fail] Gateway: not running");
   });
 });

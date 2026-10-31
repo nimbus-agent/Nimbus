@@ -159,6 +159,22 @@ jobs:
           }
           nimbus --version
 
+      # The .deb's whole sandbox on a stock runner: its dependency brought bubblewrap, its postinst loaded
+      # the AppArmor profile Ubuntu's restriction needs, and it put the helper where doctor looks. No
+      # gateway is running here, so this is doctor's own start. Like the demo step below it has no skip
+      # branch for a release that predates the line: that is a red job until the next release.
+      - name: Linux — the .deb's network forwarder can start
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Exit code ignored: this job has no keyring, and doctor fails on that legitimately.
+          nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          cat "$RUNNER_TEMP/doctor.log"
+          if ! grep -qF "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement." "$RUNNER_TEMP/doctor.log"; then
+            echo "::error::nimbus doctor did not start the network forwarder from the published .deb"; exit 1
+          fi
+
       # --- First run: the installed binary must be able to DO something ---------
       - name: Checkout (assertion script only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

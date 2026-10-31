@@ -148,12 +148,16 @@ the gateway executable, else `/usr/lib/nimbus/bin/nimbus-sandbox-helper`.
   refusal, never a fallback. `canConfine` and `nimbus doctor` run the real nested start, so
   they report it before the owner is asked to approve.
 
-`nimbus doctor` prints `[ok] Sandbox: declared hosts are enforced.` when the helper runs and a
-real forwarded connection works, `[warn]` when the helper is missing, and `[fail]` when the
-gateway would refuse. Doctor's own start is a copy run from the CLI, so with a gateway running
-it asks that gateway (`diag.snapshot`, `sandbox.platform_capabilities.network`) and a gateway that
-refuses is a `[fail]` whatever the copy found. A probe that runs past its 5 s limit is a `[warn]` to
-re-run, not a refusal: the gateway treats its own start timeout as transient too.
+`nimbus doctor` prints `[ok] Sandbox: declared hosts are enforced.` only when a running gateway
+reports `per_host` (`diag.snapshot`, `sandbox.platform_capabilities.network`). With no gateway, or one
+whose snapshot carries no posture, it prints `[ok] Sandbox: the network forwarder can start here. Start
+the gateway to confirm enforcement.`: doctor's own start is a copy run from the CLI, with an unused
+socket and no seccomp filter around `/usr/bin/true`, so it shows that the nesting starts here, and neither
+a forwarded connection nor a connector. It prints `[warn]` when the helper is missing and `[fail]` when the
+gateway would refuse; a running gateway that refuses is a `[fail]` whatever the copy found. A probe that
+runs past its 5 s limit is a `[warn]` to re-run, not a refusal: the gateway treats its own start timeout as
+transient too. Neither `[ok]` line says a given connector can reach its hosts; for one that cannot, read
+the `net-forward:` lines described next.
 
 **When a connector cannot reach a host,** look for `net-forward: <host>: <reason>` in the gateway
 log (`gateway-<date>.log`, written when the gateway is started through `nimbus start`). The line

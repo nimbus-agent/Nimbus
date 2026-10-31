@@ -100,12 +100,23 @@ describe("doctorPrintLinuxSandbox", () => {
 
   describe("the declared-hosts check", () => {
     const ENFORCED = "[ok] Sandbox: declared hosts are enforced.";
+    const CAN_START =
+      "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.";
     const MISSING =
       "[warn] Sandbox: nimbus-sandbox-helper is missing, so a connector that declares a network reaches the whole internet.";
     const isCheck = (cmd: readonly string[]): boolean => cmd[1] === "--check";
     const isNested = (cmd: readonly string[]): boolean => cmd.includes("--socket");
 
-    test("a helper beside the gateway that starts: both [ok] lines, exit 0", () => {
+    test("only a gateway reporting per_host earns the claim that hosts are enforced", () => {
+      const code = doctorPrintLinuxSandbox(deps({ run: () => ({ code: 0, stderr: "" }) }), {
+        network: "per_host",
+        reason: null,
+      });
+      expect(code).toBe(0);
+      expect(lines.at(-1)).toBe(ENFORCED);
+    });
+
+    test("a helper beside the gateway that starts, with no gateway: it can start, exit 0", () => {
       const seen: (readonly string[])[] = [];
       const code = doctorPrintLinuxSandbox(
         deps({
@@ -116,7 +127,8 @@ describe("doctorPrintLinuxSandbox", () => {
         }),
       );
       expect(code).toBe(0);
-      expect(lines).toEqual(["[ok] Sandbox: bubblewrap can start sandboxed children.", ENFORCED]);
+      expect(lines).toEqual(["[ok] Sandbox: bubblewrap can start sandboxed children.", CAN_START]);
+      expect(lines).not.toContain(ENFORCED);
       expect(seen.some((c) => c[0] === HELPER_BESIDE && isCheck(c))).toBe(true);
       expect(seen.some(isNested)).toBe(true);
     });

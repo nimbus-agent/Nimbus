@@ -287,7 +287,13 @@ function doctorPrintDeclaredHosts(
     );
     return 1;
   }
-  console.log("[ok] Sandbox: declared hosts are enforced.");
+  // This process's own start ran `/usr/bin/true` with an unused socket and no seccomp filter. It says
+  // the forwarder can start, and only the gateway that spawns connectors can say more.
+  console.log(
+    gateway?.network === "per_host"
+      ? "[ok] Sandbox: declared hosts are enforced."
+      : "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
+  );
   return 0;
 }
 

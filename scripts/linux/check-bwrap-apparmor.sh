@@ -106,7 +106,7 @@ NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file -e '
   const { createDoctorBwrapDeps, doctorPrintLinuxSandbox } = await import("./packages/cli/src/commands/doctor-bwrap.ts");
   process.exit(doctorPrintLinuxSandbox(createDoctorBwrapDeps("linux")));
 ' | tee "${work}/doctor.txt"
-grep -qxF "[ok] Sandbox: declared hosts are enforced." "${work}/doctor.txt"
+grep -qxF "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement." "${work}/doctor.txt"
 CI=true NIMBUS_REQUIRE_SANDBOX_HELPER=1 NIMBUS_REQUIRE_REAL_NETWORK=1 \
   bun test packages/gateway/src/platform/sandbox/linux-forwarder-network.test.ts --timeout 60000
 (cd packages/gateway && bun run build)
