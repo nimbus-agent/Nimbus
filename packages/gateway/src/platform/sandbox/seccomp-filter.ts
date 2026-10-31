@@ -187,6 +187,7 @@ const SYSCALL_NR: Record<string, number> = {
   preadv2: 327,
   membarrier: 324,
   rseq: 334,
+  pidfd_open: 434,
   close_range: 436,
   epoll_pwait2: 441,
 };
@@ -353,6 +354,11 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // all, so a network connector started and then died on its first request. It grants nothing
   // `sendto` and `sendmsg` above do not: it is several of the same send on an open socket.
   "sendmmsg",
+  // Bun's `child_process.spawn` and `Bun.spawn` call it on the subprocess they just started, to wait
+  // for it. Without it a child that ran any subprocess was SIGSYS-killed with no stderr, in every
+  // network mode. Measured with strace on Bun 1.4. It grants no reach: a pidfd names a process this
+  // one can already see in its own pid namespace, and nothing here lets it signal one.
+  "pidfd_open",
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
