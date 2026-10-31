@@ -663,7 +663,14 @@ describe.skipIf(process.platform !== "darwin")("sandbox-exec: ports only, for re
    * skip would read as a pass.
    */
   async function reachableAddress(name: string, port: number): Promise<string | null> {
-    const { address } = await lookup(name, { family: 4 });
+    let address: string;
+    try {
+      ({ address } = await lookup(name, { family: 4 }));
+    } catch (error) {
+      if (IS_CI) expect.unreachable(`this runner cannot resolve ${name}: ${String(error)}`);
+      console.log(`${TAG} SKIPPED, NOT PROVED: cannot resolve ${name}`);
+      return null;
+    }
     const control = await hostDial(address, port);
     console.log(`${TAG} control, no sandbox: ${name} ${address}:${String(port)} ${control}`);
     if (control === CONNECTED) return address;
@@ -773,7 +780,7 @@ describe.skipIf(process.platform !== "darwin")("sandbox-exec: ports only, for re
 
   it(
     "gets an HTTP status from a declared host, with real DNS and TLS",
-    () => {
+    async () => {
       const body = [
         'const dns = require("dns");',
         "const step = async (fn) => {",
@@ -790,6 +797,7 @@ describe.skipIf(process.platform !== "darwin")("sandbox-exec: ports only, for re
       ].join("\n");
       const { argv } = childProcess(work, "ports-fetch", body);
       const network = ["api.github.com"];
+      if ((await reachableAddress("api.github.com", 443)) === null) return;
       const r = run("fetch a declared host", network, argv);
       const { status } = outcomes(r);
       if (typeof status !== "number") reportNetworkCandidates(argv, network);
