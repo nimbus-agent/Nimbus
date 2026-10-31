@@ -14,6 +14,11 @@
  *   --check
  *       Prints OK and exits 0. No capability, namespace or file work.
  *
+ *   --connect-probe <ip>:<port>
+ *       The child of the gateway's start probe: connects, sends one byte, and exits 0 only if the
+ *       byte the gateway's forward host answers with comes back. So a start that "works" has really
+ *       carried a connection through the forwarder. Exit 8 if it did not.
+ *
  *   --socket <path> [--alias <ip>]... --listen <ip>:<port>:<index>... --dns <ip> -- <argv...>
  *       <path>   the wrapper's unix socket.
  *       --alias  adds an IPv4 address to `lo`, for an IP-literal entry. Needs CAP_NET_ADMIN.
@@ -26,7 +31,7 @@
  * datagram, reads a 2-byte length and the reply, and closes.
  *
  * Exit codes: 0 --check; 2 usage; 3 bind, listen or fork failure; 5 alias failure; 6 the forwarder
- * could not lock itself down, so nothing started; 127 exec failure.
+ * could not lock itself down, so nothing started; 8 --connect-probe failed; 127 exec failure.
  * Stderr carries only those startup failures. Nothing is ever logged about a connection, and the
  * forwarder's stderr is /dev/null.
  *
@@ -70,6 +75,7 @@
 #define EXIT_BIND 3
 #define EXIT_ALIAS 5
 #define EXIT_LOCKDOWN 6
+#define EXIT_PROBE 8
 #define EXIT_EXEC 127
 
 #define MAX_ENTRIES 65535u
@@ -87,6 +93,9 @@
 
 #define HEADER_BYTES 3
 #define DNS_LENGTH_BYTES 2
+
+#define PROBE_REQUEST 'P'
+#define PROBE_REPLY 'K'
 
 typedef struct {
     struct in_addr ip;
@@ -746,9 +755,45 @@ static bool forwarder_locked_down(int ready_read) {
     return n == 1;
 }
 
+/* <ip>:<port>. Splits the writable argv string in place. */
+static bool parse_probe_target(char *value, struct sockaddr_in *out) {
+    char *colon = strrchr(value, ':');
+    if (colon == NULL) {
+        return false;
+    }
+    *colon = '\0';
+    unsigned long port = 0;
+    struct in_addr ip;
+    if (!parse_decimal(colon + 1, MAX_PORT, &port) || port == 0 ||
+        inet_pton(AF_INET, value, &ip) != 1) {
+        return false;
+    }
+    *out = inet_address(ip, (uint16_t)port);
+    return true;
+}
+
+/* The start probe's child, under the inner bwrap: one byte out through the forwarder, one back. */
+static int connect_probe(char *target) {
+    struct sockaddr_in address;
+    if (!parse_probe_target(target, &address)) {
+        return EXIT_USAGE;
+    }
+    const unsigned char request = PROBE_REQUEST;
+    unsigned char reply = 0;
+    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    bool sent = fd >= 0 && connect(fd, (const struct sockaddr *)&address, sizeof(address)) == 0 &&
+                write_all(fd, &request, 1);
+    if (!sent || read(fd, &reply, 1) != 1 || reply != PROBE_REPLY) {
+        fputs("nimbus-sandbox-helper: no answer through the forwarder\n", stderr);
+        return EXIT_PROBE;
+    }
+    return 0;
+}
+
 static int usage(void) {
     fputs("usage:\n"
           "  nimbus-sandbox-helper --check\n"
+          "  nimbus-sandbox-helper --connect-probe <ip>:<port>\n"
           "  nimbus-sandbox-helper --socket <path> [--alias <ip>]... "
           "--listen <ip>:<port>:<index>... --dns <ip> -- <argv...>\n",
           stderr);
@@ -759,6 +804,10 @@ int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "--check") == 0) {
         puts("OK");
         return 0;
+    }
+
+    if (argc == 3 && strcmp(argv[1], "--connect-probe") == 0) {
+        return connect_probe(argv[2]);
     }
 
     options_t options;

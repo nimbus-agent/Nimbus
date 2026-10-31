@@ -32,7 +32,7 @@ export interface SandboxRunner {
    * Distinct from {@link isFullyActive}, which asks a policy-independent question: "is every
    * mechanism this platform offers available?" That is the right question for a startup banner and
    * the wrong one for admitting a specific execution. On Linux the two diverge sharply — the
-   * `nimbus-sandbox-helper` exists ONLY for per-host network filtering (`CAP_NET_ADMIN`), so a
+   * `nimbus-sandbox-helper` exists ONLY for per-host network filtering, so a
    * policy with an empty network set is confined completely without it by `--unshare-net` plus
    * bwrap's filesystem binds and seccomp. Gating such a policy on `isFullyActive()` would refuse
    * every execution on any Linux box lacking a helper the policy never uses — including CI, which
@@ -44,11 +44,27 @@ export interface SandboxRunner {
   canConfine(policy: SandboxPolicy): string | null;
 }
 
-export async function createSandboxRunner(): Promise<SandboxRunner> {
+export type CreateSandboxRunnerOptions = {
+  /**
+   * Linux: run the network forwarder's one real start before returning, so `canConfine` and
+   * `isFullyActive` can answer for a network policy. It awaits a child without blocking the event
+   * loop, costs one nested `bwrap` start when a helper is present, and nothing otherwise. The
+   * `__nimbus-sandbox` wrapper turns it off: it only spawns, and that spawn is itself a real start
+   * that refuses if it fails, so a probe would add one extra start to every connector.
+   */
+  forwarderStartProbe?: boolean;
+};
+
+export async function createSandboxRunner(
+  opts: CreateSandboxRunnerOptions = {},
+): Promise<SandboxRunner> {
   const p = platform();
   switch (p) {
-    case "linux":
-      return (await import("./linux.ts")).createLinuxSandboxRunner();
+    case "linux": {
+      const runner = (await import("./linux.ts")).createLinuxSandboxRunner();
+      if (opts.forwarderStartProbe !== false) await runner.probeForwarderStart();
+      return runner;
+    }
     case "darwin":
       return (await import("./darwin.ts")).createDarwinSandboxRunner();
     case "win32":

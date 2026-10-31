@@ -1,3 +1,4 @@
+import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import {
@@ -7,6 +8,10 @@ import {
   type SandboxPolicy,
 } from "./sandbox-policy.ts";
 import { createSandboxRunner } from "./sandbox-runner.ts";
+
+function signalNumber(signal: string): number {
+  return (osConstants.signals as Record<string, number | undefined>)[signal] ?? 0;
+}
 
 function fatal(msg: string): never {
   process.stderr.write(`nimbus-sandbox-wrapper: ${msg}\n`);
@@ -59,22 +64,29 @@ export async function runSandboxWrapper(args: readonly string[]): Promise<never>
     fatal(`cannot create sandbox working directory ${cwd}: ${(e as Error).message}`);
   }
 
-  const runner = await createSandboxRunner();
-  const child = runner.spawn(originalCmd, originalArgs, {
-    policy,
-    env: childEnv,
-    cwd,
-    stdio: "inherit",
-  });
+  const runner = await createSandboxRunner({ forwarderStartProbe: false });
+  let child: ChildProcess;
+  try {
+    child = runner.spawn(originalCmd, originalArgs, {
+      policy,
+      env: childEnv,
+      cwd,
+      stdio: "inherit",
+    });
+  } catch (e) {
+    fatal((e as Error).message);
+  }
 
+  // Explicit, and from the child's own exit: a dial pending on a blackholed address would keep the
+  // event loop alive, and with it the MCP client's pipe, long after the child has gone.
   child.on("exit", (code, signal) => {
-    if (signal !== null) {
-      const signals = osConstants.signals as Record<string, number | undefined>;
-      const num = signals[signal] ?? 0;
-      process.exit(128 + num);
-    }
-    process.exit(code ?? 1);
+    process.exit(signal === null ? (code ?? 1) : 128 + signalNumber(signal));
   });
+  // A signal's default action skips `process.exit`, so the forwarder's socket directory would stay
+  // behind every time the gateway stopped a connector. `--die-with-parent` still takes the child.
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.on(signal, () => process.exit(128 + signalNumber(signal)));
+  }
   child.on("error", (err) => fatal(`child spawn failed: ${err.message}`));
 
   return new Promise<never>(() => {});

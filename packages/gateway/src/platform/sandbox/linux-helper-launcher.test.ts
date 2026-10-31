@@ -193,6 +193,57 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
       expect(r.stdout).toBe("OK\n");
     });
 
+    describe("--connect-probe", () => {
+      /** Replies to each connection's first byte with `reply`. Returns the port. */
+      async function answering(reply: string): Promise<{ port: number; close(): void }> {
+        const server = createServer((socket) => {
+          socket.once("data", () => socket.end(reply));
+          socket.on("error", () => undefined);
+        });
+        await new Promise<void>((done) => {
+          server.listen(0, "127.0.0.1", () => done());
+        });
+        const address = server.address();
+        const port = typeof address === "object" && address !== null ? address.port : 0;
+        return { port, close: () => server.close() };
+      }
+
+      test.each<[string]>([
+        ["nope"],
+        ["127.0.0.1"],
+        ["127.0.0.1:"],
+        ["127.0.0.1:0"],
+        ["127.0.0.1:65536"],
+        ["::1:443"],
+      ])("refuses the target %s with exit 2", (target) => {
+        expect(exitOf(["--connect-probe", target])).toBe(2);
+      });
+
+      test("exits 0 only when the answer comes back", async () => {
+        const good = await answering("K");
+        const wrong = await answering("X");
+        const silent = await answering("");
+        try {
+          const probe = (port: number): Promise<Ran> =>
+            run([HELPER, "--connect-probe", `127.0.0.1:${String(port)}`]);
+          expect((await probe(good.port)).exitCode).toBe(0);
+          expect((await probe(wrong.port)).exitCode).toBe(8);
+          expect((await probe(silent.port)).exitCode).toBe(8);
+        } finally {
+          good.close();
+          wrong.close();
+          silent.close();
+        }
+      });
+
+      test("nothing listening is exit 8", async () => {
+        const closed = await answering("K");
+        closed.close();
+        const r = await run([HELPER, "--connect-probe", `127.0.0.1:${String(closed.port)}`]);
+        expect(r.exitCode).toBe(8);
+      });
+    });
+
     test.each<[string, readonly string[]]>([
       ["no arguments", []],
       ["an unknown mode", ["--check-caps"]],

@@ -89,7 +89,7 @@ export type ForwardHostOptions = {
 const MAX_HOSTS = 252;
 const FIRST_ASSIGNED_OCTET = 2;
 const LAST_ASSIGNED_OCTET = 254;
-const RESOLVER_ADDRESS = "127.0.0.53";
+export const RESOLVER_ADDRESS = "127.0.0.53";
 const POOL_SIZE = 48;
 const WILDCARD_PORT = 443;
 

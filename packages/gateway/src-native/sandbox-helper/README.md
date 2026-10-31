@@ -27,6 +27,8 @@ start if it does not. A forwarder that dies later only stops relaying.
 - `nimbus-sandbox-helper --check` prints `OK` and exits 0. It does no capability,
   namespace or file work.
 
+- `nimbus-sandbox-helper --connect-probe <ip>:<port>` is the child of the gateway's start probe: it connects, sends one byte, and exits 0 only if the byte the gateway's forward host answers with comes back, so a start reported as working has carried a real connection through the forwarder.
+
 - `nimbus-sandbox-helper --socket <path> [--alias <ip>]... --listen <ip>:<port>:<index>... --dns <ip> -- <argv...>`
   - `--socket`: the wrapper's unix socket. Must fit in `sockaddr_un`, so 107 bytes at most.
   - `--alias`: adds an IPv4 address to `lo` as a /32, for an IP-literal entry. Needs `CAP_NET_ADMIN`.
@@ -42,6 +44,7 @@ start if it does not. A forwarder that dies later only stops relaying.
 | 3 | A bind, listen or fork failed. Stderr names the address |
 | 5 | An alias failed. Stderr names the address |
 | 6 | The forwarder could not lock itself down. The child did not start |
+| 8 | `--connect-probe` got no answer through the forwarder |
 | 127 | The exec failed |
 
 Otherwise the exit code is the exec'd program's.
