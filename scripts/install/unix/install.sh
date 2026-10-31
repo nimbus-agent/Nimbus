@@ -320,6 +320,33 @@ fetch_release() {
   SCRIPT_DIR="$DOWNLOAD_DIR"
 }
 
+# Whether a process is running the gateway this script would overwrite. Linux asks /proc for each
+# process's executable, so a gateway installed anywhere else, with the same name, does not count; a
+# process of another user reads as nothing, and that user's gateway is not running from this HOME.
+# macOS has no /proc, and there `ps` prints the executable's whole path as `comm`.
+gateway_running_from_target() {
+  target_dir="$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P)" || return 1
+  target="${target_dir}/nimbus-gateway"
+  [ -e "$target" ] || return 1
+  if [ -e /proc/self/exe ]; then
+    for proc_dir in /proc/[0-9]*; do
+      if [ "$(readlink "${proc_dir}/exe" 2>/dev/null || true)" = "$target" ]; then return 0; fi
+    done
+    return 1
+  fi
+  ps -axo comm= 2>/dev/null | grep -qxF -e "$target" -e "${INSTALL_DIR}/nimbus-gateway"
+}
+
+# `cp` onto a running executable fails with "Text file busy", and under `set -e` that aborts the
+# script with the CLI replaced and the gateway, vec0.so and the helper not. So refuse while nothing
+# has changed. The gateway does not restart itself, so the user has to stop it.
+refuse_if_gateway_running() {
+  if gateway_running_from_target; then
+    echo "Error: a Nimbus gateway is running from ${INSTALL_DIR}. Run 'nimbus stop' first, then re-run this installer. Nothing was changed." >&2
+    exit 1
+  fi
+}
+
 # Locate binaries shipped beside this script.
 NIMBUS_SRC="${SCRIPT_DIR}/nimbus"
 GATEWAY_SRC="${SCRIPT_DIR}/nimbus-gateway"
@@ -359,6 +386,9 @@ if [ "$DRY_RUN" -eq 1 ] && [ "$NEED_FETCH" -eq 1 ]; then
   echo "(--dry-run; no changes made, no network request performed)"
   exit 0
 fi
+
+# Before the download too, so a refusal costs nothing. Not on --dry-run, which only prints a plan.
+[ "$DRY_RUN" -eq 1 ] || refuse_if_gateway_running
 
 if [ "$NEED_FETCH" -eq 1 ]; then
   fetch_release "$WANT_VERSION"
@@ -411,6 +441,9 @@ if [ -e "${INSTALL_DIR}/nimbus" ] || [ -e "${INSTALL_DIR}/nimbus-gateway" ]; the
     exit 1
   fi
 fi
+
+# Again, because a prompt above can sit for as long as the user likes.
+refuse_if_gateway_running
 
 cp "$NIMBUS_SRC" "${INSTALL_DIR}/nimbus"
 cp "$GATEWAY_SRC" "${INSTALL_DIR}/nimbus-gateway"

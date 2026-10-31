@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import {
   channelUpgradeHint,
   type DistributionChannel,
@@ -48,6 +49,53 @@ export async function runUpdateCheck(client: IPCClient): Promise<void> {
 /** The gateway refuses `updater.applyUpdate` with this code when it has no installer to run. */
 const INSTALL_UNSUPPORTED_CODE = "ERR_UPDATER_INSTALL_UNSUPPORTED";
 
+/** Where this CLI runs from, which decides what a manual update has to do. */
+export type InstallShape = {
+  readonly platform: string;
+  readonly execPath: string;
+  /** Set by the AppImage runtime, to the path of the `.AppImage` file. */
+  readonly appImage: string | undefined;
+  readonly home: string;
+  readonly localAppData: string | undefined;
+};
+
+function currentInstallShape(): InstallShape {
+  return {
+    platform: process.platform,
+    execPath: process.execPath,
+    appImage: process.env["APPIMAGE"],
+    home: homedir(),
+    localAppData: process.env["LOCALAPPDATA"],
+  };
+}
+
+const HELPER_NOTE =
+  "Replacing only the gateway binary leaves out files that ship beside it, such as the Linux sandbox helper.";
+
+/**
+ * What to do instead. Each shape gets its own line, because the installer's answer is wrong for two
+ * of them: it always installs into its own directory, so for an AppImage or a copy kept anywhere else
+ * it adds a second install and leaves this one on the old version.
+ */
+export function manualUpdateLine(shape: InstallShape): string {
+  const check = "Run `nimbus update --check` to see the latest version.";
+  const stop = "run `nimbus stop`";
+  if (shape.appImage !== undefined && shape.appImage !== "") {
+    return `${check} Then ${stop}, download the new .AppImage from the releases page, and use it in place of ${shape.appImage}.`;
+  }
+  const windows = shape.platform === "win32";
+  const separator = windows ? "\\" : "/";
+  const installer = windows ? "install.ps1" : "install.sh";
+  const installerDir = windows
+    ? [shape.localAppData ?? "", "Programs", "Nimbus", "bin"].join(separator)
+    : [shape.home, ".local", "bin"].join(separator);
+  const here = shape.execPath.slice(0, shape.execPath.lastIndexOf(separator));
+  if (here === installerDir) {
+    return `${check} Then ${stop} and re-run ${installer} from the new release, which refuses while a gateway is running. ${HELPER_NOTE}`;
+  }
+  return `${check} This copy is in ${here}, and ${installer} would add a second copy in ${installerDir}, so ${stop} and replace every file here from the new release's archive. ${HELPER_NOTE}`;
+}
+
 /**
  * Success is printed ONLY when the gateway call returned — which it does only after an installer
  * actually ran. No per-OS installer ships yet, so today every apply is refused with
@@ -55,7 +103,10 @@ const INSTALL_UNSUPPORTED_CODE = "ERR_UPDATER_INSTALL_UNSUPPORTED";
  * than surfacing as a raw RPC error. Nothing here promises a restart: the gateway does not restart
  * itself.
  */
-export async function runUpdateApply(client: IPCClient): Promise<void> {
+export async function runUpdateApply(
+  client: IPCClient,
+  shape: InstallShape = currentInstallShape(),
+): Promise<void> {
   try {
     await client.call<unknown>("updater.applyUpdate", {});
   } catch (err) {
@@ -64,9 +115,7 @@ export async function runUpdateApply(client: IPCClient): Promise<void> {
       console.error(
         "This gateway cannot install updates on this platform yet — nothing was downloaded or installed.",
       );
-      console.error(
-        "Run `nimbus update --check` to see the latest version, then re-run install.sh (install.ps1 on Windows) from the new release. Replacing only the gateway binary leaves out files that ship beside it, such as the Linux sandbox helper.",
-      );
+      console.error(manualUpdateLine(shape));
       process.exitCode = 1;
       return;
     }

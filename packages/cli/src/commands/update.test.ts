@@ -5,7 +5,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 
 const mod = await import("./update.ts");
-const { parseUpdateArgs, runUpdate, runUpdateApply, runUpdateCheck } = mod;
+const { manualUpdateLine, parseUpdateArgs, runUpdate, runUpdateApply, runUpdateCheck } = mod;
 
 const out = captureOutput();
 
@@ -137,15 +137,71 @@ describe("runUpdateApply", () => {
           "ERR_UPDATER_INSTALL_UNSUPPORTED: no installer is available for this platform yet; download the release manually",
         ),
       ]);
-      await runUpdateApply(client);
+      await runUpdateApply(client, {
+        platform: "linux",
+        execPath: "/home/u/.local/bin/nimbus",
+        appImage: undefined,
+        home: "/home/u",
+        localAppData: undefined,
+      });
       expect(process.exitCode).toBe(1);
       expect(out.stderr).toContain("cannot install updates");
       expect(out.stderr).toContain("re-run install.sh");
+      expect(out.stderr).toContain("nimbus stop");
       expect(out.stderr).toContain("sandbox helper");
       expect(out.stderr).not.toContain("download the release manually");
       expect(out.stdout).not.toContain("Update installed.");
       expect(out.stdout).not.toMatch(/restart/i);
     });
+  });
+});
+
+describe("manualUpdateLine", () => {
+  const linux = {
+    platform: "linux",
+    execPath: "/home/u/.local/bin/nimbus",
+    appImage: undefined,
+    home: "/home/u",
+    localAppData: undefined,
+  };
+
+  it("sends an install.sh install back to install.sh, after stopping the gateway", () => {
+    const line = manualUpdateLine(linux);
+    expect(line).toContain("`nimbus stop` and re-run install.sh");
+    expect(line).not.toContain("second copy");
+  });
+
+  it("sends an AppImage to a new AppImage, never to install.sh", () => {
+    const line = manualUpdateLine({
+      ...linux,
+      execPath: "/home/u/.cache/nimbus/appimage/x/nimbus",
+      appImage: "/home/u/Apps/nimbus.AppImage",
+    });
+    expect(line).toContain("download the new .AppImage");
+    expect(line).toContain("/home/u/Apps/nimbus.AppImage");
+    expect(line).not.toContain("install.sh");
+  });
+
+  it("tells a copy kept elsewhere that install.sh would add a second one", () => {
+    const line = manualUpdateLine({ ...linux, execPath: "/opt/nimbus/nimbus" });
+    expect(line).toContain("This copy is in /opt/nimbus");
+    expect(line).toContain("second copy in /home/u/.local/bin");
+    expect(line).toContain("replace every file here");
+    expect(line).not.toContain("re-run install.sh");
+  });
+
+  it("names install.ps1 and its directory on Windows", () => {
+    const shape = {
+      platform: "win32",
+      execPath: String.raw`C:\Users\u\AppData\Local\Programs\Nimbus\bin\nimbus.exe`,
+      appImage: undefined,
+      home: String.raw`C:\Users\u`,
+      localAppData: String.raw`C:\Users\u\AppData\Local`,
+    };
+    expect(manualUpdateLine(shape)).toContain("re-run install.ps1");
+    expect(manualUpdateLine({ ...shape, execPath: String.raw`D:\tools\nimbus.exe` })).toContain(
+      "second copy",
+    );
   });
 });
 

@@ -40,7 +40,7 @@ export interface UpdaterOptions {
 export const ERR_UPDATER_INSTALL_UNSUPPORTED = "ERR_UPDATER_INSTALL_UNSUPPORTED";
 
 const INSTALL_UNSUPPORTED_DETAIL =
-  "no installer is available for this platform yet; download the release manually from the project's releases page";
+  "no installer is available for this platform yet; install the new release the way this copy was installed, as docs/install.md describes for each channel";
 
 /**
  * `applyUpdate` was asked to install with no `invokeInstaller` wired — the production shape on

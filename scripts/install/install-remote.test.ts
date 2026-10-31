@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { chmod, copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assetNameFor, findSupportedTarget } from "./lib/release-assets.ts";
@@ -229,6 +229,102 @@ async function runInstallSh(env: Record<string, string | undefined>) {
   ]);
   return { stdout, stderr, exitCode };
 }
+
+/**
+ * A real process whose executable is `dir/nimbus-gateway`: a copy of `sleep`, because the installer
+ * compares the kernel's idea of what is running, which a script's interpreter would hide.
+ */
+async function startFakeGateway(dir: string) {
+  const sleepBin = Bun.which("sleep");
+  if (sleepBin === null) throw new Error("no sleep on PATH");
+  await mkdir(dir, { recursive: true });
+  const path = join(dir, "nimbus-gateway");
+  await copyFile(sleepBin, path);
+  await chmod(path, 0o755);
+  const proc = Bun.spawn([path, "120"], { stdout: "ignore", stderr: "ignore" });
+  // Long enough to have exec'd. A copy that cannot run under this name would prove nothing below.
+  await Bun.sleep(200);
+  expect(proc.exitCode).toBeNull();
+  return proc;
+}
+
+/** A fresh HOME and a stage directory holding install.sh and the new binaries beside it. */
+async function makeLocalInstallFixture() {
+  const work = realpathSync(await mkdtemp(join(tmpdir(), "nimbus-running-")));
+  const home = join(work, "home");
+  const stage = join(work, "stage");
+  await mkdir(home, { recursive: true });
+  await mkdir(stage, { recursive: true });
+  for (const name of ["nimbus", "nimbus-gateway", "vec0.so", "nimbus-sandbox-helper"]) {
+    await writeFile(join(stage, name), "#!/bin/sh\necho new\n");
+    await chmod(join(stage, name), 0o755);
+  }
+  await copyFile(join("scripts", "install", "unix", "install.sh"), join(stage, "install.sh"));
+  return { work, home, stage, binDir: join(home, ".local", "bin") };
+}
+
+async function runLocalInstall(stage: string, home: string) {
+  const proc = Bun.spawn(["sh", join(stage, "install.sh"), "--local", "--yes"], {
+    env: { ...process.env, HOME: home },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
+    proc.exited,
+  ]);
+  return { stdout, stderr, exitCode };
+}
+
+test.skipIf(isWindows)(
+  "install.sh refuses while a gateway runs from its target, and changes nothing",
+  async () => {
+    const { work, home, stage, binDir } = await makeLocalInstallFixture();
+    const gateway = await startFakeGateway(binDir);
+    const cliBefore = "#!/bin/sh\necho old\n";
+    await writeFile(join(binDir, "nimbus"), cliBefore);
+    try {
+      const { stderr, exitCode } = await runLocalInstall(stage, home);
+      expect(stderr).toContain("Run 'nimbus stop' first");
+      expect(stderr).not.toContain("Text file busy");
+      expect(exitCode).toBe(1);
+      expect(readFileSync(join(binDir, "nimbus"), "utf8")).toBe(cliBefore);
+      expect(existsSync(join(binDir, "vec0.so"))).toBe(false);
+      expect(existsSync(join(binDir, "nimbus-sandbox-helper"))).toBe(false);
+      expect(existsSync(join(home, ".profile"))).toBe(false);
+
+      // Once it has stopped, the same command works, so the refusal was about the running gateway.
+      gateway.kill("SIGKILL");
+      await gateway.exited;
+      const after = await runLocalInstall(stage, home);
+      expect(after.exitCode).toBe(0);
+      expect(readFileSync(join(binDir, "nimbus"), "utf8")).toContain("echo new");
+    } finally {
+      gateway.kill("SIGKILL");
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  SUBPROCESS_TEST_TIMEOUT_MS,
+);
+
+test.skipIf(isWindows)(
+  "install.sh does not mistake a gateway running from another directory for its own",
+  async () => {
+    const { work, home, stage, binDir } = await makeLocalInstallFixture();
+    const elsewhere = await startFakeGateway(join(work, "elsewhere"));
+    try {
+      const { stderr, exitCode } = await runLocalInstall(stage, home);
+      expect(stderr).not.toContain("nimbus stop");
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(binDir, "nimbus-gateway"), "utf8")).toContain("echo new");
+    } finally {
+      elsewhere.kill("SIGKILL");
+      await rm(work, { recursive: true, force: true });
+    }
+  },
+  SUBPROCESS_TEST_TIMEOUT_MS,
+);
 
 test.skipIf(skip)(
   "install.sh installs from a served release",

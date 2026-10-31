@@ -33,7 +33,10 @@ All downloads are checksummed in `SHA256SUMS` and GPG-signed; verify with
 Native installers and package-manager builds disable the self-updater — the
 installer/package owns updates. The standalone tarball and the raw binaries can check for a new
 version (`nimbus update --check`), but no build can apply one yet: `nimbus update` is refused with
-`ERR_UPDATER_INSTALL_UNSUPPORTED` before anything is downloaded. Re-run `install.sh` from the new release.
+`ERR_UPDATER_INSTALL_UNSUPPORTED` before anything is downloaded, and prints what to do for that copy.
+For an `install.sh` install, run `nimbus stop` and re-run `install.sh` from the new release; it refuses,
+changing nothing, while a gateway is running from its directory. See [Direct downloads](#direct-downloads)
+for the AppImage and for a copy kept anywhere else.
 
 To remove: Windows uses Add/Remove Programs; macOS runs `uninstall-nimbus`;
 RPM/DEB use `sudo dnf remove nimbus-headless` / `sudo apt remove nimbus-headless`.
@@ -83,15 +86,24 @@ binaries, the portable `.tar.gz` (macOS/Linux) and `.zip` (Windows) archives, th
 Linux `.AppImage`, and the `SHA256SUMS` + GPG signature — is published on the
 [releases page](https://github.com/nimbus-agent/Nimbus/releases). The portable
 archives and raw binaries can check for updates (`nimbus update --check`) but cannot apply one: the
-updater refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` before it downloads anything, so to update re-run
-`install.sh` from the new release. On Linux, a raw `nimbus-gateway-linux-x64` has no
-`nimbus-sandbox-helper` beside it, so connectors that declare a network reach the whole internet (a log
-warning and `nimbus doctor` `[warn]`); re-run `install.sh` to put the helper there.
+updater refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` before it downloads anything. To update:
+
+- **Installed with `install.sh`:** run `nimbus stop`, then re-run `install.sh` from the new release. It
+  refuses, changing nothing, while a gateway is running from its directory.
+- **An AppImage:** run `nimbus stop`, download the new `.AppImage` and use it in place of the old one.
+- **A raw binary, or an archive unpacked and kept in its own directory:** `install.sh` always installs to
+  `~/.local/bin`, so it would add a second copy and leave this one old. Run `nimbus stop` and replace every
+  file there from the new archive.
+
+On Linux, a raw `nimbus-gateway-linux-x64` has no `nimbus-sandbox-helper` beside it, so connectors that
+declare a network reach the whole internet (a log warning and `nimbus doctor` `[warn]`). Copy
+`bin/nimbus-sandbox-helper` from the Linux tarball beside that gateway, or use the tarball's `install.sh`,
+which installs its own copy of everything to `~/.local/bin`.
 
 ## Universal fallback (scripted)
 
 The read-it-yourself `install.sh` / `install.ps1` in each release archive install
-per-user with no admin; re-running one from a newer release is how they update. See
+per-user with no admin; re-running one from a newer release, after `nimbus stop`, is how they update. See
 [`scripts/install/README.md`](../scripts/install/README.md).
 
 > **Signing status:** Windows/macOS installers are currently **unsigned** (no
