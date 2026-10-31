@@ -97,6 +97,13 @@ echo "Restriction on, the profile loaded, the network forwarder:"
 helper="${PWD}/packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper"
 bun run build:sandbox-helper
 NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file scripts/linux/check-sandbox-dns.ts
+# `nimbus doctor`'s own nested start, whose argv is a copy the CLI keeps because it cannot import the
+# gateway's. Real helper, real namespaces, so a drift in that copy shows here.
+NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file -e '
+  const { createDoctorBwrapDeps, doctorPrintLinuxSandbox } = await import("./packages/cli/src/commands/doctor-bwrap.ts");
+  process.exit(doctorPrintLinuxSandbox(createDoctorBwrapDeps("linux")));
+' | tee "${work}/doctor.txt"
+grep -qxF "[ok] Sandbox: declared hosts are enforced." "${work}/doctor.txt"
 CI=true NIMBUS_REQUIRE_SANDBOX_HELPER=1 NIMBUS_REQUIRE_REAL_NETWORK=1 \
   bun test packages/gateway/src/platform/sandbox/linux-forwarder-network.test.ts --timeout 60000
 (cd packages/gateway && bun run build)

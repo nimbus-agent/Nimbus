@@ -11,6 +11,7 @@
  * commands. It imports only `node:fs`, so a packaging script can load it.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { posix } from "node:path";
 
 export const BWRAP_APPARMOR_PROFILE_PATH = "/etc/apparmor.d/nimbus-bwrap";
 
@@ -73,7 +74,18 @@ export interface DoctorBwrapDeps {
   readonly run: (cmd: readonly string[]) => DoctorBwrapRun;
   /** Whether the install block would act here, so the commands doctor prints can help. */
   readonly apparmorFixApplies: (bwrap: string) => boolean;
+  readonly findHelper: () => HelperLookup;
+  /** The uid and gid the inner `bwrap` of the nested start maps its child to. */
+  readonly ids: () => { uid: number; gid: number };
 }
+
+/** What the gateway's `resolveHelperPath` would answer here. */
+export type HelperLookup =
+  | { readonly kind: "found"; readonly path: string }
+  /** `NIMBUS_SANDBOX_HELPER_PATH` names nothing. The gateway refuses a network spawn for this. */
+  | { readonly kind: "override-missing"; readonly path: string }
+  /** Nothing anywhere. The one case where the gateway falls back to the whole internet. */
+  | { readonly kind: "missing" };
 
 /** The namespaces the sandbox runner asks for, minus what does not affect whether it can start. */
 function startProbeCommand(bwrap: string): string[] {
@@ -99,9 +111,138 @@ function startProbeCommand(bwrap: string): string[] {
   ];
 }
 
+const HELPER_IN_SANDBOX = "/run/nimbus-sandbox/helper";
+/** Never connected to: this start carries no connection, and the forwarder dials only for one. */
+const UNUSED_SOCKET = "/tmp/nimbus-doctor-start/s";
+
+function libraryBinds(): string[] {
+  return [
+    "--ro-bind",
+    "/usr",
+    "/usr",
+    "--ro-bind",
+    "/lib",
+    "/lib",
+    "--ro-bind-try",
+    "/lib64",
+    "/lib64",
+  ];
+}
+
 /**
- * A Linux-only check that bubblewrap can really start a child. `--version` passes on a machine
- * where it cannot, so this runs the namespaces. Returns the exit severity.
+ * The shape of the gateway's per-host start (`buildForwarderArgv`): outer `bwrap`, launcher, forwarder
+ * up to its lockdown, inner `bwrap`, a child. The CLI reaches the gateway over IPC only, so this is a
+ * copy of the part that decides whether the machine can start it. It carries no connection, so it
+ * says nesting works here, not that a given host is reachable.
+ */
+function nestedStartCommand(
+  bwrap: string,
+  helper: string,
+  ids: { uid: number; gid: number },
+): string[] {
+  const bwrapBind = bwrap.startsWith("/usr/") ? [] : ["--ro-bind", bwrap, bwrap];
+  return [
+    bwrap,
+    "--unshare-user",
+    "--unshare-net",
+    "--unshare-pid",
+    "--die-with-parent",
+    "--uid",
+    "0",
+    "--gid",
+    "0",
+    "--cap-add",
+    "CAP_NET_BIND_SERVICE",
+    "--cap-add",
+    "CAP_SETPCAP",
+    "--cap-add",
+    "CAP_SETFCAP",
+    ...libraryBinds(),
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "--tmpfs",
+    "/tmp",
+    ...bwrapBind,
+    "--ro-bind",
+    helper,
+    HELPER_IN_SANDBOX,
+    HELPER_IN_SANDBOX,
+    "--socket",
+    UNUSED_SOCKET,
+    "--listen",
+    "127.0.0.2:443:0",
+    "--dns",
+    "127.0.0.53",
+    "--",
+    bwrap,
+    "--unshare-pid",
+    "--unshare-uts",
+    "--unshare-ipc",
+    "--unshare-user",
+    "--new-session",
+    "--die-with-parent",
+    "--share-net",
+    "--uid",
+    String(ids.uid),
+    "--gid",
+    String(ids.gid),
+    "--cap-drop",
+    "ALL",
+    ...libraryBinds(),
+    "--proc",
+    "/proc",
+    "--dev",
+    "/dev",
+    "/usr/bin/true",
+  ];
+}
+
+function runFailureText(r: DoctorBwrapRun): string {
+  return r.stderr.trim() === "" ? `exit ${String(r.code)}` : r.stderr.trim();
+}
+
+/**
+ * The per-host half of the sandbox. A missing helper is a warning, since the sandbox still confines
+ * and only the network is wider, as documented. A helper that is named or present and cannot work is
+ * a failure, because then the gateway refuses every connector that declares a network.
+ */
+function doctorPrintDeclaredHosts(bwrap: string, deps: DoctorBwrapDeps): number {
+  const helper = deps.findHelper();
+  if (helper.kind === "missing") {
+    console.log(
+      "[warn] Sandbox: nimbus-sandbox-helper is missing, so a connector that declares a network reaches the whole internet.",
+    );
+    return 1;
+  }
+  const refused = "so a connector that declares a network is refused.";
+  if (helper.kind === "override-missing") {
+    console.log(
+      `[fail] Sandbox: NIMBUS_SANDBOX_HELPER_PATH names ${helper.path}, which does not exist, ${refused}`,
+    );
+    return 2;
+  }
+  const check = deps.run([helper.path, "--check"]);
+  if (check.code !== 0) {
+    console.log(`[fail] Sandbox: ${helper.path} cannot run (${runFailureText(check)}), ${refused}`);
+    return 2;
+  }
+  const start = deps.run(nestedStartCommand(bwrap, helper.path, deps.ids()));
+  if (start.code !== 0) {
+    console.log(
+      `[fail] Sandbox: the network forwarder cannot start here (${runFailureText(start)}), ${refused}`,
+    );
+    return 2;
+  }
+  console.log("[ok] Sandbox: declared hosts are enforced.");
+  return 0;
+}
+
+/**
+ * A Linux-only check that bubblewrap can really start a child, and that a child that declares hosts
+ * reaches only those. `--version` passes on a machine where it cannot start one, so this runs the
+ * namespaces. Returns the exit severity.
  */
 export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
   if (deps.platform !== "linux") return 0;
@@ -115,11 +256,10 @@ export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
   const r = deps.run(startProbeCommand(bwrap));
   if (r.code === 0) {
     console.log("[ok] Sandbox: bubblewrap can start sandboxed children.");
-    return 0;
+    return doctorPrintDeclaredHosts(bwrap, deps);
   }
-  const why = r.stderr.trim() === "" ? `exit ${String(r.code)}` : r.stderr.trim();
   console.log(
-    `[fail] Sandbox: bubblewrap cannot start a sandbox (${why}), so connectors, extensions and \`nimbus eval\` cannot start.`,
+    `[fail] Sandbox: bubblewrap cannot start a sandbox (${runFailureText(r)}), so connectors, extensions and \`nimbus eval\` cannot start.`,
   );
   if (deps.apparmorFixApplies(bwrap)) {
     console.log("  Ubuntu's AppArmor restriction is blocking it. To allow bubblewrap only, run:");
@@ -131,6 +271,8 @@ export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
 
 const BWRAP_CANDIDATES = ["/usr/bin/bwrap", "/bin/bwrap", "/usr/local/bin/bwrap"] as const;
 const PROBE_TIMEOUT_MS = 5000;
+const HELPER_NAME = "nimbus-sandbox-helper";
+const INSTALLED_HELPER = `/usr/lib/nimbus/bin/${HELPER_NAME}`;
 
 export interface DoctorBwrapHost {
   readonly exists: (path: string) => boolean;
@@ -139,6 +281,8 @@ export interface DoctorBwrapHost {
   /** The binary's path on `PATH`, or null. */
   readonly which: (name: string) => string | null;
   readonly env: (name: string) => string | undefined;
+  /** This program's path. Every package puts the CLI and the gateway in one directory. */
+  readonly execPath: string;
 }
 
 const REAL_HOST: DoctorBwrapHost = {
@@ -146,7 +290,23 @@ const REAL_HOST: DoctorBwrapHost = {
   read: (path) => readFileSync(path, "utf8"),
   which: (name) => Bun.which(name),
   env: (name) => process.env[name],
+  execPath: process.execPath,
 };
+
+/** The same order as the gateway's `resolveHelperPath`, which the CLI may not import. */
+function findHelper(host: DoctorBwrapHost): HelperLookup {
+  const override = host.env("NIMBUS_SANDBOX_HELPER_PATH");
+  if (override !== undefined && override !== "") {
+    return host.exists(override)
+      ? { kind: "found", path: override }
+      : { kind: "override-missing", path: override };
+  }
+  const beside = posix.join(posix.dirname(host.execPath), HELPER_NAME);
+  if (host.exists(beside)) return { kind: "found", path: beside };
+  return host.exists(INSTALLED_HELPER)
+    ? { kind: "found", path: INSTALLED_HELPER }
+    : { kind: "missing" };
+}
 
 /** The same conditions as {@link bwrapApparmorInstallShell}: never offer what it would refuse. */
 function apparmorFixApplies(bwrap: string, host: DoctorBwrapHost): boolean {
@@ -190,5 +350,7 @@ export function createDoctorBwrapDeps(
       }
     },
     apparmorFixApplies: (bwrap) => apparmorFixApplies(bwrap, host),
+    findHelper: () => findHelper(host),
+    ids: () => ({ uid: process.getuid?.() ?? 0, gid: process.getgid?.() ?? 0 }),
   };
 }

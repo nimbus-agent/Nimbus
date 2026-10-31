@@ -9,12 +9,17 @@ import {
   doctorPrintLinuxSandbox,
 } from "./doctor-bwrap.ts";
 
+const HELPER_BESIDE = "/home/owner/.local/bin/nimbus-sandbox-helper";
+const INSTALLED_HELPER = "/usr/lib/nimbus/bin/nimbus-sandbox-helper";
+
 function deps(over: Partial<DoctorBwrapDeps>): DoctorBwrapDeps {
   return {
     platform: "linux",
     findBwrap: () => "/usr/bin/bwrap",
     run: () => ({ code: 0, stderr: "" }),
     apparmorFixApplies: () => false,
+    findHelper: () => ({ kind: "found", path: HELPER_BESIDE }),
+    ids: () => ({ uid: 1000, gid: 1000 }),
     ...over,
   };
 }
@@ -91,6 +96,126 @@ describe("doctorPrintLinuxSandbox", () => {
     expect(lines[0]).toContain("exit 1");
     expect(lines.join("\n")).not.toContain("apparmor_parser");
   });
+
+  describe("the declared-hosts check", () => {
+    const ENFORCED = "[ok] Sandbox: declared hosts are enforced.";
+    const MISSING =
+      "[warn] Sandbox: nimbus-sandbox-helper is missing, so a connector that declares a network reaches the whole internet.";
+    const isCheck = (cmd: readonly string[]): boolean => cmd[1] === "--check";
+    const isNested = (cmd: readonly string[]): boolean => cmd.includes("--socket");
+
+    test("a helper beside the gateway that starts: both [ok] lines, exit 0", () => {
+      const seen: (readonly string[])[] = [];
+      const code = doctorPrintLinuxSandbox(
+        deps({
+          run: (cmd) => {
+            seen.push(cmd);
+            return { code: 0, stderr: "" };
+          },
+        }),
+      );
+      expect(code).toBe(0);
+      expect(lines).toEqual(["[ok] Sandbox: bubblewrap can start sandboxed children.", ENFORCED]);
+      expect(seen.some((c) => c[0] === HELPER_BESIDE && isCheck(c))).toBe(true);
+      expect(seen.some(isNested)).toBe(true);
+    });
+
+    test("the nested start is the real shape: the launcher's three capabilities, then a second bwrap", () => {
+      let nested: readonly string[] = [];
+      doctorPrintLinuxSandbox(
+        deps({
+          run: (cmd) => {
+            if (isNested(cmd)) nested = cmd;
+            return { code: 0, stderr: "" };
+          },
+        }),
+      );
+      for (const cap of ["CAP_NET_BIND_SERVICE", "CAP_SETPCAP", "CAP_SETFCAP"]) {
+        expect(nested).toContain(cap);
+      }
+      // The helper's own binary is bound at the fixed path, and its directory is not.
+      expect(nested).toContain(HELPER_BESIDE);
+      expect(nested).not.toContain("/home/owner/.local/bin");
+      const split = nested.indexOf("--");
+      expect(nested[split + 1]).toBe("/usr/bin/bwrap");
+      expect(nested.slice(split)).toContain("1000");
+      expect(nested.at(-1)).toBe("/usr/bin/true");
+    });
+
+    test("a bwrap outside /usr is bound into the outer view, so the inner one can run", () => {
+      let nested: readonly string[] = [];
+      doctorPrintLinuxSandbox(
+        deps({
+          findBwrap: () => "/opt/bwrap",
+          run: (cmd) => {
+            if (isNested(cmd)) nested = cmd;
+            return { code: 0, stderr: "" };
+          },
+        }),
+      );
+      expect(nested.join(" ")).toContain("--ro-bind /opt/bwrap /opt/bwrap");
+    });
+
+    test("no helper warns with exit severity 1, and runs nothing more", () => {
+      let runs = 0;
+      const code = doctorPrintLinuxSandbox(
+        deps({
+          findHelper: () => ({ kind: "missing" }),
+          run: () => {
+            runs += 1;
+            return { code: 0, stderr: "" };
+          },
+        }),
+      );
+      expect(code).toBe(1);
+      expect(lines.at(-1)).toBe(MISSING);
+      expect(runs).toBe(1);
+    });
+
+    test("an override naming nothing fails: the gateway refuses, it does not fall back", () => {
+      const code = doctorPrintLinuxSandbox(
+        deps({ findHelper: () => ({ kind: "override-missing", path: "/no/such/helper" }) }),
+      );
+      expect(code).toBe(2);
+      expect(lines.at(-1)).toStartWith(
+        "[fail] Sandbox: NIMBUS_SANDBOX_HELPER_PATH names /no/such/helper",
+      );
+      expect(lines.join("\n")).not.toContain("whole internet");
+    });
+
+    test("a helper that cannot run fails, and quotes why", () => {
+      const code = doctorPrintLinuxSandbox(
+        deps({
+          run: (cmd) =>
+            isCheck(cmd) ? { code: 126, stderr: "cannot execute\n" } : { code: 0, stderr: "" },
+        }),
+      );
+      expect(code).toBe(2);
+      expect(lines.at(-1)).toContain("cannot execute");
+      expect(lines.join("\n")).not.toContain(ENFORCED);
+    });
+
+    test("a nested start that fails is not reported as enforced", () => {
+      const code = doctorPrintLinuxSandbox(
+        deps({
+          run: (cmd) =>
+            isNested(cmd)
+              ? { code: 1, stderr: "bwrap: setting up uid map: Operation not permitted\n" }
+              : { code: 0, stderr: "" },
+        }),
+      );
+      expect(code).toBe(2);
+      expect(lines.at(-1)).toContain("the network forwarder cannot start here");
+      expect(lines.at(-1)).toContain("setting up uid map");
+      expect(lines.join("\n")).not.toContain(ENFORCED);
+    });
+
+    test("a bwrap that cannot start reports only that, and tests no helper", () => {
+      const code = doctorPrintLinuxSandbox(deps({ run: () => ({ code: 1, stderr: "" }) }));
+      expect(code).toBe(2);
+      expect(lines).toHaveLength(1);
+    });
+  });
 });
 
 const RESTRICT = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
@@ -103,6 +228,7 @@ function host(over: Partial<DoctorBwrapHost> = {}, files?: readonly string[]): D
     read: () => "1\n",
     which: () => "/usr/sbin/apparmor_parser",
     env: () => undefined,
+    execPath: "/home/owner/.local/bin/nimbus",
     ...over,
   };
 }
@@ -131,6 +257,54 @@ describe("createDoctorBwrapDeps", () => {
   test("an empty override is no override", () => {
     const env = () => "";
     expect(createDoctorBwrapDeps("linux", host({ env })).findBwrap()).toBe("/usr/bin/bwrap");
+  });
+
+  describe("findHelper, in the gateway's order", () => {
+    const find = (h: DoctorBwrapHost) => createDoctorBwrapDeps("linux", h).findHelper();
+    const OVERRIDE = "/opt/helper";
+    const overriding = () => OVERRIDE;
+
+    test("a set override wins over a helper beside the program", () => {
+      expect(find(host({ env: overriding }, [OVERRIDE, HELPER_BESIDE]))).toEqual({
+        kind: "found",
+        path: OVERRIDE,
+      });
+    });
+
+    test("an override naming nothing does not fall through to a real helper", () => {
+      expect(find(host({ env: overriding }, [HELPER_BESIDE]))).toEqual({
+        kind: "override-missing",
+        path: OVERRIDE,
+      });
+    });
+
+    test("then beside the program, as a tarball and an AppImage install it", () => {
+      expect(find(host({}, [HELPER_BESIDE, INSTALLED_HELPER]))).toEqual({
+        kind: "found",
+        path: HELPER_BESIDE,
+      });
+    });
+
+    test("then the package's directory", () => {
+      expect(find(host({}, [INSTALLED_HELPER]))).toEqual({ kind: "found", path: INSTALLED_HELPER });
+    });
+
+    test("nowhere is missing", () => {
+      expect(find(host({}, []))).toEqual({ kind: "missing" });
+    });
+
+    test("an empty override is no override", () => {
+      expect(find(host({ env: () => "" }, [HELPER_BESIDE]))).toEqual({
+        kind: "found",
+        path: HELPER_BESIDE,
+      });
+    });
+  });
+
+  test("the default ids are this process's", () => {
+    const { ids } = createDoctorBwrapDeps("linux", host());
+    expect(ids().uid).toBe(process.getuid?.() ?? 0);
+    expect(ids().gid).toBe(process.getgid?.() ?? 0);
   });
 
   test("run reports the real exit code and stderr", () => {
