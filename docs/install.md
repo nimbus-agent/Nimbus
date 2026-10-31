@@ -20,6 +20,9 @@ All downloads are checksummed in `SHA256SUMS` and GPG-signed; verify with
 > Microsoft's PR review + SmartScreen reputation are the trust signals until code-signing
 > lands (see the signing note at the bottom of this page).
 
+On Linux the Homebrew formula also needs your distribution's `bubblewrap` package: the gateway looks for
+`bwrap` at fixed paths, and Homebrew's own is not one of them. After `brew upgrade`, restart the gateway.
+
 ## Native installers (double-click)
 
 | Platform | Artifact | Scope |
@@ -91,6 +94,8 @@ updater refuses with `ERR_UPDATER_INSTALL_UNSUPPORTED` before it downloads anyth
 - **Installed with `install.sh`:** run `nimbus stop`, then re-run `install.sh` from the new release. It
   refuses, changing nothing, while a gateway is running from its directory.
 - **An AppImage:** run `nimbus stop`, download the new `.AppImage` and use it in place of the old one.
+  An AppImage runs from a copy of its binaries in `~/.cache/nimbus/appimage` (about 225 MB, see
+  [`docs/sandbox.md`](./sandbox.md#linux)); delete an old version's directory there when you no longer need it.
 - **A raw binary, or an archive unpacked and kept in its own directory:** `install.sh` always installs to
   `~/.local/bin`, so it would add a second copy and leave this one old. Run `nimbus stop` and replace every
   file there from the new archive.

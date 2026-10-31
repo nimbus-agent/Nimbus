@@ -113,6 +113,9 @@ before it connects.
 - **A server redirect to an undeclared host fails.** It surfaces as a failed lookup for that
   name. A connector with an incomplete host list breaks rather than falling back to the
   internet; there is no switch.
+- **A host the connector's list does not name fails too.** GCP workload-identity credentials need
+  `sts.googleapis.com` and an AWS SSO profile needs its `portal.sso.<region>.amazonaws.com` hosts; neither
+  is declared, so both fail on Linux.
 - **`*.blob.core.windows.net` covers every Azure storage account**, not only GitHub's, for
   `github_actions`. `gcp_gke_workload_restart`, Azure sovereign clouds and consumer OneDrive
   downloads (a host with more than one label where the wildcard allows one) fail on Linux.
@@ -130,8 +133,8 @@ before it connects.
   `bwrap --unshare-pid` with no init leaves one zombie per run.
 - **Traffic to declared hosts is not in the egress ledger** (I29's stated bound).
 
-**The helper.** `nimbus-sandbox-helper` ships in every Linux package (`.deb`, `.rpm`, tarball
-and AppImage) at mode 755, a static binary with no file capability and no setuid bit; it needs
+**The helper.** `nimbus-sandbox-helper` ships in every Linux package (`.deb`, `.rpm`, tarball,
+AppImage, and the Homebrew formula on Linux) at mode 755, a static binary with no file capability and no setuid bit; it needs
 no `setcap` and no `libcap`. The gateway looks for it at `NIMBUS_SANDBOX_HELPER_PATH`, else beside
 the gateway executable, else `/usr/lib/nimbus/bin/nimbus-sandbox-helper`.
 
@@ -140,7 +143,9 @@ the gateway executable, else `/usr/lib/nimbus/bin/nimbus-sandbox-helper`.
   network. The gateway logs `sandbox: degraded mode (no per-host network gating)` and
   `nimbus doctor` prints `[warn]`. In practice this is a source build, or someone who runs a raw
   `nimbus-gateway-linux-x64` release binary or replaces only the gateway by hand: there is no
-  helper beside it. Re-running `install.sh` puts the helper there.
+  helper beside it. The helper has to go beside the installed gateway: copy `bin/nimbus-sandbox-helper`
+  from the Linux tarball there. `install.sh` does not fix that copy; it installs one of its own, with
+  the helper, to `~/.local/bin`.
 - **`NIMBUS_SANDBOX_HELPER_PATH` set to a path that does not exist:** every spawn of a
   connector that declares a network is refused. It never falls back.
 - **A helper that is found but fails its check, or whose nested start fails** (user
@@ -159,8 +164,18 @@ runs past its 5 s limit is a `[warn]` to re-run, not a refusal: the gateway trea
 transient too. Neither `[ok]` line says a given connector can reach its hosts; for one that cannot, read
 the `net-forward:` lines described next.
 
+**After an upgrade, restart the gateway.** A `.deb` or `.rpm` upgrade does not stop a running gateway
+(the `.deb` says so on an upgrade; the `.rpm` has no install scripts). That gateway keeps its old code but
+starts children from the new file at its path, so new children go through the forwarder at once, while
+`nimbus doctor` reports the posture it took at boot. Coming from v10.12.0 or v10.13.0 that is the whole
+effect. Coming from v10.11.0 or earlier its policies carry neither `firstPartyPolicy` nor
+`ownerConfiguredNetwork`, so until it restarts every entry counts as package-declared: a private answer
+for a stored self-hosted URL or a first-party name is refused. `install.sh` refuses while a gateway is
+running from its directory, so it never reaches this state.
+
 **When a connector cannot reach a host,** look for `net-forward: <host>: <reason>` in the gateway
-log (`gateway-<date>.log`, written when the gateway is started through `nimbus start`). The line
+log (`${XDG_DATA_HOME:-~/.local/share}/nimbus/logs/gateway-<date>.log`, written when the gateway is
+started through `nimbus start`). The line
 names the host, not the connector, and has no timestamp of its own. Lines are sanitised and
 rate-limited (60 a minute), and never carry relayed bytes or an address.
 
@@ -174,6 +189,14 @@ For the tarball, `linux-postinstall.sh` does the same through `sudo`. An AppImag
 step: `nimbus doctor` reports the failure and prints the commands. `canConfine` runs the namespaces
 rather than `bwrap --version`, so a refused policy says why before the owner is asked to approve.
 
+**The AppImage runs from a copy.** Its FUSE mount lasts only as long as the process that entered it, so
+`nimbus start` would leave a gateway whose executable had vanished, and on a real AppImage that gateway
+crashed within a second of the command returning. `AppRun` therefore copies the binaries, on first use, to
+`${XDG_CACHE_HOME:-~/.cache}/nimbus/appimage/<version>-<hash>/` (about 225 MB) and runs from there, so the
+gateway, the helper and `vec0.so` are ordinary files. Nothing removes the copy of an old version; delete
+it by hand once no gateway is running from it. If the copy cannot be made, `AppRun` says so and runs from
+the mount, where every command but a background gateway still works.
+
 Behind the forwarder a child's `/etc/resolv.conf` is the generated one. In the no-helper fallback only, a
 child with a network gets the file behind the host's `/etc/resolv.conf` bound at its own path, because
 on Ubuntu that is a symlink into `/run/systemd/resolve`, which is not otherwise bound. Only that file
@@ -186,8 +209,10 @@ allows only the declared hosts and paths, with a rule of the form
 `(remote tcp "*:443" (host "api.github.com"))` for each declared entry. macOS 14
 (Sonoma) + macOS 15 (Sequoia) verified during PR 1's spike. What is tested: the
 profile text the runner generates, and `sandbox-exec` for filesystem and
-no-network confinement. No test has sent a connection through a per-host rule under
-a real `sandbox-exec`, so the per-host rule has never run in a test. If `sandbox-exec` is unavailable
+no-network confinement. `sandbox-wrapper-spawn.test.ts` also runs a per-host policy through the real
+runner on the macOS CI leg: it asserts that the profile parses and a child starts, and it logs what a
+declared and an undeclared connection do without asserting either. So no test yet proves that macOS
+refuses an undeclared host. If `sandbox-exec` is unavailable
 on a future macOS version, Nimbus falls back to an `EndpointSecurity`
 client (deferred to a follow-up).
 
@@ -373,6 +398,11 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 
 ### Stated bounds
 
+- **A server that fetches its own code needs that host too.** `npx -y pkg` downloads from
+  `registry.npmjs.org` when it starts, so a server registered with `--net api.example.com` and `npx`,
+  which worked while Linux gave it the whole internet, now fails with a failed lookup for that name.
+  There is no command that edits a registered server's grants: run `nimbus connector remove <mcp_id>`,
+  then `nimbus connector add --mcp` again with `--net registry.npmjs.org` as well, and approve it again.
 - **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
 - **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
 - **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so its manifest grants it read and write on `dataDir` explicitly. It is NOT excepted from the per-policy directory: it runs in its own leaf under `sandboxDir` like every other spawn. The exception is that explicit `dataDir` GRANT, not its working directory.
@@ -392,7 +422,7 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 | -- | ----------------------------------------------------- |
 | Linux (helper available) | Per-host + per-port, through the local forwarder: only `a.com:443` and `b.com:993` reachable, TCP only. First-party connectors may also reach their wildcard patterns |
 | Linux (helper missing) | All-or-nothing: full network (`nimbus doctor` `[warn]`). A set `NIMBUS_SANDBOX_HELPER_PATH` that names nothing, or a helper that cannot start, refuses instead |
-| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching); no wildcards. Generated profile text is tested; the rule has not been run under a real `sandbox-exec` test |
+| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching); no wildcards. A test runs the rule under a real `sandbox-exec` and asserts that it parses and a child starts; refusal of an undeclared host is logged, not asserted |
 | Windows | All-or-nothing (AppContainer `internetClient`; port not enforced) |
 
 Windows per-host filtering would require Windows Filtering Platform

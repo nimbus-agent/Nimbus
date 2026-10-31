@@ -34,19 +34,34 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
   re-run inside `bwrap`, and a gateway outside `/usr` (a tarball's `~/.local/bin`, the AppImage mount) is in no view, so
   `bwrap` failed with `execvp ...: No such file or directory` and no sandboxed child started, in any network mode; that one
   file is now bound read-only in the inner view (never its directory); every Linux package
-  (`.deb`, `.rpm`, tarball, AppImage) ships the helper at mode 755 and the `setcap` steps, the `libcap2-bin`/`libcap`
+  (`.deb`, `.rpm`, tarball, AppImage, Homebrew) ships the helper at mode 755 and the `setcap` steps, the `libcap2-bin`/`libcap`
   dependencies and `headless-postinst-linux-setcap.md` are gone; `nimbus doctor` prints `[ok] Sandbox: declared hosts are
-  enforced.`, `[warn]` when the helper is missing and `[fail]` when the gateway would refuse; the child's seccomp filter
+  enforced.` for a running gateway that reports it, `[ok] Sandbox: the network forwarder can start here. Start the
+  gateway to confirm enforcement.` with none, `[warn]` when the helper is missing and `[fail]` when the gateway would
+  refuse; the Homebrew formula's `bin.install "nimbus"` failed with `ENOENT` on the Linux tarball's `bin/` layout (measured
+  on a real Linuxbrew), so that channel had never installed, and it now does, with the helper and `vec0.so` and a caveat
+  that bubblewrap comes from the distribution; `install.sh` over a running gateway died of `Text file busy` with the CLI
+  replaced and the rest not, and now refuses before changing anything; `nimbus update` gives an AppImage and a copy kept
+  elsewhere their own instructions rather than `install.sh`, which would add a second copy; the AppImage's mount ended when
+  `nimbus start` returned and the gateway it had spawned crashed within a second, so `AppRun` now runs from a per-build
+  copy under `~/.cache/nimbus/appimage`; the child's seccomp filter
   answers an unlisted call ENOSYS rather than killing (a kill is kept for a wrong architecture and `SYS_KILL_ALWAYS`).
   **Bounds:** TCP only; IPv4 loopback inside; a direct connection to an undeclared IP is refused by the kernel and not
   logged; with no helper found the whole internet returns (doctor warns), while a set `NIMBUS_SANDBOX_HELPER_PATH` that names
   nothing, or a helper whose start fails, refuses and never falls back; a server redirect to an undeclared host fails;
   `*.blob.core.windows.net` covers every Azure storage account for `github_actions`; `gcp_gke_workload_restart`, Azure
-  sovereign clouds and consumer OneDrive downloads fail on Linux; wildcards do not exist on macOS or Windows, and macOS's
-  per-host SBPL rule has been tested as generated text only; a policy read path at `$HOME` or `/tmp` exposes any unix
+  sovereign clouds, consumer OneDrive downloads, GCP workload-identity credentials (`sts.googleapis.com`) and an AWS SSO
+  profile's portal hosts fail on Linux; a user MCP server run through `npx` needs `--net registry.npmjs.org` too, set by
+  `nimbus connector remove` and adding it again; wildcards do not exist on macOS or Windows, and macOS's per-host SBPL rule
+  is tested as generated text and as a real `sandbox-exec` run that parses and starts a child, with refusal logged and not
+  asserted; a policy read path at `$HOME` or `/tmp` exposes any unix
   socket there to the child and the forwarder; a container needs `docker run --init`; a raw `nimbus-gateway-linux-x64` binary
-  run without the helper beside it has none (re-run `install.sh`). The `net-forward:` lines reach `gateway-<date>.log`, name the host and not the
-  connector, and carry no timestamp. See `docs/sandbox.md` § Linux and `docs/SECURITY-INVARIANTS.md` I50.
+  run without the helper beside it has none (copy it there from the tarball). The `net-forward:` lines reach
+  `gateway-<date>.log` under the data directory's `logs/`, name the host and not the connector, and carry no timestamp.
+  **After upgrading, restart the gateway:** one left running through a `.deb` or `.rpm` upgrade keeps its old code, starts new
+  children from the new file, so they go through the forwarder, and doctor reports its old posture; v10.12.0 and v10.13.0
+  already carry `firstPartyPolicy` and `ownerConfiguredNetwork`, but a gateway from v10.11.0 or earlier does not, so until it
+  restarts a private answer for a stored self-hosted URL or a first-party name is refused. See `docs/sandbox.md` § Linux and `docs/SECURITY-INVARIANTS.md` I50.
 
 - **2026-10-31 — A pull request's source branch is indexed, and `GET /v1/items/resolve` returns it (no migration, no new
   invariant).** `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read from GitHub's `head.ref`, Bitbucket's
