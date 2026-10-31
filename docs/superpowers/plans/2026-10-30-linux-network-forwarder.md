@@ -317,7 +317,7 @@ Run: `bun run verify:docker --changed`
 - Produces two CLI modes:
   - `nimbus-sandbox-helper --check`: prints `OK`, exit 0. No capability check.
   - `nimbus-sandbox-helper --socket <path> [--alias <ip>]... --listen <ip>:<port>:<index>... --dns <ip> -- <argv...>`
-- Exit codes: 2 usage, 3 bind or listen failure, 5 alias failure, 127 exec failure.
+- Exit codes: 2 usage, 3 bind or listen failure, 5 alias failure, 6 the forwarder failed to lock down, 127 exec failure.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -375,8 +375,8 @@ The `Makefile` drops `-lcap`, and links with `-static`. Keep `-Wall -Wextra -Wer
 
 ```ts
 // resolveHelperPath: NIMBUS_SANDBOX_HELPER_PATH wins; next, a helper beside execPath; next, /usr/lib/nimbus/bin; else null.
-// buildForwarderArgv: outer has --unshare-user --unshare-net --unshare-pid --uid 0 --gid 0, the three --cap-add, and CAP_NET_ADMIN only when an entry is an IP literal.
-// Outer ro-binds / and read-write-binds cwd and each policy write path, so the inner bwrap's binds resolve.
+// buildForwarderArgv: outer has --unshare-user --unshare-net --unshare-pid --uid 0 --gid 0, the three --cap-add, and CAP_NET_ADMIN only when an entry is an IP literal outside 127.0.0.0/8. A 127.0.0.0/8 literal gets no --alias, since it is already local and `--alias 127.0.0.1` exits 5.
+// Outer binds exactly what the spec's "Outer view" lists, and each path the inner bwrap's argv binds, so its binds resolve. Assert it binds none of /, /run, /var/run, $HOME or $XDG_RUNTIME_DIR, and that a bwrap outside /usr is also bound.
 // Outer binds the generated hosts file at /etc/hosts and the generated resolv.conf at resolvConfTarget.
 // Outer binds the helper at a fixed path under /run, so a helper in ~/.local/bin or an AppImage mount resolves.
 // The socket dir is bound in the outer and NOT in the inner.
@@ -408,6 +408,8 @@ In `per-host` mode: create a 0700 temp dir, write the hosts and resolv files, ca
 // Kill the wrapper while the child sleeps: within 5 s no child or forwarder process is left.
 // Kill the forwarder from outside: the child's next connection fails, and nothing falls back to a route.
 // Owner uid: a file written in cwd is owned by the real uid on the host.
+// Under buildForwarderArgv, a helper patched or a probe told to connect to a unix socket in a directory outside the policy: the target receives nothing.
+// A real connect through the forwarder in the start probe: a forwarder that failed lockdown makes the start exit 6, so canConfine refuses.
 // Real network, CI only: a first-party-shaped policy with `*-run.googleapis.com`. fetch to https://us-central1-run.googleapis.com/ gets an HTTP status with real TLS. evil.googleapis.com and a.b-run.googleapis.com fail to resolve, and the log names them.
 // A trailing-dot name, `jenkins.corp.`, resolves through the same entry as `jenkins.corp`.
 ```
