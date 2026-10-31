@@ -141,6 +141,7 @@ export function bitbucketPrMetadata(
  * The upsert replaces the whole metadata object, so a response with no `source.branch` would erase
  * the branch already indexed. Carry it forward, as GitLab's rows do.
  */
+// lane-census: scope=pr service=bitbucket
 function withStoredBranch(
   ctx: SyncContext,
   externalId: string,
@@ -159,7 +160,6 @@ function withStoredBranch(
   } catch {
     return meta;
   }
-  // lane-census: scope=pr service=bitbucket
   const branch = asRecord(stored)?.["branch"];
   return typeof branch === "string" && branch !== "" ? { ...meta, branch } : meta;
 }
