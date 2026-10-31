@@ -18,6 +18,36 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-31 — Declared hosts are enforced on Linux, through a local forwarder (invariant I50, I1–I50; no migration, no new static rule).**
+  Until now a Linux child that declared a network got `--share-net`, the whole internet, on every released package: none
+  carried `nimbus-sandbox-helper`, and the helper that existed held `cap_net_admin`, which `unshare(CLONE_NEWNET)` does not
+  accept, so it exited 4 and started nothing (draft #1826). While `docs/sandbox.md` promised per-host. The mechanism is now
+  different. The outer `bwrap` gives the child an empty network namespace (`--unshare-net`); the rewritten helper, a static
+  C binary with no file capability, binds a `127.0.0.x` listener per declared `host:port` there and a forwarder relays each
+  connection over a unix socket to the sandbox wrapper OUTSIDE the sandbox. The wrapper checks the entry, resolves the name
+  once, drops every answer the address rules refuse (link-local, loopback unless the owner typed it, unspecified and
+  reserved ranges, a private answer for a package-declared name) and connects only to an address it kept; a stub resolver in
+  the wrapper answers the child's lookups. The outer view never binds `/`, `/run`, `/var/run`, `$HOME` or
+  `$XDG_RUNTIME_DIR`. First-party connectors get fixed wildcard patterns on Linux only (`*.blob.core.windows.net`,
+  `*.sharepoint.com`, the AWS regional hosts and so on), set only by a table in `first-party-manifests.ts`. **Also in this
+  delivery:** the forwarder's code landed earlier in #1834; this change ships it. A connector or extension is the gateway
+  re-run inside `bwrap`, and a gateway outside `/usr` (a tarball's `~/.local/bin`, the AppImage mount) is in no view, so
+  `bwrap` failed with `execvp ...: No such file or directory` and no sandboxed child started, in any network mode; that one
+  file is now bound read-only in the inner view (never its directory); every Linux package
+  (`.deb`, `.rpm`, tarball, AppImage) ships the helper at mode 755 and the `setcap` steps, the `libcap2-bin`/`libcap`
+  dependencies and `headless-postinst-linux-setcap.md` are gone; `nimbus doctor` prints `[ok] Sandbox: declared hosts are
+  enforced.`, `[warn]` when the helper is missing and `[fail]` when the gateway would refuse; the child's seccomp filter
+  answers an unlisted call ENOSYS rather than killing (a kill is kept for a wrong architecture and `SYS_KILL_ALWAYS`).
+  **Bounds:** TCP only; IPv4 loopback inside; a direct connection to an undeclared IP is refused by the kernel and not
+  logged; with no helper found the whole internet returns (doctor warns), while a set `NIMBUS_SANDBOX_HELPER_PATH` that names
+  nothing, or a helper whose start fails, refuses and never falls back; a server redirect to an undeclared host fails;
+  `*.blob.core.windows.net` covers every Azure storage account for `github_actions`; `gcp_gke_workload_restart`, Azure
+  sovereign clouds and consumer OneDrive downloads fail on Linux; wildcards do not exist on macOS or Windows, and macOS's
+  per-host SBPL rule has been tested as generated text only; a policy read path at `$HOME` or `/tmp` exposes any unix
+  socket there to the child and the forwarder; a container needs `docker run --init`; a raw `nimbus-gateway-linux-x64` binary
+  run without the helper beside it has none (re-run `install.sh`). The `net-forward:` lines reach `gateway-<date>.log`, name the host and not the
+  connector, and carry no timestamp. See `docs/sandbox.md` § Linux and `docs/SECURITY-INVARIANTS.md` I50.
+
 - **2026-10-31 — A pull request's source branch is indexed, and `GET /v1/items/resolve` returns it (no migration, no new
   invariant).** `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read from GitHub's `head.ref`, Bitbucket's
   `source.branch.name` and GitLab's `source_branch`, the same key a `ci_run` row already uses. A found `resolve` answer now

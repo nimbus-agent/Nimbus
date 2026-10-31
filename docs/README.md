@@ -248,8 +248,8 @@ sudo apt install libsecret-tools   # Debian/Ubuntu
 # sudo dnf install libsecret       # Fedora/RHEL
 
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus_amd64.deb -o /tmp/nimbus.deb
-# apt, not `dpkg -i` — the package depends on bubblewrap and libcap2-bin,
-# and dpkg will not install those for you.
+# apt, not `dpkg -i` — the package depends on bubblewrap, and dpkg will
+# not install that for you.
 sudo apt install /tmp/nimbus.deb
 nimbus --version
 ```
@@ -912,7 +912,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I49 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I50 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

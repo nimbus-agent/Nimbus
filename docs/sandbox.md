@@ -41,20 +41,121 @@ or `587` — while everything else keeps the HTTPS-only default:
       }
     }
 
-Enforcement is per-host **and** per-port on Linux (helper) and macOS; the
-bare-host form is identical to the pre-Tier-4 behaviour (TCP/443). On Windows
-the port is not enforced (all-or-nothing `internetClient`, as for hosts — see
+Enforcement is per-host **and** per-port on Linux (through the local forwarder,
+see [#linux](#linux)) and macOS; the bare-host form is identical to the
+pre-Tier-4 behaviour (TCP/443). On Windows the port is not enforced
+(all-or-nothing `internetClient`, as for hosts — see
 [#platform-asymmetry](#platform-asymmetry)).
 
 ## Per-OS implementation
 
 ### Linux {#linux}
 
-`bwrap` (Bubblewrap) creates user / PID / IPC / mount / network namespaces.
-The `nimbus-sandbox-helper` binary (granted `cap_net_admin+ep` via `setcap`
-at install) configures per-host iptables rules inside the netns and drops
-the cap before exec'ing the connector. `bubblewrap` is a hard install
+`bwrap` (Bubblewrap) creates user / PID / IPC / mount / network namespaces, and a
+seccomp filter limits the child's system calls. `bubblewrap` is a hard install
 dependency (`.deb` `Depends:`, `.rpm` `Requires:`).
+
+**Network: a local forwarder** ([invariant I50](./SECURITY-INVARIANTS.md#i50--on-linux-a-sandboxed-childs-only-network-path-is-the-forwarder-and-the-wrapper-checks-every-connection)).
+A child with no declared network gets a single `bwrap --unshare-net`: no network at all.
+A child that declares one runs in a network namespace of its own that holds loopback and
+nothing else, and reaches its declared `host:port` entries like this:
+
+1. Each declared name is written to a generated `/etc/hosts` as its own `127.0.0.x`. The
+   launcher half of `nimbus-sandbox-helper` binds `127.0.0.x:port` for each entry inside the
+   namespace, on the real port, so a client's TLS name and port stay correct. No proxy
+   settings are needed: any program in the sandbox that resolves the name and connects
+   over TCP reaches it.
+2. The forwarder half of the helper (no capabilities, its own seccomp allowlist) relays each
+   connection over a unix socket to the sandbox wrapper, which runs **outside** the sandbox.
+   The forwarder says only which entry the connection arrived on.
+3. The wrapper checks that entry against the policy it parsed, resolves the name once on the
+   host, drops every answer the address rules refuse, and connects only to an address it
+   kept. A name that changes its answer between the check and the connect gains nothing.
+4. A generated `resolv.conf` points at a stub resolver the wrapper runs (`127.0.0.53`, UDP).
+   A declared name gets its mapped address, anything else `NXDOMAIN`; no query leaves the
+   machine. The child itself only sees a failed lookup.
+
+The outer `bwrap` binds no more than the inner one needs (`/usr`, `/etc`, the root's
+`/bin /sbin /lib*`, the helper, a tmpfs `/tmp`, the cwd, the policy's paths and the socket
+directory) and the gateway executable itself when it lives outside `/usr` (`ownExecutableBind` in
+`linux.ts`): that one file, read-only, never its directory, so a child under a `$HOME` install can
+start. It never binds `/`, `/run`, `/var/run`, `$HOME` or `$XDG_RUNTIME_DIR`, because
+the forwarder runs as the owner's uid and a read-only bind does not stop `connect` on a
+unix socket.
+
+**Address rules.** Who chose an entry decides what its name may resolve to. Public answers
+are allowed for everyone. A private answer (RFC 1918, `100.64.0.0/10`, IPv6 unique-local) is
+allowed for an entry the owner typed (a stored connector URL, `--net`) and for a first-party
+connector's own list, so a self-hosted Jenkins on a LAN or a Tailscale name works; for a name
+an extension declared it is refused unless the extension declared that literal address.
+Loopback is allowed only for an owner entry that is `localhost` or that literal, on its
+declared port. Link-local (`169.254.169.254`, `fe80::/10`) and every other non-routable
+range are refused for everyone.
+
+**First-party wildcards.** A few first-party tools call hosts no fixed list can name. A table
+in `connectors/lazy-mesh/first-party-manifests.ts` gives these connectors patterns:
+`github_actions` `*.blob.core.windows.net`; `onedrive` `*.sharepoint.com`; `gcp`
+`*-run.googleapis.com`; `vertex_ai` `*-aiplatform.googleapis.com`; `apple`
+`p*-caldav.icloud.com`; and, on both `amazonaws.com` and `amazonaws.com.cn`, `aws` `ecs.*`
+`lambda.*` `ec2.*` `sts.*`, `athena` `athena.*` `sts.*`, `cloudwatch` `logs.*` `sts.*`, and
+`sagemaker` `api.sagemaker.*` `sts.*`. The `*` stands for part or all of one DNS label, and
+the port is 443 only. A manifest file, an extension or `--net` cannot set one. A matching
+name takes one of 48 pool slots for the child's life; the wrapper re-matches the slot's name
+before it connects.
+
+**Limits, plainly:**
+
+- **TCP only.** UDP (other than the stub resolver's), ICMP and QUIC do not leave; HTTP/3
+  clients fall back to TCP. Inside the sandbox only IPv4 loopback exists; the host may reach
+  the declared name over either family.
+- **A direct connection to an undeclared IP** uses no name and is refused by the kernel. The
+  wrapper never sees it, so it is **not logged**.
+- **A server redirect to an undeclared host fails.** It surfaces as a failed lookup for that
+  name. A connector with an incomplete host list breaks rather than falling back to the
+  internet; there is no switch.
+- **`*.blob.core.windows.net` covers every Azure storage account**, not only GitHub's, for
+  `github_actions`. `gcp_gke_workload_restart`, Azure sovereign clouds and consumer OneDrive
+  downloads (a host with more than one label where the wildcard allows one) fail on Linux.
+- **Wildcards are Linux only.** macOS (SBPL has no way to write one) and Windows ignore them,
+  so these tools keep failing there as they did.
+- **A policy is limited to 252 distinct hosts** (pool slots count), and the wrapper allows at
+  most 256 open connections per child. There is no idle timeout.
+- **A policy path or the cwd at or above `/run`, `/var/run` or the runtime directory is
+  refused** for a network policy.
+- **A policy `read` path at `$HOME` or `/tmp` is the owner's grant** and exposes any unix socket
+  there to the child and to the forwarder. When there is no `$XDG_RUNTIME_DIR` the gateway's own
+  socket lives in `tmpdir()`, so a `/tmp` grant then exposes it.
+- **x86-64 only,** as the seccomp filter and the helper are.
+- **A container needs a reaping init** such as `docker run --init`. Plain
+  `bwrap --unshare-pid` with no init leaves one zombie per run.
+- **Traffic to declared hosts is not in the egress ledger** (I29's stated bound).
+
+**The helper.** `nimbus-sandbox-helper` ships in every Linux package (`.deb`, `.rpm`, tarball
+and AppImage) at mode 755, a static binary with no file capability and no setuid bit; it needs
+no `setcap` and no `libcap`. The gateway looks for it at `NIMBUS_SANDBOX_HELPER_PATH`, else beside
+the gateway executable, else `/usr/lib/nimbus/bin/nimbus-sandbox-helper`.
+
+- **No helper found:** the sandbox degrades to all-or-nothing network. A connector with a
+  non-empty `permissions.network` gets the **whole internet**; one with none gets no
+  network. The gateway logs `sandbox: degraded mode (no per-host network gating)` and
+  `nimbus doctor` prints `[warn]`. In practice this is a source build, or someone who runs a raw
+  `nimbus-gateway-linux-x64` release binary or replaces only the gateway by hand: there is no
+  helper beside it. Re-running `install.sh` puts the helper there.
+- **`NIMBUS_SANDBOX_HELPER_PATH` set to a path that does not exist:** every spawn of a
+  connector that declares a network is refused. It never falls back.
+- **A helper that is found but fails its check, or whose nested start fails** (user
+  namespaces disabled, a listener that cannot bind, the AppArmor restriction below): the same
+  refusal, never a fallback. `canConfine` and `nimbus doctor` run the real nested start, so
+  they report it before the owner is asked to approve.
+
+`nimbus doctor` prints `[ok] Sandbox: declared hosts are enforced.` when the helper runs and a
+real forwarded connection works, `[warn]` when the helper is missing, and `[fail]` when the
+gateway would refuse.
+
+**When a connector cannot reach a host,** look for `net-forward: <host>: <reason>` in the gateway
+log (`gateway-<date>.log`, written when the gateway is started through `nimbus start`). The line
+names the host, not the connector, and has no timestamp of its own. Lines are sanitised and
+rate-limited (60 a minute), and never carry relayed bytes or an address.
 
 **Ubuntu 23.10 and later** set `kernel.apparmor_restrict_unprivileged_userns=1`, and the bubblewrap
 package ships no AppArmor profile, so `bwrap` fails before starting its child (`setting up uid map:
@@ -66,37 +167,20 @@ For the tarball, `linux-postinstall.sh` does the same through `sudo`. An AppImag
 step: `nimbus doctor` reports the failure and prints the commands. `canConfine` runs the namespaces
 rather than `bwrap --version`, so a refused policy says why before the owner is asked to approve.
 
-A child with a network also gets the file behind `/etc/resolv.conf` bound at its own path, because
+Behind the forwarder a child's `/etc/resolv.conf` is the generated one. In the no-helper fallback only, a
+child with a network gets the file behind the host's `/etc/resolv.conf` bound at its own path, because
 on Ubuntu that is a symlink into `/run/systemd/resolve`, which is not otherwise bound. Only that file
 is bound, not the directory holding systemd-resolved's control socket.
-
-If the helper is missing or lacks the cap, the sandbox degrades to
-all-or-nothing network — connectors with non-empty `permissions.network`
-get full network access; connectors with empty `permissions.network` get
-no network at all. The Gateway emits a structured-log warning at startup
-and `nimbus diag --json` reports `sandbox.linux_helper.available: false`.
-
-#### AppImage limitation
-
-AppImage bundles cannot have file capabilities applied to binaries inside
-the squashfs image — `setcap cap_net_admin+ep` only takes effect on a real
-filesystem path. When Nimbus is launched from an AppImage, the
-`nimbus-sandbox-helper` binary inside the bundle has no capability set, so
-the sandbox detects the missing cap at startup and degrades to the
-all-or-nothing network mode described above. The Gateway emits the same
-structured-log warning; `nimbus diag --json` reports
-`sandbox.linux_helper.available: false` and
-`sandbox.linux_helper.reason: "appimage"`.
-
-To get per-host network enforcement on Linux, install via `.deb` /
-`.rpm` / tarball + manual `setcap`. The AppImage flow is supported for
-convenience but runs in the documented fallback mode.
 
 ### macOS
 
 `sandbox-exec` runs each extension under a per-spawn SBPL profile that
-allows only the declared hosts and paths. macOS 14 (Sonoma) + macOS 15
-(Sequoia) verified during PR 1's spike. If `sandbox-exec` is unavailable
+allows only the declared hosts and paths, with a rule of the form
+`(remote tcp "*:443" (host "api.github.com"))` for each declared entry. macOS 14
+(Sonoma) + macOS 15 (Sequoia) verified during PR 1's spike. What is tested: the
+profile text the runner generates, and `sandbox-exec` for filesystem and
+no-network confinement. No test has sent a connection through a per-host rule under
+a real `sandbox-exec`, so the per-host rule has never run in a test. If `sandbox-exec` is unavailable
 on a future macOS version, Nimbus falls back to an `EndpointSecurity`
 client (deferred to a follow-up).
 
@@ -108,7 +192,7 @@ ships beside `nimbus-gateway.exe` in every Windows release artifact
 (zip and MSI) and is resolved by `dirname(process.execPath)` at
 startup. `CreateAppContainerProfile` is a per-user API: ACL edits
 inside the user's own profile need no elevation, so there is no
-install-time `setcap`-equivalent step, unlike the Linux helper.
+install-time privilege step.
 
 On every spawn the helper:
 
@@ -299,9 +383,9 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
 
 | OS | Network policy when `permissions.network: ["a.com", "b.com:993"]` |
 | -- | ----------------------------------------------------- |
-| Linux (helper available) | Per-host + per-port: only `a.com:443` and `b.com:993` reachable |
-| Linux (helper missing) | All-or-nothing: full network |
-| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching) |
+| Linux (helper available) | Per-host + per-port, through the local forwarder: only `a.com:443` and `b.com:993` reachable, TCP only. First-party connectors may also reach their wildcard patterns |
+| Linux (helper missing) | All-or-nothing: full network (`nimbus doctor` `[warn]`). A set `NIMBUS_SANDBOX_HELPER_PATH` that names nothing, or a helper that cannot start, refuses instead |
+| macOS | Per-host + per-port (SBPL host + `remote tcp "*:port"` matching); no wildcards. Generated profile text is tested; the rule has not been run under a real `sandbox-exec` test |
 | Windows | All-or-nothing (AppContainer `internetClient`; port not enforced) |
 
 Windows per-host filtering would require Windows Filtering Platform
@@ -324,43 +408,33 @@ To list affected extensions:
 
     nimbus extension list --filter needs-reinstall
 
-## Stale DNS rules {#stale-dns-rules}
+## Name resolution on Linux {#stale-dns-rules}
 
-The Linux helper resolves each `permissions.network` host once at exec
-time. If a host's IP changes during a long-running connector session
-(CDN rotation, regional failover), the connector starts seeing
-`ECONNREFUSED` / `ETIMEDOUT` against an allowed host. PR 1's recovery
-strategy is:
+Earlier builds resolved each declared host once when the sandbox started and wrote the
+addresses into `iptables` rules, so a host whose IP changed (CDN rotation, regional failover)
+started failing until the extension restarted. That mechanism is gone. The wrapper resolves a
+declared name when each connection arrives, and filters the answers then, so there is nothing
+to go stale. `nimbus diag --json` still carries `sandbox.stale_rules_count`, now always `0`.
 
-1. The connector retries the connection. The kernel resolver caches DNS
-   for the connector process; a fresh DNS query may return the new IP,
-   but the iptables rules still list the old IPs.
-2. Persistent failures surface a `SandboxStaleRulesError` in the
-   connector's health state machine.
-3. `nimbus diag --json` reports the count under
-   `sandbox.stale_rules_count`.
-4. To recover, restart the extension:
+## Linux network model {#linux-veth-model}
 
-       nimbus extension restart <id>
+There is no `veth` pair, no `iptables` and no capability on the host. The child's network
+namespace holds loopback only; the one thing that crosses it is a unix socket to the wrapper,
+which the child cannot see (see [#linux](#linux)). The launcher holds `CAP_NET_BIND_SERVICE`,
+`CAP_SETPCAP` and `CAP_SETFCAP` inside its own user namespace (and `CAP_NET_ADMIN` there when
+an IP-literal entry needs an address added to loopback), the forwarder drops all of them and
+installs its own seccomp allowlist, and the child has none (`--cap-drop ALL`, and measured
+`CapPrm`, `CapEff` and `CapAmb` of 0).
 
-   or restart the Gateway. The sandbox spawns a fresh helper invocation
-   which re-resolves the allow-list.
+### The child's seccomp filter
 
-Periodic re-resolve inside the helper (avoiding the manual restart) is
-a tracked follow-up. PR 1 ships the counter so operators can size the
-problem before the follow-up lands.
-
-## Linux veth model
-
-The helper creates a per-spawn netns and a `veth` pair connecting it to
-the host: `nb-out-<pid>` (host side) ↔ `nb-in-<pid>` (inside the new
-netns). The host-side peer is in the host's network namespace, so the
-connector inside the new netns cannot see it as an interface — namespace
-isolation enforces this at the kernel level. The connector also lacks
-`CAP_NET_ADMIN` in the host's user namespace (bwrap's `--unshare-user`
-moves it to a fresh user namespace where caps don't translate to
-host-namespace effects), so it cannot manipulate or escape the netns
-boundary.
+An x86-64 allowlist (`platform/sandbox/seccomp-filter.ts`). First match wins: a call on the
+allow list is allowed; `SYS_BLOCK_EPERM` answers `EPERM`; `SYS_KILL_ALWAYS` kills the
+process; a call on no list answers `ENOSYS`, as a kernel without it would. `clone` with a
+namespace flag kills the process, and `clone3` answers `ENOSYS` (its flags live in user memory,
+which a filter cannot read, so libc and the runtimes fall back to `clone`). A call from another
+architecture is killed. `uretprobe` and `uprobe` pass any seccomp filter by kernel design, so
+the filter does not govern them.
 
 ## See also
 

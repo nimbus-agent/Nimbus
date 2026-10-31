@@ -80,7 +80,9 @@ Every artifact — the native installers above, the raw `nimbus` / `nimbus-gatew
 binaries, the portable `.tar.gz` (macOS/Linux) and `.zip` (Windows) archives, the
 Linux `.AppImage`, and the `SHA256SUMS` + GPG signature — is published on the
 [releases page](https://github.com/nimbus-agent/Nimbus/releases). The portable
-archives and raw binaries keep the self-updater enabled.
+archives and raw binaries keep the self-updater enabled. On Linux, a raw `nimbus-gateway-linux-x64` has no
+`nimbus-sandbox-helper` beside it, so connectors that declare a network reach the whole internet (a log
+warning and `nimbus doctor` `[warn]`); re-run `install.sh` to put the helper there.
 
 ## Universal fallback (scripted)
 
