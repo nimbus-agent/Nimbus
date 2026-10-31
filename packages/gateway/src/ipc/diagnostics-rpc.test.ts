@@ -328,6 +328,19 @@ describe("buildSandboxDiagPayload (T2 PR 1 Task 20)", () => {
     });
   });
 
+  test("a helper that is there and cannot start reports refusing, not all_or_nothing", () => {
+    const payload = buildSandboxDiagPayload({
+      ...makeMockRunner({
+        platform: "linux",
+        fullyActive: false,
+        reason: "the network forwarder cannot start here: exit 3",
+      }),
+      networkRefused: () => true,
+    });
+    expect(payload.platform_capabilities.network).toBe("refusing");
+    expect(payload.platform_capabilities.reason).toContain("cannot start");
+  });
+
   test("reports all_or_nothing + 'sandbox runner unavailable' when no runner is wired", () => {
     const payload = buildSandboxDiagPayload(undefined);
     expect(payload.platform_capabilities.network).toBe("all_or_nothing");

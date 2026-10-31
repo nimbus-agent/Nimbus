@@ -1,5 +1,6 @@
 import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { isValidWildcardHost } from "./net-wildcard-hosts.ts";
 
 /**
  * What a sandbox runner needs to know to confine a process.
@@ -26,9 +27,21 @@ export interface SandboxPolicy {
   /**
    * The `permissions.network` entries the OWNER typed (a stored connector URL, a `--net`), the only
    * ones a runner may let resolve to a private or loopback address. Set only by gateway code from
-   * the owner's settings, never read from a manifest file. Nothing reads it yet.
+   * the owner's settings, never read from a manifest file.
    */
   readonly ownerConfiguredNetwork?: readonly string[];
+  /**
+   * True when the policy came from a first-party manifest (`manifestForFirstParty`). Selects the
+   * first-party column of the address rules. Set only by gateway code, never read from a manifest
+   * file.
+   */
+  readonly firstPartyPolicy?: boolean;
+  /**
+   * Wildcard host patterns a first-party connector may reach, from the table in
+   * `first-party-manifests.ts`. Only the Linux runner reads them. Set only by gateway code,
+   * never read from a manifest file.
+   */
+  readonly firstPartyWildcardHosts?: readonly string[];
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
@@ -39,6 +52,10 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
     ...(manifest.ownerConfiguredNetwork === undefined
       ? {}
       : { ownerConfiguredNetwork: manifest.ownerConfiguredNetwork }),
+    ...(manifest.firstPartyPolicy === true ? { firstPartyPolicy: true } : {}),
+    ...(manifest.firstPartyWildcardHosts === undefined
+      ? {}
+      : { firstPartyWildcardHosts: manifest.firstPartyWildcardHosts }),
   };
 }
 
@@ -55,11 +72,58 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
 export const SANDBOX_POLICY_ENV = "NIMBUS_SANDBOX_POLICY_JSON";
 export const SANDBOX_CWD_ENV = "NIMBUS_SANDBOX_CWD";
 
+/**
+ * What the Linux wrapper needs from the gateway's environment and a child never gets. The allowlist
+ * in `extensionProcessEnv` (I1) rightly drops both, and that dropped the helper override: a gateway
+ * that saw a helper reported per-host, while its wrapper found none and gave the child the whole
+ * internet. The wrapper strips them from the child's environment. Not on Windows, where `win32.ts`
+ * reads the same override and its e2e tests rely on a helper copied beside the runtime instead.
+ */
+const LINUX_WRAPPER_ONLY_ENV = ["NIMBUS_SANDBOX_HELPER_PATH", "XDG_RUNTIME_DIR"] as const;
+
+/** Whether a child under this policy has any network to reach. Wildcards alone count. */
+export function declaresNetwork(policy: SandboxPolicy): boolean {
+  return policy.permissions.network.length > 0 || (policy.firstPartyWildcardHosts?.length ?? 0) > 0;
+}
+
+export function isSandboxWrapperOnlyEnv(key: string): boolean {
+  return (LINUX_WRAPPER_ONLY_ENV as readonly string[]).includes(key);
+}
+
+export function sandboxWrapperOnlyEnv(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string> {
+  if (platform !== "linux") return {};
+  const out: Record<string, string> = {};
+  for (const key of LINUX_WRAPPER_ONLY_ENV) {
+    const value = env[key];
+    if (value !== undefined && value !== "") out[key] = value;
+  }
+  return out;
+}
+
 function strings(v: unknown, what: string): string[] {
   if (!Array.isArray(v) || v.some((e) => typeof e !== "string")) {
     throw new TypeError(`${what} must be an array of strings`);
   }
   return v as string[];
+}
+
+function wildcardPatterns(v: unknown): string[] {
+  const patterns = strings(v, "policy.firstPartyWildcardHosts");
+  const bad = patterns.find((p) => !isValidWildcardHost(p));
+  if (bad !== undefined) {
+    throw new TypeError("policy.firstPartyWildcardHosts holds a pattern that is not valid");
+  }
+  return patterns;
+}
+
+function booleanField(v: unknown, what: string): boolean {
+  if (typeof v !== "boolean") {
+    throw new TypeError(`${what} must be a boolean`);
+  }
+  return v;
 }
 
 /**
@@ -115,5 +179,11 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
             "policy.ownerConfiguredNetwork",
           ),
         }),
+    ...(o["firstPartyPolicy"] === undefined
+      ? {}
+      : { firstPartyPolicy: booleanField(o["firstPartyPolicy"], "policy.firstPartyPolicy") }),
+    ...(o["firstPartyWildcardHosts"] === undefined
+      ? {}
+      : { firstPartyWildcardHosts: wildcardPatterns(o["firstPartyWildcardHosts"]) }),
   };
 }

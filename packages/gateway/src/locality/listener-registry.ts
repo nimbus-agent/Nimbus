@@ -4,8 +4,8 @@
  * honest if a listener that is not actually open is absent, never reported "closed": `live()`
  * calls each registered PROBE fresh on every read, so it can never report a stale snapshot.
  *
- * Each of the five listen sites the static rule D31 polices (`ipc`, `http`, `lan`, `metrics`,
- * `oauth_callback`) registers a probe right after its own `listen`/`serve` call succeeds and
+ * Each of the six listen sites the static rule D31 polices (`ipc`, `http`, `lan`, `metrics`,
+ * `oauth_callback`, `sandbox_forward`) registers a probe right after its own `listen`/`serve` call succeeds and
  * unregisters on every stop path (success, error, and — for `oauth_callback` — timeout). A probe
  * returning `null` means "not listening right now" without the caller having to remember to
  * unregister eagerly; `live()` also treats a THROWING probe as `null` rather than letting one
@@ -16,9 +16,20 @@
  * through D31: that rule can only see the three call shapes it scans for
  * (`Bun.serve`/`Bun.listen`/`net.createServer`), and a library opening a socket internally is
  * invisible to a text scan. Its registration is proven only by its own test.
+ *
+ * `sandbox_forward` (`platform/sandbox/net-forward-host.ts`) is the Linux network forwarder's unix
+ * socket. It registers because D31 scans its file, but it runs in the `__nimbus-sandbox` wrapper,
+ * a process of its own, so a gateway's panel never shows it.
  */
 
-export type ListenerName = "ipc" | "http" | "lan" | "metrics" | "oauth_callback" | "mdns";
+export type ListenerName =
+  | "ipc"
+  | "http"
+  | "lan"
+  | "metrics"
+  | "oauth_callback"
+  | "mdns"
+  | "sandbox_forward";
 
 export interface ListenerReport {
   readonly name: ListenerName;

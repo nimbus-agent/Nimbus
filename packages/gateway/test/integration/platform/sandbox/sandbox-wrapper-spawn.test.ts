@@ -15,9 +15,9 @@ import {
 /**
  * Real, end-to-end spawns through the `__nimbus-sandbox` role, on every platform Nimbus ships on.
  *
- * Nothing else in the suite does this. `sandbox-helper-strace.test.ts` (Linux-only) straces the
- * raw native helper binary directly — it never goes through `sandbox-wrapper.ts`, and it says
- * nothing about Windows or macOS at all. That gap is exactly what let a broken Windows spawn path
+ * Nothing else in the suite does this. `linux-helper-launcher.test.ts` (Linux-only) runs the raw
+ * native helper binary directly — it never goes through `sandbox-wrapper.ts`, and it says nothing
+ * about Windows or macOS at all. That gap is exactly what let a broken Windows spawn path
  * (Task 5's fix) survive a green three-OS CI matrix: nothing in CI ever spawned through this role
  * for real on any OS but Linux. This file closes that hole.
  */

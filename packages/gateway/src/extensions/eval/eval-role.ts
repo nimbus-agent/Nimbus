@@ -158,7 +158,9 @@ export const REAL_EVAL_LOADERS: EvalRunLoaders = {
     };
   },
   canConfine: async () => {
-    const runner = await (await import("../../platform/sandbox/index.ts")).createSandboxRunner();
+    // No network by construction (I49), so no forwarder to probe.
+    const { createSandboxRunner } = await import("../../platform/sandbox/index.ts");
+    const runner = await createSandboxRunner({ forwarderStartProbe: false });
     return (p) => runner.canConfine(p);
   },
   sandboxDir: async () =>

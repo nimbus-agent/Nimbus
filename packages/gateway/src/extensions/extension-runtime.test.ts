@@ -12,13 +12,16 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { userMcpManifestFromRow } from "../connectors/lazy-mesh/user-mcp.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
 import {
+  declaresNetwork,
   policyFromManifest,
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
+  sandboxWrapperOnlyEnv,
 } from "../platform/sandbox/sandbox-policy.ts";
 import { MockVault } from "../vault/mock.ts";
 import { approveExtensionRun } from "./approve-run.ts";
@@ -117,7 +120,30 @@ describe("buildExtensionRuntimeManifest", () => {
   });
 });
 
-describe("an extension can never set ownerConfiguredNetwork (I43)", () => {
+describe("an extension can never set ownerConfiguredNetwork or firstPartyPolicy (I43)", () => {
+  test("a manifest file naming firstPartyPolicy parses without it", () => {
+    const parsed = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        permissions: { network: ["10.0.0.1"], filesystem: { read: [], write: [] } },
+        firstPartyPolicy: true,
+      }),
+    );
+    expect((parsed as ExtensionManifest).firstPartyPolicy).toBeUndefined();
+    expect("firstPartyPolicy" in parsed).toBe(false);
+  });
+
+  test("neither the spawn manifest nor the spawn policy carries firstPartyPolicy", () => {
+    const { v } = realInstall();
+    const m = buildExtensionRuntimeManifest(v, runtimeReadPaths);
+    expect("firstPartyPolicy" in m).toBe(false);
+    expect("firstPartyPolicy" in policyFromManifest(m)).toBe(false);
+    expect(
+      "firstPartyPolicy" in extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
+    ).toBe(false);
+  });
+
   test("a manifest file naming it parses without it", () => {
     const parsed = parseExtensionManifestJson(
       JSON.stringify({
@@ -140,6 +166,52 @@ describe("an extension can never set ownerConfiguredNetwork (I43)", () => {
       "ownerConfiguredNetwork" in
         extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
     ).toBe(false);
+  });
+});
+
+describe("no manifest file or user MCP row can set firstPartyWildcardHosts (I43)", () => {
+  const WILDCARDS = ["*.sharepoint.com", "*.blob.core.windows.net"];
+
+  test("a manifest file naming it parses without it, and so does its policy", () => {
+    const parsed = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+        firstPartyPolicy: true,
+        firstPartyWildcardHosts: WILDCARDS,
+      }),
+    );
+    expect((parsed as ExtensionManifest).firstPartyWildcardHosts).toBeUndefined();
+    expect("firstPartyWildcardHosts" in parsed).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(parsed)).toBe(false);
+  });
+
+  test("neither the spawn manifest nor the spawn policy of an extension carries it", () => {
+    const { v } = realInstall();
+    const m = buildExtensionRuntimeManifest(v, runtimeReadPaths);
+    expect("firstPartyWildcardHosts" in m).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(m)).toBe(false);
+    expect(
+      "firstPartyWildcardHosts" in
+        extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
+    ).toBe(false);
+  });
+
+  test("a user MCP row, even one whose --net holds a wildcard, yields a manifest without it", () => {
+    const r = userMcpManifestFromRow({
+      service_id: "mcp_x",
+      command: "/bin/echo",
+      args_json: "[]",
+      created_at: 0,
+      read_paths_json: "[]",
+      net_hosts_json: JSON.stringify(WILDCARDS),
+      model_access: 0,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect("firstPartyWildcardHosts" in r.manifest).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(r.manifest)).toBe(false);
   });
 });
 
@@ -170,6 +242,8 @@ describe("buildExtensionSpawnSpec", () => {
       ...Object.keys(extensionProcessEnv({})),
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
+      // The wrapper strips this pair before the child, and only a network policy on Linux gets it.
+      ...Object.keys(declaresNetwork(policyFromManifest(manifest)) ? sandboxWrapperOnlyEnv() : {}),
     ]);
     for (const k of Object.keys(spec.env)) expect(allowed.has(k)).toBe(true);
     // The working directory is the fresh stage itself, never the long-lived per-policy leaf.

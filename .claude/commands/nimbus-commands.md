@@ -90,7 +90,7 @@ something the adjacent command checks — with one exception: `test:coverage:hea
 `audit:coverage-floor` ratchet. The commands remain useful for running a scope's tests locally;
 CI no longer runs them. Their per-area `Coverage — <area>` jobs were removed on 2026-10-17 (12 per
 PR, ~30 per push, re-running tests the suite had already run), and the only work they did that the
-suite does not moved with them: the CAP_NET_ADMIN sandbox helper build, its `cppcheck
+suite does not moved with them: the sandbox helper build, its `cppcheck
 --error-exitcode=1` and its sandbox tests now run in the Linux `integration` job, and the Windows
 helper's `--check-caps` probe in the Windows `unit-coverage` job.
 

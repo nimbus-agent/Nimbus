@@ -746,26 +746,29 @@ jobs:
         env:
           CI: "true"
 
-      # The Linux sandbox helper itself: built, statically analysed, given CAP_NET_ADMIN, and
-      # exercised by the sandbox unit tests against the real binary. This ran in the Linux leg of
+      # The Linux sandbox helper itself: built, statically analysed, and exercised by the sandbox
+      # unit tests against the real binary, which NIMBUS_REQUIRE_SANDBOX_HELPER stops them skipping. This ran in the Linux leg of
       # the `Coverage — Sandbox` job until the per-area coverage jobs were removed. AFTER the
       # integration tests on purpose — they have always run with no helper built, and building it
       # first would change which sandbox path they take — and `!cancelled()` so a red integration
       # step does not hide this one.
-      - name: Linux — sandbox helper (build, cppcheck, setcap, its tests against the real binary)
+      - name: Linux — sandbox helper (build, cppcheck, its tests against the real binary)
         if: runner.os == 'Linux' && !cancelled()
         shell: bash
         run: |
           bun run build:sandbox-helper
           cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
-          sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
-          bun test packages/gateway/src/platform/sandbox --timeout 60000
+          # Not the forwarder's real-network file: the next step runs it with the restriction on.
+          bun test packages/gateway/src/platform/sandbox --timeout 60000 --path-ignore-patterns='**/linux-forwarder-network.test.ts'
         env:
           CI: "true"
+          NIMBUS_REQUIRE_SANDBOX_HELPER: "1"
 
       # Everything above runs with Ubuntu's AppArmor restriction switched OFF by
       # install-sandbox-deps.sh, which is how a stock Ubuntu 24.04 could not start any sandboxed
       # child while CI stayed green. This step runs with it on, using the `.deb`'s own script blocks.
+      # It also builds the helper and a gateway, and runs the network forwarder's real test and the
+      # real `github` connector through it, since that path nests a second bwrap.
       - name: Linux — bubblewrap on stock Ubuntu (AppArmor restriction on, the .deb's profile)
         if: runner.os == 'Linux' && !cancelled()
         shell: bash
@@ -1048,6 +1051,8 @@ jobs:
           (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
           bun scripts/connector-boot-smoke.ts dist/nimbus-gateway
           bun scripts/package-headless-bundle.ts --skip-embedding-model
-          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
+          # --skip-sandbox-helper: the helper must not ship yet; the shipping PR removes this flag
+          # (and its twin in release.yml). package-linux-installers.test.ts guards both calls.
+          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage --skip-sandbox-helper
           test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
           test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz

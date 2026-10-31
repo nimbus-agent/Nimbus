@@ -1,4 +1,29 @@
-const SYSCALL_NR: Record<string, number> = {
+/**
+ * The child's seccomp filter: an x86-64 allowlist.
+ *
+ * Order of verdicts, first match wins: allow (`SYS_ALLOW`), refuse with EPERM (`SYS_BLOCK_EPERM`),
+ * kill (`SYS_KILL_ALWAYS`), and anything else answers ENOSYS ("function not implemented"). A call
+ * from another architecture is killed before any of that.
+ *
+ * Why the default is ENOSYS and not a kill. The default used to be SECCOMP_RET_KILL_PROCESS, and an
+ * allowlist can never be complete across distros and CLIs, so each call it missed killed a connector
+ * with SIGSYS, exit 159 and no stderr, which nothing could report or diagnose. That cost three
+ * separate bugs on real systems: DNS died on glibc's `sendmmsg`, every subprocess died on Bun's
+ * `pidfd_open`, and every shell script died on Fedora, where bash calls `getresuid`. ENOSYS refuses
+ * the call exactly as the kill did, so confinement is unchanged: only the failure mode differs, from
+ * a silent death to an ordinary error that a program reports or falls back from, as it does for a
+ * kernel that predates the call. Docker's default profile answers the same way.
+ *
+ * `clone3` is on no list, so it answers ENOSYS: its flags live in user memory, where a filter cannot
+ * read them, so it cannot be told apart from a namespace request. libc and the runtimes fall back to
+ * `clone`, which the filter can check, and Docker's default profile answers the same way.
+ *
+ * The kill stays for two things. A call from the wrong architecture is a 32-bit ABI bypass attempt
+ * (the numbers mean other calls there), not a missing entry. And `SYS_KILL_ALWAYS` lists the calls
+ * a confined child has no innocent use for and that could be an escape attempt, so loudly
+ * ending that process is the better answer than letting it carry on.
+ */
+export const SYSCALL_NR: Record<string, number> = {
   read: 0,
   write: 1,
   open: 2,
@@ -15,9 +40,12 @@ const SYSCALL_NR: Record<string, number> = {
   rt_sigaction: 13,
   rt_sigprocmask: 14,
   rt_sigreturn: 15,
+  restart_syscall: 219,
   ioctl: 16,
   pread64: 17,
   pwrite64: 18,
+  preadv: 295,
+  pwritev: 296,
   readv: 19,
   writev: 20,
   access: 21,
@@ -187,8 +215,62 @@ const SYSCALL_NR: Record<string, number> = {
   preadv2: 327,
   membarrier: 324,
   rseq: 334,
+  pidfd_open: 434,
+  fsync: 74,
+  fdatasync: 75,
+  kill: 62,
+  tkill: 200,
+  fadvise64: 221,
+  faccessat2: 439,
+  getgroups: 115,
+  getresuid: 118,
+  getresgid: 120,
+  sched_getscheduler: 145,
   close_range: 436,
   epoll_pwait2: 441,
+  // Added with the ENOSYS default: harmless calls now allowed, and the kill list.
+  flock: 73,
+  getrusage: 98,
+  truncate: 76,
+  fallocate: 285,
+  copy_file_range: 326,
+  sendfile: 40,
+  time: 201,
+  times: 100,
+  alarm: 37,
+  setitimer: 38,
+  getitimer: 36,
+  inotify_init1: 294,
+  inotify_add_watch: 254,
+  inotify_rm_watch: 255,
+  signalfd4: 289,
+  splice: 275,
+  sched_getparam: 143,
+  ioprio_get: 252,
+  pause: 34,
+  getpriority: 140,
+  sync: 162,
+  syncfs: 306,
+  capget: 125,
+  pidfd_getfd: 438,
+  pidfd_send_signal: 424,
+  setns: 308,
+  unshare: 272,
+  move_mount: 429,
+  open_tree: 428,
+  fsopen: 430,
+  fsconfig: 431,
+  fsmount: 432,
+  fspick: 433,
+  open_by_handle_at: 304,
+  name_to_handle_at: 303,
+  acct: 163,
+  settimeofday: 164,
+  clock_settime: 227,
+  adjtimex: 159,
+  lookup_dcookie: 212,
+  nfsservctl: 180,
+  vmsplice: 278,
 };
 
 export const SYS_ALLOW: readonly string[] = Object.freeze([
@@ -207,9 +289,20 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "rt_sigaction",
   "rt_sigprocmask",
   "rt_sigreturn",
+  // No program asks for this one: the kernel makes it, through the filter, to resume a timed sleep
+  // (`futex`, `nanosleep`, `poll`) that a signal woke with nothing to run. A thread is woken that way
+  // when another thread takes the signal first, or by a stop and continue. Answered ENOSYS, the sleep
+  // itself seemed to fail: when a Bun child's subprocess exited, one thread took the SIGCHLD and another
+  // woke for nothing, and in about 1 run in 500 glibc read that ENOSYS as fatal and aborted ("The futex
+  // facility returned an unexpected error code", exit 134). It takes no arguments and grants nothing:
+  // it continues only a call the filter already allowed, with what the kernel saved.
+  "restart_syscall",
   "ioctl",
   "pread64",
   "pwrite64",
+  // Bun writes its transpile cache with `pwritev`, and answering ENOSYS makes it drop the cache.
+  "preadv",
+  "pwritev",
   "readv",
   "writev",
   "access",
@@ -238,8 +331,6 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "getpgrp",
   "getppid",
   "getrandom",
-  "clone",
-  "clone3",
   "fork",
   "vfork",
   "epoll_wait",
@@ -314,8 +405,8 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "futimesat",
   "statx",
   "openat2",
-  // Modern-runtime calls (glibc startup + Bun event loop) — without these the KILL default
-  // SIGSYS-kills every wrapped connector on a current distro. None grant privilege: they are
+  // Modern-runtime calls (glibc startup + Bun event loop) — without these they fail with ENOSYS
+  // (before the default changed, they killed every wrapped connector) on a current distro. None grant privilege: they are
   // thread/registration (rseq, sigaltstack, membarrier), stat (newfstatat), event-loop fds
   // (eventfd2, timerfd_*), fd hygiene (close_range), scheduling (sched_setscheduler), process
   // metadata (prctl, sysinfo).
@@ -348,11 +439,81 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   // ALREADY-OPEN fd, so it can only affect a file the bind mounts already made writable. It
   // cannot open anything, reach outside the mounts, or change what is reachable.
   "ftruncate",
-  // glibc's resolver sends its A and AAAA queries together with `sendmmsg`. Without it the KILL
-  // default SIGSYS-killed every child on its first DNS lookup on Ubuntu 24.04, with no stderr at
-  // all, so a network connector started and then died on its first request. It grants nothing
+  // glibc's resolver sends its A and AAAA queries together with `sendmmsg`. Without it DNS
+  // fails on its first lookup on Ubuntu 24.04 (it used to kill the child with no stderr at all), so
+  // a network connector started and then failed its first request. It grants nothing
   // `sendto` and `sendmsg` above do not: it is several of the same send on an open socket.
   "sendmmsg",
+  // Bun's `child_process.spawn` and `Bun.spawn` call it on the subprocess they just started, to wait
+  // for it. Without it a child that ran any subprocess was SIGSYS-killed with no stderr, in every
+  // network mode. Measured with strace on Bun 1.4. It grants no reach: a pidfd names a process this
+  // one can already see in its own pid namespace.
+  "pidfd_open",
+  // The rest of what an ordinary program does to its own children, which a connector's CLI is. Each
+  // one here SIGSYS-killed the child with no stderr, measured on Bun 1.4.
+  //
+  // Signals: `child.kill()` and `process.kill(pid, 0)`. Every spawn passes `--unshare-pid`, in every
+  // network mode, so a pid here names only a process in the child's own namespace, and `-1` reaches
+  // only those. `buildBwrapArgv`'s test pins that. `tgkill` is listed above.
+  "kill",
+  "tkill",
+  // Durability of a file the bind mounts already made writable. They open nothing.
+  "fsync",
+  "fdatasync",
+  // This process's own file mode mask.
+  "umask",
+  // Sessions and process groups, within the pid namespace: `detached: true`, and a shell's job
+  // control. bwrap's `--new-session` has already cut the child off the host's terminal, so a new
+  // session cannot get back to it.
+  "setsid",
+  "setpgid",
+  "getsid",
+  "getpgid",
+  // What strace showed the real CLIs call that the list above lacked. `gcloud` is a bash script, and
+  // bash tests a file with `faccessat2`, which is `faccessat` with flags and reads no more than it
+  // does. `cat` and the Python in `aws` and `az` call `fadvise64`, a read-ahead hint on an open fd.
+  "faccessat2",
+  "fadvise64",
+  // On Fedora `/usr/bin/sh` is bash, which reads its own ids and scheduler at startup, so every shell
+  // script died there before its first line, while Debian's dash passed. `id` calls `getgroups`. All
+  // four only read this process's own credentials.
+  "getresuid",
+  "getresgid",
+  "getgroups",
+  "sched_getscheduler",
+  // NOT here, on purpose, and the filter's test pins that they stay killed: `pidfd_getfd` copies a
+  // descriptor out of another process, `pidfd_send_signal` signals through a descriptor that may
+  // have been handed in from outside the namespace, and `setns` enters another namespace. `ptrace`
+  // stays in `SYS_BLOCK_EPERM`.
+  // Harmless calls an ordinary CLI makes, added when the default became ENOSYS. Each acts on an
+  // already-open fd, on a path the bind mounts already made reachable, on this process's own clocks,
+  // timers, signals or scheduling, or reads its own state; none opens a new route out or grants privilege.
+  "flock",
+  "getrusage",
+  "truncate",
+  "fallocate",
+  "copy_file_range",
+  "sendfile",
+  "gettimeofday",
+  "time",
+  "times",
+  "alarm",
+  "setitimer",
+  "getitimer",
+  "inotify_init1",
+  "inotify_add_watch",
+  "inotify_rm_watch",
+  "signalfd4",
+  "splice",
+  "sched_getparam",
+  "ioprio_get",
+  "pause",
+  "getpriority",
+  "sync",
+  "syncfs",
+  "capget",
+  // Left unlisted on purpose, so they answer ENOSYS: `memfd_create`, `mknodat`, `shmget`, `semget`,
+  // `mlock`, `setpriority`, `rt_sigqueueinfo`.
 ]);
 
 export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
@@ -399,7 +560,34 @@ export const SYS_BLOCK_EPERM: readonly string[] = Object.freeze([
   "io_uring_register",
 ]);
 
-export const SYS_KILL_DEFAULT = true;
+/**
+ * Calls a confined child has no innocent use for and that could mean an escape attempt: they reach
+ * other processes or namespaces, the mount table, kernel modules or the machine's clock and state,
+ * or are known building blocks of exploits. They are killed (SIGSYS), not refused, so an attempt
+ * ends the process loudly. Calls already in `SYS_BLOCK_EPERM` (mount, bpf, ...) stay there and answer
+ * EPERM; none is repeated here.
+ */
+export const SYS_KILL_ALWAYS: readonly string[] = Object.freeze([
+  "pidfd_getfd",
+  "pidfd_send_signal",
+  "setns",
+  "unshare",
+  "move_mount",
+  "open_tree",
+  "fsopen",
+  "fsconfig",
+  "fsmount",
+  "fspick",
+  "open_by_handle_at",
+  "name_to_handle_at",
+  "acct",
+  "settimeofday",
+  "clock_settime",
+  "adjtimex",
+  "lookup_dcookie",
+  "nfsservctl",
+  "vmsplice",
+]);
 
 const BPF_LD = 0x00,
   BPF_W = 0x00,
@@ -407,13 +595,41 @@ const BPF_LD = 0x00,
 const BPF_JMP = 0x05,
   BPF_JEQ = 0x10,
   BPF_K = 0x00;
+const BPF_JSET = 0x40;
 const BPF_RET = 0x06;
+const SECCOMP_DATA_ARG0_OFFSET = 16;
 const SECCOMP_DATA_NR_OFFSET = 0;
 const SECCOMP_DATA_ARCH_OFFSET = 4;
 const AUDIT_ARCH_X86_64 = 0xc000003e;
 const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_ERRNO_EPERM = 0x00050001;
+const SECCOMP_RET_ERRNO_ENOSYS = 0x00050000 | 38;
 const SECCOMP_RET_KILL_PROCESS = 0x80000000;
+
+/**
+ * `clone` flags that ask for a new namespace. A child that got one could set up a view the outer
+ * bwrap never gave it, so a `clone` carrying any of them is killed, the same answer `unshare` gets.
+ * Read from the low 32 bits of arg0, as the kernel does. `CLONE_NEWTIME` shares its bit with the
+ * exit-signal byte, where 0x80 is not a signal `clone` accepts, so it costs a real call nothing.
+ */
+const CLONE_NEWTIME = 0x00000080;
+const CLONE_NEWNS = 0x00020000;
+const CLONE_NEWCGROUP = 0x02000000;
+const CLONE_NEWUTS = 0x04000000;
+const CLONE_NEWIPC = 0x08000000;
+const CLONE_NEWUSER = 0x10000000;
+const CLONE_NEWPID = 0x20000000;
+const CLONE_NEWNET = 0x40000000;
+export const CLONE_NAMESPACE_FLAGS =
+  (CLONE_NEWTIME |
+    CLONE_NEWNS |
+    CLONE_NEWCGROUP |
+    CLONE_NEWUTS |
+    CLONE_NEWIPC |
+    CLONE_NEWUSER |
+    CLONE_NEWPID |
+    CLONE_NEWNET) >>>
+  0;
 
 interface SockFilter {
   code: number;
@@ -443,11 +659,13 @@ function emit(filters: SockFilter[]): Buffer {
 export interface SeccompFilterOverrides {
   allowList?: readonly string[];
   blockList?: readonly string[];
+  killList?: readonly string[];
 }
 
 export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}): Buffer {
   const allowList = overrides.allowList ?? SYS_ALLOW;
   const blockList = overrides.blockList ?? SYS_BLOCK_EPERM;
+  const killList = overrides.killList ?? SYS_KILL_ALWAYS;
 
   const program: SockFilter[] = [];
   program.push(
@@ -477,6 +695,25 @@ export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}
       instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_EPERM),
     );
   }
-  program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS));
+  for (const name of killList) {
+    const nr = SYSCALL_NR[name];
+    if (nr === undefined) {
+      throw new Error(`unknown syscall in kill list: ${name}`);
+    }
+    program.push(
+      instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 1, nr),
+      instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    );
+  }
+  // clone: allowed unless it asks for a namespace. It is on no list, so this is its only verdict. Both
+  // arms return, so loading arg0 into the accumulator leaves nothing after it to be misread.
+  program.push(
+    instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 4, SYSCALL_NR["clone"] ?? -1),
+    instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARG0_OFFSET),
+    instr(BPF_JMP | BPF_JSET | BPF_K, 0, 1, CLONE_NAMESPACE_FLAGS),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS),
+  );
   return emit(program);
 }

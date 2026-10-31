@@ -33,7 +33,9 @@ function emitSandboxPostureBannerIfDegraded(runner: SandboxRunner): void {
       affected: "extensions declaring permissions.network",
       docs: "docs/sandbox.md#platform-asymmetry",
     },
-    "sandbox: degraded posture — per-host network filtering is not enforced",
+    runner.networkRefused?.() === true
+      ? "sandbox: a child that declares network will be refused"
+      : "sandbox: degraded posture — per-host network filtering is not enforced",
   );
   if (process.stderr.isTTY === true) {
     process.stderr.write(
