@@ -18,6 +18,16 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-31 — macOS: a connector that declares a network can start, and the sandbox enforces ports, not hosts (no migration,
+  no new invariant).** Since 2026-05-16, in every release, no macOS child with a declared network could start: the profile
+  carried `(remote tcp "*:443" (host "api.github.com"))`, `sandbox-exec` rejected it (`unbound variable: host`, exit 65), and the
+  only test read the generated text. The profile now emits `(allow network-outbound (remote tcp "*:<port>"))` per distinct
+  declared port, and no hostname reaches it. **Bound, stated:** on macOS a declared entry allows any host on that port, loopback
+  and local-network addresses included, so a connector's list limits ports there, not hosts; per-host on macOS is a later
+  project. Diagnostics report the new `per_port` posture on macOS, `nimbus extension info` shows it, and the `extension.run`,
+  migration and `connector add --mcp` prompts say it. Tests under a real `sandbox-exec` now cover the start, a real fetch, the
+  port filter, no-network, a read outside the grants and a subprocess.
+
 - **2026-10-31 — A pull request's source branch is indexed, and `GET /v1/items/resolve` returns it (no migration, no new
   invariant).** `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read from GitHub's `head.ref`, Bitbucket's
   `source.branch.name` and GitLab's `source_branch`, the same key a `ci_run` row already uses. A found `resolve` answer now

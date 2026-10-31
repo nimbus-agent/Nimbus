@@ -892,12 +892,12 @@ Extension manifests declare their sandbox surface via a structured `permissions`
 
 #### Platform sandbox asymmetry
 
-Per-host network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Platform asymmetry"](./sandbox.md#platform-asymmetry).
+Network filtering depth varies by OS. Mirrors [`docs/sandbox.md` §"Platform asymmetry"](./sandbox.md#platform-asymmetry).
 
 | OS | Network policy when `permissions.network: ["a.com"]` |
 | --- | --- |
 | Linux (helper available) | **Per-host** — bwrap + nimbus-sandbox-helper installs per-connector iptables; only `a.com` reachable. |
-| macOS | **Per-host** — sandbox-exec SBPL `(allow network* (remote tcp "a.com:443"))`. |
+| macOS | **Per-port only** — sandbox-exec SBPL `(allow network-outbound (remote tcp "*:443"))`. Any host on a declared port is reachable, so the list limits ports, not hosts; SBPL cannot name a host. |
 | Windows | **All-or-nothing** — AppContainer `internetClient` capability; per-host filtering would require WFP callout drivers and is deferred ([`docs/sandbox.md` §"Windows platform status"](./sandbox.md#windows-platform-status)). |
 
 > **Current sandbox depth:** I15 is wired for every first-party lazy-mesh connector and every third-party extension that ships a T2-shape manifest. Treat third-party extensions from untrusted sources with the caution appropriate to the **least** isolated platform you intend to run them on — on Windows that is "network on or off".
@@ -1458,7 +1458,7 @@ confinement the owner consented to. It holds today through three unrelated mecha
 | Platform | Mechanism with an empty `permissions.network` | Loopback reachable? |
 |---|---|---|
 | Linux | `--unshare-net` | No — a fresh netns has its *own* loopback; the host's `127.0.0.1` is not in it. |
-| macOS | SBPL `(deny default)` with no `(allow network*)` block emitted at all | No — with no hosts there is no network allow rule, so the default denial covers loopback. |
+| macOS | SBPL `(deny default)` with no `(allow network-outbound ...)` rule emitted at all | No — with no hosts there is no network allow rule, so the default denial covers loopback. |
 | Windows | AppContainer with no `internetClient` capability | No — AppContainer blocks loopback absent an explicit `CheckNetIsolation` exemption. |
 
 Three independent implementation accidents is the most fragile way for a property to be true, which

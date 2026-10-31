@@ -9,10 +9,17 @@ describe("networkAccessLine", () => {
     );
   });
 
-  test("macOS and Linux name the hosts the sandbox limits it to", () => {
-    for (const platform of ["darwin", "linux"] as const) {
-      expect(networkAccessLine(platform, ["readwise.io"])).toBe("network access to readwise.io");
-    }
+  test("Linux names the hosts the sandbox limits it to", () => {
+    expect(networkAccessLine("linux", ["readwise.io"])).toBe("network access to readwise.io");
+  });
+
+  test("macOS names the ports it enforces and says the host list is not a limit", () => {
+    expect(networkAccessLine("darwin", ["readwise.io"])).toBe(
+      "network access to any host on port 443 (macOS cannot limit this to readwise.io)",
+    );
+    expect(networkAccessLine("darwin", ["a.com", "b.com", "c.com:993"])).toBe(
+      "network access to any host on ports 443, 993 (macOS cannot limit this to a.com, b.com, c.com:993)",
+    );
   });
 
   test("no hosts means no network on every OS, with no caveat", () => {

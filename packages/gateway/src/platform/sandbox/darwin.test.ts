@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { manifestWithExtraNetworkHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
-import { generateSbplProfile } from "./darwin.ts";
+import { createDarwinSandboxRunner, generateSbplProfile } from "./darwin.ts";
 import { policyFromManifest, type SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd/tmpdir strings (S5443). The
@@ -30,35 +30,68 @@ describe("generateSbplProfile", () => {
     expect(profile).toContain("(allow process-fork process-exec)");
   });
 
-  it("emits (allow network* (remote tcp ... (host ...))) for each declared host", () => {
-    const profile = generateSbplProfile({
-      cwd: CWD,
-      tmpdir: CWD_TMP,
-      policy: policy({ network: ["api.github.com"] }),
-    });
-    expect(profile).toMatch(/\(remote tcp "\*:443" \(host "api\.github\.com"\)\)/);
+  const networkRules = (network: string[]): string[] =>
+    generateSbplProfile({ cwd: CWD, tmpdir: CWD_TMP, policy: policy({ network }) })
+      .split("\n")
+      .filter((line) => line.includes("network"));
+  const UDP_53 = '(allow network-outbound (remote udp "*:53"))';
+
+  // The text only. Whether `sandbox-exec` accepts it, and what it does, is pinned in
+  // `sandbox-wrapper-spawn.test.ts`: this text being "right" is how a profile that could not start
+  // any child with a network shipped for five months.
+  it("allows the port of a declared host, and names no host", () => {
+    expect(networkRules(["api.github.com"])).toEqual([
+      '(allow network-outbound (remote tcp "*:443"))',
+      UDP_53,
+    ]);
   });
 
-  it("emits the explicit TCP port for a host:port entry (IMAP/SMTP)", () => {
+  it("never emits a host filter, which sandbox-exec rejects", () => {
     const profile = generateSbplProfile({
       cwd: CWD,
       tmpdir: CWD_TMP,
-      policy: policy({ network: ["imap.fastmail.com:993", "smtp.fastmail.com:465"] }),
+      policy: policy({ network: ["api.github.com", "imap.fastmail.com:993"] }),
     });
-    expect(profile).toMatch(/\(remote tcp "\*:993" \(host "imap\.fastmail\.com"\)\)/);
-    expect(profile).toMatch(/\(remote tcp "\*:465" \(host "smtp\.fastmail\.com"\)\)/);
-    // the port must not leak into the (host ...) clause
-    expect(profile).not.toContain('host "imap.fastmail.com:993"');
+    expect(profile).not.toContain("(host");
+    expect(profile).not.toContain("github");
+    expect(profile).not.toContain("fastmail");
   });
 
-  it("emits no (allow network*) when permissions.network is empty", () => {
-    const profile = generateSbplProfile({
-      cwd: CWD,
-      tmpdir: CWD_TMP,
-      policy: policy(),
-    });
-    expect(profile).not.toMatch(/\(allow network\*/);
+  it("emits each distinct port once, ascending, for host:port entries (IMAP/SMTP)", () => {
+    expect(
+      networkRules([
+        "imap.fastmail.com:993",
+        "smtp.fastmail.com:465",
+        "a.com",
+        "b.com",
+        "c.com:993",
+      ]),
+    ).toEqual([
+      '(allow network-outbound (remote tcp "*:443"))',
+      '(allow network-outbound (remote tcp "*:465"))',
+      '(allow network-outbound (remote tcp "*:993"))',
+      UDP_53,
+    ]);
   });
+
+  it("gives a localhost or loopback entry the same *:port rule", () => {
+    expect(networkRules(["localhost:8080", "127.0.0.1:9090"])).toEqual([
+      '(allow network-outbound (remote tcp "*:8080"))',
+      '(allow network-outbound (remote tcp "*:9090"))',
+      UDP_53,
+    ]);
+  });
+
+  it("emits no network rule, DNS included, when permissions.network is empty", () => {
+    expect(networkRules([])).toEqual([]);
+  });
+
+  it.each([["a.com:notaport"], ["a.com:0"], ["a.com:65536"], ["a.com:1.5"], ["a.com:"]])(
+    "opens nothing for %s, whose port is not a port",
+    (entry) => {
+      expect(networkRules([entry])).toEqual([]);
+    },
+  );
 
   it("emits subpath rules for filesystem.read entries", () => {
     const profile = generateSbplProfile({
@@ -193,6 +226,7 @@ describe("ancestor literals grant traversal, never a tree", () => {
 describe("generateSbplProfile, from a policy built by manifestWithExtraNetworkHosts", () => {
   it("has no injected quote, whatever a stored value carried", () => {
     const hostile = ['x")) (allow network*) (host "y', 'a"b.com:443', "a\nb.com", "a b.com"];
+    const leaked = ["(host", '"y', 'a"b', "a\nb", "a b.com", "ok.example.com"];
     const manifest = manifestWithExtraNetworkHosts("jenkins", [...hostile, "ok.example.com:8443"], {
       ownerConfigured: hostile,
       onDropped: () => {},
@@ -202,8 +236,43 @@ describe("generateSbplProfile, from a policy built by manifestWithExtraNetworkHo
       tmpdir: CWD_TMP,
       policy: policyFromManifest(manifest),
     });
-    expect(profile).toContain('(remote tcp "*:8443" (host "ok.example.com"))');
-    const hostRules = profile.split("\n").filter((line) => line.includes("(host "));
-    expect(hostRules).toEqual(['  (remote tcp "*:8443" (host "ok.example.com"))']);
+    expect(profile.split("\n").filter((line) => line.includes("remote tcp"))).toEqual([
+      '(allow network-outbound (remote tcp "*:8443"))',
+    ]);
+    for (const text of leaked) expect(profile).not.toContain(text);
+  });
+
+  // The door above no longer carries this: only a port reaches the profile, so a hostile value that
+  // skipped it, straight from a policy, still cannot.
+  it("has no injected text from a policy that skipped that door", () => {
+    const hostile = ['x")) (allow network*) (host "y:443', 'a")) (allow default)\n:8443'];
+    const profile = generateSbplProfile({
+      cwd: CWD,
+      tmpdir: CWD_TMP,
+      policy: policy({ network: hostile }),
+    });
+    expect(profile).not.toContain("(host");
+    expect(profile).not.toContain("(allow default)");
+    expect(profile).not.toContain("(allow network*)");
+    expect(profile.split("\n").filter((line) => line.includes("remote tcp"))).toEqual([
+      '(allow network-outbound (remote tcp "*:443"))',
+      '(allow network-outbound (remote tcp "*:8443"))',
+    ]);
+  });
+});
+
+describe("the macOS runner reports what it enforces", () => {
+  const runner = createDarwinSandboxRunner();
+
+  it("is per port, with a reason, and still fully active", () => {
+    expect(runner.networkScope?.()).toBe("per_port");
+    expect(runner.degradedReason()).toContain("limits ports, not hosts");
+    expect(runner.isFullyActive()).toBe(true);
+  });
+
+  // Like Windows: the accepted asymmetry is reported, and refuses nothing.
+  it("can confine a policy that names hosts, and one with no network", () => {
+    expect(runner.canConfine(policy({ network: ["api.github.com"] }))).toBeNull();
+    expect(runner.canConfine(policy())).toBeNull();
   });
 });

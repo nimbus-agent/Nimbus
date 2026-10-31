@@ -43,8 +43,8 @@ export const LOCAL_ONLY_SYNC_SERVICES: ReadonlySet<string> = new Set([
  * makes no connector request of its own — it only ensures the server process is running — so a
  * `sync.run` row for it would describe a connector sync that never happened and inflate
  * `nimbus prove`. STATED BOUND: a user MCP server's OWN network traffic (its `--net` hosts) is
- * NOT ledgered by Nimbus at all; it leaves through the sandbox's per-host network grant the owner
- * approved at registration. What IS ledgered is every `mcp_*` ACTION dispatch, at the executor
+ * NOT ledgered by Nimbus at all; it leaves through the sandbox's network grant the owner approved
+ * at registration. What IS ledgered is every `mcp_*` ACTION dispatch, at the executor
  * chokepoint (`engine/executor.ts`), like any other gated connector action.
  *
  * The pattern test runs first so a first-party destination never touches `user_mcp_connector`.

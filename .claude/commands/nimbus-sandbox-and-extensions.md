@@ -56,10 +56,10 @@ Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43, I44). Ope
 | OS | File | Mechanism | Helper | `canConfine` |
 |---|---|---|---|---|
 | Linux | `platform/sandbox/linux.ts` | `bwrap` (`buildBwrapArgv`): user/pid/ipc/uts namespaces, `--die-with-parent`, `--unshare-net` for an empty network set; seccomp (`seccomp-filter.ts`, x86-64 only) | `nimbus-sandbox-helper` (unprivileged, no capabilities; path overridable via `NIMBUS_SANDBOX_HELPER_PATH`, and an override naming nothing is a refusal) — needed ONLY for per-host network filtering, which it does by forwarding the declared hosts into an empty network namespace | `null` for a no-network policy even without the helper |
-| macOS | `platform/sandbox/darwin.ts` | `/usr/bin/sandbox-exec` with a per-spawn `(deny default)` SBPL profile | none | always `null` |
+| macOS | `platform/sandbox/darwin.ts` | `/usr/bin/sandbox-exec` with a per-spawn `(deny default)` SBPL profile; a declared network becomes `(allow network-outbound (remote tcp "*:<port>"))` per distinct port | none | always `null` |
 | Windows | `platform/sandbox/win32.ts` | AppContainer profile per policy id, inheritable ACEs on cwd + declared paths, Job Object kill-on-close | `nimbus-sandbox-helper.exe` beside `process.execPath` (probed with `--check-caps`) — IS the confinement | the helper's reason when missing; the runner refuses to spawn unconfined |
 
-**Network asymmetry** (derive from `docs/sandbox.md` § Platform asymmetry): Linux-with-helper and macOS enforce per host and per port; Linux-without-helper and Windows (`internetClient`, `capabilitiesForPolicy`) are all-or-nothing.
+**Network asymmetry** (derive from `docs/sandbox.md` § Platform asymmetry): Linux-with-helper enforces per host and per port; macOS enforces per port only (any host on a declared port, `networkScope()` → diagnostics `per_port`, because SBPL cannot name a host, and `(host ...)` is a profile error, exit 65); Linux-without-helper and Windows (`internetClient`, `capabilitiesForPolicy`) are all-or-nothing.
 
 **Working directory.** Every spawn runs in `<sandboxDir>/<leaf>` (`platform/sandbox/sandbox-cwd.ts`'s `sandboxCwdFor`), never `dataDir`/`configDir`. The filesystem MCP's explicit `dataDir` grant is the one stated exception (a grant, not its cwd). `PlatformPaths.sandboxDir` defaults outside data and config, but an override can nest them and nothing refuses that.
 
@@ -78,7 +78,7 @@ Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43, I44). Ope
 - **Grants are exactly what the owner approved:** `--read` paths (read-only; there is no write grant), `--net` hosts (no IPv6 literals), its own cwd leaf. Linux/macOS also grant the binary's directory read; Windows does not.
 - **Protected roots** (`userMcpProtectedRootsFor`: data, config, sandbox dirs) refuse an overlapping grant in either direction. A leftover leaf on re-register is cleared after approval or the registration refuses `ERR_USER_MCP_SANDBOX_NOT_CLEAN`.
 - **Ids:** `USER_MCP_SERVICE_ID_PATTERN`; registration refuses an id that `_`-extends another registered id (so `mcp_a` and `mcp_a_b` never coexist).
-- **Network traffic is not ledgered** — it leaves through the approved per-host grant. Only the `mcp_*` action dispatches are (I29, executor chokepoint).
+- **Network traffic is not ledgered** — it leaves through the approved network grant. Only the `mcp_*` action dispatches are (I29, executor chokepoint).
 - **Script-mode servers cannot run on Windows** (see Traps); compile the server.
 
 **I42 — the per-call floor**, for both `mcp_*` and `ext_*` (`connectors/owner-code-server.ts`'s `isOwnerCodeServerServiceId`):

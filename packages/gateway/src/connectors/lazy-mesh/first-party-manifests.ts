@@ -142,7 +142,7 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   }),
   // Execs `gcloud run` and `gcloud container`. The per-region Cloud Run host is added at spawn
   // from `gcp.region`; a tool call naming another region is a Linux wildcard
-  // (FIRST_PARTY_WILDCARD_HOSTS) and still fails on macOS (connector-host-gaps.json).
+  // (FIRST_PARTY_WILDCARD_HOSTS). macOS enforces only ports, so 443 reaches it there.
   gcp: baseManifest("com.nimbus.gcp", {
     network: [
       "cloudresourcemanager.googleapis.com",
@@ -551,8 +551,8 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   // host declared statically here. Calendar requests go to the per-account
   // p##-caldav.icloud.com partition that discovery returns. The ten listed are the ones the
   // connector's own nimbus.extension.json names; a higher partition is a Linux wildcard
-  // (FIRST_PARTY_WILDCARD_HOSTS), and on macOS that account has no calendar under per-host
-  // enforcement. Recorded in connector-host-gaps.json.
+  // (FIRST_PARTY_WILDCARD_HOSTS). macOS enforces only ports, so 443 reaches it there. Recorded in
+  // connector-host-gaps.json.
   apple: baseManifest("com.nimbus.apple", {
     network: [
       "caldav.icloud.com",
@@ -603,8 +603,8 @@ function awsWildcards(...services: string[]): string[] {
 /**
  * Hosts a first-party tool calls that no exact list can name: a redirect to a per-tenant host, or a
  * region chosen per call. Keyed like {@link FIRST_PARTY_MANIFESTS} (`github_actions`, `vertex_ai`).
- * Only the Linux runner reads them; macOS and Windows ignore the field, so these tools keep failing
- * there as they do today. `*.blob.core.windows.net` covers every Azure storage account, not only
+ * Only the Linux runner reads them; macOS and Windows ignore the field and need none of it, since
+ * neither limits hosts and every connector here declares a 443 host. `*.blob.core.windows.net` covers every Azure storage account, not only
  * GitHub's: the owner accepted that.
  */
 export const FIRST_PARTY_WILDCARD_HOSTS: Readonly<Record<string, readonly string[]>> = {
@@ -754,9 +754,10 @@ function warnDroppedEntries(fields: {
  * argument is required so every call site has to decide.
  *
  * The one door for a run-time entry into a first-party policy, so the check lives here. These
- * manifests skip `validateAndNormalizePermissions`, and `darwin.ts` writes each entry into the SBPL
- * profile as `(host "...")`, so a `"` or a newline in a stored value would otherwise inject into
- * it. `new URL` does not stop this: it keeps a `"` in a hostname. A bad entry is dropped, from the
+ * manifests skip `validateAndNormalizePermissions`, so a `"` or a newline in a stored value would
+ * otherwise reach the consent prompt, the audit label and the Linux forwarder's host list. `new URL`
+ * does not stop this: it keeps a `"` in a hostname. `darwin.ts` writes only a validated port into
+ * the SBPL profile, so a host can no longer inject there. A bad entry is dropped, from the
  * label too, and reported by service and count. Never by value: it came from the Vault.
  */
 export function manifestWithExtraNetworkHosts(
