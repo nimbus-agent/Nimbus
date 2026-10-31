@@ -52,6 +52,30 @@ describe("the wrapper wire", () => {
   });
 });
 
+describe("ownerConfiguredNetwork", () => {
+  it("policyFromManifest carries the owner-configured entries from the manifest", () => {
+    const m = manifest({ ownerConfiguredNetwork: ["jenkins:8080"] });
+    expect(policyFromManifest(m).ownerConfiguredNetwork).toEqual(["jenkins:8080"]);
+  });
+
+  it("the policy has no such key when the manifest names none", () => {
+    expect("ownerConfiguredNetwork" in policyFromManifest(manifest())).toBe(false);
+  });
+
+  it("survives the wire, and a wrong shape refuses", () => {
+    const withField = (v: unknown) => ({
+      id: "x",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      ownerConfiguredNetwork: v,
+    });
+    expect(
+      parseSandboxPolicy(JSON.stringify(withField(["jenkins:8080"]))).ownerConfiguredNetwork,
+    ).toEqual(["jenkins:8080"]);
+    expect(() => parseSandboxPolicy(JSON.stringify(withField("jenkins")))).toThrow();
+    expect(() => parseSandboxPolicy(JSON.stringify(withField([1])))).toThrow();
+  });
+});
+
 describe("parseSandboxPolicy", () => {
   const good = {
     id: "com.acme.x",

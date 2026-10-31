@@ -33,9 +33,10 @@ import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { transitionHealth } from "../health.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  siteUrlWithScheme,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
@@ -59,8 +60,9 @@ function manifestWithConfiguredHost(
   serviceId: string,
   configuredUrl: string | null,
 ): ExtensionManifest {
-  const host = configuredUrl === null ? null : hostnameFromUrl(configuredUrl);
-  return manifestWithExtraNetworkHosts(serviceId, host === null ? [] : [host]);
+  const hosts = configuredUrl === null ? [] : storedUrlHosts(serviceId, configuredUrl);
+  // The URL is one the owner stored for this connector (Vault), so its host is the owner's.
+  return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
 }
 
 export async function ensurePhase3BundleMcp(ctx: MeshSpawnContext): Promise<void> {
@@ -504,7 +506,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
               JIRA_BASE_URL: baseUrl,
             }),
           },
-          manifestWithConfiguredHost("jira", baseUrl),
+          manifestWithConfiguredHost("jira", siteUrlWithScheme(baseUrl)),
           ctx.sandboxCwd,
         ),
       },
@@ -636,7 +638,7 @@ export async function ensureConfluenceMcp(ctx: MeshSpawnContext): Promise<void> 
               CONFLUENCE_BASE_URL: baseUrl,
             }),
           },
-          manifestWithConfiguredHost("confluence", baseUrl),
+          manifestWithConfiguredHost("confluence", siteUrlWithScheme(baseUrl)),
           ctx.sandboxCwd,
         ),
       },
@@ -699,11 +701,10 @@ export async function ensureJenkinsMcp(ctx: MeshSpawnContext): Promise<void> {
     return;
   }
   const base = stripTrailingSlashes(baseRaw.trim());
-  const jenkinsHost = hostnameFromUrl(base);
-  const jenkinsManifest = manifestWithExtraNetworkHosts(
-    "jenkins",
-    jenkinsHost === null ? [] : [jenkinsHost],
-  );
+  const jenkinsHosts = storedUrlHosts("jenkins", base);
+  const jenkinsManifest = manifestWithExtraNetworkHosts("jenkins", jenkinsHosts, {
+    ownerConfigured: jenkinsHosts,
+  });
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1131,8 +1132,13 @@ export async function ensureSalesforceMcp(ctx: MeshSpawnContext): Promise<void> 
   if (auth.accessToken === "" || auth.instanceUrl === "") {
     return;
   }
-  const sfHost = hostnameFromUrl(auth.instanceUrl);
-  const manifest = manifestWithExtraNetworkHosts("salesforce", sfHost === null ? [] : [sfHost]);
+  const sfHosts = storedUrlHosts("salesforce", auth.instanceUrl);
+  const manifest = manifestWithExtraNetworkHosts(
+    "salesforce",
+    sfHosts,
+    // The instance URL arrives in the OAuth token response, so Salesforce chose it, not the owner.
+    { ownerConfigured: [] },
+  );
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1188,8 +1194,8 @@ export async function ensureWorkdayMcp(ctx: MeshSpawnContext): Promise<void> {
   if (accessToken === "") {
     return;
   }
-  const host = hostnameFromUrl(tenantHost);
-  const manifest = manifestWithExtraNetworkHosts("workday", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("workday", tenantHost);
+  const manifest = manifestWithExtraNetworkHosts("workday", hosts, { ownerConfigured: hosts });
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -1240,10 +1246,11 @@ export async function ensureAppleMcp(ctx: MeshSpawnContext): Promise<void> {
   }
   // iCloud IMAP/SMTP are fixed, non-443 host:port endpoints (993 / 587); add
   // them to the apple manifest's network allow-list at spawn.
-  const appleManifest = manifestWithExtraNetworkHosts("apple", [
-    "imap.mail.me.com:993",
-    "smtp.mail.me.com:587",
-  ]);
+  const appleManifest = manifestWithExtraNetworkHosts(
+    "apple",
+    ["imap.mail.me.com:993", "smtp.mail.me.com:587"],
+    { ownerConfigured: [] },
+  ); // fixed endpoints written in code
   ctx.setLazyClient(
     slotKey,
     new MCPClient({

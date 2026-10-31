@@ -1,11 +1,11 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
+import { manifestForFirstParty, manifestRefusals } from "./first-party-manifests.ts";
 import {
   buildPhase3Servers,
   phase3AddAirflowMcp,
@@ -70,6 +70,7 @@ import {
   phase3AddZendeskMcp,
   phase3AddZoteroMcp,
 } from "./phase3-config.ts";
+import { awsRegionalHosts, isSafeRegion } from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 
 let SANDBOX_CWD: string;
@@ -725,7 +726,7 @@ describe("phase3AddFluxMcp", () => {
     const spec = servers["flux"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    expectSandboxed(spec, "k8s.example.com");
+    expectSandboxed(spec, "k8s.example.com:6443");
     expect(spec.env?.["FLUX_API_URL"]).toBe("https://k8s.example.com:6443");
     expect(spec.env?.["FLUX_TOKEN"]).toBe("sa-jwt-token");
   });
@@ -1882,7 +1883,7 @@ describe("phase3AddElasticsearchMcp", () => {
     const spec = servers["elasticsearch"];
     expect(spec).toBeDefined();
     if (spec === undefined) return;
-    expectSandboxed(spec, "my-cluster.es.example.com");
+    expectSandboxed(spec, "my-cluster.es.example.com:9243");
     expect(spec.env?.["ELASTICSEARCH_URL"]).toBe("https://my-cluster.es.example.com:9243");
     expect(spec.env?.["ELASTICSEARCH_API_KEY"]).toBe("es-key-test");
   });
@@ -2704,6 +2705,26 @@ describe("phase3AddProtonmailMcp", () => {
     expect(spec.env?.["PROTONMAIL_PASSWORD"]).toBe("bridge-pw");
     expect(spec.env?.["PROTONMAIL_MAILBOX"]).toBeUndefined();
     expect(spec.env?.["PROTONMAIL_SMTP_HOST"]).toBeUndefined();
+    const policy = readSandboxPolicy(spec) as { ownerConfiguredNetwork?: string[] };
+    expect(policy.ownerConfiguredNetwork).toEqual(["127.0.0.1:1143"]);
+  });
+
+  test("default SMTP loopback entry is labelled only when send credentials add it", async () => {
+    const vault = createMockVault();
+    await vault.set("protonmail.username", "me@proton.me");
+    await vault.set("protonmail.password", "bridge-pw");
+    await vault.set("protonmail.smtp_username", "smtp@proton.me");
+    await vault.set("protonmail.smtp_password", "smtp-pw");
+    const servers: Record<string, ServerSpec> = {};
+    await phase3AddProtonmailMcp(vault, servers, SANDBOX_CWD);
+    const spec = servers["protonmail"];
+    expect(spec).toBeDefined();
+    if (spec === undefined) return;
+    const policy = readSandboxPolicy(spec) as ReturnType<typeof readSandboxPolicy> & {
+      ownerConfiguredNetwork?: string[];
+    };
+    expect(policy.permissions.network).toEqual(["127.0.0.1:1143", "127.0.0.1:1025"]);
+    expect(policy.ownerConfiguredNetwork).toEqual(["127.0.0.1:1143", "127.0.0.1:1025"]);
   });
 
   test("custom host/port + mailbox + full SMTP creds set every optional env + smtp host:port", async () => {
@@ -2964,4 +2985,391 @@ describe("GCP MCP spawns support gcloud login mode (no key file configured)", ()
       expect(spec?.env?.["GOOGLE_APPLICATION_CREDENTIALS"]).toBeUndefined();
     });
   }
+});
+
+describe("a host the connector calls is in its network list", () => {
+  type Add = (
+    vault: NimbusVault,
+    servers: Record<string, ServerSpec>,
+    sandboxCwd: string,
+  ) => Promise<void>;
+
+  async function spawned(
+    add: Add,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<{ network: string[]; owner: string[] | undefined }> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    const raw = servers[service]?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}";
+    const policy = JSON.parse(raw) as {
+      permissions: { network: string[] };
+      ownerConfiguredNetwork?: string[];
+    };
+    return { network: policy.permissions.network, owner: policy.ownerConfiguredNetwork };
+  }
+
+  const stored: ReadonlyArray<{
+    name: string;
+    add: Add;
+    service: string;
+    secrets: Readonly<Record<string, string>>;
+    expected: readonly string[];
+  }> = [
+    {
+      name: "a self-hosted sentry",
+      add: phase3AddSentryMcp,
+      service: "sentry",
+      secrets: {
+        "sentry.auth_token": "t",
+        "sentry.org_slug": "o",
+        "sentry.url": "https://sentry.acme.test:9000",
+      },
+      expected: ["sentry.acme.test:9000"],
+    },
+    {
+      name: "a self-hosted sonarqube",
+      add: phase3AddSonarqubeMcp,
+      service: "sonarqube",
+      secrets: { "sonarqube.token": "t", "sonarqube.url": "http://sonar.acme.test:9000" },
+      expected: ["sonar.acme.test:9000"],
+    },
+    {
+      name: "a wiz tenant's api and auth urls",
+      add: phase3AddWizMcp,
+      service: "wiz",
+      secrets: {
+        "wiz.client_id": "c",
+        "wiz.client_secret": "s",
+        "wiz.api_url": "https://api.us17.app.wiz.test/graphql",
+        "wiz.auth_url": "https://auth.gov.wiz.test/oauth/token",
+      },
+      expected: ["api.us17.app.wiz.test", "auth.gov.wiz.test"],
+    },
+    {
+      name: "a launchdarkly base url",
+      add: phase3AddLaunchdarklyMcp,
+      service: "launchdarkly",
+      secrets: { "launchdarkly.token": "t", "launchdarkly.base_url": "https://ld.acme.test" },
+      expected: ["ld.acme.test"],
+    },
+    {
+      name: "a self-hosted flagsmith",
+      add: phase3AddFlagsmithMcp,
+      service: "flagsmith",
+      secrets: { "flagsmith.token": "t", "flagsmith.api_base": "https://flags.acme.test" },
+      expected: ["flags.acme.test"],
+    },
+    {
+      name: "a fastmail base url",
+      add: phase3AddFastmailMcp,
+      service: "fastmail",
+      secrets: { "fastmail.api_token": "t", "fastmail.base_url": "https://jmap.acme.test" },
+      expected: ["jmap.acme.test"],
+    },
+  ];
+
+  for (const c of stored) {
+    test(`${c.name} is declared, and labelled as the owner's`, async () => {
+      const { network, owner } = await spawned(c.add, c.service, c.secrets);
+      for (const host of c.expected) expect(network).toContain(host);
+      expect([...(owner ?? [])].sort()).toEqual([...c.expected].sort());
+    });
+  }
+
+  test("with no stored url, sentry keeps the fixed list and no label", async () => {
+    const { network, owner } = await spawned(phase3AddSentryMcp, "sentry", {
+      "sentry.auth_token": "t",
+      "sentry.org_slug": "o",
+    });
+    expect(network).toEqual(["sentry.io"]);
+    expect(owner).toBeUndefined();
+  });
+
+  test("a datadog site declares api.<site>, built in code so not the owner's", async () => {
+    const { network, owner } = await spawned(phase3AddDatadogMcp, "datadog", {
+      "datadog.api_key": "a",
+      "datadog.app_key": "b",
+      "datadog.site": "datadoghq.eu",
+    });
+    expect(network).toContain("api.datadoghq.eu");
+    expect(owner).toBeUndefined();
+  });
+
+  const awsKeys = {
+    "aws.access_key_id": "AKIA0001",
+    "aws.secret_access_key": "SK0001",
+    "aws.default_region": "eu-west-1",
+  };
+
+  test("aws declares the regional endpoint of every service its tools call", async () => {
+    const { network, owner } = await spawned(phase3AddAwsMcp, "aws", awsKeys);
+    for (const service of ["ecs", "lambda", "ec2", "sts"]) {
+      expect(network).toContain(`${service}.eu-west-1.amazonaws.com`);
+    }
+    expect(owner).toBeUndefined();
+  });
+
+  test("a China region takes the amazonaws.com.cn suffix", async () => {
+    const { network } = await spawned(phase3AddAwsMcp, "aws", {
+      ...awsKeys,
+      "aws.default_region": "cn-north-1",
+    });
+    expect(network).toContain("ecs.cn-north-1.amazonaws.com.cn");
+  });
+
+  test("aws with no known region adds no regional host", async () => {
+    const { network } = await spawned(phase3AddAwsMcp, "aws", { "aws.profile": "dev" });
+    expect(network.filter((h) => h.split(".").length > 3)).toEqual([]);
+  });
+
+  const awsFamily: ReadonlyArray<[string, Add, string]> = [
+    ["athena", phase3AddAthenaMcp, "athena.eu-west-1.amazonaws.com"],
+    ["cloudwatch", phase3AddCloudwatchMcp, "logs.eu-west-1.amazonaws.com"],
+    ["sagemaker", phase3AddSagemakerMcp, "api.sagemaker.eu-west-1.amazonaws.com"],
+  ];
+  for (const [service, add, serviceHost] of awsFamily) {
+    test(`${service} declares its service host and regional STS`, async () => {
+      const { network } = await spawned(add, service, awsKeys);
+      expect(network).toContain(serviceHost);
+      expect(network).toContain("sts.eu-west-1.amazonaws.com");
+    });
+  }
+
+  test("gcp declares the Cloud Run host of the stored region", async () => {
+    const { network, owner } = await spawned(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": "europe-west1",
+    });
+    expect(network).toContain("europe-west1-run.googleapis.com");
+    expect(network).toContain("run.googleapis.com");
+    expect(network).toContain("container.googleapis.com");
+    expect(owner).toBeUndefined();
+  });
+
+  test("gcp with an unsafe stored region adds no regional host", async () => {
+    const { network } = await spawned(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": "-bad",
+    });
+    expect(network).toEqual(manifestForFirstParty("gcp").permissions.network);
+  });
+});
+
+describe("a region is validated before any host is built from it", () => {
+  const INJECTION = 'x")) (allow network*) (host "y';
+
+  async function policyAndEnv(
+    add: (
+      vault: NimbusVault,
+      servers: Record<string, ServerSpec>,
+      sandboxCwd: string,
+    ) => Promise<void>,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<{ network: string[]; env: Record<string, string | undefined> | undefined }> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    const spec = servers[service];
+    const raw = spec?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? '{"permissions":{"network":[]}}';
+    const policy = JSON.parse(raw) as { permissions: { network: string[] } };
+    return { network: policy.permissions.network, env: spec?.env };
+  }
+
+  test("isSafeRegion takes real regions and refuses everything else", () => {
+    for (const good of ["us-east-1", "eu-west-1", "us-gov-west-1", "cn-north-1", "us-central1"]) {
+      expect(isSafeRegion(good)).toBe(true);
+    }
+    for (const bad of [
+      "",
+      'us-east-1"',
+      INJECTION,
+      "-bad",
+      "US-EAST-1",
+      "us east 1",
+      "us.east",
+      "us-east-1\n",
+      "a".repeat(65),
+    ]) {
+      expect(isSafeRegion(bad)).toBe(false);
+    }
+  });
+
+  test("awsRegionalHosts builds nothing from a bad region", () => {
+    expect(awsRegionalHosts(INJECTION, ["ecs"])).toEqual([]);
+    expect(awsRegionalHosts("", ["ecs"])).toEqual([]);
+  });
+
+  const awsFamily = [
+    ["aws", phase3AddAwsMcp],
+    ["athena", phase3AddAthenaMcp],
+    ["cloudwatch", phase3AddCloudwatchMcp],
+    ["sagemaker", phase3AddSagemakerMcp],
+  ] as const;
+  for (const [service, add] of awsFamily) {
+    test(`${service}: a stored region with a quote reaches no host and no env`, async () => {
+      const { network, env } = await policyAndEnv(add, service, {
+        "aws.profile": "dev",
+        "aws.default_region": INJECTION,
+      });
+      expect(env).toBeDefined();
+      expect(network.filter((h) => h.includes('"'))).toEqual([]);
+      expect(env?.["AWS_DEFAULT_REGION"]).toBeUndefined();
+    });
+
+    test(`${service}: keys with only a bad region count as no region, so no spawn`, async () => {
+      const { env } = await policyAndEnv(add, service, {
+        "aws.access_key_id": "AKIA0001",
+        "aws.secret_access_key": "SK0001",
+        "aws.default_region": INJECTION,
+      });
+      expect(env).toBeUndefined();
+    });
+  }
+
+  test("gcp: a stored region with a quote reaches no host", async () => {
+    const { network, env } = await policyAndEnv(phase3AddGcpMcp, "gcp", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": INJECTION,
+    });
+    expect(env).toBeDefined();
+    expect(network.filter((h) => h.includes('"'))).toEqual([]);
+  });
+
+  test("vertex_ai: a stored region with a quote falls back to the default", async () => {
+    const { network, env } = await policyAndEnv(phase3AddVertexAiMcp, "vertex_ai", {
+      "gcp.credentials_json_path": "/tmp/k.json",
+      "gcp.region": INJECTION,
+    });
+    expect(network.filter((h) => h.includes('"'))).toEqual([]);
+    expect(network).toContain("us-central1-aiplatform.googleapis.com");
+    expect(env?.["VERTEX_AI_REGION"]).toBe("us-central1");
+  });
+});
+
+describe("a stored value cannot carry a quote into the network list", () => {
+  const QUOTED = 'x")) (allow network*) (host "y';
+
+  async function network(
+    add: (
+      vault: NimbusVault,
+      servers: Record<string, ServerSpec>,
+      sandboxCwd: string,
+    ) => Promise<void>,
+    service: string,
+    secrets: Readonly<Record<string, string>>,
+  ): Promise<string[]> {
+    const vault = createMockVault();
+    for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+    const servers: Record<string, ServerSpec> = {};
+    await add(vault, servers, SANDBOX_CWD);
+    expect(servers[service]).toBeDefined();
+    const raw = servers[service]?.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}";
+    return (JSON.parse(raw) as { permissions: { network: string[] } }).permissions.network;
+  }
+
+  const cases = [
+    [
+      "imap.host",
+      phase3AddImapMcp,
+      "imap",
+      { "imap.host": QUOTED, "imap.username": "u", "imap.password": "p" },
+    ],
+    [
+      "protonmail.imap_host",
+      phase3AddProtonmailMcp,
+      "protonmail",
+      { "protonmail.username": "u", "protonmail.password": "p", "protonmail.imap_host": QUOTED },
+    ],
+    [
+      "snowflake.account",
+      phase3AddSnowflakeMcp,
+      "snowflake",
+      { "snowflake.account": QUOTED, "snowflake.oauth_token": "t" },
+    ],
+    [
+      "datadog.site",
+      phase3AddDatadogMcp,
+      "datadog",
+      { "datadog.api_key": "a", "datadog.app_key": "b", "datadog.site": 'a"b.com' },
+    ],
+    [
+      "sentry.url",
+      phase3AddSentryMcp,
+      "sentry",
+      { "sentry.auth_token": "t", "sentry.org_slug": "o", "sentry.url": 'https://a"b.com' },
+    ],
+  ] as const;
+
+  for (const [name, add, service, secrets] of cases) {
+    test(`${name}`, async () => {
+      const hosts = await network(add, service, secrets);
+      expect(hosts.filter((h) => h.includes('"'))).toEqual([]);
+    });
+  }
+});
+
+describe("a refused region is reported, by service and never by value", () => {
+  async function warnsFor(run: () => Promise<void>): Promise<unknown[]> {
+    const warn = spyOn(manifestRefusals, "warn").mockImplementation(() => {});
+    try {
+      await run();
+      const text = JSON.stringify(warn.mock.calls);
+      expect(text).not.toContain("BAD REGION");
+      return warn.mock.calls.map((c) => c[0]);
+    } finally {
+      warn.mockRestore();
+    }
+  }
+
+  test("aws with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddAwsMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "aws" }]);
+  });
+
+  test("athena names athena, not aws", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddAthenaMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "athena" }]);
+  });
+
+  test("a good region is silent", async () => {
+    const vault = createMockVault();
+    await vault.set("aws.access_key_id", "AKIA0001");
+    await vault.set("aws.secret_access_key", "SK0001");
+    await vault.set("aws.default_region", "us-east-1");
+    const servers: Record<string, ServerSpec> = {};
+    expect(await warnsFor(() => phase3AddAwsMcp(vault, servers, SANDBOX_CWD))).toEqual([]);
+  });
+
+  test("gcp with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddGcpMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "gcp" }]);
+  });
+
+  test("vertex_ai with a bad region", async () => {
+    const vault = createMockVault();
+    await vault.set("gcp.credentials_json_path", "/etc/gcp.json");
+    await vault.set("gcp.region", "BAD REGION");
+    const servers: Record<string, ServerSpec> = {};
+    const calls = await warnsFor(() => phase3AddVertexAiMcp(vault, servers, SANDBOX_CWD));
+    expect(calls).toEqual([{ serviceId: "vertex_ai" }]);
+  });
 });

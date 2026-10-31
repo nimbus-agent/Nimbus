@@ -50,6 +50,8 @@ export function userMcpManifestFromRow(
         network: net.value,
         filesystem: { read: read.value, write: [] },
       },
+      // Every `--net` entry is the owner's: it is what they typed at `connector add --mcp`.
+      ...(net.value.length === 0 ? {} : { ownerConfiguredNetwork: [...net.value] }),
       updateChannel: "stable",
     },
   };

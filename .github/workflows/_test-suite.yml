@@ -152,6 +152,11 @@ jobs:
         # "it parses" is not sufficient validation.
         run: bun run audit:workflow-lint
 
+      - name: Connector hosts (every host a connector names is declared or recorded)
+        # Guards the sandbox's network lists, not the compiled binary. Wired here AND in
+        # preflight-gates.ts in the same commit: a gate only in the manifest gates no PR.
+        run: bun run audit:connector-hosts
+
       # The three audits below guard the compiled binary. They shipped into the local preflight
       # manifest but no workflow ran them, so nothing gated a contributor's PR on them.
       - name: Connector registry drift (generated file vs. package exports)

@@ -1,4 +1,23 @@
+import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
+import pino from "pino";
+
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+
+// To stderr: a stdout line in a process with an MCP stdio channel corrupts it. See sandbox/linux.ts.
+const log = pino(
+  { name: "connector-manifests", level: process.env["NIMBUS_LOG_LEVEL"] ?? "warn" },
+  pino.destination(2),
+);
+
+/**
+ * Where a refused or ignored stored value is reported. An object so a test can observe it; every
+ * message carries the service id and never the value, which came from the Vault.
+ */
+export const manifestRefusals = {
+  warn(fields: Record<string, unknown>, message: string): void {
+    log.warn(fields, message);
+  },
+};
 
 const DEFAULT_DENY: ExtensionManifest["permissions"] = {
   network: [],
@@ -120,8 +139,16 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     network: ["management.azure.com", "login.microsoftonline.com"],
     filesystem: { read: [], write: [] },
   }),
+  // Execs `gcloud run` and `gcloud container`. The per-region Cloud Run host is added at spawn
+  // from `gcp.region`; a tool call naming another region is recorded in connector-host-gaps.json.
   gcp: baseManifest("com.nimbus.gcp", {
-    network: ["cloudresourcemanager.googleapis.com", "oauth2.googleapis.com"],
+    network: [
+      "cloudresourcemanager.googleapis.com",
+      "oauth2.googleapis.com",
+      "run.googleapis.com",
+      "container.googleapis.com",
+      "serviceusage.googleapis.com",
+    ],
     filesystem: { read: [], write: [] },
   }),
   // BigQuery (Tier-3, metadata-only). Execs `gcloud` to mint an access token, then
@@ -519,13 +546,24 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
   // imap.mail.me.com:993 / smtp.mail.me.com:587 host:port entries are added at
   // spawn time by ensureAppleMcp via manifestWithExtraNetworkHosts (host:port
   // syntax, same as imap). caldav.icloud.com is the fixed 443 CalDAV bootstrap
-  // host declared statically here. NOTE: principal discovery redirects to a
-  // per-account p##-caldav.icloud.com partition host that cannot be enumerated
-  // statically; under strict per-host gating (the rarely-available sandbox
-  // helper) CalDAV reads degrade — in the common fallback (all-or-nothing) mode
-  // the declared hosts enable the connector. See README "Network sandbox".
+  // host declared statically here. Calendar requests go to the per-account
+  // p##-caldav.icloud.com partition that discovery returns. The ten listed are the ones the
+  // connector's own nimbus.extension.json names; an account on a higher partition has no
+  // calendar under per-host enforcement. Recorded in connector-host-gaps.json.
   apple: baseManifest("com.nimbus.apple", {
-    network: ["caldav.icloud.com"],
+    network: [
+      "caldav.icloud.com",
+      "p01-caldav.icloud.com",
+      "p02-caldav.icloud.com",
+      "p03-caldav.icloud.com",
+      "p04-caldav.icloud.com",
+      "p05-caldav.icloud.com",
+      "p06-caldav.icloud.com",
+      "p07-caldav.icloud.com",
+      "p08-caldav.icloud.com",
+      "p09-caldav.icloud.com",
+      "p10-caldav.icloud.com",
+    ],
     filesystem: { read: [], write: [] },
   }),
 
@@ -560,32 +598,140 @@ export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   return baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY);
 }
 
-export function hostnameFromUrl(input: string): string | null {
+/**
+ * The network-grant entry for a configured service URL: `host`, or `host:port` when the port is
+ * not 443 (a bare entry means 443, see `parseNetworkEntry`). A plain-http URL with no port is
+ * `host:80`, never a bare host, because a bare host would grant the wrong port. One trailing dot
+ * (the fully-qualified form) is the same name and is dropped. IPv6 literals and hostless URLs
+ * return null, so no network is granted for them.
+ */
+export function networkEntryFromUrl(input: string): string | null {
   try {
     const url = new URL(input.trim());
-    const host = url.hostname.toLowerCase();
-    return host === "" ? null : host;
+    const host = url.hostname.toLowerCase().replace(/\.$/, "");
+    if (host === "" || host.startsWith("[")) return null;
+    const port = url.port !== "" ? url.port : url.protocol === "http:" ? "80" : "443";
+    return port === "443" ? host : `${host}:${port}`;
   } catch {
     return null;
   }
 }
 
+/**
+ * The network entries (none or one) for a URL the owner stored for `serviceId`, labelled as the
+ * owner's by the caller. An empty value means the connector uses its fixed vendor host and adds
+ * nothing. A non-empty value that yields no entry (an IPv6 literal, a hostless or unparseable URL)
+ * is reported, by service and never by value, because otherwise the connector loses its network
+ * with no trace.
+ */
+export function storedUrlHosts(serviceId: string, url: string): string[] {
+  if (url.trim() === "") return [];
+  const host = networkEntryFromUrl(url);
+  if (host !== null) return [host];
+  manifestRefusals.warn(
+    { serviceId },
+    "a stored URL yielded no network entry, so the connector is granted no network for it",
+  );
+  return [];
+}
+
+/** One trailing dot on the host part of a `host` or `host:port` entry: the same name. */
+function withoutTrailingDot(entry: string): string {
+  return entry.replace(/\.(:\d+)?$/, "$1");
+}
+
+/**
+ * A region the connector will not use. Callers fall back (or drop the host); this says so.
+ */
+export function warnRegionRefused(serviceId: string): void {
+  manifestRefusals.warn(
+    { serviceId },
+    "a stored region is not a valid region name and was ignored",
+  );
+}
+
+/**
+ * A stored Atlassian site URL as the Jira and Confluence connectors will read it: they accept one
+ * with no scheme and assume https, and `networkEntryFromUrl` alone would return null for it.
+ */
+export function siteUrlWithScheme(input: string): string {
+  const trimmed = input.trim();
+  return trimmed.startsWith("http") ? trimmed : `https://${trimmed}`;
+}
+
+/**
+ * The rule an extension's own manifest is held to (an RFC 1123 hostname, and a port in range), plus
+ * an underscore in a label, for run-time entries only. A self-hosted name such as `my_jenkins` works
+ * today and must keep working. Swapping `_` for a letter before the shared check changes nothing
+ * else: every other character still meets the shared rule, so `"`, whitespace and the rest stay
+ * refused, and an underscore in a port still fails as non-numeric.
+ */
+function isValidRuntimeEntry(entry: string): boolean {
+  try {
+    validateAndNormalizePermissions({ network: [entry.replaceAll("_", "a")] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function warnDroppedEntries(fields: {
+  readonly serviceId: string;
+  readonly dropped: number;
+}): void {
+  log.warn(fields, "ignored a stored host that is not a valid hostname");
+}
+
+/**
+ * `ownerConfigured` names the entries of `extraNetworkHosts` the owner typed: a host taken from a
+ * value the owner stored for this connector. A default written in code, a host derived from a
+ * region, or one a vendor returned is NOT owner-configured, even when it passes through here. The
+ * argument is required so every call site has to decide.
+ *
+ * The one door for a run-time entry into a first-party policy, so the check lives here. These
+ * manifests skip `validateAndNormalizePermissions`, and `darwin.ts` writes each entry into the SBPL
+ * profile as `(host "...")`, so a `"` or a newline in a stored value would otherwise inject into
+ * it. `new URL` does not stop this: it keeps a `"` in a hostname. A bad entry is dropped, from the
+ * label too, and reported by service and count. Never by value: it came from the Vault.
+ */
 export function manifestWithExtraNetworkHosts(
   serviceId: string,
   extraNetworkHosts: readonly string[],
+  opts: {
+    readonly ownerConfigured: readonly string[];
+    readonly onDropped?: (fields: { readonly serviceId: string; readonly dropped: number }) => void;
+  },
 ): ExtensionManifest {
   const base = manifestForFirstParty(serviceId);
   if (extraNetworkHosts.length === 0) return base;
+  const normalized = extraNetworkHosts
+    .map((h) => withoutTrailingDot(h.toLowerCase().trim()))
+    .filter((h) => h !== "");
+  const valid = normalized.filter(isValidRuntimeEntry);
+  if (valid.length !== normalized.length) {
+    (opts.onDropped ?? warnDroppedEntries)({
+      serviceId,
+      dropped: normalized.length - valid.length,
+    });
+  }
   const existing = new Set(base.permissions.network);
   const merged = [...base.permissions.network];
-  for (const host of extraNetworkHosts) {
-    const lower = host.toLowerCase().trim();
-    if (lower === "" || existing.has(lower)) continue;
-    existing.add(lower);
-    merged.push(lower);
+  for (const host of valid) {
+    if (existing.has(host)) continue;
+    existing.add(host);
+    merged.push(host);
   }
+  const extras = new Set(valid);
+  const owned = [
+    ...new Set(
+      opts.ownerConfigured
+        .map((h) => withoutTrailingDot(h.toLowerCase().trim()))
+        .filter((h) => extras.has(h)),
+    ),
+  ];
   return {
     ...base,
+    ...(owned.length === 0 ? {} : { ownerConfiguredNetwork: owned }),
     permissions: {
       network: merged,
       filesystem: {

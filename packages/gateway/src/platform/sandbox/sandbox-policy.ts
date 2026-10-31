@@ -23,11 +23,23 @@ export interface SandboxPolicy {
    * the Windows Job Object the helper already assigns remains available as later hardening.
    */
   readonly limits?: { readonly wallClockMs?: number };
+  /**
+   * The `permissions.network` entries the OWNER typed (a stored connector URL, a `--net`), the only
+   * ones a runner may let resolve to a private or loopback address. Set only by gateway code from
+   * the owner's settings, never read from a manifest file. Nothing reads it yet.
+   */
+  readonly ownerConfiguredNetwork?: readonly string[];
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
 export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
-  return { id: manifest.id, permissions: manifest.permissions };
+  return {
+    id: manifest.id,
+    permissions: manifest.permissions,
+    ...(manifest.ownerConfiguredNetwork === undefined
+      ? {}
+      : { ownerConfiguredNetwork: manifest.ownerConfiguredNetwork }),
+  };
 }
 
 /**
@@ -95,5 +107,13 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
     ...(typeof o["limits"] === "object" && o["limits"] !== null
       ? { limits: o["limits"] as NonNullable<SandboxPolicy["limits"]> }
       : {}),
+    ...(o["ownerConfiguredNetwork"] === undefined
+      ? {}
+      : {
+          ownerConfiguredNetwork: strings(
+            o["ownerConfiguredNetwork"],
+            "policy.ownerConfiguredNetwork",
+          ),
+        }),
   };
 }

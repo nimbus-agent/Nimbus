@@ -2,9 +2,9 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { addDirManifestServer, addUrlAndSecretMcp, isSafeHostIdentifier } from "./phase3-shared.ts";
@@ -26,7 +26,7 @@ export async function phase3AddDbtMcp(
   }
   const apiBase = (await readConnectorSecret(vault, "dbt", "api_base"))?.trim() ?? "";
   // A regional or single-tenant dbt Cloud host is not the manifest's cloud.getdbt.com.
-  const apiHost = apiBase === "" ? null : hostnameFromUrl(apiBase);
+  const apiHosts = storedUrlHosts("dbt", apiBase);
   servers["dbt"] = wrapServerSpec(
     {
       ...connectorSpawn("dbt"),
@@ -35,7 +35,7 @@ export async function phase3AddDbtMcp(
         ...(apiBase === "" ? {} : { DBT_API_BASE: apiBase }),
       }),
     },
-    manifestWithExtraNetworkHosts("dbt", apiHost === null ? [] : [apiHost]),
+    manifestWithExtraNetworkHosts("dbt", apiHosts, { ownerConfigured: apiHosts }),
     sandboxCwd,
   );
 }
@@ -94,7 +94,9 @@ export async function phase3AddSnowflakeMcp(
     return;
   }
   const host = `${account}.snowflakecomputing.com`;
-  const manifest = manifestWithExtraNetworkHosts("snowflake", [host]);
+  const manifest = manifestWithExtraNetworkHosts("snowflake", [host], {
+    ownerConfigured: [], // <account>.snowflakecomputing.com is built in code from a validated id
+  });
   servers["snowflake"] = wrapServerSpec(
     {
       ...connectorSpawn("snowflake"),
@@ -116,8 +118,8 @@ export async function phase3AddTableauMcp(
   if (url === "" || patName === "" || patSecret === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("tableau", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("tableau", url);
+  const manifest = manifestWithExtraNetworkHosts("tableau", hosts, { ownerConfigured: hosts });
   servers["tableau"] = wrapServerSpec(
     {
       ...connectorSpawn("tableau"),
@@ -143,8 +145,8 @@ export async function phase3AddLookerMcp(
   if (baseUrl === "" || clientId === "" || clientSecret === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("looker", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("looker", baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("looker", hosts, { ownerConfigured: hosts });
   servers["looker"] = wrapServerSpec(
     {
       ...connectorSpawn("looker"),
@@ -200,8 +202,8 @@ export async function phase3AddSupersetMcp(
   if (url === "" || user === "" || pass === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("superset", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("superset", url);
+  const manifest = manifestWithExtraNetworkHosts("superset", hosts, { ownerConfigured: hosts });
   servers["superset"] = wrapServerSpec(
     {
       ...connectorSpawn("superset"),
@@ -294,8 +296,8 @@ export async function phase3AddBigeyeMcp(
   if (baseUrl === "" || apiKey === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("bigeye", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("bigeye", baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("bigeye", hosts, { ownerConfigured: hosts });
   servers["bigeye"] = wrapServerSpec(
     {
       ...connectorSpawn("bigeye"),
@@ -352,8 +354,8 @@ export async function phase3AddAirflowMcp(
   if (url === "" || username === "" || password === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts("airflow", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("airflow", url);
+  const manifest = manifestWithExtraNetworkHosts("airflow", hosts, { ownerConfigured: hosts });
   servers["airflow"] = wrapServerSpec(
     {
       ...connectorSpawn("airflow"),
@@ -378,8 +380,8 @@ export async function phase3AddPrefectMcp(
   if (apiUrl === "" || apiKey === "") {
     return;
   }
-  const host = hostnameFromUrl(apiUrl);
-  const manifest = manifestWithExtraNetworkHosts("prefect", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("prefect", apiUrl);
+  const manifest = manifestWithExtraNetworkHosts("prefect", hosts, { ownerConfigured: hosts });
   servers["prefect"] = wrapServerSpec(
     {
       ...connectorSpawn("prefect"),
@@ -403,8 +405,8 @@ export async function phase3AddDagsterMcp(
   if (baseUrl === "" || apiToken === "") {
     return;
   }
-  const host = hostnameFromUrl(baseUrl);
-  const manifest = manifestWithExtraNetworkHosts("dagster", host === null ? [] : [host]);
+  const hosts = storedUrlHosts("dagster", baseUrl);
+  const manifest = manifestWithExtraNetworkHosts("dagster", hosts, { ownerConfigured: hosts });
   servers["dagster"] = wrapServerSpec(
     {
       ...connectorSpawn("dagster"),

@@ -2,9 +2,18 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { gcloudAuthEnv, loadGcpAuthFromVault } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { manifestForFirstParty, manifestWithExtraNetworkHosts } from "./first-party-manifests.ts";
+import {
+  manifestForFirstParty,
+  manifestWithExtraNetworkHosts,
+  warnRegionRefused,
+} from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
-import { isSafeRegion, loadAwsCreds, VERTEX_AI_DEFAULT_REGION } from "./phase3-shared.ts";
+import {
+  awsRegionalHosts,
+  isSafeRegion,
+  loadAwsCreds,
+  VERTEX_AI_DEFAULT_REGION,
+} from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
 
@@ -21,12 +30,18 @@ export async function phase3AddAwsMcp(
   if (!creds.ok) {
     return;
   }
-  servers["aws"] = wrap(
+  // The aws tools call ECS, Lambda and EC2 through the CLI, always at their regional endpoints.
+  const awsManifest = manifestWithExtraNetworkHosts(
+    "aws",
+    awsRegionalHosts(creds.region, ["ecs", "lambda", "ec2"]),
+    { ownerConfigured: [] }, // a region template; the host name is built in code
+  );
+  servers["aws"] = wrapServerSpec(
     {
       ...connectorSpawn("aws"),
       env: extensionProcessEnv(creds.env),
     },
-    "aws",
+    awsManifest,
     sandboxCwd,
   );
 }
@@ -65,12 +80,21 @@ export async function phase3AddGcpMcp(
   if (auth === null) {
     return;
   }
-  servers["gcp"] = wrap(
+  // `gcloud run` calls `<region>-run.googleapis.com` for the region a tool call names. The stored
+  // region is the one that can be known here.
+  const region = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
+  if (region !== "" && !isSafeRegion(region)) warnRegionRefused("gcp");
+  const gcpManifest = manifestWithExtraNetworkHosts(
+    "gcp",
+    isSafeRegion(region) ? [`${region}-run.googleapis.com`] : [],
+    { ownerConfigured: [] }, // a region template; the host name is built in code
+  );
+  servers["gcp"] = wrapServerSpec(
     {
       ...connectorSpawn("gcp"),
       env: extensionProcessEnv({ ...gcloudAuthEnv(auth) }),
     },
-    "gcp",
+    gcpManifest,
     sandboxCwd,
   );
 }
@@ -105,7 +129,7 @@ export async function phase3AddAthenaMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // Athena (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "athena");
   if (!creds.ok) {
     return;
   }
@@ -114,7 +138,8 @@ export async function phase3AddAthenaMcp(
   // concrete per-region host is added here (sts.amazonaws.com is the fixed base).
   const athenaManifest = manifestWithExtraNetworkHosts(
     "athena",
-    creds.region === "" ? [] : [`athena.${creds.region}.amazonaws.com`],
+    awsRegionalHosts(creds.region, ["athena"]),
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["athena"] = wrapServerSpec(
     {
@@ -132,7 +157,7 @@ export async function phase3AddCloudwatchMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // CloudWatch (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "cloudwatch");
   if (!creds.ok) {
     return;
   }
@@ -141,7 +166,8 @@ export async function phase3AddCloudwatchMcp(
   // concrete per-region host is added here (sts.amazonaws.com is the fixed base).
   const cloudwatchManifest = manifestWithExtraNetworkHosts(
     "cloudwatch",
-    creds.region === "" ? [] : [`logs.${creds.region}.amazonaws.com`],
+    awsRegionalHosts(creds.region, ["logs"]),
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["cloudwatch"] = wrapServerSpec(
     {
@@ -159,7 +185,7 @@ export async function phase3AddSagemakerMcp(
   sandboxCwd: string,
 ): Promise<void> {
   // SageMaker (Tier-3, metadata-only) reuses the existing AWS credentials.
-  const creds = await loadAwsCreds(vault);
+  const creds = await loadAwsCreds(vault, "sagemaker");
   if (!creds.ok) {
     return;
   }
@@ -169,7 +195,8 @@ export async function phase3AddSagemakerMcp(
   // base).
   const sagemakerManifest = manifestWithExtraNetworkHosts(
     "sagemaker",
-    creds.region === "" ? [] : [`api.sagemaker.${creds.region}.amazonaws.com`],
+    awsRegionalHosts(creds.region, ["api.sagemaker"]),
+    { ownerConfigured: [] }, // a region template; the host name is built in code
   );
   servers["sagemaker"] = wrapServerSpec(
     {
@@ -226,9 +253,12 @@ export async function phase3AddVertexAiMcp(
   const rawRegion = (await readConnectorSecret(vault, "gcp", "region"))?.trim() ?? "";
   const region = rawRegion === "" ? VERTEX_AI_DEFAULT_REGION : rawRegion;
   const safeRegion = isSafeRegion(region) ? region : VERTEX_AI_DEFAULT_REGION;
-  const manifest = manifestWithExtraNetworkHosts("vertex_ai", [
-    `${safeRegion}-aiplatform.googleapis.com`,
-  ]);
+  if (rawRegion !== "" && !isSafeRegion(rawRegion)) warnRegionRefused("vertex_ai");
+  const manifest = manifestWithExtraNetworkHosts(
+    "vertex_ai",
+    [`${safeRegion}-aiplatform.googleapis.com`],
+    { ownerConfigured: [] },
+  ); // a region template; the host name is built in code
   servers["vertex_ai"] = wrapServerSpec(
     {
       ...connectorSpawn("vertex-ai"),

@@ -7,15 +7,17 @@
 // an unwrapped spec. Every module here that builds a spec therefore declares its own - this
 // one included, since the `add*` helpers below build specs too.
 
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
 import { type ConnectorSecretKeyOf, readConnectorSecret } from "../connector-vault.ts";
 import { cliEnvFor } from "../local-auth/local-auth-env.ts";
 import {
-  hostnameFromUrl,
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
+  storedUrlHosts,
+  warnRegionRefused,
 } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import type { ServerSpec } from "./slot.ts";
@@ -30,23 +32,14 @@ function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSp
 export const VERTEX_AI_DEFAULT_REGION = "us-central1";
 
 /**
- * Inline argv flag-smuggling guard for the optional Vertex AI region before it
- * is interpolated into the spawned MCP's `VERTEX_AI_REGION` env and the per-region
- * network host (the gateway cannot import the `shared/` helpers of the
- * `@nimbus-dev/connectors` package). A value that is empty, over-long,
- * `-`-prefixed, or carries control characters is rejected so the caller falls
- * back to the safe default.
+ * The guard for a region before any host name or child env value is built from it. Lowercase
+ * letters, digits and inner hyphens only, which every AWS and GCP region fits. The result reaches a
+ * network entry unvalidated (a first-party manifest skips `validateAndNormalizePermissions`), and
+ * darwin.ts writes that entry into the SBPL profile as `(host "...")`, so a `"` here would inject
+ * into the profile. A leading `-` would also smuggle a flag. Callers treat a bad value as no region.
  */
 export function isSafeRegion(value: string): boolean {
-  if (value.length === 0 || value.length > 1024 || value.startsWith("-")) {
-    return false;
-  }
-  for (let i = 0; i < value.length; i += 1) {
-    if ((value.codePointAt(i) ?? 0x20) < 0x20) {
-      return false;
-    }
-  }
-  return true;
+  return value.length <= 64 && /^[a-z0-9][a-z0-9-]*$/.test(value);
 }
 
 /**
@@ -87,6 +80,32 @@ export async function readSecret<S extends ConnectorServiceId>(
   key: ConnectorSecretKeyOf<S>,
 ): Promise<string> {
   return (await readConnectorSecret(vault, serviceId, key))?.trim() ?? "";
+}
+
+/**
+ * The first-party manifest plus the host of each URL the owner stored for this connector, labelled
+ * as the owner's. An empty value means the connector uses its fixed vendor host, and adds nothing.
+ */
+export function manifestWithStoredUrls(
+  serviceId: string,
+  urls: readonly string[],
+): ExtensionManifest {
+  const hosts = urls.flatMap((url) => storedUrlHosts(serviceId, url));
+  return manifestWithExtraNetworkHosts(serviceId, hosts, { ownerConfigured: hosts });
+}
+
+/**
+ * The regional endpoint of each AWS service, the form the `aws` CLI calls (botocore's
+ * `{service}.{region}.{dnsSuffix}`). `services` holds endpoint prefixes, not CLI command names:
+ * SageMaker's is `api.sagemaker`, CloudWatch Logs' is `logs`. STS is included because a v2 CLI
+ * resolves an assume-role profile against the regional endpoint. With no known region this is
+ * empty, and the connector cannot reach its service where hosts are enforced: recorded in
+ * connector-host-gaps.json.
+ */
+export function awsRegionalHosts(region: string, services: readonly string[]): string[] {
+  if (!isSafeRegion(region)) return [];
+  const suffix = region.startsWith("cn-") ? "amazonaws.com.cn" : "amazonaws.com";
+  return [...services, "sts"].map((service) => `${service}.${region}.${suffix}`);
 }
 
 export interface SimpleTokenSpec<S extends ConnectorServiceId> {
@@ -176,10 +195,15 @@ export interface AwsCreds {
  * build the connector env subset. Reused by the AWS-family connectors (aws,
  * athena, cloudwatch, sagemaker) that all authenticate the same way.
  */
-export async function loadAwsCreds(vault: NimbusVault): Promise<AwsCreds> {
+export async function loadAwsCreds(
+  vault: NimbusVault,
+  serviceId: string = "aws",
+): Promise<AwsCreds> {
   const ak = await readSecret(vault, "aws", "access_key_id");
   const sk = await readSecret(vault, "aws", "secret_access_key");
-  const reg = await readSecret(vault, "aws", "default_region");
+  const storedRegion = await readSecret(vault, "aws", "default_region");
+  const reg = isSafeRegion(storedRegion) ? storedRegion : "";
+  if (storedRegion !== "" && reg === "") warnRegionRefused(serviceId);
   const prof = await readSecret(vault, "aws", "profile");
   const ok = (ak !== "" && sk !== "" && (reg !== "" || prof !== "")) || (prof !== "" && ak === "");
   const env: Record<string, string> = { ...cliEnvFor("aws", process.env) };
@@ -219,8 +243,8 @@ export async function addUrlAndSecretMcp<S extends ConnectorServiceId>(
   if (url === "" || credential === "") {
     return;
   }
-  const host = hostnameFromUrl(url);
-  const manifest = manifestWithExtraNetworkHosts(cfg.service, host === null ? [] : [host]);
+  const hosts = storedUrlHosts(cfg.service, url);
+  const manifest = manifestWithExtraNetworkHosts(cfg.service, hosts, { ownerConfigured: hosts });
   servers[cfg.service] = wrapServerSpec(
     {
       ...connectorSpawn(cfg.service),

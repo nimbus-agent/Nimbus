@@ -1,19 +1,15 @@
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import {
-  hostnameFromUrl,
-  manifestForFirstParty,
-  manifestWithExtraNetworkHosts,
-} from "./first-party-manifests.ts";
+import { manifestWithExtraNetworkHosts, storedUrlHosts } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
-import { addSimpleTokenServer, addUrlAndSecretMcp } from "./phase3-shared.ts";
+import {
+  addSimpleTokenServer,
+  addUrlAndSecretMcp,
+  manifestWithStoredUrls,
+} from "./phase3-shared.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
-
-function wrap(spec: ServerSpec, serviceId: string, sandboxCwd: string): ServerSpec {
-  return wrapServerSpec(spec, manifestForFirstParty(serviceId), sandboxCwd);
-}
 
 export async function phase3AddGrafanaMcp(
   vault: NimbusVault,
@@ -25,11 +21,10 @@ export async function phase3AddGrafanaMcp(
   if (gfu === "" || gtk === "") {
     return;
   }
-  const grafanaHost = hostnameFromUrl(gfu);
-  const grafanaManifest = manifestWithExtraNetworkHosts(
-    "grafana",
-    grafanaHost === null ? [] : [grafanaHost],
-  );
+  const grafanaHosts = storedUrlHosts("grafana", gfu);
+  const grafanaManifest = manifestWithExtraNetworkHosts("grafana", grafanaHosts, {
+    ownerConfigured: grafanaHosts,
+  });
   servers["grafana"] = wrapServerSpec(
     {
       ...connectorSpawn("grafana"),
@@ -58,12 +53,12 @@ export async function phase3AddSentryMcp(
   if (surl !== "") {
     extra["SENTRY_URL"] = surl;
   }
-  servers["sentry"] = wrap(
+  servers["sentry"] = wrapServerSpec(
     {
       ...connectorSpawn("sentry"),
       env: extensionProcessEnv(extra),
     },
-    "sentry",
+    manifestWithStoredUrls("sentry", [surl]),
     sandboxCwd,
   );
 }
@@ -99,12 +94,14 @@ export async function phase3AddDatadogMcp(
   if (site !== "") {
     extra["DD_SITE"] = site;
   }
-  servers["datadog"] = wrap(
+  // The connector calls `api.<site>`. The name is built in code from the stored site.
+  const siteHosts = storedUrlHosts("datadog", site === "" ? "" : `https://api.${site}`);
+  servers["datadog"] = wrapServerSpec(
     {
       ...connectorSpawn("datadog"),
       env: extensionProcessEnv(extra),
     },
-    "datadog",
+    manifestWithExtraNetworkHosts("datadog", siteHosts, { ownerConfigured: [] }),
     sandboxCwd,
   );
 }
