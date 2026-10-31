@@ -334,6 +334,32 @@ type ForwarderSpawn = {
   ownExecutable: string;
 };
 
+/**
+ * The whole inner command a per-host spawn runs behind the forwarder: its `bwrap`, that `bwrap`'s
+ * flags, then the child. Its own function so a test can hold it against `buildForwarderArgv`, which
+ * mirrors every bind in it into the outer view: a bind added here and not in the outer view is a
+ * child that cannot start.
+ */
+export function forwarderInnerArgv(
+  paths: Pick<ForwarderSpawn, "bwrapPath" | "ownExecutable">,
+  policy: SandboxPolicy,
+  cwd: string,
+  cmd: string,
+  args: readonly string[],
+  resolvTarget: string,
+): string[] {
+  return [
+    paths.bwrapPath,
+    ...buildForwarderInnerFlags(policy, cwd),
+    ...innerResolvBind(resolvTarget),
+    ...ownExecutableBind(cmd, paths.ownExecutable),
+    "--seccomp",
+    "3",
+    cmd,
+    ...args,
+  ];
+}
+
 /** The per-host path. Any step that throws refuses the spawn, and leaves nothing behind. */
 function spawnBehindForwarder(
   paths: ForwarderSpawn,
@@ -348,16 +374,7 @@ function spawnBehindForwarder(
     helperPath: paths.helperPath,
     entries: planForwardEntries(opts.policy),
     resolvConfTarget: target,
-    innerArgv: [
-      paths.bwrapPath,
-      ...buildForwarderInnerFlags(opts.policy, opts.cwd),
-      ...innerResolvBind(target),
-      ...ownExecutableBind(cmd, paths.ownExecutable),
-      "--seccomp",
-      "3",
-      cmd,
-      ...args,
-    ],
+    innerArgv: forwarderInnerArgv(paths, opts.policy, opts.cwd, cmd, args, target),
   });
   try {
     const child = spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, session.argv, opts);

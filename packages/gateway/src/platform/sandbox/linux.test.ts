@@ -6,6 +6,7 @@ import {
   buildBwrapArgv,
   createLinuxSandboxRunner,
   decideNetworkMode,
+  forwarderInnerArgv,
   ownExecutableBind,
   resolverFileToBind,
 } from "./linux.ts";
@@ -453,6 +454,39 @@ describe("buildForwarderArgv", () => {
       `${nix} -> ${nix}`,
     );
     expect(destinations(argvFor(webPolicy).outer)).not.toContain("/usr/bin/bwrap");
+  });
+
+  describe("a child that is this executable, as a spawn builds it", () => {
+    const TARBALL = "/home/owner/.local/bin/nimbus-gateway";
+    const spawnInner = (cmd: string, own: string): string[] =>
+      forwarderInnerArgv(
+        { bwrapPath: "/usr/bin/bwrap", ownExecutable: own },
+        webPolicy,
+        FWD_CWD,
+        cmd,
+        ["--role"],
+        "/etc/resolv.conf",
+      );
+
+    it("mirrors the executable's bind into the outer view, or the inner bwrap finds nothing to exec", () => {
+      const { outer, inner } = argvFor(webPolicy, { innerArgv: spawnInner(TARBALL, TARBALL) });
+      expect(bindsOf(inner)).toContain(`${TARBALL} -> ${TARBALL}`);
+      expect(bindsOf(outer)).toContain(`${TARBALL} -> ${TARBALL}`);
+      // The file only: its directory is never bound.
+      expect(destinations(outer)).not.toContain("/home/owner/.local/bin");
+      expect(destinations(outer)).not.toContain(HOME);
+    });
+
+    it("adds no bind under /usr, or for a command that is not this executable", () => {
+      const installed = "/usr/lib/nimbus/bin/nimbus-gateway";
+      expect(
+        destinations(argvFor(webPolicy, { innerArgv: spawnInner(installed, installed) }).outer),
+      ).not.toContain(installed);
+      const other = "/home/owner/bin/server";
+      expect(
+        destinations(argvFor(webPolicy, { innerArgv: spawnInner(other, TARBALL) }).outer),
+      ).not.toContain(other);
+    });
   });
 
   it("binds the generated files over the real ones, after everything else", () => {
