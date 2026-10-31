@@ -152,7 +152,9 @@ function buildReply(query: ParsedQuery, rcode: number, address: number[] | null)
 }
 
 function refuse(query: ParsedQuery, rcode: number): DnsAnswer {
-  return { reply: buildReply(query, rcode, null), refusedName: query.logName };
+  // The root name names nothing worth logging.
+  const refusedName = query.logName === "" ? null : query.logName;
+  return { reply: buildReply(query, rcode, null), refusedName };
 }
 
 /** Answers one DNS query datagram. Never throws on malformed input: it returns a null reply. */
@@ -160,7 +162,8 @@ export function answerDnsQuery(query: Uint8Array, names: DnsNames): DnsAnswer {
   const parsed = parseQuery(query);
   if (parsed === null) return { reply: null, refusedName: null };
   const name = parsed.name;
-  if (name === null || !names.isDeclared(name)) return refuse(parsed, RCODE_NXDOMAIN);
+  if (name === null || name === "" || !names.isDeclared(name))
+    return refuse(parsed, RCODE_NXDOMAIN);
   const isAddressQuery = parsed.qtype === TYPE_A || parsed.qtype === TYPE_AAAA;
   if (isAddressQuery && !names.hasRoom(name)) return refuse(parsed, RCODE_SERVFAIL);
   if (parsed.qtype !== TYPE_A || parsed.qclass !== CLASS_IN) {

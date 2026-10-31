@@ -23,8 +23,31 @@ function header(over: HeaderOptions = {}): number[] {
   return [id >> 8, id & 0xff, flags >> 8, flags & 0xff, 0, qd, 0, 0, 0, 0, 0, ar];
 }
 
-function query(name: string | Uint8Array[], qtype = 1, over: HeaderOptions = {}): Uint8Array {
-  return Uint8Array.from([...header(over), ...labelBytes(name), 0, qtype, 0, 1]);
+function query(
+  name: string | Uint8Array[],
+  qtype = 1,
+  over: HeaderOptions = {},
+  qclass = 1,
+): Uint8Array {
+  return Uint8Array.from([...header(over), ...labelBytes(name), 0, qtype, 0, qclass]);
+}
+
+/**
+ * A question whose one label starts with `lenByte` and is followed by exactly the `lenByte`'s
+ * value in bytes, then a terminator, type and class. Read as a plain label it would be valid, so
+ * only the length-above-63 check can reject it.
+ */
+function rawLabelQuery(lenByte: number, padding: number): Uint8Array {
+  return Uint8Array.from([
+    ...header(),
+    lenByte,
+    ...new Array<number>(padding).fill(0x61),
+    0,
+    0,
+    1,
+    0,
+    1,
+  ]);
 }
 
 function parse(reply: Uint8Array | null) {
@@ -66,6 +89,49 @@ describe("answerDnsQuery", () => {
     expect(p.flags & 0x0100).toBe(0x0100);
     expect(Array.from(p.bytes.slice(-4))).toEqual([127, 0, 0, 2]);
     expect(r.refusedName).toBeNull();
+  });
+
+  test("the whole A reply: header counts, question echo and answer record", () => {
+    const q = query("api.github.com");
+    const bytes = answerDnsQuery(q, makeNames()).reply;
+    if (bytes === null) throw new Error("expected a reply");
+    // id, flags (QR + RD, NOERROR), QD 1, AN 1, NS 0, AR 0
+    expect(Array.from(bytes.slice(0, 12))).toEqual([
+      0xbe, 0xef, 0x81, 0x00, 0, 1, 0, 1, 0, 0, 0, 0,
+    ]);
+    expect(Array.from(bytes.slice(12, q.length))).toEqual(Array.from(q.slice(12)));
+    expect(Array.from(bytes.slice(q.length))).toEqual([
+      0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 2,
+    ]);
+    expect(bytes.length).toBe(q.length + 16);
+  });
+
+  test("A in a class other than IN is NOERROR with no answers", () => {
+    const names = makeNames({
+      addressFor: () => {
+        throw new Error("must not be called");
+      },
+    });
+    const p = parse(answerDnsQuery(query("api.github.com", 1, {}, 3), names).reply);
+    expect(p.rcode).toBe(0);
+    expect(p.an).toBe(0);
+  });
+
+  test("MX on a declared name with no room is NOERROR, no answers, no refusal", () => {
+    const r = answerDnsQuery(query("api.github.com", 15), makeNames({ hasRoom: () => false }));
+    const p = parse(r.reply);
+    expect(p.rcode).toBe(0);
+    expect(p.an).toBe(0);
+    expect(r.refusedName).toBeNull();
+  });
+
+  test("the root name is NXDOMAIN and is not logged", () => {
+    const names = makeNames();
+    const q = Uint8Array.from([...header(), 0, 0, 1, 0, 1]);
+    const r = answerDnsQuery(q, names);
+    expect(parse(r.reply).rcode).toBe(3);
+    expect(r.refusedName).toBeNull();
+    expect(names.seen).toEqual([]);
   });
 
   test("AAAA for a declared name: NOERROR, no answers, addressFor never called", () => {
@@ -141,7 +207,7 @@ describe("answerDnsQuery", () => {
   test("a control byte in a label is stripped from refusedName and the name is undeclared", () => {
     const names = makeNames();
     const r = answerDnsQuery(
-      query([Uint8Array.from([0x65, 0x01, 0x76, 0x0a]), ascii("example")]),
+      query([Uint8Array.from([0x65, 0x01, 0x76, 0x0a, 0x7f]), ascii("example")]),
       names,
     );
     expect(names.seen).toEqual([]);
@@ -185,12 +251,14 @@ describe("answerDnsQuery", () => {
       "no question": Uint8Array.from(good.slice(0, 12)),
       "QDCOUNT 0": query("a.b", 1, { qd: 0 }),
       "QDCOUNT 2": query("a.b", 1, { qd: 2 }),
-      "compression pointer in the question": Uint8Array.from([...header(), 0xc0, 0x0c, 0, 1, 0, 1]),
-      "extended label type": Uint8Array.from([...header(), 0x40, 1, 0, 0, 1, 0, 1]),
+      "compression pointer type 0xC0": rawLabelQuery(0xc0, 192),
+      "reserved label type 0x80": rawLabelQuery(0x80, 128),
+      "extended label type 0x40": rawLabelQuery(0x40, 64),
       "label past the end": Uint8Array.from([...header(), 50, 0x61, 0x62]),
       "missing type and class": Uint8Array.from(good.slice(0, good.length - 3)),
       "label over 63 bytes": query([ascii("a".repeat(64))]),
       "name over 255 bytes": query(Array.from({ length: 6 }, () => ascii("a".repeat(60)))),
+      "name of 256 wire bytes": query([63, 63, 63, 62].map((n) => ascii("a".repeat(n)))),
       "a response, not a query": query("api.github.com", 1, { flags: 0x8100 }),
       "opcode 1 (IQUERY)": query("api.github.com", 1, { flags: 0x0800 }),
       "opcode 4 (NOTIFY)": query("api.github.com", 1, { flags: 0x2000 }),
