@@ -20,7 +20,7 @@ A Linux child with a declared network reaches exactly its declared `host:port` e
 
 - Windows and macOS are unchanged. Windows stays all-or-nothing. macOS keeps its SBPL per-host rules.
 - UDP, ICMP and QUIC stay blocked for a sandboxed child. Nothing first-party needs them. HTTP/3 clients fall back to TCP.
-- Wildcard hosts stay unsupported, as the manifest validator already requires.
+- Wildcard hosts stay unsupported for extensions and user MCP servers, as the manifest validator already requires. First-party connectors get a fixed set of them on Linux only, see "First-party wildcard hosts".
 - The project 6 audit surface (`nimbus extension audit`, narrowing, warnings) is not built here. This design only leaves the seam for it, see "What project 6 gets".
 - The egress ledger is not extended. Traffic to declared hosts stays unledgered, as `docs/SECURITY-INVARIANTS.md` states for I29.
 
@@ -76,9 +76,35 @@ A declared name can resolve to something the owner never meant to allow. An exte
 
 The policy needs a new field naming the owner-configured entries, passed through `parseSandboxPolicy`. It must be set only by gateway code from the owner's settings, never read from a manifest.
 
+### First-party wildcard hosts
+
+The owner chose this on 2026-10-31. Some first-party tools call hosts no fixed list can name: a server redirect to a per-tenant host, or a region chosen per call. Without this they fail on Linux once enforcement ships.
+
+- **Who.** Only a table in `first-party-manifests.ts`. A manifest file, an extension and `--net` cannot set one. A policy carrying wildcards without `firstPartyPolicy` is refused at the spawn.
+- **Shape.** One `*` standing for part or all of exactly one DNS label, matching `[a-z0-9-]+`, so it never crosses a dot. At least two labels must follow the wildcard's label. Port 443 only.
+- **The table:**
+
+| Connector | Wildcards |
+|---|---|
+| github-actions | `*.blob.core.windows.net` |
+| onedrive | `*.sharepoint.com` |
+| gcp | `*-run.googleapis.com` |
+| vertex-ai | `*-aiplatform.googleapis.com` |
+| apple | `p*-caldav.icloud.com` |
+| aws | `ecs.*`, `lambda.*`, `ec2.*`, `sts.*` on `amazonaws.com` and `amazonaws.com.cn` |
+| athena | `athena.*`, `sts.*` on the same two suffixes |
+| cloudwatch | `logs.*`, `sts.*` on the same two suffixes |
+| sagemaker | `api.sagemaker.*`, `sts.*` on the same two suffixes |
+
+- **How a name is reached.** A wildcard has no entry in `/etc/hosts`, so the child's lookup reaches the stub resolver. A policy with any wildcard gets one pool of 48 extra `127.0.0.x:443` listeners, fewer if the 252-address limit leaves fewer. An `A` query for a matching name takes the next free slot, and the name keeps that slot for the child's life. A query for an exact declared name is answered from the exact map first. An `AAAA` query for a matching name answers with no records and takes no slot.
+- **A connection on a slot.** The wrapper relays only if that slot holds a name, and only after checking the name against the wildcards again. A compromised forwarder that names an unassigned slot gets a closed connection. The address rules are the first-party column.
+- **A full pool** answers `SERVFAIL` and logs the name, rate-limited like a refused name. Nothing is recycled, because a client that cached the old answer would reach a different host. A restart clears it.
+- **Limits.** `*.blob.core.windows.net` covers every Azure storage account, not only GitHub's, for the github-actions connector. The owner accepted this. A name of more than one label under a wildcard, such as a consumer OneDrive download host, still fails, as do `gcp_gke_workload_restart` and Azure sovereign clouds. These stay recorded gaps.
+- **Other OSes.** Windows ignores wildcards, since it is all-or-nothing. macOS ignores them, since SBPL has no way to write one, so these tools keep failing there as they do today.
+
 ### Limits
 
-- A policy has at most 252 distinct hosts: `127.0.0.2` to `127.0.0.254`, without `127.0.0.53`, which the resolver holds. Over that, the spawn refuses.
+- A policy has at most 252 distinct hosts: `127.0.0.2` to `127.0.0.254`, without `127.0.0.53`, which the resolver holds. Pool slots count against this. Over that, the spawn refuses.
 - Every descriptor the launcher opens for its listeners is close-on-exec, so neither the inner `bwrap` nor the child inherits one.
 - The wrapper allows at most 256 open connections per child and closes any above that, so a child cannot exhaust the gateway's file descriptors. There is no idle timeout, because Slack and Discord connections are long-lived on purpose. Relays apply backpressure rather than buffering without limit.
 
@@ -126,8 +152,8 @@ The nesting needs the outer `bwrap` to keep `CAP_SETFCAP`, because Linux 5.12 an
 - **Packaging.** `release.yml` builds it for Linux, as a static binary so one build runs on every target distro, and every Linux package ships it: `.deb`, `.rpm`, tarball and AppImage. Windows and macOS builds skip it, as they skip the Linux helper today. The `setcap` steps, the `libcap2-bin` and `libcap` dependencies, and `docs/release/headless-postinst-linux-setcap.md` are removed.
 - **AppArmor.** The profile from #1827 covers `/usr/bin/bwrap`, which is enough, since the launcher creates no namespaces itself. To confirm when built.
 - **Runner.** `decideNetworkMode` still returns `no-net`, `per-host` or `fallback`, with `per-host` now meaning this. `resolverFileToBind` is not used in `per-host`. `canConfine` and `isFullyActive` test the launcher with a real start, not a capability check.
-- **Tests.** A real-binary test replaces #1826's, and runs in the restriction-on CI step: allowed entry, undeclared name, wrong port, direct IP, no `/etc/resolv.conf` use, exit code, EOF, a killed forwarder. The strace test that counts `unshare` is deleted.
-- **Invariant.** A new `I50`, under the triple rule: on Linux, a sandboxed child's only network path is the forwarder, and the wrapper checks each connection against the policy.
+- **Tests.** A real-binary test replaces #1826's, and runs in the restriction-on CI step: allowed entry, undeclared name, wrong port, direct IP, no `/etc/resolv.conf` use, exit code, EOF, a killed forwarder, a name matching a first-party wildcard, and a name that does not. The strace test that counts `unshare` is deleted.
+- **Invariant.** A new `I50`, under the triple rule: on Linux, a sandboxed child's only network path is the forwarder, the wrapper checks each connection against the policy, and a wildcard host exists only in a first-party policy.
 - **Docs.** `docs/sandbox.md`, `docs/SECURITY.md`, the roadmap line that claims this, `docs/architecture.md` and the `nimbus-sandbox-and-extensions` skill all change to match.
 
 ## What project 6 gets
@@ -136,7 +162,7 @@ The wrapper sees each connection by declared entry, so it can record host, port,
 
 ## Decisions
 
-**Made by the owner:** the local forwarder over `pasta`, and the `.deb` installing a machine-wide AppArmor profile for `bwrap`.
+**Made by the owner:** the local forwarder over `pasta`, the `.deb` installing a machine-wide AppArmor profile for `bwrap`, and first-party wildcard hosts.
 
 **My calls, for the owner to check:**
 

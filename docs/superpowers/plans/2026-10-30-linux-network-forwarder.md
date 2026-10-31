@@ -148,7 +148,7 @@ No release package ships the helper yet, so a user sees no change. Title: `feat(
 - Produces:
   - `type AddressClass = "public" | "private" | "loopback" | "refused"`
   - `classifyAddress(ip: string): AddressClass`
-  - `allowedAddresses(entry: { host: string; trust: "owner" | "first-party" | "package" }, answers: readonly string[]): string[]`. Replace `ownerConfigured: false` and `true` in this task's tests with `trust: "package"` and `trust: "owner"`, and add `first-party`: a private answer is kept, a loopback answer is dropped. `SandboxPolicy` gains `firstPartyPolicy?: boolean`, set by `manifestForFirstParty` and never read from a manifest file; `planForwardEntries` derives `trust` from it and `ownerConfiguredNetwork`, and `ForwardEntry.ownerConfigured` becomes `trust`
+  - `allowedAddresses(entry: { host: string; trust: "owner" | "first-party" | "package" }, answers: readonly string[]): string[]`. `SandboxPolicy` gains `firstPartyPolicy?: boolean`, set by `manifestForFirstParty` and never read from a manifest file; `planForwardEntries` derives `trust` from it and `ownerConfiguredNetwork`
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -165,14 +165,16 @@ const cases: [string, AddressClass][] = [
 ];
 for (const [ip, want] of cases) expect(classifyAddress(ip)).toBe(want);
 
-const pkg = { host: "evil.example", ownerConfigured: false };
+const pkg = { host: "evil.example", trust: "package" as const };
 expect(allowedAddresses(pkg, ["140.82.114.6", "10.0.0.1", "127.0.0.1"])).toEqual(["140.82.114.6"]);
-expect(allowedAddresses({ host: "10.0.0.1", ownerConfigured: false }, ["10.0.0.1"])).toEqual(["10.0.0.1"]);
-expect(allowedAddresses({ host: "127.0.0.1", ownerConfigured: false }, ["127.0.0.1"])).toEqual([]);
-const own = { host: "jenkins", ownerConfigured: true };
+expect(allowedAddresses({ host: "10.0.0.1", trust: "package" }, ["10.0.0.1"])).toEqual(["10.0.0.1"]);
+expect(allowedAddresses({ host: "127.0.0.1", trust: "package" }, ["127.0.0.1"])).toEqual([]);
+const own = { host: "jenkins", trust: "owner" as const };
 expect(allowedAddresses(own, ["10.0.0.1", "127.0.0.1", "169.254.169.254"])).toEqual(["10.0.0.1"]);
-expect(allowedAddresses({ host: "localhost", ownerConfigured: true }, ["127.0.0.1"])).toEqual(["127.0.0.1"]);
-expect(allowedAddresses({ host: "127.0.0.1", ownerConfigured: true }, ["127.0.0.1"])).toEqual(["127.0.0.1"]);
+expect(allowedAddresses({ host: "localhost", trust: "owner" }, ["127.0.0.1"])).toEqual(["127.0.0.1"]);
+expect(allowedAddresses({ host: "127.0.0.1", trust: "owner" }, ["127.0.0.1"])).toEqual(["127.0.0.1"]);
+const first = { host: "logs.us-east-1.amazonaws.com", trust: "first-party" as const };
+expect(allowedAddresses(first, ["10.0.0.1", "127.0.0.1", "169.254.169.254"])).toEqual(["10.0.0.1"]);
 ```
 
 - [ ] **Step 2: Run it, expect FAIL**
@@ -183,13 +185,49 @@ expect(allowedAddresses({ host: "127.0.0.1", ownerConfigured: true }, ["127.0.0.
 
 - [ ] **Step 4: Run it, expect PASS, then commit**
 
+### Task 4a: First-party wildcard hosts
+
+**Files:**
+- Create: `packages/gateway/src/platform/sandbox/net-wildcard-hosts.ts`, `net-wildcard-hosts.test.ts`
+- Modify: `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` and its test, `packages/gateway/src/extensions/manifest.ts`, `packages/gateway/src/platform/sandbox/sandbox-policy.ts`, `packages/gateway/src/extensions/extension-runtime.test.ts`, `scripts/structure-audit/connector-host-gaps.json`
+
+**Interfaces:**
+- Produces:
+  - `isValidWildcardHost(pattern: string): boolean`
+  - `wildcardHostMatches(pattern: string, name: string): boolean`, on lower-case names with no trailing dot
+  - `ExtensionManifest.firstPartyWildcardHosts?: readonly string[]` and `SandboxPolicy.firstPartyWildcardHosts?: readonly string[]`, passed by `policyFromManifest` and `parseSandboxPolicy` the way `ownerConfiguredNetwork` is
+
+- [ ] **Step 1: Write the failing tests**
+
+```ts
+// isValidWildcardHost: true for "*.sharepoint.com", "*-run.googleapis.com", "p*-caldav.icloud.com", "ecs.*.amazonaws.com", "ecs.*.amazonaws.com.cn".
+// false for "*.com", "*", "*.*.example.com", "a*b*.example.com", "*.example.com:443", "*.EXAMPLE.com", "api.github.com", "*..example.com".
+// wildcardHostMatches("*.sharepoint.com", "contoso-my.sharepoint.com"): true.
+// false for "a.b.sharepoint.com", "sharepoint.com", "evilsharepoint.com", "contoso-my.sharepoint.com.evil.example", "con_toso.sharepoint.com".
+// wildcardHostMatches("ecs.*.amazonaws.com", "ecs.us-east-1.amazonaws.com"): true. "ecs.a.b.amazonaws.com": false.
+// wildcardHostMatches("*-run.googleapis.com", "us-central1-run.googleapis.com"): true. "-run.googleapis.com": false.
+// Every pattern in the first-party table passes isValidWildcardHost, and the table equals the spec's.
+// manifestForFirstParty("github-actions").firstPartyWildcardHosts is ["*.blob.core.windows.net"], and it survives manifestWithExtraNetworkHosts.
+// manifestForFirstParty("slack") has no such field, and permissions.network never holds a "*".
+// parseExtensionManifest with firstPartyWildcardHosts in the file: the parsed value has no such key. Same for a user MCP manifest, and policyFromManifest of each.
+// parseSandboxPolicy round-trips the field, and throws on a non-string-array value or an invalid pattern.
+```
+
+- [ ] **Step 2: Run them, expect FAIL**
+
+- [ ] **Step 3: Implement them**
+
+The wildcard field is separate from `permissions.network`, so the macOS and Windows runners, which read only `permissions.network`, cannot see one. Edit `connector-host-gaps.json`: remove the github-actions record, narrow onedrive to consumer download hosts, remove the gcp Cloud Run, vertex-ai, apple, aws, athena, cloudwatch and sagemaker records, and keep GKE, azure, kubernetes and iac. Update the matching `handRead` decisions and the comments at `first-party-manifests.ts:143` and `:552`, and `phase3-shared.ts:103`. Every removed record's fact moves to a note that the host is a Linux wildcard and still fails on macOS. Run `bun run audit:connector-hosts`, which must pass.
+
+- [ ] **Step 4: Run them, expect PASS, then commit**
+
 ### Task 5: The stub resolver
 
 **Files:**
 - Create: `packages/gateway/src/platform/sandbox/net-dns-stub.ts`, `net-dns-stub.test.ts`
 
 **Interfaces:**
-- Produces: `answerDnsQuery(query: Uint8Array, mapped: ReadonlyMap<string, string>): { reply: Uint8Array | null; refusedName: string | null }`
+- Produces: `answerDnsQuery(query: Uint8Array, names: { isDeclared(name: string): boolean; addressFor(name: string): string | null }): { reply: Uint8Array | null; refusedName: string | null }`. `addressFor` runs only for an `A` query on a declared name, so an `AAAA` query takes no pool slot. Null means the pool is full
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -197,11 +235,14 @@ Build query bytes with a test helper. Assert on the parsed reply:
 
 ```ts
 const map = new Map([["api.github.com", "127.0.0.2"]]);
+const names = { isDeclared: (n: string) => map.has(n), addressFor: (n: string) => map.get(n) ?? null };
 // A query for a declared name: NOERROR, one A record.
 // AAAA for a declared name: NOERROR, no answers, refusedName null.
 // A for an undeclared name: NXDOMAIN, refusedName "evil.example".
 // AAAA for an undeclared name: NXDOMAIN, refusedName "evil.example".
-// Case-insensitive: "API.GitHub.COM" is declared. The reply echoes the question's own bytes and id.
+// A for a declared name whose addressFor returns null: SERVFAIL, refusedName is the name.
+// AAAA for a declared name: addressFor is never called.
+// Case-insensitive: "API.GitHub.COM" reaches isDeclared as "api.github.com". The reply echoes the question's own bytes and id.
 // Malformed (too short, a compression pointer in the question, a label running past the end, QDCOUNT != 1): reply null, no throw.
 // refusedName with a control byte in a label: control bytes are stripped before it is returned.
 ```
@@ -222,9 +263,9 @@ Parse only the header and single question, bounded by the buffer. No compression
 **Interfaces:**
 - Consumes: `allowedAddresses`, `answerDnsQuery`, `parseNetworkEntry`
 - Produces:
-  - `interface ForwardEntry { host: string; port: number; ownerConfigured: boolean; loopbackIp: string }`
-  - `planForwardEntries(policy: SandboxPolicy): ForwardEntry[]`, which throws above 252 hosts, and skips `127.0.0.53`
-  - `startForwardHost(opts: { socketPath: string; entries: readonly ForwardEntry[]; resolve: (host: string) => Promise<string[]>; connect: (ip: string, port: number) => Promise<NetSocketLike>; log: (line: string) => void; now?: () => number; onConnectionClosed?: (e: ForwardEntry, stats: { startedAtMs: number; durationMs: number; bytesToHost: number; bytesFromHost: number }) => void; onRefusedName?: (name: string) => void }): { close(): void }`
+  - `interface ForwardEntry { host: string | null; port: number; trust: "owner" | "first-party" | "package"; loopbackIp: string }`. `host` is null for a pool slot
+  - `planForwardEntries(policy: SandboxPolicy): ForwardEntry[]`, which throws above 252 hosts, and when wildcards are present without `firstPartyPolicy`, and skips `127.0.0.53`. Exact entries come first. A policy with wildcards then gets `min(48, addresses left)` pool slots on port 443 with trust `first-party`
+  - `startForwardHost(opts: { socketPath: string; entries: readonly ForwardEntry[]; wildcards?: readonly string[]; resolve: (host: string) => Promise<string[]>; connect: (ip: string, port: number) => Promise<NetSocketLike>; log: (line: string) => void; now?: () => number; onConnectionClosed?: (e: ForwardEntry, stats: { startedAtMs: number; durationMs: number; bytesToHost: number; bytesFromHost: number }) => void; onRefusedName?: (name: string) => void }): { close(): void }`
 
 The wire format, one per unix connection: a 3-byte header, then the stream. Byte 0 is `T` (TCP) or `D` (DNS). Bytes 1 and 2 are the big-endian entry index, 0 for DNS. For `T`, relay until either side closes. For `D`, read a 2-byte big-endian length and the datagram, write back a 2-byte length and the reply, then close.
 
@@ -246,6 +287,13 @@ All use a real unix socket in a temp dir, with fake `resolve` and `connect`:
 // onConnectionClosed is called once per finished T connection, with the entry, start time, duration and byte counts in both directions. It is the project 6 seam, and nothing in production passes it.
 // A slow reader: the relay pauses reading rather than buffering past 1 MiB.
 // close(): the socket file is gone.
+// D, A for a name matching a wildcard: the next pool slot's address, and the same name again gets the same address.
+// D, AAAA for that name: no records, and the next new name still gets the first free slot.
+// D, A for a name matching no wildcard: NXDOMAIN.
+// T on a slot after its name was assigned: resolves that name and connects.
+// T on an unassigned slot: closes, connect never called.
+// An exact entry that also matches a wildcard: answered from the exact entry, no slot taken.
+// A 49th name on a 48-slot pool: SERVFAIL, one log line, and the first 48 keep working.
 ```
 
 - [ ] **Step 2: Run them, expect FAIL**
@@ -334,6 +382,8 @@ The `Makefile` drops `-lcap`, and links with `-static`. Keep `-Wall -Wextra -Wer
 // The socket dir is bound in the outer and NOT in the inner.
 // Inner is buildBwrapArgv's result with --share-net and --uid <real uid> --gid <real gid>, and --seccomp 3 last before the command.
 // A 253rd host: canConfine and spawn refuse.
+// Wildcards present: every pool slot has a --listen, and no pool slot or wildcard appears in the hosts file.
+// decideNetworkMode: a policy with wildcards and an empty permissions.network is per-host with a helper, and fallback without one.
 // Mode per-host never calls resolverFileToBind's bind in the inner.
 ```
 
@@ -358,6 +408,8 @@ In `per-host` mode: create a 0700 temp dir, write the hosts and resolv files, ca
 // Kill the wrapper while the child sleeps: within 5 s no child or forwarder process is left.
 // Kill the forwarder from outside: the child's next connection fails, and nothing falls back to a route.
 // Owner uid: a file written in cwd is owned by the real uid on the host.
+// Real network, CI only: a first-party-shaped policy with `*-run.googleapis.com`. fetch to https://us-central1-run.googleapis.com/ gets an HTTP status with real TLS. evil.googleapis.com and a.b-run.googleapis.com fail to resolve, and the log names them.
+// A trailing-dot name, `jenkins.corp.`, resolves through the same entry as `jenkins.corp`.
 ```
 
 - [ ] **Step 5: Run it in CI with the restriction on**
@@ -414,6 +466,7 @@ This is the PR that changes behaviour for users. Title: `feat(sandbox): ship the
 // I50, behavioural: a per-host argv has --unshare-net in the outer, and buildForwarderArgv is the only path in linux.ts for a per-host policy.
 // I50, source pin: net-forward-host.ts checks allowedAddresses before connect.
 // I50, static: `--share-net` appears in a per-host spawn only inside the inner argv built by buildForwarderArgv, whose outer has --unshare-net.
+// I50, source pin: `firstPartyWildcardHosts` is assigned only in first-party-manifests.ts, and the wrapper re-matches a slot's name against the wildcards before connect.
 ```
 
 - [ ] **Step 2: Run them, expect FAIL, then add the I50 row and rationale**
@@ -422,7 +475,7 @@ Triple rule: wiring, docs and test in one commit. The CLAUDE.md count moves to I
 
 - [ ] **Step 3: Correct every claim**
 
-Grep the concept, not one spelling: `per-host`, `per host`, `cap_net_admin`, `iptables`, `setcap`, across `docs/`, `.claude/commands/` and `packages/docs`. State the real limits: TCP only, IPv4 loopback inside, direct-IP attempts unseen, a missing helper means whole internet, and a server redirect to an undeclared host fails.
+Grep the concept, not one spelling: `per-host`, `per host`, `cap_net_admin`, `iptables`, `setcap`, across `docs/`, `.claude/commands/` and `packages/docs`. State the real limits: TCP only, IPv4 loopback inside, direct-IP attempts unseen, a missing helper means whole internet, a server redirect to an undeclared host fails, first-party wildcards exist on Linux only, and `*.blob.core.windows.net` covers every Azure storage account for github-actions.
 
 - [ ] **Step 4: Run `bun run preflight:fast`, expect PASS, then open PR 3**
 
