@@ -44,7 +44,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 |---|---|
 | `packages/gateway/src/platform/sandbox/sandbox-runner.ts` | `SandboxRunner` interface + `createSandboxRunner()` dispatcher (I15 entry) |
 | `packages/gateway/src/platform/sandbox/sandbox-wrapper.ts` | Wrapper script — reads manifest from env, calls `runner.spawn`. **Single I15 boundary** |
-| `packages/gateway/src/platform/sandbox/linux.ts` | Linux runner — bwrap + helper + iptables; `decideNetworkMode` / `buildBwrapArgv` exposed |
+| `packages/gateway/src/platform/sandbox/linux.ts` | Linux runner — bwrap + unprivileged helper (per-host network forwarder); `decideNetworkMode` / `buildBwrapArgv` exposed |
 | `packages/gateway/src/platform/sandbox/darwin.ts` | macOS runner — sandbox-exec SBPL profile generator |
 | `packages/gateway/src/platform/sandbox/win32.ts` | Windows runner — AppContainer + `internetClient` capability, enforced via the unprivileged native `nimbus-sandbox-helper.exe` (ACL grants + Job Object + `CreateProcessW`), not FFI; per-host network filtering deferred (would need WFP callout drivers) |
 | `packages/gateway/src/platform/sandbox/seccomp-filter.ts` | Default Linux seccomp BPF filter — raw bytecode; AUDIT_ARCH_X86_64 guard |

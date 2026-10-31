@@ -55,7 +55,7 @@ Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43, I44). Ope
 
 | OS | File | Mechanism | Helper | `canConfine` |
 |---|---|---|---|---|
-| Linux | `platform/sandbox/linux.ts` | `bwrap` (`buildBwrapArgv`): user/pid/ipc/uts namespaces, `--die-with-parent`, `--unshare-net` for an empty network set; seccomp (`seccomp-filter.ts`, x86-64 only) | `nimbus-sandbox-helper` (`cap_net_admin`, path overridable via `NIMBUS_SANDBOX_HELPER_PATH`) — needed ONLY for per-host network filtering | `null` for a no-network policy even without the helper |
+| Linux | `platform/sandbox/linux.ts` | `bwrap` (`buildBwrapArgv`): user/pid/ipc/uts namespaces, `--die-with-parent`, `--unshare-net` for an empty network set; seccomp (`seccomp-filter.ts`, x86-64 only) | `nimbus-sandbox-helper` (unprivileged, no capabilities; path overridable via `NIMBUS_SANDBOX_HELPER_PATH`, and an override naming nothing is a refusal) — needed ONLY for per-host network filtering, which it does by forwarding the declared hosts into an empty network namespace | `null` for a no-network policy even without the helper |
 | macOS | `platform/sandbox/darwin.ts` | `/usr/bin/sandbox-exec` with a per-spawn `(deny default)` SBPL profile | none | always `null` |
 | Windows | `platform/sandbox/win32.ts` | AppContainer profile per policy id, inheritable ACEs on cwd + declared paths, Job Object kill-on-close | `nimbus-sandbox-helper.exe` beside `process.execPath` (probed with `--check-caps`) — IS the confinement | the helper's reason when missing; the runner refuses to spawn unconfined |
 

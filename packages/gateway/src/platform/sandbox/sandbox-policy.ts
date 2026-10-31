@@ -27,19 +27,19 @@ export interface SandboxPolicy {
   /**
    * The `permissions.network` entries the OWNER typed (a stored connector URL, a `--net`), the only
    * ones a runner may let resolve to a private or loopback address. Set only by gateway code from
-   * the owner's settings, never read from a manifest file. Nothing reads it yet.
+   * the owner's settings, never read from a manifest file.
    */
   readonly ownerConfiguredNetwork?: readonly string[];
   /**
    * True when the policy came from a first-party manifest (`manifestForFirstParty`). Selects the
    * first-party column of the address rules. Set only by gateway code, never read from a manifest
-   * file. Nothing reads it yet.
+   * file.
    */
   readonly firstPartyPolicy?: boolean;
   /**
    * Wildcard host patterns a first-party connector may reach, from the table in
-   * `first-party-manifests.ts`. Only the Linux runner will read them. Set only by gateway code,
-   * never read from a manifest file. Nothing reads it yet.
+   * `first-party-manifests.ts`. Only the Linux runner reads them. Set only by gateway code,
+   * never read from a manifest file.
    */
   readonly firstPartyWildcardHosts?: readonly string[];
 }

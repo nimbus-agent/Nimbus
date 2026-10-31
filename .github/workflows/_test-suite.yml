@@ -1051,6 +1051,8 @@ jobs:
           (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
           bun scripts/connector-boot-smoke.ts dist/nimbus-gateway
           bun scripts/package-headless-bundle.ts --skip-embedding-model
-          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
+          # --skip-sandbox-helper: the helper must not ship yet; the shipping PR removes this flag
+          # (and its twin in release.yml). package-linux-installers.test.ts guards both calls.
+          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage --skip-sandbox-helper
           test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
           test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz

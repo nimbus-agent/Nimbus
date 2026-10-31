@@ -293,3 +293,25 @@ linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () =>
   expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");
   expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
 });
+
+// The Linux sandbox helper must not ship until its shipping PR. A workflow call without the flag
+// would build the helper (the static link now succeeds), bundle it and run setcap on it in
+// postinst. Every workflow call to the packager, release and CI alike, must pass the flag.
+test("every workflow call to the Linux packager passes --skip-sandbox-helper", () => {
+  const workflows = ["release.yml", "_test-suite.yml"];
+  const calls: string[] = [];
+  for (const name of workflows) {
+    const text = readFileSync(join(REPO_ROOT, ".github", "workflows", name), "utf8");
+    const joined = text.replace(/\\r?\n/g, " ");
+    for (const line of joined.split(/\r?\n/)) {
+      if (/^\s*#/.test(line)) continue;
+      if (/package-linux-installers\.ts|package:installers:linux/.test(line)) {
+        calls.push(`${name}: ${line.trim()}`);
+        expect(line).toContain("--skip-sandbox-helper");
+      }
+    }
+  }
+  // One call in each workflow, so a rename of the call cannot make this pass vacuously.
+  expect(calls.filter((c) => c.startsWith("release.yml")).length).toBe(1);
+  expect(calls.filter((c) => c.startsWith("_test-suite.yml")).length).toBe(1);
+});
