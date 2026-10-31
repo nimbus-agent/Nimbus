@@ -7,6 +7,8 @@
  * and no query ever leaves the machine.
  */
 
+import { parseIpv4 } from "./net-address-rules.ts";
+
 export type DnsNames = {
   isDeclared(name: string): boolean;
   /** False only for a matching name that holds no pool slot when the pool is full. */
@@ -61,6 +63,22 @@ function asciiLower(b: number): number {
   return b >= 0x41 && b <= 0x5a ? b + 0x20 : b;
 }
 
+type Label = { label: string; logLabel: string; clean: boolean };
+
+/** The `len` bytes at `pos` as a label: the name form, the logging form, and whether all were passed on. */
+function readLabel(q: Uint8Array, pos: number, len: number): Label {
+  let label = "";
+  let logLabel = "";
+  let clean = true;
+  for (let i = 0; i < len; i += 1) {
+    const b = q[pos + i] ?? 0;
+    if (b >= 0x20 && b <= 0x7e) logLabel += String.fromCharCode(b);
+    if (isNameByte(b)) label += String.fromCharCode(asciiLower(b));
+    else clean = false;
+  }
+  return { label, logLabel, clean };
+}
+
 /**
  * Reads the question's name from `start`. Labels only: a length byte above 63 (a compression
  * pointer or an extended label) is malformed. Each pass advances at least one byte and the loop
@@ -78,17 +96,11 @@ function readQuestionName(q: Uint8Array, start: number): QuestionName | null {
       return { end: pos, name: clean ? labels.join(".") : null, logName: logLabels.join(".") };
     }
     if (len > MAX_LABEL_LENGTH || pos + len > q.length) return null;
-    let label = "";
-    let logLabel = "";
-    for (let i = 0; i < len; i += 1) {
-      const b = q[pos + i] ?? 0;
-      if (b >= 0x20 && b <= 0x7e) logLabel += String.fromCharCode(b);
-      if (isNameByte(b)) label += String.fromCharCode(asciiLower(b));
-      else clean = false;
-    }
+    const read = readLabel(q, pos, len);
+    if (!read.clean) clean = false;
     pos += len;
-    labels.push(label);
-    logLabels.push(logLabel);
+    labels.push(read.label);
+    logLabels.push(read.logLabel);
   }
   return null;
 }
@@ -114,20 +126,6 @@ function parseQuery(q: Uint8Array): ParsedQuery | null {
     qtype: view.getUint16(parsed.end),
     qclass: view.getUint16(parsed.end + 2),
   };
-}
-
-/** The 4 bytes of a dotted-quad, or null. The caller's pool only ever holds loopback addresses. */
-function ipv4Bytes(address: string): number[] | null {
-  const parts = address.split(".");
-  if (parts.length !== 4) return null;
-  const out: number[] = [];
-  for (const part of parts) {
-    if (!/^(0|[1-9]\d{0,2})$/.test(part)) return null;
-    const n = Number(part);
-    if (n > 255) return null;
-    out.push(n);
-  }
-  return out;
 }
 
 function buildReply(query: ParsedQuery, rcode: number, address: number[] | null): Uint8Array {
@@ -169,7 +167,7 @@ export function answerDnsQuery(query: Uint8Array, names: DnsNames): DnsAnswer {
   if (parsed.qtype !== TYPE_A || parsed.qclass !== CLASS_IN) {
     return { reply: buildReply(parsed, RCODE_NOERROR, null), refusedName: null };
   }
-  const address = ipv4Bytes(names.addressFor(name) ?? "");
+  const address = parseIpv4(names.addressFor(name) ?? "");
   if (address === null) return refuse(parsed, RCODE_SERVFAIL);
   return { reply: buildReply(parsed, RCODE_NOERROR, address), refusedName: null };
 }

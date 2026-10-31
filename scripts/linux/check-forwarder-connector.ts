@@ -72,7 +72,7 @@ function policyFor(connector: string): SandboxPolicy {
 function wrapperEnv(policy: SandboxPolicy, extra: Record<string, string>): Record<string, string> {
   return {
     PATH: CHILD_PATH,
-    HOME: process.env["HOME"] ?? "/tmp",
+    HOME: process.env["HOME"] ?? tmpdir(),
     NIMBUS_SANDBOX_HELPER_PATH: process.env["NIMBUS_SANDBOX_HELPER_PATH"] ?? "",
     [SANDBOX_POLICY_ENV]: JSON.stringify(policy),
     [SANDBOX_CWD_ENV]: join(mkdtempSync(join(tmpdir(), "nimbus-forwarder-proof-")), "cwd"),
@@ -196,7 +196,10 @@ async function proveIfReachable(proof: ConnectorProof): Promise<void> {
 
 function toolOnPath(tool: string): boolean {
   // windows-console-ok: this script runs only on Linux, where the flag is ignored.
-  return spawnSync("sh", ["-c", `command -v ${tool}`], { env: { PATH: CHILD_PATH } }).status === 0;
+  return (
+    spawnSync("sh", ["-c", 'command -v "$1"', "sh", tool], { env: { PATH: CHILD_PATH } }).status ===
+    0
+  );
 }
 
 /** A shell-script CLI under its connector's policy. A kill or a missing interpreter is the failure. */

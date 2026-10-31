@@ -8,6 +8,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -298,20 +299,20 @@ linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () =>
 // would build the helper (the static link now succeeds), bundle it and run setcap on it in
 // postinst. Every workflow call to the packager, release and CI alike, must pass the flag.
 test("every workflow call to the Linux packager passes --skip-sandbox-helper", () => {
-  const workflows = ["release.yml", "_test-suite.yml"];
+  const dir = join(REPO_ROOT, ".github", "workflows");
   const calls: string[] = [];
-  for (const name of workflows) {
-    const text = readFileSync(join(REPO_ROOT, ".github", "workflows", name), "utf8");
-    const joined = text.replace(/\\r?\n/g, " ");
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".yml"))) {
+    const text = readFileSync(join(dir, name), "utf8");
+    // A trailing backslash continues the command onto the next line.
+    const joined = text.replace(/\\\r?\n/g, " ");
     for (const line of joined.split(/\r?\n/)) {
-      if (/^\s*#/.test(line)) continue;
-      if (/package-linux-installers\.ts|package:installers:linux/.test(line)) {
-        calls.push(`${name}: ${line.trim()}`);
-        expect(line).toContain("--skip-sandbox-helper");
-      }
+      // A call is a `bun` command line: a path filter, a comment or a grep pattern is not one.
+      if (!/^\s*bun\s.*(package-linux-installers\.ts|package:installers:linux)/.test(line))
+        continue;
+      calls.push(`${name}: ${line.trim()}`);
+      expect(line).toContain("--skip-sandbox-helper");
     }
   }
-  // One call in each workflow, so a rename of the call cannot make this pass vacuously.
-  expect(calls.filter((c) => c.startsWith("release.yml")).length).toBe(1);
-  expect(calls.filter((c) => c.startsWith("_test-suite.yml")).length).toBe(1);
+  // At least the release and CI calls, so a rename of the call cannot make this pass vacuously.
+  expect(calls.length).toBeGreaterThanOrEqual(2);
 });

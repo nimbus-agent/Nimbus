@@ -23,7 +23,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { posix } from "node:path";
 import { isIpv4Literal } from "./net-address-rules.ts";
 import {
@@ -628,7 +628,7 @@ export async function runForwarderStartProbe(opts: StartProbeOpts): Promise<Star
   let session: ForwarderSession | null = null;
   let cwd: string | null = null;
   try {
-    cwd = mkdtempSync(posix.join(opts.tempRoot ?? "/tmp", "nimbus-forwarder-probe-"));
+    cwd = mkdtempSync(posix.join(opts.tempRoot ?? tmpdir(), "nimbus-forwarder-probe-"));
     const entries = planForwardEntries(policy);
     const address = entries[0]?.loopbackIp ?? "";
     const target = resolvConfTarget();

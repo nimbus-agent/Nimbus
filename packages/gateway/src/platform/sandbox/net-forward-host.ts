@@ -206,23 +206,17 @@ function sanitiseName(name: string): string {
 }
 
 /**
- * At most one line per name per minute. The map is bounded, oldest first, because a hostile child
- * can send unlimited distinct names. A name evicted that way may log again inside its minute.
- *
- * All names share a budget per minute, for the same reason. The first line over it says so once,
- * and a name it holds back is not recorded, so that name can log later. `linesPerMinute` is an
- * override for tests, which reach the map's bound only with the budget out of the way.
+ * The shared per-minute line budget. Returns whether a line at `at` may be logged; the first
+ * refusal over the budget says so once through `log`, and the budget resets each window.
  */
-export function createRefusalLog(
+function createRefusalBudget(
   log: (line: string) => void,
-  now: () => number,
-  linesPerMinute = REFUSAL_LINES_PER_MINUTE,
-): (name: string, port: number | null, reason: string) => void {
-  const lastLoggedAt = new Map<string, number>();
+  linesPerMinute: number,
+): (at: number) => boolean {
   let budgetStartedAt = Number.NEGATIVE_INFINITY;
   let linesInBudget = 0;
   let toldSuppressed = false;
-  const withinBudget = (at: number): boolean => {
+  return (at) => {
     if (at - budgetStartedAt >= REFUSAL_LOG_WINDOW_MS) {
       budgetStartedAt = at;
       linesInBudget = 0;
@@ -238,6 +232,29 @@ export function createRefusalLog(
     }
     return false;
   };
+}
+
+/** Drops the oldest entry (a Map iterates in insertion order). */
+function evictOldest(map: Map<string, number>): void {
+  const oldest = map.keys().next().value;
+  if (oldest !== undefined) map.delete(oldest);
+}
+
+/**
+ * At most one line per name per minute. The map is bounded, oldest first, because a hostile child
+ * can send unlimited distinct names. A name evicted that way may log again inside its minute.
+ *
+ * All names share a budget per minute, for the same reason. The first line over it says so once,
+ * and a name it holds back is not recorded, so that name can log later. `linesPerMinute` is an
+ * override for tests, which reach the map's bound only with the budget out of the way.
+ */
+export function createRefusalLog(
+  log: (line: string) => void,
+  now: () => number,
+  linesPerMinute = REFUSAL_LINES_PER_MINUTE,
+): (name: string, port: number | null, reason: string) => void {
+  const lastLoggedAt = new Map<string, number>();
+  const withinBudget = createRefusalBudget(log, linesPerMinute);
   return (name, port, reason) => {
     const at = now();
     const last = lastLoggedAt.get(name);
@@ -245,10 +262,7 @@ export function createRefusalLog(
     if (!withinBudget(at)) return;
     lastLoggedAt.delete(name);
     lastLoggedAt.set(name, at);
-    if (lastLoggedAt.size > MAX_TRACKED_REFUSED_NAMES) {
-      const oldest = lastLoggedAt.keys().next().value;
-      if (oldest !== undefined) lastLoggedAt.delete(oldest);
-    }
+    if (lastLoggedAt.size > MAX_TRACKED_REFUSED_NAMES) evictOldest(lastLoggedAt);
     const target = port === null ? name : `${name}:${String(port)}`;
     log(`net-forward: ${target}: ${reason}`);
   };

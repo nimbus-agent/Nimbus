@@ -13,7 +13,7 @@ export type AddressClass = "public" | "private" | "loopback" | "refused";
 export type EntryTrust = "owner" | "first-party" | "package";
 
 /** The 4 bytes of a dotted-quad IPv4 address, or null for anything else (no leading zeros). */
-function parseIpv4(s: string): number[] | null {
+export function parseIpv4(s: string): number[] | null {
   const parts = s.split(".");
   if (parts.length !== 4) return null;
   const out: number[] = [];
@@ -31,87 +31,125 @@ export function isIpv4Literal(s: string): boolean {
   return parseIpv4(s) !== null;
 }
 
-/** The 16 bytes of an IPv6 address (with `::` and an embedded dotted-quad tail), or null. */
-function parseIpv6(s: string): number[] | null {
-  if (!s.includes(":") || s.includes("%")) return null;
-  let text = s;
-  const lastColon = text.lastIndexOf(":");
-  const tail = text.slice(lastColon + 1);
-  if (tail.includes(".")) {
-    const v4 = parseIpv4(tail);
-    if (v4 === null) return null;
-    const hi = ((v4[0] ?? 0) << 8) | (v4[1] ?? 0);
-    const lo = ((v4[2] ?? 0) << 8) | (v4[3] ?? 0);
-    text = `${text.slice(0, lastColon + 1)}${hi.toString(16)}:${lo.toString(16)}`;
-  }
-  const halves = text.split("::");
-  if (halves.length > 2) return null;
-  const groups = (part: string): string[] | null => {
-    if (part === "") return [];
-    const g = part.split(":");
-    return g.every((h) => /^[0-9a-fA-F]{1,4}$/.test(h)) ? g : null;
-  };
-  const head = groups(halves[0] ?? "");
-  const rest = halves.length === 2 ? groups(halves[1] ?? "") : [];
+/** Replace a dotted-quad tail with its two hex groups; null for a malformed tail, `s` if none. */
+function embedIpv4Tail(s: string): string | null {
+  const lastColon = s.lastIndexOf(":");
+  const tail = s.slice(lastColon + 1);
+  if (!tail.includes(".")) return s;
+  const v4 = parseIpv4(tail);
+  if (v4 === null) return null;
+  const hi = ((v4[0] ?? 0) << 8) | (v4[1] ?? 0);
+  const lo = ((v4[2] ?? 0) << 8) | (v4[3] ?? 0);
+  return `${s.slice(0, lastColon + 1)}${hi.toString(16)}:${lo.toString(16)}`;
+}
+
+/** The colon-separated hex groups of one side of `::`, or null when any group is malformed. */
+function parseGroups(part: string): string[] | null {
+  if (part === "") return [];
+  const g = part.split(":");
+  return g.every((h) => /^[0-9a-fA-F]{1,4}$/.test(h)) ? g : null;
+}
+
+/** The 8 groups of an address split on `::` (one or two halves), zero-filled, or null. */
+function expandHalves(halves: readonly string[]): string[] | null {
+  const head = parseGroups(halves[0] ?? "");
+  const rest = halves.length === 2 ? parseGroups(halves[1] ?? "") : [];
   if (head === null || rest === null) return null;
-  let all: string[];
   if (halves.length === 2) {
     const missing = 8 - head.length - rest.length;
     if (missing < 1) return null;
-    all = [...head, ...Array.from({ length: missing }, () => "0"), ...rest];
-  } else {
-    all = head;
+    return [...head, ...Array.from({ length: missing }, () => "0"), ...rest];
   }
-  if (all.length !== 8) return null;
+  return head.length === 8 ? head : null;
+}
+
+function groupsToBytes(groups: readonly string[]): number[] {
   const bytes: number[] = [];
-  for (const h of all) {
+  for (const h of groups) {
     const n = Number.parseInt(h, 16);
     bytes.push(n >> 8, n & 0xff);
   }
   return bytes;
 }
 
-function classifyIpv4(b: readonly number[]): AddressClass {
-  const a = b[0] ?? 0;
-  const c = b[1] ?? 0;
-  const d = b[2] ?? 0;
-  if (a === 0) return "refused"; // 0.0.0.0/8 reaches the host's loopback
-  if (a === 127) return "loopback";
-  if (a === 10) return "private";
-  if (a === 172 && c >= 16 && c <= 31) return "private";
-  if (a === 192 && c === 168) return "private";
-  if (a === 100 && c >= 64 && c <= 127) return "private"; // CGNAT, Tailscale
-  if (a === 169 && c === 254) return "refused"; // link-local, cloud metadata
-  if (a === 192 && c === 0 && d === 0) return "refused"; // IETF protocol assignments
-  if (a === 192 && c === 0 && d === 2) return "refused"; // documentation
-  if (a === 198 && c === 51 && d === 100) return "refused"; // documentation
-  if (a === 203 && c === 0 && d === 113) return "refused"; // documentation
-  if (a === 198 && (c === 18 || c === 19)) return "refused"; // benchmarking
-  if (a >= 224) return "refused"; // multicast, reserved, broadcast
-  return "public";
+/** The 16 bytes of an IPv6 address (with `::` and an embedded dotted-quad tail), or null. */
+function parseIpv6(s: string): number[] | null {
+  if (!s.includes(":") || s.includes("%")) return null;
+  const text = embedIpv4Tail(s);
+  if (text === null) return null;
+  const halves = text.split("::");
+  if (halves.length > 2) return null;
+  const all = expandHalves(halves);
+  return all === null ? null : groupsToBytes(all);
 }
 
+/** One range of the address space: the leading `bits` bits of `prefix`, and what it classifies as. */
+type CidrRule = {
+  readonly prefix: readonly number[];
+  readonly bits: number;
+  readonly class: AddressClass;
+};
+
+/** True when the first `bits` bits of `b` equal those of `prefix`. */
+function inCidr(b: readonly number[], prefix: readonly number[], bits: number): boolean {
+  for (let i = 0; i * 8 < bits; i++) {
+    const mask = (0xff << (8 - Math.min(8, bits - i * 8))) & 0xff;
+    if (((b[i] ?? 0) & mask) !== ((prefix[i] ?? 0) & mask)) return false;
+  }
+  return true;
+}
+
+/** The class of the FIRST rule that contains `b`, or null. Table order is the order of the checks. */
+function firstMatch(b: readonly number[], rules: readonly CidrRule[]): AddressClass | null {
+  for (const rule of rules) {
+    if (inCidr(b, rule.prefix, rule.bits)) return rule.class;
+  }
+  return null;
+}
+
+/** IPv4 ranges, checked in this order; an address in none of them is public. */
+const IPV4_RULES: readonly CidrRule[] = [
+  { prefix: [0], bits: 8, class: "refused" }, // 0.0.0.0/8 reaches the host's loopback
+  { prefix: [127], bits: 8, class: "loopback" },
+  { prefix: [10], bits: 8, class: "private" },
+  { prefix: [172, 16], bits: 12, class: "private" },
+  { prefix: [192, 168], bits: 16, class: "private" },
+  { prefix: [100, 64], bits: 10, class: "private" }, // CGNAT, Tailscale
+  { prefix: [169, 254], bits: 16, class: "refused" }, // link-local, cloud metadata
+  { prefix: [192, 0, 0], bits: 24, class: "refused" }, // IETF protocol assignments
+  { prefix: [192, 0, 2], bits: 24, class: "refused" }, // documentation
+  { prefix: [198, 51, 100], bits: 24, class: "refused" }, // documentation
+  { prefix: [203, 0, 113], bits: 24, class: "refused" }, // documentation
+  { prefix: [198, 18], bits: 15, class: "refused" }, // benchmarking
+  { prefix: [224], bits: 3, class: "refused" }, // multicast, reserved, broadcast
+];
+
+function classifyIpv4(b: readonly number[]): AddressClass {
+  return firstMatch(b, IPV4_RULES) ?? "public";
+}
+
+/** ::ffff:0:0/96, IPv4-mapped: judged as the IPv4 address it carries. */
+const IPV4_MAPPED_PREFIX: readonly number[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff];
+
+/** IPv6 ranges checked after the mapped form, in this order. */
+const IPV6_RULES: readonly CidrRule[] = [
+  { prefix: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], bits: 128, class: "loopback" },
+  { prefix: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], bits: 128, class: "refused" }, // ::
+  { prefix: [0xfc], bits: 7, class: "private" }, // fc00::/7 unique-local
+  { prefix: [0xfe, 0x80], bits: 10, class: "refused" }, // fe80::/10 link-local
+  { prefix: [0xff], bits: 8, class: "refused" }, // multicast
+  { prefix: [0x20, 0x01, 0x0d, 0xb8], bits: 32, class: "refused" }, // documentation
+  { prefix: [0x3f, 0xff], bits: 20, class: "refused" }, // 3fff::/20 documentation
+  { prefix: [0x20, 0x01, 0, 0], bits: 32, class: "refused" }, // Teredo
+  { prefix: [0x20, 0x02], bits: 16, class: "refused" }, // 6to4 embeds an arbitrary IPv4 address
+];
+
 function classifyIpv6(b: readonly number[]): AddressClass {
-  const first10Zero = b.slice(0, 10).every((x) => x === 0);
-  if (first10Zero && b[10] === 0xff && b[11] === 0xff) {
-    return classifyIpv4(b.slice(12)); // IPv4-mapped: judged as the IPv4 address it carries
-  }
-  if (b.slice(0, 15).every((x) => x === 0)) {
-    if (b[15] === 1) return "loopback";
-    if (b[15] === 0) return "refused"; // ::
-  }
-  const b0 = b[0] ?? 0;
-  const b1 = b[1] ?? 0;
-  if ((b0 & 0xfe) === 0xfc) return "private"; // fc00::/7 unique-local
-  if (b0 === 0xfe && (b1 & 0xc0) === 0x80) return "refused"; // fe80::/10 link-local
-  if (b0 === 0xff) return "refused"; // multicast
+  if (inCidr(b, IPV4_MAPPED_PREFIX, 96)) return classifyIpv4(b.slice(12));
+  const listed = firstMatch(b, IPV6_RULES);
+  if (listed !== null) return listed;
   // Only global unicast (2000::/3) can be public; everything else is unassigned or special.
-  if ((b0 & 0xe0) !== 0x20) return "refused";
-  if (b0 === 0x20 && b1 === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return "refused"; // documentation
-  if (b0 === 0x3f && b1 === 0xff && ((b[2] ?? 0) & 0xf0) === 0) return "refused"; // 3fff::/20 documentation
-  if (b0 === 0x20 && b1 === 0x01 && b[2] === 0 && b[3] === 0) return "refused"; // Teredo
-  if (b0 === 0x20 && b1 === 0x02) return "refused"; // 6to4 embeds an arbitrary IPv4 address
-  return "public";
+  return inCidr(b, [0x20], 3) ? "public" : "refused";
 }
 
 function parseAddress(ip: string): number[] | null {

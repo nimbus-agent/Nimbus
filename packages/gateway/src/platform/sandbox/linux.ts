@@ -383,6 +383,132 @@ export type LinuxSandboxRunner = SandboxRunner & {
 
 const START_PROBE_NOT_RUN = "the network forwarder's start probe has not run";
 
+type StartProbe = {
+  /** The reason the forwarder cannot start here, `START_PROBE_NOT_RUN` before it ran, or null. */
+  failure(): string | null;
+  /** Runs the probe unless a settled answer is already held. */
+  ensureRun(): Promise<void>;
+  /**
+   * A timeout says the machine was busy, not that it cannot do this, so it is not kept: whoever asks
+   * still gets the refusal, and starts another try in the background for the next one to read.
+   */
+  reprobeAfterTimeout(): void;
+};
+
+type StartProbeInputs = {
+  bwrapPath: string | null;
+  helperPath: string | null;
+  helperAvailable: boolean;
+  seccompPath: string;
+  timeoutMs: number | undefined;
+};
+
+function startFailureText(failure: string | null): string | null {
+  return failure === null ? null : `the network forwarder cannot start here: ${failure}`;
+}
+
+function createStartProbe(inputs: StartProbeInputs): StartProbe {
+  const { bwrapPath, helperPath, helperAvailable, seccompPath, timeoutMs } = inputs;
+  const probeTimeout = timeoutMs === undefined ? {} : { timeoutMs };
+  let failure: string | null = START_PROBE_NOT_RUN;
+  let timedOut = false;
+  let probing: Promise<void> | null = null;
+
+  /** One at a time, each bounded by the probe's own timeout. */
+  const start = (): Promise<void> => {
+    if (bwrapPath === null || helperPath === null || !helperAvailable) return Promise.resolve();
+    probing ??= runForwarderStartProbe({
+      bwrapPath,
+      helperPath,
+      seccompPath,
+      buildInnerFlags: buildForwarderInnerFlags,
+      ...probeTimeout,
+    }).then((result) => {
+      failure = startFailureText(result.failure);
+      timedOut = result.timedOut;
+      probing = null;
+    });
+    return probing;
+  };
+
+  return {
+    failure: () => failure,
+    ensureRun: () => (failure === START_PROBE_NOT_RUN || timedOut ? start() : Promise.resolve()),
+    reprobeAfterTimeout: () => {
+      if (timedOut) void start();
+    },
+  };
+}
+
+/** Phase 1 of a spawn: every refusal that holds whatever the mode, before anything is chosen. */
+function assertSpawnable(
+  bwrapPath: string | null,
+  bwrapMissing: string | null,
+  policy: SandboxPolicy,
+): asserts bwrapPath is string {
+  // Fail closed rather than falling back to a bare `"bwrap"`, which would reintroduce the PATH
+  // lookup this resolution exists to remove -- and would spawn UNCONFINED-ish through whatever
+  // PATH found, at the one point where being wrong means no sandbox. The exec gate never gets
+  // here (canConfine refuses first); a connector spawn can, and should stop too.
+  if (bwrapPath === null) {
+    throw new Error(`refusing to spawn: ${bwrapMissing ?? "bwrap unavailable"}`);
+  }
+  const refusal = wildcardRefusal(policy);
+  if (refusal !== null) throw new Error(`refusing to spawn: ${refusal}`);
+  // A helper the operator named that is not there is not "no helper": the fallback would hand
+  // the child the whole network, which is what asking for a specific helper was meant to stop.
+  if (declaresNetwork(policy) && HELPER_OVERRIDE_REFUSAL !== null) {
+    throw new Error(`refusing to spawn: ${HELPER_OVERRIDE_REFUSAL}`);
+  }
+}
+
+/** A helper that is there but fails its check, or a start the probe saw fail, refuses the spawn. */
+function assertForwarderReady(helper: HelperState, probe: StartProbe): void {
+  probe.reprobeAfterTimeout();
+  const startFailure = probe.failure();
+  const failure = helper.reason ?? (startFailure === START_PROBE_NOT_RUN ? null : startFailure);
+  if (failure !== null) throw new Error(`refusing to spawn: ${failure}`);
+}
+
+/** The no-net and fallback modes: plain `bwrap`, with no forwarder in front of it. */
+function spawnWithoutForwarder(
+  paths: { bwrapPath: string; seccompPath: string },
+  mode: NetworkMode,
+  cmd: string,
+  args: string[],
+  opts: SandboxSpawnOptions,
+): ChildProcess {
+  const bwrapArgv = buildBwrapArgv(opts.policy, {
+    mode,
+    cwd: opts.cwd,
+    resolverFile: resolverFileToBind(),
+  });
+  bwrapArgv.push("--seccomp", "3", cmd, ...args);
+  return spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, bwrapArgv, opts);
+}
+
+type CanConfineContext = {
+  bwrapMissing: string | null;
+  helper: HelperState;
+  probe: StartProbe;
+};
+
+function canConfineOnLinux(ctx: CanConfineContext, policy: SandboxPolicy): string | null {
+  // bwrap first: without it NOTHING is confinable here, network-bearing or not.
+  if (ctx.bwrapMissing !== null) return ctx.bwrapMissing;
+  // The helper is needed ONLY for per-host network filtering. With no declared network the
+  // runner passes `--unshare-net`, giving the child its own network namespace — no helper
+  // involved — while bwrap's filesystem binds and the seccomp filter apply regardless. So a
+  // no-network policy is fully confined on a box with no helper at all, which is the common
+  // case: CI installs bubblewrap, not the helper.
+  if (!declaresNetwork(policy)) return null;
+  const refusal = wildcardRefusal(policy);
+  if (refusal !== null) return refusal;
+  if (!ctx.helper.available) return ctx.helper.reason;
+  ctx.probe.reprobeAfterTimeout();
+  return forwarderPolicyRefusal(policy) ?? ctx.probe.failure();
+}
+
 export function createLinuxSandboxRunner(
   options: LinuxSandboxRunnerOptions = {},
 ): LinuxSandboxRunner {
@@ -394,67 +520,22 @@ export function createLinuxSandboxRunner(
   if (!helper.available) {
     log.warn({ helper: helper.reason }, "sandbox: degraded mode (no per-host network gating)");
   }
-
-  let startFailure: string | null = START_PROBE_NOT_RUN;
-  let startTimedOut = false;
-  let probing: Promise<void> | null = null;
-
-  /** One at a time, each bounded by the probe's own timeout. */
-  const startProbe = (): Promise<void> => {
-    if (bwrapPath === null || HELPER_PATH === null || !helper.available) return Promise.resolve();
-    const helperPath = HELPER_PATH;
-    probing ??= runForwarderStartProbe({
-      bwrapPath,
-      helperPath,
-      seccompPath,
-      buildInnerFlags: buildForwarderInnerFlags,
-      ...(options.startProbeTimeoutMs === undefined
-        ? {}
-        : { timeoutMs: options.startProbeTimeoutMs }),
-    }).then((result) => {
-      startFailure =
-        result.failure === null
-          ? null
-          : `the network forwarder cannot start here: ${result.failure}`;
-      startTimedOut = result.timedOut;
-      probing = null;
-    });
-    return probing;
-  };
-
-  /**
-   * A timeout says the machine was busy, not that it cannot do this, so it is not kept: whoever asks
-   * still gets the refusal, and starts another try in the background for the next one to read.
-   */
-  const reprobeAfterTimeout = (): void => {
-    if (startTimedOut) void startProbe();
-  };
+  const probe = createStartProbe({
+    bwrapPath,
+    helperPath: HELPER_PATH,
+    helperAvailable: helper.available,
+    seccompPath,
+    timeoutMs: options.startProbeTimeoutMs,
+  });
 
   return {
     platform: "linux",
     spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
-      // Fail closed rather than falling back to a bare `"bwrap"`, which would reintroduce the PATH
-      // lookup this resolution exists to remove -- and would spawn UNCONFINED-ish through whatever
-      // PATH found, at the one point where being wrong means no sandbox. The exec gate never gets
-      // here (canConfine refuses first); a connector spawn can, and should stop too.
-      if (bwrapPath === null) {
-        throw new Error(`refusing to spawn: ${bwrapMissing ?? "bwrap unavailable"}`);
-      }
-      const refusal = wildcardRefusal(opts.policy);
-      if (refusal !== null) throw new Error(`refusing to spawn: ${refusal}`);
-      // Only a helper that is not there at all takes the documented fallback. One that is there and
-      // fails its check, or a start the probe saw fail, refuses: it never reaches the host network.
+      assertSpawnable(bwrapPath, bwrapMissing, opts.policy);
+      // Only a helper that is not there at all takes the documented fallback.
       const mode = decideNetworkMode(opts.policy, { helperAvailable: HELPER_PATH !== null });
-      // A helper the operator named that is not there is not "no helper": the fallback would hand
-      // the child the whole network, which is what asking for a specific helper was meant to stop.
-      if (mode !== "no-net" && HELPER_OVERRIDE_REFUSAL !== null) {
-        throw new Error(`refusing to spawn: ${HELPER_OVERRIDE_REFUSAL}`);
-      }
       if (mode === "per-host" && HELPER_PATH !== null) {
-        reprobeAfterTimeout();
-        const failure =
-          helper.reason ?? (startFailure === START_PROBE_NOT_RUN ? null : startFailure);
-        if (failure !== null) throw new Error(`refusing to spawn: ${failure}`);
+        assertForwarderReady(helper, probe);
         return spawnBehindForwarder(
           { bwrapPath, helperPath: HELPER_PATH, seccompPath },
           cmd,
@@ -462,22 +543,14 @@ export function createLinuxSandboxRunner(
           opts,
         );
       }
-      const bwrapArgv = buildBwrapArgv(opts.policy, {
-        mode,
-        cwd: opts.cwd,
-        resolverFile: resolverFileToBind(),
-      });
-      bwrapArgv.push("--seccomp", "3", cmd, ...args);
-      return spawnWithSeccomp(seccompPath, bwrapPath, bwrapArgv, opts);
+      return spawnWithoutForwarder({ bwrapPath, seccompPath }, mode, cmd, args, opts);
     },
     probeForwarderStart(): Promise<void> {
-      return startFailure === START_PROBE_NOT_RUN || startTimedOut
-        ? startProbe()
-        : Promise.resolve();
+      return probe.ensureRun();
     },
     isFullyActive(): boolean {
-      reprobeAfterTimeout();
-      return helper.available && startFailure === null;
+      probe.reprobeAfterTimeout();
+      return helper.available && probe.failure() === null;
     },
     networkRefused(): boolean {
       return (
@@ -487,22 +560,10 @@ export function createLinuxSandboxRunner(
       );
     },
     degradedReason(): string | null {
-      return bwrapMissing ?? helper.reason ?? startFailure;
+      return bwrapMissing ?? helper.reason ?? probe.failure();
     },
     canConfine(policy): string | null {
-      // bwrap first: without it NOTHING is confinable here, network-bearing or not.
-      if (bwrapMissing !== null) return bwrapMissing;
-      // The helper is needed ONLY for per-host network filtering. With no declared network the
-      // runner passes `--unshare-net`, giving the child its own network namespace — no helper
-      // involved — while bwrap's filesystem binds and the seccomp filter apply regardless. So a
-      // no-network policy is fully confined on a box with no helper at all, which is the common
-      // case: CI installs bubblewrap, not the helper.
-      if (!declaresNetwork(policy)) return null;
-      const refusal = wildcardRefusal(policy);
-      if (refusal !== null) return refusal;
-      if (!helper.available) return helper.reason;
-      reprobeAfterTimeout();
-      return forwarderPolicyRefusal(policy) ?? startFailure;
+      return canConfineOnLinux({ bwrapMissing, helper, probe }, policy);
     },
   };
 }

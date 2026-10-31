@@ -304,7 +304,9 @@ function verdict(program: Buffer, nr: number, arg0 = 0): "allow" | "eperm" | "en
     const jf = program.readUInt8(pc * 8 + 3);
     const k = program.readUInt32LE(pc * 8 + 4);
     if (code === 0x20) {
-      accumulator = k === 4 ? ARCH : k === 16 ? arg0 : nr;
+      if (k === 4) accumulator = ARCH;
+      else if (k === 16) accumulator = arg0;
+      else accumulator = nr;
       pc += 1;
     } else if (code === 0x15) {
       pc += 1 + (accumulator === k ? jt : jf);
