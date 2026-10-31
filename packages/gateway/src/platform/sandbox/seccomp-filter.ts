@@ -14,6 +14,10 @@
  * a silent death to an ordinary error that a program reports or falls back from, as it does for a
  * kernel that predates the call. Docker's default profile answers the same way.
  *
+ * `clone3` is on no list, so it answers ENOSYS: its flags live in user memory, where a filter cannot
+ * read them, so it cannot be told apart from a namespace request. libc and the runtimes fall back to
+ * `clone`, which the filter can check, and Docker's default profile answers the same way.
+ *
  * The kill stays for two things. A call from the wrong architecture is a 32-bit ABI bypass attempt
  * (the numbers mean other calls there), not a missing entry. And `SYS_KILL_ALWAYS` lists the calls
  * a confined child has no innocent use for and that could be an escape attempt, so loudly
@@ -313,8 +317,6 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "getpgrp",
   "getppid",
   "getrandom",
-  "clone",
-  "clone3",
   "fork",
   "vfork",
   "epoll_wait",
@@ -579,7 +581,9 @@ const BPF_LD = 0x00,
 const BPF_JMP = 0x05,
   BPF_JEQ = 0x10,
   BPF_K = 0x00;
+const BPF_JSET = 0x40;
 const BPF_RET = 0x06;
+const SECCOMP_DATA_ARG0_OFFSET = 16;
 const SECCOMP_DATA_NR_OFFSET = 0;
 const SECCOMP_DATA_ARCH_OFFSET = 4;
 const AUDIT_ARCH_X86_64 = 0xc000003e;
@@ -587,6 +591,31 @@ const SECCOMP_RET_ALLOW = 0x7fff0000;
 const SECCOMP_RET_ERRNO_EPERM = 0x00050001;
 const SECCOMP_RET_ERRNO_ENOSYS = 0x00050000 | 38;
 const SECCOMP_RET_KILL_PROCESS = 0x80000000;
+
+/**
+ * `clone` flags that ask for a new namespace. A child that got one could set up a view the outer
+ * bwrap never gave it, so a `clone` carrying any of them is killed, the same answer `unshare` gets.
+ * Read from the low 32 bits of arg0, as the kernel does. `CLONE_NEWTIME` shares its bit with the
+ * exit-signal byte, where 0x80 is not a signal `clone` accepts, so it costs a real call nothing.
+ */
+const CLONE_NEWTIME = 0x00000080;
+const CLONE_NEWNS = 0x00020000;
+const CLONE_NEWCGROUP = 0x02000000;
+const CLONE_NEWUTS = 0x04000000;
+const CLONE_NEWIPC = 0x08000000;
+const CLONE_NEWUSER = 0x10000000;
+const CLONE_NEWPID = 0x20000000;
+const CLONE_NEWNET = 0x40000000;
+export const CLONE_NAMESPACE_FLAGS =
+  (CLONE_NEWTIME |
+    CLONE_NEWNS |
+    CLONE_NEWCGROUP |
+    CLONE_NEWUTS |
+    CLONE_NEWIPC |
+    CLONE_NEWUSER |
+    CLONE_NEWPID |
+    CLONE_NEWNET) >>>
+  0;
 
 interface SockFilter {
   code: number;
@@ -662,6 +691,15 @@ export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}
       instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
     );
   }
+  // clone: allowed unless it asks for a namespace. It is on no list, so this is its only verdict. Both
+  // arms return, so loading arg0 into the accumulator leaves nothing after it to be misread.
+  program.push(
+    instr(BPF_JMP | BPF_JEQ | BPF_K, 0, 4, SYSCALL_NR["clone"] ?? -1),
+    instr(BPF_LD | BPF_W | BPF_ABS, 0, 0, SECCOMP_DATA_ARG0_OFFSET),
+    instr(BPF_JMP | BPF_JSET | BPF_K, 0, 1, CLONE_NAMESPACE_FLAGS),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),
+  );
   program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS));
   return emit(program);
 }

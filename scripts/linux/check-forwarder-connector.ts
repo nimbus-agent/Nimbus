@@ -10,7 +10,8 @@
 //   used to kill.
 //
 // No retries, on purpose: a retry would hide a flaky path, and this path has to work the first time.
-// A service the host itself cannot reach, outside the sandbox, is a skip with a loud line.
+// A service the host itself cannot reach, outside the sandbox, is a skip with a loud line, but a run
+// where every internet proof skipped fails: a skip is not a pass.
 //
 // Usage: bun scripts/linux/check-forwarder-connector.ts <path to the compiled nimbus-gateway>
 // Needs NIMBUS_SANDBOX_HELPER_PATH, and the internet.
@@ -178,9 +179,14 @@ async function hostReaches(url: string): Promise<boolean> {
   }
 }
 
+/** Proofs that really ran: a request through the forwarder to a real host, or a CLI under policy. */
+let connectorProofsRun = 0;
+let versionProofsRun = 0;
+
 async function proveIfReachable(proof: ConnectorProof): Promise<void> {
   if (await hostReaches(proof.hostUrl)) {
     await proveConnector(proof);
+    connectorProofsRun += 1;
     return;
   }
   console.error(
@@ -211,6 +217,7 @@ function proveVersion(tool: string, connector: string): void {
   if (run.status === SECCOMP_KILLED_EXIT) fail(`${tool}: killed by the seccomp filter`);
   if (run.status !== 0)
     fail(`${tool}: exit ${String(run.status)}: ${said.slice(-STDERR_TAIL_CHARS)}`);
+  versionProofsRun += 1;
 }
 
 await proveIfReachable({
@@ -240,4 +247,13 @@ await proveIfReachable({
 
 proveVersion("gcloud", "gcp");
 proveVersion("az", "azure");
+
+// A skip is not a pass. With every internet proof skipped, nothing here went through the forwarder
+// to a real host, and the script would otherwise exit 0 having proved nothing about it.
+console.log(
+  `check-forwarder-connector: ${String(connectorProofsRun)} connector proof(s) and ${String(versionProofsRun)} CLI proof(s) ran`,
+);
+if (connectorProofsRun === 0) {
+  fail("no proof ran: every internet proof was skipped, so nothing was shown");
+}
 process.exit(0);

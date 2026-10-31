@@ -866,6 +866,36 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           "from-sh",
         ],
         [
+          "a node:child_process spawn, which falls back from clone3 to clone",
+          `const c = require("node:child_process").spawnSync("/usr/bin/sh", ["-c", "echo from-spawn"], { encoding: "utf8" });
+           report({ v: c.stdout.trim() });`,
+          "from-spawn",
+        ],
+        [
+          "a Bun.spawn",
+          `const p = Bun.spawn(["/usr/bin/sh", "-c", "echo from-bun-spawn"], { stdout: "pipe" });
+           report({ v: (await new Response(p.stdout).text()).trim() });`,
+          "from-bun-spawn",
+        ],
+        [
+          "a worker thread, which is a clone with thread flags",
+          `const path = require("node:path").resolve("worker.js");
+           fs.writeFileSync(path, "postMessage('from-worker');");
+           const w = new Worker(path);
+           report({ v: await new Promise((done, fail) => { w.onmessage = (m) => done(m.data); w.onerror = (e) => fail(new Error(String(e.message))); }) });
+           w.terminate();`,
+          "from-worker",
+        ],
+        [
+          "clone3 answering ENOSYS rather than killing",
+          `${SYSCALL}
+           const { read } = require("bun:ffi");
+           const e = dlopen("libc.so.6", { __errno_location: { args: [], returns: "ptr" } }).symbols;
+           const first = sys(435, 0, 0);
+           report({ v: [first, read.i32(e.__errno_location())] });`,
+          [-1, 38],
+        ],
+        [
           "a shell's own pipeline and job control",
           `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "set -m; (exit 4) & wait $!; echo $?"], { encoding: "utf8" });
            report({ v: c.stdout.trim() });`,
@@ -915,6 +945,32 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
             ownerPolicy([declared()]),
             box,
             `${SYSCALL} report({ survived: true, v: sys(${String(nr)}) });`,
+            [],
+            { coreless: true },
+          );
+          expect(ran.exitCode).toBe(SECCOMP_KILLED_EXIT);
+          expect(ran.stdout).not.toContain("survived");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test.each<[string, number]>([
+        ["CLONE_NEWUSER", 0x10000000],
+        ["CLONE_NEWNET", 0x40000000],
+        ["CLONE_NEWNS", 0x00020000],
+        ["CLONE_NEWPID", 0x20000000],
+        ["CLONE_NEWIPC", 0x08000000],
+        ["CLONE_NEWUTS", 0x04000000],
+        ["CLONE_NEWCGROUP", 0x02000000],
+        ["CLONE_NEWTIME", 0x00000080],
+      ])(
+        "clone(%s) is killed, as unshare is",
+        async (_name, flag) => {
+          const box = newSandbox(root, "clone-ns");
+          const ran = await runChild(
+            ownerPolicy([declared()]),
+            box,
+            `${SYSCALL} report({ survived: true, v: sys(56, ${String(flag)}) });`,
             [],
             { coreless: true },
           );
@@ -1290,6 +1346,59 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           expect(answer.active).toBe(false);
           expect(answer.reason).toContain("not found");
           expect(answer.canConfine).toContain("not found");
+        },
+        TEST_TIMEOUT_MS,
+      );
+    });
+
+    describe("a helper override that names nothing", () => {
+      test(
+        "refuses a network child in canConfine and spawn, never falling back to the host network",
+        async () => {
+          const script = join(mkdtempSync(join(root, "typo-")), "typo.ts");
+          writeFileSync(
+            script,
+            `import { createLinuxSandboxRunner } from ${JSON.stringify(LINUX_MODULE)};
+             const runner = createLinuxSandboxRunner();
+             const net = { id: "p", permissions: { network: ["a.example.com"], filesystem: { read: [], write: [] } } };
+             const none = { id: "q", permissions: { network: [], filesystem: { read: [], write: [] } } };
+             let spawned = "no throw";
+             try {
+               const c = runner.spawn("/usr/bin/true", [], { policy: net, cwd: "/tmp", stdio: "ignore" });
+               c.kill();
+             } catch (e) { spawned = String(e instanceof Error ? e.message : e); }
+             console.log(JSON.stringify({
+               canConfine: runner.canConfine(net),
+               noNet: runner.canConfine(none),
+               refused: runner.networkRefused(),
+               spawned,
+             }));
+             process.exit(0);`,
+          );
+          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+          const proc = Bun.spawn([process.execPath, "--no-env-file", script], {
+            env: {
+              PATH: "/usr/bin:/bin",
+              HOME: homedir(),
+              NIMBUS_SANDBOX_HELPER_PATH: join(root, "no-such-helper"),
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: RUN_TIMEOUT_MS,
+          });
+          const [stdout, stderr] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+          const line = stdout.trim().split("\n").at(-1);
+          if (line === undefined || line === "") throw new Error(`no answer: ${stderr}`);
+          const out = JSON.parse(line) as Record<string, unknown>;
+          expect(String(out["canConfine"])).toContain("no-such-helper");
+          expect(String(out["spawned"])).toContain("refusing to spawn");
+          expect(String(out["spawned"])).toContain("no-such-helper");
+          expect(out["refused"]).toBe(true);
+          expect(out["noNet"]).toBeNull();
         },
         TEST_TIMEOUT_MS,
       );

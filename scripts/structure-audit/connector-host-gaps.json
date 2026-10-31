@@ -109,7 +109,7 @@
     },
     "apple": {
       "reaches": "caldav.icloud.com, then a p##-caldav.icloud.com partition; imap.mail.me.com:993 and smtp.mail.me.com:587.",
-      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. A higher partition is a Linux wildcard (p*-caldav.icloud.com); on macOS an account outside p01 to p10 still has no calendar, and whether login reaches a partition host is unverified.",
+      "decision": "IMAP and SMTP are added by ensureAppleMcp. Partitions p01 to p10 added to the fixed list, matching the connector's own nimbus.extension.json. A higher partition is a Linux wildcard (p*-caldav.icloud.com); on macOS an account outside p01 to p10 still has no calendar, and whether login reaches a partition host is unverified. The real range of partitions is unverified. Mail is unaffected unless calendar.login() itself fails, since server.ts awaits it at boot with no catch.",
       "covers": {
         "env": [],
         "cli": [],
@@ -142,7 +142,7 @@
     },
     "aws": {
       "reaches": "aws CLI to ecs, lambda and ec2 at <region>.amazonaws.com; sts for an assume-role profile.",
-      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared.",
+      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; on macOS every tool of this connector still fails with no region. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared.",
       "covers": {
         "env": [],
         "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ecs", "lambda"],
