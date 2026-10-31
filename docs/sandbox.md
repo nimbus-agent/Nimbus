@@ -161,8 +161,10 @@ reports `per_host` (`diag.snapshot`, `sandbox.platform_capabilities.network`). W
 whose snapshot carries no posture, it prints `[ok] Sandbox: the network forwarder can start here. Start
 the gateway to confirm enforcement.`: doctor's own start is a copy run from the CLI, with an unused
 socket and no seccomp filter around `/usr/bin/true`, so it shows that the nesting starts here, and neither
-a forwarded connection nor a connector. It prints `[warn]` when the helper is missing and `[fail]` when the
-gateway would refuse; a running gateway that refuses is a `[fail]` whatever the copy found. A probe that
+a forwarded connection nor a connector. With no gateway it prints `[warn]` when the helper is missing and
+`[fail]` when the gateway would refuse. A running gateway decides alone, whatever a helper beside the CLI
+or the CLI's own environment would show: `[ok]` for `per_host`, `[warn]` when it cannot filter by host,
+`[fail]` when it refuses. A probe that
 runs past its 5 s limit is a `[warn]` to re-run, not a refusal: the gateway treats its own start timeout as
 transient too. Neither `[ok]` line says a given connector can reach its hosts; for one that cannot, read
 the `net-forward:` lines described next.

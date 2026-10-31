@@ -233,6 +233,28 @@ function runFailureText(r: DoctorBwrapRun): string {
   return r.stderr.trim() === "" ? `exit ${String(r.code)}` : r.stderr.trim();
 }
 
+/** What the gateway that spawns connectors reports about itself. */
+function doctorPrintGatewayPosture(gateway: GatewaySandboxPosture): number {
+  const why = gateway.reason === null ? "" : ` (${gateway.reason})`;
+  if (gateway.network === "refusing") {
+    console.log(
+      `[fail] Sandbox: the running gateway refuses a connector that declares a network${why}, whatever this check's own start found.`,
+    );
+    return 2;
+  }
+  if (gateway.network === "all_or_nothing") {
+    console.log(
+      `[warn] Sandbox: the running gateway cannot filter by host${why}, so a connector that declares a network reaches the whole internet.`,
+    );
+    return 1;
+  }
+  console.log("[ok] Sandbox: declared hosts are enforced.");
+  console.log(
+    "  If a connector still cannot reach a host, look for net-forward: lines in the gateway log.",
+  );
+  return 0;
+}
+
 /**
  * The per-host half of the sandbox. A missing helper is a warning, since the sandbox still confines
  * and only the network is wider, as documented. A helper that is named or present and cannot work is
@@ -243,15 +265,9 @@ function doctorPrintDeclaredHosts(
   deps: DoctorBwrapDeps,
   gateway: GatewaySandboxPosture | undefined,
 ): number {
-  // The running gateway outranks this process's own probe, which is a copy of the gateway's start run
-  // from the CLI: it can pass where the gateway, with its own environment and runner, refuses.
-  if (gateway?.network === "refusing") {
-    const why = gateway.reason === null ? "" : ` (${gateway.reason})`;
-    console.log(
-      `[fail] Sandbox: the running gateway refuses a connector that declares a network${why}, whatever this check's own start found.`,
-    );
-    return 2;
-  }
+  // A running gateway decides alone. This process looks for a helper beside the CLI, in the CLI's
+  // environment, and the gateway looks beside itself in its own, so the two can disagree either way.
+  if (gateway !== undefined) return doctorPrintGatewayPosture(gateway);
   const helper = deps.findHelper();
   if (helper.kind === "missing") {
     console.log(
@@ -280,22 +296,8 @@ function doctorPrintDeclaredHosts(
     );
     return 2;
   }
-  if (gateway?.network === "all_or_nothing") {
-    const why = gateway.reason === null ? "" : ` (${gateway.reason})`;
-    console.log(
-      `[warn] Sandbox: the running gateway cannot filter by host${why}, so a connector that declares a network reaches the whole internet.`,
-    );
-    return 1;
-  }
   // This process's own start ran `/usr/bin/true` with an unused socket and no seccomp filter. It says
   // the forwarder can start, and only the gateway that spawns connectors can say more.
-  if (gateway?.network === "per_host") {
-    console.log("[ok] Sandbox: declared hosts are enforced.");
-    console.log(
-      "  If a connector still cannot reach a host, look for net-forward: lines in the gateway log.",
-    );
-    return 0;
-  }
   console.log(
     "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement.",
   );

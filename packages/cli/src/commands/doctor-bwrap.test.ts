@@ -300,6 +300,46 @@ describe("doctorPrintLinuxSandbox", () => {
         expect(lines).toContain(ENFORCED);
       });
 
+      test("a gateway that enforces outranks a CLI install with no helper of its own", () => {
+        const code = doctorPrintLinuxSandbox(deps({ findHelper: () => ({ kind: "missing" }) }), {
+          network: "per_host",
+          reason: null,
+        });
+        expect(code).toBe(0);
+        expect(lines).toContain(ENFORCED);
+        expect(lines.join("\n")).not.toContain(MISSING);
+      });
+
+      test("a gateway that enforces outranks an override only this shell has set", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({ findHelper: () => ({ kind: "override-missing", path: "/nope" }) }),
+          { network: "per_host", reason: null },
+        );
+        expect(code).toBe(0);
+        expect(lines).toContain(ENFORCED);
+      });
+
+      test("a gateway that enforces outranks a local start that fails", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({
+            run: (cmd) => (isNested(cmd) ? { code: 1, stderr: "denied" } : { code: 0, stderr: "" }),
+          }),
+          { network: "per_host", reason: null },
+        );
+        expect(code).toBe(0);
+        expect(lines).toContain(ENFORCED);
+      });
+
+      test("a gateway with no filter is named as the reason, even with no helper here", () => {
+        const code = doctorPrintLinuxSandbox(deps({ findHelper: () => ({ kind: "missing" }) }), {
+          network: "all_or_nothing",
+          reason: "no helper beside the gateway",
+        });
+        expect(code).toBe(1);
+        expect(lines.at(-1)).toStartWith("[warn] Sandbox: the running gateway cannot filter");
+        expect(lines.at(-1)).toContain("no helper beside the gateway");
+      });
+
       test("no gateway: the local probe decides", () => {
         expect(doctorPrintLinuxSandbox(deps({}), undefined)).toBe(0);
       });
