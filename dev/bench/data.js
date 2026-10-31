@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793451676850,
+  "lastUpdate": 1793453240503,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "317d32c5a53a893601c226f7b8df60a303dc40f6",
-          "message": "chore: release main (#1176)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.3.1</summary>\n\n##\n[2.3.1](https://github.com/nimbus-agent/Nimbus/compare/v2.3.0...v2.3.1)\n(2026-08-14)\n\n\n### Bug Fixes\n\n* **install:** verify the release signature on Windows with a\nGit-for-Windows gpg\n([#1175](https://github.com/nimbus-agent/Nimbus/issues/1175))\n([a68945e](https://github.com/nimbus-agent/Nimbus/commit/a68945e55cff9409536824d9fa7ff2c87d025fef))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-14T03:16:17Z",
-          "tree_id": "5d8659f3c99023123f846c56bec0be1a0fdfa8d8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/317d32c5a53a893601c226f7b8df60a303dc40f6"
-        },
-        "date": 1786678043766,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.44501469999994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.2887384500009,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 221.0175490000005,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a28f7d2f54a2bac1eba8321fa586efc2ecffb3c9",
+          "message": "feat(connectors): index a pull request's source branch and return it from resolve (#1836)\n\n## Summary\n\nIndex a pull request's source branch, and return it from `GET\n/v1/items/resolve`.\n\n- `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read\nfrom GitHub's `head.ref`, Bitbucket's `source.branch.name` and GitLab's\n`source_branch`. It is the same key `ci_run` rows already use.\n- A found `resolve` answer carries `item.branch` when the row has one,\nunder the existing `resolve` scope. It is the only `metadata` key that\nroute reads.\n\n**Why.** `GET /v1/preflight/deploy` scopes its failing-CI check to a\n`target_ref`, and the browser client on a PR page has no way to learn\none:\n\n- No forge wrote a branch onto the `pr` row, so the client's read of\n`metadata.branch` never found one on a PR.\n- #1702 moved `GET /v1/items/{id}` behind the `data` scope. That's the\nright call for that route, but it also opens every item's body,\n`/v1/people` and `/v1/audit`, which is far too much to learn one string,\nand it wouldn't help PR rows anyway.\n\n## Related Issue\n\nNone. The consumer is `nimbus-web-clipper`'s deploy-readiness section.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint); the 6 info-level\nnotes are in files this PR doesn't touch\n- [ ] All existing tests pass (`bun test`): I ran\n`packages/gateway/src/{connectors,index,agents}` and the resolve\nintegration test, not the whole suite (see Testing)\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n\n## Coverage (if you added or changed source files)\n\n- [x] New or changed source files are covered by tests, or the PR\ndescription says why a file is excluded\n\n`gitlab-sync.ts`'s one new line maps `source_branch` on the `fetchOne`\npath. I added no test that drives `fetchOne` end to end; the unit tests\nstart at `gitlabMrMetadata`.\n\n## Testing\n\nLocally on Windows:\n\n- `bun test packages/gateway/src/connectors packages/gateway/src/index\npackages/gateway/src/agents\npackages/gateway/test/integration/http/items-resolve-route.test.ts`:\n6043 pass, 0 fail.\n- `typecheck`, `typecheck:tests`, `lint`, `lint:markdown` on the\nchangelog, `audit:openapi-drift`, `audit:doc-refs` and\n`audit:status-drift` all pass.\n\nNot run against a live forge: the field names come from each forge's API\nas I know it, and the fixtures are hand-written.\n\n## Notes for Reviewers\n\n- **GitLab is partial.** The events feed has no branch, so only\n`fetchOne` writes it, and events carry it forward so a later sync can't\nerase it. An MR found by the periodic sync has no branch until something\nfetches that MR. Closing that needs an MR-detail enrichment pass, which\nI left out.\n- **Existing rows.** GitHub and Bitbucket rows gain the key the next\ntime they're synced; nothing backfills them. `meta_v` is only a stamp,\nso the bump triggers no re-fetch.\n- **Exposure.** Any `resolve`-scoped token can already read a PR's title\nfrom this route. A branch name is no more sensitive than that, but it is\nnew data on this route, so please check you agree.\n- **Ambiguous candidates** keep their shape, with no branch.\n- **Lane census.** I left `docs/structure-audit/index-lane-census.json`\nout. Running the audit rewrites it with drift that was already there and\nisn't from this change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Resolved pull requests can now include their source branch in the\nresponse when available. Branch information is supported across GitHub,\nBitbucket, and GitLab.\n* Ambiguous results remain unchanged, and responses expose no additional\nmetadata fields.\n* **Documentation**\n* Updated the changelog with branch metadata availability and\nprovider-specific limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-31T13:18:49Z",
+          "tree_id": "a3020e036c83affdfbcfd56ff9c46528124db8ca",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a28f7d2f54a2bac1eba8321fa586efc2ecffb3c9"
+        },
+        "date": 1793453236621,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 233.7164792499978,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 228.3977561999971,
             "unit": "ms"
           }
         ]
