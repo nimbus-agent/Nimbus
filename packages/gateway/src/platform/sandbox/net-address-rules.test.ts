@@ -43,6 +43,25 @@ describe("classifyAddress", () => {
     ["0:0:0:0:0:ffff:7f00:1", "loopback"],
     ["0:0:0:0:0:ffff:a9fe:a9fe", "refused"],
     ["0000:0000:0000:0000:0000:0000:0000:0001", "loopback"],
+    ["::FFFF:7F00:1", "loopback"],
+    ["2a00::1", "public"],
+    // IPv4-compatible, NAT64, a non-mapped ::ffff:0:x, Teredo, 6to4 and documentation forms
+    ["::127.0.0.1", "refused"],
+    ["64:ff9b::7f00:1", "refused"],
+    ["::ffff:0:7f00:1", "refused"],
+    ["2001:0:4136:e378:8000:63bf:3fff:fdd2", "refused"],
+    ["2002:7f00:1::", "refused"],
+    ["2002:a00:1::", "refused"],
+    ["3fff::1", "refused"],
+    ["192.0.2.1", "refused"],
+    ["198.51.100.1", "refused"],
+    ["203.0.113.1", "refused"],
+    // not canonical dotted quads: never guessed at
+    ["010.0.0.1", "refused"],
+    ["0177.0.0.1", "refused"],
+    ["0x7f.1", "refused"],
+    ["127.1", "refused"],
+    ["1:2:3:4:5:6:7:8:9", "refused"],
   ];
   for (const [ip, want] of cases) {
     test(`${JSON.stringify(ip)} is ${want}`, () => {
@@ -88,6 +107,26 @@ describe("allowedAddresses", () => {
     ]);
     expect(allowedAddresses({ host: "127.0.0.1", trust: "owner" }, ["127.0.0.2"])).toEqual([]);
     expect(allowedAddresses({ host: "[::1]", trust: "owner" }, ["::1"])).toEqual(["::1"]);
+  });
+
+  test("an owner-configured loopback literal does not reach a different loopback answer", () => {
+    expect(allowedAddresses({ host: "127.0.0.2", trust: "owner" }, ["127.0.0.1"])).toEqual([]);
+  });
+
+  test("localhost reaches any loopback answer for the owner", () => {
+    expect(allowedAddresses({ host: "localhost", trust: "owner" }, ["127.9.9.9"])).toEqual([
+      "127.9.9.9",
+    ]);
+  });
+
+  test("the host must arrive without its port: the caller splits it off", () => {
+    expect(allowedAddresses({ host: "localhost:8080", trust: "owner" }, ["127.0.0.1"])).toEqual([]);
+  });
+
+  test("a package-declared mapped private literal reaches the same IPv4 address", () => {
+    expect(allowedAddresses({ host: "::ffff:10.0.0.1", trust: "package" }, ["10.0.0.1"])).toEqual([
+      "10.0.0.1",
+    ]);
   });
 
   test("a first-party name reaches private answers but not loopback or link-local", () => {

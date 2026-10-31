@@ -103,6 +103,7 @@ function classifyIpv6(b: readonly number[]): AddressClass {
   // Only global unicast (2000::/3) can be public; everything else is unassigned or special.
   if ((b0 & 0xe0) !== 0x20) return "refused";
   if (b0 === 0x20 && b1 === 0x01 && b[2] === 0x0d && b[3] === 0xb8) return "refused"; // documentation
+  if (b0 === 0x3f && b1 === 0xff && ((b[2] ?? 0) & 0xf0) === 0) return "refused"; // 3fff::/20 documentation
   if (b0 === 0x20 && b1 === 0x01 && b[2] === 0 && b[3] === 0) return "refused"; // Teredo
   if (b0 === 0x20 && b1 === 0x02) return "refused"; // 6to4 embeds an arbitrary IPv4 address
   return "public";
