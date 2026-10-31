@@ -1,8 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildBwrapArgv, decideNetworkMode, resolverFileToBind } from "./linux.ts";
+import {
+  buildBwrapArgv,
+  createLinuxSandboxRunner,
+  decideNetworkMode,
+  ownExecutableBind,
+  resolverFileToBind,
+} from "./linux.ts";
 import {
   buildForwarderArgv,
   createForwarderDir,
@@ -56,6 +62,62 @@ describe("decideNetworkMode", () => {
     expect(decideNetworkMode(policy, { helperAvailable: false })).toBe("fallback");
   });
 });
+
+describe("ownExecutableBind", () => {
+  const TARBALL = "/home/owner/.local/bin/nimbus-gateway";
+
+  it("binds this executable's one file, never its directory", () => {
+    expect(ownExecutableBind(TARBALL, TARBALL)).toEqual(["--ro-bind", TARBALL, TARBALL]);
+  });
+
+  it("an AppImage's mount gets the same", () => {
+    const mounted = "/tmp/.mount_nimbusAbC/usr/bin/nimbus-gateway";
+    expect(ownExecutableBind(mounted, mounted)).toEqual(["--ro-bind", mounted, mounted]);
+  });
+
+  it("adds nothing under /usr, which every view binds", () => {
+    const installed = "/usr/lib/nimbus/bin/nimbus-gateway";
+    expect(ownExecutableBind(installed, installed)).toEqual([]);
+  });
+
+  it("adds nothing for any other command: a policy decides what that can see", () => {
+    expect(ownExecutableBind("/home/owner/bin/server", TARBALL)).toEqual([]);
+    expect(ownExecutableBind("aws", TARBALL)).toEqual([]);
+  });
+});
+
+/** The bug this bind fixes: a gateway outside /usr, as a tarball installs it, started no connector. */
+describe.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
+  "a child that is this executable, outside every bound tree, with an empty policy",
+  () => {
+    function exitOf(cmd: string, ownExecutable: string): Promise<number | null> {
+      const runner = createLinuxSandboxRunner({ ownExecutable });
+      const cwd = join(mkdtempSync(join(TMP_ROOT, "own-exec-")), "cwd");
+      mkdirSync(cwd);
+      const child = runner.spawn(cmd, [], { policy: basePolicy(), env: {}, cwd, stdio: "ignore" });
+      return new Promise((done) => child.once("exit", (code) => done(code)));
+    }
+
+    function installedCopy(): string {
+      const dir = join(realpathSync(mkdtempSync(join(TMP_ROOT, "home-"))), ".local", "bin");
+      mkdirSync(dir, { recursive: true });
+      const copy = join(dir, "nimbus-gateway");
+      copyFileSync(realpathSync("/usr/bin/true"), copy);
+      chmodSync(copy, 0o755);
+      return copy;
+    }
+
+    it("starts", async () => {
+      const copy = installedCopy();
+      expect(await exitOf(copy, copy)).toBe(0);
+    });
+
+    it("the same file does not start when it is not this executable, so the test proves the bind", async () => {
+      const copy = installedCopy();
+      expect(await exitOf(copy, "/usr/bin/nothing-else")).not.toBe(0);
+    });
+  },
+);
 
 describe("buildBwrapArgv", () => {
   it("uses --unshare-net for no-net mode", () => {
