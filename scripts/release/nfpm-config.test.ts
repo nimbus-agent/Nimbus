@@ -31,6 +31,17 @@ test("maps binaries to /usr/lib/nimbus/bin and wrappers to /usr/local/bin", () =
   expect(y).toContain("dst: /usr/local/bin/nimbus-gateway");
 });
 
+test("ships vec0.so beside the gateway when the bundle has one, and not otherwise", () => {
+  const y = renderNfpmConfig({ ...BASE, hasVec0: true });
+  expect(y).toContain(
+    "  - src: /work/bundle/vec0.so\n    dst: /usr/lib/nimbus/bin/vec0.so\n    file_info:\n      mode: 0644",
+  );
+  // Same directory as the gateway: it resolves the extension from dirname(process.execPath).
+  expect(y).toContain("dst: /usr/lib/nimbus/bin/nimbus-gateway");
+  expect(renderNfpmConfig(BASE)).not.toContain("vec0");
+  expect(renderNfpmConfig({ ...BASE, hasVec0: false })).not.toContain("vec0");
+});
+
 test("always includes the sandbox helper at mode 0755, with no install script", () => {
   const y = renderNfpmConfig(BASE);
   expect(y).toMatch(

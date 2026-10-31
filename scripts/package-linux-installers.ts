@@ -384,7 +384,7 @@ function buildRpm(nfpmBin: string): string {
     "utf8",
   );
 
-  const cfg = renderNfpmConfig({ version, binDir: rpmBinDir, wrapperDir });
+  const cfg = renderNfpmConfig({ version, binDir: rpmBinDir, wrapperDir, hasVec0 });
   const cfgPath = join(stage, "nfpm.yaml");
   writeFileSync(cfgPath, cfg, "utf8");
 
