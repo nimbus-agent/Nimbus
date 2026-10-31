@@ -766,6 +766,8 @@ jobs:
       # Everything above runs with Ubuntu's AppArmor restriction switched OFF by
       # install-sandbox-deps.sh, which is how a stock Ubuntu 24.04 could not start any sandboxed
       # child while CI stayed green. This step runs with it on, using the `.deb`'s own script blocks.
+      # It also builds the helper and a gateway, and runs the network forwarder's real test and the
+      # real `github` connector through it, since that path nests a second bwrap.
       - name: Linux — bubblewrap on stock Ubuntu (AppArmor restriction on, the .deb's profile)
         if: runner.os == 'Linux' && !cancelled()
         shell: bash

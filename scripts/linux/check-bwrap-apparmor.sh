@@ -88,6 +88,19 @@ expect_allowed "with the profile"
 echo "Restriction on, the profile loaded, name resolution through the real runner:"
 bun --no-env-file scripts/linux/check-sandbox-dns.ts
 
+# The whole per-host path, and the one place it runs with the restriction on: nested bwrap, the
+# launcher, the forwarder and a real connector, under the profile the .deb installs. A failure here
+# on an otherwise green test suite means stock Ubuntu cannot start a network child.
+echo "Restriction on, the profile loaded, the network forwarder:"
+helper="${PWD}/packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper"
+bun run build:sandbox-helper
+NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file scripts/linux/check-sandbox-dns.ts
+CI=true NIMBUS_REQUIRE_SANDBOX_HELPER=1 NIMBUS_REQUIRE_REAL_NETWORK=1 \
+  bun test packages/gateway/src/platform/sandbox/linux-forwarder-network.test.ts --timeout 60000
+(cd packages/gateway && bun run build)
+NIMBUS_SANDBOX_HELPER_PATH="${helper}" \
+  bun --no-env-file scripts/linux/check-forwarder-connector.ts dist/nimbus-gateway
+
 echo "Restriction on, the install block has run twice (an upgrade):"
 sudo sh "${work}/install.sh"
 expect_allowed "after a second install"
