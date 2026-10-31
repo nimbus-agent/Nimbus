@@ -331,6 +331,7 @@ describe.skipIf(!IS_LINUX || (!compilerAvailable() && !REQUIRED))(
     let dir = "";
     let lines: string[] = [];
     let exitCode: number | null = null;
+    let harnessFailure: string | null = null;
 
     beforeAll(() => {
       expect(compilerAvailable()).toBe(true);
@@ -360,6 +361,8 @@ describe.skipIf(!IS_LINUX || (!compilerAvailable() && !REQUIRED))(
       const r = spawnSync(binary, [], { encoding: "utf8", timeout: TEST_TIMEOUT_MS - 5000 });
       lines = r.stdout.trim().split("\n");
       exitCode = r.status;
+      // A null status alone says nothing: name the timeout or the signal.
+      harnessFailure = r.error?.message ?? r.signal ?? null;
     }, TEST_TIMEOUT_MS);
 
     afterAll(() => {
@@ -368,6 +371,7 @@ describe.skipIf(!IS_LINUX || (!compilerAvailable() && !REQUIRED))(
 
     test("every case behaves as the harness expects", () => {
       expect(lines.filter((line) => !line.startsWith("ok "))).toEqual([]);
+      expect(harnessFailure).toBeNull();
       expect(exitCode).toBe(0);
     });
 

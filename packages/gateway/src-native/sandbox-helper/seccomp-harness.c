@@ -147,6 +147,11 @@ static void report(const char *name, bool ok, int status) {
 
 static void enter_filter(void) {
     alarm(CHILD_TIMEOUT_SECONDS); /* a syscall the filter wrongly allows may block */
+    /* The sweep kills hundreds of children. On a host with a crash reporter in core_pattern, such as
+     * Ubuntu's apport, each kill would otherwise start it. */
+    if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0) {
+        _exit(SETUP_FAILED);
+    }
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 || !install_seccomp()) {
         _exit(SETUP_FAILED);
     }

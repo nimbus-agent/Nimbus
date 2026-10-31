@@ -17,6 +17,7 @@ import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
 import {
+  isSandboxWrapperOnlyEnv,
   policyFromManifest,
   SANDBOX_CWD_ENV,
   SANDBOX_POLICY_ENV,
@@ -241,7 +242,10 @@ describe("buildExtensionSpawnSpec", () => {
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
     ]);
-    for (const k of Object.keys(spec.env)) expect(allowed.has(k)).toBe(true);
+    // The wrapper strips the wrapper-only pair before the child, and only a network policy gets it.
+    for (const k of Object.keys(spec.env)) {
+      expect(allowed.has(k) || isSandboxWrapperOnlyEnv(k)).toBe(true);
+    }
     // The working directory is the fresh stage itself, never the long-lived per-policy leaf.
     expect(spec.env[SANDBOX_CWD_ENV]).toBe(s.stagePath);
   }
