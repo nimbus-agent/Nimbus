@@ -99,8 +99,8 @@
 
 typedef struct {
     struct in_addr ip;
-    const char *ip_text;
-    const char *port_text;
+    char ip_text[INET_ADDRSTRLEN];
+    char port_text[6]; /* "65535" and its NUL */
     uint16_t port;
     uint16_t index;
     int fd;
@@ -143,31 +143,37 @@ static bool parse_decimal(const char *s, unsigned long max, unsigned long *out) 
     return true;
 }
 
-/* <ip>:<port>:<index>. Splits the writable argv string in place. */
-static bool parse_listen(char *value, listener_t *out) {
-    char *last_colon = strrchr(value, ':');
+/* <ip>:<port>:<index>. Copies the two texts it keeps, so `value` is only read. */
+static bool parse_listen(const char *value, listener_t *out) {
+    const char *last_colon = strrchr(value, ':');
     if (last_colon == NULL) {
         return false;
     }
-    *last_colon = '\0';
-    char *port_colon = strrchr(value, ':');
+    size_t before_index = (size_t)(last_colon - value);
+    const char *port_colon = memrchr(value, ':', before_index);
     if (port_colon == NULL) {
         return false;
     }
-    *port_colon = '\0';
+    size_t ip_length = (size_t)(port_colon - value);
+    size_t port_length = (size_t)(last_colon - port_colon) - 1;
+    if (ip_length >= sizeof(out->ip_text) || port_length >= sizeof(out->port_text)) {
+        return false;
+    }
+    memcpy(out->ip_text, value, ip_length);
+    out->ip_text[ip_length] = '\0';
+    memcpy(out->port_text, port_colon + 1, port_length);
+    out->port_text[port_length] = '\0';
     unsigned long port = 0;
     unsigned long index = 0;
-    if (!parse_decimal(port_colon + 1, MAX_PORT, &port) || port == 0) {
+    if (!parse_decimal(out->port_text, MAX_PORT, &port) || port == 0) {
         return false;
     }
     if (!parse_decimal(last_colon + 1, MAX_INDEX, &index)) {
         return false;
     }
-    if (inet_pton(AF_INET, value, &out->ip) != 1) {
+    if (inet_pton(AF_INET, out->ip_text, &out->ip) != 1) {
         return false;
     }
-    out->ip_text = value;
-    out->port_text = port_colon + 1;
     out->port = (uint16_t)port;
     out->index = (uint16_t)index;
     out->fd = -1;
@@ -191,7 +197,7 @@ static bool parse_socket_path(const char *value, const char **out) {
 }
 
 /* One `--flag value` pair. False on anything unknown, repeated, malformed or over a limit. */
-static bool parse_flag(const char *flag, char *value, options_t *o) {
+static bool parse_flag(const char *flag, const char *value, options_t *o) {
     if (strcmp(flag, "--socket") == 0) {
         return parse_socket_path(value, &o->socket_path);
     }
@@ -653,6 +659,7 @@ static void relay_datagram(int dns_fd, const char *socket_path, const unsigned c
     while (sendto(dns_fd, reply, reply_length, 0, (const struct sockaddr *)sender,
                   sizeof(*sender)) < 0 &&
            errno == EINTR) {
+        /* retry the send; EINTR is the only reason to go round again */
     }
 }
 
@@ -729,6 +736,7 @@ static void forward(const options_t *o, int dns_fd) {
             if (errno == EINTR) {
                 continue;
             }
+            free(fds);
             return;
         }
         live = reap_relays(live);
@@ -755,17 +763,23 @@ static bool forwarder_locked_down(int ready_read) {
     return n == 1;
 }
 
-/* <ip>:<port>. Splits the writable argv string in place. */
-static bool parse_probe_target(char *value, struct sockaddr_in *out) {
-    char *colon = strrchr(value, ':');
+/* <ip>:<port>. Reads `value` without changing it. */
+static bool parse_probe_target(const char *value, struct sockaddr_in *out) {
+    const char *colon = strrchr(value, ':');
     if (colon == NULL) {
         return false;
     }
-    *colon = '\0';
+    char ip_text[INET_ADDRSTRLEN];
+    size_t ip_length = (size_t)(colon - value);
+    if (ip_length >= sizeof(ip_text)) {
+        return false;
+    }
+    memcpy(ip_text, value, ip_length);
+    ip_text[ip_length] = '\0';
     unsigned long port = 0;
     struct in_addr ip;
     if (!parse_decimal(colon + 1, MAX_PORT, &port) || port == 0 ||
-        inet_pton(AF_INET, value, &ip) != 1) {
+        inet_pton(AF_INET, ip_text, &ip) != 1) {
         return false;
     }
     *out = inet_address(ip, (uint16_t)port);
@@ -773,7 +787,7 @@ static bool parse_probe_target(char *value, struct sockaddr_in *out) {
 }
 
 /* The start probe's child, under the inner bwrap: one byte out through the forwarder, one back. */
-static int connect_probe(char *target) {
+static int connect_probe(const char *target) {
     struct sockaddr_in address;
     if (!parse_probe_target(target, &address)) {
         return EXIT_USAGE;
@@ -800,19 +814,17 @@ static int usage(void) {
     return EXIT_USAGE;
 }
 
-int main(int argc, char **argv) {
-    if (argc == 2 && strcmp(argv[1], "--check") == 0) {
-        puts("OK");
-        return 0;
-    }
+/* Frees what parse_args allocated. Safe to call twice: the pointers are cleared. */
+static void release_options(options_t *o) {
+    free(o->aliases);
+    free(o->listeners);
+    o->aliases = NULL;
+    o->listeners = NULL;
+}
 
-    if (argc == 3 && strcmp(argv[1], "--connect-probe") == 0) {
-        return connect_probe(argv[2]);
-    }
-
-    options_t options;
-    memset(&options, 0, sizeof(options));
-    if (argc < 2 || !parse_args(argc, argv, &options)) {
+/* Everything after the three fixed forms. Returns only on failure; success ends in the exec. */
+static int launch(options_t *options, int argc, char **argv) {
+    if (argc < 2 || !parse_args(argc, argv, options)) {
         return usage();
     }
     if (!reserve_low_fds()) {
@@ -820,15 +832,15 @@ int main(int argc, char **argv) {
         return EXIT_BIND;
     }
 
-    int rc = apply_aliases(&options);
+    int rc = apply_aliases(options);
     if (rc != 0) {
         return rc;
     }
-    rc = bind_listeners(&options);
+    rc = bind_listeners(options);
     if (rc != 0) {
         return rc;
     }
-    int dns_fd = bind_dns(&options);
+    int dns_fd = bind_dns(options);
     if (dns_fd < 0) {
         return EXIT_BIND;
     }
@@ -850,7 +862,7 @@ int main(int argc, char **argv) {
         close(ready[0]);
         if (lock_down(launcher) && write_all(ready[1], &ready_byte, 1)) {
             close(ready[1]);
-            forward(&options, dns_fd);
+            forward(options, dns_fd);
         }
         _exit(1);
     }
@@ -868,7 +880,26 @@ int main(int argc, char **argv) {
         fprintf(stderr, "nimbus-sandbox-helper: sigaction: %s\n", strerror(errno));
         return EXIT_EXEC;
     }
-    execv(options.child_argv[0], options.child_argv);
-    fprintf(stderr, "nimbus-sandbox-helper: exec %s: %s\n", options.child_argv[0], strerror(errno));
+    /* child_argv points into argv, so the tables are free to go; a failed exec returns to main. */
+    release_options(options);
+    execv(options->child_argv[0], options->child_argv);
+    fprintf(stderr, "nimbus-sandbox-helper: exec %s: %s\n", options->child_argv[0], strerror(errno));
     return EXIT_EXEC;
+}
+
+int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "--check") == 0) {
+        puts("OK");
+        return 0;
+    }
+
+    if (argc == 3 && strcmp(argv[1], "--connect-probe") == 0) {
+        return connect_probe(argv[2]);
+    }
+
+    options_t options;
+    memset(&options, 0, sizeof(options));
+    int rc = launch(&options, argc, argv);
+    release_options(&options);
+    return rc;
 }
