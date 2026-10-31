@@ -64,6 +64,38 @@ describeWithFetchRestore("bitbucket-sync fetchOne", () => {
     expect(row.resolve_key).toBe("https://bitbucket.org/w/r/pull-requests/42");
   });
 
+  test("a response with no source.branch keeps the branch already indexed", async () => {
+    const db = createMemoryIndexDb();
+    const ctx = ctxWithCreds(db, "user", "app-pass");
+    const syncable = createBitbucketSyncable({ ensureBitbucketMcpRunning: async () => {} });
+    const url = "https://bitbucket.org/w/r/pull-requests/42";
+    const storedBranch = (): unknown => {
+      const row = db
+        .query("SELECT json_extract(metadata, '$.branch') AS branch FROM item WHERE id = ?")
+        .get("bitbucket:w/r#42") as { branch: unknown };
+      return row.branch;
+    };
+    const answer = (payload: Record<string, unknown>): void => {
+      globalThis.fetch = ((): Promise<Response> =>
+        Promise.resolve(
+          new Response(JSON.stringify(payload), { status: 200 }),
+        )) as unknown as typeof fetch;
+    };
+
+    answer(prPayload({ source: { branch: { name: "feat/x" } } }));
+    await syncable.fetchOne?.(ctx, url);
+    expect(storedBranch()).toBe("feat/x");
+
+    answer(prPayload());
+    await syncable.fetchOne?.(ctx, url);
+    expect(storedBranch()).toBe("feat/x");
+
+    // A new branch still wins over the stored one.
+    answer(prPayload({ source: { branch: { name: "feat/y" } } }));
+    await syncable.fetchOne?.(ctx, url);
+    expect(storedBranch()).toBe("feat/y");
+  });
+
   test("declines a non-PR bitbucket url", async () => {
     const db = createMemoryIndexDb();
     const ctx = ctxWithCreds(db, "user", "app-pass");
