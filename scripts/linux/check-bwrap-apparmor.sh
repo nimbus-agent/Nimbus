@@ -98,7 +98,10 @@ helper="${PWD}/packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper"
 bun run build:sandbox-helper
 NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file scripts/linux/check-sandbox-dns.ts
 # `nimbus doctor`'s own nested start, whose argv is a copy the CLI keeps because it cannot import the
-# gateway's. Real helper, real namespaces, so a drift in that copy shows here.
+# gateway's. Real helper, real namespaces, so this shows only a copy that no longer STARTS here under
+# the profile. A copy that drifts and still starts passes this; scripts/sandbox-doctor-parity.test.ts
+# compares its flags with the gateway's. And a passing probe here says nothing about the running
+# gateway, which doctor asks for itself and which outranks it.
 NIMBUS_SANDBOX_HELPER_PATH="${helper}" bun --no-env-file -e '
   const { createDoctorBwrapDeps, doctorPrintLinuxSandbox } = await import("./packages/cli/src/commands/doctor-bwrap.ts");
   process.exit(doctorPrintLinuxSandbox(createDoctorBwrapDeps("linux")));

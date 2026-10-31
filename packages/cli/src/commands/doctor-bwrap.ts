@@ -8,7 +8,7 @@
  *
  * This module is the one definition of that profile: the `.deb` and the tarball render their
  * scripts from it (`scripts/package-linux-installers.ts`) and `nimbus doctor` prints the same
- * commands. It imports only `node:fs`, so a packaging script can load it.
+ * commands. It imports only `node:fs` and `node:path`, so a packaging script can load it.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { posix } from "node:path";
@@ -65,6 +65,32 @@ fi
 export interface DoctorBwrapRun {
   readonly code: number | null;
   readonly stderr: string;
+  /** The command was killed for running past its time limit. Says nothing about whether it could work. */
+  readonly timedOut?: boolean;
+}
+
+/**
+ * What a running gateway says about the network half of its sandbox: the `platform_capabilities`
+ * block of `diag.snapshot`'s `sandbox` payload. `refusing` is the gateway turning away every connector
+ * that declares a network.
+ */
+export interface GatewaySandboxPosture {
+  readonly network: "per_host" | "all_or_nothing" | "refusing";
+  readonly reason: string | null;
+}
+
+/** The gateway's posture from a `diag.snapshot` result, or undefined when it does not carry one. */
+export function gatewaySandboxPosture(snapshot: unknown): GatewaySandboxPosture | undefined {
+  if (snapshot === null || typeof snapshot !== "object") return undefined;
+  const sandbox = (snapshot as { sandbox?: unknown }).sandbox;
+  if (sandbox === null || typeof sandbox !== "object") return undefined;
+  const caps = (sandbox as { platform_capabilities?: unknown }).platform_capabilities;
+  if (caps === null || typeof caps !== "object") return undefined;
+  const { network, reason } = caps as { network?: unknown; reason?: unknown };
+  if (network !== "per_host" && network !== "all_or_nothing" && network !== "refusing") {
+    return undefined;
+  }
+  return { network, reason: typeof reason === "string" && reason !== "" ? reason : null };
 }
 
 export interface DoctorBwrapDeps {
@@ -111,7 +137,7 @@ function startProbeCommand(bwrap: string): string[] {
   ];
 }
 
-const HELPER_IN_SANDBOX = "/run/nimbus-sandbox/helper";
+export const HELPER_IN_SANDBOX = "/run/nimbus-sandbox/helper";
 /** Never connected to: this start carries no connection, and the forwarder dials only for one. */
 const UNUSED_SOCKET = "/tmp/nimbus-doctor-start/s";
 
@@ -134,8 +160,12 @@ function libraryBinds(): string[] {
  * up to its lockdown, inner `bwrap`, a child. The CLI reaches the gateway over IPC only, so this is a
  * copy of the part that decides whether the machine can start it. It carries no connection, so it
  * says nesting works here, not that a given host is reachable.
+ *
+ * A copy drifts, so `scripts/sandbox-doctor-parity.test.ts` compares its namespaces, capabilities and
+ * helper flags with what `buildForwarderArgv` builds. And a running gateway's own answer outranks
+ * this probe (`GatewaySandboxPosture`).
  */
-function nestedStartCommand(
+export function nestedStartCommand(
   bwrap: string,
   helper: string,
   ids: { uid: number; gid: number },
@@ -208,7 +238,20 @@ function runFailureText(r: DoctorBwrapRun): string {
  * and only the network is wider, as documented. A helper that is named or present and cannot work is
  * a failure, because then the gateway refuses every connector that declares a network.
  */
-function doctorPrintDeclaredHosts(bwrap: string, deps: DoctorBwrapDeps): number {
+function doctorPrintDeclaredHosts(
+  bwrap: string,
+  deps: DoctorBwrapDeps,
+  gateway: GatewaySandboxPosture | undefined,
+): number {
+  // The running gateway outranks this process's own probe, which is a copy of the gateway's start run
+  // from the CLI: it can pass where the gateway, with its own environment and runner, refuses.
+  if (gateway?.network === "refusing") {
+    const why = gateway.reason === null ? "" : ` (${gateway.reason})`;
+    console.log(
+      `[fail] Sandbox: the running gateway refuses a connector that declares a network${why}, whatever this check's own start found.`,
+    );
+    return 2;
+  }
   const helper = deps.findHelper();
   if (helper.kind === "missing") {
     console.log(
@@ -224,19 +267,39 @@ function doctorPrintDeclaredHosts(bwrap: string, deps: DoctorBwrapDeps): number 
     return 2;
   }
   const check = deps.run([helper.path, "--check"]);
+  if (check.timedOut === true) return printTimedOut(`${helper.path} --check`);
   if (check.code !== 0) {
     console.log(`[fail] Sandbox: ${helper.path} cannot run (${runFailureText(check)}), ${refused}`);
     return 2;
   }
   const start = deps.run(nestedStartCommand(bwrap, helper.path, deps.ids()));
+  if (start.timedOut === true) return printTimedOut("the network forwarder's start");
   if (start.code !== 0) {
     console.log(
       `[fail] Sandbox: the network forwarder cannot start here (${runFailureText(start)}), ${refused}`,
     );
     return 2;
   }
+  if (gateway?.network === "all_or_nothing") {
+    const why = gateway.reason === null ? "" : ` (${gateway.reason})`;
+    console.log(
+      `[warn] Sandbox: the running gateway cannot filter by host${why}, so a connector that declares a network reaches the whole internet.`,
+    );
+    return 1;
+  }
   console.log("[ok] Sandbox: declared hosts are enforced.");
   return 0;
+}
+
+/**
+ * A probe that ran out of time says the machine was busy, not that it cannot start one: the gateway
+ * treats its own start timeout as transient and asks again, so this is a warning to re-run.
+ */
+function printTimedOut(what: string): number {
+  console.log(
+    `[warn] Sandbox: ${what} did not finish within ${String(PROBE_TIMEOUT_MS)} ms, which says the machine is busy and not that it cannot start one. Re-run nimbus doctor.`,
+  );
+  return 1;
 }
 
 /**
@@ -244,7 +307,10 @@ function doctorPrintDeclaredHosts(bwrap: string, deps: DoctorBwrapDeps): number 
  * reaches only those. `--version` passes on a machine where it cannot start one, so this runs the
  * namespaces. Returns the exit severity.
  */
-export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
+export function doctorPrintLinuxSandbox(
+  deps: DoctorBwrapDeps,
+  gateway?: GatewaySandboxPosture,
+): number {
   if (deps.platform !== "linux") return 0;
   const bwrap = deps.findBwrap();
   if (bwrap === null) {
@@ -254,9 +320,10 @@ export function doctorPrintLinuxSandbox(deps: DoctorBwrapDeps): number {
     return 2;
   }
   const r = deps.run(startProbeCommand(bwrap));
+  if (r.timedOut === true) return printTimedOut("bubblewrap's start");
   if (r.code === 0) {
     console.log("[ok] Sandbox: bubblewrap can start sandboxed children.");
-    return doctorPrintDeclaredHosts(bwrap, deps);
+    return doctorPrintDeclaredHosts(bwrap, deps, gateway);
   }
   console.log(
     `[fail] Sandbox: bubblewrap cannot start a sandbox (${runFailureText(r)}), so connectors, extensions and \`nimbus eval\` cannot start.`,
@@ -294,7 +361,7 @@ const REAL_HOST: DoctorBwrapHost = {
 };
 
 /** The same order as the gateway's `resolveHelperPath`, which the CLI may not import. */
-function findHelper(host: DoctorBwrapHost): HelperLookup {
+export function findHelper(host: DoctorBwrapHost): HelperLookup {
   const override = host.env("NIMBUS_SANDBOX_HELPER_PATH");
   if (override !== undefined && override !== "") {
     return host.exists(override)
@@ -344,7 +411,11 @@ export function createDoctorBwrapDeps(
           stderr: "pipe",
           timeout: PROBE_TIMEOUT_MS,
         });
-        return { code: p.exitCode, stderr: p.stderr.toString() };
+        return {
+          code: p.exitCode,
+          stderr: p.stderr.toString(),
+          timedOut: p.exitedDueToTimeout === true,
+        };
       } catch (err) {
         return { code: null, stderr: err instanceof Error ? err.message : String(err) };
       }

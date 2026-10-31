@@ -150,7 +150,10 @@ the gateway executable, else `/usr/lib/nimbus/bin/nimbus-sandbox-helper`.
 
 `nimbus doctor` prints `[ok] Sandbox: declared hosts are enforced.` when the helper runs and a
 real forwarded connection works, `[warn]` when the helper is missing, and `[fail]` when the
-gateway would refuse.
+gateway would refuse. Doctor's own start is a copy run from the CLI, so with a gateway running
+it asks that gateway (`diag.snapshot`, `sandbox.platform_capabilities.network`) and a gateway that
+refuses is a `[fail]` whatever the copy found. A probe that runs past its 5 s limit is a `[warn]` to
+re-run, not a refusal: the gateway treats its own start timeout as transient too.
 
 **When a connector cannot reach a host,** look for `net-forward: <host>: <reason>` in the gateway
 log (`gateway-<date>.log`, written when the gateway is started through `nimbus start`). The line

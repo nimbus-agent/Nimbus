@@ -10,6 +10,7 @@ import {
   createDoctorBwrapDeps,
   type DoctorBwrapDeps,
   doctorPrintLinuxSandbox,
+  gatewaySandboxPosture,
 } from "./doctor-bwrap.ts";
 import { type FixKeyringDeps, runFixKeyringCommand } from "./doctor-fix-keyring.ts";
 import {
@@ -1090,7 +1091,14 @@ function isLayerRecord(l: unknown): l is LayerRecord {
   return l !== null && typeof l === "object";
 }
 
-async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
+/**
+ * `onSnapshot` runs on the `diag.snapshot` result, which is the one place a running gateway states
+ * whether it enforces a connector's declared hosts. It returns its own exit severity.
+ */
+async function doctorRunGatewayRpcs(
+  client: IPCClient,
+  onSnapshot: (snap: unknown) => number,
+): Promise<number> {
   const ping = await client.call<{ uptime?: number }>("gateway.ping", {});
   const uptime = typeof ping.uptime === "number" && Number.isFinite(ping.uptime) ? ping.uptime : 0;
   console.log(`[ok] Gateway: IPC OK (uptime ~${String(Math.round(uptime / 1000))}s).`);
@@ -1108,6 +1116,7 @@ async function doctorRunGatewayRpcs(client: IPCClient): Promise<number> {
     vectorSearch?: unknown;
     configLayers?: unknown;
   }>("diag.snapshot", {});
+  exit = Math.max(exit, onSnapshot(snap));
   exit = Math.max(exit, doctorPrintProfile(snap.configLayers));
   exit = Math.max(exit, doctorPrintIndexFromSnapshot(snap));
   // A second call rather than a field on `diag.snapshot`: the health report is several GROUP BY
@@ -1190,17 +1199,24 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
   console.log(`Gateway state file: ${deps.gatewayStatePath(paths)}`);
 
   exit = Math.max(exit, doctorPrintVaultCheck(paths.demo === true));
-  exit = Math.max(
-    exit,
-    doctorPrintLinuxSandbox(deps.bwrapDeps ?? createDoctorBwrapDeps(platform())),
-  );
+  // The sandbox line is printed once. With a gateway running it waits for that gateway's own answer,
+  // which outranks this process's probe (a copy of the gateway's start that can pass where the
+  // gateway refuses); with none, or when the gateway cannot be asked, the probe decides alone.
+  const bwrapDeps = deps.bwrapDeps ?? createDoctorBwrapDeps(platform());
+  let sandboxPrinted = false;
+  const printSandbox = (snap: unknown): number => {
+    sandboxPrinted = true;
+    return doctorPrintLinuxSandbox(bwrapDeps, gatewaySandboxPosture(snap));
+  };
 
   const state = await deps.readGatewayState(paths);
-  if (state !== undefined && deps.isProcessAlive(state.pid)) {
+  const live = state !== undefined && deps.isProcessAlive(state.pid);
+  if (!live) exit = Math.max(exit, printSandbox(undefined));
+  if (state !== undefined && live) {
     const client = deps.makeClient(state.socketPath);
     try {
       await client.connect();
-      exit = Math.max(exit, await doctorRunGatewayRpcs(client));
+      exit = Math.max(exit, await doctorRunGatewayRpcs(client, printSandbox));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.log(`[fail] Gateway: IPC failed — ${msg}`);
@@ -1208,6 +1224,7 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
     } finally {
       await client.disconnect().catch(() => {});
     }
+    if (!sandboxPrinted) exit = Math.max(exit, printSandbox(undefined));
   } else if (state === undefined) {
     console.log(
       `[fail] Gateway: not running (no gateway.json — start with: ${gatewayStartCommand(paths.demo === true)}).`,

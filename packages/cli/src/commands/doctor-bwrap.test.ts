@@ -7,6 +7,7 @@ import {
   type DoctorBwrapDeps,
   type DoctorBwrapHost,
   doctorPrintLinuxSandbox,
+  gatewaySandboxPosture,
 } from "./doctor-bwrap.ts";
 
 const HELPER_BESIDE = "/home/owner/.local/bin/nimbus-sandbox-helper";
@@ -215,6 +216,81 @@ describe("doctorPrintLinuxSandbox", () => {
       expect(code).toBe(2);
       expect(lines).toHaveLength(1);
     });
+
+    describe("a probe that ran out of time", () => {
+      const timedOut = { code: null, stderr: "", timedOut: true } as const;
+
+      test("the nested start warns to re-run, and is not a refusal", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({ run: (cmd) => (isNested(cmd) ? timedOut : { code: 0, stderr: "" }) }),
+        );
+        expect(code).toBe(1);
+        const last = lines.at(-1) ?? "";
+        expect(last).toStartWith("[warn] Sandbox:");
+        expect(last).toContain("Re-run nimbus doctor");
+        expect(last).not.toContain("refused");
+        expect(lines.join("\n")).not.toContain("[fail]");
+        expect(lines.join("\n")).not.toContain(ENFORCED);
+      });
+
+      test("the helper's --check warns the same way", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({ run: (cmd) => (isCheck(cmd) ? timedOut : { code: 0, stderr: "" }) }),
+        );
+        expect(code).toBe(1);
+        expect(lines.at(-1)).toContain("Re-run nimbus doctor");
+      });
+
+      test("bubblewrap's own start warns, and prints no AppArmor commands", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({ run: () => timedOut, apparmorFixApplies: () => true }),
+        );
+        expect(code).toBe(1);
+        expect(lines).toHaveLength(1);
+        expect(lines[0]).toStartWith("[warn] Sandbox:");
+      });
+
+      test("a null exit that did not time out is still a failure", () => {
+        const code = doctorPrintLinuxSandbox(
+          deps({
+            run: (cmd) =>
+              isNested(cmd) ? { code: null, stderr: "", timedOut: false } : { code: 0, stderr: "" },
+          }),
+        );
+        expect(code).toBe(2);
+        expect(lines.at(-1)).toStartWith("[fail] Sandbox:");
+      });
+    });
+
+    describe("what the running gateway says", () => {
+      test("a gateway that refuses is a [fail], whatever the local probe found", () => {
+        const code = doctorPrintLinuxSandbox(deps({}), {
+          network: "refusing",
+          reason: "the forwarder did not start",
+        });
+        expect(code).toBe(2);
+        expect(lines.at(-1)).toStartWith("[fail] Sandbox: the running gateway refuses");
+        expect(lines.at(-1)).toContain("the forwarder did not start");
+        expect(lines.join("\n")).not.toContain(ENFORCED);
+      });
+
+      test("a gateway that cannot filter by host is a warning, not [ok]", () => {
+        const code = doctorPrintLinuxSandbox(deps({}), { network: "all_or_nothing", reason: null });
+        expect(code).toBe(1);
+        expect(lines.at(-1)).toStartWith("[warn] Sandbox: the running gateway cannot filter");
+        expect(lines.join("\n")).not.toContain(ENFORCED);
+      });
+
+      test("a gateway that enforces per host leaves the local result alone", () => {
+        const code = doctorPrintLinuxSandbox(deps({}), { network: "per_host", reason: null });
+        expect(code).toBe(0);
+        expect(lines.at(-1)).toBe(ENFORCED);
+      });
+
+      test("no gateway: the local probe decides", () => {
+        expect(doctorPrintLinuxSandbox(deps({}), undefined)).toBe(0);
+      });
+    });
   });
 });
 
@@ -386,5 +462,34 @@ describe("the AppArmor shell blocks", () => {
     expect(bwrapApparmorRemoveShell(false)).not.toContain("sudo");
     expect(bwrapApparmorInstallShell(true)).toContain(`sudo apparmor_parser -r`);
     expect(bwrapApparmorRemoveShell(true)).toContain(`sudo apparmor_parser -R`);
+  });
+});
+
+describe("gatewaySandboxPosture", () => {
+  const snap = (caps: unknown): unknown => ({ sandbox: { platform_capabilities: caps } });
+
+  test("reads the network posture and reason diag.snapshot carries", () => {
+    expect(gatewaySandboxPosture(snap({ network: "refusing", reason: "why" }))).toEqual({
+      network: "refusing",
+      reason: "why",
+    });
+    expect(gatewaySandboxPosture(snap({ network: "per_host", reason: null }))).toEqual({
+      network: "per_host",
+      reason: null,
+    });
+  });
+
+  test("anything else is undefined, so an older gateway leaves doctor to its own probe", () => {
+    for (const bad of [
+      undefined,
+      null,
+      "x",
+      {},
+      { sandbox: null },
+      snap({ network: "open" }),
+      snap(null),
+    ]) {
+      expect(gatewaySandboxPosture(bad)).toBeUndefined();
+    }
   });
 });

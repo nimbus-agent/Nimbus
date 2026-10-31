@@ -7,6 +7,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import type { IPCClient } from "../ipc-client/index.ts";
 import type { CliPlatformPaths } from "../paths.ts";
+import type { DoctorBwrapDeps } from "./doctor-bwrap.ts";
 import {
   DEMO_FIX_KEYRING_REFUSAL,
   type DoctorCoreDeps,
@@ -463,6 +464,72 @@ describe("runDoctor dispatcher (4 fixture permutations)", () => {
     );
     expect(out.stdout).toContain("[fail] Gateway: IPC failed");
     expect(process.exitCode).toBe(2);
+  });
+});
+
+describe("runDoctor — the sandbox line and the running gateway", () => {
+  const LOCAL_OK: DoctorBwrapDeps = {
+    platform: "linux",
+    findBwrap: () => "/usr/bin/bwrap",
+    run: () => ({ code: 0, stderr: "" }),
+    apparmorFixApplies: () => false,
+    findHelper: () => ({ kind: "found", path: "/usr/lib/nimbus/bin/nimbus-sandbox-helper" }),
+    ids: () => ({ uid: 1000, gid: 1000 }),
+  };
+  const live = {
+    readGatewayState: async () => ({ socketPath: join(FAKE_ROOT, "fake.sock"), pid: 1 }),
+    isProcessAlive: () => true,
+  };
+  const sandboxLines = (): string[] => out.stdout.split("\n").filter((l) => l.includes("Sandbox:"));
+
+  beforeEach(() => out.reset());
+
+  it("a gateway that refuses outranks a local probe that passed, and the check prints once", async () => {
+    const mock = createMockIpcClient([
+      { uptime: 1000 },
+      { ok: true, errors: [], warnings: [] },
+      {
+        index: { totalItems: 1 },
+        connectorHealth: [],
+        sandbox: { platform_capabilities: { network: "refusing", reason: "forwarder down" } },
+      },
+    ]);
+    await runDoctor([], makeDeps({ ...live, makeClient: () => mock.client, bwrapDeps: LOCAL_OK }));
+    expect(sandboxLines()).toHaveLength(2);
+    expect(sandboxLines()[0]).toBe("[ok] Sandbox: bubblewrap can start sandboxed children.");
+    expect(sandboxLines()[1]).toStartWith("[fail] Sandbox: the running gateway refuses");
+    expect(out.stdout).not.toContain("declared hosts are enforced");
+    expect(process.exitCode).toBe(2);
+  });
+
+  it("a gateway that enforces leaves the local result standing", async () => {
+    const mock = createMockIpcClient([
+      { uptime: 1000 },
+      { ok: true, errors: [], warnings: [] },
+      {
+        index: { totalItems: 1 },
+        connectorHealth: [],
+        sandbox: { platform_capabilities: { network: "per_host", reason: null } },
+      },
+    ]);
+    await runDoctor([], makeDeps({ ...live, makeClient: () => mock.client, bwrapDeps: LOCAL_OK }));
+    expect(sandboxLines()).toEqual([
+      "[ok] Sandbox: bubblewrap can start sandboxed children.",
+      "[ok] Sandbox: declared hosts are enforced.",
+    ]);
+  });
+
+  it("a gateway that cannot be reached falls back to the local probe, once", async () => {
+    const mock = createMockIpcClient([new Error("connection refused")]);
+    await runDoctor([], makeDeps({ ...live, makeClient: () => mock.client, bwrapDeps: LOCAL_OK }));
+    expect(sandboxLines()).toHaveLength(2);
+    expect(out.stdout).toContain("[fail] Gateway: IPC failed");
+  });
+
+  it("no gateway: the local probe alone", async () => {
+    await runDoctor([], makeDeps({ bwrapDeps: LOCAL_OK }));
+    expect(sandboxLines()).toHaveLength(2);
+    expect(out.stdout).toContain("[fail] Gateway: not running");
   });
 });
 
