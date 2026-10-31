@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793443587234,
+  "lastUpdate": 1793451071082,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2a13fdbb1e69a3845ac7b3d5b8d5129598ba19a2",
-          "message": "ci(install): run the PowerShell 5.1 smoke leg against real binaries (#1174)\n\n## What\n\nSwitches the Windows PowerShell 5.1 leg in\n`.github/workflows/install-smoke.yml` from stub binaries (a tiny\n`Add-Type -OutputType ConsoleApplication` placeholder) to the same real\nstaged ~50-80 MB `nimbus`/`nimbus-gateway` binaries the PS7 remote leg\nin the same job already packs and serves.\n\n## Why this needed an AV exclusion\n\nDownloading the real archive over `127.0.0.1` under Windows PowerShell\n5.1's legacy `Invoke-WebRequest` (WinINet-backed, unlike PS7's\nHttpClient) on GitHub-hosted `windows-2022` runners was previously\nmeasured transferring at ~0.95 MB/s and landing\nplausible-size-but-wrong-content bytes — deterministic across retries\n(3/3 identical), never reproducing off CI, never on the PS7 leg. The\nworking (never formally proven by an isolated A/B) diagnosis was\nreal-time antivirus inline-scanning interfering with the legacy WinINet\nstack's writes to disk. **The user explicitly authorised adding a\nWindows Defender exclusion to this CI-only job to unblock real-binary\ncoverage** — this had previously been refused as a change to shared CI\ninfrastructure not owned by this change.\n\nNote: `install.ps1` separately gained `$ProgressPreference =\n\"SilentlyContinue\"` for a real, separately-measured ~182x throughput fix\n(5.1's per-chunk console progress rendering). It's possible that fix\nalone already removed whatever triggered the corruption — that was never\ntested in isolation, so a future reader who sees this leg green for a\nlong stretch should weigh removing the exclusion before assuming it's\nstill load-bearing. The full rationale is in the workflow file's comment\nblock above the leg.\n\n## The exclusion — scope\n\n- **One directory only**: a dedicated per-run temp folder,\n`$env:RUNNER_TEMP\\ps51-dl-tmp` — not a drive, not `$env:RUNNER_TEMP`\nitself, not process-wide or extension-wide.\n- `install.ps1`'s own download temp dir (`Get-NimbusRelease`'s `$work`,\nbuilt from `[System.IO.Path]::GetTempPath()`) is redirected into exactly\nthat folder for one step only, via `$env:TMP`/`$env:TEMP` set inside\nthat step's own PowerShell process (no `$GITHUB_ENV` write, so no later\nstep inherits it).\n- **Added immediately before the download step, removed immediately\nafter**, in an `if: always()` step, so the runner is never left with a\nlingering exclusion even if the install step fails.\n- Applies only inside this CI job on GitHub-hosted `windows-2022`\nrunners — nothing under `scripts/install/` references Defender or\n`Add-MpPreference`; it never touches a developer machine or a user's\ninstall.\n\n## Verification\n\n- `bun run audit:workflow-lint` — OK.\n- `bun run preflight:fast` — PASSED.\n- **GREEN run** (real binaries + exclusion):\nhttps://github.com/nimbus-agent/Nimbus/actions/runs/31730405489 — all\nthree OS legs passed. The PS5.1 leg's log shows a real\n`Downloading`/`OK: sha256 verified` cycle, binaries resolved from inside\nthe excluded `ps51-dl-tmp` directory, and `nimbus --version` printing\nthe real `2.2.0` (not the old stub's `nimbus-stub 0.0.0-test`) — the\nwhole download+verify+install completed in ~4.6s, no sign of the\nprevious throughput collapse.\n- **RED-PROVE**: temporarily added a step that corrupted the\nalready-served `SHA256SUMS` right before the PS5.1 install step\n(reverted before merge, commit `b37ab5d5` → revert `57af0842`).\nConfirmed the leg **fails** exactly as expected:\nhttps://github.com/nimbus-agent/Nimbus/actions/runs/31730823450 (`sha256\nchecksum mismatch for nimbus-headless-windows-x64.zip - refusing to\ninstall.`) — and that the exclusion-removal step still runs and succeeds\neven when the guarded install step fails.\n- **GREEN-after-revert**:\nhttps://github.com/nimbus-agent/Nimbus/actions/runs/31731226217 —\nconfirms the reverted state (byte-identical to the real change; `git\ndiff` against the pre-corruption commit is empty) is green again.\n\n## Scope\n\nOnly the Windows PowerShell 5.1 leg is touched. Unix legs and the PS7\nleg are untouched.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved Windows installation smoke testing by validating the actual\nstaged release archive.\n* Reduced false failures caused by Windows Defender scanning temporary\ndownload files.\n  * Ensured temporary security exclusions are removed after testing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-14T00:00:36+03:00",
-          "tree_id": "29bd0a6da74843c10bead262380d16900f4dcbe7",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2a13fdbb1e69a3845ac7b3d5b8d5129598ba19a2"
-        },
-        "date": 1786655537076,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 336.117802650002,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 335.67810604999613,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.2415613999994,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e6908edbbb6de62a7e370c17db0589dc45004061",
+          "message": "feat(sandbox): enforce declared hosts on Linux through a local forwarder (#1834)\n\nOn Linux, a sandboxed child that declares a network gets the whole\ninternet, because no released package ships a working helper. This PR\nbuilds the enforcement: a child reaches only its declared `host:port`\nentries, and any program in the sandbox can use them with no proxy\nsettings.\n\n**Enforcement stays off for packaged users until the next PR ships the\nhelper.** Both packaging calls now pass `--skip-sandbox-helper`, with a\nguard test. Dropping `-lcap` would otherwise have let `make` succeed on\nthe release job and shipped the helper with `setcap`.\n\n## What reaches users in this release\n\nA released bug is fixed here. On Linux, the child's seccomp filter\nkilled any child that started a subprocess, with exit 159 and no stderr.\nThat is `pidfd_open`, measured with Bun children. 13 first-party\nconnectors spawn a CLI this way, such as `aws`, `gcp`, `azure` and\n`kubernetes`. That they die is inferred from the code, since I did not\nrun them on a released build. `/bin` was also missing inside the\nsandbox, so a shell-script CLI such as `gcloud` could not start.\n\n- An unlisted syscall now answers `ENOSYS` rather than killing the\nprocess. The call is still refused, so confinement is the same, and only\nthe failure changes. Docker's default profile does the same.\n- `kill`, `fsync`, `umask`, `setsid`, `flock` and similar calls are\nallowed, each bounded by the PID namespace or the file view.\n- `restart_syscall` is allowed. Without it, a thread in a timed wait\ncould abort at random when a subprocess exited, about 1 run in 500 in a\nloop, because glibc treats the failed resume as a broken futex. After\nthe fix, 30,000 runs in Docker had no failures.\n- `/bin` and `/sbin` are bound.\n- Kill stays for a wrong architecture and for `setns`, `unshare`,\n`pidfd_getfd`, `pidfd_send_signal` and similar calls.\n- **Tightened:** `clone` with a namespace flag now kills, and `clone3`\nanswers `ENOSYS`, since its flags cannot be checked. glibc is expected\nto fall back to `clone`, and this ran under the filter on four images.\n- `azure` gets a read grant on `/opt/az` where it exists, because `az`\nis a script over that tree.\n- The wrapper exits 128+n on SIGTERM, SIGINT and SIGHUP, on every OS,\nrather than dying by the signal. I found no code that reads the\nwrapper's signal.\n\n## How it works\n\nAn outer `bwrap` creates an empty network namespace holding loopback\nlisteners on the declared ports. A small C forwarder with no\ncapabilities relays each connection over a unix socket to the\n`__nimbus-sandbox` wrapper outside, and the child runs in a nested\n`bwrap` under the same seccomp filter.\n\n- **The wrapper is the enforcement point.** It trusts only which entry\nto check, resolves the name itself, filters the answers by who chose the\nentry, and connects only to an address it kept.\n- **Address rules.** Loopback is refused unless the owner typed it.\nLink-local, including `169.254.169.254`, is refused for everyone. A\nprivate address is refused for an extension's name, unless it declared\nthat literal.\n- **Undeclared names.** A stub resolver answers `NXDOMAIN`, no query\nleaves the machine, and a rate-limited stderr line names the host.\n- **First-party wildcards, Linux only.** A fixed table covers tools no\nexact list can name: `*.blob.core.windows.net`, `*.sharepoint.com`,\n`*-run.googleapis.com`, `*-aiplatform.googleapis.com`,\n`p*-caldav.icloud.com`, and the regional AWS hosts. A manifest, an\nextension and `--net` cannot set one. A `*` never crosses a dot.\n`*.blob.core.windows.net` covers every Azure storage account for the\n`github_actions` connector, which the owner accepted.\n- **Setup failure refuses the spawn and never falls back.** Only a truly\nmissing helper keeps the documented whole-internet fallback. An override\nthat names nothing refuses.\n\n## What review found\n\n- **A compromised forwarder could reach the gateway's own socket under\n`--ro-bind / /`,** proved with a real filter. The outer sandbox now\nbinds only what the inner one needs, and a test proves a socket outside\nthat view gets no connection.\n- **The gateway said per-host while the child had the whole internet,**\nwhen the helper came from `NIMBUS_SANDBOX_HELPER_PATH`, because the env\nallowlist dropped it. Now forwarded for network policies, with a test\nthrough the real `wrapServerSpec`.\n- **A hostile child could write 44,000 log lines a second.** There is\nnow a budget of 60 lines a minute.\n\n## Known limits\n\n- **Still fails on Linux once enforced:** `gcp_gke_workload_restart`,\nAzure sovereign clouds, and consumer OneDrive downloads. These are\nrecorded in `connector-host-gaps.json`.\n- **macOS has no wildcards,** since SBPL cannot express one, so these\ntools keep failing there as they do today. No test has run macOS's\n`(host \"...\")` rule under a real `sandbox-exec`.\n- Hosts still from memory, for the owner to confirm:\n`serviceusage.googleapis.com`, `container.googleapis.com`, and the STS\nv2 regional default.\n- **Two calls no seccomp filter can refuse:** `uretprobe` (335) and\n`uprobe` (336). `kernel/seccomp.c` passes them through by design on\nkernels that have them, so the sweep test accepts their own failure\nthere, SIGILL and an error return. They grant nothing when called this\nway.\n- x86-64 only. An aarch64 child dies on its first syscall, as it does\ntoday.\n- Two steps in the restriction-on job need the internet. They skip only\nwhen the host itself cannot reach the target, so a failure inside the\nsandbox stays red.\n\n## Testing\n\nOnly the restriction-on step on `ubuntu-24.04` proves this, because\nDocker hid three sandbox bugs in this area before.\n\n| Where | Result |\n|---|---|\n| Privileged Docker, Bun 1.4.4, four images | Sandbox directory 703\npass, 0 fail |\n| `ubuntu-24.04`, restriction on | 82 of 82 forwarder tests pass, and\nthe `.deb` profile install, upgrade and remove steps pass |\n| Same step, real `github` connector with a fake token | GitHub 401\nthrough the forwarder |\n| Same step, real `aws` CLI with a fake key |\n`UnrecognizedClientException` through a wildcard host |\n| Same step, `gcloud --version`, `az --version` | Exit 0 inside the\nsandbox |\n| Real `github` connector, fake token | GitHub's 401 through the\nforwarder |\n| Real `aws` CLI, fake key | `UnrecognizedClientException` through a\nwildcard host |\n| `gcloud --version`, `az --version` | Exit 0 inside the sandbox |\n\nThe Debian and Fedora runs were in privileged Docker, which does not\nprove their kernel defaults. The security tests were each proved by\nbreaking the code once. SonarCloud cannot run locally, so complexity was\ncounted by hand.\n\nSpec and plan are on `dev/asaf/linux-network-forwarder-spec`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Linux sandboxed extensions can access explicitly permitted hosts\nthrough per-host network forwarding, including supported first-party\nwildcard hosts.\n* Sandbox diagnostics now distinguish when network access is refused\nfrom other limited-network modes.\n* **Bug Fixes**\n* Improved Linux connector access for selected cloud, GitHub Actions,\nApple, and OneDrive services while keeping host permissions scoped to\nthe relevant connector.\n* Linux extensions that declare network access are refused when the\nrequired forwarding setup cannot start.\n* Linux network forwarding filters resolved addresses according to the\nhost’s trust level.\n* **Chores**\n  * Linux installer packages no longer include the sandbox helper.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-31T14:44:58+02:00",
+          "tree_id": "4354eb26cd156370b69b794a803321a8de37a061",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e6908edbbb6de62a7e370c17db0589dc45004061"
+        },
+        "date": 1793451067835,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 193.91152685000247,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 182.5089972500038,
             "unit": "ms"
           }
         ]
