@@ -102,7 +102,9 @@ only the declared paths and the declared **ports**. SBPL's network address is
 `*` or `localhost` and a port, so it cannot name a host: a declared entry opens
 its port to every host, loopback and local-network addresses included, and a
 connector's list limits ports here, not hosts. Per-host filtering on macOS is a
-later project. A policy with no network gets no network, loopback included.
+later project. A policy with no network gets no network, loopback included. A
+policy with a network can also reach `mDNSResponder`, because that is how macOS
+resolves names, so it can look up any name.
 
 **Connectors that declared a network could not start on macOS before this
 fix.** From 2026-05-16 the profile carried a rule `sandbox-exec` rejects

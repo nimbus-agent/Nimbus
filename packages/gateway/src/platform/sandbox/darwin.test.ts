@@ -34,7 +34,10 @@ describe("generateSbplProfile", () => {
     generateSbplProfile({ cwd: CWD, tmpdir: CWD_TMP, policy: policy({ network }) })
       .split("\n")
       .filter((line) => line.includes("network"));
-  const UDP_53 = '(allow network-outbound (remote udp "*:53"))';
+  const DNS_RULES = [
+    '(allow network-outbound (remote udp "*:53"))',
+    '(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))',
+  ];
 
   // The text only. Whether `sandbox-exec` accepts it, and what it does, is pinned in
   // `sandbox-wrapper-spawn.test.ts`: this text being "right" is how a profile that could not start
@@ -42,7 +45,7 @@ describe("generateSbplProfile", () => {
   it("allows the port of a declared host, and names no host", () => {
     expect(networkRules(["api.github.com"])).toEqual([
       '(allow network-outbound (remote tcp "*:443"))',
-      UDP_53,
+      ...DNS_RULES,
     ]);
   });
 
@@ -70,7 +73,7 @@ describe("generateSbplProfile", () => {
       '(allow network-outbound (remote tcp "*:443"))',
       '(allow network-outbound (remote tcp "*:465"))',
       '(allow network-outbound (remote tcp "*:993"))',
-      UDP_53,
+      ...DNS_RULES,
     ]);
   });
 
@@ -78,7 +81,7 @@ describe("generateSbplProfile", () => {
     expect(networkRules(["localhost:8080", "127.0.0.1:9090"])).toEqual([
       '(allow network-outbound (remote tcp "*:8080"))',
       '(allow network-outbound (remote tcp "*:9090"))',
-      UDP_53,
+      ...DNS_RULES,
     ]);
   });
 

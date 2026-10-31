@@ -176,6 +176,9 @@ export function generateSbplProfile(opts: SbplOpts): string {
     lines.push(
       ...ports.map((port) => `(allow network-outbound (remote tcp "*:${port}"))`),
       `(allow network-outbound (remote udp "*:53"))`,
+      // getaddrinfo asks mDNSResponder over this socket, not UDP 53. Measured on the CI runner: with
+      // no such rule every lookup is ENOTFOUND, and with it a real fetch gets its 200.
+      `(allow network-outbound (remote unix-socket (path-literal "/private/var/run/mDNSResponder")))`,
     );
   }
   return lines.join("\n");
