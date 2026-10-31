@@ -127,7 +127,8 @@ export async function openTerminalLane(
 ): Promise<TerminalLane> {
   let rt = runtime;
   if (rt === undefined) {
-    const runner = await createSandboxRunner();
+    // No network by construction (`buildTerminalLaunchPolicy`), so no forwarder to probe.
+    const runner = await createSandboxRunner({ forwarderStartProbe: false });
     rt = {
       spawnShell: ({ cmd, args, cwd, launch }) =>
         runner.spawn(cmd, [...args], terminalSpawnOptions(launch, cwd)),

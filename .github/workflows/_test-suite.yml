@@ -758,7 +758,8 @@ jobs:
         run: |
           bun run build:sandbox-helper
           cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
-          bun test packages/gateway/src/platform/sandbox --timeout 60000
+          # Not the forwarder's real-network file: the next step runs it with the restriction on.
+          bun test packages/gateway/src/platform/sandbox --timeout 60000 --path-ignore-patterns='**/linux-forwarder-network.test.ts'
         env:
           CI: "true"
           NIMBUS_REQUIRE_SANDBOX_HELPER: "1"

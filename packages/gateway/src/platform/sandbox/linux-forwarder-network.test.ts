@@ -15,21 +15,28 @@ import {
 import { createServer, type Server } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { wrapServerSpecInCwd } from "../../connectors/lazy-mesh/wrap-server-spec.ts";
+import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { buildBwrapArgv } from "./linux.ts";
 import { buildForwarderArgv, HELPER_IN_SANDBOX, resolvConfTarget } from "./linux-forwarder.ts";
 import { planForwardEntries } from "./net-forward-host.ts";
-import { SANDBOX_CWD_ENV, SANDBOX_POLICY_ENV, type SandboxPolicy } from "./sandbox-policy.ts";
+import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 /**
  * The whole per-host path with nothing faked: the real `__nimbus-sandbox` wrapper and runner, the
  * real helper, nested `bwrap`, the real seccomp filter, and real listeners on the host's loopback
  * that a child reaches only as owner-configured `127.0.0.1:<port>` entries.
  *
- * Skipped unless the helper is built. CI's helper step and the restriction-on step set
- * NIMBUS_REQUIRE_SANDBOX_HELPER, which turns that skip into a failure.
+ * Each child starts the way a real one does, through `wrapServerSpecInCwd` with the environment
+ * `extensionProcessEnv` builds. A hand-written wrapper environment here once hid that the wrapper
+ * never received the helper override, so a child got the whole internet while this file stayed green.
+ *
+ * Skipped unless the helper is built. CI's restriction-on step sets NIMBUS_REQUIRE_SANDBOX_HELPER,
+ * which turns that skip into a failure, and is the one step that runs this file: it needs the internet
+ * for one test, and a run with the restriction off would prove nothing more.
  */
 const HELPER = join(import.meta.dir, "../../../src-native/sandbox-helper/nimbus-sandbox-helper");
-const GATEWAY_ENTRY = resolve(import.meta.dir, "../../index.ts");
 const LINUX_MODULE = resolve(import.meta.dir, "linux.ts");
 const IS_LINUX = process.platform === "linux";
 const REQUIRED = process.env["NIMBUS_REQUIRE_SANDBOX_HELPER"] === "1";
@@ -57,6 +64,12 @@ function helperBuilt(): boolean {
 }
 
 type Ran = { exitCode: number; stdout: string; stderr: string; elapsedMs: number };
+
+const NO_CORE_THEN_EXEC = 'ulimit -c 0; exec "$0" "$@"';
+/** 128 + SIGSYS: how the filter's kill shows at the wrapper. */
+const SECCOMP_KILLED_EXIT = 159;
+const REAL_NETWORK_URL = "https://us-central1-run.googleapis.com/";
+const HOST_REACH_TIMEOUT_MS = 15_000;
 
 function childProgram(body: string): string {
   return `
@@ -103,30 +116,49 @@ function ownerPolicy(network: readonly string[]): SandboxPolicy {
   return policyOf(network, { ownerConfiguredNetwork: [...network] });
 }
 
-function wrapperEnv(policy: SandboxPolicy, box: Sandbox): Record<string, string> {
-  return {
-    PATH: "/usr/bin:/bin",
-    HOME: homedir(),
-    XDG_RUNTIME_DIR: box.socketParent,
-    NIMBUS_SANDBOX_HELPER_PATH: HELPER,
-    [SANDBOX_POLICY_ENV]: JSON.stringify(policy),
-    [SANDBOX_CWD_ENV]: box.cwd,
-  };
+/** The fields `policyFromManifest` reads. Nothing here looks at the rest of a manifest. */
+function manifestOf(policy: SandboxPolicy): ExtensionManifest {
+  return { ...policy } as unknown as ExtensionManifest;
 }
 
-function wrapperArgv(box: Sandbox, body: string, extra: readonly string[] = []): string[] {
+type Wrapped = { argv: string[]; env: Record<string, string> };
+
+/** What the gateway would spawn for this child, given a gateway with this helper and runtime dir. */
+function wrapped(
+  policy: SandboxPolicy,
+  box: Sandbox,
+  body: string,
+  extra: readonly string[] = [],
+  opts: { coreless?: boolean } = {},
+): Wrapped {
   const script = join(box.cwd, "child.js");
   writeFileSync(script, childProgram(body));
-  return [
-    process.execPath,
-    "--no-env-file",
-    GATEWAY_ENTRY,
-    "__nimbus-sandbox",
-    realExecPath,
-    "--no-env-file",
-    script,
-    ...extra,
-  ];
+  const saved = {
+    helper: process.env["NIMBUS_SANDBOX_HELPER_PATH"],
+    runtime: process.env["XDG_RUNTIME_DIR"],
+  };
+  process.env["NIMBUS_SANDBOX_HELPER_PATH"] = HELPER;
+  process.env["XDG_RUNTIME_DIR"] = box.socketParent;
+  try {
+    const child = [realExecPath, "--no-env-file", script, ...extra];
+    // A seccomp kill dumps Bun's core first, which takes 16 s and proves nothing more.
+    const argv =
+      opts.coreless === true ? ["/usr/bin/sh", "-c", NO_CORE_THEN_EXEC, ...child] : child;
+    const spec = wrapServerSpecInCwd(
+      { command: argv[0] ?? "", args: argv.slice(1), env: extensionProcessEnv({}) },
+      manifestOf(policy),
+      box.cwd,
+    );
+    return { argv: [spec.command, ...spec.args], env: spec.env };
+  } finally {
+    restoreEnv("NIMBUS_SANDBOX_HELPER_PATH", saved.helper);
+    restoreEnv("XDG_RUNTIME_DIR", saved.runtime);
+  }
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
 }
 
 /** Reading stdout and stderr to their ends is itself the EOF check: a held pipe hangs here. */
@@ -135,11 +167,13 @@ async function runChild(
   box: Sandbox,
   body: string,
   extra: readonly string[] = [],
+  opts: { coreless?: boolean } = {},
 ): Promise<Ran> {
   const startedAt = Date.now();
+  const spawned = wrapped(policy, box, body, extra, opts);
   // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
-  const proc = Bun.spawn(wrapperArgv(box, body, extra), {
-    env: wrapperEnv(policy, box),
+  const proc = Bun.spawn(spawned.argv, {
+    env: spawned.env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -480,23 +514,37 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
       );
 
       test(
-        "a name with no entry that says localhost has no mapping to a dead address",
+        "with no entry naming localhost, it means this namespace: a child can listen there, and the host's listener is not reached",
         async () => {
           const box = newSandbox(root, "no-localhost");
+          const hitsBefore = silentHits;
           const { report } = await reportOf(
-            // A distro whose nsswitch has `myhostname`, as Fedora does, answers localhost itself, with
-            // 127.0.0.1. So the proof is the file and the port, where no entry listens either way.
             ownerPolicy(["a-declared-name.example:8443"]),
             box,
-            `report({
-              hosts: fs.readFileSync("/etc/hosts", "utf8"),
-              reach: await outcome("localhost", 8443),
-            });`,
+            `const own = await new Promise((done, fail) => {
+               const server = net.createServer((s) => s.end("own"));
+               server.on("error", fail);
+               server.listen(0, "localhost", () => {
+                 const c = net.connect({ host: "localhost", port: server.address().port });
+                 let got = "";
+                 c.on("data", (d) => { got += d; });
+                 c.on("end", () => done(got));
+                 c.on("error", fail);
+               });
+             });
+             report({
+               hosts: fs.readFileSync("/etc/hosts", "utf8"),
+               own,
+               hostListener: await outcome("localhost", ${String(silentPort)}),
+             });`,
           );
           expect(report["hosts"]).toBe(
-            "127.0.0.2 a-declared-name.example a-declared-name.example.\n",
+            "127.0.0.1 localhost localhost.\n127.0.0.2 a-declared-name.example a-declared-name.example.\n",
           );
-          expect(report["reach"]).not.toBe("connected");
+          expect(report["own"]).toBe("own");
+          // A real listener on the host's own loopback, at that port.
+          expect(report["hostListener"]).toBe("ECONNREFUSED");
+          expect(silentHits).toBe(hitsBefore);
         },
         TEST_TIMEOUT_MS,
       );
@@ -606,21 +654,20 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const box = newSandbox(root, `kill-${signal}`);
           const token = `nimbus-forwarder-test-${signal}-${String(process.pid)}`;
           const marker = join(box.cwd, "ready");
-          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
-          const proc = Bun.spawn(
-            wrapperArgv(
-              box,
-              `fs.writeFileSync("ready", "x"); await new Promise(() => setInterval(() => undefined, 1000));`,
-              [token],
-            ),
-            {
-              env: wrapperEnv(ownerPolicy([declared()]), box),
-              stdin: "ignore",
-              stdout: "ignore",
-              stderr: "ignore",
-              timeout: RUN_TIMEOUT_MS,
-            },
+          const spawned = wrapped(
+            ownerPolicy([declared()]),
+            box,
+            `fs.writeFileSync("ready", "x"); await new Promise(() => setInterval(() => undefined, 1000));`,
+            [token],
           );
+          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+          const proc = Bun.spawn(spawned.argv, {
+            env: spawned.env,
+            stdin: "ignore",
+            stdout: "ignore",
+            stderr: "ignore",
+            timeout: RUN_TIMEOUT_MS,
+          });
           await until("the child to start", () => existsSync(marker), FILE_READY_LIMIT_MS);
           expect(processesCarrying(token).length).toBeGreaterThan(0);
           proc.kill(signal);
@@ -662,9 +709,10 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
               ]),
               publicIp: await outcome("1.1.1.1", 443),
             });`;
+          const spawned = wrapped(ownerPolicy([declared()]), box, body, [token]);
           // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
-          const proc = Bun.spawn(wrapperArgv(box, body, [token]), {
-            env: wrapperEnv(ownerPolicy([declared()]), box),
+          const proc = Bun.spawn(spawned.argv, {
+            env: spawned.env,
             stdin: "ignore",
             stdout: "pipe",
             stderr: "pipe",
@@ -709,6 +757,169 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           );
           expect(ran.exitCode).toBe(5);
           expect(ran.elapsedMs).toBeLessThan(RUN_TIMEOUT_MS - 10_000);
+        },
+        TEST_TIMEOUT_MS,
+      );
+    });
+
+    describe("the way a real child starts", () => {
+      test(
+        "through wrapServerSpec, the child has no route, and neither wrapper-only variable",
+        async () => {
+          const box = newSandbox(root, "wrapped");
+          const { report } = await reportOf(
+            policyOf(["a-declared-name.example:8443"]),
+            box,
+            `report({
+              routeLines: fs.readFileSync("/proc/net/route", "utf8").trim().split("\\n").length,
+              helper: process.env.NIMBUS_SANDBOX_HELPER_PATH ?? null,
+              runtime: process.env.XDG_RUNTIME_DIR ?? null,
+              policy: process.env.NIMBUS_SANDBOX_POLICY_JSON ?? null,
+            });`,
+          );
+          expect(report).toEqual({ routeLines: 1, helper: null, runtime: null, policy: null });
+        },
+        TEST_TIMEOUT_MS,
+      );
+    });
+
+    describe("what the child's filter lets an ordinary program do", () => {
+      /** A raw syscall from the child, for the calls no JavaScript API makes on its own. */
+      const SYSCALL = `const { dlopen } = require("bun:ffi");
+        const libc = dlopen("libc.so.6", { syscall: { args: ["i64", "i64", "i64", "i64"], returns: "i64" } }).symbols;
+        const sys = (nr, a = 0, b = 0, c = 0) => Number(libc.syscall(nr, a, b, c));`;
+      const SYS_GETTID = 186;
+
+      const ALLOWED: readonly [string, string, unknown][] = [
+        [
+          "child.kill(), which is kill",
+          `const c = require("node:child_process").spawn("/usr/bin/sleep", ["30"]);
+           await new Promise((r) => c.once("spawn", r));
+           c.kill();
+           report({ v: await new Promise((r) => c.once("exit", (_code, signal) => r(signal))) });`,
+          "SIGTERM",
+        ],
+        ["process.kill(pid, 0)", `report({ v: process.kill(process.pid, 0) });`, true],
+        ["tkill", `${SYSCALL} report({ v: sys(200, sys(${String(SYS_GETTID)}), 0) });`, 0],
+        [
+          "fsync",
+          `const fd = fs.openSync("f", "w"); fs.fsyncSync(fd); fs.closeSync(fd); report({ v: "ok" });`,
+          "ok",
+        ],
+        [
+          "fdatasync",
+          `const fd = fs.openSync("f", "w"); fs.fdatasyncSync(fd); fs.closeSync(fd); report({ v: "ok" });`,
+          "ok",
+        ],
+        ["umask", `process.umask(0o077); report({ v: process.umask() });`, 0o077],
+        [
+          "setsid, through detached: true",
+          `const c = require("node:child_process").spawn("/usr/bin/sh", ["-c", "exit 3"], { detached: true });
+           report({ v: await new Promise((r) => c.once("exit", r)) });`,
+          3,
+        ],
+        ["setpgid", `${SYSCALL} report({ v: sys(109, 0, 0) });`, 0],
+        [
+          "faccessat2, which survives its bad pointer",
+          `${SYSCALL} report({ v: sys(439, -100, 0, 0) });`,
+          -1,
+        ],
+        [
+          "fadvise64, which survives its bad descriptor",
+          `${SYSCALL} report({ v: sys(221, -1, 0, 0) });`,
+          -1,
+        ],
+        ["getpgid", `${SYSCALL} report({ v: sys(121, 0) > 0 });`, true],
+        ["getsid", `${SYSCALL} report({ v: sys(124, 0) > 0 });`, true],
+        ["getgroups", `${SYSCALL} report({ v: sys(115, 0, 0) >= 0 });`, true],
+        [
+          "getresuid, which survives its bad pointers",
+          `${SYSCALL} report({ v: sys(118, 0, 0, 0) });`,
+          -1,
+        ],
+        [
+          "getresgid, which survives its bad pointers",
+          `${SYSCALL} report({ v: sys(120, 0, 0, 0) });`,
+          -1,
+        ],
+        ["sched_getscheduler", `${SYSCALL} report({ v: sys(145, 0) >= 0 });`, true],
+        [
+          "/bin/sh -c, as a shell-script CLI starts",
+          `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
+           report({ v: c.stdout.trim() });`,
+          "from-sh",
+        ],
+        [
+          "a shell's own pipeline and job control",
+          `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "set -m; (exit 4) & wait $!; echo $?"], { encoding: "utf8" });
+           report({ v: c.stdout.trim() });`,
+          "4",
+        ],
+      ];
+
+      test.each(ALLOWED)(
+        "%s",
+        async (name, body, expected) => {
+          const box = newSandbox(root, `allow-${name.replaceAll(/[^a-z]/g, "").slice(0, 12)}`);
+          const ran = await runChild(ownerPolicy([declared()]), box, body, [], { coreless: true });
+          expect(ran.exitCode).toBe(0);
+          expect(parseLast(ran.stdout)["v"]).toEqual(expected);
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "/bin/sh works in the no-network mode too",
+        async () => {
+          const box = newSandbox(root, "allow-nonet");
+          const ran = await runChild(
+            policyOf([]),
+            box,
+            `const c = require("node:child_process").spawnSync("/bin/sh", ["-c", "echo from-sh"], { encoding: "utf8" });
+             report({ v: c.stdout.trim() });`,
+            [],
+            { coreless: true },
+          );
+          expect(ran.exitCode).toBe(0);
+          expect(parseLast(ran.stdout)["v"]).toBe("from-sh");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test.each<[string, number]>([
+        ["pidfd_getfd", 438],
+        ["pidfd_send_signal", 424],
+        ["setns", 308],
+      ])(
+        "%s stays killed",
+        async (_name, nr) => {
+          const box = newSandbox(root, "killed");
+          const ran = await runChild(
+            ownerPolicy([declared()]),
+            box,
+            `${SYSCALL} report({ survived: true, v: sys(${String(nr)}) });`,
+            [],
+            { coreless: true },
+          );
+          expect(ran.exitCode).toBe(SECCOMP_KILLED_EXIT);
+          expect(ran.stdout).not.toContain("survived");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "ptrace stays refused, with EPERM rather than a kill",
+        async () => {
+          const box = newSandbox(root, "ptrace");
+          const ran = await runChild(
+            ownerPolicy([declared()]),
+            box,
+            `${SYSCALL} report({ v: sys(101, 0, process.ppid) });`,
+            [],
+            { coreless: true },
+          );
+          expect(ran.exitCode).toBe(0);
+          expect(parseLast(ran.stdout)["v"]).toBe(-1);
         },
         TEST_TIMEOUT_MS,
       );
@@ -816,7 +1027,12 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
     });
 
     describe("the start probe", () => {
-      type ProbeAnswer = { active: boolean; reason: string | null; canConfine: string | null };
+      type ProbeAnswer = {
+        active: boolean;
+        reason: string | null;
+        canConfine: string | null;
+        badName: string | null;
+      };
 
       async function probeWith(helperPath: string, extraEnv = {}): Promise<ProbeAnswer> {
         const script = join(mkdtempSync(join(root, "probe-")), "probe.ts");
@@ -831,6 +1047,10 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
              canConfine: runner.canConfine({
                id: "p",
                permissions: { network: ["a.example.com"], filesystem: { read: [], write: [] } },
+             }),
+             badName: runner.canConfine({
+               id: "p",
+               permissions: { network: ["bad name.example.com"], filesystem: { read: [], write: [] } },
              }),
            }));
            process.exit(0);`,
@@ -870,13 +1090,16 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
       test(
         "a real start with a real connection answers yes",
         async () => {
-          expect(await probeWith(HELPER)).toEqual({ active: true, reason: null, canConfine: null });
+          const answer = await probeWith(HELPER);
+          expect(answer).toMatchObject({ active: true, reason: null, canConfine: null });
+          // What the spawn would refuse, it refuses here too.
+          expect(answer.badName).toContain("/etc/hosts");
         },
         TEST_TIMEOUT_MS,
       );
 
       test(
-        "a forwarder that failed lockdown, which is exit 6, refuses",
+        "a start reporting exit 6 is reported and refused (a stub, so this proves the reporting; the launcher's own exit 6 is in linux-helper-launcher.test.ts)",
         async () => {
           const answer = await probeWith(stubHelper("exit 6"));
           expect(answer.active).toBe(false);
@@ -887,7 +1110,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
       );
 
       test(
-        "a child that gets no answer through the forwarder refuses",
+        "a start reporting exit 8 is reported and refused (a stub, so this proves the reporting)",
         async () => {
           const answer = await probeWith(stubHelper("exit 8"));
           expect(answer.active).toBe(false);
@@ -903,6 +1126,117 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const answer = await probeWith(stubHelper("while :; do /usr/bin/sleep 1; done"));
           expect(answer.active).toBe(false);
           expect(answer.canConfine).toContain("did not finish");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "a helper that hangs on --check is bounded, and is refused as present",
+        async () => {
+          const hanging = join(mkdtempSync(join(root, "stub-")), "helper");
+          writeFileSync(hanging, "#!/usr/bin/sh\nexec /usr/bin/sleep 60\n");
+          chmodSync(hanging, 0o755);
+          const startedAt = Date.now();
+          const answer = await probeWith(hanging);
+          expect(Date.now() - startedAt).toBeLessThan(30_000);
+          expect(answer.active).toBe(false);
+          expect(answer.canConfine).toContain("--check failed");
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "a start that timed out is not kept: it is asked again in the background, one at a time",
+        async () => {
+          const dir = mkdtempSync(join(root, "retry-"));
+          const hang = join(dir, "hang");
+          const count = join(dir, "count");
+          writeFileSync(hang, "");
+          const stub = join(dir, "helper");
+          // Every start appends a line, so the count is the number of starts.
+          writeFileSync(
+            stub,
+            `#!/usr/bin/sh\nif [ "$1" = "--check" ]; then echo OK; exit 0; fi\nexit 0\n`,
+          );
+          chmodSync(stub, 0o755);
+          const bwrap = join(dir, "bwrap");
+          writeFileSync(
+            bwrap,
+            // Only the forwarder's start is counted and hangs. The runner's own bwrap checks pass.
+            `#!/bin/sh\ncase "$*" in *--socket*) ;; *) exit 0 ;; esac\necho x >> ${count}\nif [ -e ${hang} ]; then exec /usr/bin/sleep 60; fi\nexit 0\n`,
+          );
+          chmodSync(bwrap, 0o755);
+          const script = join(dir, "retry.ts");
+          writeFileSync(
+            script,
+            `import { readFileSync, rmSync } from "node:fs";
+             import { createLinuxSandboxRunner } from ${JSON.stringify(LINUX_MODULE)};
+             const policy = { id: "p", permissions: { network: ["a.example.com"], filesystem: { read: [], write: [] } } };
+             const runner = createLinuxSandboxRunner({ startProbeTimeoutMs: 300 });
+             await runner.probeForwarderStart();
+             const first = runner.canConfine(policy);
+             // Many asks while a retry hangs must start only that one.
+             for (let i = 0; i < 20; i += 1) {
+               runner.isFullyActive();
+               await Bun.sleep(10);
+             }
+             const starts = () => readFileSync(${JSON.stringify(count)}, "utf8").trim().split("\\n").length;
+             while (starts() < 2) {
+               runner.isFullyActive();
+               await Bun.sleep(20);
+             }
+             rmSync(${JSON.stringify(hang)});
+             await Bun.sleep(1000);
+             const second = runner.canConfine(policy);
+             await Bun.sleep(1000);
+             const third = runner.canConfine(policy);
+             console.log(JSON.stringify({ first, second, third }));
+             process.exit(0);`,
+          );
+          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+          const proc = Bun.spawn([process.execPath, "--no-env-file", script], {
+            env: {
+              PATH: "/usr/bin:/bin",
+              HOME: homedir(),
+              NIMBUS_SANDBOX_HELPER_PATH: stub,
+              NIMBUS_BWRAP_PATH: bwrap,
+            },
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: RUN_TIMEOUT_MS,
+          });
+          const stdout = await new Response(proc.stdout).text();
+          await proc.exited;
+          const out = parseLast(stdout.trim());
+          expect(String(out["first"])).toContain("did not finish");
+          expect(out["third"]).toBeNull();
+          // Far fewer starts than the 20 asks, since each hangs for its whole 300 ms bound.
+          expect(readFileSync(count, "utf8").trim().split("\n").length).toBeLessThanOrEqual(6);
+        },
+        TEST_TIMEOUT_MS,
+      );
+
+      test(
+        "a runner leaves no seccomp directory behind when its process exits",
+        async () => {
+          const tmp = mkdtempSync(join(root, "seccomp-"));
+          const script = join(tmp, "make.ts");
+          writeFileSync(
+            script,
+            `import { createLinuxSandboxRunner } from ${JSON.stringify(LINUX_MODULE)};
+             createLinuxSandboxRunner();
+             createLinuxSandboxRunner();
+             process.exit(0);`,
+          );
+          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+          const proc = Bun.spawn([process.execPath, "--no-env-file", script], {
+            env: { PATH: "/usr/bin:/bin", HOME: homedir(), TMPDIR: tmp },
+            stdout: "ignore",
+            stderr: "ignore",
+            timeout: RUN_TIMEOUT_MS,
+          });
+          await proc.exited;
+          expect(readdirSync(tmp).filter((name) => name.startsWith("nimbus-sandbox-"))).toEqual([]);
         },
         TEST_TIMEOUT_MS,
       );
@@ -976,11 +1310,11 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           const broken = join(mkdtempSync(join(root, "broken-")), "helper");
           writeFileSync(broken, "#!/usr/bin/sh\nexit 1\n");
           chmodSync(broken, 0o755);
-          const env = { ...wrapperEnv(policyOf(["a.example.com"]), box) };
-          env["NIMBUS_SANDBOX_HELPER_PATH"] = broken;
+          const spawned = wrapped(policyOf(["a.example.com"]), box, "process.exit(0);");
+          spawned.env["NIMBUS_SANDBOX_HELPER_PATH"] = broken;
           // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
-          const proc = Bun.spawn(wrapperArgv(box, "process.exit(0);"), {
-            env,
+          const proc = Bun.spawn(spawned.argv, {
+            env: spawned.env,
             stdin: "ignore",
             stdout: "pipe",
             stderr: "pipe",
@@ -1046,7 +1380,7 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           expect(report["other"]).not.toBe(report["a"]);
           expect(report["evil"]).toBe("ENOTFOUND");
           expect(report["twoLabels"]).toBe("ENOTFOUND");
-          expect(report["hosts"]).toBe("");
+          expect(report["hosts"]).toBe("127.0.0.1 localhost localhost.\n");
           expect(ran.stderr).toContain("evil.googleapis.com");
           expect(ran.stderr).toContain("a.b-run.googleapis.com");
         },
@@ -1076,12 +1410,26 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
       test.skipIf(!REAL_NETWORK)(
         "real network: a matching name reaches its host over real TLS, and others fail to resolve",
         async () => {
+          // The same URL from outside the sandbox first. Only that failing is an outage; a host that
+          // answers while the sandboxed fetch below fails stays red.
+          const hostReached = await fetch(REAL_NETWORK_URL, {
+            signal: AbortSignal.timeout(HOST_REACH_TIMEOUT_MS),
+          }).then(
+            () => true,
+            () => false,
+          );
+          if (!hostReached) {
+            console.error(
+              `SKIPPED, NOT PROVED: this machine cannot reach ${REAL_NETWORK_URL} even outside the sandbox`,
+            );
+            return;
+          }
           const box = newSandbox(root, "real");
           const { report, ran } = await reportOf(
             wildcardPolicy([]),
             box,
             `report({
-               status: await fetch("https://us-central1-run.googleapis.com/").then((r) => r.status),
+               status: await fetch("${REAL_NETWORK_URL}").then((r) => r.status),
                evil: await fetch("https://evil.googleapis.com/").then((r) => r.status, (e) => e.code ?? "failed"),
                twoLabels: await fetch("https://a.b-run.googleapis.com/").then((r) => r.status, (e) => e.code ?? "failed"),
              });`,

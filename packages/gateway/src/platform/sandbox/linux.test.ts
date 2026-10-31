@@ -15,6 +15,7 @@ import {
   renderResolvConf,
   resolvConfTarget,
   resolveHelperPath,
+  rootDirFlags,
 } from "./linux-forwarder.ts";
 import { type ForwardEntry, planForwardEntries } from "./net-forward-host.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
@@ -94,6 +95,69 @@ describe("buildBwrapArgv", () => {
     });
     const idx = argv.findIndex((a, i) => a === "--ro-bind" && argv[i + 1] === "/home/u/docs");
     expect(idx).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("the root's program and library directories", () => {
+  const MERGED = {
+    readlink: (p: string): string | null =>
+      ({ "/bin": "usr/bin", "/sbin": "usr/sbin", "/lib": "usr/lib", "/lib64": "usr/lib64" })[p] ??
+      null,
+    exists: (): boolean => false,
+  };
+  const SPLIT = {
+    readlink: (): string | null => null,
+    exists: (p: string): boolean => ["/bin", "/sbin", "/lib", "/lib64"].includes(p),
+  };
+
+  it("a merged-usr host gets its own links, since /usr is bound", () => {
+    expect(rootDirFlags(MERGED)).toEqual([
+      "--symlink",
+      "usr/bin",
+      "/bin",
+      "--symlink",
+      "usr/sbin",
+      "/sbin",
+      "--symlink",
+      "usr/lib",
+      "/lib",
+      "--symlink",
+      "usr/lib64",
+      "/lib64",
+    ]);
+  });
+
+  it("a split host gets each directory bound, and what it lacks is left out", () => {
+    expect(rootDirFlags(SPLIT)).toEqual([
+      "--ro-bind",
+      "/bin",
+      "/bin",
+      "--ro-bind",
+      "/sbin",
+      "/sbin",
+      "--ro-bind",
+      "/lib",
+      "/lib",
+      "--ro-bind",
+      "/lib64",
+      "/lib64",
+    ]);
+  });
+
+  it("a link out of /usr is bound through, since its target is not otherwise there", () => {
+    const flags = rootDirFlags({
+      readlink: (p) => (p === "/lib64" ? "/opt/lib64" : null),
+      exists: () => false,
+    });
+    expect(flags.join(" ")).toContain("--ro-bind /lib64 /lib64");
+  });
+
+  it("every mode gets them, and every mode unshares the pid namespace that bounds a child's signals", () => {
+    for (const mode of ["no-net", "per-host", "fallback"] as const) {
+      const argv = buildBwrapArgv(basePolicy(), { mode, cwd: CWD, rootLookup: MERGED });
+      expect(argv.join(" ")).toContain("--symlink usr/bin /bin");
+      expect(argv).toContain("--unshare-pid");
+    }
   });
 });
 
@@ -295,7 +359,6 @@ describe("buildForwarderArgv", () => {
     const expected = new Set([
       "/usr",
       "/etc",
-      "/lib",
       FWD_CWD,
       "/opt/app",
       "/srv/data",
@@ -304,7 +367,8 @@ describe("buildForwarderArgv", () => {
       HELPER_IN_SANDBOX,
       SOCKET_DIR,
     ]);
-    const unknown = dests.filter((d) => !expected.has(d) && d !== "/lib64");
+    const rootDirs = ["/bin", "/sbin", "/lib", "/lib64", "/lib32", "/libx32"];
+    const unknown = dests.filter((d) => !expected.has(d) && !rootDirs.includes(d));
     expect(unknown).toEqual([]);
     expect(outer.join(" ")).toContain("--tmpfs /tmp");
     expect(outer.join(" ")).toContain("--proc /proc");
@@ -383,7 +447,9 @@ describe("buildForwarderArgv", () => {
     entries.forEach((entry, index) => {
       expect(outer).toContain(`${entry.loopbackIp}:${String(entry.port)}:${String(index)}`);
     });
-    expect(renderHostsFile(entries)).toBe("127.0.0.2 api.example.com api.example.com.\n");
+    expect(renderHostsFile(entries)).toBe(
+      "127.0.0.1 localhost localhost.\n127.0.0.2 api.example.com api.example.com.\n",
+    );
   });
 
   it("a wildcard-only policy still has a listener, which the helper requires", () => {
@@ -394,7 +460,7 @@ describe("buildForwarderArgv", () => {
     };
     const { outer } = argvFor(policy);
     expect(outer.filter((a) => a === "--listen")).toHaveLength(48);
-    expect(renderHostsFile(planForwardEntries(policy))).toBe("");
+    expect(renderHostsFile(planForwardEntries(policy))).toBe("127.0.0.1 localhost localhost.\n");
   });
 
   it("252 exact hosts plus wildcards has no pool, and every exact entry still listens", () => {
@@ -468,22 +534,26 @@ describe("the generated files", () => {
         entry("jenkins.corp", "127.0.0.2", 8443),
         entry("my_jenkins", "127.0.0.3"),
       ]),
-    ).toBe("127.0.0.2 jenkins.corp jenkins.corp.\n127.0.0.3 my_jenkins my_jenkins.\n");
+    ).toBe(
+      "127.0.0.1 localhost localhost.\n127.0.0.2 jenkins.corp jenkins.corp.\n127.0.0.3 my_jenkins my_jenkins.\n",
+    );
   });
 
   it("writes no line for an IP literal or a pool slot", () => {
     expect(renderHostsFile([entry("192.168.1.5", "192.168.1.5"), entry(null, "127.0.0.2")])).toBe(
-      "",
+      "127.0.0.1 localhost localhost.\n",
     );
   });
 
-  it("maps localhost only to the address an entry holds", () => {
+  it("maps localhost to the address an entry holds, and otherwise to 127.0.0.1", () => {
     const named = planForwardEntries(basePolicy({ network: ["localhost:1143", "a.example.com"] }));
     expect(renderHostsFile(named)).toBe(
       "127.0.0.2 localhost localhost.\n127.0.0.3 a.example.com a.example.com.\n",
     );
     const unnamed = planForwardEntries(basePolicy({ network: ["a.example.com"] }));
-    expect(renderHostsFile(unnamed)).not.toContain("localhost");
+    expect(renderHostsFile(unnamed)).toBe(
+      "127.0.0.1 localhost localhost.\n127.0.0.2 a.example.com a.example.com.\n",
+    );
   });
 
   it.each([

@@ -59,7 +59,9 @@ const MAX_SOCKET_PATH_BYTES = 107;
 const KEPT_CAPABILITIES = ["CAP_NET_BIND_SERVICE", "CAP_SETPCAP", "CAP_SETFCAP"] as const;
 const ALIAS_CAPABILITY = "CAP_NET_ADMIN";
 
-const OUTER_BASE_BINDS = ["/usr", "/etc", "/lib"] as const;
+const OUTER_BASE_BINDS = ["/usr", "/etc"] as const;
+/** The root's program and library directories. On a merged-usr host each is a symlink into `/usr`. */
+const ROOT_DIRS = ["/bin", "/sbin", "/lib", "/lib64", "/lib32", "/libx32"] as const;
 const MAX_LINK_HOPS = 8;
 
 const LOCALHOST_ADDRESS = "127.0.0.1";
@@ -94,8 +96,30 @@ export function resolveHelperPath(
   return exists(INSTALLED_HELPER) ? INSTALLED_HELPER : null;
 }
 
-export function declaresNetwork(policy: SandboxPolicy): boolean {
-  return policy.permissions.network.length > 0 || (policy.firstPartyWildcardHosts?.length ?? 0) > 0;
+export type RootLookup = {
+  readlink(path: string): string | null;
+  exists(path: string): boolean;
+};
+
+const HOST_ROOT: RootLookup = { readlink: readlinkOrNull, exists: existsSync };
+
+/**
+ * The flags that give a sandbox the host's `/bin`, `/sbin` and `/lib*`. A link into `/usr` stays a
+ * link, since `/usr` is bound; any other directory is bound as it is. Without `/bin`, `/bin/sh` was
+ * not found, and `gcloud` and `az` are shell scripts. `/lib` is always asked for, as it always was:
+ * a machine with none cannot run a dynamic program, and should say so.
+ */
+export function rootDirFlags(lookup: RootLookup = HOST_ROOT): string[] {
+  const flags: string[] = [];
+  for (const path of ROOT_DIRS) {
+    const link = lookup.readlink(path);
+    if (link !== null && posix.resolve("/", link).startsWith("/usr/")) {
+      flags.push("--symlink", link, path);
+    } else if (link !== null || path === "/lib" || lookup.exists(path)) {
+      flags.push("--ro-bind", path, path);
+    }
+  }
+  return flags;
 }
 
 function hostsName(name: string): string {
@@ -110,9 +134,9 @@ function hostsName(name: string): string {
  * and an IP literal has no name to map. Each name also appears with a trailing dot, since a URL can
  * keep `jenkins.corp.` where the grant dropped it.
  *
- * `localhost` appears only when an entry names it, at the address the planner gave that entry. A line
- * for it otherwise would send a client to an address with no listener, with no log line to say why;
- * without one it reaches the stub, which refuses it by name.
+ * `localhost` maps to the address the planner gave an entry that names it. Otherwise it maps to
+ * `127.0.0.1`, as on any machine, so a child can `listen` on it. That widens nothing: this namespace
+ * is empty, so the only things there are the child's own and the entries it declared.
  */
 export function renderHostsFile(entries: readonly ForwardEntry[]): string {
   const namesByAddress = new Map<string, string[]>();
@@ -123,7 +147,11 @@ export function renderHostsFile(entries: readonly ForwardEntry[]): string {
     if (!names.includes(name)) names.push(name, `${name}.`);
     namesByAddress.set(entry.loopbackIp, names);
   }
-  return [...namesByAddress].map(([address, names]) => `${address} ${names.join(" ")}\n`).join("");
+  const lines = [...namesByAddress].map(([address, names]) => `${address} ${names.join(" ")}\n`);
+  if (!entries.some((entry) => entry.host === "localhost")) {
+    lines.unshift(`${LOCALHOST_ADDRESS} localhost localhost.\n`);
+  }
+  return lines.join("");
 }
 
 export function renderResolvConf(): string {
@@ -213,10 +241,14 @@ export function forwarderPathRefusal(
   const env = context.env ?? process.env;
   const realpath = context.realpath ?? realpathSync;
   const uid = context.uid ?? process.getuid?.() ?? 0;
-  const home = context.home ?? env["HOME"] ?? homedir();
-  const sockets = ["/run", "/var/run", `/run/user/${String(uid)}`];
+  const homes = spellingsOf(context.home ?? env["HOME"] ?? homedir(), realpath);
   const runtimeDir = env["XDG_RUNTIME_DIR"];
-  if (runtimeDir !== undefined && runtimeDir !== "") sockets.push(trimmed(runtimeDir));
+  const sockets = [
+    "/run",
+    "/var/run",
+    `/run/user/${String(uid)}`,
+    ...(runtimeDir === undefined || runtimeDir === "" ? [] : [runtimeDir]),
+  ].flatMap((path) => spellingsOf(path, realpath));
 
   const { read, write } = policy.permissions.filesystem;
   for (const path of [...read, ...write, ...(context.cwd === undefined ? [] : [context.cwd])]) {
@@ -226,7 +258,9 @@ export function forwarderPathRefusal(
     }
   }
   if (context.cwd !== undefined) {
-    const above = spellingsOf(context.cwd, realpath).some((s) => isAtOrAbove(s, trimmed(home)));
+    const above = spellingsOf(context.cwd, realpath).some((s) =>
+      homes.some((home) => isAtOrAbove(s, home)),
+    );
     if (above)
       return `a working directory at or above $HOME cannot run behind the network forwarder: ${context.cwd}`;
   }
@@ -246,6 +280,8 @@ export type ForwarderArgvOpts = {
   innerArgv: readonly string[];
   /** Overrides for {@link forwarderPathRefusal}, for tests. */
   pathContext?: Omit<ForwarderPathContext, "cwd">;
+  /** Overrides for {@link rootDirFlags}, for tests. */
+  rootLookup?: RootLookup;
 };
 
 type InnerBind = { flag: string; path: string };
@@ -296,7 +332,12 @@ function helperFlags(entries: readonly ForwardEntry[]): string[] {
 
 function mirroredBinds(opts: ForwarderArgvOpts): string[] {
   // These reach the inner `bwrap` from what this view adds below, and not from the host.
-  const provided = new Set<string>([...OUTER_BASE_BINDS, HELPER_IN_SANDBOX, opts.resolvConfTarget]);
+  const provided = new Set<string>([
+    ...OUTER_BASE_BINDS,
+    ...ROOT_DIRS,
+    HELPER_IN_SANDBOX,
+    opts.resolvConfTarget,
+  ]);
   const out: string[] = [];
   for (const { flag, path } of innerBinds(opts.innerArgv)) {
     if (!provided.has(path)) out.push(flag, path, path);
@@ -327,6 +368,7 @@ export function buildForwarderArgv(policy: SandboxPolicy, opts: ForwarderArgvOpt
     "0",
     ...capabilityFlags(opts.entries),
     ...OUTER_BASE_BINDS.flatMap((path) => ["--ro-bind", path, path]),
+    ...rootDirFlags(opts.rootLookup),
     "--proc",
     "/proc",
     "--dev",
@@ -381,8 +423,10 @@ function mkdtempOrNull(prefix: string): string | null {
 export function createForwarderDir(
   boundPaths: readonly string[],
   env: Readonly<Record<string, string | undefined>> = process.env,
+  realpath: (path: string) => string = realpathSync,
 ): string {
   const candidates = [env["XDG_RUNTIME_DIR"], env["TMPDIR"], "/tmp"];
+  const bound = boundPaths.flatMap((path) => spellingsOf(path, realpath));
   let tried = "";
   for (const candidate of candidates) {
     if (candidate === undefined || !candidate.startsWith("/")) continue;
@@ -391,7 +435,9 @@ export function createForwarderDir(
     const usable =
       Buffer.byteLength(longest) <= MAX_SOCKET_PATH_BYTES &&
       existsSync(base) &&
-      !boundPaths.some((path) => isInside(longest, path));
+      !spellingsOf(base, realpath).some((form) =>
+        bound.some((path) => isInside(posix.join(form, DIR_TEMPLATE), path)),
+      );
     tried = `${tried} ${base}`;
     if (usable) {
       const made = mkdtempOrNull(posix.join(base, DIR_PREFIX));
@@ -438,6 +484,9 @@ function stderrLine(line: string): void {
  * this when the child exits and must not wait for a pending dial.
  */
 export function openForwarderSession(opts: ForwarderSessionOpts): ForwarderSession {
+  // First, so that a policy this view refuses says why, and not that no directory could hold a socket.
+  const refusal = forwarderPathRefusal(opts.policy, { cwd: opts.cwd });
+  if (refusal !== null) throw new Error(refusal);
   const { read, write } = opts.policy.permissions.filesystem;
   const dir = createForwarderDir([...read, ...write, opts.cwd]);
   let host: { close(): void } | null = null;
@@ -506,31 +555,42 @@ export type StartProbeOpts = {
   /** The same inner flags a real spawn gets, for the probe's policy and cwd. */
   buildInnerFlags: (policy: SandboxPolicy, cwd: string) => string[];
   timeoutMs?: number;
+  /** Where the probe's working directory goes. Overridden in a test. */
+  tempRoot?: string;
 };
 
-function waitForStart(child: ChildProcess, timeoutMs: number): Promise<string | null> {
+export type StartProbeResult = {
+  /** Null when the start worked, else why not. */
+  failure: string | null;
+  /** The start did not finish. Says nothing about the machine beyond this moment, so ask again. */
+  timedOut: boolean;
+};
+
+const failedStart = (failure: string): StartProbeResult => ({ failure, timedOut: false });
+
+function waitForStart(child: ChildProcess, timeoutMs: number): Promise<StartProbeResult> {
   return new Promise((resolve) => {
     let stderr = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
-      resolve(`it did not finish within ${String(timeoutMs)} ms`);
+      resolve({ failure: `it did not finish within ${String(timeoutMs)} ms`, timedOut: true });
     }, timeoutMs);
     child.stderr?.on("data", (chunk: Buffer) => {
       stderr += chunk.toString();
     });
     child.once("error", (e) => {
       clearTimeout(timer);
-      resolve(e.message);
+      resolve(failedStart(e.message));
     });
     child.once("close", (code, signal) => {
       clearTimeout(timer);
       if (code === 0) {
-        resolve(null);
+        resolve({ failure: null, timedOut: false });
         return;
       }
       const how = signal === null ? `exit ${String(code)}` : `signal ${signal}`;
       const said = stderr.trim();
-      resolve(said === "" ? how : `${how}: ${said}`);
+      resolve(failedStart(said === "" ? how : `${how}: ${said}`));
     });
   });
 }
@@ -538,11 +598,11 @@ function waitForStart(child: ChildProcess, timeoutMs: number): Promise<string | 
 /**
  * One real start of the whole path: outer `bwrap`, launcher, forwarder, inner `bwrap` under the real
  * seccomp filter, and a child that sends a byte through the forwarder to a real forward host and gets
- * the answer. So a dead forwarder fails here, as well as one that failed its lockdown. Null when it
- * worked, else why not. Bounded: a start that hangs is killed and reported.
+ * the answer. So a dead forwarder fails here, as well as one that failed its lockdown. Bounded: a
+ * start that hangs is killed and reported. Never rejects: a failure of any step is a refusal, and a
+ * rejection here would fail the gateway's boot.
  */
-export async function runForwarderStartProbe(opts: StartProbeOpts): Promise<string | null> {
-  const cwd = mkdtempSync(posix.join("/tmp", "nimbus-forwarder-probe-"));
+export async function runForwarderStartProbe(opts: StartProbeOpts): Promise<StartProbeResult> {
   const policy: SandboxPolicy = {
     id: "forwarder-start-probe",
     permissions: {
@@ -552,7 +612,9 @@ export async function runForwarderStartProbe(opts: StartProbeOpts): Promise<stri
     firstPartyPolicy: true,
   };
   let session: ForwarderSession | null = null;
+  let cwd: string | null = null;
   try {
+    cwd = mkdtempSync(posix.join(opts.tempRoot ?? "/tmp", "nimbus-forwarder-probe-"));
     const entries = planForwardEntries(policy);
     const address = entries[0]?.loopbackIp ?? "";
     const target = resolvConfTarget();
@@ -589,9 +651,9 @@ export async function runForwarderStartProbe(opts: StartProbeOpts): Promise<stri
       closeSync(fd);
     }
   } catch (e) {
-    return e instanceof Error ? e.message : String(e);
+    return failedStart(e instanceof Error ? e.message : String(e));
   } finally {
     session?.close();
-    rmSync(cwd, { recursive: true, force: true });
+    if (cwd !== null) rmSync(cwd, { recursive: true, force: true });
   }
 }

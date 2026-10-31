@@ -13,7 +13,6 @@ import {
 import { join } from "node:path";
 import {
   createForwarderDir,
-  declaresNetwork,
   ForwarderSocketPathError,
   forwarderPathRefusal,
   openForwarderSession,
@@ -21,7 +20,7 @@ import {
   runForwarderStartProbe,
 } from "./linux-forwarder.ts";
 import { type ForwardEntry, planForwardEntries } from "./net-forward-host.ts";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { declaresNetwork, type SandboxPolicy } from "./sandbox-policy.ts";
 
 /**
  * The parts of the forwarder's spawn path that need no `bwrap`: the private directory, the session
@@ -99,6 +98,22 @@ describe.skipIf(!IS_LINUX)("the forwarder's spawn path, without bwrap", () => {
       rmSync(dir, { recursive: true });
     });
 
+    test("compares real paths: a symlinked candidate inside a bound path is skipped", () => {
+      const runtime = freshDir();
+      const realpath = (p: string): string => (p === "/link/run" ? runtime : p);
+      const dir = createForwarderDir([runtime], { XDG_RUNTIME_DIR: "/link/run" }, realpath);
+      expect(dir.startsWith("/link/run")).toBe(false);
+      rmSync(dir, { recursive: true });
+    });
+
+    test("compares real paths: a candidate inside a symlinked bound path is skipped", () => {
+      const runtime = freshDir();
+      const realpath = (p: string): string => (p === "/link/bound" ? runtime : p);
+      const dir = createForwarderDir(["/link/bound"], { XDG_RUNTIME_DIR: runtime }, realpath);
+      expect(dir.startsWith(runtime)).toBe(false);
+      rmSync(dir, { recursive: true });
+    });
+
     test("names what it tried when nothing can hold it", () => {
       const runtime = freshDir();
       let message = "";
@@ -137,7 +152,7 @@ describe.skipIf(!IS_LINUX)("the forwarder's spawn path, without bwrap", () => {
       const dir = join(runtime, readdirSync(runtime)[0] ?? "");
       expect(statSync(dir).mode & 0o777).toBe(0o700);
       expect(readFileSync(join(dir, "hosts"), "utf8")).toBe(
-        "127.0.0.2 api.example.com api.example.com.\n",
+        "127.0.0.1 localhost localhost.\n127.0.0.2 api.example.com api.example.com.\n",
       );
       expect(readFileSync(join(dir, "resolv.conf"), "utf8")).toBe("nameserver 127.0.0.53\n");
       expect(existsSync(join(dir, "s"))).toBe(true);
@@ -154,6 +169,12 @@ describe.skipIf(!IS_LINUX)("the forwarder's spawn path, without bwrap", () => {
       session.close();
       session.close();
       expect(process.listenerCount("exit")).toBe(before);
+    });
+
+    test("a policy that binds / says so, and not that no directory could hold the socket", () => {
+      const runtime = freshDir();
+      const root_ = policyWith({ filesystem: { read: ["/"], write: [] } });
+      expect(() => openIn(runtime, root_)).toThrow(/runtime directory/);
     });
 
     test("a policy the view would refuse leaves no directory behind", () => {
@@ -190,14 +211,22 @@ describe.skipIf(!IS_LINUX)("the forwarder's spawn path, without bwrap", () => {
       return path;
     }
 
-    const probe = (bwrapPath: string, seccompPath = seccomp(), timeoutMs = 5000) =>
+    const probeResult = (
+      bwrapPath: string,
+      seccompPath = seccomp(),
+      timeoutMs = 5000,
+      tempRoot?: string,
+    ) =>
       runForwarderStartProbe({
         bwrapPath,
         helperPath: "/opt/helper",
         seccompPath,
         buildInnerFlags: () => ["--share-net"],
         timeoutMs,
+        ...(tempRoot === undefined ? {} : { tempRoot }),
       });
+    const probe = async (bwrapPath: string, seccompPath = seccomp(), timeoutMs = 5000) =>
+      (await probeResult(bwrapPath, seccompPath, timeoutMs)).failure;
 
     test("a start that exits 0 is null", async () => {
       expect(await probe(standIn("exit 0"))).toBeNull();
@@ -219,6 +248,20 @@ describe.skipIf(!IS_LINUX)("the forwarder's spawn path, without bwrap", () => {
       expect(await probe(standIn("exec /usr/bin/sleep 60"), seccomp(), 100)).toContain(
         "did not finish within 100 ms",
       );
+    });
+
+    test("only a start that hangs is marked as one to ask again", async () => {
+      expect((await probeResult(standIn("exec /usr/bin/sleep 60"), seccomp(), 100)).timedOut).toBe(
+        true,
+      );
+      expect((await probeResult(standIn("exit 6"))).timedOut).toBe(false);
+      expect((await probeResult(standIn("exit 0"))).timedOut).toBe(false);
+    });
+
+    test("no temp directory for the probe is a refusal, not a rejection that fails boot", async () => {
+      const result = await probeResult(standIn("exit 0"), seccomp(), 5000, join(root, "missing"));
+      expect(result.failure).not.toBeNull();
+      expect(result.timedOut).toBe(false);
     });
 
     test("a bwrap that cannot run is a refusal, not a throw", async () => {
@@ -279,6 +322,21 @@ describe("the forwarder's small rules", () => {
         context,
       ),
     ).not.toBeNull();
+  });
+
+  test("$HOME and the runtime directory are compared by where they really are", () => {
+    const realpath = (p: string): string => {
+      if (p === "/home/o") return "/data/home/o";
+      if (p === "/xdg") return "/data/run";
+      return p;
+    };
+    const context = { env: { XDG_RUNTIME_DIR: "/xdg" }, home: "/home/o", uid: 1000, realpath };
+    expect(forwarderPathRefusal(policyWith(), { ...context, cwd: "/data/home/o" })).toContain(
+      "$HOME",
+    );
+    expect(
+      forwarderPathRefusal(policyWith({ filesystem: { read: ["/data/run"], write: [] } }), context),
+    ).toContain("runtime directory");
   });
 
   test("a cwd below $HOME is fine, which is where a real one lives", () => {

@@ -1,5 +1,5 @@
 export type SandboxPlatformCapabilities = {
-  network: "per_host" | "all_or_nothing";
+  network: "per_host" | "all_or_nothing" | "refusing";
   reason: string | null;
 };
 
@@ -11,5 +11,8 @@ export function formatNetworkIsolationLine(cap: SandboxPlatformCapabilities | nu
     return "Network isolation: per-host";
   }
   const reasonSuffix = cap.reason !== null && cap.reason !== "" ? ` (${cap.reason})` : "";
+  if (cap.network === "refusing") {
+    return `Network isolation: refusing network-declaring extensions${reasonSuffix}`;
+  }
   return `Network isolation: Degraded - all-or-nothing${reasonSuffix}`;
 }

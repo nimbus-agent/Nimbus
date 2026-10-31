@@ -91,6 +91,8 @@ bun --no-env-file scripts/linux/check-sandbox-dns.ts
 # The whole per-host path, and the one place it runs with the restriction on: nested bwrap, the
 # launcher, the forwarder and a real connector, under the profile the .deb installs. A failure here
 # on an otherwise green test suite means stock Ubuntu cannot start a network child.
+# No retry anywhere here, on purpose: this path has to work the first time. A host that cannot reach
+# a service even outside the sandbox is a loud skip, and a sandbox failure with a working host is red.
 echo "Restriction on, the profile loaded, the network forwarder:"
 helper="${PWD}/packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper"
 bun run build:sandbox-helper

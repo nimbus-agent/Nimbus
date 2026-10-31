@@ -1,20 +1,30 @@
 import { type ChildProcess, type StdioOptions, spawn, spawnSync } from "node:child_process";
-import { closeSync, existsSync, mkdtempSync, openSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdtempSync,
+  openSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 
 import {
-  declaresNetwork,
   forwarderPathRefusal,
   innerResolvBind,
   openForwarderSession,
+  type RootLookup,
+  renderHostsFile,
   resolvConfTarget,
   resolveHelperPath,
+  rootDirFlags,
   runForwarderStartProbe,
 } from "./linux-forwarder.ts";
 import { planForwardEntries } from "./net-forward-host.ts";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import { declaresNetwork, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildDefaultSeccompFilter } from "./seccomp-filter.ts";
 
@@ -33,6 +43,8 @@ interface BuildArgvOpts {
    * network. In `per-host` the file a child reads is the generated one, so it never gets this.
    */
   resolverFile?: string | null;
+  /** Overrides for {@link rootDirFlags}, for tests. */
+  rootLookup?: RootLookup;
 }
 
 const HELPER_PATH = resolveHelperPath(process.execPath, process.env, existsSync);
@@ -90,9 +102,7 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
     "--ro-bind",
     "/etc",
     "/etc",
-    "--ro-bind",
-    "/lib",
-    "/lib",
+    ...rootDirFlags(opts.rootLookup),
     "--proc",
     "/proc",
     "--dev",
@@ -108,9 +118,6 @@ export function buildBwrapArgv(policy: SandboxPolicy, opts: BuildArgvOpts): stri
     "--chdir",
     opts.cwd,
   ];
-  if (existsSync("/lib64")) {
-    argv.push("--ro-bind", "/lib64", "/lib64");
-  }
   if (opts.mode === "fallback" && opts.resolverFile !== undefined && opts.resolverFile !== null) {
     argv.push("--ro-bind", opts.resolverFile, opts.resolverFile);
   }
@@ -202,6 +209,8 @@ export function probeBwrap(
   return `bwrap at ${bwrapPath} cannot start a sandbox: ${why} (run \`nimbus doctor\` for the fix)`;
 }
 
+const HELPER_CHECK_TIMEOUT_MS = 5000;
+
 function probeHelper(): HelperState {
   if (HELPER_PATH === null) {
     return {
@@ -212,15 +221,16 @@ function probeHelper(): HelperState {
   }
   try {
     // windows-console-ok: Linux-only module.
-    const result = spawnSync(HELPER_PATH, ["--check"], { encoding: "utf8" });
+    const result = spawnSync(HELPER_PATH, ["--check"], {
+      encoding: "utf8",
+      timeout: HELPER_CHECK_TIMEOUT_MS,
+    });
     if (result.status === 0 && result.stdout.trim() === "OK") {
       return { available: true, reason: null };
     }
     const stderr = (result.stderr ?? "").trim();
-    return {
-      available: false,
-      reason: `nimbus-sandbox-helper --check failed: ${stderr === "" ? "<no stderr>" : stderr}`,
-    };
+    const said = stderr === "" ? (result.error?.message ?? "<no stderr>") : stderr;
+    return { available: false, reason: `nimbus-sandbox-helper --check failed: ${said}` };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
@@ -270,7 +280,8 @@ function wildcardRefusal(policy: SandboxPolicy): string | null {
 /** Why this network policy cannot run behind the forwarder whatever the machine can do, or null. */
 function forwarderPolicyRefusal(policy: SandboxPolicy): string | null {
   try {
-    planForwardEntries(policy);
+    // The same two steps a spawn takes, so this cannot pass what the spawn refuses.
+    renderHostsFile(planForwardEntries(policy));
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -334,21 +345,43 @@ function spawnBehindForwarder(
   }
 }
 
+let sharedSeccompPath: string | null = null;
+
+/**
+ * One file per process: the program never changes, so a runner per caller gains nothing, and each
+ * left a `nimbus-sandbox-*` directory behind for good. Goes when the process does, on the same paths
+ * as the forwarder's directory: `process.exit`, which the wrapper's signal handlers call too.
+ */
+function seccompFile(): string {
+  if (sharedSeccompPath !== null) return sharedSeccompPath;
+  const dir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-"));
+  const path = join(dir, "seccomp.bpf");
+  writeFileSync(path, buildDefaultSeccompFilter(), { mode: 0o600 });
+  process.once("exit", () => rmSync(dir, { recursive: true, force: true }));
+  sharedSeccompPath = path;
+  return path;
+}
+
+export type LinuxSandboxRunnerOptions = {
+  /** Overrides the start probe's bound, for tests. */
+  startProbeTimeoutMs?: number;
+};
+
 export type LinuxSandboxRunner = SandboxRunner & {
   /**
    * The forwarder's one real start. Until it has run, a network policy is refused by `canConfine`,
-   * since no check has shown this machine can start one. Runs once however often it is called.
+   * since no check has shown this machine can start one. Runs once however often it is called,
+   * except that a start that merely timed out is asked again, see `reprobeAfterTimeout`.
    */
   probeForwarderStart(): Promise<void>;
 };
 
 const START_PROBE_NOT_RUN = "the network forwarder's start probe has not run";
 
-export function createLinuxSandboxRunner(): LinuxSandboxRunner {
-  const seccompProgram = buildDefaultSeccompFilter();
-  const seccompDir = mkdtempSync(join(tmpdir(), "nimbus-sandbox-"));
-  const seccompPath = join(seccompDir, "seccomp.bpf");
-  writeFileSync(seccompPath, seccompProgram, { mode: 0o600 });
+export function createLinuxSandboxRunner(
+  options: LinuxSandboxRunnerOptions = {},
+): LinuxSandboxRunner {
+  const seccompPath = seccompFile();
 
   const bwrapPath = resolveBwrapPath();
   const bwrapMissing = probeBwrap(bwrapPath);
@@ -358,7 +391,39 @@ export function createLinuxSandboxRunner(): LinuxSandboxRunner {
   }
 
   let startFailure: string | null = START_PROBE_NOT_RUN;
-  let startedProbe: Promise<void> | null = null;
+  let startTimedOut = false;
+  let probing: Promise<void> | null = null;
+
+  /** One at a time, each bounded by the probe's own timeout. */
+  const startProbe = (): Promise<void> => {
+    if (bwrapPath === null || HELPER_PATH === null || !helper.available) return Promise.resolve();
+    const helperPath = HELPER_PATH;
+    probing ??= runForwarderStartProbe({
+      bwrapPath,
+      helperPath,
+      seccompPath,
+      buildInnerFlags: buildForwarderInnerFlags,
+      ...(options.startProbeTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.startProbeTimeoutMs }),
+    }).then((result) => {
+      startFailure =
+        result.failure === null
+          ? null
+          : `the network forwarder cannot start here: ${result.failure}`;
+      startTimedOut = result.timedOut;
+      probing = null;
+    });
+    return probing;
+  };
+
+  /**
+   * A timeout says the machine was busy, not that it cannot do this, so it is not kept: whoever asks
+   * still gets the refusal, and starts another try in the background for the next one to read.
+   */
+  const reprobeAfterTimeout = (): void => {
+    if (startTimedOut) void startProbe();
+  };
 
   return {
     platform: "linux",
@@ -376,6 +441,7 @@ export function createLinuxSandboxRunner(): LinuxSandboxRunner {
       // fails its check, or a start the probe saw fail, refuses: it never reaches the host network.
       const mode = decideNetworkMode(opts.policy, { helperAvailable: HELPER_PATH !== null });
       if (mode === "per-host" && HELPER_PATH !== null) {
+        reprobeAfterTimeout();
         const failure =
           helper.reason ?? (startFailure === START_PROBE_NOT_RUN ? null : startFailure);
         if (failure !== null) throw new Error(`refusing to spawn: ${failure}`);
@@ -395,26 +461,19 @@ export function createLinuxSandboxRunner(): LinuxSandboxRunner {
       return spawnWithSeccomp(seccompPath, bwrapPath, bwrapArgv, opts);
     },
     probeForwarderStart(): Promise<void> {
-      if (bwrapPath === null || HELPER_PATH === null || !helper.available) {
-        return Promise.resolve();
-      }
-      const helperPath = HELPER_PATH;
-      startedProbe ??= runForwarderStartProbe({
-        bwrapPath,
-        helperPath,
-        seccompPath,
-        buildInnerFlags: buildForwarderInnerFlags,
-      }).then((failure) => {
-        startFailure =
-          failure === null ? null : `the network forwarder cannot start here: ${failure}`;
-      });
-      return startedProbe;
+      return startFailure === START_PROBE_NOT_RUN || startTimedOut
+        ? startProbe()
+        : Promise.resolve();
     },
     isFullyActive(): boolean {
+      reprobeAfterTimeout();
       return helper.available && startFailure === null;
     },
+    networkRefused(): boolean {
+      return bwrapPath === null || (HELPER_PATH !== null && !this.isFullyActive());
+    },
     degradedReason(): string | null {
-      return helper.reason ?? startFailure;
+      return bwrapMissing ?? helper.reason ?? startFailure;
     },
     canConfine(policy): string | null {
       // bwrap first: without it NOTHING is confinable here, network-bearing or not.
@@ -428,6 +487,7 @@ export function createLinuxSandboxRunner(): LinuxSandboxRunner {
       const refusal = wildcardRefusal(policy);
       if (refusal !== null) return refusal;
       if (!helper.available) return helper.reason;
+      reprobeAfterTimeout();
       return forwarderPolicyRefusal(policy) ?? startFailure;
     },
   };

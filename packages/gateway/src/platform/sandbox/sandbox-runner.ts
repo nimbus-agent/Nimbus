@@ -26,6 +26,11 @@ export interface SandboxRunner {
   isFullyActive(): boolean;
   degradedReason(): string | null;
   /**
+   * True when a network-declaring spawn is refused here, rather than let through unfiltered: Linux
+   * with a helper present whose real start failed, or with no `bwrap`. Absent means it never is.
+   */
+  networkRefused?(): boolean;
+  /**
    * Can this runner enforce THIS policy in full? `null` if yes; otherwise the reason it cannot,
    * named precisely enough to act on.
    *
