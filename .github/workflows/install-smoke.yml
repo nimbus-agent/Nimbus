@@ -47,7 +47,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          FULL='["ubuntu-24.04","macos-14","windows-2022"]'
+          FULL='["ubuntu-24.04","macos-15","windows-2022"]'
           if [ "$EVENT_NAME" != "pull_request" ]; then
             echo "matrix=$FULL" >> "$GITHUB_OUTPUT"; exit 0
           fi
