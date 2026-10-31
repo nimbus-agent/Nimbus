@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793455536728,
+  "lastUpdate": 1793481285699,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b4d29a77c1305711fd1282530cb7c464e4663247",
-          "message": "chore: release main (#1178)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.0</summary>\n\n##\n[2.4.0](https://github.com/nimbus-agent/Nimbus/compare/v2.3.1...v2.4.0)\n(2026-08-14)\n\n\n### Features\n\n* **connectors:** attribute PagerDuty incidents to people\n([#1177](https://github.com/nimbus-agent/Nimbus/issues/1177))\n([20b51f6](https://github.com/nimbus-agent/Nimbus/commit/20b51f645fb118c388a4ba763514e9272ba627b2))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-14T10:44:58+03:00",
-          "tree_id": "14aa13adb4094cee75755424867736355dd96fc0",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b4d29a77c1305711fd1282530cb7c464e4663247"
-        },
-        "date": 1786694188195,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.69104125000086,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.070633849992,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 280.840808250002,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c4730bbbf0c03db327f6f1ddb03eee232111e77b",
+          "message": "fix(sandbox): let a macOS child with a declared network start, limited to its declared ports (#1842)\n\nOn macOS, no sandboxed child with a declared network could start.\n`darwin.ts` emitted `(remote tcp \"*:443\" (host \"api.github.com\"))`, and\n`sandbox-exec` rejects it: `unbound variable: host`, exit 65. This\nshipped in every release since 2026-05-16, and the only test checked the\ngenerated text.\n\n## What changes\n\n**macOS now filters by port, not by host, as the owner decided.** Each\ndeclared port becomes `(allow network-outbound (remote tcp\n\"*:<port>\"))`. A declared entry allows any host on that port, including\nloopback and LAN addresses, which Linux's address rules would refuse.\nPer-host on macOS is a later project.\n\n- **Consent text.** The `extension.run` and migration prompts, and\n`connector add --mcp`, now say any host on the declared port on macOS,\nso the owner approves what really happens.\n- **Diagnostics.** A new `per_port` posture, shown by `nimbus doctor`\nand `extension info`.\n- **Docs.** `docs/sandbox.md`, `docs/SECURITY.md`,\n`docs/SECURITY-INVARIANTS.md`, `docs/architecture.md` and the skills now\nsay this plainly.\n- **Wildcard tools.** First-party tools that were listed as failing on\nmacOS reach their hosts on port 443.\n\n## Testing\n\nThe first real tests of this profile are in\n`sandbox-wrapper-spawn.test.ts`, under real `sandbox-exec`, on this PR's\nmacOS leg: a child starts, a real `fetch` with DNS and TLS, an\nundeclared port is refused, a no-network policy has no network, reads\nstay confined, a subprocess runs, and a real `github` connector gets\nGitHub's answer.\n\nThis runs only on CI, since no Mac is available here. The first CI run\nsettled the forms: `*:443`, `*:53` and `localhost:443` parse; a hostname\nor a loopback literal is refused with `host must be * or localhost`.\nLookups failed `ENOTFOUND` until the `mDNSResponder` socket was allowed,\nso that rule is now in, and it means a child with a network can look up\nany name. In that run the port filter refused an undeclared port,\nconnected to an undeclared host on a declared port, and reads outside\nthe grants stayed refused.\n\nGrep the macOS log for `[sandbox-exec ports]`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* macOS connectors with network permissions can now make outbound TCP\nconnections on declared ports, regardless of destination host. This\nincludes loopback and local-network addresses; policies with no declared\nnetwork access allow none.\n* macOS consent prompts, diagnostics, and extension information now\ndisclose that network access is limited by port, not host.\n* **Documentation**\n* Updated sandbox and network-permission guidance to explain platform\ndifferences: Linux filters by host and port, macOS by port, and Windows\nremains all-or-nothing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-10-31T23:03:38+02:00",
+          "tree_id": "f4ad873a0814bc90624c3fae62ad6037c96f6f2b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c4730bbbf0c03db327f6f1ddb03eee232111e77b"
+        },
+        "date": 1793481281506,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.4475494000038,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 298.7905526999948,
             "unit": "ms"
           }
         ]
