@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793453240503,
+  "lastUpdate": 1793455536728,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "20b51f645fb118c388a4ba763514e9272ba627b2",
-          "message": "feat(connectors): attribute PagerDuty incidents to people (#1177)\n\n## Summary\n\nAttributes PagerDuty incidents to people, closing sub-project C of the\n`nimbus negotiate` substrate (Spine S1). Two new graph edges — `person\n--assigned--> incident` and `person --resolves--> incident` — plus the\nreaders that turn them into evidence.\n\nThe connector fetches expanded actor objects via `include[]` and writes\nactor **emails** into `item.metadata`; the **graph populator**, not the\nconnector, resolves email→person and emits the edges. That split is\ndeliberate: `nimbus index regraph` replays stored rows with no network,\nso resolving in the connector would silently drop attribution on every\nreplay.\n\nReaders:\n\n- `catchup` — already queried `person --resolves--> incident` and\nreturned nothing. Now returns rows; no code change needed.\n- `expert` — `subIncidentResolved` had **no query at all**; it only\nprobed for the edge's absence. Once the edge existed it would have\nemitted neither a gap note nor evidence — silently empty, in the agent\nwhose job is explaining what it can and cannot see. Now wired, mirroring\n`subPrReviewed`, emitting `incident_resolved` evidence (a variant\nalready present in the SDK and previously unused).\n- `negotiate` — new 7th lane with its own rendered section. `\"incidents\nresolved\"` leaves `UNAVAILABLE_EVIDENCE`.\n\n**No migration.** `resolves` and `assigned` were already registered in\n`graph_relation_type` (v7 seed). `authorId` stays `null` on incidents —\nan incident has no author, and six lanes query `item.author_id`\ndirectly.\n\nSpec and plan are in\n`docs/superpowers/{specs,plans}/2026-08-14-incident-attribution-*`, with\nboth review rounds.\n\n## Related Issue\n\nRelates to the `nimbus negotiate` substrate (sub-project C). No tracking\nissue.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n- [x] Documentation only (CHANGELOG + architecture graph-edge docs ride\nalong)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — full `test:ci (suite +\ncoverage)` green\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a, none added\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — untouched\n- [x] Does not touch `docs/README.md`\n\n## Coverage\n\n`engine/` and `vault/` were not modified, so neither coverage gate\napplies.\n\n`audit:coverage-floor` **fails locally with 6 violations, none of them\nin this branch**: `platform/linux.ts` (line + branch), three\n`mcp-connectors/apple/src/*` files with no lcov data, and\n`ipc/server/socket-listeners.ts`. All are platform-gated code whose\ntests do not execute on the Windows host this ran on — the documented\nfalse-violation mode for this gate. `git diff --name-only\na68945e5..HEAD` contains none of them, and coverage of an untouched file\ncannot change unless a covering test changed; this branch adds no test\ntouching the Linux PAL or the Apple connectors. The baseline was\ndeliberately **not** updated to silence it. This gate is\nCI-Linux-authoritative — CI is the real verdict.\n\nThe two new source files this PR adds (`connectors/actor-email.ts`,\n`connectors/pagerduty-attribution.ts`) are absent from the violation\nlist, i.e. they clear the floor.\n\n## Testing\n\nBuilt task-by-task with a review after each, then a whole-branch review.\nLocal gates: `typecheck` 0, `lint` 0, `preflight:fast` 28/28 green, full\n`preflight` green on `build`, `test:connector-boot` and `test:ci (suite\n+ coverage)`.\n\nTwo retirement paths were **red-proven**, not asserted — `assigned` and\n`resolves` retire by different mechanisms and a test that only checks\nthe new edge exists passes with both clears deleted:\n\n- deleting `clearIncomingRelationsOfType(..., \"resolves\")` → 2 failures\n(`resolves` length 1 but got 2; the re-open test got 1 expected 0)\n- adding `\"assigned\"` to `CROSS_ITEM_RELATION_TYPES` → 1 failure\n(`assigned` length 1 but got 2)\n\nThe `ie.type = 'incident'` filter on the new expert lane was red-proven\nthe same way: removing it made a fabricated `person --resolves--> issue`\nfixture surface as `incident_resolved` evidence.\n\n## Notes for Reviewers\n\n**One open pre-merge requirement.** Spec § 8.2 requires a test driven by\na **captured real PagerDuty payload**, because two payload shapes could\nnot be verified from documentation: whether `include[]` expands\n`last_status_change_by`, and the exact assignee-reference shape. No\nPagerDuty credentials were available, and a hand-written fixture would\nhave been built from the same assumption as the parser — it would look\nlike verification while proving nothing. It was deliberately not\nfabricated. **If that assumption is wrong, resolver attribution could be\nzero in production while every test is green.** The design fails closed\nat every rung and the `unattributable` count plus the gap notes make\nsuch a zero visible rather than silent, but a human with a token should\nclose this before merge.\n\n**Token scope change.** Assignee attribution needs no new PagerDuty\nscope — it rides the existing incidents-list call. Resolver\nattribution's `/users/{id}` fallback needs user-read; a token scoped\nbefore this feature gets a 403 there, which degrades to an unattributed\nincident (logged, counted) rather than failing the sync.\n\n**Areas worth a careful look:**\n\n- `syncIncidentPersonEdges` is called **before** the `affectedService`\nbail-out in `syncTimelineEventGraph`. That bail exists for\ndeploy↔incident correlation, which needs a service; attribution does\nnot. Emitting after it would silently drop attribution for every\nincident with no bound service.\n- The blanket `clearIncomingRelationsOfType(..., \"resolves\")` is safe\nonly because `syncPrGraph`'s `resolves` edges target `issue` entities\nexclusively. If a second emitter ever targets incidents, that clear must\nbecome endpoint-scoped.\n- `unattributed_actors` (connector metadata) and `unattributable`\n(negotiate lane) are different quantities with similar names. Nothing\nreads the former yet.\n\n**Deferred, with reasons:**\n\n- `pagerdutyEmailMapFromIncidents` dedup is first-write-wins, untested\nagainst one actor id carrying conflicting emails in a page — not a state\nthe API produces.\n- `incident_resolved` evidence weight is `0.8`, matching `pr_authored`.\n- Two `negotiate` gap-note tests assert absence in scenarios that were\nalso gap-free before the fix, so they do not independently red-prove;\nthe other two do.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **New Features**\n- PagerDuty incidents now show assigned people and resolvers when\nidentifiable.\n- Negotiation reports include resolved, assigned, and unattributed\nincident counts with evidence.\n  - Expert incident views can surface incidents resolved by a person.\n- Historical incident attribution can be recovered using `index rebody\n--since`.\n\n- **Bug Fixes**\n- Missing permissions, malformed data, service accounts, and lookup\nfailures no longer interrupt synchronization.\n- Re-synchronizing or reopening incidents removes stale resolver\nrelationships while preserving assignments.\n\n- **Documentation**\n- Updated CLI help and architecture documentation for incident\nattribution and historical indexing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-14T07:16:10Z",
-          "tree_id": "863191297053791aadf6cb226926ee3d42fd116b",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/20b51f645fb118c388a4ba763514e9272ba627b2"
-        },
-        "date": 1786692450782,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.97836434999806,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 324.8294150000129,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 228.3977561999971,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f924e84922ec8175d3813b3ff7ac956dceae7ab",
+          "message": "chore: release main (#1840)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.13.0</summary>\n\n##\n[10.13.0](https://github.com/nimbus-agent/Nimbus/compare/v10.12.0...v10.13.0)\n(2026-10-31)\n\n\n### Features\n\n* **connectors:** index a pull request's source branch and return it\nfrom resolve\n([#1836](https://github.com/nimbus-agent/Nimbus/issues/1836))\n([a28f7d2](https://github.com/nimbus-agent/Nimbus/commit/a28f7d2f54a2bac1eba8321fa586efc2ecffb3c9))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-31T15:54:54+02:00",
+          "tree_id": "f12d223ce088cbcfa55cafa52637424622ff7dba",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5f924e84922ec8175d3813b3ff7ac956dceae7ab"
+        },
+        "date": 1793455532705,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 280.27741989999413,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 280.840808250002,
             "unit": "ms"
           }
         ]
