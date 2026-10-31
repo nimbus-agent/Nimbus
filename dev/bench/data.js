@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793451071082,
+  "lastUpdate": 1793451676850,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a68945e55cff9409536824d9fa7ff2c87d025fef",
-          "message": "fix(install): verify the release signature on Windows with a Git-for-Windows gpg (#1175)\n\n## Failing run\n\n\nhttps://github.com/nimbus-agent/Nimbus/actions/workflows/released-install-smoke.yml\n— run\n[31735428461](https://github.com/nimbus-agent/Nimbus/actions/runs/31735428461),\nthe first real run against published `v2.3.0` assets:\n\n- ubuntu-24.04 documented one-liner: SUCCESS (\"GPG signature verified\")\n- macos-14 documented one-liner: SUCCESS (\"GPG signature verified\")\n- windows-2022 documented one-liner: **FAILURE** at\n`scripts/install/windows/install.ps1:304`, `throw \"signature\nverification failed - refusing to install.\"`\n\nFails closed (refuses to install), so not a security hole — but blocks\nany Windows user with Git-for-Windows' bundled gpg on PATH from\ninstalling via the one-liner, which is common.\n\n## Root cause (confirmed locally, not just inferred)\n\nGit for Windows bundles an MSYS2-compiled `gpg.exe`. Confirmed locally\n(`gpg (GnuPG) 2.4.8`, `Home: /c/Users/<user>/.gnupg`): that gpg's own\n\"is this `--homedir` absolute\" check only recognizes a leading `/`\n(POSIX form) — a Windows drive-letter path is NOT recognized as absolute\nin **either** slash direction (`C:\\Users\\...\\gnupg-sig` and\n`C:/Users/...\\gnupg-sig` both fail identically). Not recognized as\nabsolute, gpg silently treats it as *relative* and prepends its own\nMSYS-translated cwd, producing a nonexistent keyring resource (e.g.\n`/c/gitrep/Nimbus/C:\\Users\\...\\gnupg-sig/pubring.kbx`).\n\nConsequence: `--import` fails (\"no writable keyring found\"), silently\nswallowed by the existing `*>$null` redirect — the pinned Nimbus signing\nkey is never actually imported. `--verify` then runs against an\nunreachable keyring, finds no public key, and emits\n`NO_PUBKEY`/`FAILURE` — `VALIDSIG` never appears, so\n`Test-NimbusSignature` correctly (but wrongly, against a genuinely valid\nsignature) returns `$false`.\n\nThis exact bug class was already discovered and worked around in this\nrepo's own test infrastructure\n(`scripts/install/install-remote-windows.test.ts`'s\n`signManifestWithUntrustedKey`, using `GNUPGHOME` env var in msys2-style\nform instead of `--homedir`) — but the fix was never back-ported to the\nproduction `Test-NimbusSignature` function.\n\nOther candidates from the task brief were checked and ruled out:\narmored-key encoding/CRLF (irrelevant — failure is before import ever\nreaches a reachable keyring), VALIDSIG field-splitting (\"last field =\nprimary FP, not field 3\" logic was already correct), and `--status-fd 1`\nrouting (status *does* land on stdout correctly; the problem is there's\nnothing valid to report).\n\n## Fix\n\n`Test-NimbusSignature` now runs both gpg invocations (`--import`,\n`--verify`) with the process cwd temporarily changed to `$Dir`\n(`Push-Location`/`Pop-Location`) and passes `--homedir` a bare\n**relative** name instead of the full absolute path. Ordinary\nrelative-path resolution against the real process cwd is correct under\nboth a native Win32 gpg.exe (e.g. Gpg4win) and an MSYS-translated one\n(Git for Windows) — it never exercises the broken \"is this absolute\"\nheuristic, so the fix works for both gpg flavors without needing to\ndetect which is installed. Every other gpg argument (key/asc/sums paths)\nis left as an absolute Windows path, unchanged — confirmed those already\nwork fine under both flavors.\n\nNo change to: the pinned fingerprint requirement (still matched against\nthe PRIMARY/last-field fingerprint, never field 3), the\nEXPKEYSIG/REVKEYSIG rejection, the best-effort skip policy, or the\ntemp-directory ownership/cleanup discipline (`$sigHome` stays nested\nunder the caller's script-owned `$WorkDir`; `$env:GNUPGHOME` is still\nnever read or set).\n\nAs an internal-only refactor, the VALIDSIG parsing + trust decision was\nfactored into a pure `Resolve-SignatureVerdict($StatusLines,\n$ExpectedFingerprint)` function (no gpg invocation, no env-supplied\ntrust anchor) so it's independently unit-testable — see Tests below.\nThis does **not** reopen the fingerprint-override seam this project has\nalready deliberately refused (which would compose with\n`NIMBUS_INSTALL_BASE_URL` into a full bypass): `$ExpectedFingerprint` is\nan ordinary parameter, and the one production call site always supplies\nthe hardcoded `$NimbusSigningFpr` constant.\n\n\n## ⚠️ This fix CANNOT be verified by `released-install-smoke.yml` until\nit ships in a release\n\n`documented-one-liner`'s Windows steps always download the script from\n\n`https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1`\n— the currently\n**published** `v2.3.0` asset — regardless of which ref/branch the\nworkflow is dispatched against.\n`workflow_dispatch --ref <this-branch>` does **not** change what the\nrunner `curl`/`irm`s.\n\nRe-dispatched at run\n[31736837649](https://github.com/nimbus-agent/Nimbus/actions/runs/31736837649)\nto check: as expected, the Windows one-liner leg failed again with the\nidentical\n`signature verification failed` error, because it re-ran the same\nstill-broken published `v2.3.0`\nscript, never this branch's fix. **A red Windows leg on that workflow\nright now is NOT evidence\nthis fix failed** — do not read it that way. The only real proof is the\nlocal before/after\nevidence below; `released-install-smoke`'s Windows one-liner leg will\nonly be able to confirm this\nfor real once a release ships with this fix included (merge + next\nversion cut). Same post-release\nsequencing constraint that keeps #1167 open.\n\n## Local evidence (before/after)\n\n**BEFORE** (original `install.ps1`, real `v2.3.0` assets,\nGit-for-Windows gpg 2.4.8):\n```\nDownloading nimbus-headless-windows-x64.zip (v2.3.0)...\nOK: sha256 verified.\nWARNING: SHA256SUMS.asc did not verify against the pinned Nimbus key -- refusing to install.\nCAUGHT: signature verification failed - refusing to install.\nEXIT: 2\n```\nRaw gpg output from the isolated repro:\n```\ngpg: keyblock resource '/c/gitrep/Nimbus/C:\\Users\\...\\gnupg-sig/pubring.kbx': No such file or directory\ngpg: no writable keyring found: Not found\n...\n[GNUPG:] NO_PUBKEY 156554654F4A0639\ngpg: Can't check signature: No public key\n[GNUPG:] FAILURE gpg-exit 33554433\n```\n\n**AFTER** (fixed `install.ps1`, real end-to-end run against real\n`v2.3.0`):\n```\nOK: sha256 verified.\nOK: GPG signature verified (5A20457CCD8B53FFAA945240886ADA6B487CAB6E).\n...\nOK: Nimbus installed.\nEXIT: 0\n```\n\n## Tests\n\n- New `scripts/install/windows/signature-verdict.test.ts`: unit-tests\n`Resolve-SignatureVerdict`, extracted **verbatim** from `install.ps1`'s\nown source text at test time (brace-counted, not a hand-copied duplicate\n— can't silently drift), against canned/realistic `gpg --status-fd 1`\nline arrays including a real capture from the fixed run above. Covers:\nreal valid VALIDSIG → accept with correct primary-fingerprint\nextraction; a VALIDSIG where the pinned fingerprint sits at field 3\n(subkey) but not the last field → reject (proves no field-3/substring\nanchor bug); EXPKEYSIG/REVKEYSIG rejection even with a matching\nfingerprint; no VALIDSIG line at all (the exact NO_PUBKEY shape this bug\nproduced) → reject; a VALIDSIG signed by a different, unpinned key →\nreject. No gpg dependency (only needs `pwsh`), so it also runs on the\nLinux `pr-quality` gate.\n- `bun test scripts/install/` — 36 pass, 6 skip (unrelated platform\nguards), 0 fail.\n- `bun run preflight:fast` — PASSED.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved Windows signature verification compatibility across native\nand MSYS2 Git-for-Windows GPG environments.\n* More reliably rejects expired, revoked, missing, or untrusted signing\nkeys.\n  * Ensures signatures are validated against the expected primary key.\n\n* **Tests**\n  * Added coverage for valid and invalid signature scenarios on Windows.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-14T06:01:05+03:00",
-          "tree_id": "012f428b1499d2d7a86407cfae007f137fef5a87",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a68945e55cff9409536824d9fa7ff2c87d025fef"
-        },
-        "date": 1786676979965,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 249.36511574999494,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 251.34943909999782,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 182.5089972500038,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "98c20380509d47929ee3283d072754d95a253586",
+          "message": "chore: release main (#1837)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.11.2</summary>\n\n##\n[10.11.2](https://github.com/nimbus-agent/Nimbus/compare/v10.11.1...v10.11.2)\n(2026-10-31)\n\n\n### Bug Fixes\n\n* **connectors:** keep the port of a self-hosted connector's URL, and\ndeclare every host a connector calls\n([#1830](https://github.com/nimbus-agent/Nimbus/issues/1830))\n([eb9bc7e](https://github.com/nimbus-agent/Nimbus/commit/eb9bc7eb97897effe9d5629198e45794b7c1441f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-10-31T12:52:50Z",
+          "tree_id": "34435a0a4157309a0ec628ac9ae0da65efd65fe1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/98c20380509d47929ee3283d072754d95a253586"
+        },
+        "date": 1793451672530,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 209.47120090000425,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 221.0175490000005,
             "unit": "ms"
           }
         ]
