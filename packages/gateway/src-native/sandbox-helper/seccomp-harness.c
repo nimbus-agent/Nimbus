@@ -176,7 +176,8 @@ static int run_syscall(long nr, long a0, long a1, long a2) {
     if (pid == 0) {
         enter_filter();
         long result = syscall(nr, a0, a1, a2, 0L, 0L, 0L);
-        _exit(result >= 0 ? 0 : (errno == ENOSYS ? ENOSYS : 1));
+        int failure = errno == ENOSYS ? ENOSYS : 1;
+        _exit(result >= 0 ? 0 : failure);
     }
     return wait_for(pid);
 }
@@ -205,12 +206,27 @@ static bool is_allowed(long nr) {
 }
 
 /*
- * x86-64 assigns no syscall to these numbers. On GitHub's ubuntu-24.04 runner 335 died of SIGILL and
- * 336 exited 1 under this filter, in every job, while every assigned number was killed. The cause is
- * not established. No kernel function sits behind them, so here they only have to not succeed.
+ * Linux assigns x86-64 335 to uretprobe and 336 to uprobe, and seccomp lets both past any filter on
+ * purpose (kernel/seccomp.c, seccomp_uprobe_exception), so no filter can refuse them. Called from
+ * outside the uprobe trampoline they grant nothing: uretprobe raises SIGILL and uprobe fails with
+ * an error. A kernel without them has no such numbers, so the filter kills them with SIGSYS. The
+ * numbers are literal because older headers lack the macros.
  */
-static bool in_unassigned_gap(long nr) {
-    return nr >= 335 && nr <= 423;
+#define SYS_URETPROBE_NR 335
+#define SYS_UPROBE_NR 336
+
+/* True when the call was refused in a way that grants nothing, whatever the kernel. */
+static bool sweep_refused(long nr, int status) {
+    if (died_of(status, SIGSYS)) {
+        return true;
+    }
+    if (nr == SYS_URETPROBE_NR) {
+        return died_of(status, SIGILL);
+    }
+    if (nr == SYS_UPROBE_NR) {
+        return WIFEXITED(status) && WEXITSTATUS(status) != 0 && WEXITSTATUS(status) != SETUP_FAILED;
+    }
+    return false;
 }
 
 /* Every other number, with no arguments, must kill: this is what catches an addition to the list. */
@@ -221,10 +237,7 @@ static void sweep(void) {
             continue;
         }
         int status = run_syscall(nr, 0, 0, 0);
-        bool refused = in_unassigned_gap(nr)
-            ? !(WIFEXITED(status) && (WEXITSTATUS(status) == 0 || WEXITSTATUS(status) == SETUP_FAILED))
-            : died_of(status, SIGSYS);
-        if (!refused) {
+        if (!sweep_refused(nr, status)) {
             char name[64];
             snprintf(name, sizeof(name), "sweep %ld", nr);
             report(name, false, status);
