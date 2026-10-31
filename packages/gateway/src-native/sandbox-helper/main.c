@@ -25,7 +25,8 @@
  * (0 for `D`). `T` relays until either side closes. `D` writes a 2-byte big-endian length and a
  * datagram, reads a 2-byte length and the reply, and closes.
  *
- * Exit codes: 0 --check; 2 usage; 3 bind, listen or fork failure; 5 alias failure; 127 exec failure.
+ * Exit codes: 0 --check; 2 usage; 3 bind, listen or fork failure; 5 alias failure; 6 the forwarder
+ * could not lock itself down, so nothing started; 127 exec failure.
  * Stderr carries only those startup failures. Nothing is ever logged about a connection, and the
  * forwarder's stderr is /dev/null.
  *
@@ -58,6 +59,7 @@
 #include <linux/audit.h>
 #include <linux/capability.h>
 #include <linux/filter.h>
+#include <linux/sched.h>
 #include <linux/seccomp.h>
 
 #ifndef __x86_64__
@@ -67,6 +69,7 @@
 #define EXIT_USAGE 2
 #define EXIT_BIND 3
 #define EXIT_ALIAS 5
+#define EXIT_LOCKDOWN 6
 #define EXIT_EXEC 127
 
 #define MAX_ENTRIES 65535u
@@ -372,9 +375,20 @@ static bool drop_capabilities(void) {
 #define ALLOW_RET BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
 #define ALLOW(nr) BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (nr), 0, 1), ALLOW_RET
 
+/* A new namespace would escape the outer bwrap's view, so a thread or process may not ask for one. */
+#define CLONE_NAMESPACE_FLAGS                                                                      \
+    (CLONE_NEWUSER | CLONE_NEWNET | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWIPC | CLONE_NEWUTS |     \
+     CLONE_NEWCGROUP | CLONE_NEWTIME)
+
 /*
- * Anything not named here kills the process. Nothing here opens a path, and `socket` is AF_UNIX
+ * Anything not named here kills the process. Nothing here opens a file, and `socket` is AF_UNIX
  * only, so a compromised forwarder cannot open a route. It runs after /dev/null is open.
+ *
+ * This does not bound which unix sockets it reaches: `connect` takes any path it can see. What
+ * bounds that is the outer bwrap's view, which must never show it the host's sockets, the gateway's
+ * among them. A change to that view is a change to this boundary.
+ *
+ * seccomp-harness.c tests this list, and repeats it on purpose. Change both.
  */
 static bool install_seccomp(void) {
     struct sock_filter filter[] = {
@@ -390,6 +404,17 @@ static bool install_seccomp(void) {
         ALLOW_RET,
         KILL,
 
+        /* clone: no namespace flag, read from the low word of arg0 as the kernel does. Both return. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone, 0, 4),
+        LOAD(SECCOMP_ARG0_OFFSET),
+        BPF_JUMP(BPF_JMP | BPF_JSET | BPF_K, CLONE_NAMESPACE_FLAGS, 0, 1),
+        KILL,
+        ALLOW_RET,
+
+        /* clone3's flags live in user memory, where a filter cannot read them. libc falls back. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_clone3, 0, 1),
+        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ERRNO | ENOSYS),
+
         ALLOW(SYS_read),
         ALLOW(SYS_write),
         ALLOW(SYS_close),
@@ -402,9 +427,6 @@ static bool install_seccomp(void) {
         ALLOW(SYS_sendto),
         ALLOW(SYS_recvfrom),
         ALLOW(SYS_fcntl),
-        ALLOW(SYS_fork),
-        ALLOW(SYS_clone),
-        ALLOW(SYS_clone3),
         ALLOW(SYS_wait4),
         ALLOW(SYS_exit),
         ALLOW(SYS_exit_group),
@@ -714,6 +736,16 @@ static void forward(const options_t *o, int dns_fd) {
 
 /* ------------------------------------------------------------------ entry */
 
+/* True once the forwarder says it is locked down. EOF means it died first. */
+static bool forwarder_locked_down(int ready_read) {
+    unsigned char byte;
+    ssize_t n;
+    do {
+        n = read(ready_read, &byte, 1);
+    } while (n < 0 && errno == EINTR);
+    return n == 1;
+}
+
 static int usage(void) {
     fputs("usage:\n"
           "  nimbus-sandbox-helper --check\n"
@@ -752,6 +784,12 @@ int main(int argc, char **argv) {
         return EXIT_BIND;
     }
 
+    int ready[2];
+    if (pipe2(ready, O_CLOEXEC) != 0) {
+        fprintf(stderr, "nimbus-sandbox-helper: forwarder pipe: %s\n", strerror(errno));
+        return EXIT_LOCKDOWN;
+    }
+
     pid_t launcher = getpid();
     pid_t forwarder = fork();
     if (forwarder < 0) {
@@ -759,11 +797,22 @@ int main(int argc, char **argv) {
         return EXIT_BIND;
     }
     if (forwarder == 0) {
-        if (lock_down(launcher)) {
+        const unsigned char ready_byte = 'k';
+        close(ready[0]);
+        if (lock_down(launcher) && write_all(ready[1], &ready_byte, 1)) {
+            close(ready[1]);
             forward(&options, dns_fd);
         }
         _exit(1);
     }
+
+    /* A forwarder that dies later only stops relaying. Before this point, nothing may start. */
+    close(ready[1]);
+    if (!forwarder_locked_down(ready[0])) {
+        fputs("nimbus-sandbox-helper: the forwarder could not lock itself down\n", stderr);
+        return EXIT_LOCKDOWN;
+    }
+    close(ready[0]);
 
     /* The launcher keeps its capabilities: the inner bwrap needs CAP_SETFCAP, and drops them all. */
     if (!set_signal(SIGCHLD, SIG_DFL)) {

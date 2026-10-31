@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
@@ -10,7 +10,8 @@ import { join } from "node:path";
  * real unix socket. Skipped unless the binary is built and `bwrap` can create a namespace here.
  * CI's helper step sets NIMBUS_REQUIRE_SANDBOX_HELPER, which turns that skip into a failure.
  */
-const HELPER = join(import.meta.dir, "../../../src-native/sandbox-helper/nimbus-sandbox-helper");
+const HELPER_DIR = join(import.meta.dir, "../../../src-native/sandbox-helper");
+const HELPER = join(HELPER_DIR, "nimbus-sandbox-helper");
 const BWRAP = "/usr/bin/bwrap";
 const ENV = "/usr/bin/env";
 const IS_LINUX = process.platform === "linux";
@@ -266,6 +267,95 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
   },
 );
 
+function compilerAvailable(): boolean {
+  if (!IS_LINUX || process.arch !== "x64") return false;
+  // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+  return spawnSync("cc", ["--version"], { encoding: "utf8" }).status === 0;
+}
+
+/** The real `install_seccomp`, syscall by syscall. It needs a compiler, but no helper or `bwrap`. */
+describe.skipIf(!IS_LINUX || (!compilerAvailable() && !REQUIRED))(
+  "the forwarder's seccomp filter",
+  () => {
+    let dir = "";
+    let lines: string[] = [];
+    let exitCode: number | null = null;
+
+    beforeAll(() => {
+      expect(compilerAvailable()).toBe(true);
+      dir = mkdtempSync(join(tmpdir(), "nh-seccomp-"));
+      const binary = join(dir, "seccomp-harness");
+      // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+      const build = spawnSync(
+        "cc",
+        [
+          "-O1",
+          "-std=c99",
+          "-D_GNU_SOURCE",
+          "-Wall",
+          "-Wextra",
+          "-Werror",
+          "-Wno-unused-function",
+          "-static",
+          "-o",
+          binary,
+          join(HELPER_DIR, "seccomp-harness.c"),
+        ],
+        { encoding: "utf8" },
+      );
+      expect(build.stderr).toBe("");
+      expect(build.status).toBe(0);
+      // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+      const r = spawnSync(binary, [], { encoding: "utf8", timeout: TEST_TIMEOUT_MS - 5000 });
+      lines = r.stdout.trim().split("\n");
+      exitCode = r.status;
+    }, TEST_TIMEOUT_MS);
+
+    afterAll(() => {
+      rmSync(dir, { recursive: true, force: true });
+    });
+
+    test("every case behaves as the harness expects", () => {
+      expect(lines.filter((line) => !line.startsWith("ok "))).toEqual([]);
+      expect(exitCode).toBe(0);
+    });
+
+    test.each<[string]>([
+      ["socket AF_UNIX"],
+      ["socket 0x100000001"],
+      ["socket AF_INET"],
+      ["socket AF_NETLINK"],
+      ["socket 0x100000002"],
+      ["clone plain"],
+      ["clone CLONE_NEWUSER"],
+      ["clone CLONE_NEWNET"],
+      ["clone CLONE_NEWNS"],
+      ["clone CLONE_NEWPID"],
+      ["clone CLONE_NEWIPC"],
+      ["clone CLONE_NEWUTS"],
+      ["clone CLONE_NEWCGROUP"],
+      ["clone CLONE_NEWTIME"],
+      ["clone3"],
+      ["plain fork"],
+      ["open"],
+      ["openat"],
+      ["execve"],
+      ["ptrace"],
+      ["mount"],
+      ["unshare"],
+      ["setns"],
+      ["chroot"],
+      ["ioctl"],
+      ["setsockopt"],
+      ["i386 socket"],
+      ["i386 mkdir"],
+      ["sweep"],
+    ])("covers %s", (name) => {
+      expect(lines).toContain(`ok ${name}`);
+    });
+  },
+);
+
 const ready = helperBuilt() && bwrapUsable();
 
 describe.skipIf(!IS_LINUX || (!ready && !REQUIRED))("nimbus-sandbox-helper under bwrap", () => {
@@ -415,6 +505,59 @@ setTimeout(() => { console.log(JSON.stringify({ replied: false })); process.exit
       expect(JSON.parse(r.stdout)).toEqual({ replied: true });
       expect(target.conns).toHaveLength(1);
       expect(target.conns[0]?.bytes.length).toBe(5 + 4096);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a zero-byte datagram opens no connection to the target",
+    async () => {
+      target.behaviour = (conn) => answerDnsFrame(conn, Buffer.from("r"));
+      // The second datagram's reply is what shows the forwarder had already taken the first.
+      const script = `
+const dgram = require("node:dgram");
+const s = dgram.createSocket("udp4");
+s.on("message", () => { console.log(JSON.stringify({ replied: true })); process.exit(0); });
+s.send(Buffer.alloc(0), 53, ${JSON.stringify(RESOLVER_IP)}, () => {
+  s.send(Buffer.from("query"), 53, ${JSON.stringify(RESOLVER_IP)});
+});
+setTimeout(() => { console.log(JSON.stringify({ replied: false })); process.exit(1); }, 20000);
+`;
+      const r = await run([...outerBwrap(), ...helperArgs(bunProbe(script))]);
+      expect(JSON.parse(r.stdout)).toEqual({ replied: true });
+      expect(target.conns).toHaveLength(1);
+      expect(target.conns[0]?.bytes.length).toBe(5 + "query".length);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "a reply of 4096 bytes reaches the sender, and one of 4097 does not",
+    async () => {
+      // The query's first byte says how large a reply the target sends.
+      target.behaviour = (conn) => {
+        const large = conn.bytes[5] === 0x62; // "b"
+        answerDnsFrame(conn, Buffer.alloc(large ? 4097 : 4096, 0x72));
+      };
+      const script = `
+const dgram = require("node:dgram");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const s = dgram.createSocket("udp4");
+const sizes = [];
+s.on("message", (m) => { sizes.push(m.length); });
+s.send(Buffer.from("a"), 53, ${JSON.stringify(RESOLVER_IP)});
+const by = Date.now() + 20000;
+while (sizes.length === 0 && Date.now() < by) await sleep(20);
+const afterFit = sizes.length;
+s.send(Buffer.from("b"), 53, ${JSON.stringify(RESOLVER_IP)});
+await sleep(1000);
+console.log(JSON.stringify({ afterFit, sizes }));
+process.exit(0);
+`;
+      const r = await run([...outerBwrap(), ...helperArgs(bunProbe(script))]);
+      expect(JSON.parse(r.stdout)).toEqual({ afterFit: 1, sizes: [4096] });
+      // Both reached the target, so the one that never arrived was dropped on its way back.
+      expect(target.conns).toHaveLength(2);
     },
     TEST_TIMEOUT_MS,
   );
@@ -750,13 +893,13 @@ s.on("close", () => { console.log(JSON.stringify({ got })); process.exit(0); });
 
   describe("the forwarder's confinement", () => {
     test(
-      "no capability in any set, no new privileges, a seccomp filter",
+      "no capability in any set, and a seccomp filter of its own",
       async () => {
         const script = `${FIND_FORWARDER}
 const pid = await forwarder();
 const status = statusOf(pid);
 console.log(JSON.stringify({
-  ...Object.fromEntries(["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb", "NoNewPrivs"].map((n) => [n, field(status, n)])),
+  ...Object.fromEntries(["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"].map((n) => [n, field(status, n)])),
   filtersAdded: filtersAbove(pid),
 }));
 `;
@@ -768,7 +911,6 @@ console.log(JSON.stringify({
           CapEff: ZERO_CAPS,
           CapBnd: ZERO_CAPS,
           CapAmb: ZERO_CAPS,
-          NoNewPrivs: "1",
           filtersAdded: 1,
         });
       },
@@ -940,6 +1082,49 @@ process.exit(0);
   });
 
   describe("startup failures", () => {
+    test.skipIf(IS_ROOT)(
+      "a forwarder that cannot lock itself down refuses the start: exit 6, and the child never runs",
+      async () => {
+        // With no CAP_SETPCAP in the namespace it cannot clear its bounding set.
+        const noSetpcap = outerBwrap().filter(
+          (arg, i, all) => arg !== "CAP_SETPCAP" && all[i + 1] !== "CAP_SETPCAP",
+        );
+        const child = join(dir, "child-ran");
+        const r = await run([
+          ...noSetpcap,
+          "--bind",
+          dir,
+          dir,
+          ...helperArgs(
+            bunProbe(`require("node:fs").writeFileSync(${JSON.stringify(child)}, "x");`),
+          ),
+        ]);
+        expect(r.exitCode).toBe(6);
+        expect(r.stderr).toContain("lock itself down");
+        expect(existsSync(child)).toBe(false);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
+    test(
+      "control: the same probe writes its file when the forwarder can lock itself down",
+      async () => {
+        const child = join(dir, "child-ran");
+        const r = await run([
+          ...outerBwrap(),
+          "--bind",
+          dir,
+          dir,
+          ...helperArgs(
+            bunProbe(`require("node:fs").writeFileSync(${JSON.stringify(child)}, "x");`),
+          ),
+        ]);
+        expect(r.exitCode).toBe(0);
+        expect(existsSync(child)).toBe(true);
+      },
+      TEST_TIMEOUT_MS,
+    );
+
     test(
       "a listener already bound exits 3 and names the address",
       async () => {

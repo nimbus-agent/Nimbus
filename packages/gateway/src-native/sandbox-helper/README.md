@@ -10,10 +10,17 @@ all itself. It forks the forwarder first.
 
 The forwarder handles bytes a hostile child wrote. It keeps only its sockets, drops
 every capability, installs its own seccomp allowlist (x86-64 only, `socket` limited
-to `AF_UNIX`, anything unnamed kills it), and then relays bytes to the wrapper's unix
+to `AF_UNIX`, `clone` to no new namespace, anything unnamed kills it), and then relays bytes to the wrapper's unix
 socket, parsing none of them. The policy is enforced outside the sandbox, in
 `packages/gateway/src/platform/sandbox/net-forward-host.ts`, which also defines the
 wire format.
+
+The filter does not bound which unix sockets the forwarder can `connect` to: any path it
+can see is reachable. The outer `bwrap`'s view bounds that, so it must not show the host's
+sockets.
+
+The launcher waits for the forwarder to report that it is locked down, and refuses the
+start if it does not. A forwarder that dies later only stops relaying.
 
 ## Modes
 
@@ -34,6 +41,7 @@ wire format.
 | 2 | Usage |
 | 3 | A bind, listen or fork failed. Stderr names the address |
 | 5 | An alias failed. Stderr names the address |
+| 6 | The forwarder could not lock itself down. The child did not start |
 | 127 | The exec failed |
 
 Otherwise the exit code is the exec'd program's.
@@ -49,4 +57,4 @@ Otherwise the exit code is the exec'd program's.
 
 `make` in this directory, with a C99 compiler and a static libc (`libc6-dev` on Debian and Ubuntu). x86-64 only.
 
-Test: `packages/gateway/src/platform/sandbox/linux-helper-launcher.test.ts`, against the real binary under `bwrap`.
+Test: `packages/gateway/src/platform/sandbox/linux-helper-launcher.test.ts`, against the real binary under `bwrap`, and against the real filter through `seccomp-harness.c`, which it compiles.
