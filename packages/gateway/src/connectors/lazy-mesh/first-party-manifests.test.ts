@@ -1,8 +1,10 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 
+import { isValidWildcardHost } from "../../platform/sandbox/net-wildcard-hosts.ts";
 import {
   FIRST_PARTY_MANIFESTS,
+  FIRST_PARTY_WILDCARD_HOSTS,
   manifestForFirstParty,
   manifestRefusals,
   manifestWithExtraNetworkHosts,
@@ -174,6 +176,73 @@ describe("firstPartyPolicy", () => {
     });
     expect(merged.firstPartyPolicy).toBe(true);
     expect(manifestWithExtraNetworkHosts("jenkins", [], NONE).firstPartyPolicy).toBe(true);
+  });
+});
+
+describe("firstPartyWildcardHosts", () => {
+  const aws = (service: string) => [`${service}.*.amazonaws.com`, `${service}.*.amazonaws.com.cn`];
+
+  test("the table is exactly the spec's", () => {
+    expect(FIRST_PARTY_WILDCARD_HOSTS).toEqual({
+      github_actions: ["*.blob.core.windows.net"],
+      onedrive: ["*.sharepoint.com"],
+      gcp: ["*-run.googleapis.com"],
+      vertex_ai: ["*-aiplatform.googleapis.com"],
+      apple: ["p*-caldav.icloud.com"],
+      aws: [...aws("ecs"), ...aws("lambda"), ...aws("ec2"), ...aws("sts")],
+      athena: [...aws("athena"), ...aws("sts")],
+      cloudwatch: [...aws("logs"), ...aws("sts")],
+      sagemaker: [...aws("api.sagemaker"), ...aws("sts")],
+    });
+  });
+
+  test("every pattern is valid, and every key is a manifest key", () => {
+    for (const [key, patterns] of Object.entries(FIRST_PARTY_WILDCARD_HOSTS)) {
+      expect(FIRST_PARTY_MANIFESTS[key]).toBeDefined();
+      for (const pattern of patterns) expect(isValidWildcardHost(pattern)).toBe(true);
+    }
+  });
+
+  test("manifestForFirstParty attaches the table's entry under the underscore key", () => {
+    expect(manifestForFirstParty("github_actions").firstPartyWildcardHosts).toEqual([
+      "*.blob.core.windows.net",
+    ]);
+    expect(manifestForFirstParty("vertex_ai").firstPartyWildcardHosts).toEqual([
+      "*-aiplatform.googleapis.com",
+    ]);
+    // The hyphenated connector name is not the manifest key, so it reaches no table entry.
+    expect("firstPartyWildcardHosts" in manifestForFirstParty("github-actions")).toBe(false);
+  });
+
+  test("a run-time merge keeps it", () => {
+    const merged = manifestWithExtraNetworkHosts("github_actions", ["a.example.com"], {
+      ownerConfigured: [],
+      onDropped: () => {},
+    });
+    expect(merged.firstPartyWildcardHosts).toEqual(["*.blob.core.windows.net"]);
+    expect(merged.permissions.network).toContain("a.example.com");
+    expect(manifestWithExtraNetworkHosts("onedrive", [], NONE).firstPartyWildcardHosts).toEqual([
+      "*.sharepoint.com",
+    ]);
+  });
+
+  test("a service outside the table has no such field", () => {
+    expect("firstPartyWildcardHosts" in manifestForFirstParty("slack")).toBe(false);
+    expect("firstPartyWildcardHosts" in manifestForFirstParty("no-such-service")).toBe(false);
+  });
+
+  test("the manifest's list is a copy, so a caller cannot edit the table", () => {
+    const m = manifestForFirstParty("onedrive");
+    (m.firstPartyWildcardHosts as string[]).push("*.evil.example");
+    expect(manifestForFirstParty("onedrive").firstPartyWildcardHosts).toEqual(["*.sharepoint.com"]);
+  });
+
+  test("permissions.network never holds a wildcard, for any manifest", () => {
+    for (const key of Object.keys(FIRST_PARTY_MANIFESTS)) {
+      for (const host of manifestForFirstParty(key).permissions.network) {
+        expect(host.includes("*")).toBe(false);
+      }
+    }
   });
 });
 

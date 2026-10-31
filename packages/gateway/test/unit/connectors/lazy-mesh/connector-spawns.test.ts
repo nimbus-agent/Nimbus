@@ -542,6 +542,21 @@ describe("ensureGithubMcp", () => {
     expectNoProcessEnvLeak(servers["github_actions"]?.env ?? {});
   });
 
+  test("only github_actions carries a wildcard host, on the wire", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("github.pat", "ghp_test");
+    await ensureGithubMcp(ctx);
+    const servers = capturedClients[0]?.servers ?? {};
+    const wild = (id: string): unknown =>
+      (
+        JSON.parse(servers[id]?.env["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}") as {
+          firstPartyWildcardHosts?: string[];
+        }
+      ).firstPartyWildcardHosts;
+    expect(wild("github_actions")).toEqual(["*.blob.core.windows.net"]);
+    expect(wild("github")).toBeUndefined();
+  });
+
   test("blank github.pat → no spawn", async () => {
     const { ctx, calls, vault } = makeCtx();
     await vault.set("github.pat", "");
@@ -711,6 +726,13 @@ describe("ensureAppleMcp (iCloud Mail+Calendar, two-key gate)", () => {
     expect(policyJson).toContain("imap.mail.me.com:993");
     expect(policyJson).toContain("smtp.mail.me.com:587");
     expect(policyJson).toContain("caldav.icloud.com");
+    // The host:port merge in ensureAppleMcp keeps the table's wildcard, and keeps it out of the list.
+    const policy = JSON.parse(policyJson) as {
+      permissions: { network: string[] };
+      firstPartyWildcardHosts?: string[];
+    };
+    expect(policy.firstPartyWildcardHosts).toEqual(["p*-caldav.icloud.com"]);
+    expect(policy.permissions.network.some((h) => h.includes("*"))).toBe(false);
     expectNoProcessEnvLeak(spec?.env ?? {});
   });
 
@@ -1316,6 +1338,22 @@ describe("ensureMicrosoftBundleMcp", () => {
       expectNoProcessEnvLeak(servers[id]?.env ?? {});
     }
     expect(servers["outlook"]?.env).not.toHaveProperty("MICROSOFT_OAUTH_SCOPES");
+  });
+
+  test("onedrive spawns under its own key, so only it carries *.sharepoint.com", async () => {
+    const { ctx, vault } = makeCtx();
+    await vault.set("microsoft.oauth", '{"access_token":"x"}');
+    await ensureMicrosoftBundleMcp(ctx);
+    const servers = capturedClients[0]?.servers ?? {};
+    const wild = (id: string): unknown =>
+      (
+        JSON.parse(servers[id]?.env["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}") as {
+          firstPartyWildcardHosts?: string[];
+        }
+      ).firstPartyWildcardHosts;
+    expect(wild("onedrive")).toEqual(["*.sharepoint.com"]);
+    expect(wild("outlook")).toBeUndefined();
+    expect(wild("teams")).toBeUndefined();
   });
 
   test("outlook scopes present → MICROSOFT_OAUTH_SCOPES injected into outlook env only", async () => {

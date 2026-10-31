@@ -1,5 +1,6 @@
 import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
+import { isValidWildcardHost } from "./net-wildcard-hosts.ts";
 
 /**
  * What a sandbox runner needs to know to confine a process.
@@ -35,6 +36,12 @@ export interface SandboxPolicy {
    * file. Nothing reads it yet.
    */
   readonly firstPartyPolicy?: boolean;
+  /**
+   * Wildcard host patterns a first-party connector may reach, from the table in
+   * `first-party-manifests.ts`. Only the Linux runner will read them. Set only by gateway code,
+   * never read from a manifest file. Nothing reads it yet.
+   */
+  readonly firstPartyWildcardHosts?: readonly string[];
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
@@ -46,6 +53,9 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
       ? {}
       : { ownerConfiguredNetwork: manifest.ownerConfiguredNetwork }),
     ...(manifest.firstPartyPolicy === true ? { firstPartyPolicy: true } : {}),
+    ...(manifest.firstPartyWildcardHosts === undefined
+      ? {}
+      : { firstPartyWildcardHosts: manifest.firstPartyWildcardHosts }),
   };
 }
 
@@ -67,6 +77,15 @@ function strings(v: unknown, what: string): string[] {
     throw new TypeError(`${what} must be an array of strings`);
   }
   return v as string[];
+}
+
+function wildcardPatterns(v: unknown): string[] {
+  const patterns = strings(v, "policy.firstPartyWildcardHosts");
+  const bad = patterns.find((p) => !isValidWildcardHost(p));
+  if (bad !== undefined) {
+    throw new TypeError("policy.firstPartyWildcardHosts holds a pattern that is not valid");
+  }
+  return patterns;
 }
 
 function booleanField(v: unknown, what: string): boolean {
@@ -132,5 +151,8 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
     ...(o["firstPartyPolicy"] === undefined
       ? {}
       : { firstPartyPolicy: booleanField(o["firstPartyPolicy"], "policy.firstPartyPolicy") }),
+    ...(o["firstPartyWildcardHosts"] === undefined
+      ? {}
+      : { firstPartyWildcardHosts: wildcardPatterns(o["firstPartyWildcardHosts"]) }),
   };
 }

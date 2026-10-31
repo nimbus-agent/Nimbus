@@ -94,6 +94,40 @@ describe("firstPartyPolicy", () => {
   });
 });
 
+describe("firstPartyWildcardHosts", () => {
+  it("policyFromManifest carries it from the manifest, and has no key otherwise", () => {
+    const m = manifest({ firstPartyWildcardHosts: ["*.sharepoint.com"] });
+    expect(policyFromManifest(m).firstPartyWildcardHosts).toEqual(["*.sharepoint.com"]);
+    expect("firstPartyWildcardHosts" in policyFromManifest(manifest())).toBe(false);
+  });
+
+  const withField = (v: unknown) => ({
+    id: "x",
+    permissions: { network: [], filesystem: { read: [], write: [] } },
+    firstPartyWildcardHosts: v,
+  });
+
+  it("survives the wire", () => {
+    const patterns = ["*.sharepoint.com", "ecs.*.amazonaws.com"];
+    expect(parseSandboxPolicy(JSON.stringify(withField(patterns))).firstPartyWildcardHosts).toEqual(
+      patterns,
+    );
+  });
+
+  it("a value that is not a string array refuses", () => {
+    expect(() => parseSandboxPolicy(JSON.stringify(withField("*.sharepoint.com")))).toThrow();
+    expect(() => parseSandboxPolicy(JSON.stringify(withField([1])))).toThrow();
+  });
+
+  it("an invalid pattern refuses, even beside valid ones", () => {
+    for (const bad of ["*.com", "api.github.com", "*.*.example.com", "*.EXAMPLE.com"]) {
+      expect(() =>
+        parseSandboxPolicy(JSON.stringify(withField(["*.sharepoint.com", bad]))),
+      ).toThrow();
+    }
+  });
+});
+
 describe("parseSandboxPolicy", () => {
   const good = {
     id: "com.acme.x",

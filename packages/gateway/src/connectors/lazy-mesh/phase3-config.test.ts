@@ -3373,3 +3373,49 @@ describe("a refused region is reported, by service and never by value", () => {
     expect(calls).toEqual([{ serviceId: "vertex_ai" }]);
   });
 });
+
+describe("a spawn carries the wildcard hosts of the manifest key it spawns under", () => {
+  type Add = (
+    vault: NimbusVault,
+    servers: Record<string, ServerSpec>,
+    sandboxCwd: string,
+  ) => Promise<void>;
+
+  const awsKeys = {
+    "aws.access_key_id": "AKIA0001",
+    "aws.secret_access_key": "SK0001",
+    "aws.default_region": "eu-west-1",
+  };
+  const gcpKeys = { "gcp.credentials_json_path": "/etc/gcp.json" };
+
+  // Spawn-site keys, not the table's: a rename of either side breaks exactly one of these.
+  const cases: ReadonlyArray<[string, Add, Readonly<Record<string, string>>]> = [
+    ["aws", phase3AddAwsMcp, awsKeys],
+    ["athena", phase3AddAthenaMcp, awsKeys],
+    ["cloudwatch", phase3AddCloudwatchMcp, awsKeys],
+    ["sagemaker", phase3AddSagemakerMcp, awsKeys],
+    ["gcp", phase3AddGcpMcp, { ...gcpKeys, "gcp.region": "europe-west1" }],
+    ["vertex_ai", phase3AddVertexAiMcp, gcpKeys],
+  ];
+
+  for (const [service, add, secrets] of cases) {
+    test(`${service}: the policy on the wire holds the table's patterns, apart from the hosts`, async () => {
+      const vault = createMockVault();
+      for (const [key, value] of Object.entries(secrets)) await vault.set(key, value);
+      const servers: Record<string, ServerSpec> = {};
+      await add(vault, servers, SANDBOX_CWD);
+      const spec = servers[service];
+      expect(spec).toBeDefined();
+      if (spec === undefined) return;
+      const policy = JSON.parse(spec.env?.["NIMBUS_SANDBOX_POLICY_JSON"] ?? "{}") as {
+        permissions: { network: string[] };
+        firstPartyWildcardHosts?: string[];
+      };
+      expect(policy.firstPartyWildcardHosts?.length ?? 0).toBeGreaterThan(0);
+      expect(policy.firstPartyWildcardHosts).toEqual([
+        ...(manifestForFirstParty(service).firstPartyWildcardHosts ?? []),
+      ]);
+      expect(policy.permissions.network.some((h) => h.includes("*"))).toBe(false);
+    });
+  }
+});

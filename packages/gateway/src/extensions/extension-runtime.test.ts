@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { insertExtensionRow } from "../automation/extension-store.ts";
+import { userMcpManifestFromRow } from "../connectors/lazy-mesh/user-mcp.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { DEFAULT_RUNTIME_LAYOUT, type RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../platform/sandbox/sandbox-cwd.ts";
@@ -163,6 +164,52 @@ describe("an extension can never set ownerConfiguredNetwork or firstPartyPolicy 
       "ownerConfiguredNetwork" in
         extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
     ).toBe(false);
+  });
+});
+
+describe("no manifest file or user MCP row can set firstPartyWildcardHosts (I43)", () => {
+  const WILDCARDS = ["*.sharepoint.com", "*.blob.core.windows.net"];
+
+  test("a manifest file naming it parses without it, and so does its policy", () => {
+    const parsed = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+        firstPartyPolicy: true,
+        firstPartyWildcardHosts: WILDCARDS,
+      }),
+    );
+    expect((parsed as ExtensionManifest).firstPartyWildcardHosts).toBeUndefined();
+    expect("firstPartyWildcardHosts" in parsed).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(parsed)).toBe(false);
+  });
+
+  test("neither the spawn manifest nor the spawn policy of an extension carries it", () => {
+    const { v } = realInstall();
+    const m = buildExtensionRuntimeManifest(v, runtimeReadPaths);
+    expect("firstPartyWildcardHosts" in m).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(m)).toBe(false);
+    expect(
+      "firstPartyWildcardHosts" in
+        extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
+    ).toBe(false);
+  });
+
+  test("a user MCP row, even one whose --net holds a wildcard, yields a manifest without it", () => {
+    const r = userMcpManifestFromRow({
+      service_id: "mcp_x",
+      command: "/bin/echo",
+      args_json: "[]",
+      created_at: 0,
+      read_paths_json: "[]",
+      net_hosts_json: JSON.stringify(WILDCARDS),
+      model_access: 0,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect("firstPartyWildcardHosts" in r.manifest).toBe(false);
+    expect("firstPartyWildcardHosts" in policyFromManifest(r.manifest)).toBe(false);
   });
 });
 
