@@ -237,7 +237,7 @@ if (!toolOnPath("aws")) fail("aws is not on this machine, and the GitHub runner 
 await proveIfReachable({
   connector: "aws",
   env: {
-    AWS_ACCESS_KEY_ID: "AKIAIOSFODNN7NOTREAL",
+    AWS_ACCESS_KEY_ID: "AKIA0000000000000000",
     AWS_SECRET_ACCESS_KEY: "not-a-real-secret-key",
     AWS_DEFAULT_REGION: "us-east-1",
   },
