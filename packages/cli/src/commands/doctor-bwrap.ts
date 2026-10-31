@@ -139,7 +139,7 @@ function startProbeCommand(bwrap: string): string[] {
 
 export const HELPER_IN_SANDBOX = "/run/nimbus-sandbox/helper";
 /** Never connected to: this start carries no connection, and the forwarder dials only for one. */
-const UNUSED_SOCKET = "/tmp/nimbus-doctor-start/s";
+const UNUSED_SOCKET = "/run/nimbus-sandbox/unused-socket";
 
 function libraryBinds(): string[] {
   return [
