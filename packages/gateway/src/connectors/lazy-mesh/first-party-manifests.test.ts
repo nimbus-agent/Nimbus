@@ -164,6 +164,19 @@ describe("manifestForFirstParty", () => {
   });
 });
 
+describe("firstPartyPolicy", () => {
+  test("a known service, the default-deny fallback and a run-time merge all carry it", () => {
+    expect(manifestForFirstParty("github").firstPartyPolicy).toBe(true);
+    expect(manifestForFirstParty("no-such-service").firstPartyPolicy).toBe(true);
+    const merged = manifestWithExtraNetworkHosts("jenkins", ["a.example.com"], {
+      ownerConfigured: [],
+      onDropped: () => {},
+    });
+    expect(merged.firstPartyPolicy).toBe(true);
+    expect(manifestWithExtraNetworkHosts("jenkins", [], NONE).firstPartyPolicy).toBe(true);
+  });
+});
+
 describe("networkEntryFromUrl", () => {
   test("a bare host when the port is the https default", () => {
     expect(networkEntryFromUrl("https://jenkins.corp")).toBe("jenkins.corp");

@@ -117,7 +117,30 @@ describe("buildExtensionRuntimeManifest", () => {
   });
 });
 
-describe("an extension can never set ownerConfiguredNetwork (I43)", () => {
+describe("an extension can never set ownerConfiguredNetwork or firstPartyPolicy (I43)", () => {
+  test("a manifest file naming firstPartyPolicy parses without it", () => {
+    const parsed = parseExtensionManifestJson(
+      JSON.stringify({
+        id: "x",
+        version: "1.0.0",
+        permissions: { network: ["10.0.0.1"], filesystem: { read: [], write: [] } },
+        firstPartyPolicy: true,
+      }),
+    );
+    expect((parsed as ExtensionManifest).firstPartyPolicy).toBeUndefined();
+    expect("firstPartyPolicy" in parsed).toBe(false);
+  });
+
+  test("neither the spawn manifest nor the spawn policy carries firstPartyPolicy", () => {
+    const { v } = realInstall();
+    const m = buildExtensionRuntimeManifest(v, runtimeReadPaths);
+    expect("firstPartyPolicy" in m).toBe(false);
+    expect("firstPartyPolicy" in policyFromManifest(m)).toBe(false);
+    expect(
+      "firstPartyPolicy" in extensionSpawnPolicyForGrants(v.serviceId, v.grants, runtimeReadPaths),
+    ).toBe(false);
+  });
+
   test("a manifest file naming it parses without it", () => {
     const parsed = parseExtensionManifestJson(
       JSON.stringify({

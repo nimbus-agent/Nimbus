@@ -76,6 +76,24 @@ describe("ownerConfiguredNetwork", () => {
   });
 });
 
+describe("firstPartyPolicy", () => {
+  it("policyFromManifest carries it from the manifest, and has no key otherwise", () => {
+    expect(policyFromManifest(manifest({ firstPartyPolicy: true })).firstPartyPolicy).toBe(true);
+    expect("firstPartyPolicy" in policyFromManifest(manifest())).toBe(false);
+  });
+
+  it("survives the wire, and a wrong shape refuses", () => {
+    const withField = (v: unknown) => ({
+      id: "x",
+      permissions: { network: [], filesystem: { read: [], write: [] } },
+      firstPartyPolicy: v,
+    });
+    expect(parseSandboxPolicy(JSON.stringify(withField(true))).firstPartyPolicy).toBe(true);
+    expect(() => parseSandboxPolicy(JSON.stringify(withField("true")))).toThrow();
+    expect(() => parseSandboxPolicy(JSON.stringify(withField(1)))).toThrow();
+  });
+});
+
 describe("parseSandboxPolicy", () => {
   const good = {
     id: "com.acme.x",

@@ -29,6 +29,12 @@ export interface SandboxPolicy {
    * the owner's settings, never read from a manifest file. Nothing reads it yet.
    */
   readonly ownerConfiguredNetwork?: readonly string[];
+  /**
+   * True when the policy came from a first-party manifest (`manifestForFirstParty`). Selects the
+   * first-party column of the address rules. Set only by gateway code, never read from a manifest
+   * file. Nothing reads it yet.
+   */
+  readonly firstPartyPolicy?: boolean;
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
@@ -39,6 +45,7 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
     ...(manifest.ownerConfiguredNetwork === undefined
       ? {}
       : { ownerConfiguredNetwork: manifest.ownerConfiguredNetwork }),
+    ...(manifest.firstPartyPolicy === true ? { firstPartyPolicy: true } : {}),
   };
 }
 
@@ -60,6 +67,13 @@ function strings(v: unknown, what: string): string[] {
     throw new TypeError(`${what} must be an array of strings`);
   }
   return v as string[];
+}
+
+function booleanField(v: unknown, what: string): boolean {
+  if (typeof v !== "boolean") {
+    throw new TypeError(`${what} must be a boolean`);
+  }
+  return v;
 }
 
 /**
@@ -115,5 +129,8 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
             "policy.ownerConfiguredNetwork",
           ),
         }),
+    ...(o["firstPartyPolicy"] === undefined
+      ? {}
+      : { firstPartyPolicy: booleanField(o["firstPartyPolicy"], "policy.firstPartyPolicy") }),
   };
 }

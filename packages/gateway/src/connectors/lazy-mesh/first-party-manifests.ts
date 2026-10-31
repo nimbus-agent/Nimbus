@@ -594,8 +594,12 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
 
 export function manifestForFirstParty(serviceId: string): ExtensionManifest {
   const known = FIRST_PARTY_MANIFESTS[serviceId];
-  if (known !== undefined) return known;
-  return baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY);
+  // The only place `firstPartyPolicy` is set, including for the default-deny fallback: this code
+  // wrote the manifest, so its entries get the first-party address rules.
+  return {
+    ...(known ?? baseManifest(`com.nimbus.${serviceId}`, DEFAULT_DENY)),
+    firstPartyPolicy: true,
+  };
 }
 
 /**

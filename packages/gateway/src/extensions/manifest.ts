@@ -28,6 +28,12 @@ export {
  */
 export type ExtensionManifest = RegistryExtensionManifest & {
   ownerConfiguredNetwork?: readonly string[];
+  /**
+   * True only for a manifest `manifestForFirstParty` built: its fixed hosts, and the hosts our code
+   * derives, get the first-party address rules. Same provenance rule as above: the parser never
+   * reads it, so a manifest file cannot claim it.
+   */
+  firstPartyPolicy?: boolean;
 };
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";
