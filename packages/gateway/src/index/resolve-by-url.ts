@@ -62,7 +62,9 @@ function matchesForKey(db: Database, key: string): Row[] {
   return db
     .query(
       `SELECT id, service, type, title, url, modified_at,
-              CASE WHEN json_valid(metadata) THEN json_extract(metadata, '$.branch') END AS branch
+              CASE WHEN json_valid(metadata) THEN
+                CASE json_type(metadata, '$.branch') WHEN 'text' THEN json_extract(metadata, '$.branch') END
+              END AS branch
        FROM item
        WHERE resolve_key = ? ORDER BY modified_at DESC, id ASC LIMIT ?`,
     )

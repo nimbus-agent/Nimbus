@@ -31,6 +31,9 @@ test.each([
   ["metadata without a branch", JSON.stringify({ state: "open" })],
   ["an empty branch", JSON.stringify({ branch: "" })],
   ["a non-string branch", JSON.stringify({ branch: 7 })],
+  // `json_extract` returns these two as serialized JSON text, which a JS string check would pass.
+  ["an object branch", JSON.stringify({ branch: { name: "feat/x" } })],
+  ["an array branch", JSON.stringify({ branch: ["feat/x"] })],
   ["malformed metadata", "{branch: feat/x"],
 ])("%s resolves with no branch key", (_label, metadata) => {
   const db = dbWith([{ id: "a", key: PR_KEY, ...(metadata === undefined ? {} : { metadata }) }]);
