@@ -108,6 +108,11 @@ function bitbucketPrExternalId(repoFull: string, id: number): string {
   return `${repoFull}#${String(id)}`;
 }
 
+function prSourceBranch(pr: Record<string, unknown>): string | undefined {
+  const branch = asRecord(asRecord(pr["source"])?.["branch"]);
+  return branch === undefined ? undefined : stringField(branch, "name");
+}
+
 /**
  * The full `pr` metadata for one Bitbucket pull request. Bitbucket's PR resource carries no merge
  * timestamp (`updated_on` is the last change of any kind, not the merge), so `merged_at` is never
@@ -127,8 +132,36 @@ export function bitbucketPrMetadata(
       openedAtMs: canonicalEpochMs(stringField(pr, "created_on")),
       repo: repoFull,
       number: numberField(pr, "id"),
+      branch: prSourceBranch(pr),
     },
   );
+}
+
+/**
+ * The upsert replaces the whole metadata object, so a response with no `source.branch` would erase
+ * the branch already indexed. Carry it forward, as GitLab's rows do.
+ */
+// lane-census: scope=pr service=bitbucket
+function withStoredBranch(
+  ctx: SyncContext,
+  externalId: string,
+  meta: Record<string, unknown>,
+): Record<string, unknown> {
+  if (meta["branch"] !== undefined) {
+    return meta;
+  }
+  const json = ctx.itemMetadata(itemPrimaryKey(SERVICE_ID, externalId));
+  if (json === null) {
+    return meta;
+  }
+  let stored: unknown;
+  try {
+    stored = JSON.parse(json) as unknown;
+  } catch {
+    return meta;
+  }
+  const branch = asRecord(stored)?.["branch"];
+  return typeof branch === "string" && branch !== "" ? { ...meta, branch } : meta;
 }
 
 function upsertFromPullRequest(
@@ -170,8 +203,8 @@ function upsertFromPullRequest(
           displayName: displayName ?? bbUuid,
         })
       : null;
-  const meta = bitbucketPrMetadata(repoFull, pr, displayName);
   const externalId = bitbucketPrExternalId(repoFull, id);
+  const meta = withStoredBranch(ctx, externalId, bitbucketPrMetadata(repoFull, pr, displayName));
   ctx.upsertItem({
     service: SERVICE_ID,
     type: "pr",

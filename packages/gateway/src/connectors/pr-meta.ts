@@ -11,8 +11,9 @@
 /**
  * Bump when a mapper starts writing a key consumers may rely on. Drives `rebody` eligibility.
  * 2 (A3): canonical `number` (GitHub number, GitLab iid, Bitbucket id).
+ * 3: canonical `branch`, the PR's source branch.
  */
-export const PR_META_VERSION = 2;
+export const PR_META_VERSION = 3;
 
 export type PrService = "github" | "bitbucket" | "gitlab";
 
@@ -26,6 +27,7 @@ export type CanonicalPrKey =
   | "merged_at"
   | "repo"
   | "number"
+  | "branch"
   | "meta_v";
 
 export const CANONICAL_PR_KEYS: readonly CanonicalPrKey[] = [
@@ -36,6 +38,7 @@ export const CANONICAL_PR_KEYS: readonly CanonicalPrKey[] = [
   "merged_at",
   "repo",
   "number",
+  "branch",
   "meta_v",
 ];
 
@@ -46,6 +49,8 @@ const CANONICAL_SET: ReadonlySet<string> = new Set(CANONICAL_PR_KEYS);
  * Bitbucket's PR resource has no merge timestamp, and `updated_on` is not one. GitLab emits both
  * timestamps from its `opened`/`accepted` transition events and from `fetchOne`; an MR whose
  * opening predates the sync window simply lacks the key on its row (per-row absence = unknown).
+ * GitLab's `branch` comes from `fetchOne` alone, because the events feed does not carry it, so an
+ * MR the periodic sync found lacks the key until something fetches that MR.
  */
 export const PR_EMITTED_KEYS: Readonly<Record<PrService, ReadonlySet<CanonicalPrKey>>> = {
   github: new Set<CanonicalPrKey>(CANONICAL_PR_KEYS),
@@ -56,6 +61,7 @@ export const PR_EMITTED_KEYS: Readonly<Record<PrService, ReadonlySet<CanonicalPr
     "opened_at_ms",
     "repo",
     "number",
+    "branch",
     "meta_v",
   ]),
   gitlab: new Set<CanonicalPrKey>(CANONICAL_PR_KEYS),
@@ -68,6 +74,8 @@ export type PrFields = {
   readonly mergedAtMs?: number | undefined;
   readonly repo?: string | undefined;
   readonly number?: number | undefined;
+  /** The source branch: the same key a `ci_run` row uses for the branch it ran on. */
+  readonly branch?: string | undefined;
 };
 
 function lookup(
@@ -180,6 +188,9 @@ export function buildPrMetadata(
   }
   if (typeof fields.number === "number" && Number.isInteger(fields.number) && fields.number > 0) {
     out["number"] = fields.number;
+  }
+  if (typeof fields.branch === "string" && fields.branch !== "") {
+    out["branch"] = fields.branch;
   }
   out["meta_v"] = PR_META_VERSION;
   return out;

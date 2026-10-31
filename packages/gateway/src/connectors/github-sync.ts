@@ -86,6 +86,11 @@ function applyMergeCommitSha(out: Record<string, unknown>, pr: Record<string, un
   }
 }
 
+function prHeadRef(pr: Record<string, unknown>): string | undefined {
+  const head = asRecord(pr["head"]);
+  return head === undefined ? undefined : stringField(head, "ref");
+}
+
 export function extractPrMetadataForIndex(
   repoFull: string,
   pr: Record<string, unknown>,
@@ -125,6 +130,7 @@ export function extractPrMetadataForIndex(
     mergedAtMs: merged ? canonicalEpochMs(stringField(pr, "merged_at")) : undefined,
     repo: repoFull,
     number: numberField(pr, "number"),
+    branch: prHeadRef(pr),
   });
 }
 
@@ -209,7 +215,7 @@ function githubPrExternalId(repoFull: string, num: number): string {
 const PR_STAT_KEYS = ["additions", "deletions", "changed_files", "commits"] as const;
 
 /** Contract keys an events-feed payload can lack; carried from the stored row like the stats. */
-const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms"] as const;
+const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms", "branch"] as const;
 
 /**
  * I-2: `extractPrMetadataForIndex` only sets the four size-stat keys, and `opened_at_ms` (which
@@ -227,7 +233,7 @@ const PR_CARRIED_CONTRACT_KEYS = ["opened_at_ms"] as const;
  * without new commit/diff counts) until the next detail fetch refreshes them. That is strictly
  * better than losing the stats outright and re-enriching the same PR on every tick.
  *
- * Scope, deliberately: this merges forward the four `PR_STAT_KEYS` and `opened_at_ms` only. `mergeable`,
+ * Scope, deliberately: this merges forward the four `PR_STAT_KEYS`, `opened_at_ms` and `branch` only. `mergeable`,
  * `mergeable_state`, and `mergeable_state_fetched_at_ms` are subject to the same wholesale
  * `metadata = excluded.metadata` replacement and are NOT merged forward here — left as-is
  * because no re-queue loop results: `shouldRefreshMergeableState` currently has no production

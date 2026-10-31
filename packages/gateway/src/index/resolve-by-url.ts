@@ -21,7 +21,11 @@ export type ResolveCandidate = {
 export type ResolveResponse =
   | {
       readonly found: true;
-      readonly item: ResolveCandidate & { readonly modified_at: number };
+      readonly item: ResolveCandidate & {
+        readonly modified_at: number;
+        /** `metadata.branch`, when the row has one: a PR's source branch, a CI run's branch. */
+        readonly branch?: string;
+      };
       readonly matchKind: ResolveMatchKind;
     }
   | {
@@ -46,6 +50,7 @@ type Row = {
   title: string;
   url: string | null;
   modified_at: number;
+  branch: unknown;
 };
 
 /**
@@ -53,9 +58,14 @@ type Row = {
  * from "exactly the cap" without a second COUNT query.
  */
 function matchesForKey(db: Database, key: string): Row[] {
+  // lane-census: scope=ci_run,pr
   return db
     .query(
-      `SELECT id, service, type, title, url, modified_at FROM item
+      `SELECT id, service, type, title, url, modified_at,
+              CASE WHEN json_valid(metadata) THEN
+                CASE json_type(metadata, '$.branch') WHEN 'text' THEN json_extract(metadata, '$.branch') END
+              END AS branch
+       FROM item
        WHERE resolve_key = ? ORDER BY modified_at DESC, id ASC LIMIT ?`,
     )
     .all(key, RESOLVE_CANDIDATE_CAP + 1) as Row[];
@@ -66,11 +76,19 @@ function toCandidate(r: Row): ResolveCandidate {
 }
 
 /** Metadata only, NEVER a body — resolve is a resolver; reading is `GET /v1/items/{id}`. This also
- * deliberately avoids the `metadata_only` redaction path and its two unfixed privacy defects. */
+ * deliberately avoids the `metadata_only` redaction path and its two unfixed privacy defects.
+ *
+ * `branch` is the one `metadata` key this reads. It sits here rather than behind the `data` scope
+ * because a client needs it for `GET /v1/preflight/deploy`'s `target_ref`, and `data` would hand
+ * that client every item's body, `/v1/people` and `/v1/audit` to learn one string. */
 function hit(r: Row, matchKind: ResolveMatchKind): ResolveResponse {
   return {
     found: true,
-    item: { ...toCandidate(r), modified_at: r.modified_at },
+    item: {
+      ...toCandidate(r),
+      modified_at: r.modified_at,
+      ...(typeof r.branch === "string" && r.branch !== "" ? { branch: r.branch } : {}),
+    },
     matchKind,
   };
 }

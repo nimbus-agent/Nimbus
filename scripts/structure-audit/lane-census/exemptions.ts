@@ -178,6 +178,14 @@ export const LANE_EXEMPTIONS: readonly LaneExemption[] = [
     reason:
       "selectItemBodyFetchState (annotated scope=page service=notion) reads bodyFetch, which notionConsumeSearchResultRow in connectors/notion-sync.ts writes into a metadata variable initialised by a ternary before ctx.upsertItem — a shape the census writer scan does not follow (it records the notion:page write with no keys). Absent means never attempted or errored, which marks the page retryable.",
   },
+  {
+    file: "packages/gateway/src/index/resolve-by-url.ts",
+    key: "branch",
+    category: "by-design",
+    reads: 1,
+    reason:
+      "resolveItemByUrl passes a row's branch through to the caller when it has one. Writers that record no branch (Jenkins, and a GitLab MR no fetchOne has reached) simply omit item.branch, and the browser client then says it could not check that page's own branch.",
+  },
   // ── ipc/ ─────────────────────────────────────────────────────────────────────────────────
   {
     file: "packages/gateway/src/ipc/clip-rpc.ts",

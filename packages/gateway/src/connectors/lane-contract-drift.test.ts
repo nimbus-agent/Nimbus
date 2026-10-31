@@ -63,13 +63,19 @@ describe("pr emitted keys == table", () => {
       merged: true,
       created_at: "2026-10-01T00:00:00Z",
       merged_at: "2026-10-02T00:00:00Z",
+      head: { ref: "feat/x" },
     });
     expect(prKeys(m)).toEqual(new Set(PR_EMITTED_KEYS.github));
   });
   test("bitbucket", () => {
     const m = bitbucketPrMetadata(
       "a/b",
-      { id: 1, state: "MERGED", created_on: "2026-10-01T00:00:00Z" },
+      {
+        id: 1,
+        state: "MERGED",
+        created_on: "2026-10-01T00:00:00Z",
+        source: { branch: { name: "feat/x" } },
+      },
       "x",
     );
     expect(prKeys(m)).toEqual(new Set(PR_EMITTED_KEYS.bitbucket));
@@ -81,6 +87,8 @@ describe("pr emitted keys == table", () => {
         iid: 1,
         actionName: "opened",
         eventCreatedAt: "2026-10-01T00:00:00Z",
+        // The branch only ever arrives on the MR resource: the events feed does not carry it.
+        mr: { state: "opened", createdAt: "2026-10-01T00:00:00Z", sourceBranch: "feat/x" },
       },
       null,
     );

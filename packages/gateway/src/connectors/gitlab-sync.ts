@@ -175,6 +175,7 @@ async function fetchOneMergeRequest(ctx: SyncContext, url: string): Promise<Fetc
       state: stringField(mr, "state"),
       createdAt: stringField(mr, "created_at"),
       mergedAt: stringField(mr, "merged_at"),
+      sourceBranch: stringField(mr, "source_branch"),
     },
   });
   return {

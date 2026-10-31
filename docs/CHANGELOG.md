@@ -18,6 +18,17 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-10-31 — A pull request's source branch is indexed, and `GET /v1/items/resolve` returns it (no migration, no new
+  invariant).** `pr` metadata gains a canonical `branch` (`PR_META_VERSION` 3), read from GitHub's `head.ref`, Bitbucket's
+  `source.branch.name` and GitLab's `source_branch`, the same key a `ci_run` row already uses. A found `resolve` answer now
+  carries `item.branch` when the row has one, under the existing `resolve` scope, and it is the only `metadata` key that route
+  reads. The consumer is the browser client's deploy-readiness section, which needs a `target_ref` for
+  `GET /v1/preflight/deploy`: no PR row held a branch, so a PR page's failing-CI check looked at the wrong ref, and reading a
+  row's branch from `GET /v1/items/{id}` would take the `data` scope that also opens every item's body, `/v1/people` and
+  `/v1/audit`. **Bounds:** GitLab's events feed does not carry the branch, so only `fetchOne` writes it (events carry it
+  forward) and an MR the periodic sync found has none until it is fetched. Existing GitHub and Bitbucket rows gain the key the
+  next time they are synced. Ambiguous candidates keep their shape, with no branch.
+
 - **2026-10-30 — `nimbus eval` PR 5 of 5: `--installed` (Phase 9.5 project 5 complete; no migration, no new invariant).**
   `nimbus eval --installed [--threshold <n>] [--json]` evaluates every enabled, non-starter-pack installed extension behind
   ONE owner approval (`extension.eval`, terminal-only: no `--yes`, no non-TTY; at most 50 per run, else

@@ -46,6 +46,32 @@ describe("GET /v1/items/resolve (integration)", () => {
     }
   });
 
+  test("carries a pull request's branch to a resolve-scoped token, with no data scope", async () => {
+    const { port, token, db, stop } = await startServerWithClipToken(["resolve"]);
+    try {
+      upsertIndexedItem(db, {
+        service: "github",
+        type: "pr",
+        externalId: "pr-2",
+        title: "PR two",
+        bodyPreview: "x",
+        url: "https://github.com/o/r/pull/2",
+        canonicalUrl: "https://github.com/o/r/pull/2",
+        modifiedAt: 99,
+        syncedAt: 99,
+        metadata: { branch: "feat/x" },
+      });
+      const res = await fetch(
+        `http://127.0.0.1:${port}/v1/items/resolve?url=${encodeURIComponent("https://github.com/o/r/pull/2")}`,
+        { headers: { authorization: `Bearer ${token}` } },
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ found: true, item: { branch: "feat/x" } });
+    } finally {
+      stop();
+    }
+  });
+
   // IMPORTANT 1: `handleItemsResolve` used to call `resolveItemByUrl(db, raw)` with NO `opts`, so
   // `fetchable` was always the hardcoded default `false` — a client following the documented
   // resolve-then-fetch handshake would NEVER fetch, even with the host fully configured. This
