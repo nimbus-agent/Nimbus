@@ -75,7 +75,10 @@ const START_PROBE_TIMEOUT_MS = 10_000;
 const START_PROBE_HOST = "nimbus-start-probe.invalid";
 const START_PROBE_PORT = 443;
 const START_PROBE_REPLY = new Uint8Array([0x4b]); // "K", which `--connect-probe` waits for
-/** Never dialed: the probe's `connect` answers by itself. Passes the first-party address rule. */
+/**
+ * Never dialed: the probe's `connect` answers by itself. Passes the first-party address rule.
+ * The literal is deliberate (Sonar S1313): it must be a public address for that rule to pass.
+ */
 const START_PROBE_ANSWER = "1.1.1.1";
 
 export type HelperLookup = (path: string) => boolean;
@@ -443,7 +446,7 @@ export function createForwarderDir(
   const bound = boundPaths.flatMap((path) => spellingsOf(path, realpath));
   let tried = "";
   for (const candidate of candidates) {
-    if (candidate === undefined || !candidate.startsWith("/")) continue;
+    if (!candidate?.startsWith("/")) continue;
     const base = trimmed(candidate);
     const longest = posix.join(base, DIR_TEMPLATE, SOCKET_NAME);
     const usable =
@@ -545,9 +548,9 @@ export function openForwarderSession(opts: ForwarderSessionOpts): ForwarderSessi
 }
 
 /** Answers the probe's one request with the reply it waits for, with no network at all. */
-async function startProbeConnect(): Promise<NetSocketLike> {
+function startProbeConnect(): Promise<NetSocketLike> {
   let handlers: NetSocketHandlers | null = null;
-  return {
+  return Promise.resolve<NetSocketLike>({
     write(data) {
       handlers?.data(START_PROBE_REPLY);
       return data.length;
@@ -559,7 +562,7 @@ async function startProbeConnect(): Promise<NetSocketLike> {
     setHandlers(next) {
       handlers = next;
     },
-  };
+  });
 }
 
 export type StartProbeOpts = {

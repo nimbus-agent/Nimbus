@@ -103,7 +103,7 @@ describe("answerDnsQuery", () => {
     expect(Array.from(bytes.slice(q.length))).toEqual([
       0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 60, 0, 4, 127, 0, 0, 2,
     ]);
-    expect(bytes.length).toBe(q.length + 16);
+    expect(bytes).toHaveLength(q.length + 16);
   });
 
   test("A in a class other than IN is NOERROR with no answers", () => {

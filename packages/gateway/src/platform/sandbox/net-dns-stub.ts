@@ -72,8 +72,8 @@ function readLabel(q: Uint8Array, pos: number, len: number): Label {
   let clean = true;
   for (let i = 0; i < len; i += 1) {
     const b = q[pos + i] ?? 0;
-    if (b >= 0x20 && b <= 0x7e) logLabel += String.fromCharCode(b);
-    if (isNameByte(b)) label += String.fromCharCode(asciiLower(b));
+    if (b >= 0x20 && b <= 0x7e) logLabel += String.fromCodePoint(b);
+    if (isNameByte(b)) label += String.fromCodePoint(asciiLower(b));
     else clean = false;
   }
   return { label, logLabel, clean };

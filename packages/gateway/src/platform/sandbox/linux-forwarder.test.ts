@@ -296,7 +296,7 @@ describe("the forwarder's small rules", () => {
     expect(helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "/typo" }, none)).toContain("/typo");
     expect(
       helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "/real" }, (p) => p === "/real"),
-    ).toBe(null);
+    ).toBeNull();
     expect(helperOverrideRefusal({ NIMBUS_SANDBOX_HELPER_PATH: "" }, none)).toBeNull();
     expect(helperOverrideRefusal({}, none)).toBeNull();
   });

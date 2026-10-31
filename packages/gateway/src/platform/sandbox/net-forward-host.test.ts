@@ -624,12 +624,12 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
   }
 
   /** Retries until the host answers rather than turning the connection away. */
-  async function dnsOnceASlotIsFree(h: Harness): Promise<void> {
+  async function dnsOnceASlotIsFree(h: Harness): Promise<Uint8Array> {
     for (;;) {
       const c = await h.client();
       c.socket.write(dnsFrame(dnsQuery("api.example.com", TYPE_A)));
       await waitFor("an answer or a refusal", c.isClosed);
-      if (c.bytes().length > 0) return;
+      if (c.bytes().length > 0) return c.bytes();
       await Bun.sleep(2);
     }
   }
@@ -680,6 +680,7 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
       lookups[0]?.(["93.184.216.34"]);
       await waitFor("the remote", () => h.remotes.length === 1);
       await waitFor("bytes at the host", () => h.remotes[0]?.text() === "abc");
+      expect(h.remotes[0]?.text()).toBe("abc");
     },
     SLOW,
   );
@@ -723,6 +724,7 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
       c.socket.write(Uint8Array.from([0, 0x7a]));
       await waitFor("the remote", () => h.remotes.length === 1);
       await waitFor("bytes at the host", () => h.remotes[0]?.text() === "z");
+      expect(h.remotes[0]?.text()).toBe("z");
     },
     SLOW,
   );
@@ -885,8 +887,10 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
         if (remote !== undefined) settle(remote);
       });
       await waitFor("every late socket closed", () => late.every((r) => r.closeCount > 0));
+      expect(late.every((r) => r.closeCount > 0)).toBe(true);
 
-      await dnsOnceASlotIsFree(h);
+      const answer = await dnsOnceASlotIsFree(h);
+      expect(answer.length).toBeGreaterThan(0);
     },
     SLOW,
   );
@@ -1332,7 +1336,7 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
       const c = await h.client();
       c.socket.write(Uint8Array.from([0x44, 0, 0, 0, 40, 1, 2, 3]));
       await waitFor("the close", c.isClosed);
-      expect(c.bytes().length).toBe(0);
+      expect(c.bytes()).toHaveLength(0);
     },
     SLOW,
   );
@@ -1378,7 +1382,7 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
       const c = await h.client();
       c.socket.write(frame);
       await waitFor("the close", c.isClosed);
-      expect(c.bytes().length).toBe(0);
+      expect(c.bytes()).toHaveLength(0);
       expect(h.logs).toEqual([]);
     }
 
@@ -1426,7 +1430,7 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
           c.socket.write(chunk);
           await Bun.sleep(1);
         }
-        expect(c.bytes().length).toBe(0);
+        expect(c.bytes()).toHaveLength(0);
       },
       SLOW,
     );

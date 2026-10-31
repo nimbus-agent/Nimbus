@@ -713,7 +713,7 @@ export function buildDefaultSeccompFilter(overrides: SeccompFilterOverrides = {}
     instr(BPF_JMP | BPF_JSET | BPF_K, 0, 1, CLONE_NAMESPACE_FLAGS),
     instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_KILL_PROCESS),
     instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ALLOW),
+    instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS),
   );
-  program.push(instr(BPF_RET | BPF_K, 0, 0, SECCOMP_RET_ERRNO_ENOSYS));
   return emit(program);
 }

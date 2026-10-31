@@ -509,7 +509,7 @@ export class ForwardHost {
   }
 
   closeAll(): void {
-    for (const conn of [...this.conns]) this.closeConn(conn);
+    for (const conn of this.conns) this.closeConn(conn);
   }
 
   private readHeader(conn: Conn, chunk: Uint8Array): void {
@@ -667,6 +667,7 @@ export class ForwardHost {
     for (const ip of kept) {
       if (conn.closing) return null;
       try {
+        // Deliberately sequential: kept addresses are tried in order, and the first success stops it.
         return await this.opts.connect(ip, port);
       } catch {
         // The next kept address, if any.
