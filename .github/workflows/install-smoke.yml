@@ -170,6 +170,18 @@ jobs:
           bun run build:sandbox-helper:win32
           Copy-Item packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe dist/
 
+      # The Linux sandbox helper (I15, I50): the gateway looks for it beside its own executable, and
+      # install.sh copies it there, so it has to travel in both fixtures below as it does in the real
+      # tarball. Without it a connector that declares a network reaches the whole internet and
+      # `nimbus doctor` warns. Mirrors release.yml's own "make -C" step. macOS has no such helper.
+      - name: Build sandbox helper (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun run build:sandbox-helper
+          cp packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper dist/nimbus-sandbox-helper
+
       - name: Stage a fake release dir (Unix)
         if: runner.os != 'Windows'
         shell: bash
@@ -186,6 +198,7 @@ jobs:
           # the "Vector search" assertion in the quickstart step below would be testing that.
           if [ "$RUNNER_OS" = "Linux" ]; then
             cp dist/vec0.so "$STAGE/vec0.so"
+            cp dist/nimbus-sandbox-helper "$STAGE/nimbus-sandbox-helper"
           else
             cp dist/vec0.dylib "$STAGE/vec0.dylib"
             test -n "${NIMBUS_SQLITE_PATH:-}" || {
@@ -207,6 +220,15 @@ jobs:
           export HOME="$RUNNER_TEMP/fake-home"
           mkdir -p "$HOME"
           "$STAGE/install.sh" --yes
+          # install.sh must put the helper beside the gateway, executable by all and with no
+          # setuid or setgid bit: it holds no file capability, so mode 755 is the whole of it.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            test -f "$HOME/.local/bin/nimbus-sandbox-helper" || {
+              echo "::error::install.sh did not place nimbus-sandbox-helper beside the gateway"; exit 1; }
+            helper_mode="$(stat -c '%a' "$HOME/.local/bin/nimbus-sandbox-helper")"
+            test "$helper_mode" = "755" || {
+              echo "::error::nimbus-sandbox-helper installed at mode $helper_mode, expected 755"; exit 1; }
+          fi
           for rc in "$HOME/.zshrc" "$HOME/.bash_profile" "$HOME/.bashrc" "$HOME/.profile"; do
             if [ -f "$rc" ]; then
               # shellcheck disable=SC1090
@@ -395,6 +417,11 @@ jobs:
           cat "$RUNNER_TEMP/doctor.log"
           grep -qF "[ok] Vector search" "$RUNNER_TEMP/doctor.log" || {
             echo "::error::nimbus doctor did not report '[ok] Vector search' — sqlite-vec is not loaded in the installed binary"; exit 1; }
+          # Linux: the helper install.sh placed is the one doctor finds, so it does not warn that
+          # a connector's declared network reaches the whole internet.
+          if [ "$(uname)" = "Linux" ] && grep -qF "nimbus-sandbox-helper is missing" "$RUNNER_TEMP/doctor.log"; then
+            echo "::error::nimbus doctor reports nimbus-sandbox-helper missing after install.sh placed it"; exit 1
+          fi
           # macOS: an [ok] alone is not enough. The PAL falls back to Homebrew's SQLite after the
           # bundled copy, and this runner image HAS Homebrew SQLite, so the line would stay green
           # with the bundled libsqlite3.dylib missing or broken. Doctor names the library that was
@@ -613,6 +640,13 @@ jobs:
           fi
           cp "$VEC0_SRC" "$PAYLOAD/bin/$(basename "$VEC0_SRC")"
 
+          # The Linux sandbox helper, at bin/ as the real tarball has it (the CI Packaging job
+          # asserts that path). The macOS archives carry none.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            cp dist/nimbus-sandbox-helper "$PAYLOAD/bin/nimbus-sandbox-helper"
+            chmod 755 "$PAYLOAD/bin/nimbus-sandbox-helper"
+          fi
+
           # The full SQLite that sidecar needs to load on macOS (#1505). Real macOS archives ship
           # one, so the served fixture must too — otherwise the assertion below would prove nothing
           # about install.sh's own copy loop. Taken from NIMBUS_SQLITE_PATH, which setup-nimbus-ci
@@ -706,6 +740,22 @@ jobs:
           if [ "$RUNNER_OS" = "macOS" ]; then
             test -f "$HOME/.local/bin/libsqlite3.dylib" || {
               echo "::error::remote install did not place libsqlite3.dylib — the sqlite-copy path in install.sh did not run, and vec0.dylib cannot load without it"; exit 1; }
+          fi
+
+          # Same proof for the Linux sandbox helper: the served archive carries it, so install.sh's
+          # helper-copy loop must have placed it, at mode 755, and doctor must not call it missing.
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            test -f "$HOME/.local/bin/nimbus-sandbox-helper" || {
+              echo "::error::remote install did not place nimbus-sandbox-helper — the helper-copy path in install.sh did not run"; exit 1; }
+            helper_mode="$(stat -c '%a' "$HOME/.local/bin/nimbus-sandbox-helper")"
+            test "$helper_mode" = "755" || {
+              echo "::error::remote install put nimbus-sandbox-helper at mode $helper_mode, expected 755"; exit 1; }
+            # Exit code ignored: a bare runner legitimately fails other lines.
+            "$HOME/.local/bin/nimbus" doctor > "$RUNNER_TEMP/remote-doctor.log" 2>&1 || true
+            cat "$RUNNER_TEMP/remote-doctor.log"
+            if grep -qF "nimbus-sandbox-helper is missing" "$RUNNER_TEMP/remote-doctor.log"; then
+              echo "::error::nimbus doctor reports nimbus-sandbox-helper missing after the remote install placed it"; exit 1
+            fi
           fi
 
           "$HOME/.local/bin/nimbus" --version
