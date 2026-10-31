@@ -1165,6 +1165,34 @@ export const DEMO_FIX_KEYRING_REFUSAL =
   "Refusing --fix-keyring in the demo: the demo uses an in-memory vault, not the OS keyring. " +
   "Run `nimbus doctor --fix-keyring` without --demo to repair the real keyring.";
 
+/** The sandbox line is printed once; `printed` records whether the gateway's own answer already did. */
+interface DoctorSandboxLine {
+  printed: boolean;
+  print: (snap: unknown) => number;
+}
+
+/** The checks that need a live gateway. Falls back to the probe-only sandbox line if none was printed. */
+async function doctorGatewaySection(
+  deps: DoctorCoreDeps,
+  state: DoctorGatewayState,
+  sandbox: DoctorSandboxLine,
+): Promise<number> {
+  let exit = 0;
+  const client = deps.makeClient(state.socketPath);
+  try {
+    await client.connect();
+    exit = Math.max(exit, await doctorRunGatewayRpcs(client, sandbox.print));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.log(`[fail] Gateway: IPC failed — ${msg}`);
+    exit = Math.max(exit, 2);
+  } finally {
+    await client.disconnect().catch(() => {});
+  }
+  if (!sandbox.printed) exit = Math.max(exit, sandbox.print(undefined));
+  return exit;
+}
+
 export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<void> {
   // Resolved FIRST, before any branch: `--fix-keyring` must know whether this is the demo root,
   // and that is decided by the resolved paths' `demo` field — never the env var.
@@ -1203,28 +1231,19 @@ export async function runDoctor(args: string[], deps: DoctorCoreDeps): Promise<v
   // which outranks this process's probe (a copy of the gateway's start that can pass where the
   // gateway refuses); with none, or when the gateway cannot be asked, the probe decides alone.
   const bwrapDeps = deps.bwrapDeps ?? createDoctorBwrapDeps(platform());
-  let sandboxPrinted = false;
-  const printSandbox = (snap: unknown): number => {
-    sandboxPrinted = true;
-    return doctorPrintLinuxSandbox(bwrapDeps, gatewaySandboxPosture(snap));
+  const sandbox: DoctorSandboxLine = {
+    printed: false,
+    print: (snap: unknown): number => {
+      sandbox.printed = true;
+      return doctorPrintLinuxSandbox(bwrapDeps, gatewaySandboxPosture(snap));
+    },
   };
 
   const state = await deps.readGatewayState(paths);
   const live = state !== undefined && deps.isProcessAlive(state.pid);
-  if (!live) exit = Math.max(exit, printSandbox(undefined));
+  if (!live) exit = Math.max(exit, sandbox.print(undefined));
   if (state !== undefined && live) {
-    const client = deps.makeClient(state.socketPath);
-    try {
-      await client.connect();
-      exit = Math.max(exit, await doctorRunGatewayRpcs(client, printSandbox));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.log(`[fail] Gateway: IPC failed — ${msg}`);
-      exit = Math.max(exit, 2);
-    } finally {
-      await client.disconnect().catch(() => {});
-    }
-    if (!sandboxPrinted) exit = Math.max(exit, printSandbox(undefined));
+    exit = Math.max(exit, await doctorGatewaySection(deps, state, sandbox));
   } else if (state === undefined) {
     console.log(
       `[fail] Gateway: not running (no gateway.json — start with: ${gatewayStartCommand(paths.demo === true)}).`,

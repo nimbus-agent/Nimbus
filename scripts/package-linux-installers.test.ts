@@ -181,6 +181,21 @@ describe("AppRun", () => {
     expect(again.stdout).toContain("status");
   });
 
+  linuxTest("ignores a relative XDG_CACHE_HOME and uses $HOME/.cache", () => {
+    const { appRun } = makeAppDir();
+    const home = join(workDir, "home");
+    mkdirSync(home, { recursive: true });
+    const r = spawnSync(appRun, ["go"], {
+      encoding: "utf8",
+      env: { PATH: process.env["PATH"] ?? "", XDG_CACHE_HOME: "relative/cache", HOME: home },
+      windowsHide: true,
+    });
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toBe(
+      `${join(home, ".cache", "nimbus", "appimage", "1.2.3-abc", "nimbus")} go`,
+    );
+  });
+
   linuxTest("a copy that cannot be made says so, and still runs from the AppImage", () => {
     const { appRun, bin } = makeAppDir();
     const notADirectory = join(workDir, "a-file");

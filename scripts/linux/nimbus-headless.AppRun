@@ -8,17 +8,23 @@
 # two runs at once cannot leave a partial one at the final path.
 HERE="$(dirname "$(readlink -f "$0")")"
 BIN="$HERE/usr/bin"
-CACHE="${XDG_CACHE_HOME:-${HOME:-/nonexistent}/.cache}/nimbus/appimage"
+# XDG: a relative XDG_CACHE_HOME is invalid and must be ignored.
+case "${XDG_CACHE_HOME:-}" in
+  /*) CACHE_ROOT="$XDG_CACHE_HOME" ;;
+  *) CACHE_ROOT="${HOME:-/nonexistent}/.cache" ;;
+esac
+CACHE="$CACHE_ROOT/nimbus/appimage"
 COPY="$CACHE/$(cat "$HERE/build-id")"
 
-if [ ! -x "$COPY/nimbus" ] && mkdir -p "$CACHE" 2>/dev/null; then
+# Trust the copy only if this user owns it: a directory someone else put there is not ours to run.
+if ! { [ -O "$COPY" ] && [ -x "$COPY/nimbus" ]; } && mkdir -p "$CACHE" 2>/dev/null; then
   if STAGE="$(mktemp -d "$CACHE/.stage.XXXXXX" 2>/dev/null)"; then
     cp -p "$BIN"/* "$STAGE"/ 2>/dev/null && mv -T "$STAGE" "$COPY" 2>/dev/null
     rm -rf "$STAGE"
   fi
 fi
 
-if [ -x "$COPY/nimbus" ]; then
+if [ -O "$COPY" ] && [ -x "$COPY/nimbus" ]; then
   exec "$COPY/nimbus" "$@"
 fi
 echo "nimbus: could not copy this AppImage's binaries to $CACHE, so a gateway started here stops when this command ends." >&2

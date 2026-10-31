@@ -334,7 +334,9 @@ gateway_running_from_target() {
     done
     return 1
   fi
-  ps -axo comm= 2>/dev/null | grep -qxF -e "$target" -e "${INSTALL_DIR}/nimbus-gateway"
+  ps_status=0
+  ps -axo comm= 2>/dev/null | grep -qxF -e "$target" -e "${INSTALL_DIR}/nimbus-gateway" || ps_status=$?
+  return "$ps_status"
 }
 
 # `cp` onto a running executable fails with "Text file busy", and under `set -e` that aborts the
@@ -345,6 +347,7 @@ refuse_if_gateway_running() {
     echo "Error: a Nimbus gateway is running from ${INSTALL_DIR}. Run 'nimbus stop' first, then re-run this installer. Nothing was changed." >&2
     exit 1
   fi
+  return 0
 }
 
 # Locate binaries shipped beside this script.

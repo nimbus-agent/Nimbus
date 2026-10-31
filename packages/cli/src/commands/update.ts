@@ -72,6 +72,17 @@ function currentInstallShape(): InstallShape {
 const HELPER_NOTE =
   "Replacing only the gateway binary leaves out files that ship beside it, such as the Linux sandbox helper.";
 
+/** Install locations a package manager owns: overwriting files there fights the manager. */
+const PACKAGE_MANAGERS: readonly { pattern: RegExp; name: string; command: string }[] = [
+  {
+    pattern: /^\/usr\/lib\/nimbus(\/|$)/,
+    name: "apt or dnf",
+    command: "`apt upgrade nimbus` or `dnf upgrade nimbus`",
+  },
+  { pattern: /\/Cellar\/nimbus(\/|$)/i, name: "Homebrew", command: "`brew upgrade nimbus`" },
+  { pattern: /\/scoop\/apps\/nimbus(\/|$)/i, name: "Scoop", command: "`scoop update nimbus`" },
+];
+
 /**
  * What to do instead. Each shape gets its own line, because the installer's answer is wrong for two
  * of them: it always installs into its own directory, so for an AppImage or a copy kept anywhere else
@@ -91,7 +102,14 @@ export function manualUpdateLine(shape: InstallShape): string {
     : [shape.home, ".local", "bin"].join(separator);
   const here = shape.execPath.slice(0, shape.execPath.lastIndexOf(separator));
   if (here === installerDir) {
-    return `${check} Then ${stop} and re-run ${installer} from the new release, which refuses while a gateway is running. ${HELPER_NOTE}`;
+    const refusal = windows
+      ? `${stop} first (a running gateway keeps its files open) and re-run ${installer} from the new release.`
+      : `${stop} and re-run ${installer} from the new release, which refuses while a gateway is running.`;
+    return `${check} Then ${refusal} ${HELPER_NOTE}`;
+  }
+  const manager = PACKAGE_MANAGERS.find((m) => m.pattern.test(here.replaceAll("\\", "/")));
+  if (manager !== undefined) {
+    return `${check} This copy is in ${here}, which ${manager.name} owns, so ${stop} and update it with ${manager.command} instead of overwriting its files.`;
   }
   return `${check} This copy is in ${here}, and ${installer} would add a second copy in ${installerDir}, so ${stop} and replace every file here from the new release's archive. ${HELPER_NOTE}`;
 }

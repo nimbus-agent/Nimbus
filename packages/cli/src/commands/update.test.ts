@@ -190,6 +190,39 @@ describe("manualUpdateLine", () => {
     expect(line).not.toContain("re-run install.sh");
   });
 
+  it("points package-manager copies at their manager, not at an overwrite", () => {
+    const apt = manualUpdateLine({ ...linux, execPath: "/usr/lib/nimbus/bin/nimbus" });
+    expect(apt).toContain("apt upgrade nimbus");
+    expect(apt).not.toContain("replace every file");
+    const brew = manualUpdateLine({
+      ...linux,
+      platform: "darwin",
+      execPath: "/opt/homebrew/Cellar/nimbus/10.11.0/bin/nimbus",
+    });
+    expect(brew).toContain("brew upgrade nimbus");
+    expect(brew).not.toContain("replace every file");
+    const scoop = manualUpdateLine({
+      ...linux,
+      platform: "win32",
+      execPath: String.raw`C:\Users\u\scoop\apps\nimbus\current\nimbus.exe`,
+      localAppData: String.raw`C:\Users\u\AppData\Local`,
+    });
+    expect(scoop).toContain("scoop update nimbus");
+    expect(scoop).not.toContain("replace every file");
+  });
+
+  it("does not claim install.ps1 refuses while a gateway runs on Windows", () => {
+    const line = manualUpdateLine({
+      platform: "win32",
+      execPath: String.raw`C:\Users\u\AppData\Local\Programs\Nimbus\bin\nimbus.exe`,
+      appImage: undefined,
+      home: String.raw`C:\Users\u`,
+      localAppData: String.raw`C:\Users\u\AppData\Local`,
+    });
+    expect(line).not.toContain("refuses");
+    expect(line).toContain("`nimbus stop` first");
+  });
+
   it("names install.ps1 and its directory on Windows", () => {
     const shape = {
       platform: "win32",
