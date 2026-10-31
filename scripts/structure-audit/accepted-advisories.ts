@@ -130,4 +130,35 @@ export const ACCEPTED_ADVISORIES: readonly AcceptedAdvisory[] = [
     recheckBy: "2026-11-28",
     owner: "asafgolombek",
   },
+  // Two MODERATE advisories that turned `Dependency audit` red on `main` on 2026-10-31, with
+  // no change to the repo (#1833). Both sit only under developer tools, and nothing that ships
+  // contains either package.
+  {
+    ghsa: "GHSA-3g3m-2fjr-6pw4",
+    package: "glob",
+    severity: "moderate",
+    noFixReason:
+      "The advisory covers >=9.0.0 <=14.0.1 and 10.5.0 is installed. Its only dependent, test-exclude 7.0.2, requires glob ^10.4.1, so a fixed glob is a major above what it accepts, and overriding a major under the coverage instrumenter risks the coverage gate for no reachable benefit.",
+    reachability:
+      "Dev-only: `bun why glob` gives the sole chain nimbus > babel-plugin-istanbul > test-exclude > glob. The flaw needs a caller that passes an AbortSignal to stop a traversal, and test-exclude's two glob calls pass none. Its patterns are this repository's own coverage config, run in CI over this repository's own tree.",
+    unblockedBy:
+      "test-exclude releases with a fixed glob and babel-plugin-istanbul takes it. Either way `bun audit` stops reporting this and the row must be deleted.",
+    acceptedOn: "2026-10-31",
+    recheckBy: "2026-11-30",
+    owner: "asafgolombek",
+  },
+  {
+    ghsa: "GHSA-g3hv-75wg-m249",
+    package: "minimatch",
+    severity: "moderate",
+    noFixReason:
+      "The advisory covers <11.0.1, and 10.2.6 and 9.0.9 are installed. Their dependents pin below the fix: @stryker-mutator/core 10.0.0 requires ~10.2.4, test-exclude requires ^10.2.2, and glob 10.5.0 requires ^9.0.4, so a fix needs each of them to move a major.",
+    reachability:
+      "Dev-only: `bun why minimatch` gives only babel-plugin-istanbul > test-exclude and glob, and @stryker-mutator/core. The denial of service needs a hostile pattern. Every pattern these tools match comes from this repository's own coverage and mutation config, not from any user or network input, and the worst case is a slow developer or CI run.",
+    unblockedBy:
+      "@stryker-mutator/core and test-exclude release with minimatch >=11.0.1, and glob with them. Either way `bun audit` stops reporting this and the row must be deleted.",
+    acceptedOn: "2026-10-31",
+    recheckBy: "2026-11-30",
+    owner: "asafgolombek",
+  },
 ];

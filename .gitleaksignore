@@ -64,3 +64,10 @@ ff3ab297ae365f7e2a499b21ffbb3111a79f9cc8:packages/gateway/src/platform/assemble.
 # historical PR-branch commit keeps the old literals, so its two findings are pinned. Never real.
 bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariants.test.ts:generic-api-key:9257
 bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariants.test.ts:generic-api-key:9258
+
+# Linux forwarder (PR #1834, 2026-10-31) — scripts/linux/check-forwarder-connector.ts gives the real
+# aws CLI a fake key, to prove a real AWS error comes back through the sandbox. That branch's HEAD
+# uses a value the rule's character set refuses; a historical commit keeps the old literal. It lands
+# here rather than in #1834 because the PR scan walks every pushed branch and reads this file from
+# the PR's own tree, so it reds every open PR until it reaches main. Never real.
+55ad6942a2c6e62cac7c30e34d463a6f18bf528a:scripts/linux/check-forwarder-connector.ts:aws-access-token:230
