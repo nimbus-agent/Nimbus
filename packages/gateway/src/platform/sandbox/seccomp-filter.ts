@@ -44,6 +44,8 @@ export const SYSCALL_NR: Record<string, number> = {
   ioctl: 16,
   pread64: 17,
   pwrite64: 18,
+  preadv: 295,
+  pwritev: 296,
   readv: 19,
   writev: 20,
   access: 21,
@@ -298,6 +300,9 @@ export const SYS_ALLOW: readonly string[] = Object.freeze([
   "ioctl",
   "pread64",
   "pwrite64",
+  // Bun writes its transpile cache with `pwritev`, and answering ENOSYS makes it drop the cache.
+  "preadv",
+  "pwritev",
   "readv",
   "writev",
   "access",
