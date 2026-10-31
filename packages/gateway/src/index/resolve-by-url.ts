@@ -58,6 +58,7 @@ type Row = {
  * from "exactly the cap" without a second COUNT query.
  */
 function matchesForKey(db: Database, key: string): Row[] {
+  // lane-census: scope=ci_run,pr
   return db
     .query(
       `SELECT id, service, type, title, url, modified_at,
