@@ -200,14 +200,14 @@ function probeHelper(): HelperState {
   }
   try {
     // windows-console-ok: Linux-only module.
-    const result = spawnSync(HELPER_PATH, ["--check-caps"], { encoding: "utf8" });
+    const result = spawnSync(HELPER_PATH, ["--check"], { encoding: "utf8" });
     if (result.status === 0 && result.stdout.trim() === "OK") {
       return { available: true, reason: null };
     }
     const stderr = (result.stderr ?? "").trim();
     return {
       available: false,
-      reason: `nimbus-sandbox-helper lacks CAP_NET_ADMIN: ${stderr === "" ? "<no stderr>" : stderr}`,
+      reason: `nimbus-sandbox-helper --check failed: ${stderr === "" ? "<no stderr>" : stderr}`,
     };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);

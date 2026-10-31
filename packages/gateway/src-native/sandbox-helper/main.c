@@ -1,607 +1,776 @@
 /*
- * nimbus-sandbox-helper — Linux-only post-bwrap network confinement.
+ * nimbus-sandbox-helper: the launcher and forwarder of Linux per-host networking.
+ *
+ * It runs inside the outer bwrap's new user and network namespaces, as uid 0 there, holding
+ * CAP_NET_BIND_SERVICE, CAP_SETPCAP and CAP_SETFCAP. It binds the sandbox's loopback listeners,
+ * forks the forwarder, and becomes the inner bwrap.
+ *
+ * The forwarder drops everything, then relays bytes between those listeners and the unix socket of
+ * the wrapper outside the sandbox. It handles bytes a hostile child wrote, so it parses none of
+ * them, holds no capability, and runs under its own seccomp allowlist. It knows nothing about the
+ * policy: a compromised forwarder can name any entry index, and the wrapper checks every one.
  *
  * Modes:
- *   --check-caps           — verify CAP_NET_ADMIN is in the permitted set
- *                            (used at install-time by `nimbus doctor` and in CI).
+ *   --check
+ *       Prints OK and exits 0. No capability, namespace or file work.
  *
- *   --allow <host[:port]> [...]  -- <argv...>
- *                          — resolve each <host>, unshare(CLONE_NEWNET), install
- *                            an iptables/ip6tables OUTPUT-default-DROP ruleset
- *                            that only permits the resolved IPs on each host's
- *                            declared TCP port (a bare host defaults to 443; an
- *                            explicit `host:port` such as imap.example.com:993
- *                            opens that port instead) plus DNS UDP/TCP 53 and
- *                            ESTABLISHED,RELATED, drop all
- *                            capabilities, install a post-unshare seccomp BPF
- *                            filter that forbids setns + unshare (so the helper
- *                            cannot itself escape the netns it just created),
- *                            then execv(<argv>).
+ *   --socket <path> [--alias <ip>]... --listen <ip>:<port>:<index>... --dns <ip> -- <argv...>
+ *       <path>   the wrapper's unix socket.
+ *       --alias  adds an IPv4 address to `lo`, for an IP-literal entry. Needs CAP_NET_ADMIN.
+ *       --listen one TCP listener; <index> is the wrapper's entry index, 0..65535.
+ *       --dns    the address whose UDP port 53 carries the stub resolver's datagrams.
  *
- * Exit codes:
- *   0   success (only meaningful for --check-caps; --allow execs and never returns)
- *   1   --check-caps: CAP_NET_ADMIN not permitted
- *   2   usage / arg parse error
- *   3   DNS resolution failure
- *   4   unshare(CLONE_NEWNET) failure
- *   5   iptables/ip configuration failure
- *   6   capability drop failure
- *   7   post-unshare seccomp install failure
- *   127 execv failure
+ * Wire format, one per unix connection (packages/gateway/src/platform/sandbox/net-forward-host.ts):
+ * a 3-byte header, then the stream. Byte 0 is `T` or `D`, bytes 1 and 2 the big-endian entry index
+ * (0 for `D`). `T` relays until either side closes. `D` writes a 2-byte big-endian length and a
+ * datagram, reads a 2-byte length and the reply, and closes.
  *
- * Build: `make` in this directory; requires libcap-dev. C99 + -Werror clean.
+ * Exit codes: 0 --check; 2 usage; 3 bind, listen or fork failure; 5 alias failure; 127 exec failure.
+ * Stderr carries only those startup failures. Nothing is ever logged about a connection, and the
+ * forwarder's stderr is /dev/null.
+ *
+ * Build: `make` in this directory. C99, -Werror clean, static, x86-64 only.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif
 #include <arpa/inet.h>
 #include <errno.h>
-#include <netdb.h>
-#include <sched.h>
+#include <fcntl.h>
+#include <net/if.h>
+#include <poll.h>
+#include <signal.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/capability.h>
+#include <sys/ioctl.h>
 #include <sys/prctl.h>
+#include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include <linux/audit.h>
+#include <linux/capability.h>
 #include <linux/filter.h>
 #include <linux/seccomp.h>
 
-#define MAX_HOSTS 32
+#ifndef __x86_64__
+#error "the forwarder's seccomp allowlist names x86-64 syscalls; add this architecture's first"
+#endif
 
-/*
- * Free every non-NULL entry in resolved[0 .. n_allowed-1] and zero the slot.
- * Centralizes the freeaddrinfo cleanup so that the per-IP iteration loop in
- * mode_enforce_and_exec has a single, audited release path on both the error
- * (return 5) and success (post-loop) branches. Idempotent — safe to call
- * twice, since each cleared slot becomes NULL on first release.
- */
-static void free_all_resolved(struct addrinfo **resolved, int n_allowed) {
-    for (int j = 0; j < n_allowed; j++) {
-        if (resolved[j]) {
-            freeaddrinfo(resolved[j]);
-            resolved[j] = NULL;
-        }
-    }
-}
+#define EXIT_USAGE 2
+#define EXIT_BIND 3
+#define EXIT_ALIAS 5
+#define EXIT_EXEC 127
 
-/*
- * RFC 1123 hostname validator. Semantically mirrors the TypeScript
- * HOSTNAME_RE in packages/registry-format/src/permissions-validator.ts —
- * both ends of the input pipeline (TOML loader + helper argv) enforce the
- * same contract so a malformed hostname never reaches getaddrinfo() with
- * caller-supplied bytes.
- *
- * Rules:
- *   - total length 1..253
- *   - one or more dot-separated labels
- *   - each label length 1..63
- *   - label characters in [A-Za-z0-9-]
- *   - no leading hyphen in any label
- *   - no trailing hyphen in any label
- *   - no empty labels (consecutive dots, leading dot, trailing dot)
- *
- * Returns 1 on accept, 0 on reject.
- */
-/*
- * Validate a single dot-free DNS label spanning label[0 .. len-1]: length
- * 1..63, characters in [A-Za-z0-9-], no leading or trailing hyphen. An empty
- * label (len == 0) is rejected, which is how valid_hostname below turns a
- * leading/trailing dot or consecutive dots into a rejection.
- * Returns 1 on accept, 0 on reject.
- */
-static int valid_label(const char *label, size_t len) {
-    if (len == 0 || len > 63) {
-        return 0;
-    }
-    if (label[0] == '-' || label[len - 1] == '-') {
-        return 0;
-    }
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)label[i];
-        int is_alnum = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                       (c >= '0' && c <= '9');
-        if (!is_alnum && c != '-') {
-            return 0;
-        }
-    }
-    return 1;
-}
+#define MAX_ENTRIES 65535u
+#define MAX_PORT 65535ul
+#define MAX_INDEX 65535ul
+#define DNS_PORT 53
 
-static int valid_hostname(const char *host) {
-    if (host == NULL) {
-        return 0;
-    }
-    size_t len = strlen(host);
-    if (len == 0 || len > 253) {
-        return 0;
-    }
-    /* Walk the dot-separated labels; the sentinel index i == len closes the
-     * final label so the trailing-dot / final-label cases reuse valid_label. */
-    size_t label_start = 0;
-    for (size_t i = 0; i <= len; i++) {
-        if (i == len || host[i] == '.') {
-            if (!valid_label(host + label_start, i - label_start)) {
-                return 0;
-            }
-            label_start = i + 1;
-        }
-    }
-    return 1;
-}
+/* The inner bwrap's seccomp program. The launcher keeps it for the exec; the forwarder closes it. */
+#define INNER_SECCOMP_FD 3
 
-/*
- * Parse a decimal TCP port (1..65535) from `s`. Accepts 1..5 ASCII digits with
- * no sign, whitespace, or other characters. Returns the port on success, or -1
- * on any malformed input. Mirrors the TypeScript `permissions.network` port
- * check (/^\d{1,5}$/ + 1..65535) in permissions-validator.ts so both ends of
- * the pipeline (TOML loader + helper argv) enforce the same contract.
- */
-static int parse_port(const char *s) {
-    if (s == NULL || s[0] == '\0') {
-        return -1;
+#define MAX_RELAYS 512u
+#define RELAY_BUFFER_BYTES 16384
+#define MAX_DATAGRAM_BYTES 4096
+#define DNS_REPLY_TIMEOUT_MS 5000
+
+#define HEADER_BYTES 3
+#define DNS_LENGTH_BYTES 2
+
+typedef struct {
+    struct in_addr ip;
+    const char *ip_text;
+    const char *port_text;
+    uint16_t port;
+    uint16_t index;
+    int fd;
+} listener_t;
+
+typedef struct {
+    struct in_addr ip;
+    const char *text;
+} address_t;
+
+typedef struct {
+    const char *socket_path;
+    address_t *aliases;
+    size_t alias_count;
+    listener_t *listeners;
+    size_t listener_count;
+    address_t dns;
+    bool has_dns;
+    char **child_argv;
+} options_t;
+
+/* ------------------------------------------------------------------ argument parsing */
+
+/* Decimal digits only, at most `max`. No sign, no whitespace, and no value from an overflow. */
+static bool parse_decimal(const char *s, unsigned long max, unsigned long *out) {
+    if (*s == '\0') {
+        return false;
     }
-    long val = 0;
+    unsigned long value = 0;
     for (const char *p = s; *p != '\0'; p++) {
         if (*p < '0' || *p > '9') {
-            return -1;
+            return false;
         }
-        val = val * 10 + (*p - '0');
-        if (val > 65535) {
-            return -1;
+        value = value * 10 + (unsigned long)(*p - '0');
+        if (value > max) {
+            return false;
         }
     }
-    if (val < 1) {
-        return -1;
+    *out = value;
+    return true;
+}
+
+/* <ip>:<port>:<index>. Splits the writable argv string in place. */
+static bool parse_listen(char *value, listener_t *out) {
+    char *last_colon = strrchr(value, ':');
+    if (last_colon == NULL) {
+        return false;
     }
-    return (int)val;
+    *last_colon = '\0';
+    char *port_colon = strrchr(value, ':');
+    if (port_colon == NULL) {
+        return false;
+    }
+    *port_colon = '\0';
+    unsigned long port = 0;
+    unsigned long index = 0;
+    if (!parse_decimal(port_colon + 1, MAX_PORT, &port) || port == 0) {
+        return false;
+    }
+    if (!parse_decimal(last_colon + 1, MAX_INDEX, &index)) {
+        return false;
+    }
+    if (inet_pton(AF_INET, value, &out->ip) != 1) {
+        return false;
+    }
+    out->ip_text = value;
+    out->port_text = port_colon + 1;
+    out->port = (uint16_t)port;
+    out->index = (uint16_t)index;
+    out->fd = -1;
+    return true;
+}
+
+static bool parse_address(const char *value, address_t *out) {
+    out->text = value;
+    return inet_pton(AF_INET, value, &out->ip) == 1;
+}
+
+static bool parse_socket_path(const char *value, const char **out) {
+    if (*out != NULL || value[0] == '\0') {
+        return false;
+    }
+    if (strlen(value) >= sizeof(((struct sockaddr_un *)NULL)->sun_path)) {
+        return false;
+    }
+    *out = value;
+    return true;
+}
+
+/* One `--flag value` pair. False on anything unknown, repeated, malformed or over a limit. */
+static bool parse_flag(const char *flag, char *value, options_t *o) {
+    if (strcmp(flag, "--socket") == 0) {
+        return parse_socket_path(value, &o->socket_path);
+    }
+    if (strcmp(flag, "--alias") == 0) {
+        if (o->alias_count >= MAX_ENTRIES) {
+            return false;
+        }
+        return parse_address(value, &o->aliases[o->alias_count++]);
+    }
+    if (strcmp(flag, "--listen") == 0) {
+        if (o->listener_count >= MAX_ENTRIES) {
+            return false;
+        }
+        return parse_listen(value, &o->listeners[o->listener_count++]);
+    }
+    if (strcmp(flag, "--dns") == 0) {
+        if (o->has_dns) {
+            return false;
+        }
+        o->has_dns = true;
+        return parse_address(value, &o->dns);
+    }
+    return false;
+}
+
+static bool parse_args(int argc, char **argv, options_t *o) {
+    size_t slots = (size_t)argc;
+    o->aliases = calloc(slots, sizeof(*o->aliases));
+    o->listeners = calloc(slots, sizeof(*o->listeners));
+    if (o->aliases == NULL || o->listeners == NULL) {
+        return false;
+    }
+    int i = 1;
+    while (i < argc && strcmp(argv[i], "--") != 0) {
+        if (i + 1 >= argc || !parse_flag(argv[i], argv[i + 1], o)) {
+            return false;
+        }
+        i += 2;
+    }
+    if (i + 1 >= argc) { /* no `--`, or nothing after it */
+        return false;
+    }
+    o->child_argv = &argv[i + 1];
+    return o->socket_path != NULL && o->listener_count > 0 && o->has_dns;
+}
+
+/* ------------------------------------------------------------------ the launcher */
+
+/*
+ * The forwarder closes 0 to 3 by number, so no socket may land there. A number nothing holds gets
+ * a close-on-exec /dev/null, which the exec removes again, so the child sees what it would have.
+ */
+static bool reserve_low_fds(void) {
+    for (int fd = 0; fd <= INNER_SECCOMP_FD; fd++) {
+        if (fcntl(fd, F_GETFD) < 0 && open("/dev/null", O_RDWR | O_CLOEXEC) != fd) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static struct sockaddr_in inet_address(struct in_addr ip, uint16_t port) {
+    struct sockaddr_in address;
+    memset(&address, 0, sizeof(address));
+    address.sin_family = AF_INET;
+    address.sin_port = htons(port);
+    address.sin_addr = ip;
+    return address;
+}
+
+static int set_interface_address(int fd, unsigned long request, const char *label,
+                                 struct in_addr ip) {
+    struct ifreq request_data;
+    memset(&request_data, 0, sizeof(request_data));
+    memcpy(request_data.ifr_name, label, strlen(label) + 1);
+    struct sockaddr_in address = inet_address(ip, 0);
+    memcpy(&request_data.ifr_addr, &address, sizeof(address));
+    return ioctl(fd, request, &request_data);
 }
 
 /*
- * --check-caps mode: verify the binary has CAP_NET_ADMIN in its permitted set
- * (granted via `setcap cap_net_admin+ep` during install or via
- * AmbientCapabilities=CAP_NET_ADMIN in a systemd unit). Used at install time
- * by `nimbus doctor` and in the Linux CI matrix.
+ * Each alias gets a /32. SIOCSIFADDR alone assigns the old classful netmask, and on `lo` that makes
+ * a whole /8 local, where the child could bind any address the policy never named.
  */
-static int mode_check_caps(void) {
-    cap_t caps = cap_get_proc();
-    if (!caps) {
-        fprintf(stderr, "cap_get_proc failed: %s\n", strerror(errno));
-        return 1;
+static int apply_aliases(const options_t *o) {
+    if (o->alias_count == 0) {
+        return 0;
     }
-    cap_flag_value_t value = CAP_CLEAR;
-    if (cap_get_flag(caps, CAP_NET_ADMIN, CAP_PERMITTED, &value) != 0) {
-        fprintf(stderr, "cap_get_flag failed: %s\n", strerror(errno));
-        cap_free(caps);
-        return 1;
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
+        fprintf(stderr, "nimbus-sandbox-helper: alias socket: %s\n", strerror(errno));
+        return EXIT_ALIAS;
     }
-    cap_free(caps);
-    if (value != CAP_SET) {
-        fprintf(stderr, "CAP_NET_ADMIN not in permitted set; "
-                        "run `setcap cap_net_admin+ep` on this binary\n");
-        return 1;
+    struct in_addr host_mask;
+    host_mask.s_addr = INADDR_NONE;
+    for (size_t i = 0; i < o->alias_count; i++) {
+        char label[IFNAMSIZ];
+        int written = snprintf(label, sizeof(label), "lo:%zu", i);
+        if (written < 0 || (size_t)written >= sizeof(label) ||
+            set_interface_address(fd, SIOCSIFADDR, label, o->aliases[i].ip) != 0 ||
+            set_interface_address(fd, SIOCSIFNETMASK, label, host_mask) != 0) {
+            fprintf(stderr, "nimbus-sandbox-helper: alias %s: %s\n", o->aliases[i].text,
+                    strerror(errno));
+            close(fd);
+            return EXIT_ALIAS;
+        }
     }
-    printf("OK\n");
+    close(fd);
     return 0;
 }
 
+static int bind_listeners(const options_t *o) {
+    for (size_t i = 0; i < o->listener_count; i++) {
+        listener_t *l = &o->listeners[i];
+        struct sockaddr_in address = inet_address(l->ip, l->port);
+        /* Nonblocking, since a connection can vanish between the poll and the accept. */
+        l->fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+        if (l->fd < 0 || bind(l->fd, (const struct sockaddr *)&address, sizeof(address)) != 0 ||
+            listen(l->fd, SOMAXCONN) != 0) {
+            fprintf(stderr, "nimbus-sandbox-helper: bind %s:%s: %s\n", l->ip_text, l->port_text,
+                    strerror(errno));
+            return EXIT_BIND;
+        }
+    }
+    return 0;
+}
+
+static int bind_dns(const options_t *o) {
+    struct sockaddr_in address = inet_address(o->dns.ip, DNS_PORT);
+    int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0 || bind(fd, (const struct sockaddr *)&address, sizeof(address)) != 0) {
+        fprintf(stderr, "nimbus-sandbox-helper: bind %s:%d: %s\n", o->dns.text, DNS_PORT,
+                strerror(errno));
+        return -1;
+    }
+    return fd;
+}
+
+/* ------------------------------------------------------------------ the forwarder's lockdown */
+
+static bool set_signal(int signum, void (*handler)(int)) {
+    struct sigaction action;
+    memset(&action, 0, sizeof(action));
+    action.sa_handler = handler;
+    return sigaction(signum, &action, NULL) == 0;
+}
+
+static bool replace_stdio(void) {
+    for (int fd = 0; fd <= INNER_SECCOMP_FD; fd++) {
+        close(fd);
+    }
+    /* Each open takes the lowest free number, so this is 0, 1 and 2 in turn. */
+    for (int fd = 0; fd <= STDERR_FILENO; fd++) {
+        if (open("/dev/null", O_RDWR) != fd) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static bool drop_capabilities(void) {
+    if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) != 0) {
+        return false;
+    }
+    /* The kernel's highest capability is not known at build time: EINVAL marks the end. */
+    for (unsigned long cap = 0; cap < 64; cap++) {
+        if (prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) != 0) {
+            if (errno == EINVAL) {
+                break;
+            }
+            return false;
+        }
+    }
+    struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
+    struct __user_cap_data_struct data[_LINUX_CAPABILITY_U32S_3];
+    memset(data, 0, sizeof(data));
+    if (syscall(SYS_capset, &header, data) != 0) {
+        return false;
+    }
+    return prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == 0;
+}
+
+#define SECCOMP_ARCH_OFFSET ((uint32_t)offsetof(struct seccomp_data, arch))
+#define SECCOMP_NR_OFFSET ((uint32_t)offsetof(struct seccomp_data, nr))
+/* The low 32 bits, on this little-endian architecture. The kernel reads `socket`'s domain as int. */
+#define SECCOMP_ARG0_OFFSET ((uint32_t)offsetof(struct seccomp_data, args[0]))
+
+#define LOAD(offset) BPF_STMT(BPF_LD | BPF_W | BPF_ABS, (offset))
+#define KILL BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS)
+#define ALLOW_RET BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW)
+#define ALLOW(nr) BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, (nr), 0, 1), ALLOW_RET
+
 /*
- * Install a small seccomp BPF filter that forbids setns(2) and unshare(2)
- * via SECCOMP_RET_KILL_PROCESS. Installed by the helper *on itself* right
- * before execv(), so:
- *
- *   - the helper cannot re-enter the host's network namespace via setns;
- *   - the helper cannot create *another* netns to escape into via unshare;
- *   - the seccomp filter is inherited across execv (PR_SET_NO_NEW_PRIVS
- *     guarantees the filter cannot be dropped by a suid/file-capability
- *     binary), so the bwrap/connector chain inherits the same restriction.
- *
- * Syscall numbers are x86_64 only (the deployment target):
- *   setns   = 308
- *   unshare = 272
- *
- * The filter's *first* instruction is an architecture check: the BPF program
- * loads seccomp_data.arch (offset 4) and refuses to run on anything other
- * than AUDIT_ARCH_X86_64 by returning SECCOMP_RET_KILL_PROCESS. This is the
- * safer default because the 308 / 272 syscall numbers above are only correct
- * on x86_64; on a different arch they would name unrelated syscalls and the
- * filter would silently allow setns/unshare while denying something benign.
- * aarch64 support is tracked as a follow-up — add another JEQ branch with
- * the aarch64 syscall numbers before the kill, do not loosen the kill.
- *
- * Returns 0 on success, -1 on failure.
+ * Anything not named here kills the process. Nothing here opens a path, and `socket` is AF_UNIX
+ * only, so a compromised forwarder cannot open a route. It runs after /dev/null is open.
  */
-static int install_post_unshare_seccomp(void) {
-    /* Offsets into struct seccomp_data (uapi/linux/seccomp.h):
-     *   nr      = 0  (s32)
-     *   arch    = 4  (u32)
-     *
-     * BPF program (9 instructions, PC-indexed below):
-     *   [0] load arch (offset 4)                         A := arch
-     *   [1] if A == AUDIT_ARCH_X86_64 jt=1 jf=0          skip [2] on match
-     *   [2] KILL_PROCESS                                 (arch mismatch)
-     *   [3] load nr (offset 0)                           A := nr
-     *   [4] if A == 308 (setns)      jt=0 jf=1           fall through to [5] on match
-     *   [5] KILL_PROCESS                                 (setns blocked)
-     *   [6] if A == 272 (unshare)    jt=0 jf=1           fall through to [7] on match
-     *   [7] KILL_PROCESS                                 (unshare blocked)
-     *   [8] ALLOW                                        default
-     */
+static bool install_seccomp(void) {
     struct sock_filter filter[] = {
-        /* load seccomp_data.arch (struct offset 4) into the accumulator */
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 4),
-
-        /* if arch == AUDIT_ARCH_X86_64 (0xC000003E), skip the kill (jt=1);
-         * else fall through (jf=0) to KILL_PROCESS. */
+        LOAD(SECCOMP_ARCH_OFFSET),
         BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+        KILL,
+        LOAD(SECCOMP_NR_OFFSET),
 
-        /* load seccomp_data.nr (struct offset 0) into the accumulator */
-        BPF_STMT(BPF_LD | BPF_W | BPF_ABS, 0),
+        /* socket: only AF_UNIX. Both arms return, so the reload of A touches nothing below. */
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_socket, 0, 4),
+        LOAD(SECCOMP_ARG0_OFFSET),
+        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, AF_UNIX, 0, 1),
+        ALLOW_RET,
+        KILL,
 
-        /* if nr == 308 (setns) -> KILL_PROCESS */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 308, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
+        ALLOW(SYS_read),
+        ALLOW(SYS_write),
+        ALLOW(SYS_close),
+        ALLOW(SYS_shutdown),
+        ALLOW(SYS_poll),
+        ALLOW(SYS_ppoll),
+        ALLOW(SYS_accept),
+        ALLOW(SYS_accept4),
+        ALLOW(SYS_connect),
+        ALLOW(SYS_sendto),
+        ALLOW(SYS_recvfrom),
+        ALLOW(SYS_fcntl),
+        ALLOW(SYS_fork),
+        ALLOW(SYS_clone),
+        ALLOW(SYS_clone3),
+        ALLOW(SYS_wait4),
+        ALLOW(SYS_exit),
+        ALLOW(SYS_exit_group),
+        ALLOW(SYS_rt_sigaction),
+        ALLOW(SYS_rt_sigreturn),
+        ALLOW(SYS_rt_sigprocmask),
+        ALLOW(SYS_brk),
+        ALLOW(SYS_mmap),
+        ALLOW(SYS_munmap),
+        ALLOW(SYS_getpid),
+        ALLOW(SYS_set_robust_list), /* glibc's fork calls it in the child */
+        ALLOW(SYS_restart_syscall), /* resumes a poll that a stop and continue interrupted */
 
-        /* if nr == 272 (unshare) -> KILL_PROCESS */
-        BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 272, 0, 1),
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL_PROCESS),
-
-        /* default: ALLOW */
-        BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+        KILL,
     };
-    struct sock_fprog prog = {
+    struct sock_fprog program = {
         .len = (unsigned short)(sizeof(filter) / sizeof(filter[0])),
         .filter = filter,
     };
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        fprintf(stderr, "prctl(PR_SET_NO_NEW_PRIVS) failed: %s\n", strerror(errno));
+    return syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &program) == 0;
+}
+
+/* Each step needs the one before. Any failure leaves the forwarder gone and nothing relaying. */
+static bool lock_down(pid_t launcher) {
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0) != 0 || getppid() != launcher) {
+        return false;
+    }
+    /* An ignored SIGCHLD the launcher inherited would make `wait4` blind to the relays. */
+    if (!set_signal(SIGCHLD, SIG_DFL) || !set_signal(SIGPIPE, SIG_IGN)) {
+        return false;
+    }
+    return replace_stdio() && drop_capabilities() && install_seccomp();
+}
+
+/* ------------------------------------------------------------------ the relays */
+
+/* Blocking. Null-terminated by the length check in parse_socket_path. */
+static int connect_wrapper(const char *path) {
+    struct sockaddr_un address;
+    memset(&address, 0, sizeof(address));
+    address.sun_family = AF_UNIX;
+    memcpy(address.sun_path, path, strlen(path) + 1);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (fd < 0) {
         return -1;
     }
-    if (syscall(SYS_seccomp, SECCOMP_SET_MODE_FILTER, 0, &prog) != 0) {
-        fprintf(stderr, "seccomp(SET_MODE_FILTER) failed: %s\n", strerror(errno));
-        return -1;
+    while (connect(fd, (const struct sockaddr *)&address, sizeof(address)) != 0) {
+        if (errno != EINTR) {
+            close(fd);
+            return -1;
+        }
     }
-    return 0;
+    return fd;
+}
+
+static bool write_all(int fd, const unsigned char *bytes, size_t length) {
+    size_t sent = 0;
+    while (sent < length) {
+        ssize_t n = write(fd, bytes + sent, length - sent);
+        if (n > 0) {
+            sent += (size_t)n;
+        } else if (n < 0 && errno != EINTR) {
+            return false;
+        }
+    }
+    return true;
+}
+
+/* One direction of a relay. `shut` means its EOF has been passed on and its buffer is empty. */
+typedef struct {
+    int from;
+    int to;
+    size_t offset;
+    size_t length;
+    bool eof;
+    bool shut;
+    unsigned char buffer[RELAY_BUFFER_BYTES];
+} stream_t;
+
+static short read_interest(const stream_t *s) {
+    return (!s->eof && s->length == 0) ? POLLIN : 0;
+}
+
+static short write_interest(const stream_t *s) {
+    return s->length > 0 ? POLLOUT : 0;
+}
+
+static bool would_retry(void) {
+    return errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK;
+}
+
+/* Moves whatever is ready in one direction. False when the relay is over. */
+static bool service_stream(stream_t *s, short from_revents, short to_revents) {
+    if (read_interest(s) != 0 && from_revents != 0) {
+        ssize_t n = read(s->from, s->buffer, sizeof(s->buffer));
+        if (n > 0) {
+            s->offset = 0;
+            s->length = (size_t)n;
+        } else if (n == 0) {
+            s->eof = true;
+        } else if (!would_retry()) {
+            return false;
+        }
+    }
+    if (write_interest(s) != 0 && to_revents != 0) {
+        ssize_t n = write(s->to, s->buffer + s->offset, s->length);
+        if (n > 0) {
+            s->offset += (size_t)n;
+            s->length -= (size_t)n;
+        } else if (n < 0 && !would_retry()) {
+            return false;
+        }
+    }
+    if (s->eof && s->length == 0 && !s->shut) {
+        (void)shutdown(s->to, SHUT_WR);
+        s->shut = true;
+    }
+    return true;
 }
 
 /*
- * Wrapper around `/bin/sh -c <cmd>`. Returns 0 on clean success, or -1 on any
- * non-zero exit or fork/exec failure. Callers build the command string first
- * (see add_host_accept_rules for the only formatted call site); run_cmd takes
- * a finished string so the format string handed to the formatter is always a
- * literal at the build site, never run_cmd's own argument.
- *
- * The helper passes only well-validated values into <cmd>:
- *   - hardcoded iptables/ip6tables/ip subcommands, and
- *   - IP literals produced by inet_ntop() (never user input),
- * so /bin/sh -c is acceptable here.
+ * Both directions at once, so neither side's flow can wait on the other's. A descriptor with no
+ * interest goes in as -1, since poll reports POLLHUP regardless and would otherwise spin.
  */
-static int run_cmd(const char *cmd) {
+static void relay_stream_pair(int a, int b) {
+    stream_t a_to_b;
+    stream_t b_to_a;
+    memset(&a_to_b, 0, offsetof(stream_t, buffer));
+    memset(&b_to_a, 0, offsetof(stream_t, buffer));
+    a_to_b.from = a;
+    a_to_b.to = b;
+    b_to_a.from = b;
+    b_to_a.to = a;
+
+    while (!(a_to_b.shut && b_to_a.shut)) {
+        short a_events = (short)(read_interest(&a_to_b) | write_interest(&b_to_a));
+        short b_events = (short)(read_interest(&b_to_a) | write_interest(&a_to_b));
+        struct pollfd fds[2] = {
+            {a_events != 0 ? a : -1, a_events, 0},
+            {b_events != 0 ? b : -1, b_events, 0},
+        };
+        if (poll(fds, 2, -1) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return;
+        }
+        if (!service_stream(&a_to_b, fds[0].revents, fds[1].revents) ||
+            !service_stream(&b_to_a, fds[1].revents, fds[0].revents)) {
+            return;
+        }
+    }
+}
+
+static void relay_tcp(int accepted, uint16_t index, const char *socket_path) {
+    const unsigned char header[HEADER_BYTES] = {'T', (unsigned char)(index >> 8),
+                                                (unsigned char)(index & 0xff)};
+    int wrapper = connect_wrapper(socket_path);
+    if (wrapper < 0 || !write_all(wrapper, header, sizeof(header))) {
+        return;
+    }
+    int flags = fcntl(wrapper, F_GETFL);
+    if (flags < 0 || fcntl(wrapper, F_SETFL, flags | O_NONBLOCK) != 0) {
+        return;
+    }
+    relay_stream_pair(accepted, wrapper);
+}
+
+/* Reads exactly `length` bytes, each wait bounded by the reply timeout. */
+static bool read_reply(int fd, unsigned char *bytes, size_t length) {
+    size_t got = 0;
+    while (got < length) {
+        struct pollfd pfd = {fd, POLLIN, 0};
+        int ready = poll(&pfd, 1, DNS_REPLY_TIMEOUT_MS);
+        if (ready == 0 || (ready < 0 && errno != EINTR)) {
+            return false;
+        }
+        if (ready < 0) {
+            continue;
+        }
+        ssize_t n = read(fd, bytes + got, length - got);
+        if (n > 0) {
+            got += (size_t)n;
+        } else if (n == 0 || errno != EINTR) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void relay_datagram(int dns_fd, const char *socket_path, const unsigned char *datagram,
+                           size_t length, const struct sockaddr_in *sender) {
+    unsigned char frame[HEADER_BYTES + DNS_LENGTH_BYTES + MAX_DATAGRAM_BYTES];
+    frame[0] = 'D';
+    frame[1] = 0;
+    frame[2] = 0;
+    frame[3] = (unsigned char)(length >> 8);
+    frame[4] = (unsigned char)(length & 0xff);
+    memcpy(frame + HEADER_BYTES + DNS_LENGTH_BYTES, datagram, length);
+
+    int wrapper = connect_wrapper(socket_path);
+    if (wrapper < 0 || !write_all(wrapper, frame, HEADER_BYTES + DNS_LENGTH_BYTES + length)) {
+        return;
+    }
+    unsigned char prefix[DNS_LENGTH_BYTES];
+    if (!read_reply(wrapper, prefix, sizeof(prefix))) {
+        return;
+    }
+    size_t reply_length = ((size_t)prefix[0] << 8) | prefix[1];
+    unsigned char reply[MAX_DATAGRAM_BYTES];
+    if (reply_length == 0 || reply_length > sizeof(reply) ||
+        !read_reply(wrapper, reply, reply_length)) {
+        return;
+    }
+    while (sendto(dns_fd, reply, reply_length, 0, (const struct sockaddr *)sender,
+                  sizeof(*sender)) < 0 &&
+           errno == EINTR) {
+    }
+}
+
+/* ------------------------------------------------------------------ the poll loop */
+
+static void close_listeners(const options_t *o) {
+    for (size_t i = 0; i < o->listener_count; i++) {
+        close(o->listeners[i].fd);
+    }
+}
+
+static unsigned reap_relays(unsigned live) {
+    while (live > 0 && wait4(-1, NULL, WNOHANG, NULL) > 0) {
+        live--;
+    }
+    return live;
+}
+
+static unsigned serve_listener(const options_t *o, const listener_t *l, int dns_fd, unsigned live) {
+    int accepted = accept4(l->fd, NULL, NULL, SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (accepted < 0) {
+        return live;
+    }
+    if (live >= MAX_RELAYS) {
+        close(accepted);
+        return live;
+    }
     pid_t pid = fork();
-    if (pid < 0) {
-        fprintf(stderr, "run_cmd fork: %s\n", strerror(errno));
-        return -1;
-    }
     if (pid == 0) {
-        execlp("/bin/sh", "sh", "-c", cmd, (char *)NULL);
-        fprintf(stderr, "run_cmd execlp: %s\n", strerror(errno));
-        _exit(127);
+        close_listeners(o);
+        close(dns_fd);
+        relay_tcp(accepted, l->index, o->socket_path);
+        _exit(0);
     }
-    int status = 0;
-    if (waitpid(pid, &status, 0) < 0) {
-        fprintf(stderr, "run_cmd waitpid: %s\n", strerror(errno));
-        return -1;
-    }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        fprintf(stderr, "run_cmd non-zero exit: %s\n", cmd);
-        return -1;
-    }
-    return 0;
+    close(accepted);
+    return pid > 0 ? live + 1 : live;
 }
 
-/*
- * Parse the `--allow <host[:port]> ... -- <argv...>` portion of argv. On success
- * returns 0 with allowed[] (host only) + ports[] (parsed TCP port, default 443)
- * / *n_allowed_out populated and *child_argv_out pointing at the post-`--` child
- * argv. On any parse error prints a diagnostic and returns 2.
- *
- * A `host:port` value is split in place: the colon in the writable argv string
- * is overwritten with a NUL so allowed[k] becomes the bare host, and the port
- * substring is validated via parse_port. A bare host gets the default port 443.
- */
-static int parse_allowed_hosts(int argc, char **argv, const char **allowed,
-                               int *ports, int *n_allowed_out, char ***child_argv_out) {
-    int n_allowed = 0;
-    int i = 1;
-    while (i < argc && strcmp(argv[i], "--") != 0) {
-        if (strcmp(argv[i], "--allow") != 0) {
-            fprintf(stderr, "unexpected arg: %s\n", argv[i]);
-            return 2;
-        }
-        if (i + 1 >= argc) {
-            fprintf(stderr, "--allow requires a value\n");
-            return 2;
-        }
-        char *value = argv[i + 1];
-        int port = 443;
-        /* Hostnames never contain a colon, so the last colon (if any) separates
-         * host from port. Split in place: argv strings are writable. */
-        char *colon = strrchr(value, ':');
-        if (colon != NULL) {
-            port = parse_port(colon + 1);
-            if (port < 0) {
-                fprintf(stderr, "invalid port: %s\n", value);
-                return 2;
-            }
-            *colon = '\0';
-        }
-        if (!valid_hostname(value)) {
-            fprintf(stderr, "invalid hostname: %s\n", value);
-            return 2;
-        }
-        if (n_allowed >= MAX_HOSTS) {
-            fprintf(stderr, "too many --allow flags (max %d)\n", MAX_HOSTS);
-            return 2;
-        }
-        ports[n_allowed] = port;
-        allowed[n_allowed++] = value;
-        i += 2;
+static unsigned serve_dns(const options_t *o, int dns_fd, unsigned live) {
+    /* One byte over the limit, to tell a datagram that fits from one the kernel cut short. */
+    unsigned char datagram[MAX_DATAGRAM_BYTES + 1];
+    struct sockaddr_in sender;
+    socklen_t sender_length = sizeof(sender);
+    ssize_t n = recvfrom(dns_fd, datagram, sizeof(datagram), 0, (struct sockaddr *)&sender,
+                         &sender_length);
+    if (n <= 0 || n > MAX_DATAGRAM_BYTES || live >= MAX_RELAYS) {
+        return live;
     }
-    if (i >= argc || strcmp(argv[i], "--") != 0) {
-        fprintf(stderr, "expected -- followed by child argv\n");
-        return 2;
+    pid_t pid = fork();
+    if (pid == 0) {
+        close_listeners(o);
+        relay_datagram(dns_fd, o->socket_path, datagram, (size_t)n, &sender);
+        _exit(0);
     }
-    char **child_argv = &argv[i + 1];
-    if (child_argv[0] == NULL) {
-        fprintf(stderr, "child argv is empty\n");
-        return 2;
-    }
-    *n_allowed_out = n_allowed;
-    *child_argv_out = child_argv;
-    return 0;
+    return pid > 0 ? live + 1 : live;
 }
 
-/*
- * Resolve every allowed host to an addrinfo chain in resolved[]. Done before
- * any kernel-state change so DNS failures surface as exit code 3 without
- * leaving a half-configured netns. On failure frees the partial set it
- * allocated (resolved[0 .. k-1]) and returns 3; on success returns 0 with
- * every resolved[k] non-NULL.
- */
-static int resolve_allowed_hosts(const char **allowed, int n_allowed,
-                                 struct addrinfo **resolved) {
-    for (int k = 0; k < n_allowed; k++) {
-        resolved[k] = NULL;
+static void forward(const options_t *o, int dns_fd) {
+    size_t count = o->listener_count;
+    struct pollfd *fds = calloc(count + 1, sizeof(*fds));
+    if (fds == NULL) {
+        return;
     }
-    struct addrinfo hints;
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_UNSPEC;       /* IPv4 + IPv6 */
-    hints.ai_socktype = SOCK_STREAM;
-    for (int k = 0; k < n_allowed; k++) {
-        int rc = getaddrinfo(allowed[k], "443", &hints, &resolved[k]);
-        if (rc != 0 || resolved[k] == NULL) {
-            fprintf(stderr, "getaddrinfo(%s): %s\n", allowed[k], gai_strerror(rc));
-            free_all_resolved(resolved, k);
-            return 3;
-        }
+    for (size_t i = 0; i < count; i++) {
+        fds[i].fd = o->listeners[i].fd;
+        fds[i].events = POLLIN;
     }
-    return 0;
-}
+    fds[count].fd = dns_fd;
+    fds[count].events = POLLIN;
 
-/*
- * Install the per-resolved-IP TCP ACCEPT rules for one host's addrinfo chain on
- * the host's declared `port`. Returns 0, or 5 on an inet_ntop / run_cmd failure.
- * Does not free `ai` — ownership stays with the caller. Families other than
- * AF_INET / AF_INET6 are silently skipped (the default-DROP policy still covers
- * them). `port` is a validated 1..65535 value (see parse_port), so it is safe to
- * interpolate into the iptables command.
- */
-static int add_host_accept_rules(struct addrinfo *ai, int port) {
-    for (; ai != NULL; ai = ai->ai_next) {
-        char ipstr[INET6_ADDRSTRLEN];
-        char cmd[128];
-        if (ai->ai_family == AF_INET) {
-            const void *addr_ptr = &((struct sockaddr_in *)ai->ai_addr)->sin_addr;
-            if (inet_ntop(AF_INET, addr_ptr, ipstr, sizeof(ipstr)) == NULL) {
-                fprintf(stderr, "inet_ntop(AF_INET) failed: %s\n", strerror(errno));
-                return 5;
+    unsigned live = 0;
+    for (;;) {
+        if (poll(fds, count + 1, -1) < 0) {
+            if (errno == EINTR) {
+                continue;
             }
-            int n = snprintf(cmd, sizeof(cmd),
-                             "iptables -A OUTPUT -d %s -p tcp --dport %d -j ACCEPT", ipstr, port);
-            if (n < 0 || (size_t)n >= sizeof(cmd)) {
-                fprintf(stderr, "add_host_accept_rules: command truncated\n");
-                return 5;
-            }
-            if (run_cmd(cmd) != 0) {
-                return 5;
-            }
-        } else if (ai->ai_family == AF_INET6) {
-            const void *addr_ptr = &((struct sockaddr_in6 *)ai->ai_addr)->sin6_addr;
-            if (inet_ntop(AF_INET6, addr_ptr, ipstr, sizeof(ipstr)) == NULL) {
-                fprintf(stderr, "inet_ntop(AF_INET6) failed: %s\n", strerror(errno));
-                return 5;
-            }
-            int n = snprintf(cmd, sizeof(cmd),
-                             "ip6tables -A OUTPUT -d %s -p tcp --dport %d -j ACCEPT", ipstr, port);
-            if (n < 0 || (size_t)n >= sizeof(cmd)) {
-                fprintf(stderr, "add_host_accept_rules: command truncated\n");
-                return 5;
-            }
-            if (run_cmd(cmd) != 0) {
-                return 5;
+            return;
+        }
+        live = reap_relays(live);
+        for (size_t i = 0; i < count; i++) {
+            if (fds[i].revents != 0) {
+                live = serve_listener(o, &o->listeners[i], dns_fd, live);
             }
         }
-        /* silently skip families we don't handle (e.g. AF_UNIX from a
-         * misconfigured nss module) — the default-DROP catches them. */
-    }
-    return 0;
-}
-
-/*
- * Bring loopback up and install the default-DROP OUTPUT ruleset (v4+v6) plus
- * ESTABLISHED,RELATED, DNS/53, and the per-resolved-IP per-host-port TCP ACCEPT
- * rules. Returns 0, or 5 on the first failure. Does not free resolved[] — the
- * caller owns it and frees it unconditionally afterwards.
- */
-static int install_firewall_rules(struct addrinfo **resolved, const int *ports,
-                                  int n_allowed) {
-    if (run_cmd("ip link set lo up") != 0) return 5;
-
-    /* Default-DROP OUTPUT on both v4 and v6 — nothing leaves the netns unless
-     * explicitly allowed below. */
-    if (run_cmd("iptables -P OUTPUT DROP") != 0) return 5;
-    if (run_cmd("ip6tables -P OUTPUT DROP") != 0) return 5;
-
-    /* Accept ESTABLISHED,RELATED so return traffic on already-accepted
-     * connections is not silently dropped. */
-    if (run_cmd("iptables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT") != 0) return 5;
-    if (run_cmd("ip6tables -A OUTPUT -m state --state ESTABLISHED,RELATED -j ACCEPT") != 0) return 5;
-
-    /* Accept DNS on UDP and TCP port 53 so the connector can resolve
-     * additional hostnames inside its own DNS cycle. */
-    if (run_cmd("iptables -A OUTPUT -p udp --dport 53 -j ACCEPT") != 0) return 5;
-    if (run_cmd("iptables -A OUTPUT -p tcp --dport 53 -j ACCEPT") != 0) return 5;
-    if (run_cmd("ip6tables -A OUTPUT -p udp --dport 53 -j ACCEPT") != 0) return 5;
-    if (run_cmd("ip6tables -A OUTPUT -p tcp --dport 53 -j ACCEPT") != 0) return 5;
-
-    /* Per-host TCP ACCEPT rules on each host's declared port — one per resolved
-     * A / AAAA record. */
-    for (int k = 0; k < n_allowed; k++) {
-        int rc = add_host_accept_rules(resolved[k], ports[k]);
-        if (rc != 0) {
-            return rc;
+        if (fds[count].revents != 0) {
+            live = serve_dns(o, dns_fd, live);
         }
     }
-    return 0;
 }
 
-/*
- * Drop all capabilities (CAP_NET_ADMIN included) before exec, so neither the
- * helper nor the to-be-execed bwrap/connector chain can call CAP_NET_ADMIN-gated
- * syscalls even if seccomp somehow allowed them. Returns 0 or 6.
- */
-static int drop_all_caps(void) {
-    cap_t empty = cap_init();
-    if (!empty) {
-        fprintf(stderr, "cap_init failed: %s\n", strerror(errno));
-        return 6;
-    }
-    if (cap_set_proc(empty) != 0) {
-        fprintf(stderr, "cap_set_proc(empty) failed: %s\n", strerror(errno));
-        cap_free(empty);
-        return 6;
-    }
-    cap_free(empty);
-    return 0;
-}
+/* ------------------------------------------------------------------ entry */
 
-/*
- * --allow ... -- <argv...>
- *
- * Parse hostnames + ports, resolve them, unshare(CLONE_NEWNET), install iptables
- * default-DROP OUTPUT chain plus per-resolved-IP per-host-port TCP ACCEPT rules,
- * drop all capabilities, install post-unshare seccomp, then execv() the
- * remainder of argv (typically `bwrap --share-net ... connector-entry`).
- *
- * Namespace isolation guarantee:
- *   - The helper creates a fresh network namespace via unshare(CLONE_NEWNET)
- *     and immediately installs OUTPUT-default-DROP. The host-side veth
- *     peer (nb-out-<pid>) is, by Linux design, owned by the host's netns
- *     and therefore invisible to anything running inside this new netns.
- *   - The connector inside also lacks CAP_NET_ADMIN against the host user
- *     namespace because bwrap is invoked with --unshare-user — so even if
- *     a confused-deputy inside the connector tries to call netlink to
- *     manipulate routes, it cannot.
- *   - The veth pair itself is **out of scope for the helper in PR 1**.
- *     The helper relies on bwrap's existing routing (--share-net in the
- *     calling Bun process establishes the upstream path before unshare);
- *     a follow-up PR will add a dedicated nb-out-<pid> veth pair owned
- *     by the host's netns.
- */
-static int mode_enforce_and_exec(int argc, char **argv) {
-    /* Step 0: parse `--allow <host[:port]> ... -- <argv...>`. */
-    const char *allowed[MAX_HOSTS];
-    int ports[MAX_HOSTS];
-    int n_allowed = 0;
-    char **child_argv = NULL;
-    int rc = parse_allowed_hosts(argc, argv, allowed, ports, &n_allowed, &child_argv);
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Step 1: resolve each host before any kernel-state change so DNS
-     * failures surface as exit code 3 without leaving the helper inside a
-     * half-configured netns. resolve_allowed_hosts frees its own partial set
-     * on failure. */
-    struct addrinfo *resolved[MAX_HOSTS];
-    rc = resolve_allowed_hosts(allowed, n_allowed, resolved);
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Step 2: create the network namespace. After this point the helper is
-     * inside a fresh, empty netns with no interfaces except a down `lo`. */
-    if (unshare(CLONE_NEWNET) != 0) {
-        fprintf(stderr, "unshare(CLONE_NEWNET) failed: %s\n", strerror(errno));
-        free_all_resolved(resolved, n_allowed);
-        return 4;
-    }
-
-    /* Step 3: install the iptables/ip6tables ruleset. resolved[] is consumed
-     * here and freed unconditionally on return — both the failure and success
-     * paths release it, preserving the original "free on every branch"
-     * guarantee by construction. The helper still holds CAP_NET_ADMIN in this
-     * netns; it is dropped immediately after the rules are installed. */
-    rc = install_firewall_rules(resolved, ports, n_allowed);
-    free_all_resolved(resolved, n_allowed);
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Step 4: drop all capabilities. Past this point the helper (and the
-     * to-be-execed bwrap/connector chain) cannot call CAP_NET_ADMIN-gated
-     * syscalls such as additional iptables manipulation, even if seccomp
-     * somehow allowed them. */
-    rc = drop_all_caps();
-    if (rc != 0) {
-        return rc;
-    }
-
-    /* Step 5: install the post-unshare seccomp filter. This is the proof
-     * that the helper cannot itself escape the netns — even with a future
-     * code-level bug, setns and unshare are kernel-side denied. The filter
-     * is inherited across execv per kernel docs. */
-    if (install_post_unshare_seccomp() != 0) {
-        fprintf(stderr, "post-unshare seccomp install failed\n");
-        return 7;
-    }
-
-    /* Step 6: exec the supplied argv (typically bwrap ... connector). */
-    execv(child_argv[0], child_argv);
-    fprintf(stderr, "execv(%s) failed: %s\n", child_argv[0], strerror(errno));
-    return 127;
+static int usage(void) {
+    fputs("usage:\n"
+          "  nimbus-sandbox-helper --check\n"
+          "  nimbus-sandbox-helper --socket <path> [--alias <ip>]... "
+          "--listen <ip>:<port>:<index>... --dns <ip> -- <argv...>\n",
+          stderr);
+    return EXIT_USAGE;
 }
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        fprintf(stderr,
-            "usage:\n"
-            "  %s --check-caps\n"
-            "  %s --allow <host[:port]> [--allow <host[:port]> ...] -- <argv...>\n",
-            argv[0], argv[0]);
-        return 2;
+    if (argc == 2 && strcmp(argv[1], "--check") == 0) {
+        puts("OK");
+        return 0;
     }
-    if (strcmp(argv[1], "--check-caps") == 0) {
-        return mode_check_caps();
+
+    options_t options;
+    memset(&options, 0, sizeof(options));
+    if (argc < 2 || !parse_args(argc, argv, &options)) {
+        return usage();
     }
-    if (strcmp(argv[1], "--allow") == 0) {
-        return mode_enforce_and_exec(argc, argv);
+    if (!reserve_low_fds()) {
+        fprintf(stderr, "nimbus-sandbox-helper: /dev/null: %s\n", strerror(errno));
+        return EXIT_BIND;
     }
-    fprintf(stderr, "unknown mode: %s\n", argv[1]);
-    return 2;
+
+    int rc = apply_aliases(&options);
+    if (rc != 0) {
+        return rc;
+    }
+    rc = bind_listeners(&options);
+    if (rc != 0) {
+        return rc;
+    }
+    int dns_fd = bind_dns(&options);
+    if (dns_fd < 0) {
+        return EXIT_BIND;
+    }
+
+    pid_t launcher = getpid();
+    pid_t forwarder = fork();
+    if (forwarder < 0) {
+        fprintf(stderr, "nimbus-sandbox-helper: fork: %s\n", strerror(errno));
+        return EXIT_BIND;
+    }
+    if (forwarder == 0) {
+        if (lock_down(launcher)) {
+            forward(&options, dns_fd);
+        }
+        _exit(1);
+    }
+
+    /* The launcher keeps its capabilities: the inner bwrap needs CAP_SETFCAP, and drops them all. */
+    if (!set_signal(SIGCHLD, SIG_DFL)) {
+        fprintf(stderr, "nimbus-sandbox-helper: sigaction: %s\n", strerror(errno));
+        return EXIT_EXEC;
+    }
+    execv(options.child_argv[0], options.child_argv);
+    fprintf(stderr, "nimbus-sandbox-helper: exec %s: %s\n", options.child_argv[0], strerror(errno));
+    return EXIT_EXEC;
 }

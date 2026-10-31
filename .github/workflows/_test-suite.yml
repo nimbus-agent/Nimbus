@@ -746,22 +746,22 @@ jobs:
         env:
           CI: "true"
 
-      # The Linux sandbox helper itself: built, statically analysed, given CAP_NET_ADMIN, and
-      # exercised by the sandbox unit tests against the real binary. This ran in the Linux leg of
+      # The Linux sandbox helper itself: built, statically analysed, and exercised by the sandbox
+      # unit tests against the real binary, which NIMBUS_REQUIRE_SANDBOX_HELPER stops them skipping. This ran in the Linux leg of
       # the `Coverage — Sandbox` job until the per-area coverage jobs were removed. AFTER the
       # integration tests on purpose — they have always run with no helper built, and building it
       # first would change which sandbox path they take — and `!cancelled()` so a red integration
       # step does not hide this one.
-      - name: Linux — sandbox helper (build, cppcheck, setcap, its tests against the real binary)
+      - name: Linux — sandbox helper (build, cppcheck, its tests against the real binary)
         if: runner.os == 'Linux' && !cancelled()
         shell: bash
         run: |
           bun run build:sandbox-helper
           cppcheck --enable=all --error-exitcode=1 --suppress=missingIncludeSystem packages/gateway/src-native/sandbox-helper/main.c
-          sudo setcap cap_net_admin+ep packages/gateway/src-native/sandbox-helper/nimbus-sandbox-helper
           bun test packages/gateway/src/platform/sandbox --timeout 60000
         env:
           CI: "true"
+          NIMBUS_REQUIRE_SANDBOX_HELPER: "1"
 
       # Everything above runs with Ubuntu's AppArmor restriction switched OFF by
       # install-sandbox-deps.sh, which is how a stock Ubuntu 24.04 could not start any sandboxed

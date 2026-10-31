@@ -663,7 +663,7 @@ moves to P6).
   the suite had already run and enforced nothing; the floors are enforced by
   `audit:coverage-scopes` over the merged lcov in `unit-coverage`. They cost 12
   jobs per PR and ~30 per push (the PR chain's tail by ~2 min). Their only
-  unique work moved: cppcheck, the CAP_NET_ADMIN helper build and its sandbox
+  unique work moved: cppcheck, the helper build and its sandbox
   tests now run in the Linux `integration` job, and the Windows helper's
   `--check-caps` probe in the Windows `unit-coverage` job.
 - **Deferred:** guarding E2E against a TypeScript failure on `main`. Measured

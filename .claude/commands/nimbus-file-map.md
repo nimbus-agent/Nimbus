@@ -51,7 +51,7 @@ Curated pointer index. Source of truth is the working tree — verify a path wit
 | `packages/gateway/src/platform/sandbox/{orphan-reap,win32-reap}.ts` | Windows AppContainer orphan-reap, wired at `platform/assemble.ts` boot |
 | `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec(spec, manifest, cwd)` — I15 wiring entrypoint |
 | `packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts` | `FIRST_PARTY_MANIFESTS` — per-connector sandbox manifests |
-| `packages/gateway/src-native/sandbox-helper/main.c` | Privileged C helper — `cap_net_admin+ep` via setcap; setns/unshare-killer |
+| `packages/gateway/src-native/sandbox-helper/main.c` | Linux network launcher + forwarder: no capabilities of its own; binds the loopback listeners, relays to the wrapper's unix socket under its own seccomp allowlist |
 | _(standalone repo)_ `nimbus-sdk/src/testing/sandbox-contract.ts` | `runSandboxContractTests(manifestPath)` — [nimbus-agent/nimbus-sdk](https://github.com/nimbus-agent/nimbus-sdk), published as `@nimbus-dev/sdk` — SDK API for connector authors |
 | `docs/sandbox.md` | Operator-facing reference; `#platform-asymmetry` + `#windows-platform-status` |
 
