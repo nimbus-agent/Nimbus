@@ -69,6 +69,61 @@ describe("accessEvidence", () => {
     expect(e.fileAccess).toContain("can't run here");
   });
 
+  test("canRunHere is false when the sandbox refuses every child, even if the paths pass", () => {
+    const refusing: ReachRunner = {
+      ...perHost,
+      isFullyActive: () => false,
+      degradedReason: () => "helper missing",
+      networkRefused: () => true,
+    };
+    const e = accessEvidence(
+      { sandbox: refusing, grantEnv: env({ "/ok": "/ok" }), homeDir: "/home/ada" },
+      perms(["a.com"], ["/ok"]),
+    );
+    expect(e.reachKind).toBe("refused");
+    expect(e.networkReach).toContain("will not start here");
+    expect(e.fileAccess).toBe("reads /ok · writes none");
+    expect(e.canRunHere).toBe(false);
+  });
+
+  test("a refusing sandbox with no network declared also reads canRunHere false", () => {
+    const e = accessEvidence(
+      { sandbox: { ...perHost, canConfine: () => "no bwrap" }, grantEnv: env({}), homeDir: "/h" },
+      perms([]),
+    );
+    expect(e.reachKind).toBe("refused");
+    expect(e.canRunHere).toBe(false);
+  });
+
+  test("a refusing sandbox with a preview that throws still reads canRunHere false", () => {
+    const boom: ExtensionRunGrantEnv = {
+      ...env({ "/x": "/x" }),
+      get protectedRoots(): readonly string[] {
+        throw new TypeError("odd");
+      },
+    };
+    const e = accessEvidence(
+      { sandbox: { ...perHost, canConfine: () => "no bwrap" }, grantEnv: boom, homeDir: "/h" },
+      perms([], ["/x"]),
+    );
+    expect(e.canRunHere).toBe(false);
+    expect(e.fileAccess).toContain("not known here");
+  });
+
+  test("a sandbox that can start the child leaves canRunHere to the file preview", () => {
+    const e = accessEvidence(
+      { sandbox: perHost, grantEnv: env({}), homeDir: "/home/ada" },
+      perms(["a.com"], ["/gone"]),
+    );
+    expect(e.reachKind).toBe("hosts");
+    expect(e.canRunHere).toBe(false);
+    const ok = accessEvidence(
+      { sandbox: perHost, grantEnv: env({ "/ok": "/ok" }), homeDir: "/home/ada" },
+      perms(["a.com"], ["/ok"]),
+    );
+    expect(ok.canRunHere).toBe(true);
+  });
+
   test("a preview that throws is stated, never thrown", () => {
     const boom: ExtensionRunGrantEnv = {
       ...env({ "/x": "/x" }),
@@ -84,7 +139,12 @@ describe("accessEvidence", () => {
 
 describe("approvalFields", () => {
   test("keeps reach and files, and canRunHere only when false", () => {
-    const base = { networkReach: "r", fileAccess: "f", checked: true };
+    const base = {
+      networkReach: "r",
+      reachKind: "hosts" as const,
+      fileAccess: "f",
+      checked: true,
+    };
     expect(approvalFields({ ...base, canRunHere: true })).toEqual({
       networkReach: "r",
       fileAccess: "f",

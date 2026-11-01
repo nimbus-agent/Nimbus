@@ -37,6 +37,7 @@ function runner(opts: {
   platform: "linux" | "darwin" | "win32";
   fullyActive: boolean;
   scope?: "per_port" | "all_or_nothing";
+  refuses?: boolean;
   reason: string | null;
 }): NonNullable<ServerCtx["options"]["sandboxRunner"]> {
   const { scope } = opts;
@@ -45,6 +46,7 @@ function runner(opts: {
     isFullyActive: () => opts.fullyActive,
     degradedReason: () => opts.reason,
     ...(scope === undefined ? {} : { networkScope: () => scope }),
+    ...(opts.refuses === true ? { networkRefused: () => true } : {}),
     canConfine: () => null,
   };
   // Only the reach slice is read; `spawn` is never called on the prompt path.
@@ -384,8 +386,72 @@ describe("the runner reaches the consent prompts through the real dispatch", () 
     expect(access?.networkReach).toContain("Windows cannot limit this to a.com");
     expect(access?.fileAccess).toContain(readable);
     expect(access?.fileAccess).not.toContain("not checked here");
-    // The own-files check needs an install path a remote entry has not got: no pass is claimed.
+    // The own-files check needs an install path a remote entry has not got, so `canRunHere` here
+    // says only that the declared paths pass and the sandbox would start; the file line claims no
+    // own-files outcome.
     expect(access?.canRunHere).toBe(true);
     expect(access?.fileAccess).not.toMatch(/can run|own files/i);
+  });
+
+  test("registry.info reads canRunHere false when the sandbox here refuses every child", async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-reach-rrefuse-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { db, localIndex } = mkIndex();
+    const dataDir = join(root, "data");
+    const readable = join(root, "readable");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(readable, { recursive: true });
+    const regDir = join(root, "reg");
+    const built = await buildTestRegistry(regDir, {
+      id: "acme.tool",
+      versions: [{ version: "1.0.0" }],
+      manifestExtra: {
+        permissions: { network: ["a.com"], filesystem: { read: [readable], write: [] } },
+      },
+    });
+    insertRegistry(db, {
+      name: "main",
+      url: regDir,
+      rootKey: built.rootKey,
+      rootFingerprint: publisherKeyFingerprint(built.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-18T12:00:00Z",
+      addedAt: 1,
+      lastIndexSha256: null,
+    });
+    const ctx = ctxWith(
+      {
+        localIndex,
+        extensionsDir: join(dataDir, "extensions"),
+        connectorMesh: { userMcpProtectedRoots: () => [dataDir] } as never,
+        sandboxRunner: runner({
+          platform: "win32",
+          fullyActive: false,
+          refuses: true,
+          reason: "helper missing",
+        }),
+        registryFetch: {
+          fetchFn: () => Promise.reject(new Error("unexpected network")),
+          enforceAirGap: () => false,
+          now: () => Date.parse("2026-10-18T12:00:00Z"),
+          production: false,
+          builtin: null,
+        },
+      },
+      [],
+    );
+    const out = (await tryDispatchRegistryRpc(ctx, "c1", "registry.info", {
+      id: "acme.tool",
+      registry: "main",
+    })) as {
+      versions: Array<{
+        access?: { networkReach: string; reachKind: string; canRunHere: boolean | null };
+      }>;
+    };
+    const access = out.versions[0]?.access;
+    expect(access?.networkReach).toContain("will not start here");
+    expect(access?.reachKind).toBe("refused");
+    // The declared path itself passes; the sandbox is what refuses, so this must not read true.
+    expect(access?.canRunHere).toBe(false);
   });
 });

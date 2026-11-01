@@ -5,7 +5,11 @@ import { listExtensions } from "../automation/extension-store.ts";
 import { permissionsAfterUpdate } from "./auto-update-permissions-diff.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
 import { previewFileGrants } from "./extension-file-preview.ts";
-import { describeNetworkReach, type ReachRunner } from "./extension-reach.ts";
+import {
+  describeNetworkReach,
+  type NetworkReachKind,
+  type ReachRunner,
+} from "./extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { oneLine } from "./install-plan-text.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
@@ -20,6 +24,8 @@ export type ExtensionEvidenceDeps = {
 
 export type AccessEvidence = {
   readonly networkReach: string;
+  /** The kind of `networkReach`; `refused` means the sandbox here starts no child of this extension. */
+  readonly reachKind: NetworkReachKind;
   readonly fileAccess: string;
   readonly canRunHere: boolean | null;
   readonly checked: boolean;
@@ -39,24 +45,30 @@ export function accessEvidence(
   permissions: SandboxPermissions,
   installPath?: string,
 ): AccessEvidence {
-  const networkReach = describeNetworkReach(deps?.sandbox, permissions.network).text;
+  const reach = describeNetworkReach(deps?.sandbox, permissions.network);
+  const networkReach = reach.text;
+  const reachKind = reach.kind;
   try {
     const preview = previewFileGrants(permissions.filesystem, deps?.grantEnv, {
       ...(installPath === undefined ? {} : { installPath }),
       homeDir: deps?.homeDir ?? "",
     });
+    // A sandbox that refuses every child here means the extension cannot run here, whatever its
+    // paths say; otherwise the preview's own answer stands (null when a path was not checked).
     return {
       networkReach,
+      reachKind,
       fileAccess: preview.text,
-      canRunHere: preview.canRunHere,
+      canRunHere: reachKind === "refused" ? false : preview.canRunHere,
       checked: preview.checked,
     };
   } catch (e) {
     const why = e instanceof Error ? e.message : "unexpected failure";
     return {
       networkReach,
+      reachKind,
       fileAccess: `not known here (${oneLine(why)})`,
-      canRunHere: null,
+      canRunHere: reachKind === "refused" ? false : null,
       checked: false,
     };
   }
