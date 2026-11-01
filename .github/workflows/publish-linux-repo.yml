@@ -322,7 +322,7 @@ jobs:
           VERSION="${TAG#v}"
           BASE="https://nimbus-agent.github.io/linux-repo"
           for _ in $(seq 1 40); do
-            # Read into a variable: under pipefail, `curl | grep -q` fails when grep exits first.
+            # Read into a variable: under pipefail, a pipe into a quiet grep fails if grep exits first.
             packages=$(curl -fsS "$BASE/apt/dists/stable/main/binary-amd64/Packages?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null || true)
             if grep -qx "Version: $VERSION" <<<"$packages" \
               && curl -fsSI -o /dev/null "$BASE/yum/nimbus-headless-${VERSION}-x86_64.rpm?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null; then
