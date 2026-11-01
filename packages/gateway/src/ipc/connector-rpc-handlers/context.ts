@@ -9,6 +9,7 @@ import type {
 import type { ProbeVerdict } from "../../connectors/credential-probe.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/index.ts";
 import type { ContinuityEntry } from "../../extensions/continuity/continuity-table.ts";
+import type { ReachRunner } from "../../extensions/extension-reach.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import type { SyncScheduler } from "../../sync/scheduler.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
@@ -46,11 +47,13 @@ export type ConnectorRpcHandlerContext = {
   connectorMesh: LazyConnectorMesh | undefined;
   /**
    * The host OS, passed in rather than read from `process.platform` here (PAL): `connector.addMcp`'s
-   * per-OS path rules and its Windows all-or-nothing network note both read it. Supplied by the one
+   * per-OS path rules and its path rules read it. Supplied by the one
    * production caller (`ipc/server/dispatchers.ts`); `connector.addMcp` REFUSES without it rather
    * than guessing, and no other method reads it.
    */
   platform?: NodeJS.Platform;
+  /** The sandbox runner `connector.addMcp`'s prompt describes the network reach from. */
+  sandboxRunner?: ReachRunner;
   notify?: (method: string, params: Record<string, unknown>) => void;
   /**
    * Test seam. Omitted in production, where `auth.ts` falls back to its

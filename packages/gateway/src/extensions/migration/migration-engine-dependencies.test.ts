@@ -20,12 +20,34 @@ import { setPaused } from "../../sync/scheduler-store.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../../testing/bun-test-support.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
+import type { ReachRunner } from "../extension-reach.ts";
 import { installExtensionFromLocalDirectory } from "../install-from-local.ts";
 import { buildMultiExtensionRegistry } from "../registry/__fixtures__/build-test-registry.ts";
 import type { BuiltinRegistryConfig } from "../registry/builtin-registry.ts";
 import { getRunGrant } from "../run-grant-store.ts";
 import { createMigrationEngine, type MigrationEngineDeps } from "./migration-engine.ts";
 import { getMigration, listMigrations } from "./migration-store.ts";
+
+/** A runner with a live posture: healthy per-host on Linux unless told otherwise. */
+function reachRunner(
+  confine: () => string | null,
+  opts: {
+    platform?: "linux" | "darwin" | "win32";
+    fullyActive?: boolean;
+    reason?: string | null;
+  } = {},
+): ReachRunner {
+  const platform = opts.platform ?? "linux";
+  const scopes = { win32: "all_or_nothing", darwin: "per_port" } as const;
+  const scope = platform === "linux" ? undefined : scopes[platform];
+  return {
+    platform,
+    isFullyActive: () => opts.fullyActive ?? true,
+    degradedReason: () => opts.reason ?? null,
+    ...(scope === undefined ? {} : { networkScope: () => scope }),
+    canConfine: confine,
+  };
+}
 
 const EXT = "com.example.reader";
 const DEP = "com.example.reader.lib";
@@ -120,7 +142,7 @@ function deps(): MigrationEngineDeps {
       realpath: (p) => realpathSync.native(p),
     },
     runtimeEnabled: true,
-    sandbox: { canConfine: () => null },
+    sandbox: reachRunner(() => null),
     // Mirrors the real registrar's contract: register a live, granted extension under the legacy id.
     extensionSync: {
       refresh: (id) => {

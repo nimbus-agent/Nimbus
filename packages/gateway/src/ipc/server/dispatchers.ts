@@ -2095,6 +2095,9 @@ async function dispatchExtensionAutomationRpc(
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
+      ...(ctx.options.sandboxRunner === undefined
+        ? {}
+        : { sandboxRunner: ctx.options.sandboxRunner }),
       ...(evalDeps === undefined ? {} : { evalDeps }),
       ...(ctx.options.extensionsRuntimeEnabled === undefined
         ? {}
@@ -2217,6 +2220,9 @@ export async function tryDispatchConnectorRpc(
       syncScheduler: ctx.options.syncScheduler,
       ...(mesh === undefined ? {} : { connectorMesh: mesh }),
       platform: process.platform,
+      ...(ctx.options.sandboxRunner === undefined
+        ? {}
+        : { sandboxRunner: ctx.options.sandboxRunner }),
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),

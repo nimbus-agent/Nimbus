@@ -42,6 +42,7 @@ import {
 } from "./approve-run.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
 import { serializeRunCredentials } from "./extension-credentials.ts";
+import type { ReachRunner } from "./extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { signatureDisabledRegistry } from "./hard-disable.ts";
 import { installExtensionFromLocalDirectory } from "./install-from-local.ts";
@@ -524,6 +525,7 @@ describe("approveExtensionRun", () => {
         credentials: {},
       },
       { platform: "linux", protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
+      { homeDir: "/home/u" },
     );
     const fp = publisherKeyFingerprint(key);
     expect(fp).toMatch(/^[0-9a-f]{32}$/);
@@ -532,46 +534,110 @@ describe("approveExtensionRun", () => {
     expect(redactAuditPayload(payload, 4096)).toContain(fp);
   });
 
-  test("the network line says on Windows that the host list is not enforced", () => {
-    const payloadOn = (platform: NodeJS.Platform) =>
-      buildRunConsentPayload(
-        {
-          row: {
-            id: "n",
-            version: "1.0.0",
-            install_path: "/x",
-            manifest_hash: "m",
-            entry_hash: "e",
-            enabled: 1,
-            installed_at: 1,
-            last_verified_at: 1,
-            tree_digest: "d",
-          },
-          manifest: {
-            id: "n",
-            version: "1.0.0",
-            updateChannel: "stable",
-            permissions: { network: ["readwise.io"], filesystem: { read: [], write: [] } },
-          },
-          serviceId: "ext_n",
-          treeDigest: "d",
-          grants: { network: ["readwise.io"], read: [], write: [] },
-          modelAccess: false,
-          credentials: {},
+  const reachRunner = (opts: {
+    platform: "linux" | "darwin" | "win32";
+    fullyActive: boolean;
+    scope?: "per_port" | "all_or_nothing";
+    reason: string | null;
+  }): ReachRunner => {
+    const { scope } = opts;
+    return {
+      platform: opts.platform,
+      isFullyActive: () => opts.fullyActive,
+      degradedReason: () => opts.reason,
+      ...(scope === undefined ? {} : { networkScope: () => scope }),
+      canConfine: () => null,
+    };
+  };
+
+  const payloadWith = (
+    sandbox: ReachRunner | undefined,
+    hosts: string[],
+    opts: { read?: string[]; protectedRoots?: string[]; homeDir?: string } = {},
+  ) =>
+    buildRunConsentPayload(
+      {
+        row: {
+          id: "n",
+          version: "1.0.0",
+          install_path: "/x",
+          manifest_hash: "m",
+          entry_hash: "e",
+          enabled: 1,
+          installed_at: 1,
+          last_verified_at: 1,
+          tree_digest: "d",
         },
-        { platform, protectedRoots: [], runtimeReadPaths: [], realpath: (p) => p },
-      );
-    const win = payloadOn("win32");
-    expect(win["network"]).toEqual(["readwise.io"]);
-    expect(win["networkAccess"]).toBe("network access (Windows cannot limit this to readwise.io)");
-    expect(payloadOn("linux")["networkAccess"]).toBe("network access to readwise.io");
-    expect(payloadOn("darwin")["networkAccess"]).toBe(
-      "network access to any host on port 443 (macOS cannot limit this to readwise.io)",
+        manifest: {
+          id: "n",
+          version: "1.0.0",
+          updateChannel: "stable",
+          permissions: { network: hosts, filesystem: { read: [], write: [] } },
+        },
+        serviceId: "ext_n",
+        treeDigest: "d",
+        grants: { network: hosts, read: opts.read ?? [], write: [] },
+        modelAccess: false,
+        credentials: {},
+      },
+      {
+        platform: "linux",
+        protectedRoots: opts.protectedRoots ?? [],
+        runtimeReadPaths: [],
+        realpath: (p) => p,
+      },
+      { ...(sandbox === undefined ? {} : { sandbox }), homeDir: opts.homeDir ?? "/home/u" },
     );
+
+  test("the network line states the live reach per OS", () => {
+    const win = payloadWith(
+      reachRunner({ platform: "win32", fullyActive: true, scope: "all_or_nothing", reason: null }),
+      ["readwise.io"],
+    );
+    expect(win["network"]).toEqual(["readwise.io"]);
+    expect(win["networkAccess"]).toBe(
+      "any internet host, and a private-network host may fail (Windows cannot limit this to readwise.io)",
+    );
+    expect(
+      payloadWith(reachRunner({ platform: "linux", fullyActive: true, reason: null }), [
+        "readwise.io",
+      ])["networkAccess"],
+    ).toBe("network access to readwise.io");
+    expect(
+      payloadWith(
+        reachRunner({ platform: "darwin", fullyActive: true, scope: "per_port", reason: "m" }),
+        ["readwise.io"],
+      )["networkAccess"],
+    ).toContain("macOS cannot limit this to readwise.io");
     // The consent display shows it: no redactor drops the field.
     expect(redactPayloadForConsentDisplay(win)).toMatchObject({
-      networkAccess: "network access (Windows cannot limit this to readwise.io)",
+      networkAccess: win["networkAccess"],
     });
+  });
+
+  test("Linux with no helper does not claim the named hosts in the run approval", () => {
+    const p = payloadWith(
+      reachRunner({ platform: "linux", fullyActive: false, reason: "helper missing" }),
+      ["a.com"],
+    );
+    expect(p["networkAccess"]).toBe(
+      "the whole network (this machine cannot limit it to a.com: helper missing)",
+    );
+  });
+
+  test("with no runner the run approval says the reach is not known, never a limit", () => {
+    expect(payloadWith(undefined, ["a.com"])["networkAccess"]).toBe(
+      "not known here (the sandbox is not available to ask)",
+    );
+  });
+
+  test("the run approval flags a grantable home folder", () => {
+    const p = payloadWith(reachRunner({ platform: "linux", fullyActive: true, reason: null }), [], {
+      read: ["/home/u"],
+      protectedRoots: ["/data"],
+    });
+    expect(p["fileAccess"]).toContain("(your entire home folder)");
+    expect(redactPayloadForConsentDisplay(p)).toHaveProperty("fileAccess");
   });
 
   test("an extension the startup signature pass marked is refused while enabled", async () => {

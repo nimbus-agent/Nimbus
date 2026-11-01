@@ -15,6 +15,7 @@ import { basename, dirname, join } from "node:path";
 import { LazyConnectorMesh } from "../connectors/lazy-mesh/mesh.ts";
 import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
+import type { ReachRunner } from "../extensions/extension-reach.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMockVault } from "../vault/mock.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -25,11 +26,40 @@ import {
 } from "./connector-rpc.ts";
 import { defaultUserMcpRealpath, defaultUserMcpWhich } from "./connector-rpc-handlers/config.ts";
 
-const WIN_NETWORK_NOTE =
-  "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed.";
+function reachRunner(opts: {
+  platform: "linux" | "darwin" | "win32";
+  fullyActive: boolean;
+  scope?: "per_port" | "all_or_nothing";
+  reason: string | null;
+}): ReachRunner {
+  const { scope } = opts;
+  return {
+    platform: opts.platform,
+    isFullyActive: () => opts.fullyActive,
+    degradedReason: () => opts.reason,
+    ...(scope === undefined ? {} : { networkScope: () => scope }),
+    canConfine: () => null,
+  };
+}
 
-const DARWIN_NETWORK_NOTE =
-  "macOS limits network access by port, not host: this server can reach any host on the declared ports, not only the ones listed.";
+const WIN_RUNNER = reachRunner({
+  platform: "win32",
+  fullyActive: true,
+  scope: "all_or_nothing",
+  reason: null,
+});
+const HEALTHY_LINUX = reachRunner({ platform: "linux", fullyActive: true, reason: null });
+const DEGRADED_LINUX = reachRunner({
+  platform: "linux",
+  fullyActive: false,
+  reason: "helper missing",
+});
+const DARWIN_RUNNER = reachRunner({
+  platform: "darwin",
+  fullyActive: true,
+  scope: "per_port",
+  reason: "m",
+});
 
 let db: Database;
 let localIndex: LocalIndex;
@@ -94,6 +124,7 @@ function opts(exec: ToolExecutor, registered: string[] = [], sandbox: SandboxSea
   return {
     // The fake paths are built with the host's `join`, so the host platform is the one they match.
     platform: process.platform,
+    sandboxRunner: WIN_RUNNER,
     vault,
     localIndex,
     openUrl: async (_u: string): Promise<void> => {},
@@ -253,8 +284,8 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
     readPaths: expectedReadPaths,
     netHosts: ["api.example.com:443"],
     modelAccess: true,
-    ...(process.platform === "win32" ? { networkNote: WIN_NETWORK_NOTE } : {}),
-    ...(process.platform === "darwin" ? { networkNote: DARWIN_NETWORK_NOTE } : {}),
+    networkNote:
+      "any internet host, and a private-network host may fail (Windows cannot limit this to api.example.com:443)",
   };
 
   test("the gate is called once with exactly the resolved payload; approval stores the grants", async () => {
@@ -425,7 +456,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
   });
 });
 
-describe("buildAddMcpConsentPayload — the platform is passed in, not read", () => {
+describe("buildAddMcpConsentPayload — the runner is passed in, not the OS name", () => {
   const resolved: ResolvedUserMcpRegistration = {
     serviceId: "mcp_net",
     command: "/opt/bin/node",
@@ -435,26 +466,56 @@ describe("buildAddMcpConsentPayload — the platform is passed in, not read", ()
     modelAccess: false,
   };
 
-  test("win32 with hosts carries the all-or-nothing network note", () => {
-    expect(buildAddMcpConsentPayload(resolved, "win32")["networkNote"]).toBe(WIN_NETWORK_NOTE);
+  test("win32 with hosts says Windows cannot limit it", () => {
+    expect(String(buildAddMcpConsentPayload(resolved, WIN_RUNNER)["networkNote"])).toContain(
+      "Windows cannot limit",
+    );
   });
 
-  test("win32 without hosts carries no note", () => {
-    const payload = buildAddMcpConsentPayload({ ...resolved, netHosts: [] }, "win32");
-    expect("networkNote" in payload).toBe(false);
+  test("no runner with hosts says the reach is not known, never silence", () => {
+    expect(buildAddMcpConsentPayload(resolved, undefined)["networkNote"]).toBe(
+      "not known here (the sandbox is not available to ask)",
+    );
   });
 
-  test("darwin with hosts says the list limits ports, not hosts", () => {
-    expect(buildAddMcpConsentPayload(resolved, "darwin")["networkNote"]).toBe(DARWIN_NETWORK_NOTE);
+  test("no hosts carries no note on any runner", () => {
+    for (const r of [WIN_RUNNER, DARWIN_RUNNER, DEGRADED_LINUX, undefined]) {
+      expect("networkNote" in buildAddMcpConsentPayload({ ...resolved, netHosts: [] }, r)).toBe(
+        false,
+      );
+    }
   });
 
-  test("darwin without hosts carries no note", () => {
-    const payload = buildAddMcpConsentPayload({ ...resolved, netHosts: [] }, "darwin");
-    expect("networkNote" in payload).toBe(false);
+  test("darwin with hosts says it limits ports, not hosts", () => {
+    expect(String(buildAddMcpConsentPayload(resolved, DARWIN_RUNNER)["networkNote"])).toContain(
+      "macOS cannot limit this to api.example.com",
+    );
   });
 
-  test("linux with hosts carries no note", () => {
-    expect("networkNote" in buildAddMcpConsentPayload(resolved, "linux")).toBe(false);
+  test("add --mcp on degraded Linux gets a note, on healthy Linux none", () => {
+    expect(buildAddMcpConsentPayload(resolved, DEGRADED_LINUX)["networkNote"]).toBe(
+      "the whole network (this machine cannot limit it to api.example.com: helper missing)",
+    );
+    expect("networkNote" in buildAddMcpConsentPayload(resolved, HEALTHY_LINUX)).toBe(false);
+  });
+});
+
+describe("connector.addMcp — the runner reaches the prompt through dispatchConnectorRpc", () => {
+  test("a win32 runner puts 'Windows cannot limit' in the gated action, never 'not known here'", async () => {
+    const { exec, calls } = stubExecutor("proceed");
+    await dispatchConnectorRpc({
+      ...opts(exec),
+      method: "connector.addMcp",
+      params: {
+        serviceId: "mcp_notes",
+        argv: ["node", "server.js"],
+        readPaths: [notesDir],
+        netHosts: ["api.example.com"],
+      },
+    });
+    const note = String(JSON.parse(JSON.stringify(calls[0]?.payload ?? {}))["networkNote"]);
+    expect(note).toContain("Windows cannot limit");
+    expect(note).not.toContain("not known here");
   });
 });
 

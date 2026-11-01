@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
+import { homedir } from "node:os";
 import pino, { type Logger } from "pino";
 import {
   deleteExtensionById,
@@ -60,6 +61,7 @@ import {
   extensionCredentialStatus,
   setExtensionCredential,
 } from "../extensions/extension-credential-set.ts";
+import type { ReachRunner } from "../extensions/extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
 import {
@@ -199,6 +201,8 @@ interface AutomationCtx {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  /** The sandbox runner the run approval describes network reach from. */
+  sandboxRunner?: ReachRunner;
   evalDeps?: AutomationEvalDeps;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
@@ -1149,6 +1153,10 @@ async function handleExtensionApproveRun(
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
       modelAccess: rawModelAccess === true,
+      evidence: {
+        ...(ctx.sandboxRunner === undefined ? {} : { sandbox: ctx.sandboxRunner }),
+        homeDir: homedir(),
+      },
       ...continuityTableOf(ctx),
     });
     // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
@@ -1329,6 +1337,7 @@ export async function dispatchAutomationRpc(options: {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  sandboxRunner?: ReachRunner;
   evalDeps?: AutomationEvalDeps;
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
@@ -1350,6 +1359,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
+    ...(options.sandboxRunner !== undefined && { sandboxRunner: options.sandboxRunner }),
     ...(options.evalDeps !== undefined && { evalDeps: options.evalDeps }),
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,
