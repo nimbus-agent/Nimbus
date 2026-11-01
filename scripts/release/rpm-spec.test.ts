@@ -47,6 +47,11 @@ test("maps binaries to /usr/lib/nimbus/bin and wrappers to /usr/local/bin", () =
   );
 });
 
+test("a staged path cannot break the quoting or start a macro", () => {
+  const s = renderRpmSpec({ ...BASE, binDir: "/work/it's 100%" });
+  expect(s).toContain(`'/work/it'\\''s 100%%/nimbus-gateway' '%{buildroot}`);
+});
+
 test("every installed file is listed, owned by root", () => {
   const s = renderRpmSpec({ ...BASE, hasVec0: true });
   const installed = [...s.matchAll(/%\{buildroot\}(\S+)'$/gm)].map((m) => m[1]);

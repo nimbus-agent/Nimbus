@@ -225,7 +225,7 @@ After compiling gateway + CLI to `dist/`:
 
 ```bash
 bun run package:headless                            # bundle headless gateway + CLI
-bun run package:installers:linux -- --version 0.1.0 # Linux .deb + .rpm + tarball (rpmbuild for the .rpm)
+bun run package:installers:linux -- --version 0.1.0 --rpm # Linux .deb + tarball + AppImage, and with --rpm an .rpm (needs rpmbuild)
 ```
 
 Optional: set `NIMBUS_EMBEDDING_MODEL_DIR` (or pass `--embedding-model-dir`) to embed pre-downloaded MiniLM weights in the bundle.

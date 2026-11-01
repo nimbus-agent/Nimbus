@@ -30,6 +30,11 @@ export function rpmVersion(version: string): string {
   return version.replaceAll("-", "~");
 }
 
+/** Quote a path for a spec's shell section: `%` would start a macro, `'` would end the quoting. */
+function quoteSpecPath(path: string): string {
+  return `'${path.replaceAll("%", "%%").replaceAll("'", "'\\''")}'`;
+}
+
 /**
  * Render the spec `rpmbuild` packages the Nimbus headless bundle from. Mirrors the bespoke `.deb`
  * layout in package-linux-installers.ts: real binaries under /usr/lib/nimbus/bin, thin wrappers in
@@ -91,7 +96,7 @@ Requires: bubblewrap
 Nimbus CLI and headless Gateway (local-first agent framework).
 
 %install
-${files.map((f) => `install -D -m ${f.mode} '${f.src}' '%{buildroot}${f.dst}'`).join("\n")}
+${files.map((f) => `install -D -m ${f.mode} ${quoteSpecPath(f.src)} '%{buildroot}${f.dst}'`).join("\n")}
 
 %files
 ${files.map((f) => `%attr(${f.mode},root,root) ${f.dst}`).join("\n")}
