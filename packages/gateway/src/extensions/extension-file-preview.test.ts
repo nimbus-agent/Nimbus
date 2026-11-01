@@ -180,14 +180,14 @@ describe("previewFileGrants behaviour", () => {
     expect(p.paths[0]?.text).not.toContain("\n");
     expect(p.paths[0]?.outcome).toBe("not-checked");
   });
-  test("a mixed list: the local path is still checked, the network path is not, canRunHere is null", () => {
+  test("a mixed list: the local path is still checked, the network path is not, and a refusal it found still reads false", () => {
     const asked: string[] = [];
     const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\data"), [], asked);
     const p = one({ read: ["\\\\h\\s\\x", "D:\\data", "D:\\gone"], write: [] }, env, WIN_OPTS);
     expect(asked).toContain("D:\\data"); // cross-platform-ok: explicit platform "win32" fixture
     expect(asked).not.toContain("\\\\h\\s\\x"); // cross-platform-ok: explicit platform "win32" fixture
     expect(p.paths.map((x) => x.outcome)).toEqual(["not-checked", "allowed", "missing"]);
-    expect(p.canRunHere).toBeNull();
+    expect(p.canRunHere).toBe(false);
     expect(p.checked).toBe(false);
   });
   test("a mixed list with an allowed local path reads canRunHere null, never true", () => {

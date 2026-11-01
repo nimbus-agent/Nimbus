@@ -139,6 +139,12 @@ function summarize(paths: readonly PreviewedPath[]): string {
   return `reads ${list("read")} · writes ${list("write")}`;
 }
 
+/** A refusal found is a refusal, even beside a path nobody could check. */
+function canRunFrom(paths: readonly PreviewedPath[]): boolean | null {
+  if (paths.some((p) => p.outcome !== "allowed" && p.outcome !== "not-checked")) return false;
+  return paths.some((p) => p.outcome === "not-checked") ? null : true;
+}
+
 /**
  * Predicts, before install, what the run approval's own path check will say about each declared
  * path, through that same check. "Here" is deliberate: the approval stays authoritative. With no
@@ -177,11 +183,10 @@ export function previewFileGrants(
   };
   add(declared.read, "read");
   add(declared.write, "write");
-  const unchecked = paths.some((p) => p.outcome === "not-checked");
   return {
     paths,
-    checked: !unchecked,
-    canRunHere: unchecked ? null : paths.every((p) => p.outcome === "allowed"),
+    checked: paths.every((p) => p.outcome !== "not-checked"),
+    canRunHere: canRunFrom(paths),
     text: summarize(paths),
   };
 }
