@@ -100,6 +100,10 @@ export function createWin32SandboxRunner(): SandboxRunner {
     isFullyActive(): boolean {
       return helper.available;
     },
+    // No helper means `spawn` above refuses, whatever the policy declares.
+    networkRefused: () => !helper.available,
+    // Nothing is missing when the helper is present, but `internetClient` cannot name a host.
+    networkScope: () => "all_or_nothing",
     degradedReason(): string | null {
       if (!helper.available) return helper.reason;
       // Per-host network filtering would need a WFP callout driver with kernel-mode signing.

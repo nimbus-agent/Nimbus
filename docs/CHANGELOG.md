@@ -18,6 +18,13 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-01 — Windows diagnostics stop claiming per-host network enforcement.** `diag.snapshot` reported
+  `per_host` for a Windows runner with a working helper, because only an absent `networkScope` could mean anything else
+  and Windows had none, while AppContainer `internetClient` opens every internet host or none of them. It now reports
+  `all_or_nothing`, so `nimbus extension info` prints the degraded line with its reason. A Windows runner with no usable
+  helper reported `all_or_nothing` too, though `spawn` refuses every child there; it now reports `refusing`. Enforcement
+  did not change.
+
 - **2026-10-31 — Declared hosts are enforced on Linux, through a local forwarder (invariant I50, I1–I50; no migration, no new static rule).**
   Until now a Linux child that declared a network got `--share-net`, the whole internet, on every released package: none
   carried `nimbus-sandbox-helper`, and the helper that existed held `cap_net_admin`, which `unshare(CLONE_NEWNET)` does not

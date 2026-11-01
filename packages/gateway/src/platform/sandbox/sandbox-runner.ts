@@ -32,9 +32,10 @@ export interface SandboxRunner {
   networkRefused?(): boolean;
   /**
    * How far a fully active runner limits a declared network, when that is less than per host: macOS
-   * filters by port and cannot name a host. Absent means it filters per host when fully active.
+   * filters by port and cannot name a host; Windows's `internetClient` opens every internet host
+   * or none of them. Absent means it filters per host when fully active.
    */
-  networkScope?(): "per_port";
+  networkScope?(): "per_port" | "all_or_nothing";
   /**
    * Can this runner enforce THIS policy in full? `null` if yes; otherwise the reason it cannot,
    * named precisely enough to act on.
