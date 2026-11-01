@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.15.0](https://github.com/nimbus-agent/Nimbus/compare/v10.14.2...v10.15.0) (2026-11-01)
+
+
+### Features
+
+* **extensions:** show what the sandbox will actually do, on every permission surface ([#1852](https://github.com/nimbus-agent/Nimbus/issues/1852)) ([51953ee](https://github.com/nimbus-agent/Nimbus/commit/51953ee8f308ec56fcc30ad6d31c7979e0e8df66))
+
 ## [10.14.2](https://github.com/nimbus-agent/Nimbus/compare/v10.14.1...v10.14.2) (2026-11-01)
 
 
