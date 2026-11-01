@@ -13,11 +13,14 @@ import {
   assetSha256,
   DEFAULT_RETAINED_RELEASES,
   debAssetName,
+  downloadVerifiedRpm,
   planYumRetention,
   renderRepreproDistributions,
   renderYumRepoFile,
   rpmAssetName,
   rpmVersionOf,
+  stableVersionsNewestFirst,
+  stageRetainedRpms,
 } from "./linux-repo-config.ts";
 
 const SUMS = [
@@ -432,5 +435,239 @@ describe("publish-linux-repo.yml yum prune ordering", () => {
     const buildIndex = steps.findIndex((s) => s.run.includes("createrepo_c repo/yum"));
     const signIndex = steps.findIndex((s) => s.run.includes("repo/yum/repodata/repomd.xml"));
     expect(signIndex).toBeGreaterThan(buildIndex);
+  });
+});
+
+describe("stableVersionsNewestFirst", () => {
+  test("keeps only stable v tags, newest first by semver and not by string", () => {
+    expect(
+      stableVersionsNewestFirst([
+        "v9.2.1",
+        "v10.14.1",
+        "v10.2.0",
+        "v11.0.0-rc.1",
+        "client-v1.0.0",
+        "site-10.14.1-1-1",
+        "not-a-version",
+      ]),
+    ).toEqual(["10.14.1", "10.2.0", "9.2.1"]);
+  });
+});
+
+describe("stageRetainedRpms", () => {
+  function stage(
+    tags: readonly string[],
+    currentVersion: string,
+    retain: number | undefined,
+    missing: readonly string[] = [],
+  ): string[] {
+    const fetched: string[] = [];
+    stageRetainedRpms({
+      tags,
+      currentVersion,
+      retain,
+      fetchRpm: (version) => {
+        fetched.push(version);
+        return !missing.includes(version);
+      },
+    });
+    return fetched;
+  }
+
+  test("fetches the newest releases up to retain, never the one already staged", () => {
+    expect(stage(["v4.0.0", "v3.0.0", "v2.0.0", "v1.0.0"], "4.0.0", 3)).toEqual(["3.0.0", "2.0.0"]);
+  });
+
+  test("an abandoned release with no assets costs no slot: the next one fills it", () => {
+    expect(stage(["v4.0.0", "v3.0.0", "v2.0.0", "v1.0.0"], "4.0.0", 3, ["3.0.0"])).toEqual([
+      "3.0.0",
+      "2.0.0",
+      "1.0.0",
+    ]);
+  });
+
+  test("re-publishing an old tag still fetches the newest, so retention can keep them", () => {
+    expect(stage(["v4.0.0", "v3.0.0", "v2.0.0", "v1.0.0"], "1.0.0", 3)).toEqual([
+      "4.0.0",
+      "3.0.0",
+      "2.0.0",
+    ]);
+  });
+
+  test("retain 1 fetches nothing when the release being published is the newest", () => {
+    expect(stage(["v2.0.0", "v1.0.0"], "2.0.0", 1)).toEqual([]);
+  });
+
+  test("the default retention applies when none is configured", () => {
+    const tags = ["v5.0.0", "v4.0.0", "v3.0.0", "v2.0.0", "v1.0.0"];
+    expect(stage(tags, "5.0.0", undefined)).toHaveLength(DEFAULT_RETAINED_RELEASES - 1);
+  });
+
+  test("a failure while fetching stops the publish", () => {
+    expect(() =>
+      stageRetainedRpms({
+        tags: ["v2.0.0", "v1.0.0"],
+        currentVersion: "2.0.0",
+        retain: 2,
+        fetchRpm: () => {
+          throw new Error("checksum mismatch");
+        },
+      }),
+    ).toThrow("checksum mismatch");
+  });
+});
+
+describe("downloadVerifiedRpm", () => {
+  const VERSION = "1.2.3";
+  const RPM = rpmAssetName(VERSION);
+  const BODY = "rpm body";
+  const SHA = new Bun.CryptoHasher("sha256").update(BODY).digest("hex");
+
+  function withDir<T>(run: (dir: string) => T): T {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-linux-repo-"));
+    try {
+      return run(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** A stand-in for `gh release download`: writes what the release holds into `--dir`. */
+  function gh(files: Record<string, string>, result: { status: number; stderr: string }) {
+    return (args: readonly string[]) => {
+      const dir = args[args.indexOf("--dir") + 1] ?? "";
+      for (const [name, body] of Object.entries(files)) writeFileSync(join(dir, name), body);
+      return result;
+    };
+  }
+  const OK = { status: 0, stderr: "" };
+
+  test("moves a verified RPM into the yum tree and leaves nothing else there", () => {
+    withDir((dir) => {
+      const run = gh({ [RPM]: BODY, SHA256SUMS: `${SHA}  ${RPM}\n` }, OK);
+      expect(downloadVerifiedRpm(VERSION, dir, run)).toBe(true);
+      expect(readdirSync(dir)).toEqual([RPM]);
+      expect(readFileSync(join(dir, RPM), "utf8")).toBe(BODY);
+    });
+  });
+
+  test("a checksum mismatch throws and stages nothing", () => {
+    withDir((dir) => {
+      const wrong = "0".repeat(64);
+      const run = gh({ [RPM]: BODY, SHA256SUMS: `${wrong}  ${RPM}\n` }, OK);
+      expect(() => downloadVerifiedRpm(VERSION, dir, run)).toThrow("checksum mismatch");
+      expect(readdirSync(dir)).toEqual([]);
+    });
+  });
+
+  test("a release with no matching assets is reported as missing, not as a failure", () => {
+    withDir((dir) => {
+      const run = gh({}, { status: 1, stderr: "no assets to download" });
+      expect(downloadVerifiedRpm(VERSION, dir, run)).toBe(false);
+      expect(readdirSync(dir)).toEqual([]);
+    });
+  });
+
+  test("a release holding SHA256SUMS but no RPM is missing", () => {
+    withDir((dir) => {
+      expect(downloadVerifiedRpm(VERSION, dir, gh({ SHA256SUMS: "" }, OK))).toBe(false);
+      expect(readdirSync(dir)).toEqual([]);
+    });
+  });
+
+  test("an RPM with no SHA256SUMS throws: nothing unverified is ever published", () => {
+    withDir((dir) => {
+      expect(() => downloadVerifiedRpm(VERSION, dir, gh({ [RPM]: BODY }, OK))).toThrow(
+        "SHA256SUMS",
+      );
+      expect(readdirSync(dir)).toEqual([]);
+    });
+  });
+
+  test("any other gh failure throws rather than quietly shrinking the channel", () => {
+    withDir((dir) => {
+      const run = gh({}, { status: 1, stderr: "HTTP 503: Service Unavailable" });
+      expect(() => downloadVerifiedRpm(VERSION, dir, run)).toThrow("503");
+    });
+  });
+});
+
+/** The publish job's raw YAML: `if` and `concurrency` are what the deploy mode rests on. */
+function publishJob(): { job: Record<string, unknown>; steps: Record<string, unknown>[] } {
+  const path = join(ROOT, ".github", "workflows", "publish-linux-repo.yml");
+  const doc = loadYaml(readFileSync(path, "utf8"));
+  const jobs = isRecord(doc) && isRecord(doc["jobs"]) ? doc["jobs"] : {};
+  const job = isRecord(jobs["publish-linux-repo"]) ? jobs["publish-linux-repo"] : {};
+  const steps = Array.isArray(job["steps"]) ? job["steps"].filter(isRecord) : [];
+  return { job, steps };
+}
+
+describe("publish-linux-repo.yml deploy modes", () => {
+  const { job, steps } = publishJob();
+  const named = (name: string) => steps.find((s) => s["name"] === name);
+  const ACTIONS = "vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'";
+  const NOT_ACTIONS = "vars.NIMBUS_LINUX_REPO_DEPLOY != 'actions'";
+
+  test("with the variable unset, the Git path is the one that runs", () => {
+    expect(named("Clone the linux-repo Pages repo")?.["if"]).toBe(NOT_ACTIONS);
+    expect(named("Commit + push to linux-repo")?.["if"]).toBe(NOT_ACTIONS);
+  });
+
+  test("only the Actions path hands off, waits and prunes, and it never clones", () => {
+    for (const name of [
+      "Start from an empty tree",
+      "Hand the tree to linux-repo",
+      "Wait until Pages serves this release",
+      "Prune old site releases",
+    ]) {
+      expect(named(name)?.["if"]).toBe(ACTIONS);
+    }
+  });
+
+  test("a mistyped mode fails before anything is built", () => {
+    const check = steps.findIndex((s) => s["name"] === "Check the deploy mode");
+    const build = steps.findIndex((s) => String(s["run"] ?? "").includes("createrepo_c repo/yum"));
+    expect(check).toBeGreaterThan(-1);
+    expect(check).toBeLessThan(build);
+    expect(String(steps[check]?.["run"])).toContain("exit 1");
+  });
+
+  test("older RPMs are staged before the prune, so retention still decides what stays", () => {
+    const script = String(
+      steps.find((s) => String(s["run"] ?? "").includes("createrepo_c"))?.["run"],
+    );
+    const stage = script.indexOf("--stage-yum-rpms repo/yum");
+    expect(stage).toBeGreaterThan(-1);
+    expect(stage).toBeLessThan(script.indexOf("--prune-yum repo/yum"));
+  });
+
+  test("the handoff comes after signing, and the wait after the handoff", () => {
+    const at = (name: string) => steps.findIndex((s) => s["name"] === name);
+    expect(at("Hand the tree to linux-repo")).toBeGreaterThan(
+      at("Sign apt Release + yum repomd (loopback gpg)"),
+    );
+    expect(at("Wait until Pages serves this release")).toBeGreaterThan(
+      at("Hand the tree to linux-repo"),
+    );
+    expect(at("Prune old site releases")).toBeGreaterThan(
+      at("Wait until Pages serves this release"),
+    );
+  });
+
+  test("a failed wait fails the job: only pruning may fail quietly", () => {
+    expect(named("Wait until Pages serves this release")?.["continue-on-error"]).toBeUndefined();
+    expect(String(named("Wait until Pages serves this release")?.["run"])).toContain("exit 1");
+    expect(named("Prune old site releases")?.["continue-on-error"]).toBe(true);
+  });
+
+  test("the wait never pipes into grep -q, which fails under pipefail when grep exits first", () => {
+    expect(String(named("Wait until Pages serves this release")?.["run"])).not.toMatch(
+      /\|\s*(\\\s*)?grep -q/,
+    );
+  });
+
+  test("one publish at a time across every tag", () => {
+    const concurrency = job["concurrency"];
+    expect(isRecord(concurrency) ? concurrency["group"] : undefined).toBe("publish-linux-repo");
   });
 });
