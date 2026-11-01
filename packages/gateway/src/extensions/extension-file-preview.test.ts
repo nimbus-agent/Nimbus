@@ -140,7 +140,7 @@ describe("previewFileGrants behaviour", () => {
       homeDir: "C:\\Users\\Ada",
     });
     expect(p.paths.map((x) => x.broad)).toEqual(["drive-root", "drive-root"]);
-    expect(p.paths[0]?.text).toBe("D:\\ (a whole drive)");
+    expect(p.paths[0]?.text).toBe("D:\\ (a whole drive)"); // cross-platform-ok: explicit platform "win32" fixture
   });
   test("with no install path the self-write check is skipped, and nothing claims it passed", () => {
     const asked: string[] = [];

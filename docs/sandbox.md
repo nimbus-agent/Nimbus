@@ -443,9 +443,30 @@ later project too: SBPL cannot name a host, so it needs a mechanism of its own.
 The asymmetry is surfaced on these operator-visible surfaces:
 
 - `nimbus diag --json` → `sandbox.platform_capabilities` (`per_port` on macOS, `all_or_nothing` on Windows, `refusing` on Windows with no helper)
-- `nimbus extension info <id>` → "Network isolation:" line
-- The consent prompts: `extension.run`, the migration prompt and `connector add --mcp`
+- `nimbus extension info <id>` → "Network isolation:" line, then `Reach on this machine:` and `Files:`
+  lines for what this extension's own declared hosts and paths do here (`nimbus extension info <id>
+  --registry <name>` / `--remote` prints the same two lines under the newest version's permissions)
+- The consent prompts: `extension.run`, `extension.migrate`, `connector add --mcp`, and the
+  `extension.install`, `extension.autoUpdate` and `extension.downgrade` approvals. Each states what
+  the declared network does on this machine, worded from the sandbox's live posture rather than from
+  the OS name: the named hosts only where the sandbox limits the extension to them, "any host on
+  port N, including this machine and the local network" on macOS, "any internet host" on Windows,
+  "the whole network" on Linux with no helper, "will not start here" where the sandbox would refuse,
+  and "not known here" when no sandbox could be asked. The desktop shows the same two lines
+  (`Network:` and `Files:`) in the install, update and downgrade approvals.
 - Gateway-startup structured log, only for a runner that is not fully active, so not on macOS
+
+**What the file line is, and its bound.** The `Files:` line is a prediction: it runs the run
+approval's own path check (`checkDeclaredPath`) over each declared path and says what would happen
+here, marking a path as "doesn't exist here", "overlaps Nimbus's data", a relative path, or (for an
+installed extension) overlapping the extension's own files, and flagging a grant of a filesystem
+root, a whole drive or your home folder when the check passes. A prediction can go stale: a folder
+can appear or vanish between the preview and the approval, and the approval's own check, made
+later, stays authoritative. Before an install nothing is on disk yet, so the self-write check is
+skipped and never reported as passed; the same holds for `info --registry` / `--remote`, which
+describe a package that is not installed. With no way to check, the line says `(not checked here)`
+instead of claiming a pass. The wording says "here" on purpose: it never promises the approval will
+pass.
 
 ## Pre-T2 extensions
 
