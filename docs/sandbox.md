@@ -442,7 +442,7 @@ enrollment); deferred to a tracked follow-up. macOS per-host filtering is a
 later project too: SBPL cannot name a host, so it needs a mechanism of its own.
 The asymmetry is surfaced on these operator-visible surfaces:
 
-- `nimbus diag --json` → `sandbox.platform_capabilities` (`per_port` on macOS)
+- `nimbus diag --json` → `sandbox.platform_capabilities` (`per_port` on macOS, `all_or_nothing` on Windows, `refusing` on Windows with no helper)
 - `nimbus extension info <id>` → "Network isolation:" line
 - The consent prompts: `extension.run`, the migration prompt and `connector add --mcp`
 - Gateway-startup structured log, only for a runner that is not fully active, so not on macOS

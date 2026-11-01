@@ -11,7 +11,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-
+import { buildSandboxDiagPayload } from "../../ipc/diagnostics-rpc.ts";
 import { canonicalPath } from "./canonical-path.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 import { capabilitiesForPolicy, createWin32SandboxRunner, profileNameFor } from "./win32.ts";
@@ -204,6 +204,27 @@ describe("createWin32SandboxRunner — helper probe outcomes", () => {
       expect(runner.degradedReason()).toContain("all-or-nothing");
     },
   );
+
+  it.skipIf(process.platform === "win32")(
+    "a working helper reports all_or_nothing, because internetClient cannot name a host",
+    () => {
+      installFakeHelper("echo OK\nexit 0\n");
+      const runner = createWin32SandboxRunner();
+      expect(runner.isFullyActive()).toBe(true);
+      expect(runner.networkRefused?.()).toBe(false);
+      expect(buildSandboxDiagPayload(runner).platform_capabilities.network).toBe("all_or_nothing");
+    },
+  );
+
+  it("an unusable helper reports refusing, because spawn refuses every child", () => {
+    process.env["NIMBUS_SANDBOX_HELPER_PATH"] = join(tmp, "absent-helper");
+    const runner = createWin32SandboxRunner();
+    expect(runner.isFullyActive()).toBe(false);
+    expect(() =>
+      runner.spawn("x", [], { policy: NET_POLICY, cwd: tmp, env: {}, stdio: "ignore" }),
+    ).toThrow("refusing to spawn unsandboxed");
+    expect(buildSandboxDiagPayload(runner).platform_capabilities.network).toBe("refusing");
+  });
 
   it("refuses a helper that exits 0 but does not answer exactly OK", () => {
     // process.execPath is the bun binary running this test: it exists, and it answers an
