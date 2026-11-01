@@ -1102,7 +1102,7 @@ describe("currentQualityChange: the informational read has its own deadline", ()
     expect(change).toEqual(qualityUnreadable());
   });
 
-  it("a read that settles in time is not cut short and leaves no pending timer", async () => {
+  it("a read that settles in time is not cut short", async () => {
     const plan = {
       resolver: { readRootIndex: async () => ({ extensions: {} }) },
     } as unknown as UpdatePlan;
