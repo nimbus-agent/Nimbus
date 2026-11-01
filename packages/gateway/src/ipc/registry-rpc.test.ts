@@ -828,6 +828,57 @@ describe("registry.search and registry.info", () => {
     expect(String(access?.["fileAccess"])).not.toMatch(/can run|own files/i);
   });
 
+  test("registry.info never resolves a Windows network path a manifest declares", async () => {
+    const unc = "\\\\192.0.2.1\\share\\x";
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          {
+            version: "1.0.0",
+            channel: "stable",
+            name: "Tool",
+            filesystem: { read: [unc], write: [] },
+          },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const resolved: string[] = [];
+    const out = await dispatchRegistryRpc({
+      method: "registry.info",
+      params: { id: "acme.tool", registry: "main" },
+      db,
+      fetch: fetchBag(),
+      evidence: {
+        homeDir: tmp,
+        sandbox: {
+          platform: "win32",
+          isFullyActive: () => true,
+          degradedReason: () => null,
+          canConfine: () => null,
+        },
+        grantEnv: {
+          platform: "win32",
+          protectedRoots: [],
+          runtimeReadPaths: [],
+          realpath: (p: string) => {
+            resolved.push(p);
+            return p;
+          },
+        },
+      },
+    });
+    const access = (out as { value: { versions: Array<{ access: Record<string, unknown> }> } })
+      .value.versions[0]?.access;
+    expect(resolved).not.toContain(unc);
+    expect(String(access?.["fileAccess"])).toContain(
+      `${unc} (network or device path, not checked here)`,
+    );
+    expect(access?.["canRunHere"]).toBeNull();
+    expect(access?.["checked"]).toBe(false);
+  });
+
   test("only the newest version carries access, as permissions does", async () => {
     makeRegistry(tmp, {
       "acme.tool": {

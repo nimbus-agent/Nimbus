@@ -24,9 +24,9 @@ export type PreviewedPath = {
 
 export type FilePreview = {
   readonly paths: readonly PreviewedPath[];
-  /** False when no environment was available to ask: every path is then `not-checked`. */
+  /** True only when every path was checked: false with no environment, or with any `not-checked` path. */
   readonly checked: boolean;
-  /** `null` when unchecked: neither a pass nor a refusal. */
+  /** `null` when any path is unchecked: neither a pass nor a refusal. */
   readonly canRunHere: boolean | null;
   readonly text: string;
 };
@@ -78,6 +78,14 @@ function broadKind(canonical: string, home: string, env: ExtensionRunGrantEnv): 
   return containsHome ? "above-home" : null;
 }
 
+/**
+ * On Windows a path that begins with two slashes of either kind names a network share or a device
+ * (UNC `host\share`, `//host/share`, the `\\?\UNC` and `\\.\pipe` prefixes). Resolving one touches
+ * the network (a blocked event loop, SMB, possibly an NTLM offer) from a preview that runs before
+ * any consent and leaves no egress row, so such a path is never handed to `realpath`.
+ */
+const NETWORK_OR_DEVICE = /^[\\/]{2}/;
+
 function describePath(
   declared: string,
   access: "read" | "write",
@@ -85,6 +93,16 @@ function describePath(
   home: string,
   env: ExtensionRunGrantEnv,
 ): PreviewedPath | null {
+  if (env.platform === "win32" && NETWORK_OR_DEVICE.test(declared)) {
+    const path = oneLine(declared);
+    return {
+      path,
+      access,
+      outcome: "not-checked",
+      broad: null,
+      text: `${path} (network or device path, not checked here)`,
+    };
+  }
   let canonical: string | null;
   try {
     canonical = checkDeclaredPath(declared, access, install, env);
@@ -159,10 +177,11 @@ export function previewFileGrants(
   };
   add(declared.read, "read");
   add(declared.write, "write");
+  const unchecked = paths.some((p) => p.outcome === "not-checked");
   return {
     paths,
-    checked: true,
-    canRunHere: paths.every((p) => p.outcome === "allowed"),
+    checked: !unchecked,
+    canRunHere: unchecked ? null : paths.every((p) => p.outcome === "allowed"),
     text: summarize(paths),
   };
 }

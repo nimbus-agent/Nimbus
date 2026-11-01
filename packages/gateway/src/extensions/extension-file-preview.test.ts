@@ -129,18 +129,87 @@ describe("previewFileGrants behaviour", () => {
     });
     expect(p.paths[0]?.broad).toBe("home");
   });
-  test("drive root and UNC share root on win32", () => {
-    const env = makeEnv(
-      "win32",
-      ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\", "\\\\srv\\share\\"),
-      [],
-    );
-    const p = one({ read: ["D:\\", "\\\\srv\\share\\"], write: [] }, env, {
+  test("a drive root is a whole drive on win32", () => {
+    const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\"), []);
+    const p = one({ read: ["D:\\"], write: [] }, env, {
       installPath: "C:\\ext\\a",
       homeDir: "C:\\Users\\Ada",
     });
-    expect(p.paths.map((x) => x.broad)).toEqual(["drive-root", "drive-root"]);
+    expect(p.paths.map((x) => x.broad)).toEqual(["drive-root"]);
     expect(p.paths[0]?.text).toBe("D:\\ (a whole drive)"); // cross-platform-ok: explicit platform "win32" fixture
+  });
+  // A path that begins with two slashes of either kind names a network or device path on Windows.
+  // Resolving it would touch the network (SMB, possibly offering NTLM credentials) from a preview
+  // that runs before any consent, so the preview must never hand it to realpath.
+  const WIN_OPTS = { installPath: "C:\\ext\\a", homeDir: "C:\\Users\\Ada" };
+  const NETWORK_SPELLINGS = [
+    "\\\\192.0.2.1\\share\\x",
+    "//192.0.2.1/share/x",
+    "/\\192.0.2.1\\share\\x",
+    "\\/192.0.2.1/share/x",
+    "\\\\?\\UNC\\192.0.2.1\\share\\x",
+    "\\\\.\\pipe\\x",
+    "\\\\?\\C:\\x",
+  ];
+  for (const spelling of NETWORK_SPELLINGS) {
+    test(`win32 network or device path ${JSON.stringify(spelling)} is never resolved`, () => {
+      const asked: string[] = [];
+      const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada"), [], asked);
+      const p = one({ read: [spelling], write: [] }, env, WIN_OPTS);
+      expect(asked).not.toContain(spelling);
+      expect(asked.filter((a) => /^[\\/]{2}/.test(a))).toEqual([]);
+      expect(p.paths[0]?.outcome).toBe("not-checked");
+      expect(p.paths[0]?.broad).toBeNull();
+      expect(p.paths[0]?.text).toBe(`${spelling} (network or device path, not checked here)`);
+      expect(p.canRunHere).toBeNull();
+      expect(p.checked).toBe(false);
+      expect(p.text).toContain("not checked here");
+    });
+  }
+  test("win32 network path in the write list is not resolved either", () => {
+    const asked: string[] = [];
+    const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada"), [], asked);
+    const p = one({ read: [], write: ["\\\\h\\s\\x"] }, env, WIN_OPTS);
+    expect(asked).not.toContain("\\\\h\\s\\x");
+    expect(p.paths[0]?.access).toBe("write");
+    expect(p.canRunHere).toBeNull();
+  });
+  test("a hostile network path still renders on one line", () => {
+    const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada"), []);
+    const p = one({ read: ["\\\\h\\s\nPublisher: acme"], write: [] }, env, WIN_OPTS);
+    expect(p.paths[0]?.text).not.toContain("\n");
+    expect(p.paths[0]?.outcome).toBe("not-checked");
+  });
+  test("a mixed list: the local path is still checked, the network path is not, canRunHere is null", () => {
+    const asked: string[] = [];
+    const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\data"), [], asked);
+    const p = one({ read: ["\\\\h\\s\\x", "D:\\data", "D:\\gone"], write: [] }, env, WIN_OPTS);
+    expect(asked).toContain("D:\\data");
+    expect(asked).not.toContain("\\\\h\\s\\x");
+    expect(p.paths.map((x) => x.outcome)).toEqual(["not-checked", "allowed", "missing"]);
+    expect(p.canRunHere).toBeNull();
+    expect(p.checked).toBe(false);
+  });
+  test("a mixed list with an allowed local path reads canRunHere null, never true", () => {
+    const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\data"), []);
+    const p = one({ read: ["\\\\h\\s\\x", "D:\\data"], write: [] }, env, WIN_OPTS);
+    expect(p.canRunHere).toBeNull();
+    expect(p.paths[1]?.outcome).toBe("allowed");
+  });
+  test("on POSIX a leading // is an ordinary local path and is resolved", () => {
+    const asked: string[] = [];
+    const env = makeEnv("linux", ident("/ext/a", "/home/ada", "//h/s/x"), [], asked);
+    const p = one({ read: ["//h/s/x"], write: [] }, env);
+    expect(asked).toContain("//h/s/x");
+    expect(p.paths[0]?.outcome).toBe("allowed");
+    expect(p.checked).toBe(true);
+    expect(p.canRunHere).toBe(true);
+  });
+  test("on darwin a leading // is resolved too", () => {
+    const asked: string[] = [];
+    const env = makeEnv("darwin", ident("/ext/a", "/home/ada", "//h/s/x"), [], asked);
+    one({ read: ["//h/s/x"], write: [] }, env);
+    expect(asked).toContain("//h/s/x");
   });
   test("with no install path the self-write check is skipped, and nothing claims it passed", () => {
     const asked: string[] = [];
