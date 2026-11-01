@@ -89,10 +89,13 @@ const NETWORK_OR_DEVICE = /^[\\/]{2}/;
 /**
  * Linux and macOS have the same trap in the `-hosts` automount map, conventionally at `/net` and
  * enabled by default on macOS: resolving `/net/<host>/x` contacts the host the path names. A map
- * mounted elsewhere is not detected; other maps name only servers an administrator chose.
+ * mounted elsewhere is not detected; other maps name only servers an administrator chose. A `..`
+ * segment is never resolved either: `normalize` would erase `/net` from the spelling, while
+ * `realpath` walks through it. The manifest validator refuses `..`, so no valid path loses anything.
  */
 function reachesNetworkWhenResolved(declared: string, platform: NodeJS.Platform): boolean {
   if (platform === "win32") return NETWORK_OR_DEVICE.test(declared);
+  if (declared.split("/").includes("..")) return true;
   const normal = pathApiFor(platform).normalize(declared);
   const spelled = platform === "darwin" ? normal.toLowerCase() : normal;
   return spelled === "/net" || spelled.startsWith("/net/");

@@ -175,6 +175,10 @@ describe("previewFileGrants behaviour", () => {
       ["darwin", "/net"],
       ["linux", "/net/attacker.example/x"],
       ["linux", "//net/attacker.example/x"],
+      ["darwin", "/net/attacker.example/../../tmp"],
+      ["darwin", "/tmp/../net/attacker.example/../../tmp"],
+      ["linux", "/net/attacker.example/../../tmp"],
+      ["linux", "/tmp/../net/attacker.example/../../tmp"],
     ];
     for (const [platform, spelling] of cases) {
       test(`${platform} ${spelling} is never resolved`, () => {
