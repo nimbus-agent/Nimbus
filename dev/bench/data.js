@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793510775393,
+  "lastUpdate": 1793525381009,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a8f76942802fd4ce773137a2542b5d41eef7aca3",
-          "message": "chore: release main (#1181)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.1</summary>\n\n##\n[2.4.1](https://github.com/nimbus-agent/Nimbus/compare/v2.4.0...v2.4.1)\n(2026-08-14)\n\n\n### Bug Fixes\n\n* **install:** stop Windows PowerShell 5.1 native stderr from aborting\ngpg signature verification\n([#1179](https://github.com/nimbus-agent/Nimbus/issues/1179))\n([6c991ea](https://github.com/nimbus-agent/Nimbus/commit/6c991eabf4cb110a4ddaf0ca844da62bfd437e7d))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-14T12:44:08+03:00",
-          "tree_id": "34f3ce7e73acc618eaaffa5c26c335377704ca00",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a8f76942802fd4ce773137a2542b5d41eef7aca3"
-        },
-        "date": 1786701989477,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.13875625000145,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 332.80892265000364,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 166.7566299499973,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "114cf699561212493feb171d1873f36add7a0b0e",
+          "message": "fix(release): build the rpm with rpmbuild so the apt and dnf repo can publish again (#1845)\n\napt and dnf users have been stuck on 9.2.1 since 2026-10-18. Every\n`Publish Linux repo` run since has failed at `git push`, because the\n`.rpm` grew past the 100 MiB GitHub allows for one file in\n`nimbus-agent/linux-repo`. Nothing reported it, since the Release and\nits smoke test read the release assets, not that repository.\n\n## The fix\n\nThe `.rpm` now comes from `rpmbuild`, with zstd level 19 and a 128 MiB\nwindow. The gateway and the CLI each embed the Bun runtime, and only a\nwindow that wide sees the second copy as a repeat of the first.\n\nSizes on the published v10.14.0 binaries, against the 100 MiB limit:\n\n| Build | Size |\n|---|---|\n| `nfpm` gzip, as shipped | 117.9 MiB |\n| `nfpm` xz | 100.9 MiB |\n| `nfpm` zstd 19 | 99.0 MiB |\n| `rpmbuild` zstd 19 | 89.4 MiB |\n| `rpmbuild` xz 9 | 81.4 MiB |\n| `rpmbuild` zstd 19 with the 128 MiB window | **48.5 MiB** |\n\n`nfpm` offers no window setting, which is why it goes. The `rpm` package\nnow comes from Ubuntu's archive in place of a checksum-pinned `nfpm`\ndownload.\n\n## Also in this PR\n\n- **Failure alert:** a failed publish now opens an issue titled \"The apt\nand dnf repo is not publishing\", comments on it while the failure lasts,\nand closes it on the next success.\n- **Release check:** the release job extracts the `.rpm` and compares\nthe gateway and CLI byte for byte with the bundle, so a stripped or\nunreadable package stops there.\n- **Existing bug:** the packager exited 0 when the build tool reported\nsuccess and wrote no package. It now fails.\n\n## Proof\n\nThe branch's packager built a real package in Linux Docker from the\npublished v10.14.0 binaries.\n\n- **`createrepo_c` and `dnf install` on Rocky 8, Rocky 9 and Fedora\n44:** bubblewrap was pulled in, `nimbus --version` printed 10.14.0, and\n`rpm -V` was clean. `createrepo_c` here is each distro's own build.\n- **Direct `rpm -i` on an earlier build with the same payload setting:**\nRocky 8, Rocky 9, Fedora 44 and openSUSE Leap 15.6, oldest `rpm` 4.14.3,\nwith file hashes matching.\n- **`rpm -qi`, `-qR` and `-qlv`:** bubblewrap is the only package\ndependency, and every file is root-owned at the same path and mode as\nbefore.\n- **Tests and gates:** the 41 packager and spec tests pass on Linux, and\n`preflight:fast` passes.\n\n**Not proved until the next release:** the Release workflow's own run of\nthis step, the `git push` to `linux-repo`, and an install from the real\nsigned repo. The issue-opening job has not run either. This is confirmed\nby reading what `linux-repo` serves after the next release, which this\n`fix:` title will cut.\n\n## What this costs\n\n- **Older distros:** the package now needs rpm 4.14 or later, which\nrules out RHEL 7 and CentOS 7. Both are past end of life.\n- **Memory to install:** decompressing the payload can use about 128\nMiB.\n- **Release time:** the `.rpm` takes about a minute to compress, up from\nseconds.\n\n## Left alone\n\n- **`.deb`:** it stays at 89.4 MiB, because `dpkg-deb` has no window\noption. It has been flat since v10.0.0, but the step before that added\n15 MiB, so one more like it would put it over the limit. The new alert\nwould report that.\n- **`linux-repo` history:** the repository is 14.6 GB against GitHub's\nrecommended 1 GB for a Pages source, since every release commits its\npackages to Git. This PR does not touch it. Rewriting that history is\nthe owner's call.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Linux installer packages can now be built as `.deb`, tarball, or\nAppImage by default, with RPM packages available using the RPM option.\n* Linux repository publishing failures are tracked in an issue, which is\nupdated while publishing remains unsuccessful and closed after a\nsuccessful publish.\n* **Improvements**\n* RPM builds require the system RPM build tool and verify that the\npackaged gateway and CLI match the staged binaries.\n* If Linux repository publishing fails, apt and dnf users remain on the\nlast successfully published version until a later publish succeeds.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-01T11:21:29+02:00",
+          "tree_id": "29a2f0c6a53e8742e3d1feb97ba80bc81928a905",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/114cf699561212493feb171d1873f36add7a0b0e"
+        },
+        "date": 1793525373151,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 217.7193891000019,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.54524605000006,
             "unit": "ms"
           }
         ]
