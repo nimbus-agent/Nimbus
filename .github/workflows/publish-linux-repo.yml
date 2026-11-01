@@ -249,3 +249,51 @@ jobs:
           if git diff --cached --quiet; then echo "no repo change"; exit 0; fi
           git commit -m "nimbus ${TAG#v}"
           git push
+
+  # A red run here reaches nobody: the Release and its smoke test stay green, because they read the
+  # release assets and not this repo. apt and dnf users stayed on 9.2.1 through 13 failed runs that way.
+  publish-health-alert:
+    name: Report publish failures in an issue
+    needs: publish-linux-repo
+    if: always() && needs.publish-linux-repo.result != 'skipped'
+    # One at a time, for the same reason as Security's alert: two runs could both find no issue and
+    # open one each.
+    concurrency:
+      group: publish-linux-repo-health-alert
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Open, update or close the tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
+          RESULT: ${{ needs.publish-linux-repo.result }}
+        run: |
+          set -euo pipefail
+          title="The apt and dnf repo is not publishing"
+          existing=$(gh issue list --repo "$REPO" --state open --search "\"$title\" in:title" \
+            --json number,title --jq ".[] | select(.title == \"$title\") | .number" | head -1)
+
+          if [[ "$RESULT" == "success" ]]; then
+            if [[ -n "$existing" ]]; then
+              gh issue close "$existing" --repo "$REPO" --comment "Published ${TAG}: ${RUN_URL}"
+            fi
+          elif [[ -n "$existing" ]]; then
+            gh issue comment "$existing" --repo "$REPO" --body "Still failing at ${TAG} (${RESULT}): ${RUN_URL}"
+          else
+            body="Publishing ${TAG} to \`nimbus-agent/linux-repo\` ended in **${RESULT}**: ${RUN_URL}
+
+          apt and dnf users stay on the last version that published until this is fixed. GitHub refuses a file over 100 MiB in that repository, so check the package sizes first.
+
+          This issue closes itself on the next successful publish."
+            gh issue create --repo "$REPO" --title "$title" --body "$body"
+          fi

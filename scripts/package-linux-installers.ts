@@ -15,7 +15,7 @@ import {
   bwrapApparmorInstallShell,
   bwrapApparmorRemoveShell,
 } from "../packages/cli/src/commands/doctor-bwrap.ts";
-import { renderNfpmConfig } from "./release/nfpm-config.ts";
+import { renderRpmSpec } from "./release/rpm-spec.ts";
 
 const repoRoot = resolve(import.meta.dir, "..");
 
@@ -61,8 +61,8 @@ Options:
                           of compiling from packages/gateway/src-native/. Tests
                           pass a stub via this flag.
   --make <path>           Path to make (default: /usr/bin/make).
-  --rpm                   Also build an .rpm via nfpm.
-  --nfpm <path>           Path to the nfpm binary (default: nfpm on PATH).
+  --rpm                   Also build an .rpm via rpmbuild.
+  --rpmbuild <path>       Path to the rpmbuild binary (default: rpmbuild on PATH).
   --help, -h              Show this message.
 
 Prerequisites: /usr/bin/tar, /usr/bin/dpkg-deb, and (unless --skip-appimage)
@@ -93,7 +93,7 @@ const appImageToolOverride = parseArg("--appimagetool");
 const sandboxHelperOverride = parseArg("--sandbox-helper");
 const makeBin = parseArg("--make") ?? MAKE_BIN;
 const buildRpmFlag = hasFlag("--rpm");
-const nfpmOverride = parseArg("--nfpm");
+const rpmbuildOverride = parseArg("--rpmbuild");
 
 const gw = join(bundleDir, "nimbus-gateway");
 const cli = join(bundleDir, "nimbus");
@@ -364,11 +364,11 @@ function channelWrapper(channel: string, target: string): string {
 }
 
 /**
- * Build the `.rpm` via nfpm: stage the binaries, helper, and yum-channel
- * wrappers into a temp dir, render the nfpm config, and shell out to the
- * (pinned) nfpm binary. Cleans up the stage on both success and failure.
+ * Build the `.rpm` via rpmbuild: stage the binaries, helper, and yum-channel
+ * wrappers into a temp dir, render the spec, and shell out to rpmbuild.
+ * Cleans up the stage on both success and failure.
  */
-function buildRpm(nfpmBin: string): string {
+function buildRpm(rpmbuildBin: string): string {
   const stage = join(outRoot, "rpm-stage");
   const rpmBinDir = join(stage, "bin");
   const wrapperDir = join(stage, "wrappers");
@@ -376,7 +376,7 @@ function buildRpm(nfpmBin: string): string {
   mkdirSync(wrapperDir, { recursive: true });
 
   // Stage the binaries (and the helper, wherever it was resolved from) into one
-  // dir so the nfpm `src:` paths always exist. sandboxHelper may come from
+  // dir so the spec's source paths always exist. sandboxHelper may come from
   // --sandbox-helper or the built src-native path, not necessarily bundleDir.
   copyFileSync(gw, join(rpmBinDir, "nimbus-gateway"));
   copyFileSync(cli, join(rpmBinDir, "nimbus"));
@@ -389,30 +389,44 @@ function buildRpm(nfpmBin: string): string {
     "utf8",
   );
 
-  const cfg = renderNfpmConfig({ version, binDir: rpmBinDir, wrapperDir, hasVec0 });
-  const cfgPath = join(stage, "nfpm.yaml");
-  writeFileSync(cfgPath, cfg, "utf8");
+  const spec = renderRpmSpec({ version, binDir: rpmBinDir, wrapperDir, hasVec0 });
+  const specPath = join(stage, "nimbus-headless.spec");
+  writeFileSync(specPath, spec, "utf8");
 
   const rpmName = `nimbus-headless-${version}-x86_64.rpm`;
   const rpmPath = join(outRoot, rpmName);
-  const res = spawnSync(nfpmBin, ["package", "-f", cfgPath, "-p", "rpm", "-t", rpmPath], {
-    stdio: "inherit",
-    cwd: repoRoot,
-  });
+  const res = spawnSync(
+    rpmbuildBin,
+    [
+      "-bb",
+      "--quiet",
+      "--target",
+      "x86_64",
+      "--define",
+      `_topdir ${join(stage, "top")}`,
+      "--define",
+      `_rpmdir ${outRoot}`,
+      "--define",
+      `_rpmfilename ${rpmName}`,
+      specPath,
+    ],
+    { stdio: "inherit", cwd: repoRoot },
+  );
   if (res.status !== 0 || !existsSync(rpmPath)) {
     rmSync(stage, { recursive: true, force: true });
     if (res.status === null) {
       console.error(
-        `package-linux-installers: could not spawn nfpm at '${nfpmBin}' — not found or not executable.\n` +
-          "  Pass --nfpm <path> to a valid nfpm binary or install a pinned one. See docs/install.md.",
+        `package-linux-installers: could not spawn rpmbuild at '${rpmbuildBin}' — not found or not executable.\n` +
+          "  Pass --rpmbuild <path>, or install it (sudo apt-get install rpm).",
       );
     } else {
       console.error(
-        `package-linux-installers: nfpm failed (exit ${res.status}).\n` +
-          "  Install a pinned nfpm binary or pass --nfpm <path>.",
+        `package-linux-installers: rpmbuild failed (exit ${res.status}).\n` +
+          "  Install rpm 4.14 or later (sudo apt-get install rpm), or pass --rpmbuild <path>.",
       );
     }
-    process.exit(res.status ?? 1);
+    // Not `??`: a build that exits 0 and writes no package is still a failure.
+    process.exit(res.status || 1);
   }
   rmSync(stage, { recursive: true, force: true });
   return rpmPath;
@@ -489,15 +503,18 @@ console.log(`  ${tgzPath}`);
 console.log(`  ${debPath}`);
 
 if (buildRpmFlag) {
-  const nfpmBin = nfpmOverride ?? "nfpm";
-  if (!nfpmOverride && spawnSync(nfpmBin, ["--version"], { stdio: "ignore" }).status !== 0) {
+  const rpmbuildBin = rpmbuildOverride ?? "rpmbuild";
+  if (
+    !rpmbuildOverride &&
+    spawnSync(rpmbuildBin, ["--version"], { stdio: "ignore" }).status !== 0
+  ) {
     console.error(
-      "package-linux-installers: --rpm requested but `nfpm` not found on PATH.\n" +
-        "  Pass --nfpm <path> or install a pinned nfpm binary. See docs/install.md.",
+      "package-linux-installers: --rpm requested but `rpmbuild` not found on PATH.\n" +
+        "  Pass --rpmbuild <path>, or install it (sudo apt-get install rpm).",
     );
     process.exit(1);
   }
-  const rpmPath = buildRpm(nfpmBin);
+  const rpmPath = buildRpm(rpmbuildBin);
   console.log(`  ${rpmPath}`);
 }
 
