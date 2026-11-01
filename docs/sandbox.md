@@ -459,8 +459,8 @@ The asymmetry is surfaced on these operator-visible surfaces:
 **What the file line is, and its bound.** The `Files:` line is a prediction: it runs the run
 approval's own path check (`checkDeclaredPath`) over each declared path and says what would happen
 here, marking a path as "doesn't exist here", "overlaps Nimbus's data", a relative path, or (for an
-installed extension) overlapping the extension's own files, and flagging a grant of a filesystem
-root, a whole drive or your home folder when the check passes. A prediction can go stale: a folder
+installed extension) a write path overlapping the extension's own files, and flagging a grant of a
+filesystem root, a whole drive, or your home folder or a folder above it when the check passes. A prediction can go stale: a folder
 can appear or vanish between the preview and the approval, and the approval's own check, made
 later, stays authoritative. Before an install nothing is on disk yet, so the self-write check is
 skipped and never reported as passed; the same holds for `info --registry` / `--remote`, which

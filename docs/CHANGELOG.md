@@ -27,8 +27,8 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   (as `networkReach`), beside the `extension.run`, `extension.migrate` and `connector add --mcp` prompts it already
   reached. Each of the install, update and downgrade approvals also carries a predicted outcome for every declared path
   (`fileAccess`), made by the run approval's own path check: a path that does not exist here, one that overlaps
-  Nimbus's data or (once installed) the extension's own files, and a grant of the filesystem root, a whole drive or the
-  home folder are each named. `nimbus extension info` prints the pair as `Reach on this machine:` and `Files:`
+  Nimbus's data or (once installed) the extension's own files, and a grant of the filesystem root, a whole drive, the
+  home folder or a folder above it are each named. `nimbus extension info` prints the pair as `Reach on this machine:` and `Files:`
   (`access` in `--json`), as does `info --registry` / `--remote`; the desktop shows both as `Network:` and `Files:`.
   A downgrade reads the rollback target's own manifest, never the update diff. **What it does not do:** it predicts, and
   a path can change before the run approval, whose check stays authoritative; before an install, and in remote `info`,

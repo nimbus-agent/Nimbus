@@ -103,7 +103,7 @@ describe("buildScaffoldFiles", () => {
     );
     expect(digest("win32", "C:wecho")).toBe(
       // cross-platform-ok
-      "0cb6177362d76e9341d82eb8674b72b0a5fdd1cfa3d4c7ad4b2e47b2c1316428",
+      "a58878ecc7fbe7d2d47d7484c735e6259f464730ffa3e5f439c534850bb1fa76",
     );
   });
 
