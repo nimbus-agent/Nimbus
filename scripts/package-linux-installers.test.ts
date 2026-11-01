@@ -35,6 +35,17 @@ function makeStub(name: string, body: string): string {
 
 const HELPER_FILE = "nimbus-sandbox-helper";
 
+/** Shell for an rpmbuild stub: reads the spec path and where the package goes from its arguments. */
+const RPMBUILD_STUB_ARGS = `for a in "$@"; do
+  case "$a" in
+    "_rpmdir "*) dir="\${a#_rpmdir }" ;;
+    "_rpmfilename "*) name="\${a#_rpmfilename }" ;;
+    *.spec) spec="$a" ;;
+  esac
+done
+`;
+const RPMBUILD_STUB_OUTPUT = `printf 'RPM' > "$dir/$name"`;
+
 function runInstaller(extraArgs: string[]) {
   return runInstallerRaw(["--sandbox-helper", stubHelperPath, ...extraArgs]);
 }
@@ -402,21 +413,20 @@ linuxTest("AppImage carries the helper beside the gateway at mode 755", () => {
 });
 
 linuxTest(".rpm ships the helper at mode 755, with no install script and no libcap", () => {
-  const capture = join(workDir, "captured-nfpm.yaml");
+  const capture = join(workDir, "captured.spec");
   const modeCapture = join(workDir, "captured-helper-mode");
-  const nfpmStub = makeStub(
-    "helper-recording-nfpm",
-    `prev=""\nfor a in "$@"; do\n` +
-      `  if [ "$prev" = "-f" ]; then cp "$a" "${capture}"; stat -c %a "$(dirname "$a")/bin/${HELPER_FILE}" > "${modeCapture}"; fi\n` +
-      `  if [ "$prev" = "-t" ]; then printf 'RPM' > "$a"; fi\n` +
-      `  prev="$a"\ndone`,
+  const rpmbuildStub = makeStub(
+    "helper-recording-rpmbuild",
+    `spec=""\n${RPMBUILD_STUB_ARGS}` +
+      `cp "$spec" "${capture}"\nstat -c %a "$(dirname "$spec")/bin/${HELPER_FILE}" > "${modeCapture}"\n` +
+      RPMBUILD_STUB_OUTPUT,
   );
-  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
+  const r = runInstaller(["--skip-appimage", "--rpm", "--rpmbuild", rpmbuildStub]);
   expect(r.status).toBe(0);
-  const cfg = readFileSync(capture, "utf8");
-  expect(cfg).toContain("dst: /usr/lib/nimbus/bin/nimbus-sandbox-helper");
-  expect(cfg).not.toContain("libcap");
-  expect(cfg).not.toContain("postinstall");
+  const spec = readFileSync(capture, "utf8");
+  expect(spec).toContain("%attr(0755,root,root) /usr/lib/nimbus/bin/nimbus-sandbox-helper");
+  expect(spec).not.toContain("libcap");
+  expect(spec).not.toContain("%post");
   expect(readFileSync(modeCapture, "utf8").trim()).toBe("755");
 });
 
@@ -462,35 +472,39 @@ linuxTest(".deb wrappers stamp the apt channel + disable the self-updater", () =
   expect(wrapper).toContain("NIMBUS_UPDATER_DISABLE=1");
 });
 
-linuxTest("--rpm renders an nfpm config and invokes the nfpm binary (stubbed)", () => {
-  const argvLog = join(workDir, "nfpm-argv.txt");
-  const nfpmStub = makeStub(
-    "stub-nfpm",
-    `printf '%s\\n' "$@" > "${argvLog}"\n` +
-      `prev=""\nfor a in "$@"; do\n  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n  prev="$a"\ndone`,
+linuxTest("--rpm renders a spec and invokes the rpmbuild binary (stubbed)", () => {
+  const argvLog = join(workDir, "rpmbuild-argv.txt");
+  const rpmbuildStub = makeStub(
+    "stub-rpmbuild",
+    `printf '%s\\n' "$@" > "${argvLog}"\n${RPMBUILD_STUB_ARGS}${RPMBUILD_STUB_OUTPUT}`,
   );
-  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
+  const r = runInstaller(["--skip-appimage", "--rpm", "--rpmbuild", rpmbuildStub]);
   expect(r.status).toBe(0);
   const rpmPath = join(outDir, "nimbus-headless-0.1.0-rc1-x86_64.rpm");
   expect(existsSync(rpmPath)).toBe(true);
   expect(readFileSync(rpmPath).subarray(0, 3).toString()).toBe("RPM");
   const argv = readFileSync(argvLog, "utf8");
-  expect(argv).toContain("rpm");
+  expect(argv).toContain("-bb");
+  expect(argv).toContain("x86_64");
+});
+
+linuxTest("--rpm fails when rpmbuild reports success but wrote no package", () => {
+  const rpmbuildStub = makeStub("no-output-rpmbuild", "exit 0");
+  const r = runInstaller(["--skip-appimage", "--rpm", "--rpmbuild", rpmbuildStub]);
+  expect(r.status).not.toBe(0);
+  expect(r.stderr).toContain("rpmbuild failed");
 });
 
 linuxTest("rpm wrappers stamp the yum channel + disable the self-updater", () => {
   const wrapperOut = join(workDir, "captured-nimbus-wrapper");
   // The stub runs while buildRpm's temp stage still exists; copy the staged
-  // wrapper out (config lives at <stage>/nfpm.yaml, wrappers at <stage>/wrappers/)
+  // wrapper out (the spec lives at <stage>/nimbus-headless.spec, wrappers at <stage>/wrappers/)
   // because buildRpm rmSync's the stage on success before the test could read it.
-  const nfpmStub = makeStub(
-    "cfg-recording-nfpm",
-    `prev=""\nfor a in "$@"; do\n` +
-      `  if [ "$prev" = "-f" ] || [ "$prev" = "--config" ]; then cp "$(dirname "$a")/wrappers/nimbus" "${wrapperOut}"; fi\n` +
-      `  if [ "$prev" = "-t" ] || [ "$prev" = "--target" ]; then printf 'RPM' > "$a"; fi\n` +
-      `  prev="$a"\ndone`,
+  const rpmbuildStub = makeStub(
+    "spec-recording-rpmbuild",
+    `spec=""\n${RPMBUILD_STUB_ARGS}cp "$(dirname "$spec")/wrappers/nimbus" "${wrapperOut}"\n${RPMBUILD_STUB_OUTPUT}`,
   );
-  const r = runInstaller(["--skip-appimage", "--rpm", "--nfpm", nfpmStub]);
+  const r = runInstaller(["--skip-appimage", "--rpm", "--rpmbuild", rpmbuildStub]);
   expect(r.status).toBe(0);
   const wrapper = readFileSync(wrapperOut, "utf8");
   expect(wrapper).toContain("NIMBUS_DISTRIBUTION_CHANNEL=yum");

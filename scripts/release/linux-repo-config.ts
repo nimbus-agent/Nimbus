@@ -85,8 +85,8 @@ export interface YumRepoOptions {
  * the same repo-metadata-signing model as the apt `[signed-by=...]` setup, and
  * it chains to per-package integrity via the checksums inside the signed
  * metadata. `gpgcheck=0` because the `.rpm` packages themselves are NOT
- * header-signed (`rpm --addsign`) — nfpm doesn't header-sign and the release
- * pipeline emits only a detached `.asc`, so `gpgcheck=1` would make `dnf` reject
+ * header-signed (`rpm --addsign`) — the release pipeline
+ * emits only a detached `.asc`, so `gpgcheck=1` would make `dnf` reject
  * every install with "package is not signed". Flip to `1` only once the build
  * header-signs the RPM.
  */

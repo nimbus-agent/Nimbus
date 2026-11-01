@@ -225,7 +225,7 @@ After compiling gateway + CLI to `dist/`:
 
 ```bash
 bun run package:headless                            # bundle headless gateway + CLI
-bun run package:installers:linux -- --version 0.1.0 # Linux .deb + .rpm + tarball (nfpm)
+bun run package:installers:linux -- --version 0.1.0 --rpm # Linux .deb + tarball + AppImage, and with --rpm an .rpm (needs rpmbuild)
 ```
 
 Optional: set `NIMBUS_EMBEDDING_MODEL_DIR` (or pass `--embedding-model-dir`) to embed pre-downloaded MiniLM weights in the bundle.
@@ -233,7 +233,7 @@ Optional: set `NIMBUS_EMBEDDING_MODEL_DIR` (or pass `--embedding-model-dir`) to 
 **Native installers + package-manager channels** (driven by CI on release tags, not local bun scripts):
 
 - macOS `.pkg` — `scripts/package-macos-installer.sh`; Windows `.msi` — `scripts/package-windows-installer.ps1`.
-- Package-manager manifests are generated from `scripts/release/`: `package-manager-manifests.ts` (Homebrew formula + Scoop manifest), `winget-manifest.ts` (`NimbusAgent.Nimbus`), `linux-repo-config.ts` + `nfpm-config.ts` (hosted GPG-signed apt/yum repo at `nimbus-agent.github.io/linux-repo`).
+- Package-manager manifests are generated from `scripts/release/`: `package-manager-manifests.ts` (Homebrew formula + Scoop manifest), `winget-manifest.ts` (`NimbusAgent.Nimbus`), `linux-repo-config.ts` + `rpm-spec.ts` (hosted GPG-signed apt/yum repo at `nimbus-agent.github.io/linux-repo`).
 - Signing helpers: `scripts/sign/sign-{macos.sh,windows.ps1}`, `scripts/sign-linux-gpg.sh`, `scripts/sign-ed25519.ts` (updater manifest).
 - End-user install matrix (brew/scoop/winget/apt/yum + native installers + verification) is documented in **[`docs/install.md`](../../docs/install.md)** — the canonical source; keep it in sync when a channel changes.
 
