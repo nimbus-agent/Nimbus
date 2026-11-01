@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
-import { RegistryError } from "@nimbus-dev/registry-format";
+import { codeUnitCompare, RegistryError } from "@nimbus-dev/registry-format";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
@@ -1293,7 +1293,7 @@ describe("the update approval states reach and the file outcome", () => {
     const payload = await ask(deps);
     // `packages/ui/test/components/hitl/StructuredPreview.test.tsx` builds its update fixture
     // from these keys: a change here means that fixture must change with it.
-    expect(Object.keys(payload ?? {}).sort()).toEqual(
+    expect(Object.keys(payload ?? {}).sort(codeUnitCompare)).toEqual(
       [
         "addedPermissions",
         "changelog",
@@ -1313,7 +1313,7 @@ describe("the update approval states reach and the file outcome", () => {
         "toVersion",
         "verificationStatus",
         "verifiedPublisher",
-      ].sort(),
+      ].sort(codeUnitCompare),
     );
   });
 
