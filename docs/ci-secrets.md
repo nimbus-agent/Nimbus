@@ -265,7 +265,8 @@ carries the whole commit as one base64 request body, which cannot fit a
 Pages build serves them. `actions` builds the tree from release assets, attaches it as `site.tar`
 to a `site-<version>-<run>-<attempt>` prerelease on `linux-repo`, and sends a `deploy-site`
 `repository_dispatch`. `linux-repo`'s own `deploy-site.yml` then serves it with a custom Actions
-deploy, and the publish job reads the served site until it shows that version. Both modes publish
+deploy, and the publish job reads the served `site-id.txt` until it names that release. A version
+would not do: the switch itself and any re-publish find it already served. Both modes publish
 the same URLs and the same signed metadata, so users with the repo configured notice neither.
 
 `actions` mode needs no new credential: release create, release delete and `dispatches` are all

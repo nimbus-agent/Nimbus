@@ -343,7 +343,9 @@ export function downloadVerifiedRpm(
       "SHA256SUMS",
     ]);
     if (status !== 0) {
-      if (stderr.includes("no assets to download")) return false;
+      if (stderr.includes("no assets to download") || stderr.includes("no assets match")) {
+        return false;
+      }
       throw new Error(`linux-repo-config: gh release download failed for ${version}: ${stderr}`);
     }
     if (!existsSync(join(tmp, rpm))) return false;

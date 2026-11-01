@@ -560,13 +560,16 @@ describe("downloadVerifiedRpm", () => {
     });
   });
 
-  test("a release with no matching assets is reported as missing, not as a failure", () => {
-    withDir((dir) => {
-      const run = gh({}, { status: 1, stderr: "no assets to download" });
-      expect(downloadVerifiedRpm(VERSION, dir, run)).toBe(false);
-      expect(readdirSync(dir)).toEqual([]);
+  // The second message is what gh 2.96.0 printed for a real release whose assets match no pattern.
+  for (const stderr of ["no assets to download", "no assets match the file pattern"]) {
+    test(`a release gh answers with "${stderr}" is missing, not a failure`, () => {
+      withDir((dir) => {
+        const run = gh({}, { status: 1, stderr });
+        expect(downloadVerifiedRpm(VERSION, dir, run)).toBe(false);
+        expect(readdirSync(dir)).toEqual([]);
+      });
     });
-  });
+  }
 
   test("a release holding SHA256SUMS but no RPM is missing", () => {
     withDir((dir) => {
@@ -660,10 +663,14 @@ describe("publish-linux-repo.yml deploy modes", () => {
     expect(named("Prune old site releases")?.["continue-on-error"]).toBe(true);
   });
 
-  test("the wait never pipes into grep -q, which fails under pipefail when grep exits first", () => {
-    expect(String(named("Wait until Pages serves this release")?.["run"])).not.toMatch(
-      /\|\s*(\\\s*)?grep -q/,
-    );
+  test("the wait reads this run's marker, not a version an earlier deploy may already serve", () => {
+    const handoff = String(named("Hand the tree to linux-repo")?.["run"]);
+    expect(handoff.indexOf("> repo/site-id.txt")).toBeGreaterThan(-1);
+    expect(handoff.indexOf("> repo/site-id.txt")).toBeLessThan(handoff.indexOf("tar -C repo"));
+    const wait = String(named("Wait until Pages serves this release")?.["run"]);
+    expect(wait).toContain("/site-id.txt?");
+    expect(wait).toContain('[ "$served" = "$SITE_TAG" ]');
+    expect(wait).not.toContain("Version:");
   });
 
   test("one publish at a time across every tag", () => {

@@ -304,6 +304,10 @@ jobs:
         run: |
           set -euo pipefail
           SITE_TAG="site-${TAG#v}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "SITE_TAG=$SITE_TAG" >> "$GITHUB_ENV"
+          # What the wait below reads. Unique to this run, unlike a version, which the switch to this
+          # mode and any re-publish find already served before their own deploy has happened.
+          printf '%s\n' "$SITE_TAG" > repo/site-id.txt
           tar -C repo -cf site.tar .
           gh release create "$SITE_TAG" site.tar \
             --repo nimbus-agent/linux-repo --target main --prerelease --latest=false \
@@ -319,19 +323,16 @@ jobs:
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
         run: |
           set -euo pipefail
-          VERSION="${TAG#v}"
           BASE="https://nimbus-agent.github.io/linux-repo"
           for _ in $(seq 1 40); do
-            # Read into a variable: under pipefail, a pipe into a quiet grep fails if grep exits first.
-            packages=$(curl -fsS "$BASE/apt/dists/stable/main/binary-amd64/Packages?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null || true)
-            if grep -qx "Version: $VERSION" <<<"$packages" \
-              && curl -fsSI -o /dev/null "$BASE/yum/nimbus-headless-${VERSION}-x86_64.rpm?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null; then
-              echo "Pages serves $VERSION"
+            served=$(curl -fsS "$BASE/site-id.txt?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null || true)
+            if [ "$served" = "$SITE_TAG" ]; then
+              echo "Pages serves $SITE_TAG (nimbus ${TAG#v})"
               exit 0
             fi
             sleep 15
           done
-          echo "::error::Pages did not serve $VERSION within 10 minutes. See deploy-site.yml in nimbus-agent/linux-repo."
+          echo "::error::Pages did not serve $SITE_TAG within 10 minutes. See deploy-site.yml in nimbus-agent/linux-repo."
           exit 1
 
       # Three, so an earlier tree stays one dispatch away. Failing to prune costs only storage.
