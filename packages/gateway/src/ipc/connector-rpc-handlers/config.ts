@@ -60,7 +60,7 @@ function argvParam(rec: Record<string, unknown> | undefined): string[] {
 }
 
 /** The host OS `connector.addMcp` resolves for; refuses rather than guessing when none was passed. */
-export function requireAddMcpPlatform(ctx: ConnectorRpcHandlerContext): NodeJS.Platform {
+function requireAddMcpPlatform(ctx: ConnectorRpcHandlerContext): NodeJS.Platform {
   if (ctx.platform === undefined) {
     throw new ConnectorRpcError(-32603, "connector.addMcp requires the host platform");
   }

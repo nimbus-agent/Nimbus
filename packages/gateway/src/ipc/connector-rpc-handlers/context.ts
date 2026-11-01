@@ -47,9 +47,8 @@ export type ConnectorRpcHandlerContext = {
   connectorMesh: LazyConnectorMesh | undefined;
   /**
    * The host OS, passed in rather than read from `process.platform` here (PAL): `connector.addMcp`'s
-   * per-OS path rules and its path rules read it. Supplied by the one
-   * production caller (`ipc/server/dispatchers.ts`); `connector.addMcp` REFUSES without it rather
-   * than guessing, and no other method reads it.
+   * per-OS path rules read it. Supplied by the one production caller (`ipc/server/dispatchers.ts`);
+   * `connector.addMcp` REFUSES without it rather than guessing, and no other method reads it.
    */
   platform?: NodeJS.Platform;
   /** The sandbox runner `connector.addMcp`'s prompt describes the network reach from. */

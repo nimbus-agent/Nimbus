@@ -765,6 +765,7 @@ describe("registry.search and registry.info", () => {
           permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
           access: {
             networkReach: "not known here (the sandbox is not available to ask)",
+            reachKind: "unknown",
             fileAccess: "reads none · writes none (not checked here)",
             canRunHere: null,
             checked: false,

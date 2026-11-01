@@ -637,7 +637,9 @@ describe("approveExtensionRun", () => {
       protectedRoots: ["/data"],
     });
     expect(p["fileAccess"]).toContain("(your entire home folder)");
-    expect(redactPayloadForConsentDisplay(p)).toHaveProperty("fileAccess");
+    expect((redactPayloadForConsentDisplay(p) as Record<string, unknown>)["fileAccess"]).toBe(
+      p["fileAccess"],
+    );
   });
 
   test("an extension the startup signature pass marked is refused while enabled", async () => {

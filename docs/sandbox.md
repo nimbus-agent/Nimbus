@@ -443,16 +443,18 @@ later project too: SBPL cannot name a host, so it needs a mechanism of its own.
 The asymmetry is surfaced on these operator-visible surfaces:
 
 - `nimbus diag --json` → `sandbox.platform_capabilities` (`per_port` on macOS, `all_or_nothing` on Windows, `refusing` on Windows with no helper)
-- `nimbus extension info <id>` → "Network isolation:" line, then `Reach on this machine:` and `Files:`
-  lines for what this extension's own declared hosts and paths do here (`nimbus extension info <id>
+- `nimbus extension info <id>` → `Reach on this machine:` and `Files:` lines for what this
+  extension's own declared hosts and paths do here, then the "Network isolation:" line (`nimbus extension info <id>
   --registry <name>` / `--remote` prints the same two lines under the newest version's permissions)
 - The consent prompts: `extension.run`, `extension.migrate`, `connector add --mcp`, and the
   `extension.install`, `extension.autoUpdate` and `extension.downgrade` approvals. Each states what
   the declared network does on this machine, worded from the sandbox's live posture rather than from
   the OS name: the named hosts only where the sandbox limits the extension to them, "any host on
   port N, including this machine and the local network" on macOS, "any internet host" on Windows,
-  "the whole network" on Linux with no helper, "will not start here" where the sandbox would refuse,
-  and "not known here" when no sandbox could be asked. The desktop shows the same two lines
+  "the whole network" on Linux with no helper, "will not start here" where the sandbox refuses every
+  child here (no helper, or no bwrap), and "not known here" when no sandbox could be asked. A narrower
+  refusal, such as a healthy Linux child declaring more than 252 hosts or a path at or above `/run`,
+  is reported only at spawn. The desktop shows the same two lines
   (`Network:` and `Files:`) in the install, update and downgrade approvals.
 - Gateway-startup structured log, only for a runner that is not fully active, so not on macOS
 

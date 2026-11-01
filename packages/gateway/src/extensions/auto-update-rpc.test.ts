@@ -1255,6 +1255,7 @@ describe("the update approval lists what the update adds (extension dependencies
 describe("the update approval states reach and the file outcome", () => {
   const evidence = (text: string) => ({
     networkReach: text,
+    reachKind: "hosts" as const,
     fileAccess: "reads none · writes none",
     canRunHere: true,
     checked: true,
@@ -1368,12 +1369,8 @@ describe("the update approval states reach and the file outcome", () => {
     const deps = baseDeps();
     deps.updateAccess = () => undefined;
     const payload = await ask(deps);
-    expect(payload?.["networkReach"]).toBe(
-      "not known here (the installed manifest could not be read)",
-    );
-    expect(payload?.["fileAccess"]).toBe(
-      "not known here (the installed manifest could not be read)",
-    );
+    expect(payload?.["networkReach"]).toBe("not known here (the manifest could not be read)");
+    expect(payload?.["fileAccess"]).toBe("not known here (the manifest could not be read)");
   });
 
   it("a throwing updateAccess is the same as an unreadable manifest", async () => {

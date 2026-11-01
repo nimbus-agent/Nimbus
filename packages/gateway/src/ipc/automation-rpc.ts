@@ -66,6 +66,7 @@ import {
   accessEvidence,
   approvalFields,
   type ExtensionEvidenceDeps,
+  unreadableAccessEvidence,
 } from "../extensions/extension-evidence.ts";
 import type { ReachRunner } from "../extensions/extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
@@ -784,16 +785,20 @@ async function handleExtensionList(
 /**
  * Reach and the predicted file outcome for an installed extension, from the permissions its
  * installed manifest declares and its own install path (so the own-files check runs). An
- * unreadable manifest omits the field: a client then prints nothing rather than a guess.
+ * unreadable manifest is stated on both lines, never omitted and never a guess.
  */
-function installedAccess(row: ExtensionRow, ctx: AutomationCtx): { access?: AccessEvidence } {
+function installedAccess(row: ExtensionRow, ctx: AutomationCtx): { access: AccessEvidence } {
   try {
     const path = resolveExtensionManifestPath(row.install_path);
-    if (path === undefined) return {};
+    if (path === undefined) throw new Error("no manifest file in the install directory");
     const { permissions } = parseExtensionManifestJson(readFileSync(path, "utf8"));
     return { access: accessEvidence(ctx.evidence, permissions, row.install_path) };
-  } catch {
-    return {};
+  } catch (e) {
+    automationRpcLog.debug(
+      { err: e instanceof Error ? e.message : "unexpected failure", id: row.id },
+      "extension.info could not read the installed manifest",
+    );
+    return { access: unreadableAccessEvidence() };
   }
 }
 

@@ -20,6 +20,7 @@ import {
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
+import { resolveExtensionManifestPath } from "../extensions/manifest.ts";
 import { setExtensionSource } from "../extensions/registry/registry-store.ts";
 import { verifyExtensionsBestEffort } from "../extensions/verify-extensions.ts";
 import { generateEd25519Keypair } from "../extensions/verify-signature.ts";
@@ -1915,13 +1916,34 @@ describe("extension.info states reach and the predicted file outcome", () => {
     db.close();
   });
 
-  test("an unreadable installed manifest omits access", async () => {
+  test("an unreadable installed manifest is stated on both lines, never omitted", async () => {
     const db = seededDb();
     await installOne(db, []);
     const row = listExtensions(db).find((r) => r.id === "com.example.info");
     rmSync(row?.install_path ?? "", { recursive: true, force: true });
     const { extension } = await info(db);
-    expect("access" in extension).toBe(false);
+    expect(extension.access).toEqual({
+      networkReach: "not known here (the manifest could not be read)",
+      reachKind: "unknown",
+      fileAccess: "not known here (the manifest could not be read)",
+      canRunHere: null,
+      checked: false,
+    });
+    db.close();
+  });
+
+  test("a manifest that is present but corrupt is stated the same way", async () => {
+    const db = seededDb();
+    await installOne(db, []);
+    const row = listExtensions(db).find((r) => r.id === "com.example.info");
+    const manifest = resolveExtensionManifestPath(row?.install_path ?? "");
+    expect(manifest).toBeDefined();
+    writeFileSync(manifest ?? "", "{ not json");
+    const { extension } = await info(db);
+    expect(extension.access?.["fileAccess"]).toBe(
+      "not known here (the manifest could not be read)",
+    );
+    expect(extension.access?.["canRunHere"]).toBeNull();
     db.close();
   });
 

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import type { SandboxPermissions } from "@nimbus-dev/registry-format";
+import pino from "pino";
 import { listExtensions } from "../automation/extension-store.ts";
 import { permissionsAfterUpdate } from "./auto-update-permissions-diff.ts";
 import type { AvailableUpdate } from "./auto-update-types.ts";
@@ -31,9 +32,27 @@ export type AccessEvidence = {
   readonly checked: boolean;
 };
 
-/** The wording an update approval carries when the installed manifest cannot be read. */
-export const UNREADABLE_INSTALLED_TEXT =
-  "not known here (the installed manifest could not be read)";
+const evidenceLog = pino({
+  name: "extension-evidence",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
+
+/**
+ * The wording shown when the manifest a statement is read from cannot be read: the installed one
+ * for an upgrade or `info`, the rollback target's for a downgrade.
+ */
+export const UNREADABLE_MANIFEST_TEXT = "not known here (the manifest could not be read)";
+
+/** The evidence for a manifest that could not be read: both lines state it, no outcome is claimed. */
+export function unreadableAccessEvidence(): AccessEvidence {
+  return {
+    networkReach: UNREADABLE_MANIFEST_TEXT,
+    reachKind: "unknown",
+    fileAccess: UNREADABLE_MANIFEST_TEXT,
+    canRunHere: null,
+    checked: false,
+  };
+}
 
 /**
  * Reach and the predicted file outcome for a set of permissions, from the same checks the run
@@ -64,6 +83,7 @@ export function accessEvidence(
     };
   } catch (e) {
     const why = e instanceof Error ? e.message : "unexpected failure";
+    evidenceLog.debug({ err: why }, "file preview failed");
     return {
       networkReach,
       reachKind,
@@ -137,7 +157,11 @@ export function updateAccessEvidence(
     const after = permissionsAfterUpdate(before, cached.permissionDiff);
     const all = addedUnion === undefined ? after : unionPermissions(after, addedUnion);
     return accessEvidence(deps, all, row.install_path);
-  } catch {
+  } catch (e) {
+    evidenceLog.debug(
+      { err: e instanceof Error ? e.message : "unexpected failure", id: cached.id },
+      "update evidence could not read a manifest",
+    );
     return undefined;
   }
 }

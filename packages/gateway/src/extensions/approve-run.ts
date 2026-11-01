@@ -238,8 +238,8 @@ export function buildRunConsentPayload(
     treeDigest,
     network: [...grants.network],
     // What the network grant reaches on THIS machine, from the sandbox's live posture: the host list
-    // above is not a bound where the sandbox cannot filter by host. The same sentence the migration
-    // and install prompts show.
+    // above is not a bound where the sandbox cannot filter by host. Worded by the same function as
+    // the migration and install prompts.
     networkAccess: describeNetworkReach(evidence.sandbox, grants.network).text,
     // What the path grants do here, through the approval's own check, including a broad grant.
     fileAccess: previewFileGrants({ read: [...grants.read], write: [...grants.write] }, env, {

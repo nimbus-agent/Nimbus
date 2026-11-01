@@ -20,7 +20,7 @@ import {
   type UpgradeOutcome,
 } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
-import { type AccessEvidence, UNREADABLE_INSTALLED_TEXT } from "./extension-evidence.ts";
+import { type AccessEvidence, UNREADABLE_MANIFEST_TEXT } from "./extension-evidence.ts";
 import { reportIncompleteRollback, rollbackIncompleteDetail } from "./install-from-local.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
@@ -70,7 +70,7 @@ export interface AutoUpdateRpcDeps {
   /**
    * What the update, once applied, reaches on this machine: the installed manifest's permissions
    * after the diff together with the added packages' (`addedUnion`), as network reach and the
-   * predicted file outcome. `undefined` means the installed manifest could not be read; the
+   * predicted file outcome. `undefined` means the manifest could not be read (the installed one, or the rollback target's); the
    * approval then says so. Absent => the approval carries neither field. It never refuses.
    */
   updateAccess?: (
@@ -255,7 +255,7 @@ function accessFields(
     evidence = undefined;
   }
   if (evidence === undefined) {
-    return { networkReach: UNREADABLE_INSTALLED_TEXT, fileAccess: UNREADABLE_INSTALLED_TEXT };
+    return { networkReach: UNREADABLE_MANIFEST_TEXT, fileAccess: UNREADABLE_MANIFEST_TEXT };
   }
   return { networkReach: evidence.networkReach, fileAccess: evidence.fileAccess };
 }

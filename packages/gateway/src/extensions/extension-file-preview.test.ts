@@ -170,7 +170,7 @@ describe("previewFileGrants behaviour", () => {
     const asked: string[] = [];
     const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada"), [], asked);
     const p = one({ read: [], write: ["\\\\h\\s\\x"] }, env, WIN_OPTS);
-    expect(asked).not.toContain("\\\\h\\s\\x");
+    expect(asked).not.toContain("\\\\h\\s\\x"); // cross-platform-ok: explicit platform "win32" fixture
     expect(p.paths[0]?.access).toBe("write");
     expect(p.canRunHere).toBeNull();
   });
@@ -184,8 +184,8 @@ describe("previewFileGrants behaviour", () => {
     const asked: string[] = [];
     const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada", "D:\\data"), [], asked);
     const p = one({ read: ["\\\\h\\s\\x", "D:\\data", "D:\\gone"], write: [] }, env, WIN_OPTS);
-    expect(asked).toContain("D:\\data");
-    expect(asked).not.toContain("\\\\h\\s\\x");
+    expect(asked).toContain("D:\\data"); // cross-platform-ok: explicit platform "win32" fixture
+    expect(asked).not.toContain("\\\\h\\s\\x"); // cross-platform-ok: explicit platform "win32" fixture
     expect(p.paths.map((x) => x.outcome)).toEqual(["not-checked", "allowed", "missing"]);
     expect(p.canRunHere).toBeNull();
     expect(p.checked).toBe(false);

@@ -34,8 +34,10 @@ export function extensionRunGrantProtectedRoots(
 
 /**
  * The declared grants after resolution — what a run grant stores (spec § 11 item 7). The install
- * path and the runtime's read paths are NOT here: the runtime adds them fresh at every spawn, since
- * the runtime paths are machine-derived and would make every grant stale on a Bun upgrade.
+ * path is NOT here (the extension is never granted its install tree: it runs from a verified
+ * per-spawn copy as its working directory), and neither are the runtime's read paths, which the
+ * runtime adds fresh at every spawn since they are machine-derived and would make every grant stale
+ * on a Bun upgrade.
  */
 export type ResolvedRunGrants = {
   readonly network: readonly string[];
@@ -85,8 +87,9 @@ function assertNotProtected(p: string, kind: "read" | "write", env: ExtensionRun
 /**
  * The one check a declared path goes through, shared by the resolver and the pre-install preview so
  * the two cannot drift. Returns the canonical path, or `null` for a read of the extension's own
- * install path (dropped: the runtime grants it at spawn anyway, and on macOS/Linux it sits under the
- * protected data dir, so checking it would refuse a harmless manifest; spec § 11 item 8). Throws the
+ * install path (dropped: the runtime runs a verified copy from its own working directory, so this
+ * read is never needed, and on macOS/Linux the install path sits under the protected data dir, so
+ * checking it would refuse a harmless manifest; spec § 11 item 8). Throws the
  * same errors, in the same order, the resolver always did. `install` is the CANONICAL install path;
  * `undefined` skips only the own-read and self-write comparisons.
  */
