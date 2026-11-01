@@ -140,6 +140,27 @@ const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const EXTENSION_ID = "com.example.accept";
 const REGISTRY = "local";
 
+/** A registry-signed `quality` (scorer 1) for `passed` of `cases`, all rubric cases `exact`. */
+function signedQuality(passed: number, cases: number): Record<string, unknown> {
+  return {
+    scorer: 1,
+    score: Math.floor((passed * 100) / cases),
+    cases,
+    passed,
+    rubrics: {
+      exact: { cases, passed },
+      "json-match": { cases: 0, passed: 0 },
+      "one-of": { cases: 0, passed: 0 },
+    },
+  };
+}
+
+/** 1.0.0 scores 4 of 4, 2.0.0 scores 3 of 4: the update is a drop. 3.0.0 is unscored. */
+const QUALITY_BY_VERSION: Record<string, Record<string, unknown>> = {
+  "1.0.0": signedQuality(4, 4),
+  "2.0.0": signedQuality(3, 4),
+};
+
 type ExtensionListing = {
   id: string;
   version: string;
@@ -179,13 +200,18 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
   const client = new TestIpcClient();
   /** The action type of every consent prompt the gateway raised, in order (all approved). */
   const prompts: string[] = [];
+  /** The full text of every consent prompt, parallel to `prompts`. */
+  const promptTexts: string[] = [];
 
   /** Rebuilds the folder with `versions`, re-signed at `sequence` (never below the last one seen). */
   async function publish(versions: string[], sequence: number): Promise<void> {
     await buildTestRegistry(regDir, {
       id: EXTENSION_ID,
       publisherId,
-      versions: versions.map((version) => ({ version })),
+      versions: versions.map((version) => {
+        const q = QUALITY_BY_VERSION[version];
+        return q === undefined ? { version } : { version, quality: q };
+      }),
     });
     const indexPath = join(regDir, "index.json");
     resignIndex(indexPath, {
@@ -250,6 +276,7 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
       // The prompt text names the action type (`Type: <type>`), which is what each step checks.
       const type = /^Type: (\S+)$/m.exec(String(params["prompt"] ?? ""))?.[1] ?? "unknown";
       prompts.push(type);
+      promptTexts.push(String(params["prompt"] ?? ""));
       // A socket closed by teardown rejects the reply; that must not surface as an unhandled rejection.
       void client
         .call("consent.respond", { requestId: params["requestId"], approved: true })
@@ -302,6 +329,23 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
     ]);
   }, 60_000);
 
+  test("registry.info states who tested the newest version, from the registry row's name", async () => {
+    const info = await client.call<{
+      evidence: {
+        tested: { state: string; text: string; measuredBy?: string };
+        history: { state: string; text: string };
+        checked: { state: string; text: string };
+      };
+    }>("registry.info", { id: EXTENSION_ID });
+    expect(info.evidence.tested).toMatchObject({ state: "scored", measuredBy: REGISTRY });
+    expect(info.evidence.tested.text).toBe(
+      `4 of 4 cases passed (100/100), tests by the publisher, measured by ${REGISTRY}`,
+    );
+    expect(info.evidence.history.state).toBe("known");
+    expect(info.evidence.history.text).toContain(`(recorded by ${REGISTRY})`);
+    expect(info.evidence.checked.text).toBe("no checks published");
+  }, 60_000);
+
   test("registry.install installs 1.0.0 behind the owner's approval and records the source", async () => {
     let installed: { version: string; sourceRegistry: string } | undefined;
     const raised = await promptsDuring(async () => {
@@ -338,6 +382,10 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
         verificationStatus: "verified",
       }),
     ]);
+    // The comparison reads the signed index only: 4 of 4 to 3 of 4 is a drop, and it only informs.
+    expect(updates[0]).toMatchObject({
+      qualityChange: { state: "compared", delta: -25, text: "quality 100 → 75 (-25)" },
+    });
   }, 60_000);
 
   test("extension.update applies v2 behind the owner's approval; the old run approval no longer covers it", async () => {
@@ -349,6 +397,8 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
       });
     });
     expect(raised).toEqual(["extension.autoUpdate"]);
+    // The approval states the drop; it was approved all the same (a drop never blocks).
+    expect(promptTexts.at(-1)).toContain("quality 100 → 75 (-25)");
     expect(result?.applied).toBe(true);
     expect(installedEntry()).toContain('"2.0.0"');
     const after = await listing();
