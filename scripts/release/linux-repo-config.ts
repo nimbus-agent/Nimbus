@@ -328,7 +328,6 @@ export function downloadVerifiedRpm(
   const rpm = rpmAssetName(version);
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-linux-repo-rpm-"));
   try {
-    // prettier-ignore
     const { status, stderr } = gh([
       "release",
       "download",
@@ -370,8 +369,8 @@ export function downloadVerifiedRpm(
 function runYumStage(dir: string, version: string, retain: number | undefined): void {
   const repo = process.env["GITHUB_REPOSITORY"] ?? "nimbus-agent/Nimbus";
   const list = Bun.spawnSync(
-    // Enough to step over abandoned releases, which publish no assets.
-    // prettier-ignore
+    // A long list costs little: staging stops at `retain`, so only abandoned releases, which publish
+    // no assets, make it read far down.
     [
       "gh",
       "release",
@@ -379,7 +378,7 @@ function runYumStage(dir: string, version: string, retain: number | undefined): 
       "--repo",
       repo,
       "--limit",
-      "40",
+      "200",
       "--exclude-drafts",
       "--exclude-pre-releases",
       "--json",
