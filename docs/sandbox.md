@@ -470,16 +470,20 @@ describe a package that is not installed. With no way to check, the line says `(
 instead of claiming a pass. The wording says "here" on purpose: it never promises the approval will
 pass.
 
-**A network or device path on Windows is never touched by a preview.** A declared path that begins
-with two slashes of either kind (`\host\share\x`, `//host/share/x`, `\?\UNC\...`, `\.\pipe\...`)
-names a network share or a device, and resolving it would reach the network (a stalled gateway, an
-SMB connection that can offer your credentials) from a preview that runs before you have consented
-and writes no egress row. The preview therefore never resolves it: the line reads `<path> (network or
-device path, not checked here)`, `canRunHere` is `null` (neither a pass nor a refusal) and `checked`
-is `false` for the whole list, though the other paths on it are still checked and stated. On Linux
-and macOS a leading `//` is an ordinary local path and is resolved as before. The bound:
-`extension approve` still resolves the path, so this removes the touch before consent, not the one
-at approval.
+**A network or device path is never touched by a preview.** On Windows, a declared path that begins
+with two slashes of either kind (`\\host\share\x`, `//host/share/x`, `\\?\UNC\...`, `\\.\pipe\...`)
+names a network share or a device. On Linux and macOS the same goes for `/net/<host>/...`, the
+`-hosts` automount map, enabled by default on macOS. Resolving one would reach the network (a stalled
+gateway, on Windows an SMB connection that can offer your credentials) from a preview that runs
+before you have consented and writes no egress row. The preview therefore never resolves it: the
+line reads `<path> (network or device path, not checked here)`. `checked` is `false` for the whole
+list, though the other paths on it are still checked and stated, and `canRunHere` is `null` (neither
+a pass nor a refusal) unless the sandbox or another path already refuses, which makes it `false`.
+Approval payloads carry `canRunHere` only when it is `false`. Elsewhere on Linux and macOS a leading
+`//` is an ordinary local path and is resolved as before. The bounds: `extension approve` still
+resolves the path, so this removes the touch before consent, not the one at approval; and a `-hosts`
+map mounted somewhere other than `/net`, or a local symlink leading to a network path, is not
+detected.
 
 ## Pre-T2 extensions
 

@@ -166,6 +166,45 @@ describe("previewFileGrants behaviour", () => {
       expect(p.text).toContain("not checked here");
     });
   }
+  describe("a host-naming automount root on Linux and macOS", () => {
+    const cases: readonly [NodeJS.Platform, string][] = [
+      ["darwin", "/net/attacker.example/x"],
+      ["darwin", "/NET/attacker.example/x"],
+      ["darwin", "//net/attacker.example/x"],
+      ["darwin", "/./net/attacker.example/x"],
+      ["darwin", "/net"],
+      ["linux", "/net/attacker.example/x"],
+      ["linux", "//net/attacker.example/x"],
+    ];
+    for (const [platform, spelling] of cases) {
+      test(`${platform} ${spelling} is never resolved`, () => {
+        const asked: string[] = [];
+        const p = one(
+          { read: [spelling], write: [] },
+          makeEnv(platform, ident("/ext/a"), [], asked),
+        );
+        expect(asked).not.toContain(spelling);
+        expect(p.paths[0]?.outcome).toBe("not-checked");
+        expect(p.canRunHere).toBeNull();
+        expect(p.checked).toBe(false);
+      });
+    }
+    const local: readonly [NodeJS.Platform, string][] = [
+      ["linux", "/NET/x"],
+      ["linux", "/net2/x"],
+      ["darwin", "/network/x"],
+    ];
+    for (const [platform, spelling] of local) {
+      test(`${platform} ${spelling} is an ordinary path and is resolved`, () => {
+        const asked: string[] = [];
+        one(
+          { read: [spelling], write: [] },
+          makeEnv(platform, ident("/ext/a", spelling), [], asked),
+        );
+        expect(asked).toContain(spelling);
+      });
+    }
+  });
   test("win32 network path in the write list is not resolved either", () => {
     const asked: string[] = [];
     const env = makeEnv("win32", ident("C:\\ext\\a", "C:\\Users\\Ada"), [], asked);

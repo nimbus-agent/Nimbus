@@ -26,7 +26,7 @@ export type FilePreview = {
   readonly paths: readonly PreviewedPath[];
   /** True only when every path was checked: false with no environment, or with any `not-checked` path. */
   readonly checked: boolean;
-  /** `null` when any path is unchecked: neither a pass nor a refusal. */
+  /** False when any path is refused; otherwise `null` when any is unchecked: neither a pass nor a refusal. */
   readonly canRunHere: boolean | null;
   readonly text: string;
 };
@@ -86,6 +86,18 @@ function broadKind(canonical: string, home: string, env: ExtensionRunGrantEnv): 
  */
 const NETWORK_OR_DEVICE = /^[\\/]{2}/;
 
+/**
+ * Linux and macOS have the same trap in the `-hosts` automount map, conventionally at `/net` and
+ * enabled by default on macOS: resolving `/net/<host>/x` contacts the host the path names. A map
+ * mounted elsewhere is not detected; other maps name only servers an administrator chose.
+ */
+function reachesNetworkWhenResolved(declared: string, platform: NodeJS.Platform): boolean {
+  if (platform === "win32") return NETWORK_OR_DEVICE.test(declared);
+  const normal = pathApiFor(platform).normalize(declared);
+  const spelled = platform === "darwin" ? normal.toLowerCase() : normal;
+  return spelled === "/net" || spelled.startsWith("/net/");
+}
+
 function describePath(
   declared: string,
   access: "read" | "write",
@@ -93,7 +105,7 @@ function describePath(
   home: string,
   env: ExtensionRunGrantEnv,
 ): PreviewedPath | null {
-  if (env.platform === "win32" && NETWORK_OR_DEVICE.test(declared)) {
+  if (reachesNetworkWhenResolved(declared, env.platform)) {
     const path = oneLine(declared);
     return {
       path,
