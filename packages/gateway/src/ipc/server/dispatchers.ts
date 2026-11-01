@@ -1988,7 +1988,8 @@ function buildAutoUpdateDeps(
   const db = ctx.options.localIndex.getDatabase();
   return {
     ...ctx.options.extensionsAutoUpdate,
-    updateAccess: (cached, addedUnion) => updateAccessEvidence(db, evidence, cached, addedUnion),
+    updateAccess: (cached, addedUnion, direction) =>
+      updateAccessEvidence(db, evidence, cached, addedUnion, direction, ctx.options.extensionsDir),
     gate: async (action) => {
       const r = await toolExecutor.gate(action);
       if (r === "proceed") return "proceed";

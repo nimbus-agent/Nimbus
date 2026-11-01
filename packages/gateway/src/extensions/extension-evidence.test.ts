@@ -1,8 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { insertExtensionRow } from "../automation/extension-store.ts";
+import { LocalIndex } from "../index/local-index.ts";
 import { diffPermissions, permissionsAfterUpdate } from "./auto-update-permissions-diff.ts";
-import { accessEvidence, approvalFields } from "./extension-evidence.ts";
+import type { AvailableUpdate } from "./auto-update-types.ts";
+import { accessEvidence, approvalFields, updateAccessEvidence } from "./extension-evidence.ts";
 import type { ReachRunner } from "./extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
+import { prevVersionDir } from "./version-store.ts";
 
 const perHost: ReachRunner = {
   platform: "linux",
@@ -101,5 +109,133 @@ describe("permissionsAfterUpdate", () => {
       network: ["b.com", "c.com"],
       filesystem: { read: ["/r", "/r2"], write: [] },
     });
+  });
+});
+
+describe("updateAccessEvidence, through real manifests on disk", () => {
+  const cleanups: Array<() => void> = [];
+  afterEach(() => {
+    for (const c of cleanups.splice(0).reverse()) c();
+  });
+
+  const manifest = (version: string, network: string[]): string =>
+    JSON.stringify({
+      id: "ev.ext",
+      version,
+      entry: "dist/index.js",
+      permissions: { network, filesystem: { read: [], write: [] } },
+    });
+
+  function setup(installed: string | null) {
+    const root = mkdtempSync(join(tmpdir(), "nimbus-evidence-"));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const extensionsDir = join(root, "extensions");
+    const installPath = join(extensionsDir, "ev.ext");
+    mkdirSync(installPath, { recursive: true });
+    if (installed !== null) writeFileSync(join(installPath, "nimbus.extension.json"), installed);
+    const db = new Database(":memory:");
+    cleanups.push(() => db.close());
+    LocalIndex.ensureSchema(db);
+    insertExtensionRow(db, {
+      id: "ev.ext",
+      version: "1.0.0",
+      install_path: installPath,
+      manifest_hash: "m",
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    return { db, extensionsDir, installPath };
+  }
+
+  const update = (diff: AvailableUpdate["permissionDiff"], toVersion = "1.1.0"): AvailableUpdate =>
+    ({ id: "ev.ext", toVersion, permissionDiff: diff }) as AvailableUpdate;
+  const net = (added: string[], removed: string[]): AvailableUpdate["permissionDiff"] => ({
+    network: { added, removed },
+    filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
+  });
+  const deps = { sandbox: perHost, homeDir: "/home/ada" };
+
+  test("a forward update states the version after the diff only", () => {
+    const { db, extensionsDir } = setup(manifest("1.0.0", ["a.com"]));
+    const e = updateAccessEvidence(
+      db,
+      deps,
+      update(net(["b.com"], ["a.com"])),
+      undefined,
+      "upgrade",
+      extensionsDir,
+    );
+    expect(e?.networkReach).toBe("network access to b.com");
+  });
+
+  test("added packages' permissions are unioned in", () => {
+    const { db, extensionsDir } = setup(manifest("1.0.0", ["a.com"]));
+    const added = { network: ["c.com"], filesystem: { read: [], write: [] } };
+    const e = updateAccessEvidence(db, deps, update(net([], [])), added, "upgrade", extensionsDir);
+    expect(e?.networkReach).toBe("network access to a.com, c.com");
+  });
+
+  test("a downgrade states the rollback target's manifest, not the diff", () => {
+    // 1.0 and 1.1 declare {a, d}; 1.2 is installed declaring {a}: the detection diff (1.2 vs
+    // the version installed then) is empty, but the rollback restores d.
+    const { db, extensionsDir } = setup(manifest("1.2.0", ["a.com"]));
+    const prev = prevVersionDir(extensionsDir, "ev.ext", "1.1.0");
+    mkdirSync(prev, { recursive: true });
+    writeFileSync(join(prev, "nimbus.extension.json"), manifest("1.1.0", ["a.com", "d.com"]));
+    const e = updateAccessEvidence(
+      db,
+      deps,
+      update(net([], []), "1.1.0"),
+      undefined,
+      "downgrade",
+      extensionsDir,
+    );
+    expect(e?.networkReach).toBe("network access to a.com, d.com");
+  });
+
+  test("a downgrade whose target is missing or corrupt is unreadable", () => {
+    const { db, extensionsDir } = setup(manifest("1.2.0", ["a.com"]));
+    const u = update(net([], []), "1.1.0");
+    expect(
+      updateAccessEvidence(db, deps, u, undefined, "downgrade", extensionsDir),
+    ).toBeUndefined();
+    const prev = prevVersionDir(extensionsDir, "ev.ext", "1.1.0");
+    mkdirSync(prev, { recursive: true });
+    writeFileSync(join(prev, "nimbus.extension.json"), "{not json");
+    expect(
+      updateAccessEvidence(db, deps, u, undefined, "downgrade", extensionsDir),
+    ).toBeUndefined();
+    expect(updateAccessEvidence(db, deps, u, undefined, "downgrade", undefined)).toBeUndefined();
+  });
+
+  test("no row, no manifest and a corrupt manifest are each unreadable", () => {
+    const ok = setup(manifest("1.0.0", ["a.com"]));
+    const missing = { ...update(net([], [])), id: "other.ext" } as AvailableUpdate;
+    expect(
+      updateAccessEvidence(ok.db, deps, missing, undefined, "upgrade", ok.extensionsDir),
+    ).toBeUndefined();
+    const none = setup(null);
+    expect(
+      updateAccessEvidence(
+        none.db,
+        deps,
+        update(net([], [])),
+        undefined,
+        "upgrade",
+        none.extensionsDir,
+      ),
+    ).toBeUndefined();
+    const bad = setup("{not json");
+    expect(
+      updateAccessEvidence(
+        bad.db,
+        deps,
+        update(net([], [])),
+        undefined,
+        "upgrade",
+        bad.extensionsDir,
+      ),
+    ).toBeUndefined();
   });
 });

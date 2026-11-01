@@ -340,7 +340,7 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
 
   it("shows the reach and the file outcome the gateway sends, for an update and a rollback", () => {
     // The payload `buildUpdateAction` returns through the real dispatch (gateway
-    // `dispatchers-reach.test.ts` prints this shape); the two new fields are the ones under test.
+    // `auto-update-rpc.test.ts` pins this key set); the two new fields are the ones under test.
     const details = {
       id: "reach.inst",
       displayName: "Reach",
@@ -379,22 +379,33 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.queryByTestId("auto-update-access")).toBeNull();
   });
 
-  it("an install prompt does not hide the reach, the file outcome or canRunHere", () => {
+  it("an install prompt shows reach and file outcome whole, past 80 characters", () => {
+    const reach =
+      "any internet host, and a private-network host may fail (Windows cannot limit this to a.com, b.com)";
+    const files = `reads none · writes ${"/very/long/path/".repeat(5)} (can't run here: overlaps Nimbus's data)`;
+    expect(reach.length).toBeGreaterThan(80);
+    expect(files.length).toBeGreaterThan(80);
     render(
       <StructuredPreview
-        details={{
-          id: "acme.tool",
-          networkReach: "network access to a.com",
-          fileAccess: "reads none · writes /data (can't run here: overlaps Nimbus's data)",
-          canRunHere: false,
-        }}
+        details={{ id: "acme.tool", networkReach: reach, fileAccess: files, canRunHere: false }}
         action="extension.install"
       />,
     );
-    expect(screen.getByText("networkReach")).toBeInTheDocument();
-    expect(screen.getByText("network access to a.com")).toBeInTheDocument();
-    expect(screen.getByText("fileAccess")).toBeInTheDocument();
+    expect(screen.getByTestId("install-network-reach").textContent).toBe(`Network: ${reach}`);
+    expect(screen.getByTestId("install-file-access").textContent).toBe(`Files: ${files}`);
+    // Not repeated as truncated generic rows; the other fields still are shown.
+    expect(screen.queryByText("networkReach")).toBeNull();
     expect(screen.getByText("canRunHere")).toBeInTheDocument();
+  });
+
+  it("a rollback heading does not say 'new version'", () => {
+    render(
+      <StructuredPreview
+        details={autoUpdateDetails({ networkReach: "no network access", fileAccess: "x" })}
+        action="extension.downgrade"
+      />,
+    );
+    expect(screen.getByTestId("auto-update-access").textContent).toContain("restored version");
   });
 
   it("falls through to generic renderer when action is unknown", () => {

@@ -76,6 +76,7 @@ export interface AutoUpdateRpcDeps {
   updateAccess?: (
     cached: AvailableUpdate,
     addedUnion: SandboxPermissions | undefined,
+    direction: "upgrade" | "downgrade",
   ) => AccessEvidence | undefined;
   /**
    * Whether the update's source registry still exists with the root fingerprint it was detected
@@ -240,6 +241,7 @@ function accessFields(
   cached: AvailableUpdate,
   approved: ApprovedUpdatePlan | undefined,
   deps: AutoUpdateRpcDeps,
+  isDowngrade: boolean,
 ): Record<string, unknown> {
   if (deps.updateAccess === undefined) return {};
   const added =
@@ -248,7 +250,7 @@ function accessFields(
       : undefined;
   let evidence: AccessEvidence | undefined;
   try {
-    evidence = deps.updateAccess(cached, added);
+    evidence = deps.updateAccess(cached, added, isDowngrade ? "downgrade" : "upgrade");
   } catch {
     evidence = undefined;
   }
@@ -574,7 +576,7 @@ async function handleExtensionUpdate(
       hasRunGrant,
       updateBadge(cached, deps),
       approved,
-      accessFields(cached, approved, deps),
+      accessFields(cached, approved, deps, isDowngrade),
     ),
   );
   if (gateResult !== "proceed") {

@@ -9,6 +9,7 @@ import { describeNetworkReach, type ReachRunner } from "./extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { oneLine } from "./install-plan-text.ts";
 import { parseExtensionManifestJson, resolveExtensionManifestPath } from "./manifest.ts";
+import { prevVersionDir } from "./version-store.ts";
 
 /** What an install or update approval needs to describe this machine: all of it optional but the home folder. */
 export type ExtensionEvidenceDeps = {
@@ -89,22 +90,38 @@ function unionPermissions(a: SandboxPermissions, b: SandboxPermissions): Sandbox
   };
 }
 
+function readPermissionsIn(dir: string): SandboxPermissions | undefined {
+  const path = resolveExtensionManifestPath(dir);
+  if (path === undefined) return undefined;
+  return parseExtensionManifestJson(readFileSync(path, "utf8")).permissions;
+}
+
 /**
- * The evidence an update approval states: the installed manifest's permissions after the update's
- * diff, together with what the update's added packages declare. Undefined when the installed
- * manifest cannot be read (the caller says so); it never throws.
+ * The evidence an update approval states. A forward update: the installed manifest's permissions
+ * after the update's diff (sound, since the installed version is the one the diff was taken from),
+ * together with what the added packages declare. A downgrade: the permissions the rollback target
+ * declares on disk (`prev/<toVersion>`), never the diff, which does not mention the version
+ * installed now. Undefined when the manifest needed cannot be read (the caller says so); it never
+ * throws.
  */
 export function updateAccessEvidence(
   db: Database,
   deps: ExtensionEvidenceDeps | undefined,
   cached: AvailableUpdate,
   addedUnion: SandboxPermissions | undefined,
+  direction: "upgrade" | "downgrade",
+  extensionsDir: string | undefined,
 ): AccessEvidence | undefined {
   try {
     const row = listExtensions(db).find((r) => r.id === cached.id);
-    const path = row === undefined ? undefined : resolveExtensionManifestPath(row.install_path);
-    if (row === undefined || path === undefined) return undefined;
-    const before = parseExtensionManifestJson(readFileSync(path, "utf8")).permissions;
+    if (row === undefined) return undefined;
+    if (direction === "downgrade") {
+      if (extensionsDir === undefined) return undefined;
+      const target = readPermissionsIn(prevVersionDir(extensionsDir, cached.id, cached.toVersion));
+      return target === undefined ? undefined : accessEvidence(deps, target, row.install_path);
+    }
+    const before = readPermissionsIn(row.install_path);
+    if (before === undefined) return undefined;
     const after = permissionsAfterUpdate(before, cached.permissionDiff);
     const all = addedUnion === undefined ? after : unionPermissions(after, addedUnion);
     return accessEvidence(deps, all, row.install_path);
