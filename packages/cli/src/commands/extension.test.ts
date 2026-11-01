@@ -2128,6 +2128,64 @@ describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
     expect(out).not.toMatch(/\tverified\t/);
   });
 
+  // The fixture is copied from `LIST_QUALITY_CHANGE` in
+  // `packages/gateway/src/extensions/auto-update-rpc.test.ts`, the test that proves the shape
+  // `extension.checkForUpdates` serves.
+  const GATEWAY_QUALITY_CHANGE = {
+    state: "compared",
+    from: { score: 92, cases: 100, passed: 92 },
+    to: { score: 71, cases: 100, passed: 71 },
+    delta: -21,
+    text: "quality 92 → 71 (-21)",
+  };
+
+  test("a row states the score change the gateway worded, and never computes one", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        { ...makeUpdate(), qualityChange: GATEWAY_QUALITY_CHANGE },
+        makeUpdate({ id: "ext-b" }),
+      ],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    const text = out.join("");
+    expect(text).toContain(
+      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature verified\tquality 92 → 71 (-21)\n",
+    );
+    expect(text).toContain("ext-b\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature verified\n");
+  });
+
+  test("a control character in the gateway's text never reaches the terminal", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        {
+          ...makeUpdate(),
+          qualityChange: { ...GATEWAY_QUALITY_CHANGE, text: "q\u001b[2Jx\nfake" },
+        },
+      ],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    expect(out.join("")).not.toContain("\u001b");
+    expect(out.join("").trim().split("\n")).toHaveLength(1);
+  });
+
+  test("--json carries the structured comparison with both sides", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: ["--json"],
+      caller: async () => [{ ...makeUpdate(), qualityChange: GATEWAY_QUALITY_CHANGE }],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    const parsed = JSON.parse(out.join("").trim()) as AvailableUpdateCli[];
+    expect(parsed[0]?.qualityChange).toEqual(GATEWAY_QUALITY_CHANGE);
+  });
+
   test("--json flag prints JSON array", async () => {
     const stdoutChunks: string[] = [];
     const code = await runExtensionUpdateWithCaller({

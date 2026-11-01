@@ -189,6 +189,30 @@ describe("createRegistryDependencyResolver (phase 1: verified manifests)", () =>
     expect(r.verified("com.dep", "1.0.0")).toBeUndefined();
   });
 
+  test("readRootIndex shares the read a plan made for a dependency: no second fetch", async () => {
+    await addRegistry("main", { "com.a": ONE });
+    const r = resolverFor("main");
+    await solve(r, rootNeeding({ "com.a": { range: "^1.0.0" } }));
+    const afterPlan = { calls: fetchCalls, rows: ledger("registry.index") };
+    expect(afterPlan.rows).toBe(1);
+    const index = await r.readRootIndex();
+    expect(Object.keys(index.extensions)).toEqual(["com.a"]);
+    await r.readRootIndex();
+    expect(fetchCalls).toBe(afterPlan.calls);
+    expect(ledger("registry.index")).toBe(1);
+  });
+
+  test("readRootIndex read first is the read the plan then uses", async () => {
+    await addRegistry("main", { "com.a": ONE });
+    const r = resolverFor("main");
+    await r.readRootIndex();
+    const afterRead = fetchCalls;
+    await solve(r, rootNeeding({ "com.a": { range: "^1.0.0" } }));
+    expect(ledger("registry.index")).toBe(1);
+    // the plan's own manifest fetch is the only request added
+    expect(fetchCalls).toBeGreaterThan(afterRead);
+  });
+
   test("each registry's index is read once per resolve", async () => {
     await addRegistry("main", { "com.a": ONE, "com.b": ONE });
     const r = resolverFor("main");

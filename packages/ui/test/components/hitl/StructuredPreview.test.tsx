@@ -374,6 +374,39 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByTestId("auto-update-network-reach")).toBeInTheDocument();
   });
 
+  it("shows the score change the gateway words, as text, for an update", () => {
+    // The gateway's approval carries `qualityChange` as a string (`auto-update-rpc.test.ts`).
+    render(
+      <StructuredPreview
+        details={{ ...autoUpdateDetails(), qualityChange: "quality 92 → 71 (-21)" }}
+        action="extension.autoUpdate"
+      />,
+    );
+    expect(screen.getByTestId("auto-update-quality-change").textContent).toBe(
+      "quality 92 → 71 (-21)",
+    );
+  });
+
+  it("states a comparison that could not be made, never leaves it out", () => {
+    render(
+      <StructuredPreview
+        details={{
+          ...autoUpdateDetails(),
+          qualityChange: "quality not compared: the registry could not be read just now",
+        }}
+        action="extension.autoUpdate"
+      />,
+    );
+    expect(screen.getByTestId("auto-update-quality-change").textContent).toContain(
+      "quality not compared",
+    );
+  });
+
+  it("an approval without the field (a rollback, an older gateway) shows no quality row", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.queryByTestId("auto-update-quality-change")).toBeNull();
+  });
+
   it("an update from a gateway that sends neither field shows no reach section", () => {
     render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
     expect(screen.queryByTestId("auto-update-access")).toBeNull();

@@ -462,6 +462,49 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     );
   });
 
+  it("the approval states the score change the index shows NOW, not the one detection cached", async () => {
+    const q = (passed: number) => ({
+      scorer: 1,
+      score: passed,
+      cases: 100,
+      passed,
+      rubrics: {
+        exact: { cases: 100, passed },
+        "json-match": { cases: 0, passed: 0 },
+        "one-of": { cases: 0, passed: 0 },
+      },
+    });
+    const { runtime, regDir } = await installedFromRegistry([
+      { version: "1.0.0", quality: q(92) },
+      { version: "1.2.0", quality: q(71) },
+    ]);
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.qualityChange).toMatchObject({ delta: -21 });
+    const indexPath = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, { quality: unknown }> }>;
+    };
+    const v = index.extensions[ID]?.versions["1.2.0"];
+    if (v === undefined) throw new Error("no 1.2.0 in the index");
+    v.quality = q(90);
+    resignIndex(indexPath, { ...index, sequence: index.sequence + 1 });
+    const payloads: Record<string, unknown>[] = [];
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "1.2.0" },
+      {
+        ...runtime.deps,
+        gate: async (a) => {
+          payloads.push(a.payload);
+          return { status: "rejected" as const };
+        },
+      },
+    );
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.["qualityChange"]).toBe("quality 92 → 90 (-2)");
+  });
+
   it("apply refuses a package whose sha differs from the one the index signed", async () => {
     const { runtime, regDir, extensionsDir } = await installedFromRegistry();
     await runtime.deps.forcePoll();

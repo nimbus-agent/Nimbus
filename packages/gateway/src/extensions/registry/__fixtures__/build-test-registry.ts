@@ -27,6 +27,8 @@ export interface TestVersion {
   starterPack?: boolean;
   /** The manifest's `requires` block (connector requirements). */
   requires?: { connectors: string[] };
+  /** The index entry's registry-signed `quality`, carried raw (a test may make it malformed). */
+  quality?: unknown;
 }
 
 export interface TestRegistry {
@@ -216,6 +218,7 @@ async function buildTestVersion(
       packageSizeBytes: tgz.byteLength,
       entryHash: opts.entryHashOverride ?? entryHash,
       publishedAt: "2026-10-18T10:00:00Z",
+      ...(v.quality === undefined ? {} : { quality: v.quality }),
     },
   };
 }

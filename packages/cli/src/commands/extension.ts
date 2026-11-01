@@ -1370,6 +1370,12 @@ export interface AvailableUpdateCli {
   readonly addedPackages?: readonly { readonly id: string }[];
   /** Why the update does not fit, one line each. Absent from an older gateway. */
   readonly conflicts?: readonly { readonly reason?: string }[];
+  /**
+   * How the new version's registry-signed score compares with the installed one's, as the gateway
+   * worded it. The CLI prints `text` and computes nothing; `--json` carries the whole object.
+   * Absent from an older gateway.
+   */
+  readonly qualityChange?: { readonly text?: unknown };
 }
 
 export interface UpdateApplyResultCli {
@@ -1429,7 +1435,9 @@ function formatUpdateRow(u: AvailableUpdateCli): string {
   const conflicts = (u.conflicts ?? [])
     .map((c) => `\tconflict: ${stripControl(c.reason ?? "conflict")}`)
     .join("");
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${conflicts}`;
+  const quality =
+    typeof u.qualityChange?.text === "string" ? `\t${stripControl(u.qualityChange.text)}` : "";
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${quality}${conflicts}`;
 }
 
 async function listExtensionUpdates(

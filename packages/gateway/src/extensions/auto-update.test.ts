@@ -102,6 +102,9 @@ const IDLE_RESOLVER: RegistryDependencyResolver = {
     },
   },
   rootSource: "main#test",
+  readRootIndex: async () => {
+    throw new Error("the index is not read in this test");
+  },
   verified: () => undefined,
   registryUrl: () => null,
   stage: async () => [],
