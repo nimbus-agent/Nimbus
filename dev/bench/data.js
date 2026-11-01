@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793533755800,
+  "lastUpdate": 1793543714430,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fe539e5de767a9ee56c487a4a8b8b8608d94f921",
-          "message": "ci: restore wall-clock margin on the Windows gateway test leg (#1185)\n\n## Why\n\n`PR quality — Cross-platform (gateway, windows-2025)` failed on #1184\nwith `exit code 124` — the `scripts/run-with-timeout.ts` wall-clock cap\nfiring, on **both** attempts. Zero tests failed; no summary line was\never printed, because the run was killed mid-suite at 600 s.\n\nThis was not a regression from any product change. The leg has simply\nhad no margin left:\n\n| Run (2026-08-14) | Tests | Files | Duration |\n| --- | --- | --- | --- |\n| 03:19 | 11,082 | 794 | 340.7 s |\n| 07:47 | 11,166 | 796 | 404.1 s |\n| 09:24 | 11,166 | 796 | 516.0 s |\n| 09:45 | 11,183 | 796 | **557.0 s** |\n| 15:53 | — | — | **killed at 600 s** |\n\nThe last passing run cleared the cap with **43 seconds to spare (93 % of\nbudget)**. Test count grew 0.9 % across the day while duration grew 63\n%, so this is runner variance, not suite growth — note 07:47 vs 09:24:\nidentical work (11,166 tests / 796 files), 404 s then 516 s, a 28 %\nswing. The proximate trigger was one test stalling for 59.2 s (`GET\n/v1/preflight/deploy returns 400 when max_findings is not an integer`,\nnormally ~2-3 s), which alone exceeded the remaining slack.\n\n## What\n\n**1. Stop rebuilding the schema per test.** Every `beforeEach` in\n`http-server.test.ts` replayed the full migration chain (up to\n`CURRENT_SCHEMA_VERSION` = 53) against a fresh on-disk DB. That one file\ncost **113.9 s — 20.4 % of the entire gateway suite**, for tests that\nare trivial read-only route assertions.\n\nEach distinct DB shape is now migrated once into a module-scoped\ntemplate and copied per test. Isolation is unchanged: every test still\ngets its own pristine file. Copying the bare `.db` is sound because\n`runIndexedSchemaMigrations` never switches the database to WAL, so a\nclosed template leaves no `-wal`/`-shm` sidecar holding pages the copy\nwould miss.\n\nMeasured locally (Windows), same 52 tests passing both ways:\n\n```\nbefore: Ran 52 tests across 1 file. [6.60s]\nafter:  Ran 52 tests across 1 file. [724.00ms]\n```\n\n**2. Raise the cap 600 s → 900 s.** The old value was justified\nin-comment as *\"far above a healthy Windows run (~2-3 min)\"*. That\npremise had silently expired — a healthy run is now ~9.3 min — and the\ncomment asserted this failure mode \"never\" happens while it was actively\nhappening. The comment is rewritten to record the real numbers and to\nsay when to revisit.\n\n**3. Raise the job ceiling 25 → 40 min.** This is required, not\nincidental: 2 × 900 s of tests is 30 min, so leaving the ceiling at 25\nwould have cancelled a double-timeout at the job level (\"The operation\nwas canceled\") instead of surfacing the wrapper's exit 124 —\nreintroducing exactly the failure mode the per-attempt cap exists to\nprevent. The comment now states the two must move together.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED (29 gates, incl.\n`audit:workflow-lint`)\n- `bun test packages/gateway/src/ipc` — 1718 pass, 17 skip, **0 fail**\n\n## Note\n\nRaising the cap is the stopgap; the suite getting faster is the fix. The\nremaining known hotspot is `db.verify > returns clean:true on an empty\nfresh DB` at **41.6 s** in one test — that one is real work (`PRAGMA\nintegrity_check` over a real DB), so it is deliberately left alone here\nrather than papered over from a test.",
-          "timestamp": "2026-08-14T19:47:30+03:00",
-          "tree_id": "c9ffda68163868faf96920e756d2d414968b036a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fe539e5de767a9ee56c487a4a8b8b8608d94f921"
-        },
-        "date": 1786726728935,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.7509408999995,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.1225849499977,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 222.26694520000018,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "770e59fbedaf7b13e4fd0317f307f153b8ef84fe",
+          "message": "fix(sandbox): Windows diagnostics report all_or_nothing, not per_host (#1848)\n\n`diag.snapshot` reported `per_host` for a Windows runner with a working\nhelper. Only a present `networkScope` could say anything else, and the\nWindows runner had none, while AppContainer `internetClient` opens every\ninternet host or none of them. `nimbus extension info` therefore printed\n\"Network isolation: per-host\" on Windows.\n\n- A fully active Windows runner now reports `all_or_nothing`, so\n`extension info` prints the degraded line with its reason.\n`networkScope` widens to `\"per_port\" | \"all_or_nothing\"`.\n- A Windows runner with no usable helper reported `all_or_nothing` too,\nalthough its `spawn` refuses every child. It now reports `refusing`\nthrough `networkRefused`, and the startup log says a network-declaring\nchild will be refused. This second change was not in the original\nrequest; it is the same wrong claim one branch over.\n\nEnforcement did not change. `nimbus doctor` is unaffected: its sandbox\nline reads the posture only on Linux.\n\nThis lands before Phase 9.5 project 6 so `nimbus extension audit` does\nnot inherit the wrong claim.\n\n**Verified:** `preflight:fast`, `typecheck:tests`, and the scoped\ngateway and CLI tests locally on Windows. The `all_or_nothing` test\nneeds a fake helper script, so it skips on Windows; it ran and passed\nthrough `verify:docker --changed` in the CI Linux image. Reverting\n`win32.ts` turns the `refusing` test red. The `all_or_nothing` test was\nnot red-proved by that local revert, because it skips on Windows.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Corrected Windows network capability diagnostics: when a usable\nsandbox helper is available, they report `all_or_nothing`; when none is\navailable, they report `refusing`. Sandbox enforcement is unchanged.\n* **Documentation**\n* Clarified that Windows `internetClient` access applies to internet\nhosts as a whole, rather than the entire network, and documented the\nWindows diagnostic states alongside macOS’s port-based filtering.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-01T16:29:02+02:00",
+          "tree_id": "1c0e9e417e0778fffe004c6a96b9f7fae00f96f0",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/770e59fbedaf7b13e4fd0317f307f153b8ef84fe"
+        },
+        "date": 1793543711307,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 184.32943514999604,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 190.4244265500056,
             "unit": "ms"
           }
         ]
