@@ -253,10 +253,53 @@ precondition `required_signatures` needs. **Do not enable
 step green**; the assertion proves the mechanism, but only an actual publish
 proves it against the live API.
 
-`publish-linux-repo.yml` deliberately still uses `git push`: the mutation
+`publish-linux-repo.yml`'s Git mode deliberately still uses `git push`: the mutation
 carries the whole commit as one base64 request body, which cannot fit a
 `.deb` + `.rpm` publish. **Do not add `required_signatures` to the
-`linux-repo` ruleset** — it would break the next apt/yum publish.
+`linux-repo` ruleset** while Git mode can run — it would break the next apt/yum publish.
+
+### linux-repo deploy
+
+`publish-linux-repo.yml` has two modes, chosen by the `Nimbus` repo variable
+`NIMBUS_LINUX_REPO_DEPLOY`. Unset or `git` commits the packages to `linux-repo` and its legacy
+Pages build serves them. `actions` builds the tree from release assets, attaches it as `site.tar`
+to a `site-<version>-<run>-<attempt>` prerelease on `linux-repo`, and sends a `deploy-site`
+`repository_dispatch`. `linux-repo`'s own `deploy-site.yml` then serves it with a custom Actions
+deploy, and the publish job reads the served `site-id.txt` until it names that release. A version
+would not do: the switch itself and any re-publish find it already served. Both modes publish
+the same URLs and the same signed metadata, so users with the repo configured notice neither.
+
+`actions` mode needs no new credential: release create, release delete and `dispatches` are all
+under the `Contents: write` the Release Bot already has, and `deploy-site.yml` uses only its own
+`GITHUB_TOKEN`. Anyone who can write to `linux-repo` can deploy the site in either mode. The last
+three `site-*` releases are kept. `README.md`, `LICENSE` and `.nojekyll` are served only in Git mode.
+
+The job runs `linux-repo-config.ts` from the released tag's tree, so `actions` mode works only for a
+tag that already contains `--stage-yum-rpms`. An older tag fails at that step, loudly, before
+anything is handed off. To serve an older tree, use the rollback below rather than re-publishing.
+
+**To switch to `actions`**, with no release running, once the latest release contains that flag:
+
+1. Add `deploy-site.yml` to `linux-repo`'s `main`. `github-pages` already allows `main`.
+2. `gh workflow disable publish-linux-repo.yml --repo nimbus-agent/Nimbus`
+3. `gh api -X PUT repos/nimbus-agent/linux-repo/pages -f build_type=workflow`. The old site stays
+   up until the first deploy.
+4. `gh variable set NIMBUS_LINUX_REPO_DEPLOY --repo nimbus-agent/Nimbus --body actions`
+5. `gh workflow enable publish-linux-repo.yml --repo nimbus-agent/Nimbus`
+6. `gh workflow run publish-linux-repo.yml --repo nimbus-agent/Nimbus -f tag_name=<latest tag>`
+
+**To roll back to an earlier tree** while staying in `actions` mode:
+`gh workflow run deploy-site.yml --repo nimbus-agent/linux-repo -f site_tag=<site tag>`.
+
+**To go back to `git`:**
+
+1. `gh variable delete NIMBUS_LINUX_REPO_DEPLOY --repo nimbus-agent/Nimbus`
+2. `gh api -X PUT repos/nimbus-agent/linux-repo/pages -f build_type=legacy -f 'source[branch]=main' -f 'source[path]=/'`
+3. `gh api -X POST repos/nimbus-agent/linux-repo/pages/builds`. **Switching alone does not rebuild:**
+   measured on a scratch repo, the Actions content stayed live until this call, then the branch's
+   content returned in about 30 s. No request failed at any point.
+4. `gh workflow run publish-linux-repo.yml --repo nimbus-agent/Nimbus -f tag_name=<latest tag>`.
+   The branch holds only what Git mode last pushed, and an RPM or `.deb` over 100 MiB will fail here.
 
 ### `WINGET_PAT` — winget submission — **stays a classic PAT, on purpose**
 

@@ -26,9 +26,18 @@ on:
         required: true
         type: string
 
-concurrency:
-  group: publish-linux-repo-${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
-  cancel-in-progress: false
+#
+# TWO DEPLOY MODES, chosen by the repo variable NIMBUS_LINUX_REPO_DEPLOY:
+#
+#   unset or "git"  commit the packages into linux-repo and let its legacy Pages build serve them.
+#                   Every release adds ~138 MiB to that repo's history, which is already 14.7 GiB
+#                   against GitHub's recommended 1 GB, and no package can pass 100 MiB.
+#   "actions"       build the tree from nothing but release assets, attach it to a `site-*` release
+#                   on linux-repo, and dispatch linux-repo's deploy-site.yml, which serves it with a
+#                   custom Actions deploy. Nothing enters Git, and no Git file limit applies.
+#
+# The variable is what makes this switchable and reversible without a code change. Runbook and
+# rollback: docs/ci-secrets.md § linux-repo deploy.
 
 permissions:
   contents: read
@@ -37,7 +46,14 @@ jobs:
   publish-linux-repo:
     name: Build + publish apt/yum repo
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
+    # One publish at a time across EVERY tag, not per tag. Per tag, two releases close together
+    # raced: in Git mode the loser failed at push, and in Actions mode an older one could replace a
+    # newer one. At job level so that a run this job's `if` skips never takes the slot. GitHub keeps
+    # one run waiting and cancels an older waiting one; the newest release is the one that matters.
+    concurrency:
+      group: publish-linux-repo
+      cancel-in-progress: false
     # Stable `v*` tags whose Release build succeeded (or a manual re-run). See the
     # `on:` header for why this replaces the `release: released` trigger.
     if: >-
@@ -50,6 +66,19 @@ jobs:
         uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
           egress-policy: audit
+
+      - name: Check the deploy mode
+        env:
+          DEPLOY_MODE: ${{ vars.NIMBUS_LINUX_REPO_DEPLOY }}
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_MODE" in
+            "" | git | actions) echo "deploy mode: ${DEPLOY_MODE:-git}" ;;
+            *)
+              echo "::error::NIMBUS_LINUX_REPO_DEPLOY must be unset, git or actions, got: ${DEPLOY_MODE}"
+              exit 1
+              ;;
+          esac
 
       - name: Checkout Nimbus
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -145,14 +174,21 @@ jobs:
           gpg --list-secret-keys
 
       - name: Clone the linux-repo Pages repo
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY != 'actions'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           git clone --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/nimbus-agent/linux-repo.git" repo
 
+      - name: Start from an empty tree
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'
+        run: mkdir repo
+
       - name: Build the apt repo (reprepro) + the yum repo (createrepo_c)
         env:
+          DEPLOY_MODE: ${{ vars.NIMBUS_LINUX_REPO_DEPLOY }}
+          GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
           # Optional override for the retention count; unset falls back to
           # DEFAULT_RETAINED_RELEASES in scripts/release/linux-repo-config.ts.
@@ -191,6 +227,11 @@ jobs:
           # the oversized channel this prune exists to fix.
           mkdir -p repo/yum
           cp "$RPM" repo/yum/
+          # An empty tree has no earlier RPMs to retain, so fetch them. The prune below still
+          # decides what stays.
+          if [ "$DEPLOY_MODE" = "actions" ]; then
+            bun scripts/release/linux-repo-config.ts --stage-yum-rpms repo/yum --version "$VERSION"
+          fi
           bun scripts/release/linux-repo-config.ts --prune-yum repo/yum --version "$VERSION"
           # Full regeneration, NOT `--update`: `--update` treats the existing
           # repodata as a cache, and after a delete we want the metadata built
@@ -234,6 +275,7 @@ jobs:
       # break the next apt/yum publish outright. Making these Verified needs a
       # different mechanism (e.g. bot-side commit signing), tracked separately.
       - name: Commit + push to linux-repo
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY != 'actions'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
@@ -249,6 +291,63 @@ jobs:
           if git diff --cached --quiet; then echo "no repo change"; exit 0; fi
           git commit -m "nimbus ${TAG#v}"
           git push
+
+      # A release asset and a repository_dispatch, because both need only the Contents permission the
+      # bot already has on linux-repo. An Actions artifact would need `actions` on both repos and the
+      # bot's private key in linux-repo, which credential-registry.ts keeps out of it on purpose.
+      # The run id makes the tag unique, so re-publishing a version never collides.
+      - name: Hand the tree to linux-repo
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          SITE_TAG="site-${TAG#v}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "SITE_TAG=$SITE_TAG" >> "$GITHUB_ENV"
+          # What the wait below reads. Unique to this run, unlike a version, which the switch to this
+          # mode and any re-publish find already served before their own deploy has happened.
+          printf '%s\n' "$SITE_TAG" > repo/site-id.txt
+          tar -C repo -cf site.tar .
+          gh release create "$SITE_TAG" site.tar \
+            --repo nimbus-agent/linux-repo --target main --prerelease --latest=false \
+            --title "$SITE_TAG" --notes "The Pages site for nimbus ${TAG#v}. Not a Nimbus release."
+          gh api -X POST repos/nimbus-agent/linux-repo/dispatches \
+            -f event_type=deploy-site -f "client_payload[site_tag]=$SITE_TAG"
+
+      # linux-repo's run is not this run, so its failure would reach nobody. Reading what is served
+      # catches that, and anything else between here and a user. A failure here opens the issue below.
+      - name: Wait until Pages serves this release
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'
+        env:
+          TAG: ${{ github.event.workflow_run.head_branch || github.event.inputs.tag_name }}
+        run: |
+          set -euo pipefail
+          BASE="https://nimbus-agent.github.io/linux-repo"
+          for _ in $(seq 1 40); do
+            served=$(curl -fsS "$BASE/site-id.txt?v=$GITHUB_RUN_ID-$RANDOM" 2>/dev/null || true)
+            if [ "$served" = "$SITE_TAG" ]; then
+              echo "Pages serves $SITE_TAG (nimbus ${TAG#v})"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::Pages did not serve $SITE_TAG within 10 minutes. See deploy-site.yml in nimbus-agent/linux-repo."
+          exit 1
+
+      # Three, so an earlier tree stays one dispatch away. Failing to prune costs only storage.
+      - name: Prune old site releases
+        if: vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh release list --repo nimbus-agent/linux-repo --limit 50 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | startswith("site-"))] | sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+            | while read -r old; do
+                gh release delete "$old" --repo nimbus-agent/linux-repo --cleanup-tag --yes
+              done
 
   # A red run here reaches nobody: the Release and its smoke test stay green, because they read the
   # release assets and not this repo. apt and dnf users stayed on 9.2.1 through 13 failed runs that way.

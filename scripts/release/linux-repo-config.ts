@@ -1,12 +1,16 @@
 #!/usr/bin/env bun
 import {
   appendFileSync,
+  copyFileSync,
+  existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseSha256Sums } from "./package-manager-manifests.ts";
 
@@ -264,6 +268,141 @@ function runYumPrune(dir: string, version: string, retain: number | undefined): 
   );
 }
 
+/** A stable release tag: the shape the publish job's own `if` accepts, `v` and no `-`. */
+const STABLE_TAG_PATTERN = /^v(\d+\.\d+\.\d+)$/;
+
+/** The stable versions among release tags, newest first. Any other tag is ignored. */
+export function stableVersionsNewestFirst(tags: readonly string[]): string[] {
+  return tags
+    .map((tag) => STABLE_TAG_PATTERN.exec(tag)?.[1])
+    .filter((version): version is string => version !== undefined)
+    .sort((a, b) => orderVersions(b, a));
+}
+
+export interface StageRetainedRpmsInput {
+  /** Release tags, in any order. */
+  tags: readonly string[];
+  /** The version being published, whose RPM the caller has already staged. */
+  currentVersion: string;
+  retain?: number | undefined;
+  /** Puts one release's verified RPM in the yum tree. False means that release has no RPM. */
+  fetchRpm: (version: string) => boolean;
+}
+
+/**
+ * Fill a yum tree that starts empty with the newest RPMs retention would keep. The Git deploy
+ * inherits them from the clone; a deploy that keeps no state has only the release assets.
+ *
+ * This only fetches. {@link planYumRetention} still decides what stays, so the two deploy modes
+ * cannot disagree about it. Releases abandoned after their tag existed have no assets, so a
+ * missing RPM takes no slot and the next release fills it.
+ */
+export function stageRetainedRpms(input: StageRetainedRpmsInput): void {
+  const retain = normalizeRetain(input.retain);
+  const current = stripV(input.currentVersion);
+  let have = 0;
+  for (const version of stableVersionsNewestFirst(input.tags)) {
+    if (have >= retain) return;
+    if (version === current || input.fetchRpm(version)) have += 1;
+  }
+}
+
+export type GhRunner = (args: readonly string[]) => { status: number; stderr: string };
+
+const runGh: GhRunner = (args) => {
+  const proc = Bun.spawnSync(["gh", ...args], { stderr: "pipe", stdout: "ignore" });
+  return { status: proc.exitCode, stderr: proc.stderr.toString() };
+};
+
+/**
+ * Download one release's RPM into `yumDir`, verified against that release's SHA256SUMS.
+ * False means the release has no RPM. Anything else that goes wrong throws: the alternative is a
+ * channel that quietly loses the releases `dnf downgrade` relies on, or an unverified package.
+ */
+export function downloadVerifiedRpm(
+  version: string,
+  yumDir: string,
+  gh: GhRunner = runGh,
+  repo: string = process.env["GITHUB_REPOSITORY"] ?? "nimbus-agent/Nimbus",
+): boolean {
+  const rpm = rpmAssetName(version);
+  const tmp = mkdtempSync(join(tmpdir(), "nimbus-linux-repo-rpm-"));
+  try {
+    const { status, stderr } = gh([
+      "release",
+      "download",
+      `v${stripV(version)}`,
+      "--repo",
+      repo,
+      "--dir",
+      tmp,
+      "--pattern",
+      rpm,
+      "--pattern",
+      "SHA256SUMS",
+    ]);
+    if (status !== 0) {
+      if (stderr.includes("no assets to download") || stderr.includes("no assets match")) {
+        return false;
+      }
+      throw new Error(`linux-repo-config: gh release download failed for ${version}: ${stderr}`);
+    }
+    if (!existsSync(join(tmp, rpm))) return false;
+    const sumsPath = join(tmp, "SHA256SUMS");
+    if (!existsSync(sumsPath)) {
+      throw new Error(`linux-repo-config: ${version} has an RPM but no SHA256SUMS to verify it`);
+    }
+    const expected = assetSha256(readFileSync(sumsPath, "utf8"), rpm);
+    const actual = new Bun.CryptoHasher("sha256")
+      .update(readFileSync(join(tmp, rpm)))
+      .digest("hex");
+    if (actual !== expected) {
+      throw new Error(`linux-repo-config: checksum mismatch for ${rpm}`);
+    }
+    copyFileSync(join(tmp, rpm), join(yumDir, rpm));
+    return true;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+function runYumStage(dir: string, version: string, retain: number | undefined): void {
+  const repo = process.env["GITHUB_REPOSITORY"] ?? "nimbus-agent/Nimbus";
+  const list = Bun.spawnSync(
+    // A long list costs little: staging stops at `retain`, so only abandoned releases, which publish
+    // no assets, make it read far down.
+    [
+      "gh",
+      "release",
+      "list",
+      "--repo",
+      repo,
+      "--limit",
+      "200",
+      "--exclude-drafts",
+      "--exclude-pre-releases",
+      "--json",
+      "tagName",
+      "--jq",
+      ".[].tagName",
+    ],
+    { stderr: "pipe", stdout: "pipe" },
+  );
+  if (list.exitCode !== 0) {
+    throw new Error(`linux-repo-config: gh release list failed: ${list.stderr.toString()}`);
+  }
+  stageRetainedRpms({
+    tags: list.stdout.toString().split(/\r?\n/).filter(Boolean),
+    currentVersion: version,
+    retain,
+    fetchRpm: (v) => {
+      const found = downloadVerifiedRpm(v, dir);
+      console.log(found ? `staged ${rpmAssetName(v)}` : `v${v} has no RPM, skipped`);
+      return found;
+    },
+  });
+}
+
 function parseArg(flag: string): string | undefined {
   const idx = process.argv.indexOf(flag);
   return idx >= 0 ? process.argv[idx + 1] : undefined;
@@ -330,22 +469,23 @@ function runConfigGeneration(version: string | undefined): void {
 if (import.meta.main) {
   const version = parseArg("--version") ?? process.env["NIMBUS_RELEASE_VERSION"];
   const pruneDir = parseArg("--prune-yum");
-  if (pruneDir) {
+  const stageDir = parseArg("--stage-yum-rpms");
+  if (pruneDir || stageDir) {
     if (!version) {
       console.error(
-        "Usage: bun scripts/release/linux-repo-config.ts --prune-yum <dir> --version <v> [--retain <n>]",
+        "Usage: bun scripts/release/linux-repo-config.ts (--prune-yum | --stage-yum-rpms) <dir> --version <v> [--retain <n>]",
       );
       process.exit(1);
     }
-    let retain: number | undefined;
     try {
-      retain = parseRetainArg();
+      // Fail the publish rather than prune or stage with a retention nobody chose.
+      const retain = parseRetainArg();
+      if (stageDir) runYumStage(stageDir, version, retain);
+      if (pruneDir) runYumPrune(pruneDir, version, retain);
     } catch (err) {
-      // Fail the publish rather than prune with a retention nobody chose.
       console.error(err instanceof Error ? err.message : String(err));
       process.exit(1);
     }
-    runYumPrune(pruneDir, version, retain);
   } else {
     runConfigGeneration(version);
   }
