@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.14.1](https://github.com/nimbus-agent/Nimbus/compare/v10.14.0...v10.14.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* **release:** build the rpm with rpmbuild so the apt and dnf repo can publish again ([#1845](https://github.com/nimbus-agent/Nimbus/issues/1845)) ([114cf69](https://github.com/nimbus-agent/Nimbus/commit/114cf699561212493feb171d1873f36add7a0b0e))
+
 ## [10.14.0](https://github.com/nimbus-agent/Nimbus/compare/v10.13.0...v10.14.0) (2026-11-01)
 
 
