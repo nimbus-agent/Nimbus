@@ -413,7 +413,7 @@ The toolgen confinement probe runs in its own leaf too. `nimbus connector remove
   which worked while Linux gave it the whole internet, now fails with a failed lookup for that name.
   There is no command that edits a registered server's grants: run `nimbus connector remove <mcp_id>`,
   then `nimbus connector add --mcp` again with `--net registry.npmjs.org` as well, and approve it again.
-- **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens the whole network, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
+- **Windows network is all-or-nothing for a user MCP.** Any `--net` host enables AppContainer `internetClient`, which opens every internet host, not the named host. The approval prompt says so. (See [Platform asymmetry](#platform-asymmetry).)
 - **macOS network is by port for a user MCP.** A `--net` host opens its port to every host. The approval prompt says so.
 - **Same-policy-id spawns still share one directory and SID.** The unlocked DACL read-modify-write race for a given policy id remains; what is gone is contention between different connectors.
 - **The filesystem MCP keeps a deliberate data-directory grant.** It is the one first-party connector whose job is the Nimbus data directory, so its manifest grants it read and write on `dataDir` explicitly. It is NOT excepted from the per-policy directory: it runs in its own leaf under `sandboxDir` like every other spawn. The exception is that explicit `dataDir` GRANT, not its working directory.

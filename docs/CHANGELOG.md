@@ -20,7 +20,7 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 - **2026-11-01 — Windows diagnostics stop claiming per-host network enforcement.** `diag.snapshot` reported
   `per_host` for a Windows runner with a working helper, because only an absent `networkScope` could mean anything else
-  and Windows had none, while AppContainer `internetClient` opens the whole network or none of it. It now reports
+  and Windows had none, while AppContainer `internetClient` opens every internet host or none of them. It now reports
   `all_or_nothing`, so `nimbus extension info` prints the degraded line with its reason. A Windows runner with no usable
   helper reported `all_or_nothing` too, though `spawn` refuses every child there; it now reports `refusing`. Enforcement
   did not change.
