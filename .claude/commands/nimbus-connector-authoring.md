@@ -52,7 +52,7 @@ The `hitlRequired` field lists which write/delete permissions require Gateway HI
 
 ### Sandbox declaration
 
-The `permissions` object is the manifest contract that drives the per-OS sandbox runner (invariant `I15`). Declare only the hostnames and path prefixes your connector actually needs — the runner denies everything else to the depth each OS can (bwrap + per-host iptables on Linux, sandbox-exec SBPL on macOS, AppContainer + `internetClient` capability on Windows). For the full schema, examples, platform asymmetry (macOS limits ports, not hosts; Windows is network-on-or-off until WFP support lands), and the pre-T2 reinstall flow for older extensions, see [`docs/sandbox.md`](../../docs/sandbox.md).
+The `permissions` object is the manifest contract that drives the per-OS sandbox runner (invariant `I15`). Declare only the hostnames and path prefixes your connector actually needs — the runner denies everything else to the depth each OS can (bwrap + a local per-host network forwarder on Linux (I50), sandbox-exec SBPL on macOS, AppContainer + `internetClient` capability on Windows). For the full schema, examples, platform asymmetry (macOS limits ports, not hosts; Windows is network-on-or-off until WFP support lands), and the pre-T2 reinstall flow for older extensions, see [`docs/sandbox.md`](../../docs/sandbox.md).
 
 ## Credential Injection Pattern
 

@@ -248,8 +248,8 @@ sudo apt install libsecret-tools   # Debian/Ubuntu
 # sudo dnf install libsecret       # Fedora/RHEL
 
 curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbus_amd64.deb -o /tmp/nimbus.deb
-# apt, not `dpkg -i` — the package depends on bubblewrap and libcap2-bin,
-# and dpkg will not install those for you.
+# apt, not `dpkg -i` — the package depends on bubblewrap, and dpkg will
+# not install that for you.
 sudo apt install /tmp/nimbus.deb
 nimbus --version
 ```
@@ -314,7 +314,7 @@ notepad "$env:TEMP\nimbus\install.ps1"
 | Debian / Ubuntu (apt) | signed repo — see [`install.md`](./install.md#linux-repositories-apt--yum) |
 | Fedora / RHEL (dnf) | signed repo — see [`install.md`](./install.md#linux-repositories-apt--yum) |
 
-Package-manager and native-installer builds disable the self-updater (the package owns updates); the portable archives keep it on. The full install matrix — native `.msi` / `.pkg` / `.rpm` installers, the GPG-signed apt/yum repositories, AppImage, portable tarballs, and download verification — lives in **[`install.md`](./install.md)**.
+Package-manager and native-installer builds disable the self-updater (the package owns updates); the portable archives can check for updates but cannot apply one (`ERR_UPDATER_INSTALL_UNSUPPORTED`), and `nimbus update` prints what to do for that copy. The full install matrix — native `.msi` / `.pkg` / `.rpm` installers, the GPG-signed apt/yum repositories, AppImage, portable tarballs, and download verification — lives in **[`install.md`](./install.md)**.
 
 **Verifying what you downloaded.** Every release artefact is covered by a GPG-signed SHA-256 manifest (`SHA256SUMS.asc`, key `5A20457CCD8B53FFAA945240886ADA6B487CAB6E`) — that manifest is the cross-platform integrity proof. Linux artefacts and the AppImage additionally ship an individual `.asc` sidecar; the macOS and Windows archives do not, so verify those against the manifest. The gateway and CLI binaries also carry GitHub build-provenance attestations. When it downloads a release, the installer runs the manifest check for you: it verifies `SHA256SUMS.asc` against a fingerprint pinned inside the script itself, refuses to install on a mismatched, expired or revoked key, then checks the downloaded archive against the manifest. If `gpg` is missing, or the signature file cannot be fetched, it installs on the checksum alone and says so — `SIGNATURE NOT CHECKED` — rather than letting a checksum pass read as a signature pass. To verify by hand, see [`verify-release-integrity.md`](./verify-release-integrity.md); the fingerprint is published at [`release/SIGNING-KEY.asc`](./release/SIGNING-KEY.asc) and in the [Security Policy](./SECURITY.md).
 
@@ -912,7 +912,7 @@ nimbus/
 │   ├── README.md             # this file — the repository landing page
 │   ├── architecture.md       # subsystem design, IPC catalogue, schema reference
 │   ├── SECURITY.md           # security model + vulnerability reporting
-│   ├── SECURITY-INVARIANTS.md# I1–I49 rationale + anti-patterns
+│   ├── SECURITY-INVARIANTS.md# I1–I50 rationale + anti-patterns
 │   ├── roadmap.md            # acceptance-criteria-driven roadmap
 │   ├── CHANGELOG.md          # dated delivery log (canonical)
 │   ├── cli-reference.md      # full CLI + nimbus.toml reference

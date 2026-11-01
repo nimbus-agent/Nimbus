@@ -78,9 +78,36 @@ class Nimbus < Formula
     end
   end
 
+  # The two layouts differ on purpose: the macOS archives are flat, the Linux tarball nests its
+  # binaries under bin/. The gateway looks for the sandbox helper and vec0.so beside itself, so on
+  # Linux they go in the same directory. Without the helper a connector that declares a network
+  # reaches the whole internet.
   def install
-    bin.install "nimbus"
-    bin.install "nimbus-gateway"
+    if OS.linux?
+      bin.install "bin/nimbus", "bin/nimbus-gateway", "bin/nimbus-sandbox-helper"
+      bin.install "bin/vec0.so" if File.exist?("bin/vec0.so")
+    else
+      bin.install "nimbus"
+      bin.install "nimbus-gateway"
+    end
+  end
+
+  # Not depends_on "bubblewrap": the gateway looks for bwrap at fixed paths outside Homebrew's prefix,
+  # because a bwrap found on PATH could be anything and bwrap is the confinement.
+  def caveats
+    return unless OS.linux?
+
+    <<~EOS
+      Nimbus needs bubblewrap from your distribution, at /usr/bin/bwrap. Homebrew's own bwrap is not
+      looked for. Without it no connector or extension can start.
+        Debian/Ubuntu: sudo apt install bubblewrap
+        Fedora/RHEL:   sudo dnf install bubblewrap
+        Arch:          sudo pacman -S bubblewrap
+      Then run: nimbus doctor
+
+      After brew upgrade, restart the gateway (nimbus stop, then nimbus start): one left running keeps
+      the old version and starts its connectors from a directory the upgrade replaced.
+    EOS
   end
 
   test do

@@ -18,7 +18,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { manifestForFirstParty } from "../../packages/gateway/src/connectors/lazy-mesh/first-party-manifests.ts";
 import {
   policyFromManifest,
@@ -53,20 +53,10 @@ if (process.env["NIMBUS_SANDBOX_HELPER_PATH"] === undefined) {
 }
 const gateway = realpathSync(resolve(gatewayArg));
 
+// Exactly the policy production builds, with no grant added for the gateway's directory. This gateway
+// sits outside /usr, as a tarball's does, so this also proves such an install can start a connector.
 function policyFor(connector: string): SandboxPolicy {
-  const policy = policyFromManifest(manifestForFirstParty(connector));
-  return {
-    ...policy,
-    permissions: {
-      ...policy.permissions,
-      // A compiled gateway outside /usr has to be readable to run as the connector, as a real install
-      // under /usr/lib/nimbus needs no grant for it.
-      filesystem: {
-        ...policy.permissions.filesystem,
-        read: [...policy.permissions.filesystem.read, dirname(gateway)],
-      },
-    },
-  };
+  return policyFromManifest(manifestForFirstParty(connector));
 }
 
 function wrapperEnv(policy: SandboxPolicy, extra: Record<string, string>): Record<string, string> {

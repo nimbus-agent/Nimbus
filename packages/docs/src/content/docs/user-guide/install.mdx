@@ -32,8 +32,8 @@ curl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/nimbu
 # Verify BEFORE installing — this step is yours, nothing does it for you
 gpg --verify /tmp/nimbus.deb.asc /tmp/nimbus.deb
 
-# Install with apt, NOT `dpkg -i` — the package depends on bubblewrap and
-# libcap2-bin, and dpkg will not resolve those for you.
+# Install with apt, NOT `dpkg -i` — the package depends on bubblewrap, and dpkg
+# will not resolve that for you.
 sudo apt install /tmp/nimbus.deb
 ```
 
@@ -197,7 +197,7 @@ Installed from the `.deb`:
 | Gateway data dir | `~/.local/share/nimbus/` (config: `~/.config/nimbus/`) |
 | Shell PATH update | None needed — `/usr/local/bin` is already on `PATH` |
 
-If you install from the tarball or AppImage instead, `install.sh` copies the
+If you install from the tarball instead, `install.sh` copies the
 binaries to `~/.local/bin` and adds a sentinel marker block to `~/.bashrc`,
 `~/.zshrc` or `~/.profile`. It checks for that block before writing, so it will
 not duplicate PATH entries.
@@ -229,7 +229,8 @@ yourself with `nimbus init` or `nimbus start`.
 
 ## Re-running the installer
 
-Both `install.sh` and `install.ps1` are **idempotent**. Running them again
+Both `install.sh` and `install.ps1` are **idempotent**. Run `nimbus stop` first: `install.sh`
+refuses, changing nothing, while a gateway is running from its directory. Running them again
 after a successful install:
 
 - Detects the existing installation and upgrades binaries in place.
@@ -364,7 +365,9 @@ gpg --verify /tmp/nimbus.asc ~/bin/nimbus
 nimbus --version
 ```
 
-The AppImage is self-contained — no installation step required. PATH
+The AppImage is self-contained — no installation step required. On first use it copies its
+binaries to `~/.cache/nimbus/appimage` (about 225 MB) and runs from there, because a background
+gateway cannot run from the AppImage's own mount. PATH
 management and autostart are your responsibility when using this method.
 
 ---

@@ -1051,8 +1051,15 @@ jobs:
           (cd packages/cli && bun build src/index.ts --compile --outfile ../../dist/nimbus --target bun)
           bun scripts/connector-boot-smoke.ts dist/nimbus-gateway
           bun scripts/package-headless-bundle.ts --skip-embedding-model
-          # --skip-sandbox-helper: the helper must not ship yet; the shipping PR removes this flag
-          # (and its twin in release.yml). package-linux-installers.test.ts guards both calls.
-          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage --skip-sandbox-helper
+          bun run package:installers:linux -- --version 0.0.0-ci --skip-appimage
           test -f dist/installers/nimbus-headless_0.0.0-ci_amd64.deb
           test -f dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz
+          # Each listing goes to a file, then grep reads the file. `lister | grep -q` under
+          # `bash -eo pipefail` dies of SIGPIPE when grep exits on its match while the lister is still
+          # writing a large package's listing, and the step goes red on a correct package.
+          deb_listing="$(mktemp)"
+          tar_listing="$(mktemp)"
+          dpkg-deb -c dist/installers/nimbus-headless_0.0.0-ci_amd64.deb > "$deb_listing"
+          tar -tzf dist/installers/nimbus-headless-linux-amd64-v0.0.0-ci.tar.gz > "$tar_listing"
+          grep -q '^-rwxr-xr-x .*/usr/lib/nimbus/bin/nimbus-sandbox-helper$' "$deb_listing"
+          grep -q '^bin/nimbus-sandbox-helper$' "$tar_listing"

@@ -64,7 +64,11 @@ sysctl -w kernel.unprivileged_userns_clone=1 > /dev/null 2>&1 || true
 # an unusable bwrap surfaces four assertions deep inside
 # sandbox-wrapper-spawn.test.ts with no reason attached; here it is named at
 # the step that owns it. The bind set mirrors buildBwrapArgv (linux.ts) so the
-# smoke run exercises the same namespace setup the product uses.
+# smoke run exercises the same namespace setup the product uses for a policy with no
+# network. A policy that declares hosts nests a second bwrap behind nimbus-sandbox-helper
+# (no setcap, no libcap: the helper is a plain static binary); that nested start is not
+# probed here, because the helper has to be built first. check-bwrap-apparmor.sh and
+# `nimbus doctor` run it against the real helper.
 smoke_argv=(--unshare-user --unshare-net --new-session
   --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /lib /lib
   --proc /proc --dev /dev --tmpfs /tmp)

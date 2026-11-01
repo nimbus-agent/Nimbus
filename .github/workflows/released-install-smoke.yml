@@ -87,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
 
     steps:
       - name: Harden Runner
@@ -107,8 +107,8 @@ jobs:
           sudo apt-get install -y -qq libsecret-tools
 
           curl -fsSL "$BASE/nimbus_amd64.deb" -o /tmp/nimbus.deb
-          # apt, NOT `dpkg -i` — the package depends on bubblewrap and
-          # libcap2-bin, and dpkg does not resolve those. Documented as apt
+          # apt, NOT `dpkg -i` — the package depends on bubblewrap, and dpkg
+          # does not resolve that. Documented as apt
           # because `dpkg -i` was verified to fail on a clean ubuntu:24.04.
           sudo apt-get install -y /tmp/nimbus.deb
 
@@ -119,7 +119,7 @@ jobs:
           BASE: https://github.com/nimbus-agent/Nimbus/releases/latest/download
         run: |
           set -euo pipefail
-          # macos-14 is Apple silicon; the docs tell Intel users to swap to -x64.
+          # macos-15 is Apple silicon; the docs tell Intel users to swap to -x64.
           curl -fsSL "$BASE/nimbus-headless-macos-arm64.tar.gz" -o /tmp/nimbus.tar.gz
           mkdir -p /tmp/nimbus && tar -xzf /tmp/nimbus.tar.gz -C /tmp/nimbus
           # `--yes` is the ONLY divergence from the documented command: the docs
@@ -158,6 +158,22 @@ jobs:
             Write-Error "nimbus is not on PATH after the documented install"; exit 1
           }
           nimbus --version
+
+      # The .deb's whole sandbox on a stock runner: its dependency brought bubblewrap, its postinst loaded
+      # the AppArmor profile Ubuntu's restriction needs, and it put the helper where doctor looks. No
+      # gateway is running here, so this is doctor's own start. Like the demo step below it has no skip
+      # branch for a release that predates the line: that is a red job until the next release.
+      - name: Linux — the .deb's network forwarder can start
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Exit code ignored: this job has no keyring, and doctor fails on that legitimately.
+          nimbus doctor > "$RUNNER_TEMP/doctor.log" 2>&1 || true
+          cat "$RUNNER_TEMP/doctor.log"
+          if ! grep -qF "[ok] Sandbox: the network forwarder can start here. Start the gateway to confirm enforcement." "$RUNNER_TEMP/doctor.log"; then
+            echo "::error::nimbus doctor did not start the network forwarder from the published .deb"; exit 1
+          fi
 
       # --- First run: the installed binary must be able to DO something ---------
       - name: Checkout (assertion script only)
@@ -227,7 +243,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-2022]
+        os: [ubuntu-24.04, macos-15, windows-2022]
 
     steps:
       - name: Harden Runner

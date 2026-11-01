@@ -18,6 +18,7 @@ cat <<EOF
 About to uninstall Nimbus:
   Remove: ${INSTALL_DIR}/nimbus
   Remove: ${INSTALL_DIR}/nimbus-gateway
+  Remove: ${INSTALL_DIR}/nimbus-sandbox-helper
   Strip nimbus PATH block from: ~/.zshrc, ~/.bash_profile, ~/.bashrc, ~/.profile (if present)
 EOF
 
@@ -30,7 +31,7 @@ if [ "$ASSUME_YES" -ne 1 ]; then
   esac
 fi
 
-rm -f "${INSTALL_DIR}/nimbus" "${INSTALL_DIR}/nimbus-gateway"
+rm -f "${INSTALL_DIR}/nimbus" "${INSTALL_DIR}/nimbus-gateway" "${INSTALL_DIR}/nimbus-sandbox-helper"
 
 for rc in "${HOME}/.zshrc" "${HOME}/.bash_profile" "${HOME}/.bashrc" "${HOME}/.profile"; do
   [ -f "$rc" ] || continue

@@ -320,6 +320,36 @@ fetch_release() {
   SCRIPT_DIR="$DOWNLOAD_DIR"
 }
 
+# Whether a process is running the gateway this script would overwrite. Linux asks /proc for each
+# process's executable, so a gateway installed anywhere else, with the same name, does not count; a
+# process of another user reads as nothing, and that user's gateway is not running from this HOME.
+# macOS has no /proc, and there `ps` prints the executable's whole path as `comm`.
+gateway_running_from_target() {
+  target_dir="$(cd "$INSTALL_DIR" 2>/dev/null && pwd -P)" || return 1
+  target="${target_dir}/nimbus-gateway"
+  [ -e "$target" ] || return 1
+  if [ -e /proc/self/exe ]; then
+    for proc_dir in /proc/[0-9]*; do
+      if [ "$(readlink "${proc_dir}/exe" 2>/dev/null || true)" = "$target" ]; then return 0; fi
+    done
+    return 1
+  fi
+  ps_status=0
+  ps -axo comm= 2>/dev/null | grep -qxF -e "$target" -e "${INSTALL_DIR}/nimbus-gateway" || ps_status=$?
+  return "$ps_status"
+}
+
+# `cp` onto a running executable fails with "Text file busy", and under `set -e` that aborts the
+# script with the CLI replaced and the gateway, vec0.so and the helper not. So refuse while nothing
+# has changed. The gateway does not restart itself, so the user has to stop it.
+refuse_if_gateway_running() {
+  if gateway_running_from_target; then
+    echo "Error: a Nimbus gateway is running from ${INSTALL_DIR}. Run 'nimbus stop' first, then re-run this installer. Nothing was changed." >&2
+    exit 1
+  fi
+  return 0
+}
+
 # Locate binaries shipped beside this script.
 NIMBUS_SRC="${SCRIPT_DIR}/nimbus"
 GATEWAY_SRC="${SCRIPT_DIR}/nimbus-gateway"
@@ -359,6 +389,9 @@ if [ "$DRY_RUN" -eq 1 ] && [ "$NEED_FETCH" -eq 1 ]; then
   echo "(--dry-run; no changes made, no network request performed)"
   exit 0
 fi
+
+# Before the download too, so a refusal costs nothing. Not on --dry-run, which only prints a plan.
+[ "$DRY_RUN" -eq 1 ] || refuse_if_gateway_running
 
 if [ "$NEED_FETCH" -eq 1 ]; then
   fetch_release "$WANT_VERSION"
@@ -412,6 +445,9 @@ if [ -e "${INSTALL_DIR}/nimbus" ] || [ -e "${INSTALL_DIR}/nimbus-gateway" ]; the
   fi
 fi
 
+# Again, because a prompt above can sit for as long as the user likes.
+refuse_if_gateway_running
+
 cp "$NIMBUS_SRC" "${INSTALL_DIR}/nimbus"
 cp "$GATEWAY_SRC" "${INSTALL_DIR}/nimbus-gateway"
 chmod +x "${INSTALL_DIR}/nimbus" "${INSTALL_DIR}/nimbus-gateway"
@@ -423,6 +459,17 @@ for cand in "${SCRIPT_DIR}/vec0.so" "${SCRIPT_DIR}/vec0.dylib" \
             "${SCRIPT_DIR}/bin/vec0.so" "${SCRIPT_DIR}/bin/vec0.dylib"; do
   if [ -f "$cand" ]; then
     cp "$cand" "${INSTALL_DIR}/$(basename "$cand")"
+    break
+  fi
+done
+
+# The Linux sandbox helper, which enforces a connector's declared hosts. Same rule, same directory:
+# the gateway looks for it beside its own executable. Absent from the macOS archives, which do not
+# use it, and the loop is then a no-op.
+for cand in "${SCRIPT_DIR}/nimbus-sandbox-helper" "${SCRIPT_DIR}/bin/nimbus-sandbox-helper"; do
+  if [ -f "$cand" ]; then
+    cp "$cand" "${INSTALL_DIR}/nimbus-sandbox-helper"
+    chmod 755 "${INSTALL_DIR}/nimbus-sandbox-helper"
     break
   fi
 done
@@ -475,7 +522,7 @@ EOF
 fi
 
 # Remote mode's extracted tree also carries linux-postinstall.sh (the AppArmor profile
-# bubblewrap needs on current Ubuntu, sandbox-helper setcap, the same bubblewrap check). The cleanup trap deletes that tree on
+# bubblewrap needs on current Ubuntu, the same bubblewrap check). The cleanup trap deletes that tree on
 # exit, so preserve a copy in the install dir. Never run it automatically —
 # a curl | sh installer must not chain into another script, let alone sudo.
 if [ "$FETCHED" -eq 1 ] && [ -f "${SCRIPT_DIR}/linux-postinstall.sh" ]; then

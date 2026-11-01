@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
@@ -59,10 +60,7 @@ Options:
   --sandbox-helper <path> Use a pre-built nimbus-sandbox-helper binary instead
                           of compiling from packages/gateway/src-native/. Tests
                           pass a stub via this flag.
-  --skip-sandbox-helper   Skip bundling the sandbox helper. The .deb will still
-                          declare bubblewrap as a dep, but the helper-setcap
-                          step in postinst becomes a no-op and the sandbox
-                          runs in fallback mode at runtime.
+  --make <path>           Path to make (default: /usr/bin/make).
   --rpm                   Also build an .rpm via nfpm.
   --nfpm <path>           Path to the nfpm binary (default: nfpm on PATH).
   --help, -h              Show this message.
@@ -72,10 +70,10 @@ an appimagetool binary. libfuse2 is required at runtime of appimagetool — on
 Ubuntu 22.04 install via 'sudo apt install libfuse2'; on Ubuntu 24.04+ install
 libfuse2t64 or pass --skip-appimage and build AppImage elsewhere.
 
-For the sandbox helper: unless --sandbox-helper or --skip-sandbox-helper is
-passed, the script attempts 'make -C packages/gateway/src-native/sandbox-helper'
-which requires a C99 compiler. See docs/release/headless-
-postinst-linux-setcap.md for the runtime setcap flow.
+Every package ships the sandbox helper, so a build with no helper fails. Unless
+--sandbox-helper is passed, or the bundle carries one, the script runs
+'make -C packages/gateway/src-native/sandbox-helper', which requires a C99
+compiler and a static libc (libc6-dev on Debian and Ubuntu).
 `);
 }
 
@@ -93,7 +91,7 @@ const outRoot = resolve(repoRoot, parseArg("--out") ?? join("dist", "installers"
 const skipAppImage = hasFlag("--skip-appimage");
 const appImageToolOverride = parseArg("--appimagetool");
 const sandboxHelperOverride = parseArg("--sandbox-helper");
-const skipSandboxHelper = hasFlag("--skip-sandbox-helper");
+const makeBin = parseArg("--make") ?? MAKE_BIN;
 const buildRpmFlag = hasFlag("--rpm");
 const nfpmOverride = parseArg("--nfpm");
 
@@ -103,8 +101,8 @@ const cli = join(bundleDir, "nimbus");
 /**
  * The sqlite-vec loadable extension. `tryLoadFromSidecar()` resolves it from
  * `dirname(process.execPath)`, so every layout below has to place it beside `nimbus-gateway`.
- * Optional, like the sandbox helper: a bundle built on a machine where `bun install` skipped the
- * platform binary still packages, it just ships without semantic memory.
+ * Optional: a bundle built on a machine where `bun install` skipped the platform binary still
+ * packages, it just ships without semantic memory.
  */
 const vec0 = join(bundleDir, "vec0.so");
 const hasVec0 = existsSync(vec0);
@@ -135,14 +133,11 @@ if (existsSync(outRoot)) {
 mkdirSync(outRoot, { recursive: true });
 
 /**
- * Resolve the Linux sandbox helper to bundle: an explicit
- * `--sandbox-helper`/bundled binary if present, else one built from
- * `src-native`, else `null` (the sandbox then runs in fallback mode).
+ * Resolve the Linux sandbox helper to bundle: an explicit `--sandbox-helper`, else one the bundle
+ * carries, else one built from `src-native`. There is no way to build without it: a package with no
+ * helper would hand every connector that declares a network the whole internet.
  */
-function resolveSandboxHelper(): string | null {
-  if (skipSandboxHelper) {
-    return null;
-  }
+function resolveSandboxHelper(): string {
   if (sandboxHelperOverride !== undefined) {
     const p = resolve(repoRoot, sandboxHelperOverride);
     if (!existsSync(p)) {
@@ -157,56 +152,34 @@ function resolveSandboxHelper(): string | null {
   }
   const helperDir = join(repoRoot, "packages", "gateway", "src-native", "sandbox-helper");
   const built = join(helperDir, "nimbus-sandbox-helper");
-  if (existsSync(built)) {
-    return built;
-  }
-  if (!existsSync(MAKE_BIN)) {
-    console.warn(
-      `package-linux-installers: ${MAKE_BIN} not available; skipping sandbox-helper bundling.\n` +
-        `  Sandbox will run in fallback mode at runtime. Pass --sandbox-helper <path>\n` +
-        `  with a pre-built binary or install build-essential.`,
-    );
-    return null;
-  }
-  const make = spawnSync(MAKE_BIN, ["-C", helperDir], { stdio: "inherit", cwd: repoRoot });
+  const make = spawnSync(makeBin, ["-C", helperDir], { stdio: "inherit", cwd: repoRoot });
   if (make.status !== 0 || !existsSync(built)) {
-    console.warn(
-      "package-linux-installers: make failed for nimbus-sandbox-helper; skipping bundling.\n" +
-        "  Sandbox will run in fallback mode at runtime. Install a C99\n" +
-        "  compiler (build-essential) to enable per-host network filtering.",
+    console.error(
+      `package-linux-installers: could not build nimbus-sandbox-helper with ${makeBin}.\n` +
+        "  Every package ships it. Install a C99 compiler and a static libc (build-essential),\n" +
+        "  or pass --sandbox-helper <path> with a pre-built binary.",
     );
-    return null;
+    process.exit(1);
   }
   return built;
 }
 
 const sandboxHelper = resolveSandboxHelper();
 
+/** Copy the helper into a staged bin directory. Mode 755, no file capability and no setuid bit. */
+function stageSandboxHelper(binDir: string): void {
+  const staged = join(binDir, "nimbus-sandbox-helper");
+  copyFileSync(sandboxHelper, staged);
+  chmodSync(staged, 0o755);
+}
+
 /**
- * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check, the AppArmor
- * profile bubblewrap needs on current Ubuntu, and, when the helper is bundled, the
- * `setcap cap_net_admin+ep` grant for it.
+ * Render the tarball's `linux-postinstall.sh`: a bubblewrap pre-check, and the AppArmor profile
+ * bubblewrap needs on current Ubuntu.
  */
-function linuxPostInstallScript(hasHelper: boolean): string {
-  const helperBlock = hasHelper
-    ? `HELPER="$HOME/.local/bin/nimbus-sandbox-helper"
-if [ -x "$HELPER" ]; then
-    if command -v setcap >/dev/null 2>&1; then
-        if ! sudo setcap cap_net_admin+ep "$HELPER" 2>/dev/null; then
-            echo "WARNING: setcap on $HELPER failed; sandbox will run in fallback mode."
-            echo "Run manually: sudo setcap cap_net_admin+ep $HELPER"
-        fi
-    else
-        echo "WARNING: setcap not found; install libcap2-bin (Debian/Ubuntu)"
-        echo "         or libcap (Fedora/RHEL/Arch), then run:"
-        echo "  sudo setcap cap_net_admin+ep $HELPER"
-    fi
-fi
-`
-    : `# Sandbox helper not bundled in this tarball — sandbox runs in fallback mode.
-`;
+function linuxPostInstallScript(): string {
   return `#!/bin/sh
-# Linux post-install for Nimbus tarball — bubblewrap pre-check + helper setcap.
+# Linux post-install for Nimbus tarball — bubblewrap pre-check + its AppArmor profile.
 # Run after install.sh has copied binaries into ~/.local/bin/.
 set -eu
 
@@ -223,7 +196,6 @@ EOF
 fi
 
 ${bwrapApparmorInstallShell(true)}
-${helperBlock}
 echo "Linux post-install checks complete."
 `;
 }
@@ -241,20 +213,7 @@ function buildTarball(): string {
   stageVec0(tarBin);
   chmodSync(join(tarBin, "nimbus-gateway"), 0o755);
   chmodSync(join(tarBin, "nimbus"), 0o755);
-  if (sandboxHelper !== null) {
-    copyFileSync(sandboxHelper, join(tarBin, "nimbus-sandbox-helper"));
-    chmodSync(join(tarBin, "nimbus-sandbox-helper"), 0o755);
-  }
-  const helperNote =
-    sandboxHelper === null
-      ? ""
-      : `bin/nimbus-sandbox-helper is the Linux sandbox helper. After
-running install.sh, run ./linux-postinstall.sh — it will grant the helper
-cap_net_admin+ep so the sandbox can enforce per-host network filtering
-without running the Gateway as root. See
-docs/release/headless-postinst-linux-setcap.md for details.
-
-`;
+  stageSandboxHelper(tarBin);
   writeFileSync(
     join(tarStage, "README.txt"),
     `Nimbus headless bundle (Linux x64)
@@ -263,14 +222,15 @@ Runtime dependency: bubblewrap (sudo apt install bubblewrap / dnf install
 bubblewrap / pacman -S bubblewrap). The Gateway refuses to spawn extensions
 without it.
 
-Add the bin/ directory to PATH, or symlink bin/nimbus and bin/nimbus-gateway
-into /usr/local/bin.
+Run ./install.sh, or add the bin/ directory to PATH. Keep the files in bin/
+together: the Gateway looks for nimbus-sandbox-helper beside itself, and without it
+a connector that declares a network reaches the whole internet rather than only
+the hosts it declared. "nimbus doctor" reports this.
 
 On Ubuntu 23.10 and later, also run ./linux-postinstall.sh after install.sh. It
 asks for sudo to install the AppArmor profile bubblewrap needs there; without it
 nothing sandboxed can start. "nimbus doctor" reports this and prints the commands.
-
-${helperNote}`,
+`,
     "utf8",
   );
 
@@ -280,11 +240,7 @@ ${helperNote}`,
   chmodSync(join(tarStage, "install.sh"), 0o755);
   chmodSync(join(tarStage, "uninstall.sh"), 0o755);
 
-  writeFileSync(
-    join(tarStage, "linux-postinstall.sh"),
-    linuxPostInstallScript(sandboxHelper !== null),
-    "utf8",
-  );
+  writeFileSync(join(tarStage, "linux-postinstall.sh"), linuxPostInstallScript(), "utf8");
   chmodSync(join(tarStage, "linux-postinstall.sh"), 0o755);
 
   const tgzName = `nimbus-headless-linux-amd64-v${version}.tar.gz`;
@@ -317,8 +273,7 @@ ${helperNote}`,
 /**
  * Build the bespoke `.deb`: real binaries under `/usr/lib/nimbus/bin`,
  * apt-channel-stamped wrappers in `/usr/local/bin`, a postinst that installs the
- * AppArmor profile for bubblewrap and runs `setcap`, and a postrm that removes the
- * profile.
+ * AppArmor profile for bubblewrap, and a postrm that removes the profile.
  */
 function buildDeb(): string {
   const debName = `nimbus-headless_${version}_amd64.deb`;
@@ -332,11 +287,7 @@ function buildDeb(): string {
   stageVec0(debInst);
   chmodSync(join(debInst, "nimbus-gateway"), 0o755);
   chmodSync(join(debInst, "nimbus"), 0o755);
-
-  if (sandboxHelper !== null) {
-    copyFileSync(sandboxHelper, join(debInst, "nimbus-sandbox-helper"));
-    chmodSync(join(debInst, "nimbus-sandbox-helper"), 0o755);
-  }
+  stageSandboxHelper(debInst);
 
   writeFileSync(join(debBin, "nimbus"), channelWrapper("apt", "nimbus"), "utf8");
   writeFileSync(join(debBin, "nimbus-gateway"), channelWrapper("apt", "nimbus-gateway"), "utf8");
@@ -352,32 +303,24 @@ function buildDeb(): string {
       "Section: utils",
       "Priority: optional",
       "Architecture: amd64",
-      "Depends: bubblewrap, libcap2-bin",
+      "Depends: bubblewrap",
       "Maintainer: Nimbus Contributors <https://github.com/nimbus-dev/Nimbus>",
       "Description: Nimbus CLI and headless Gateway (local-first agent framework)",
       " Installs nimbus and nimbus-gateway under /usr/lib/nimbus/bin with wrappers in /usr/local/bin.",
-      " The sandbox helper is granted cap_net_admin+ep via setcap so the Gateway",
-      " can enforce per-host network filtering without running as root.",
+      " The sandbox helper holds no capability of its own; it runs inside bubblewrap's namespaces,",
+      " so the Gateway can enforce per-host network filtering without running as root.",
       "",
     ].join("\n"),
     "utf8",
   );
 
+  // $2 is the version being replaced, so this prints on an upgrade and not on a first install.
   const postinst = `#!/bin/sh
 set -e
-HELPER="/usr/lib/nimbus/bin/nimbus-sandbox-helper"
-if [ -x "$HELPER" ]; then
-    if command -v setcap >/dev/null 2>&1; then
-        setcap cap_net_admin+ep "$HELPER" || {
-            echo "WARNING: setcap on $HELPER failed; sandbox will run in fallback mode."
-            echo "Run manually: sudo setcap cap_net_admin+ep $HELPER"
-        }
-    else
-        echo "WARNING: setcap not found in PATH; install libcap2-bin and re-run:"
-        echo "  sudo setcap cap_net_admin+ep $HELPER"
-    fi
+${bwrapApparmorInstallShell(false)}if [ "$1" = "configure" ] && [ -n "$2" ]; then
+    echo "If a Nimbus gateway is running, restart it: nimbus stop, then nimbus start. Until then it keeps its old code and nimbus doctor reports its old sandbox posture."
 fi
-${bwrapApparmorInstallShell(false)}exit 0
+exit 0
 `;
   writeFileSync(join(debRoot, "DEBIAN", "postinst"), postinst, "utf8");
   chmodSync(join(debRoot, "DEBIAN", "postinst"), 0o755);
@@ -438,9 +381,7 @@ function buildRpm(nfpmBin: string): string {
   copyFileSync(gw, join(rpmBinDir, "nimbus-gateway"));
   copyFileSync(cli, join(rpmBinDir, "nimbus"));
   stageVec0(rpmBinDir);
-  if (sandboxHelper !== null) {
-    copyFileSync(sandboxHelper, join(rpmBinDir, "nimbus-sandbox-helper"));
-  }
+  stageSandboxHelper(rpmBinDir);
   writeFileSync(join(wrapperDir, "nimbus"), channelWrapper("yum", "nimbus"), "utf8");
   writeFileSync(
     join(wrapperDir, "nimbus-gateway"),
@@ -448,27 +389,7 @@ function buildRpm(nfpmBin: string): string {
     "utf8",
   );
 
-  if (sandboxHelper !== null) {
-    writeFileSync(
-      join(wrapperDir, "rpm-postinstall.sh"),
-      `#!/bin/sh
-set -e
-HELPER="/usr/lib/nimbus/bin/nimbus-sandbox-helper"
-if [ -x "$HELPER" ] && command -v setcap >/dev/null 2>&1; then
-  setcap cap_net_admin+ep "$HELPER" || echo "WARNING: setcap failed; sandbox runs in fallback mode."
-fi
-exit 0
-`,
-      "utf8",
-    );
-  }
-
-  const cfg = renderNfpmConfig({
-    version,
-    binDir: rpmBinDir,
-    wrapperDir,
-    hasSandboxHelper: sandboxHelper !== null,
-  });
+  const cfg = renderNfpmConfig({ version, binDir: rpmBinDir, wrapperDir, hasVec0 });
   const cfgPath = join(stage, "nfpm.yaml");
   writeFileSync(cfgPath, cfg, "utf8");
 
@@ -497,6 +418,15 @@ exit 0
   return rpmPath;
 }
 
+/** The version, and a hash of the binaries in case two builds carry one version. */
+function appImageBuildId(binDir: string): string {
+  const hash = createHash("sha256");
+  for (const name of ["nimbus", "nimbus-gateway", "nimbus-sandbox-helper"]) {
+    hash.update(readFileSync(join(binDir, name)));
+  }
+  return `${version}-${hash.digest("hex").slice(0, 16)}`;
+}
+
 /**
  * Build the `.AppImage` from a staged AppDir (AppRun + desktop entry + icon +
  * binaries) using the provided appimagetool.
@@ -515,11 +445,16 @@ function buildAppImage(toolPath: string): string {
   stageVec0(usrBin);
   chmodSync(join(usrBin, "nimbus-gateway"), 0o755);
   chmodSync(join(usrBin, "nimbus"), 0o755);
+  // Beside the gateway, which is where `resolveHelperPath` looks. The outer `bwrap` binds this one
+  // file at a fixed path, so it does not matter that the AppImage's mount is not in the sandbox.
+  stageSandboxHelper(usrBin);
 
   const appRunSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.AppRun");
   const appRunDst = join(appDir, "AppRun");
   copyFileSync(appRunSrc, appRunDst);
   chmodSync(appRunDst, 0o755);
+  // Names the directory AppRun copies these binaries into, so a different build gets its own copy.
+  writeFileSync(join(appDir, "build-id"), appImageBuildId(usrBin), "utf8");
 
   const desktopSrc = join(repoRoot, "scripts", "linux", "nimbus-headless.desktop");
   const desktopContent = readFileSync(desktopSrc, "utf8").replaceAll("{{VERSION}}", version);

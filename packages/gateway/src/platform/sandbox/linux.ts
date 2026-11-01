@@ -260,6 +260,20 @@ function buildStdioWithSeccomp(
   return ["pipe", "pipe", "pipe", fd] as StdioOptions;
 }
 
+/**
+ * The bind that lets a child run as a role of this same executable, or nothing.
+ *
+ * A connector or an extension is this executable re-run inside the sandbox. A `.deb` or `.rpm` puts it
+ * under `/usr`, which every view binds. A tarball puts it in `~/.local/bin` and an AppImage on its
+ * mount, which no view binds, so `bwrap` found nothing to exec and no connector started. This binds
+ * that one file, read-only, and never its directory, so the sandbox gains no view of `$HOME` and the
+ * forwarder gains no socket. It adds nothing to the policy, so no approval or policy text changes.
+ */
+export function ownExecutableBind(cmd: string, ownExecutable: string): string[] {
+  if (cmd !== ownExecutable || cmd.startsWith("/usr/")) return [];
+  return ["--ro-bind", cmd, cmd];
+}
+
 /** The inner `bwrap`'s flags behind the forwarder: today's flags, as the owner's real uid. */
 export function buildForwarderInnerFlags(policy: SandboxPolicy, cwd: string): string[] {
   return [
@@ -313,7 +327,38 @@ function spawnWithSeccomp(
   }
 }
 
-type ForwarderSpawn = { bwrapPath: string; helperPath: string; seccompPath: string };
+type ForwarderSpawn = {
+  bwrapPath: string;
+  helperPath: string;
+  seccompPath: string;
+  ownExecutable: string;
+};
+
+/**
+ * The whole inner command a per-host spawn runs behind the forwarder: its `bwrap`, that `bwrap`'s
+ * flags, then the child. Its own function so a test can hold it against `buildForwarderArgv`, which
+ * mirrors every bind in it into the outer view: a bind added here and not in the outer view is a
+ * child that cannot start.
+ */
+export function forwarderInnerArgv(
+  paths: Pick<ForwarderSpawn, "bwrapPath" | "ownExecutable">,
+  policy: SandboxPolicy,
+  cwd: string,
+  cmd: string,
+  args: readonly string[],
+  resolvTarget: string,
+): string[] {
+  return [
+    paths.bwrapPath,
+    ...buildForwarderInnerFlags(policy, cwd),
+    ...innerResolvBind(resolvTarget),
+    ...ownExecutableBind(cmd, paths.ownExecutable),
+    "--seccomp",
+    "3",
+    cmd,
+    ...args,
+  ];
+}
 
 /** The per-host path. Any step that throws refuses the spawn, and leaves nothing behind. */
 function spawnBehindForwarder(
@@ -329,15 +374,7 @@ function spawnBehindForwarder(
     helperPath: paths.helperPath,
     entries: planForwardEntries(opts.policy),
     resolvConfTarget: target,
-    innerArgv: [
-      paths.bwrapPath,
-      ...buildForwarderInnerFlags(opts.policy, opts.cwd),
-      ...innerResolvBind(target),
-      "--seccomp",
-      "3",
-      cmd,
-      ...args,
-    ],
+    innerArgv: forwarderInnerArgv(paths, opts.policy, opts.cwd, cmd, args, target),
   });
   try {
     const child = spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, session.argv, opts);
@@ -370,6 +407,8 @@ function seccompFile(): string {
 export type LinuxSandboxRunnerOptions = {
   /** Overrides the start probe's bound, for tests. */
   startProbeTimeoutMs?: number;
+  /** Overrides which file counts as this executable, for tests. */
+  ownExecutable?: string;
 };
 
 export type LinuxSandboxRunner = SandboxRunner & {
@@ -472,7 +511,7 @@ function assertForwarderReady(helper: HelperState, probe: StartProbe): void {
 
 /** The no-net and fallback modes: plain `bwrap`, with no forwarder in front of it. */
 function spawnWithoutForwarder(
-  paths: { bwrapPath: string; seccompPath: string },
+  paths: { bwrapPath: string; seccompPath: string; ownExecutable: string },
   mode: NetworkMode,
   cmd: string,
   args: string[],
@@ -483,7 +522,7 @@ function spawnWithoutForwarder(
     cwd: opts.cwd,
     resolverFile: resolverFileToBind(),
   });
-  bwrapArgv.push("--seccomp", "3", cmd, ...args);
+  bwrapArgv.push(...ownExecutableBind(cmd, paths.ownExecutable), "--seccomp", "3", cmd, ...args);
   return spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, bwrapArgv, opts);
 }
 
@@ -513,6 +552,7 @@ export function createLinuxSandboxRunner(
   options: LinuxSandboxRunnerOptions = {},
 ): LinuxSandboxRunner {
   const seccompPath = seccompFile();
+  const ownExecutable = options.ownExecutable ?? process.execPath;
 
   const bwrapPath = resolveBwrapPath();
   const bwrapMissing = probeBwrap(bwrapPath);
@@ -537,13 +577,19 @@ export function createLinuxSandboxRunner(
       if (mode === "per-host" && HELPER_PATH !== null) {
         assertForwarderReady(helper, probe);
         return spawnBehindForwarder(
-          { bwrapPath, helperPath: HELPER_PATH, seccompPath },
+          { bwrapPath, helperPath: HELPER_PATH, seccompPath, ownExecutable },
           cmd,
           args,
           opts,
         );
       }
-      return spawnWithoutForwarder({ bwrapPath, seccompPath }, mode, cmd, args, opts);
+      return spawnWithoutForwarder(
+        { bwrapPath, seccompPath, ownExecutable },
+        mode,
+        cmd,
+        args,
+        opts,
+      );
     },
     probeForwarderStart(): Promise<void> {
       return probe.ensureRun();

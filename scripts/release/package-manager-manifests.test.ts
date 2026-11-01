@@ -67,10 +67,22 @@ describe("renderHomebrewFormula", () => {
     expect(rb).toContain("nimbus-headless-linux-amd64-v0.1.0.tar.gz");
     expect(rb).toContain(`sha256 "${"c".repeat(64)}"`);
   });
-  test("installs both binaries and has a version smoke test", () => {
-    expect(rb).toContain('bin.install "nimbus"');
-    expect(rb).toContain('bin.install "nimbus-gateway"');
+  test("installs both binaries from the flat macOS archives and has a version smoke test", () => {
+    expect(rb).toContain('bin.install "nimbus"\n');
+    expect(rb).toContain('bin.install "nimbus-gateway"\n');
     expect(rb).toContain("--version");
+  });
+  test("on Linux installs from the tarball's bin/, with the helper and vec0.so beside the gateway", () => {
+    const linuxBranch = rb.slice(rb.indexOf("if OS.linux?"), rb.indexOf("    else\n"));
+    expect(linuxBranch).toContain(
+      'bin.install "bin/nimbus", "bin/nimbus-gateway", "bin/nimbus-sandbox-helper"',
+    );
+    expect(linuxBranch).toContain('bin.install "bin/vec0.so" if File.exist?("bin/vec0.so")');
+  });
+  test("says on Linux that bubblewrap comes from the distribution, with no brew dependency", () => {
+    expect(rb).toContain("return unless OS.linux?");
+    expect(rb).toContain("sudo apt install bubblewrap");
+    expect(rb).not.toMatch(/^ *depends_on/m);
   });
 });
 

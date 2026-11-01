@@ -51,6 +51,9 @@ export function createUpdaterFromConfig(args: CreateUpdaterFromConfigArgs): Upda
 
   // No `invokeInstaller`: no per-OS installer ships yet, so `applyUpdate` refuses with
   // ERR_UPDATER_INSTALL_UNSUPPORTED rather than reporting an install that never happened.
+  // Any installer added here must deliver the Linux sandbox helper (`nimbus-sandbox-helper`, found
+  // beside the gateway) too: the update manifest carries only the gateway binary, so an updater that
+  // replaced just that file would leave a connector that declares a network with no per-host filter.
   const opts: UpdaterOptions = {
     currentVersion,
     manifestUrl: updaterCfg.url,

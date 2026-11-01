@@ -18,8 +18,8 @@ install section) was run verbatim in a fresh `ubuntu:24.04` container with nothi
 - **First attempt failed** at the first command: the standalone `install.sh` had no download
   capability at all (#1167). The docs were corrected and the installer made self-bootstrapping.
 - **Second attempt passed** with the `.deb` route — `sudo apt install /tmp/nimbus.deb`, not
-  `dpkg -i`, which leaves the package unconfigured because it does not resolve `bubblewrap` and
-  `libcap2-bin`. `nimbus init` populated the index from a public repository and
+  `dpkg -i`, which leaves the package unconfigured because it does not resolve `bubblewrap` (the
+  package depended on `libcap2-bin` too when this run was made; it no longer does). `nimbus init` populated the index from a public repository and
   `nimbus why <file>:<line>` returned a real `## Authorship` section.
 
 Against the pass criteria at the end of this page: 1 and 2 were met. Criterion 3 was not run by a
