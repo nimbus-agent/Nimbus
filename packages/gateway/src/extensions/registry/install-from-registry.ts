@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  isStarterPack,
   provenanceMatching,
   provenanceNote,
   publisherKeyFingerprint,
@@ -93,6 +94,11 @@ import {
 } from "./registry-package-stage.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
 import { getExtensionSource, type RegistryRow, setExtensionSource } from "./registry-store.ts";
+import {
+  evidenceApprovalFields,
+  type VersionEvidence,
+  versionEvidence,
+} from "./version-evidence.ts";
 
 export { MAX_REGISTRY_MANIFEST_BYTES } from "./registry-manifest.ts";
 
@@ -193,6 +199,12 @@ export interface VerifiedRegistryPackage {
    */
   readonly provenance: VersionProvenance | null;
   /**
+   * What the registry's signed entry says about this version (tested, history, checks), shown in
+   * the install approval. Optional as `index` is: a package built elsewhere (a test fake, a
+   * migration) states none, and its approval then carries none of these lines.
+   */
+  readonly evidence?: VersionEvidence;
+  /**
    * The verified index the fetch resolved the package from, so a dependency resolver over the same
    * registry need not read it again. Optional: a package built elsewhere (a test fake) has none.
    */
@@ -285,6 +297,14 @@ export async function fetchVerifiedRegistryPackage(
     provenance:
       provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
       null,
+    evidence: versionEvidence({
+      registry: reg.name,
+      versions: entry.versions,
+      version,
+      declaresNetwork: manifest.permissions.network.length > 0,
+      starterPack: isStarterPack(manifest),
+      now: deps.fetch.now(),
+    }),
     index,
   };
 }
@@ -331,6 +351,22 @@ function withProvenance(
   if (provenance === null) return approve;
   return (request) =>
     approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
+}
+
+/**
+ * The approver, stating the package's evidence (tested, history, checks) when it has some, and
+ * scoping it to the root when the plan installs more than one package.
+ */
+function withEvidence(
+  approve: ExtensionInstallApprover,
+  evidence: VersionEvidence | undefined,
+): ExtensionInstallApprover {
+  if (evidence === undefined) return approve;
+  return (request) =>
+    approve({
+      ...request,
+      ...evidenceApprovalFields(evidence, request.id, request.plan?.length ?? 1),
+    });
 }
 
 /** How `installVerifiedRegistryPackage` treats the package's dependencies. */
@@ -391,10 +427,13 @@ export async function installVerifiedRegistryPackage(
       publisherKey: decodeBase64(pkg.publisherKey),
       sourceRegistry: reg.name,
       rootFingerprint,
-      approve: withProvenance(
-        withKeyChange(deps.approve, pkg.publisherChange),
-        pkg.provenance,
-        pkg.reg.name,
+      approve: withEvidence(
+        withProvenance(
+          withKeyChange(deps.approve, pkg.publisherChange),
+          pkg.provenance,
+          pkg.reg.name,
+        ),
+        pkg.evidence,
       ),
       ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
       ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),

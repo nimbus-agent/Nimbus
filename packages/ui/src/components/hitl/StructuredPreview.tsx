@@ -133,6 +133,8 @@ interface AutoUpdatePayload {
   networkReach?: string;
   /** What the new version's file grants do here, as the run approval will judge them. */
   fileAccess?: string;
+  /** How the new version's registry-signed score compares with the installed one's (gateway text). */
+  qualityChange?: string;
   addedPermissions?: {
     network?: string[];
     filesystem?: { read?: string[]; write?: string[] };
@@ -365,6 +367,8 @@ function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayl
   if (reach !== undefined) out.networkReach = reach;
   const files = readStringField(details, "fileAccess");
   if (files !== undefined) out.fileAccess = files;
+  const quality = readStringField(details, "qualityChange");
+  if (quality !== undefined) out.qualityChange = quality;
   if (details["planPermissions"] !== undefined) {
     out.addedUnion = readPermissions(details["planPermissions"]);
   }
@@ -530,6 +534,11 @@ function AutoUpdatePreview({
         <SignatureChip status={payload.signature} />
       </p>
       <BadgeAndNotes badge={payload.badge} notes={payload.notes} />
+      {payload.qualityChange !== undefined && (
+        <p data-testid="auto-update-quality-change" className="text-sm">
+          {payload.qualityChange}
+        </p>
+      )}
       <AddedByUpdate payload={payload} />
       {(payload.networkReach !== undefined || payload.fileAccess !== undefined) && (
         <section data-testid="auto-update-access" className="text-sm">
@@ -691,8 +700,44 @@ const INSTALL_RENDERED = new Set([
   "publisherBadge",
   "networkReach",
   "fileAccess",
+  "tested",
+  "history",
+  "checked",
+  "evidenceScope",
   ...NOTE_FIELDS,
 ]);
+
+const INSTALL_EVIDENCE_ROWS: ReadonlyArray<{
+  readonly key: string;
+  readonly id: string;
+  readonly label: string;
+}> = [
+  { key: "tested", id: "install-tested", label: "Tested" },
+  { key: "history", id: "install-history", label: "History" },
+  { key: "checked", id: "install-checked", label: "Checked" },
+];
+
+/** What the gateway states about the package; absent lines (an older gateway) are simply not drawn. */
+function InstallEvidence({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  const rows = INSTALL_EVIDENCE_ROWS.filter((r) => asText(details[r.key]) !== undefined);
+  const scope = asText(details["evidenceScope"]);
+  if (rows.length === 0 && scope === undefined) return null;
+  return (
+    <section data-testid="install-evidence" className="text-sm">
+      <h3 className="font-semibold">What is known about it</h3>
+      {rows.map((r) => (
+        <p key={r.key} data-testid={r.id}>
+          {r.label}: {asText(details[r.key])}
+        </p>
+      ))}
+      {scope !== undefined && (
+        <p data-testid="install-evidence-scope" className="text-[var(--color-fg-muted)]">
+          {scope}
+        </p>
+      )}
+    </section>
+  );
+}
 
 /**
  * `extension.install`: the verified-publisher badge and the notes first, then EVERY other field the
@@ -718,6 +763,7 @@ function InstallPreview({ details }: { readonly details: Record<string, unknown>
           )}
         </section>
       )}
+      <InstallEvidence details={details} />
       <PreviewRows record={rest} depth={0} />
     </div>
   );

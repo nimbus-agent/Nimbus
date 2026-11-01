@@ -15,9 +15,14 @@ import {
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
-import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
+import {
+  createAutoUpdateRuntime,
+  currentQualityChange,
+  QUALITY_READ_DEADLINE_MS,
+  withUpdateAppliedHook,
+} from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
 import { forwardDeps, recordInstall } from "./dependency-store.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { evictPublisherKey, writePublisherKey } from "./publisher-keys.ts";
@@ -30,6 +35,7 @@ import {
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
+import { qualityUnreadable } from "./registry/version-evidence.ts";
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { recordTrustStatements } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
@@ -460,6 +466,116 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     expect(fp).toBe(
       publisherKeyFingerprint(encodeBase64(nacl.sign.keyPair.fromSeed(PUBLISHER_SEED).publicKey)),
     );
+  });
+
+  it("the approval states the score change the index shows NOW, not the one detection cached", async () => {
+    const q = (passed: number) => ({
+      scorer: 1,
+      score: passed,
+      cases: 100,
+      passed,
+      rubrics: {
+        exact: { cases: 100, passed },
+        "json-match": { cases: 0, passed: 0 },
+        "one-of": { cases: 0, passed: 0 },
+      },
+    });
+    const { runtime, regDir } = await installedFromRegistry([
+      { version: "1.0.0", quality: q(92) },
+      { version: "1.2.0", quality: q(71) },
+    ]);
+    await runtime.deps.forcePoll();
+    expect(runtime.deps.cache.get(ID)?.qualityChange).toMatchObject({ delta: -21 });
+    const indexPath = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, { quality: unknown }> }>;
+    };
+    const v = index.extensions[ID]?.versions["1.2.0"];
+    if (v === undefined) throw new Error("no 1.2.0 in the index");
+    v.quality = q(90);
+    resignIndex(indexPath, { ...index, sequence: index.sequence + 1 });
+    const payloads: Record<string, unknown>[] = [];
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "1.2.0" },
+      {
+        ...runtime.deps,
+        gate: async (a) => {
+          payloads.push(a.payload);
+          return { status: "rejected" as const };
+        },
+      },
+    );
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.["qualityChange"]).toBe("quality 92 → 90 (-2)");
+  });
+
+  describe("the approval's score read, through the real resolver, when the index changed or is gone", () => {
+    type SignedIndex = {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, unknown> } & Record<string, unknown>>;
+    };
+
+    async function approvalPayloadsAfter(
+      change: (regDir: string, index: SignedIndex, indexPath: string) => void,
+    ): Promise<Record<string, unknown>[]> {
+      const { runtime, regDir } = await installedFromRegistry();
+      await runtime.deps.forcePoll();
+      const indexPath = join(regDir, "index.json");
+      const index = JSON.parse(readFileSync(indexPath, "utf8")) as SignedIndex;
+      change(regDir, index, indexPath);
+      const payloads: Record<string, unknown>[] = [];
+      await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: ID, toVersion: "1.2.0" },
+        {
+          ...runtime.deps,
+          gate: async (a) => {
+            payloads.push(a.payload);
+            return { status: "rejected" as const };
+          },
+        },
+      );
+      return payloads;
+    }
+
+    it("an index re-signed without the offered version says the candidate is gone, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, index, path) => {
+        const entry = index.extensions[ID];
+        if (entry === undefined) throw new Error("no entry");
+        const { "1.2.0": _gone, ...rest } = entry.versions;
+        resignIndex(path, {
+          ...index,
+          sequence: index.sequence + 1,
+          extensions: { ...index.extensions, [ID]: { ...entry, versions: rest } },
+        });
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: 1.2.0 is no longer in the index",
+      );
+    });
+
+    it("an index re-signed without the extension says the candidate is gone, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, index, path) => {
+        resignIndex(path, { ...index, sequence: index.sequence + 1, extensions: {} });
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: 1.2.0 is no longer in the index",
+      );
+    });
+
+    it("an unreachable registry says it could not be read or verified, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, _index, path) => {
+        rmSync(path);
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: the registry could not be read or verified just now",
+      );
+    });
   });
 
   it("apply refuses a package whose sha differs from the one the index signed", async () => {
@@ -964,3 +1080,44 @@ describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
 function getExtensionVersion(db: Database, id: string): string | undefined {
   return listExtensions(db).find((r) => r.id === id)?.version;
 }
+
+describe("currentQualityChange: the informational read has its own deadline", () => {
+  const cached = {
+    id: "com.example.q",
+    fromVersion: "1.0.0",
+    toVersion: "1.1.0",
+  } as AvailableUpdate;
+  const neverSettling = {
+    resolver: { readRootIndex: () => new Promise(() => undefined) },
+  } as unknown as UpdatePlan;
+
+  it("states the deadline as 5 seconds", () => {
+    expect(QUALITY_READ_DEADLINE_MS).toBe(5_000);
+  });
+
+  it("answers unreadable when the read never settles, without waiting for it", async () => {
+    const started = Date.now();
+    const change = await currentQualityChange(cached, neverSettling, 20);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(change).toEqual(qualityUnreadable());
+  });
+
+  it("a read that settles in time is not cut short", async () => {
+    const plan = {
+      resolver: { readRootIndex: async () => ({ extensions: {} }) },
+    } as unknown as UpdatePlan;
+    const change = await currentQualityChange(cached, plan, 60_000);
+    expect(change.state === "not-compared" && change.why).toBe("candidate-gone");
+  });
+
+  it("a read that rejects after the deadline raises no unhandled rejection", async () => {
+    let rejectLate: (e: Error) => void = () => undefined;
+    const plan = {
+      resolver: { readRootIndex: () => new Promise((_, rej) => (rejectLate = rej)) },
+    } as unknown as UpdatePlan;
+    const change = await currentQualityChange(cached, plan, 10);
+    expect(change).toEqual(qualityUnreadable());
+    rejectLate(new Error("late"));
+    await new Promise((r) => setTimeout(r, 20));
+  });
+});

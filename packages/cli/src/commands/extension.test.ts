@@ -313,6 +313,46 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).not.toContain("Files:");
   });
 
+  // The texts the gateway test (`automation-rpc.test.ts`, "a local install states its own
+  // evidence") asserted.
+  test("a local install prints its three evidence lines", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext1",
+          version: "1.2.3",
+          enabled: 1,
+          evidence: {
+            tested: {
+              state: "not-evaluated",
+              why: "local",
+              text: "not evaluated (from a local folder)",
+            },
+            history: { state: "none", text: "none (from a local folder)" },
+            checked: { state: "none", text: "no checks published" },
+          },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).toContain("Tested: not evaluated (from a local folder)");
+    expect(out.stdout).toContain("History: none (from a local folder)");
+    expect(out.stdout).toContain("Checked: no checks published");
+  });
+
+  test("a registry-sourced install says where its evidence is read, and starts no read", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext1", version: "1.2.3", enabled: 1, evidenceIn: "main" } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).toContain(
+      "Tested, history, checks: read from main: nimbus extension info ext1 --registry main\n",
+    );
+    expect(out.stdout).not.toMatch(/^(Tested|History|Checked): /m);
+  });
+
   test("prints Requires: with the requirement lines when the extension has some", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext5", version: "1.0", enabled: 1, requires: [REQ] } },
@@ -2086,6 +2126,64 @@ describe("runExtensionUpdateWithCaller — list mode (no id)", () => {
     expect(out).toContain("ext-b\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature failed\n");
     expect(out).not.toContain("publisher: verified");
     expect(out).not.toMatch(/\tverified\t/);
+  });
+
+  // The fixture is copied from `LIST_QUALITY_CHANGE` in
+  // `packages/gateway/src/extensions/auto-update-rpc.test.ts`, the test that proves the shape
+  // `extension.checkForUpdates` serves.
+  const GATEWAY_QUALITY_CHANGE = {
+    state: "compared",
+    from: { score: 92, cases: 100, passed: 92 },
+    to: { score: 71, cases: 100, passed: 71 },
+    delta: -21,
+    text: "quality 92 → 71 (-21)",
+  };
+
+  test("a row states the score change the gateway worded, and never computes one", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        { ...makeUpdate(), qualityChange: GATEWAY_QUALITY_CHANGE },
+        makeUpdate({ id: "ext-b" }),
+      ],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    const text = out.join("");
+    expect(text).toContain(
+      "ext-a\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature verified\tquality 92 → 71 (-21)\n",
+    );
+    expect(text).toContain("ext-b\t1.0.0 → 1.1.0\t[stable]\tfrom main\tsignature verified\n");
+  });
+
+  test("a control character in the gateway's text never reaches the terminal", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: [],
+      caller: async () => [
+        {
+          ...makeUpdate(),
+          qualityChange: { ...GATEWAY_QUALITY_CHANGE, text: "q\u001b[2Jx\nfake" },
+        },
+      ],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    expect(out.join("")).not.toContain("\u001b");
+    expect(out.join("").trim().split("\n")).toHaveLength(1);
+  });
+
+  test("--json carries the structured comparison with both sides", async () => {
+    const out: string[] = [];
+    await runExtensionUpdateWithCaller({
+      args: ["--json"],
+      caller: async () => [{ ...makeUpdate(), qualityChange: GATEWAY_QUALITY_CHANGE }],
+      writeStdout: (s) => out.push(s),
+      writeStderr: () => {},
+    });
+    const parsed = JSON.parse(out.join("").trim()) as AvailableUpdateCli[];
+    expect(parsed[0]?.qualityChange).toEqual(GATEWAY_QUALITY_CHANGE);
   });
 
   test("--json flag prints JSON array", async () => {

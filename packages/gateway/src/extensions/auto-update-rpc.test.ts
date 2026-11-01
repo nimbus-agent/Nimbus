@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
 
 import { codeUnitCompare, RegistryError } from "@nimbus-dev/registry-format";
+import { consentDisplayPayload } from "../engine/executor.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
 import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
@@ -11,6 +12,7 @@ import type {
   RegistryDependencyResolver,
   VerifiedDependency,
 } from "./registry/registry-dependency-fetcher.ts";
+import type { QualityChange } from "./registry/version-evidence.ts";
 
 /**
  * A plan as `planUpdate` returns it: the root at its new version plus `added`, each verified with
@@ -1382,3 +1384,133 @@ describe("the update approval states reach and the file outcome", () => {
     expect(String(payload?.["networkReach"])).toContain("could not be read");
   });
 });
+
+describe("the update approval states how the score changes (quality layer PR 2)", () => {
+  const change = (text: string): QualityChange => ({
+    state: "compared",
+    from: { score: 92, cases: 100, passed: 92 },
+    to: { score: 90, cases: 100, passed: 90 },
+    delta: -2,
+    text,
+  });
+
+  async function ask(deps: Deps, toVersion = "1.1.0"): Promise<Record<string, unknown>[]> {
+    const payloads: Record<string, unknown>[] = [];
+    const gate = deps.gate;
+    deps.gate = async (a) => {
+      payloads.push(a.payload);
+      return gate(a);
+    };
+    await dispatchAutoUpdateRpc("extension.update", { id: "com.example.a", toVersion }, deps);
+    return payloads;
+  }
+
+  it("states the RE-READ comparison, not the cached one from detection", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, qualityChange: change("quality 92 → 71 (-21)") });
+    deps.qualityChangeNow = async () => change("quality 92 → 90 (-2)");
+    const payloads = await ask(deps);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.["qualityChange"]).toBe("quality 92 → 90 (-2)");
+  });
+
+  it("hands the dep the plan the approval is built from", async () => {
+    const deps = baseDeps();
+    const plan = fakePlan();
+    deps.planUpdate = async () => plan;
+    let seen: UpdatePlan | undefined;
+    deps.qualityChangeNow = async (_c, p) => {
+      seen = p;
+      return change("quality unchanged at 92/100");
+    };
+    await ask(deps);
+    expect(seen).toBe(plan);
+  });
+
+  it("a drop of any size is asked once and applied when approved: it never blocks", async () => {
+    const deps = baseDeps();
+    deps.qualityChangeNow = async () => ({
+      ...change("quality 100 → 0 (-100)"),
+      delta: -100,
+    });
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(res).toMatchObject({ applied: true });
+    expect(deps.performUpgrade).toHaveBeenCalledTimes(1);
+  });
+
+  it("a rejected re-read states the registry could not be read, and the approval still proceeds", async () => {
+    const deps = baseDeps();
+    deps.qualityChangeNow = () => Promise.reject(new Error("boom: secret detail"));
+    const payloads = await ask(deps);
+    expect(payloads).toHaveLength(1);
+    expect(payloads[0]?.["qualityChange"]).toBe(
+      "quality not compared: the registry could not be read or verified just now",
+    );
+    expect(deps.performUpgrade).toHaveBeenCalledTimes(1);
+  });
+
+  it("an owner's refusal is honoured whatever the comparison says", async () => {
+    const deps = baseDeps();
+    deps.qualityChangeNow = async () => change("quality 92 → 90 (-2)");
+    deps.gate = async () => ({ status: "rejected" as const });
+    const res = await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(res).toEqual({ applied: false, reason: "user_rejected" });
+    expect(deps.performUpgrade).not.toHaveBeenCalled();
+  });
+
+  it("an undefined dep leaves the field out", async () => {
+    const payloads = await ask(baseDeps());
+    expect("qualityChange" in (payloads[0] ?? {})).toBe(false);
+  });
+
+  it("a downgrade carries no comparison and never asks for one", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.1.0";
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, toVersion: "1.0.0", fromVersion: "1.1.0" });
+    deps.hasPrevVersion = async () => true;
+    const asked = mock(async () => change("never"));
+    deps.qualityChangeNow = asked;
+    const payloads = await ask(deps, "1.0.0");
+    expect(payloads).toHaveLength(1);
+    expect("qualityChange" in (payloads[0] ?? {})).toBe(false);
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it("the field name survives the consent redaction (by value)", () => {
+    const shown = consentDisplayPayload({
+      type: "extension.autoUpdate",
+      payload: { qualityChange: "quality 92 → 90 (-2)" },
+    }) as Record<string, unknown>;
+    expect(shown["qualityChange"]).toBe("quality 92 → 90 (-2)");
+  });
+
+  it("extension.checkForUpdates passes the structured comparison through", async () => {
+    const deps = baseDeps();
+    const cur = deps.cache.get("com.example.a")!;
+    deps.cache.upsert({ ...cur, qualityChange: LIST_QUALITY_CHANGE });
+    const res = (await dispatchAutoUpdateRpc("extension.checkForUpdates", {}, deps)) as Array<
+      Record<string, unknown>
+    >;
+    // `packages/cli/src/commands/extension.test.ts` copies this literal for its list fixture:
+    // a change here means that fixture must change with it.
+    expect(res[0]?.["qualityChange"]).toEqual(LIST_QUALITY_CHANGE);
+  });
+});
+
+const LIST_QUALITY_CHANGE: QualityChange = {
+  state: "compared",
+  from: { score: 92, cases: 100, passed: 92 },
+  to: { score: 71, cases: 100, passed: 71 },
+  delta: -21,
+  text: "quality 92 → 71 (-21)",
+};

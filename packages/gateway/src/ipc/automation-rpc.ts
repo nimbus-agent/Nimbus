@@ -88,6 +88,7 @@ import {
   isPromotedInstall,
   reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
+import { oneLine } from "../extensions/install-plan-text.ts";
 import {
   EvalApprovalDenied,
   evaluateInstalledExtensions,
@@ -98,6 +99,11 @@ import {
   resolveExtensionManifestPath,
 } from "../extensions/manifest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
+import {
+  evidenceApprovalFields,
+  localInstallEvidence,
+  type VersionEvidence,
+} from "../extensions/registry/version-evidence.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
   type ExtensionRunGrantRow,
@@ -802,6 +808,19 @@ function installedAccess(row: ExtensionRow, ctx: AutomationCtx): { access: Acces
   }
 }
 
+/**
+ * Who tested an installed extension, its history and its checks. A registry-sourced one has no
+ * index on hand and `info` starts no registry read, so it names where to look; a local one states
+ * its own lines.
+ */
+function installedEvidence(
+  row: ExtensionRow,
+): { evidence: VersionEvidence } | { evidenceIn: string } {
+  return row.source_registry == null
+    ? { evidence: localInstallEvidence() }
+    : { evidenceIn: oneLine(row.source_registry) };
+}
+
 async function handleExtensionInfo(
   rec: Record<string, unknown> | undefined,
   ctx: AutomationCtx,
@@ -827,6 +846,7 @@ async function handleExtensionInfo(
     ...publisherOf(row),
     ...(requires === undefined ? {} : { requires }),
     ...installedAccess(row, ctx),
+    ...installedEvidence(row),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
@@ -963,6 +983,13 @@ async function handleExtensionInstall(
             ...request,
             ...approvalFields(
               accessEvidence(ctx.evidence, request.planPermissions ?? request.permissions),
+            ),
+            // A local root brings only already-installed dependencies (no registry fetch), so its own lines
+            // are the local ones; `evidenceScope` still appears when the plan lists more than one package.
+            ...evidenceApprovalFields(
+              localInstallEvidence(),
+              request.id,
+              request.plan?.length ?? 1,
             ),
           },
         }),
