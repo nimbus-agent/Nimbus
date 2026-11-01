@@ -9,6 +9,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
+import { AutoUpdateCache } from "../../extensions/auto-update-cache.ts";
+import type { AvailableUpdate } from "../../extensions/auto-update-types.ts";
 import type { ReachRunner } from "../../extensions/extension-reach.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
@@ -143,5 +146,129 @@ describe("the runner reaches the consent prompts through the real dispatch", () 
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toContain("Windows cannot limit");
     expect(prompts[0]).not.toContain("not known here");
+  });
+
+  /** An extension source declaring network and write paths, installed through the real handler. */
+  function stageSource(root: string, name: string, network: string[], write: string[]): string {
+    const src = join(root, name);
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "reach.inst",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        permissions: { network, filesystem: { read: [], write } },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    return src;
+  }
+
+  test("the install approval states reach and a file outcome through the real dispatch", async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-reach-inst-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { localIndex } = mkIndex();
+    const dataDir = join(root, "data");
+    mkdirSync(dataDir, { recursive: true });
+    const src = stageSource(root, "src", ["a.com"], [dataDir]);
+    const prompts: string[] = [];
+    const ctx = ctxWith(
+      {
+        localIndex,
+        extensionsDir: join(dataDir, "extensions"),
+        connectorMesh: { userMcpProtectedRoots: () => [dataDir] } as never,
+        sandboxRunner: runner({
+          platform: "win32",
+          fullyActive: true,
+          scope: "all_or_nothing",
+          reason: null,
+        }),
+      },
+      prompts,
+    );
+    await tryDispatchAutomationRpc(ctx, "c1", {} as never, "extension.install", {
+      sourcePath: src,
+    }).catch(() => undefined);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Windows cannot limit this to a.com");
+    expect(prompts[0]).toContain("can't run here");
+    expect(prompts[0]).not.toContain("not known here");
+    expect(prompts[0]).not.toContain("not checked here");
+  });
+
+  test("the update approval states reach and a file outcome through the real dispatch", async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-reach-upd-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { db, localIndex } = mkIndex();
+    const dataDir = join(root, "data");
+    mkdirSync(dataDir, { recursive: true });
+    const extensionsDir = join(dataDir, "extensions");
+    await dispatchAutomationRpc({
+      method: "extension.install",
+      params: { sourcePath: stageSource(root, "src", ["a.com"], []) },
+      db,
+      extensionsDir,
+      ownerGate: async () => true,
+    });
+    const cache = new AutoUpdateCache();
+    const update: AvailableUpdate = {
+      id: "reach.inst",
+      displayName: "Reach",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      channel: "stable",
+      changelog: "",
+      publisherStatus: "verified",
+      manifestHash: "d".repeat(64),
+      signatureB64: "AA==",
+      entryHash: "e".repeat(64),
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 1,
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      packagePath: "p.tgz",
+      permissionDiff: {
+        network: { added: ["b.com"], removed: [] },
+        filesystem: { read: { added: [], removed: [] }, write: { added: [dataDir], removed: [] } },
+      },
+      verificationStatus: "verified",
+      detectedAt: 1,
+    };
+    cache.upsert(update);
+    const prompts: string[] = [];
+    const ctx = ctxWith(
+      {
+        localIndex,
+        extensionsDir,
+        connectorMesh: { userMcpProtectedRoots: () => [dataDir] } as never,
+        sandboxRunner: runner({
+          platform: "win32",
+          fullyActive: true,
+          scope: "all_or_nothing",
+          reason: null,
+        }),
+        extensionsAutoUpdate: {
+          cache,
+          forcePoll: async () => {},
+          planUpdate: planNothing,
+          performUpgrade: async () => ({ orphanedDependencies: [] }),
+          performDowngrade: async () => ({ orphanedDependencies: [] }),
+          appendAudit: async () => {},
+          getInstalledVersion: async () => "1.0.0",
+          hasPrevVersion: async () => false,
+        },
+      },
+      prompts,
+    );
+    await tryDispatchAutomationRpc(ctx, "c1", {} as never, "extension.update", {
+      id: "reach.inst",
+      toVersion: "1.1.0",
+    }).catch(() => undefined);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("a.com, b.com");
+    expect(prompts[0]).toContain("can't run here");
+    expect(prompts[0]).not.toContain("not known here");
+    expect(prompts[0]).not.toContain("not checked here");
   });
 });

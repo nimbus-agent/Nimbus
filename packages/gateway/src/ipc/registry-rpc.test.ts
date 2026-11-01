@@ -870,6 +870,27 @@ describe("registry.install", () => {
     });
   });
 
+  test("a registry install approval states reach and the file outcome from the evidence", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    await dispatchRegistryRpc({
+      method: "registry.install",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      extensionsDir,
+      vault: new MockVault(),
+      ownerGate: g.gate,
+      evidence: { homeDir: tmp },
+    });
+    const payload = (g.asked[0] as { payload: Record<string, unknown> }).payload;
+    expect(payload["networkReach"]).toBe("not known here (the sandbox is not available to ask)");
+    expect(String(payload["fileAccess"])).toContain("reads none");
+    expect("canRunHere" in payload).toBe(false);
+  });
+
   test("registry.install returns the installed dependencies", async () => {
     const dir = join(tmp, "reg");
     await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });

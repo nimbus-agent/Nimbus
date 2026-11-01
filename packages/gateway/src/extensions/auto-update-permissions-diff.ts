@@ -41,3 +41,30 @@ export function isWidened(diff: PermissionDiff): boolean {
     diff.filesystem.write.added.length > 0
   );
 }
+
+function byCodeUnit(x: string, y: string): number {
+  if (x < y) return -1;
+  return x > y ? 1 : 0;
+}
+
+function applyList(
+  before: readonly string[],
+  d: { added: readonly string[]; removed: readonly string[] },
+): string[] {
+  const gone = new Set(d.removed);
+  return [...new Set([...before.filter((v) => !gone.has(v)), ...d.added])].sort(byCodeUnit);
+}
+
+/** The permissions an extension declares once an update's diff is applied: sorted, deduplicated. */
+export function permissionsAfterUpdate(
+  before: SandboxPermissions,
+  diff: PermissionDiff,
+): SandboxPermissions {
+  return {
+    network: applyList(before.network, diff.network),
+    filesystem: {
+      read: applyList(before.filesystem.read, diff.filesystem.read),
+      write: applyList(before.filesystem.write, diff.filesystem.write),
+    },
+  };
+}

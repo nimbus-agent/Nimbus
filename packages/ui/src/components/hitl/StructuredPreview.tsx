@@ -129,6 +129,10 @@ interface AutoUpdatePayload {
   signature?: SignatureStatus;
   badge?: PublisherBadge;
   notes: string[];
+  /** What the sandbox on this machine does with the new version's network hosts. */
+  networkReach?: string;
+  /** What the new version's file grants do here, as the run approval will judge them. */
+  fileAccess?: string;
   addedPermissions?: {
     network?: string[];
     filesystem?: { read?: string[]; write?: string[] };
@@ -357,6 +361,10 @@ function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayl
   if (signature !== undefined) out.signature = signature;
   const badge = readPublisherBadge(details);
   if (badge !== undefined) out.badge = badge;
+  const reach = readStringField(details, "networkReach");
+  if (reach !== undefined) out.networkReach = reach;
+  const files = readStringField(details, "fileAccess");
+  if (files !== undefined) out.fileAccess = files;
   if (details["planPermissions"] !== undefined) {
     out.addedUnion = readPermissions(details["planPermissions"]);
   }
@@ -523,6 +531,17 @@ function AutoUpdatePreview({
       </p>
       <BadgeAndNotes badge={payload.badge} notes={payload.notes} />
       <AddedByUpdate payload={payload} />
+      {(payload.networkReach !== undefined || payload.fileAccess !== undefined) && (
+        <section data-testid="auto-update-access" className="text-sm">
+          <h3 className="font-semibold">What the new version can reach here</h3>
+          {payload.networkReach !== undefined && (
+            <p data-testid="auto-update-network-reach">Network: {payload.networkReach}</p>
+          )}
+          {payload.fileAccess !== undefined && (
+            <p data-testid="auto-update-file-access">Files: {payload.fileAccess}</p>
+          )}
+        </section>
+      )}
       {payload.changelog !== undefined && payload.changelog !== "" && (
         <details>
           <summary className="text-sm cursor-pointer">Changelog</summary>

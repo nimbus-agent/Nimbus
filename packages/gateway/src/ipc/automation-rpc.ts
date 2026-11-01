@@ -61,6 +61,11 @@ import {
   extensionCredentialStatus,
   setExtensionCredential,
 } from "../extensions/extension-credential-set.ts";
+import {
+  accessEvidence,
+  approvalFields,
+  type ExtensionEvidenceDeps,
+} from "../extensions/extension-evidence.ts";
 import type { ReachRunner } from "../extensions/extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
@@ -203,6 +208,8 @@ interface AutomationCtx {
   runGrantEnv?: ExtensionRunGrantEnv;
   /** The sandbox runner the run approval describes network reach from. */
   sandboxRunner?: ReachRunner;
+  /** What the install approval states reach and the file outcome from; absent says "not known here". */
+  evidence?: ExtensionEvidenceDeps;
   evalDeps?: AutomationEvalDeps;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
@@ -922,7 +929,16 @@ async function handleExtensionInstall(
         requirementStatuses: ctx.requirementStatuses,
       }),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
-      approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
+      approve: (request) =>
+        ownerGate({
+          type: "extension.install",
+          payload: {
+            ...request,
+            ...approvalFields(
+              accessEvidence(ctx.evidence, request.planPermissions ?? request.permissions),
+            ),
+          },
+        }),
     });
   } catch (e) {
     // A rollback that left packages behind is warned and named in the refusal (never swallowed).
@@ -1338,6 +1354,7 @@ export async function dispatchAutomationRpc(options: {
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
   sandboxRunner?: ReachRunner;
+  evidence?: ExtensionEvidenceDeps;
   evalDeps?: AutomationEvalDeps;
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
@@ -1360,6 +1377,7 @@ export async function dispatchAutomationRpc(options: {
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
     ...(options.sandboxRunner !== undefined && { sandboxRunner: options.sandboxRunner }),
+    ...(options.evidence !== undefined && { evidence: options.evidence }),
     ...(options.evalDeps !== undefined && { evalDeps: options.evalDeps }),
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,

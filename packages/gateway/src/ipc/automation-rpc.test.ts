@@ -1754,3 +1754,88 @@ describe("extension.install names an incomplete rollback", () => {
     db.close();
   });
 });
+
+describe("extension.install approval states reach and the predicted file outcome", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-evidence-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const stage = (hosts: string[], write: string[] = []): string => {
+    const src = join(tmp, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "com.example.ev",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        permissions: { network: hosts, filesystem: { read: [], write } },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    return src;
+  };
+
+  const perHostRunner = {
+    platform: "linux" as const,
+    isFullyActive: () => true,
+    degradedReason: () => null,
+    canConfine: () => null,
+  };
+
+  const install = async (
+    src: string,
+    evidence: Parameters<typeof dispatchAutomationRpc>[0]["evidence"],
+  ): Promise<Array<Record<string, unknown>>> => {
+    const asked: Array<Record<string, unknown>> = [];
+    await dispatchAutomationRpc({
+      method: "extension.install",
+      params: { sourcePath: src },
+      db: seededDb(),
+      extensionsDir: join(tmp, "installed"),
+      ownerGate: async (a) => {
+        asked.push(a.payload);
+        return true;
+      },
+      ...(evidence === undefined ? {} : { evidence }),
+    });
+    return asked;
+  };
+
+  test("states the reach of the install through the runner", async () => {
+    const asked = await install(stage(["a.com", "b.com"]), {
+      sandbox: perHostRunner,
+      homeDir: tmp,
+    });
+    expect(asked[0]?.["networkReach"]).toBe("network access to a.com, b.com");
+  });
+
+  test("without evidence it says so, and still asks", async () => {
+    const asked = await install(stage(["a.com"]), undefined);
+    expect(asked).toHaveLength(1);
+    expect(String(asked[0]?.["networkReach"])).toContain("not known here");
+    expect(String(asked[0]?.["fileAccess"])).toContain("not checked here");
+  });
+
+  test("an install whose file outcome cannot run still asks, and says so", async () => {
+    const protectedDir = join(tmp, "data");
+    mkdirSync(protectedDir, { recursive: true });
+    const asked = await install(stage([], [protectedDir]), {
+      sandbox: perHostRunner,
+      homeDir: tmp,
+      grantEnv: {
+        platform: process.platform,
+        protectedRoots: [protectedDir],
+        runtimeReadPaths: [],
+        realpath: (p: string) => p,
+      },
+    });
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.["canRunHere"]).toBe(false);
+    expect(String(asked[0]?.["fileAccess"])).toContain("can't run here");
+  });
+});

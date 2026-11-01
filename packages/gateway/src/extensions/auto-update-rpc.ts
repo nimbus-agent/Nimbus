@@ -3,6 +3,7 @@ import {
   isValidSemver,
   publisherKeyFingerprint,
   RegistryError,
+  type SandboxPermissions,
 } from "@nimbus-dev/registry-format";
 import pino, { type Logger } from "pino";
 import { updateConflictsHint } from "./auto-update.ts";
@@ -19,6 +20,7 @@ import {
   type UpgradeOutcome,
 } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
+import { type AccessEvidence, UNREADABLE_INSTALLED_TEXT } from "./extension-evidence.ts";
 import { reportIncompleteRollback, rollbackIncompleteDetail } from "./install-from-local.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
@@ -65,6 +67,16 @@ export interface AutoUpdateRpcDeps {
    * leaves it stale and the prompt says so (`runGrantNote`). Absent ⇒ no note.
    */
   hasRunGrant?: (id: string) => Promise<boolean>;
+  /**
+   * What the update, once applied, reaches on this machine: the installed manifest's permissions
+   * after the diff together with the added packages' (`addedUnion`), as network reach and the
+   * predicted file outcome. `undefined` means the installed manifest could not be read; the
+   * approval then says so. Absent => the approval carries neither field. It never refuses.
+   */
+  updateAccess?: (
+    cached: AvailableUpdate,
+    addedUnion: SandboxPermissions | undefined,
+  ) => AccessEvidence | undefined;
   /**
    * Whether the update's source registry still exists with the root fingerprint it was detected
    * under. Absent ⇒ not checked here (apply still re-checks it).
@@ -220,12 +232,39 @@ function addedFields(approved: ApprovedUpdatePlan | undefined): Record<string, u
   };
 }
 
+/**
+ * The reach and file-outcome fields of an update approval. A reader that fails, or throws, is
+ * stated in both fields: the approval is never failed by it, and never silent about it.
+ */
+function accessFields(
+  cached: AvailableUpdate,
+  approved: ApprovedUpdatePlan | undefined,
+  deps: AutoUpdateRpcDeps,
+): Record<string, unknown> {
+  if (deps.updateAccess === undefined) return {};
+  const added =
+    approved !== undefined && approved.shown.length > 0
+      ? planPermissionsUnion(approved.shown)
+      : undefined;
+  let evidence: AccessEvidence | undefined;
+  try {
+    evidence = deps.updateAccess(cached, added);
+  } catch {
+    evidence = undefined;
+  }
+  if (evidence === undefined) {
+    return { networkReach: UNREADABLE_INSTALLED_TEXT, fileAccess: UNREADABLE_INSTALLED_TEXT };
+  }
+  return { networkReach: evidence.networkReach, fileAccess: evidence.fileAccess };
+}
+
 function buildUpdateAction(
   cached: AvailableUpdate,
   isDowngrade: boolean,
   hasRunGrant: boolean,
   badge: VerifiedPublisher | null,
   approved: ApprovedUpdatePlan | undefined,
+  access: Record<string, unknown>,
 ): PlannedAction {
   return {
     type: isDowngrade ? ACTION_TYPE_DOWNGRADE : ACTION_TYPE_AUTO_UPDATE,
@@ -267,6 +306,7 @@ function buildUpdateAction(
       // A downgrade restores a local previous version, which the update's key does not describe.
       ...(!isDowngrade && { verifiedPublisher: badge, publisherBadge: publisherBadgeText(badge) }),
       ...addedFields(approved),
+      ...access,
     },
   };
 }
@@ -528,7 +568,14 @@ async function handleExtensionUpdate(
 
   const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
   const gateResult = await deps.gate(
-    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps), approved),
+    buildUpdateAction(
+      cached,
+      isDowngrade,
+      hasRunGrant,
+      updateBadge(cached, deps),
+      approved,
+      accessFields(cached, approved, deps),
+    ),
   );
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };

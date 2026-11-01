@@ -338,6 +338,65 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.queryByTestId("auto-update-needs")).toBeNull();
   });
 
+  it("shows the reach and the file outcome the gateway sends, for an update and a rollback", () => {
+    // The payload `buildUpdateAction` returns through the real dispatch (gateway
+    // `dispatchers-reach.test.ts` prints this shape); the two new fields are the ones under test.
+    const details = {
+      id: "reach.inst",
+      displayName: "Reach",
+      fromVersion: "1.0.0",
+      toVersion: "1.1.0",
+      channel: "stable",
+      changelog: "",
+      publisherStatus: "verified",
+      verificationStatus: "verified",
+      addedPermissions: { network: ["b.com"], filesystem: { read: [], write: [] } },
+      removedPermissions: { network: [], filesystem: { read: [], write: [] } },
+      manifestHash: "d".repeat(64),
+      signatureB64: "AA==",
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      verifiedPublisher: null,
+      publisherBadge: "Unverified publisher",
+      networkReach:
+        "any internet host, and a private-network host may fail (Windows cannot limit this to a.com, b.com)",
+      fileAccess: "reads none · writes /data (can't run here: overlaps Nimbus's data)",
+    };
+    const { unmount } = render(
+      <StructuredPreview details={details} action="extension.autoUpdate" />,
+    );
+    expect(screen.getByTestId("auto-update-network-reach").textContent).toContain(
+      "Windows cannot limit this to a.com, b.com",
+    );
+    expect(screen.getByTestId("auto-update-file-access").textContent).toContain("can't run here");
+    unmount();
+    render(<StructuredPreview details={details} action="extension.downgrade" />);
+    expect(screen.getByTestId("auto-update-network-reach")).toBeInTheDocument();
+  });
+
+  it("an update from a gateway that sends neither field shows no reach section", () => {
+    render(<StructuredPreview details={autoUpdateDetails()} action="extension.autoUpdate" />);
+    expect(screen.queryByTestId("auto-update-access")).toBeNull();
+  });
+
+  it("an install prompt does not hide the reach, the file outcome or canRunHere", () => {
+    render(
+      <StructuredPreview
+        details={{
+          id: "acme.tool",
+          networkReach: "network access to a.com",
+          fileAccess: "reads none · writes /data (can't run here: overlaps Nimbus's data)",
+          canRunHere: false,
+        }}
+        action="extension.install"
+      />,
+    );
+    expect(screen.getByText("networkReach")).toBeInTheDocument();
+    expect(screen.getByText("network access to a.com")).toBeInTheDocument();
+    expect(screen.getByText("fileAccess")).toBeInTheDocument();
+    expect(screen.getByText("canRunHere")).toBeInTheDocument();
+  });
+
   it("falls through to generic renderer when action is unknown", () => {
     render(<StructuredPreview details={{ foo: "bar" }} action="some.other.action" />);
     expect(screen.queryByTestId("auto-update-preview")).toBeNull();

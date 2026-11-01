@@ -1251,3 +1251,137 @@ describe("the update approval lists what the update adds (extension dependencies
     });
   });
 });
+
+describe("the update approval states reach and the file outcome", () => {
+  const evidence = (text: string) => ({
+    networkReach: text,
+    fileAccess: "reads none · writes none",
+    canRunHere: true,
+    checked: true,
+  });
+
+  async function ask(
+    deps: Deps,
+    params: Record<string, unknown> = { id: "com.example.a", toVersion: "1.1.0" },
+  ): Promise<Record<string, unknown> | undefined> {
+    let payload: Record<string, unknown> | undefined;
+    const gate = deps.gate;
+    deps.gate = async (a) => {
+      payload = a.payload;
+      return gate(a);
+    };
+    await dispatchAutoUpdateRpc("extension.update", params, deps);
+    return payload;
+  }
+
+  it("the reach covers the version after the diff, and the plan's added permissions", async () => {
+    const deps = baseDeps();
+    const seen: Array<[AvailableUpdate, unknown]> = [];
+    deps.updateAccess = (cached, added) => {
+      seen.push([cached, added]);
+      return evidence("network access to b.com");
+    };
+    const payload = await ask(deps);
+    expect(payload?.["networkReach"]).toBe("network access to b.com");
+    expect(payload?.["fileAccess"]).toBe("reads none · writes none");
+    expect(seen[0]?.[1]).toBeUndefined();
+  });
+
+  it("the payload's field set is the one the desktop preview fixture is built from", async () => {
+    const deps = baseDeps();
+    deps.updateAccess = () => evidence("network access to b.com");
+    const payload = await ask(deps);
+    // `packages/ui/test/components/hitl/StructuredPreview.test.tsx` builds its update fixture
+    // from these keys: a change here means that fixture must change with it.
+    expect(Object.keys(payload ?? {}).sort()).toEqual(
+      [
+        "addedPermissions",
+        "changelog",
+        "channel",
+        "displayName",
+        "fileAccess",
+        "fromVersion",
+        "id",
+        "manifestHash",
+        "networkReach",
+        "publisherBadge",
+        "publisherStatus",
+        "removedPermissions",
+        "rootFingerprint",
+        "signatureB64",
+        "sourceRegistry",
+        "toVersion",
+        "verificationStatus",
+        "verifiedPublisher",
+      ].sort(),
+    );
+  });
+
+  it("an update that adds packages hands their union to updateAccess", async () => {
+    const deps = baseDeps();
+    deps.planUpdate = async () =>
+      fakePlan(
+        [
+          {
+            id: "com.example.dep",
+            version: "1.0.0",
+            registry: "main",
+            registryUrl: "u",
+          } as AddedPackage,
+        ],
+        {
+          "com.example.dep": {
+            permissions: { network: ["dep.com"], filesystem: { read: [], write: [] } },
+          },
+        },
+      );
+    let added: unknown;
+    deps.updateAccess = (_c, a) => {
+      added = a;
+      return evidence("x");
+    };
+    await ask(deps);
+    expect(added).toEqual({ network: ["dep.com"], filesystem: { read: [], write: [] } });
+  });
+
+  it("downgrade carries it too", async () => {
+    const deps = baseDeps();
+    deps.getInstalledVersion = async () => "1.2.0";
+    deps.hasPrevVersion = async () => true;
+    let type: string | undefined;
+    const gate = deps.gate;
+    deps.gate = async (a) => {
+      type = a.type;
+      expect(a.payload["networkReach"]).toBe("network access to b.com");
+      return gate(a);
+    };
+    deps.updateAccess = () => evidence("network access to b.com");
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: "com.example.a", toVersion: "1.1.0" },
+      deps,
+    );
+    expect(type).toBe("extension.downgrade");
+  });
+
+  it("an unreadable installed manifest states so and never fails the approval", async () => {
+    const deps = baseDeps();
+    deps.updateAccess = () => undefined;
+    const payload = await ask(deps);
+    expect(payload?.["networkReach"]).toBe(
+      "not known here (the installed manifest could not be read)",
+    );
+    expect(payload?.["fileAccess"]).toBe(
+      "not known here (the installed manifest could not be read)",
+    );
+  });
+
+  it("a throwing updateAccess is the same as an unreadable manifest", async () => {
+    const deps = baseDeps();
+    deps.updateAccess = () => {
+      throw new Error("boom");
+    };
+    const payload = await ask(deps);
+    expect(String(payload?.["networkReach"])).toContain("could not be read");
+  });
+});

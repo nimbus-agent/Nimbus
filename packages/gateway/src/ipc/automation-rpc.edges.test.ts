@@ -369,6 +369,9 @@ describe("extension.install through the RPC", () => {
       installs: [{ id: "test.ext.signed", version: "1.0.0" }],
       // Set on every install the gateway has a Vault for; this manifest requires no connector.
       connectorRequirements: [],
+      // No sandbox or path environment is wired here, and the prompt says so rather than staying silent.
+      networkReach: "not known here (the sandbox is not available to ask)",
+      fileAccess: "reads none · writes none (not checked here)",
     });
   });
 });
