@@ -31,19 +31,26 @@ export type FilePreview = {
   readonly text: string;
 };
 
-const REFUSAL_OUTCOME: Readonly<Record<string, FileOutcome>> = {
+type RefusalOutcome = "protected" | "missing" | "relative" | "self-write";
+
+const REFUSAL_OUTCOME: Readonly<Record<string, RefusalOutcome>> = {
   ERR_EXTENSION_GRANT_PROTECTED: "protected",
   ERR_EXTENSION_GRANT_PATH_MISSING: "missing",
   ERR_EXTENSION_GRANT_PATH_RELATIVE: "relative",
   ERR_EXTENSION_GRANT_SELF_WRITE: "self-write",
 };
 
-const OUTCOME_SUFFIX: Readonly<Partial<Record<FileOutcome, string>>> = {
+const OUTCOME_SUFFIX: Readonly<Record<RefusalOutcome, string>> = {
   protected: " (can't run here: overlaps Nimbus's data)",
   missing: " (doesn't exist here)",
   relative: " (relative path, not allowed)",
   "self-write": " (can't run here: overlaps the extension's own files)",
 };
+
+/** The outcome a path refusal maps to; `undefined` for any other refusal, which is not ours to describe. */
+export function refusalOutcome(e: ExtensionRunGrantError): RefusalOutcome | undefined {
+  return REFUSAL_OUTCOME[e.code];
+}
 
 const BROAD_SUFFIX: Readonly<Record<BroadPath, string>> = {
   "filesystem-root": " (the whole filesystem)",
@@ -83,14 +90,15 @@ function describePath(
     canonical = checkDeclaredPath(declared, access, install, env);
   } catch (e) {
     if (!(e instanceof ExtensionRunGrantError)) throw e;
-    const outcome = REFUSAL_OUTCOME[e.code] ?? "missing";
+    const outcome = refusalOutcome(e);
+    if (outcome === undefined) throw e;
     const path = oneLine(declared);
     return {
       path,
       access,
       outcome,
       broad: null,
-      text: `${path}${OUTCOME_SUFFIX[outcome] ?? ""}`,
+      text: `${path}${OUTCOME_SUFFIX[outcome]}`,
     };
   }
   if (canonical === null) return null;

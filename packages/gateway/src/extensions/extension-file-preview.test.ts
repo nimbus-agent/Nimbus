@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { previewFileGrants } from "./extension-file-preview.ts";
+import { previewFileGrants, refusalOutcome } from "./extension-file-preview.ts";
 import type { ExtensionRunGrantEnv } from "./extension-run-grants.ts";
 import { resolveExtensionRunGrants } from "./extension-run-grants.ts";
+import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
 function makeEnv(
   platform: NodeJS.Platform,
@@ -143,11 +144,12 @@ describe("previewFileGrants behaviour", () => {
   });
   test("with no install path the self-write check is skipped, and nothing claims it passed", () => {
     const asked: string[] = [];
-    const env = makeEnv("linux", ident("/ext/a", "/home/ada", "/var/x"), [], asked);
+    const env = makeEnv("linux", ident("/ext/a", "/home/ada"), [], asked);
     const p = one({ read: [], write: ["/ext/a"] }, env, { homeDir: HOME });
     expect(p.paths[0]?.outcome).toBe("allowed");
     expect(p.canRunHere).toBe(true);
-    expect(asked.filter((x) => x === "/ext/a")).toHaveLength(1);
+    // Only home and the declared path were looked up: no install path was consulted.
+    expect(asked).toEqual(["/home/ada", "/ext/a"]);
   });
   test("a hostile path renders on one line", () => {
     const env = makeEnv("linux", ident("/ext/a", "/home/ada"));
@@ -181,5 +183,16 @@ describe("previewFileGrants behaviour", () => {
     expect(p.paths[0]?.outcome).toBe("not-checked");
     expect(p.paths[0]?.broad).toBeNull();
     expect(p.text).toBe("reads /a · writes /b (not checked here)");
+  });
+});
+
+describe("refusalOutcome", () => {
+  test("a refusal that is not a path refusal is not mapped, so the preview rethrows it", () => {
+    expect(
+      refusalOutcome(new ExtensionRunGrantError("ERR_EXTENSION_RUN_POLICY", "x")),
+    ).toBeUndefined();
+    expect(refusalOutcome(new ExtensionRunGrantError("ERR_EXTENSION_GRANT_PROTECTED", "x"))).toBe(
+      "protected",
+    );
   });
 });
