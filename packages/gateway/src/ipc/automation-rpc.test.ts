@@ -854,6 +854,34 @@ describe("extension.info", () => {
     expect(v.extension.id).toBe("com.example.a");
   });
 
+  test("a local install states its own evidence; a registry-sourced one points at its registry", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.local", "/p/local");
+    seedExtensionRow(db, "com.example.reg", "/p/reg");
+    setExtensionSource(db, "com.example.reg", {
+      registry: "main\nforged",
+      rootFingerprint: "f".repeat(32),
+      channel: "stable",
+    });
+    const info = async (id: string) =>
+      (
+        (await dispatchAutomationRpc({ method: "extension.info", params: { id }, db })) as {
+          value: { extension: Record<string, unknown> };
+        }
+      ).value.extension;
+    const local = (await info("com.example.local")) as {
+      evidence: { tested: { text: string }; history: { text: string }; checked: { text: string } };
+    };
+    expect(local.evidence.tested.text).toBe("not evaluated (installed from a local folder)");
+    expect(local.evidence.history.text).toBe("none (installed from a local folder)");
+    expect(local.evidence.checked.text).toBe("no checks published");
+    expect(local).not.toHaveProperty("evidenceIn");
+    const reg = await info("com.example.reg");
+    expect(String(reg["evidenceIn"])).toStartWith("main");
+    expect(String(reg["evidenceIn"])).not.toContain("\n");
+    expect(reg).not.toHaveProperty("evidence");
+  });
+
   test("throws AutomationRpcError when extension missing", async () => {
     const db = seededDb();
     await expect(

@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
+  isStarterPack,
   provenanceMatching,
   publisherKeyFingerprint,
   RegistryError,
@@ -55,6 +56,7 @@ import {
   type RegistryRow,
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
+import { versionEvidence } from "../extensions/registry/version-evidence.ts";
 import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
 import {
   type FreshenHandle,
@@ -632,6 +634,14 @@ async function handleInfo(
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
       reportUrl: reportUrlOf(found, o),
       provenance,
+      evidence: versionEvidence({
+        registry: found.reg.name,
+        versions: entry.versions,
+        version: newest[0],
+        declaresNetwork: manifest.permissions.network.length > 0,
+        starterPack: isStarterPack(manifest),
+        now: o.fetch?.now() ?? Date.now(),
+      }),
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

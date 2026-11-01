@@ -313,6 +313,46 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).not.toContain("Files:");
   });
 
+  // The texts the gateway test (`automation-rpc.test.ts`, "a local install states its own
+  // evidence") asserted.
+  test("a local install prints its three evidence lines", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext1",
+          version: "1.2.3",
+          enabled: 1,
+          evidence: {
+            tested: {
+              state: "not-evaluated",
+              why: "local",
+              text: "not evaluated (installed from a local folder)",
+            },
+            history: { state: "none", text: "none (installed from a local folder)" },
+            checked: { state: "none", text: "no checks published" },
+          },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).toContain("Tested: not evaluated (installed from a local folder)");
+    expect(out.stdout).toContain("History: none (installed from a local folder)");
+    expect(out.stdout).toContain("Checked: no checks published");
+  });
+
+  test("a registry-sourced install says where its evidence is read, and starts no read", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext1", version: "1.2.3", enabled: 1, evidenceIn: "main" } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).toContain(
+      "Tested, history, checks: read from main: nimbus extension info ext1 --remote\n",
+    );
+    expect(out.stdout).not.toMatch(/^(Tested|History|Checked): /m);
+  });
+
   test("prints Requires: with the requirement lines when the extension has some", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext5", version: "1.0", enabled: 1, requires: [REQ] } },

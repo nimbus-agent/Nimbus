@@ -211,6 +211,76 @@ describe("nimbus extension info --remote", () => {
     expect(JSON.parse(h.stdout()).versions[0].access).toEqual(REMOTE_ACCESS);
   });
 
+  // The texts the gateway test (`registry-rpc.test.ts`, "info states who tested the newest
+  // version, its history and its checks") asserted for a scored newest version.
+  const GATEWAY_EVIDENCE = {
+    tested: {
+      state: "scored",
+      score: 66,
+      cases: 3,
+      passed: 2,
+      measuredBy: "main",
+      text: "2 of 3 cases passed (66/100), tests by the publisher, measured by main; tests ran with no network",
+    },
+    history: {
+      state: "known",
+      firstPublished: "2026-10-01T00:00:00.000Z",
+      versions: 2,
+      recordedBy: "main",
+      text: "first published 2026-10-01 (31 days ago) · 2 versions (recorded by main)",
+    },
+    checked: { state: "none", text: "no checks published" },
+  };
+  const evidenceAnswer = (evidence: unknown) => () => ({
+    ...remoteAnswer(REMOTE_ACCESS)(),
+    provenance: null,
+    ...(evidence === undefined ? {} : { evidence }),
+  });
+
+  test("prints Tested, History and Checked between Provenance and Versions, after Reach and Files", async () => {
+    const h = harness(evidenceAnswer(GATEWAY_EVIDENCE));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    const out = h.stdout();
+    const at = (label: string) => out.indexOf(label);
+    const order = [
+      "Reach on this machine: ",
+      "Files: ",
+      "Publisher: ",
+      "Provenance: ",
+      "Tested: ",
+      "History: ",
+      "Checked: ",
+      "Versions:",
+      "Permissions (newest",
+    ].map(at);
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(out).toContain(`Tested: ${GATEWAY_EVIDENCE.tested.text}\n`);
+    expect(out).toContain(`History: ${GATEWAY_EVIDENCE.history.text}\n`);
+    expect(out).toContain("Checked: no checks published\n");
+  });
+
+  test("a hostile evidence text stays on one line", async () => {
+    const h = harness(
+      evidenceAnswer({
+        ...GATEWAY_EVIDENCE,
+        tested: { ...GATEWAY_EVIDENCE.tested, text: "fine\u001b[2J\nChecked: forged" },
+      }),
+    );
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    const lines = h.stdout().split("\n");
+    expect(lines.filter((l) => l.startsWith("Checked: "))).toEqual([
+      "Checked: no checks published",
+    ]);
+    expect(h.stdout()).not.toContain("\u001b");
+  });
+
+  test("an older gateway sends no evidence and none of the three labels print", async () => {
+    const h = harness(evidenceAnswer(undefined));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).not.toMatch(/^(Tested|History|Checked): /m);
+  });
+
   test("names the newest version's registry-verified provenance; a malformed one is none (PR 4c)", async () => {
     const answer = (provenance: unknown) => () => ({
       registry: "main",

@@ -58,6 +58,8 @@ interface RemoteInfo {
   verifiedPublisher?: VerifiedPublisherCli | null;
   /** The newest version's registry-verified build provenance (trust layer PR 4c), or null. */
   provenance?: unknown;
+  /** The newest version's tested / history / checked lines. Absent from an older gateway. */
+  evidence?: unknown;
   versions: InfoVersion[];
 }
 
@@ -171,6 +173,28 @@ export function accessLines(access: unknown): string[] {
   return lines;
 }
 
+/**
+ * `Tested:`, `History:` and `Checked:`, each the gateway's own `text`: nothing here is computed.
+ * An older gateway sends no `evidence`, so nothing prints; a part that is not a string is skipped,
+ * and each string passes through `clean`, so a hostile one cannot add a line.
+ */
+export function evidenceLines(evidence: unknown): string[] {
+  if (typeof evidence !== "object" || evidence === null) return [];
+  const e = evidence as Record<string, unknown>;
+  const lines: string[] = [];
+  for (const [key, label] of [
+    ["tested", "Tested"],
+    ["history", "History"],
+    ["checked", "Checked"],
+  ] as const) {
+    const part = e[key];
+    if (typeof part !== "object" || part === null) continue;
+    const text = (part as { text?: unknown }).text;
+    if (typeof text === "string") lines.push(`${label}: ${clean(text)}`);
+  }
+  return lines;
+}
+
 function formatPermissions(p: NonNullable<InfoVersion["permissions"]>): string[] {
   return [
     `  network:    ${p.network.length === 0 ? "(none)" : p.network.join(", ")}`,
@@ -207,10 +231,12 @@ export async function runExtensionInfoRemote(
   }
   deps.stdout(`Extension: ${clean(out.id)}\n`);
   deps.stdout(`Registry:  ${clean(out.registry)}\n`);
+  for (const l of accessLines(out.versions[0]?.access)) deps.stdout(`${l}\n`);
   deps.stdout(`Publisher: ${clean(out.publisherId)}\n`);
   deps.stdout(`  key fingerprint: ${clean(out.publisherFingerprint)}\n`);
   deps.stdout(`  ${verifiedPublisherLine(out.verifiedPublisher)}\n`);
   deps.stdout(`${provenanceLine(out)}\n`);
+  for (const l of evidenceLines(out.evidence)) deps.stdout(`${l}\n`);
   deps.stdout("Versions:\n");
   for (const v of out.versions) {
     deps.stdout(
@@ -220,7 +246,6 @@ export async function runExtensionInfoRemote(
     if (v.permissions !== undefined) {
       deps.stdout("Permissions (newest version, from the hash-checked manifest):\n");
       for (const l of formatPermissions(v.permissions)) deps.stdout(`${clean(l)}\n`);
-      for (const l of accessLines(v.access)) deps.stdout(`${l}\n`);
     }
   }
   return 0;

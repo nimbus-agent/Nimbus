@@ -321,6 +321,10 @@ type FixtureVersion = {
   provenance?: unknown;
   /** The version entry's raw `quality`, as a registry's sign job records it. */
   quality?: unknown;
+  /** The manifest's declared `network` hosts; defaults to one host. */
+  network?: string[];
+  /** The manifest's `kind`. */
+  kind?: "starter-pack";
 };
 
 /** A local registry directory with a root-signed index and one manifest per version. */
@@ -340,12 +344,16 @@ function makeRegistry(
         id,
         name: v.name,
         version: v.version,
-        entry: "dist/index.js",
-        permissions: {
-          network: ["api.example.com"],
-          ...(v.filesystem !== undefined && { filesystem: v.filesystem }),
-        },
+        ...(v.kind === undefined && { entry: "dist/index.js" }),
+        // A starter pack declares neither an entry nor permissions, and must depend on something.
+        ...(v.kind === undefined && {
+          permissions: {
+            network: v.network ?? ["api.example.com"],
+            ...(v.filesystem !== undefined && { filesystem: v.filesystem }),
+          },
+        }),
         ...(v.repository !== undefined && { repository: v.repository }),
+        ...(v.kind !== undefined && { kind: v.kind, dependsOn: { "other.ext": "^1.0.0" } }),
       });
       mkdirSync(join(dir, base), { recursive: true });
       writeFileSync(join(dir, base, "manifest.json"), v.manifestOverride ?? manifest);
@@ -582,6 +590,53 @@ describe("registry.search and registry.info", () => {
     expect(v100).not.toHaveProperty("qualityInvalid");
   });
 
+  test("info states who tested the newest version, its history and its checks", async () => {
+    const quality = {
+      scorer: 1,
+      score: 66,
+      cases: 3,
+      passed: 2,
+      rubrics: {
+        exact: { cases: 1, passed: 1 },
+        "json-match": { cases: 1, passed: 1 },
+        "one-of": { cases: 1, passed: 0 },
+      },
+    };
+    const evidenceOf = async (versions: FixtureVersion[], sequence: number) => {
+      makeRegistry(tmp, { "acme.tool": { publisherId: "acme", versions } }, sequence);
+      const r = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+        value: {
+          evidence: {
+            tested: { text: string };
+            history: { text: string };
+            checked: { text: string };
+          };
+        };
+      };
+      return r.value.evidence;
+    };
+    pin("main", tmp);
+    const v = { channel: "stable" as const, name: "Tool" };
+    const scored = await evidenceOf(
+      [
+        { ...v, version: "1.0.0" },
+        { ...v, version: "1.1.0", quality },
+      ],
+      3,
+    );
+    expect(scored.tested.text).toBe(
+      "2 of 3 cases passed (66/100), tests by the publisher, measured by main; tests ran with no network",
+    );
+    expect(scored.history.text).toContain("2 versions (recorded by main)");
+    expect(scored.checked.text).toBe("no checks published");
+    const noNetwork = await evidenceOf([{ ...v, version: "1.0.0", quality, network: [] }], 4);
+    expect(noNetwork.tested.text).not.toContain("no network");
+    expect((await evidenceOf([{ ...v, version: "1.0.0" }], 5)).tested.text).toBe("not evaluated");
+    expect(
+      (await evidenceOf([{ ...v, version: "1.0.0", kind: "starter-pack" }], 6)).tested.text,
+    ).toBe("not evaluated (a starter pack runs nothing)");
+  });
+
   test("a qualityInvalid reason quoting index-chosen key names is capped at 200 characters", async () => {
     const keys = Object.fromEntries(
       Array.from({ length: 20 }, (_, i) => [`k${String(i)}${"x".repeat(60)}`, 1]),
@@ -755,6 +810,21 @@ describe("registry.search and registry.info", () => {
       verifiedPublisher: null,
       reportUrl: null,
       provenance: null,
+      evidence: {
+        tested: {
+          state: "not-evaluated",
+          why: "unscored",
+          text: "not evaluated",
+        },
+        history: {
+          state: "known",
+          firstPublished: "2026-10-01T00:00:00.000Z",
+          versions: 2,
+          recordedBy: "main",
+          text: expect.stringContaining("first published 2026-10-01"),
+        },
+        checked: { state: "none", text: "no checks published" },
+      },
       versions: [
         {
           version: "1.1.0",
