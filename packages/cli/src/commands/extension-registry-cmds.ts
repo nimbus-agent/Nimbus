@@ -60,6 +60,8 @@ interface RemoteInfo {
   provenance?: unknown;
   /** The newest version's tested / history / checked lines. Absent from an older gateway. */
   evidence?: unknown;
+  /** Which version and channel `evidence` (and the reach and files lines) describe. */
+  evidenceFor?: unknown;
   versions: InfoVersion[];
 }
 
@@ -195,6 +197,17 @@ export function evidenceLines(evidence: unknown): string[] {
   return lines;
 }
 
+/**
+ * `Evidence for <version> (newest listed, channel <channel>):`, from the gateway's `evidenceFor`.
+ * Nothing for an older gateway, which sends none; each string passes through `clean`.
+ */
+export function evidenceForLine(evidenceFor: unknown): string | undefined {
+  if (typeof evidenceFor !== "object" || evidenceFor === null) return undefined;
+  const f = evidenceFor as { version?: unknown; channel?: unknown };
+  if (typeof f.version !== "string" || typeof f.channel !== "string") return undefined;
+  return `Evidence for ${clean(f.version)} (newest listed, channel ${clean(f.channel)}):`;
+}
+
 function formatPermissions(p: NonNullable<InfoVersion["permissions"]>): string[] {
   return [
     `  network:    ${p.network.length === 0 ? "(none)" : p.network.join(", ")}`,
@@ -231,6 +244,8 @@ export async function runExtensionInfoRemote(
   }
   deps.stdout(`Extension: ${clean(out.id)}\n`);
   deps.stdout(`Registry:  ${clean(out.registry)}\n`);
+  const evidenceFor = evidenceForLine(out.evidenceFor);
+  if (evidenceFor !== undefined) deps.stdout(`${evidenceFor}\n`);
   for (const l of accessLines(out.versions[0]?.access)) deps.stdout(`${l}\n`);
   deps.stdout(`Publisher: ${clean(out.publisherId)}\n`);
   deps.stdout(`  key fingerprint: ${clean(out.publisherFingerprint)}\n`);

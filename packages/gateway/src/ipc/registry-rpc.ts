@@ -581,11 +581,8 @@ async function handleInfo(
 ): Promise<Hit> {
   const id = stringParam(rec, "id");
   const registryName = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
-  const found = await resolveRegistryEntry(
-    { ...requireFetch(o.fetch), db: o.db },
-    id,
-    registryName,
-  );
+  const fetch = requireFetch(o.fetch);
+  const found = await resolveRegistryEntry({ ...fetch, db: o.db }, id, registryName);
   // `reportOnly`: the report destination comes from the signed index alone, so an extension whose
   // newest manifest is missing or fails its hash (the case most worth reporting) still has one.
   if (rec?.["reportOnly"] === true) {
@@ -601,7 +598,7 @@ async function handleInfo(
     throw new RegistryError("ERR_REGISTRY_INDEX_INVALID", `"${id}" has no versions`);
   }
   const bytes = await fetchRegistryBytes(
-    { ...requireFetch(o.fetch), db: o.db },
+    { ...fetch, db: o.db },
     found.reg,
     newest[1].manifest,
     {
@@ -640,8 +637,11 @@ async function handleInfo(
         version: newest[0],
         declaresNetwork: manifest.permissions.network.length > 0,
         starterPack: isStarterPack(manifest),
-        now: o.fetch?.now() ?? Date.now(),
+        now: fetch.now(),
       }),
+      // The evidence describes the newest LISTED version, which can be a beta a plain install
+      // would not take, so the reply says which one.
+      evidenceFor: { version: newest[0], channel: newest[1].channel },
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

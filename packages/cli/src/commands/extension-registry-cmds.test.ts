@@ -231,10 +231,42 @@ describe("nimbus extension info --remote", () => {
     },
     checked: { state: "none", text: "no checks published" },
   };
-  const evidenceAnswer = (evidence: unknown) => () => ({
+  // The gateway's `evidenceFor` for a registry whose newest listed version is a beta
+  // (`registry-rpc.test.ts`, "the evidence names the version and channel it describes").
+  const GATEWAY_EVIDENCE_FOR = { version: "2.0.0-beta.1", channel: "beta" };
+  const evidenceAnswer = (evidence: unknown, evidenceFor?: unknown) => () => ({
     ...remoteAnswer(REMOTE_ACCESS)(),
     provenance: null,
     ...(evidence === undefined ? {} : { evidence }),
+    ...(evidenceFor === undefined ? {} : { evidenceFor }),
+  });
+
+  test("a line above Reach and Files names the version and channel the evidence describes", async () => {
+    const h = harness(evidenceAnswer(GATEWAY_EVIDENCE, GATEWAY_EVIDENCE_FOR));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    const out = h.stdout();
+    const label = "Evidence for 2.0.0-beta.1 (newest listed, channel beta):\n";
+    expect(out).toContain(label);
+    expect(out.indexOf(label)).toBeLessThan(out.indexOf("Reach on this machine: "));
+  });
+
+  test("a hostile version or channel in evidenceFor stays on one line", async () => {
+    const h = harness(
+      evidenceAnswer(GATEWAY_EVIDENCE, {
+        version: "1.0.0\u001b[2J\nTested: forged",
+        channel: "beta",
+      }),
+    );
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).not.toContain("\u001b");
+    const lines = h.stdout().split("\n");
+    expect(lines.filter((l) => l.startsWith("Tested: forged"))).toEqual([]);
+  });
+
+  test("an older gateway sends no evidenceFor and no Evidence for line prints", async () => {
+    const h = harness(evidenceAnswer(GATEWAY_EVIDENCE));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).not.toContain("Evidence for");
   });
 
   test("prints Tested, History and Checked between Provenance and Versions, after Reach and Files", async () => {

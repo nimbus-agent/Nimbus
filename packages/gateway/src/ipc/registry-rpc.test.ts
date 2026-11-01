@@ -637,6 +637,39 @@ describe("registry.search and registry.info", () => {
     ).toBe("not evaluated (a starter pack runs nothing)");
   });
 
+  test("the evidence names the version and channel it describes: a newer beta, not the stable", async () => {
+    const quality = {
+      scorer: 1,
+      score: 66,
+      cases: 3,
+      passed: 2,
+      rubrics: {
+        exact: { cases: 1, passed: 1 },
+        "json-match": { cases: 1, passed: 1 },
+        "one-of": { cases: 1, passed: 0 },
+      },
+    };
+    makeRegistry(
+      tmp,
+      {
+        "acme.tool": {
+          publisherId: "acme",
+          versions: [
+            { version: "1.0.0", channel: "stable", name: "Tool" },
+            { version: "2.0.0-beta.1", channel: "beta", name: "Tool", quality },
+          ],
+        },
+      },
+      7,
+    );
+    pin("main", tmp);
+    const r = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { evidence: { tested: { text: string } }; evidenceFor: unknown };
+    };
+    expect(r.value.evidenceFor).toEqual({ version: "2.0.0-beta.1", channel: "beta" });
+    expect(r.value.evidence.tested.text).toContain("2 of 3 cases passed");
+  });
+
   test("a qualityInvalid reason quoting index-chosen key names is capped at 200 characters", async () => {
     const keys = Object.fromEntries(
       Array.from({ length: 20 }, (_, i) => [`k${String(i)}${"x".repeat(60)}`, 1]),
@@ -825,6 +858,7 @@ describe("registry.search and registry.info", () => {
         },
         checked: { state: "none", text: "no checks published" },
       },
+      evidenceFor: { version: "1.1.0", channel: "beta" },
       versions: [
         {
           version: "1.1.0",

@@ -348,7 +348,7 @@ describe("runExtensionInfo", () => {
     ]);
     await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
     expect(out.stdout).toContain(
-      "Tested, history, checks: read from main: nimbus extension info ext1 --remote\n",
+      "Tested, history, checks: read from main: nimbus extension info ext1 --registry main\n",
     );
     expect(out.stdout).not.toMatch(/^(Tested|History|Checked): /m);
   });

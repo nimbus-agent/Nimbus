@@ -403,7 +403,7 @@ function printExtensionInfoDeps(e: ExtensionListEntry): void {
 function installedEvidenceLines(e: ExtensionListEntry): string[] {
   if (typeof e.evidenceIn === "string") {
     return [
-      `Tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --remote`,
+      `Tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --registry ${stripControlChars(e.evidenceIn)}`,
     ];
   }
   return evidenceLines(e.evidence);
