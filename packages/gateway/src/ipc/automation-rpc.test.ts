@@ -18,6 +18,7 @@ import {
   setInstalledAsDependency,
 } from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import { consentDisplayPayload } from "../engine/executor.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { resolveExtensionManifestPath } from "../extensions/manifest.ts";
@@ -1591,6 +1592,41 @@ describe("extension.install", () => {
       }
       expect(caught).toBeInstanceOf(AutomationRpcError);
       expect((caught as AutomationRpcError).rpcCode).toBe(-32602);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a local install's approval states the local evidence", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-local-evidence-"));
+    try {
+      const src = join(tmpDir, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "com.example.localev", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+      const seen: Array<Record<string, unknown>> = [];
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db: seededDb(),
+        extensionsDir: join(tmpDir, "installed"),
+        ownerGate: async (action) => {
+          seen.push(action.payload ?? {});
+          return true;
+        },
+      });
+      expect(seen).toHaveLength(1);
+      const shown = consentDisplayPayload({
+        type: "extension.install",
+        payload: seen[0] ?? {},
+      }) as Record<string, unknown>;
+      expect(shown["tested"]).toBe("not evaluated (installed from a local folder)");
+      expect(shown["history"]).toBe("none (installed from a local folder)");
+      expect(shown["checked"]).toBe("no checks published");
+      expect("evidenceScope" in shown).toBe(false);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

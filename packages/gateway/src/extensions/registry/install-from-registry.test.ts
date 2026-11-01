@@ -182,6 +182,36 @@ describe("installFromRegistry", () => {
     expect(asked[0]?.provenanceNote).toBeUndefined();
   });
 
+  test("the approval states the evidence for the package, and it survives the consent redaction", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await installFromRegistry(deps(), { id: ID });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["tested"]).toBe("not evaluated");
+    expect(String(req["history"])).toStartWith("first published ");
+    expect(String(req["history"])).toContain("(recorded by main)");
+    expect(req["checked"]).toBe("no checks published");
+    expect(req["evidenceScope"]).toBeUndefined();
+    const shown = consentDisplayPayload({
+      type: "extension.install",
+      payload: { ...req },
+    }) as Record<string, unknown>;
+    expect(shown["tested"]).toBe(req["tested"]);
+    expect(shown["history"]).toBe(req["history"]);
+    expect(shown["checked"]).toBe(req["checked"]);
+  });
+
+  test("a package without evidence (a migration's) adds none of the evidence fields", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const d = deps();
+    const pkg = await fetchVerifiedRegistryPackage(d, { id: ID }, join(tmp, "stage-no-evidence"));
+    const { evidence: _evidence, ...bare } = pkg;
+    await installVerifiedRegistryPackage(d, bare, "stable");
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    for (const k of ["tested", "history", "checked", "evidenceScope"]) {
+      expect(k in req).toBe(false);
+    }
+  });
+
   test("prompt payload carries sourceRegistry and rootFingerprint, never a *Key field", async () => {
     await setup([{ version: "1.0.0" }]);
     await installFromRegistry(deps(), { id: ID });
@@ -783,6 +813,29 @@ describe("installFromRegistry installs a dependency plan", () => {
     assertInstalled(out);
     expect(out.dependencies).toEqual([{ id: DEP, version: "1.0.0", registry: "main" }]);
     expect(existsSync(join(extensionsDir, DEP, "dist", "index.js"))).toBe(true);
+  });
+
+  test("a plan of two packages scopes the evidence to the root, singular", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["evidenceScope"]).toBe(
+      `for ${ID} only; the other package in this plan is not summarised here`,
+    );
+    expect(req["checked"]).toBe("no checks published");
+  });
+
+  test("a plan of three packages scopes the evidence to the root, plural", async () => {
+    await addRemote("main", {
+      [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0", [DEP2]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+      [DEP2]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["evidenceScope"]).toBe(
+      `for ${ID} only; the 2 other packages in this plan are not summarised here`,
+    );
   });
 
   test("the approval lists the plan's connector requirements before anything is staged", async () => {

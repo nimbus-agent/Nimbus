@@ -691,8 +691,44 @@ const INSTALL_RENDERED = new Set([
   "publisherBadge",
   "networkReach",
   "fileAccess",
+  "tested",
+  "history",
+  "checked",
+  "evidenceScope",
   ...NOTE_FIELDS,
 ]);
+
+const INSTALL_EVIDENCE_ROWS: ReadonlyArray<{
+  readonly key: string;
+  readonly id: string;
+  readonly label: string;
+}> = [
+  { key: "tested", id: "install-tested", label: "Tested" },
+  { key: "history", id: "install-history", label: "History" },
+  { key: "checked", id: "install-checked", label: "Checked" },
+];
+
+/** What the gateway states about the package; absent lines (an older gateway) are simply not drawn. */
+function InstallEvidence({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  const rows = INSTALL_EVIDENCE_ROWS.filter((r) => asText(details[r.key]) !== undefined);
+  const scope = asText(details["evidenceScope"]);
+  if (rows.length === 0 && scope === undefined) return null;
+  return (
+    <section data-testid="install-evidence" className="text-sm">
+      <h3 className="font-semibold">What is known about it</h3>
+      {rows.map((r) => (
+        <p key={r.key} data-testid={r.id}>
+          {r.label}: {asText(details[r.key])}
+        </p>
+      ))}
+      {scope !== undefined && (
+        <p data-testid="install-evidence-scope" className="text-[var(--color-fg-muted)]">
+          {scope}
+        </p>
+      )}
+    </section>
+  );
+}
 
 /**
  * `extension.install`: the verified-publisher badge and the notes first, then EVERY other field the
@@ -718,6 +754,7 @@ function InstallPreview({ details }: { readonly details: Record<string, unknown>
           )}
         </section>
       )}
+      <InstallEvidence details={details} />
       <PreviewRows record={rest} depth={0} />
     </div>
   );

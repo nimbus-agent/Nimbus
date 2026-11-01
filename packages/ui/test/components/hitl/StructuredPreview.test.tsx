@@ -398,6 +398,41 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
     expect(screen.getByText("canRunHere")).toBeInTheDocument();
   });
 
+  it("an install prompt states what is known about the package, each line once", () => {
+    const tested = `${"1 of 1 cases passed (100/100), tests by the publisher, measured by main; ".repeat(2)}end`;
+    expect(tested.length).toBeGreaterThan(80);
+    render(
+      <StructuredPreview
+        details={{
+          id: "acme.tool",
+          tested,
+          history: "first published 2026-01-02 (10 days ago) · 3 versions (recorded by main)",
+          checked: "no checks published",
+          evidenceScope:
+            "for acme.tool only; the other package in this plan is not summarised here",
+        }}
+        action="extension.install"
+      />,
+    );
+    expect(screen.getByTestId("install-evidence").textContent).toContain("What is known about it");
+    expect(screen.getByTestId("install-tested").textContent).toBe(`Tested: ${tested}`);
+    expect(screen.getByTestId("install-history").textContent).toContain("(recorded by main)");
+    expect(screen.getByTestId("install-checked").textContent).toBe("Checked: no checks published");
+    expect(screen.getByTestId("install-evidence-scope").textContent).toContain(
+      "the other package in this plan",
+    );
+    // Not printed a second time as generic rows (the label or the value).
+    for (const key of ["tested", "history", "checked", "evidenceScope"]) {
+      expect(screen.queryByText(key)).toBeNull();
+    }
+    expect(screen.getAllByText("no checks published", { exact: false })).toHaveLength(1);
+  });
+
+  it("an install from a gateway that sends no evidence shows no evidence section", () => {
+    render(<StructuredPreview details={{ id: "acme.tool" }} action="extension.install" />);
+    expect(screen.queryByTestId("install-evidence")).toBeNull();
+  });
+
   it("a rollback heading does not say 'new version'", () => {
     render(
       <StructuredPreview

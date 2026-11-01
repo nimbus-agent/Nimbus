@@ -221,3 +221,32 @@ export function compareVersionQuality(
 export function qualityUnreadable(): QualityChange {
   return notCompared("registry-unreadable", "the registry could not be read just now");
 }
+
+/**
+ * The approval fields stating a package's evidence: the three lines, and, when the plan installs
+ * more than one package, a scope line saying the lines are for the root only. One builder for both
+ * install doors so each states the scope the same way.
+ */
+export function evidenceApprovalFields(
+  evidence: VersionEvidence,
+  id: string,
+  planSize: number,
+): {
+  readonly tested: string;
+  readonly history: string;
+  readonly checked: string;
+  readonly evidenceScope?: string;
+} {
+  const base = {
+    tested: evidence.tested.text,
+    history: evidence.history.text,
+    checked: evidence.checked.text,
+  };
+  const others = planSize - 1;
+  if (others < 1) return base;
+  const rest =
+    others === 1
+      ? "the other package in this plan is"
+      : `the ${others} other packages in this plan are`;
+  return { ...base, evidenceScope: `for ${oneLine(id)} only; ${rest} not summarised here` };
+}

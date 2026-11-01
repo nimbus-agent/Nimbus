@@ -100,6 +100,7 @@ import {
 } from "../extensions/manifest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import {
+  evidenceApprovalFields,
   localInstallEvidence,
   type VersionEvidence,
 } from "../extensions/registry/version-evidence.ts";
@@ -982,6 +983,12 @@ async function handleExtensionInstall(
             ...request,
             ...approvalFields(
               accessEvidence(ctx.evidence, request.planPermissions ?? request.permissions),
+            ),
+            // A local root can still bring registry dependencies, so it states its evidence too.
+            ...evidenceApprovalFields(
+              localInstallEvidence(),
+              request.id,
+              request.plan?.length ?? 1,
             ),
           },
         }),

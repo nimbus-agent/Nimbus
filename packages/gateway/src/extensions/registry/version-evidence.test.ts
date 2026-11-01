@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { RegistryVersionEntry } from "@nimbus-dev/registry-format";
 import {
   compareVersionQuality,
+  evidenceApprovalFields,
   localInstallEvidence,
   qualityUnreadable,
   versionEvidence,
@@ -287,5 +288,30 @@ describe("compareVersionQuality", () => {
       why: "registry-unreadable",
       text: "quality not compared: the registry could not be read just now",
     });
+  });
+});
+
+describe("evidenceApprovalFields", () => {
+  const evidence = localInstallEvidence();
+  test("one package states the three lines and no scope", () => {
+    expect(evidenceApprovalFields(evidence, "com.example.a", 1)).toEqual({
+      tested: "not evaluated (installed from a local folder)",
+      history: "none (installed from a local folder)",
+      checked: "no checks published",
+    });
+    expect(evidenceApprovalFields(evidence, "com.example.a", 0)).not.toHaveProperty(
+      "evidenceScope",
+    );
+  });
+  test("two packages say the other package, three say the 2 other packages", () => {
+    expect(evidenceApprovalFields(evidence, "com.example.a", 2).evidenceScope).toBe(
+      "for com.example.a only; the other package in this plan is not summarised here",
+    );
+    expect(evidenceApprovalFields(evidence, "com.example.a", 3).evidenceScope).toBe(
+      "for com.example.a only; the 2 other packages in this plan are not summarised here",
+    );
+  });
+  test("an id cannot forge a line of the prompt", () => {
+    expect(evidenceApprovalFields(evidence, "a\nforged", 2).evidenceScope).not.toContain("\n");
   });
 });
