@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793559809445,
+  "lastUpdate": 1793561475824,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8e9e3dc92e46cbc3d146b35f25d8a308e1b5859f",
-          "message": "ci(release): reconcile the manifest with the last published tag, and gate the drift (#1188)\n\nNo release has been cut since **#1183**, and every push to `main` since\nhas\nfailed the `release-please` job. `main` currently declares itself\n**1.12.0**\nwhile the newest published release is **v2.4.1**.\n\n## What happened\n\n1. **#1183 merged and no `v2.5.0` tag was ever created.** It is the one\nrecent\nrelease PR that ended with *no* `autorelease:` label at all — every\nhealthy\none carries `autorelease: tagged`. Its own run went **green**, because\nrelease-please had opened the next release PR, and `prs_created=true`\nalone\n   reads as healthy.\n2. **release-please lost its anchor.** The manifest now said `2.5.0`,\nand no\n`v2.5.0` tag existed to match it, so the next run re-walked the entire\nhistory — `commits: 915` in its log — and regenerated the changelog from\n   scratch.\n3. **That walk re-read a `Release-As: 1.12.0` trailer** from `7b530dcc`\n(2026-08-11, long before `v2.4.1`), which is only in range at all\nbecause\n   the anchor was lost. So **#1184 wrote the manifest *backwards*** to\n   `1.12.0`, took `package.json` and `GATEWAY_VERSION` down with it, and\n   appended 192 lines of duplicate history to `CHANGELOG.md`.\n4. **#1183 had already overwritten the real `v2.4.1` changelog entry**,\n   rewriting its heading into `2.5.0`. `main`'s changelog reads\n`1.12.0 → 2.5.0 → 2.4.0`: the version actually published has no entry.\n5. Since then the reconcile step computes `tag=v1.12.0` from #1184's\nmerge\ncommit, finds `v1.12.0` **already exists pointing at a different tree**\n   (released 2026-07-30), and correctly refuses to relabel — reporting\n`unaccounted=1`, which is checked before anything else and fails the\njob.\n\nThere are **zero user-facing commits after `v2.4.1`** (`a8f76942`) —\nonly\n`chore`/`ci`/`docs`. So #1183's 2.5.0 proposal was itself a product of\nthe\nlost-anchor walk, not of real work needing a release.\n\n## The repair\n\nNo tag is created, moved or deleted — `v2.5.0` was never cut, so nothing\nis\nlost by simply not cutting it, and the next genuine `feat`/`fix` will\ntake it.\n\n- `.release-please-manifest.json`, `package.json`, `GATEWAY_VERSION` →\n**2.4.1**,\n  matching the newest tag actually published.\n- `CHANGELOG.md` restored to its `a8f76942` state: both fabricated\nsections\nremoved and **the real `v2.4.1` entry restored**. The legitimate\nhistorical\n  `1.12.0` entry (`compare/v1.11.0...v1.12.0`, 2026-07-30) is untouched.\n\n## The gate that was missing\n\n`audit:release-please` only compared the manifest to `package.json`.\n#1184\nrewrote *both* to 1.12.0, so they agreed with each other and the gate\nstayed\ngreen while the repo was 13 releases behind. It now also enforces,\ndriven by\n`.release-please-config.json` rather than re-hardcoding it:\n\n- **The manifest may not fall BEHIND the highest version its own\nchangelog\ndocuments.** Needs no network and no tags, so it holds in any checkout.\n  Versions compare numerically, so `10.0.0` is not \"older\" than `9.9.9`.\nBeing *ahead* stays legal — that is the normal window between a release\nPR\n  merging and its tag existing.\n- **Every `extra-files` line carrying `x-release-please-version` must\nspell the\nmanifest version**, so a missed extra-file cannot ship a gateway\nreporting a\n  version it is not.\n\n## Verification\n\n- Red-proved against the **real** broken tree reconstructed from\n`main@7cc73758`:\nrejected with `manifest version 1.12.0 is BEHIND 2.5.0`. The repaired\ntree passes.\n- That red-prove caught a false positive in the first draft of the gate\n— it had\nflagged `version.ts`'s own header comment, which mentions the annotation\nin\nprose. Only annotated lines that actually carry a version count now, and\na\n  regression test pins it.\n- The 10 new tests were run against the **old** gate: 5 fail, so they\ndetect the\n  regression rather than merely passing.\n- `bun test scripts/structure-audit/` — 565 pass, 0 fail.\n- `bun run preflight:fast` — all 29 gates pass.\n\n## One manual step this PR cannot do\n\nMerged PR **#1184** still carries `autorelease: pending`, and\n`unaccounted > 0`\nis checked before any commit comparison — so `main` stays red until that\nlabel\nis removed. The workflow's own error says a tag pointing at the wrong\ntree\n\"must be resolved by hand\". Removing the label (rather than adding\n`autorelease: tagged`) is the honest state: no tag was created for it,\nwhich is\nexactly where #1183 already sits.\n\n## Follow-up worth considering, not done here\n\nA run that fails to create its release but *does* open the next release\nPR\nreports `prs_created=true` and reads as healthy — that is precisely how\n#1183's\nphantom passed green and started this. Left alone deliberately: it is a\nchange\nto the guard's own logic and deserves its own PR.",
-          "timestamp": "2026-08-14T18:54:09Z",
-          "tree_id": "8090a31944d1dcda1dad5a2263b0b9293bad11f2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8e9e3dc92e46cbc3d146b35f25d8a308e1b5859f"
-        },
-        "date": 1786734351218,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.92237749999583,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.73157474999715,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 290.84051424999853,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "51953ee8f308ec56fcc30ad6d31c7979e0e8df66",
+          "message": "feat(extensions): show what the sandbox will actually do, on every permission surface (#1852)\n\nFirst PR of Phase 9.5 project 6, the quality layer. Every surface that\nasks an owner about an extension's permissions now says what the sandbox\non this machine will actually do with them, not only what the extension\ndeclares.\n\n## What changes\n\n- **Network reach comes from the live sandbox.** One gateway function,\n`describeNetworkReach`, reads the same posture as `nimbus doctor`. The\nnamed hosts appear only where the sandbox can limit the extension to\nthem. Elsewhere the line states the wider truth: Windows opens every\ninternet host or none, macOS limits ports only, and degraded Linux\nreaches the whole network. Where no child can start it says `will not\nstart here`.\n- **Each declared path gets a predicted outcome.** The preview runs the\nrun approval's own check, `checkDeclaredPath`, so the two share one set\nof rules. A path that does not exist here, overlaps Nimbus's data, is\nrelative, or writes over the extension's own files is named. A grant of\na filesystem root, a whole drive, the home folder or a folder above it\nis flagged.\n- **Surfaces.** The `extension.install`, `extension.autoUpdate`,\n`extension.downgrade`, `extension.run` and `extension.migrate`\napprovals, `connector add --mcp`, `nimbus extension info`, `info\n--registry` and `--remote`, and the desktop preview. A downgrade reads\nthe rollback target's manifest, never the update diff.\n- **JSON.** `extension info --json` gains `access`, with `networkReach`,\n`reachKind`, `fileAccess`, `canRunHere` and `checked`. `canRunHere` is\nfalse when the sandbox refuses every child or a path would fail, null\nwhen something could not be checked, and is never a guarantee.\n- **Over-request penalty dropped, by owner decision.** The roadmap's\nQuality Score penalty and its acceptance line are reworded. `*` cannot\nbe declared, and a permission is a fact on its own line, not a score\ninput.\n\n## What it does not do\n\n- It predicts. A folder can appear or vanish before the approval, and\nthe approval's own check stays authoritative.\n- Before an install, and in remote `info`, nothing is on disk, so the\nown-files check is skipped and never reported as passed.\n- A narrower refusal on healthy Linux, such as more than 252 hosts or a\npath at or above `/run`, surfaces only at spawn, not in the preview.\n- The registry page is not part of this PR.\n\n## Security note\n\nThe final review caught that the preview, as first built, called\n`realpath` on any declared path, ahead of all consent. On Windows a\nmanifest declaring `\\host\\share\\x` would make the gateway attempt SMB,\nwhich can offer NTLM credentials, and block its event loop about 21\nseconds per path, measured locally. A preview now never touches a path\nstarting with two slashes of either kind on Windows, and reads `not\nchecked here`. The test spies on `realpath`, and removing the guard\nfails it, through the real `registry.info` handler as well.\n\nLinux and macOS have the same class of problem in the `-hosts` automount\nmap, enabled by default on macOS at `/net`, so a path under `/net` reads\nthe same way. A `-hosts` map mounted elsewhere and a local symlink\nleading to a network path are not detected, and `docs/sandbox.md` says\nso.\n\n**Known and left for a follow-up:** `extension approve` and spawn still\nresolve such a path through `resolveExtensionRunGrants`, as they did\nbefore this PR, so that touch happens after install consent, not before.\n\n## Changed text\n\n- The self-write refusal now quotes the canonical install path, matching\nthe canonical paths elsewhere in the prompt.\n- The scaffold template's Windows note says every internet host, not the\nnetwork entirely, so its pinned Windows digest moved for that one\nsentence.\n\n## Verification\n\n- `bun run preflight:fast` passes.\n- `verify-in-docker --changed`: 1527 pass, 29 fail, all 29 in\n`StructuredPreview.test.tsx`, a vitest file which that script runs under\n`bun test`. It passes 29 of 29 under vitest.\n- Local Windows full suite, run before the final-review fixes, had\nfailures in 9 tests: 8 toolgen tests needing an unbuilt\n`nimbus-sandbox-helper.exe`, and 1 Linux secret-tool stand-in. They were\nattributed from the error messages, not compared with main. This PR's CI\nis the first whole-repo run of the final code on all three OSes.\n\nNo schema change, no new IPC method, no new invariant, and nothing for a\nuser to do.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension install, update, downgrade, migration, and run approvals\nshow estimated network reach and filesystem access based on the\nmachine’s sandbox settings.\n* Extension details in the CLI and desktop show access previews; CLI\nregistry details include previews for the latest version.\n* Previews may be unavailable or become outdated; run approvals remain\nauthoritative. Registry pages do not display previews.\n* **Documentation**\n* Updated sandbox and permission guidance, including platform-specific\nlimits on network and path checks.\n* Clarified that Windows network grants open access to internet hosts,\nrather than the entire network.\n* **Roadmap**\n* Removed the proposed Quality Score penalty for requesting broad\npermissions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-01T21:23:07+02:00",
+          "tree_id": "b37d51c5c8d31ff649e3437127f1666085eeb5af",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/51953ee8f308ec56fcc30ad6d31c7979e0e8df66"
+        },
+        "date": 1793561471639,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 211.05346199999912,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 212.03726794999892,
             "unit": "ms"
           }
         ]
