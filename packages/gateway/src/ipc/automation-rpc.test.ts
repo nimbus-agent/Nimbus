@@ -14,6 +14,7 @@ import { rmDirWithRetry } from "../../test/helpers/rm-dir-with-retry.ts";
 import {
   insertExtensionRow,
   isInstalledAsDependency,
+  listExtensions,
   setInstalledAsDependency,
 } from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
@@ -1837,5 +1838,103 @@ describe("extension.install approval states reach and the predicted file outcome
     expect(asked).toHaveLength(1);
     expect(asked[0]?.["canRunHere"]).toBe(false);
     expect(String(asked[0]?.["fileAccess"])).toContain("can't run here");
+  });
+});
+
+describe("extension.info states reach and the predicted file outcome", () => {
+  let tmp: string;
+  beforeEach(() => {
+    tmp = mkdtempSync(join(tmpdir(), "nimbus-ext-info-access-"));
+  });
+  afterEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const evidence = {
+    sandbox: {
+      platform: "linux" as const,
+      isFullyActive: () => true,
+      degradedReason: () => null,
+      canConfine: () => null,
+    },
+    grantEnv: {
+      platform: process.platform,
+      protectedRoots: [] as string[],
+      runtimeReadPaths: [] as string[],
+      realpath: (p: string) => p,
+    },
+  };
+
+  const installOne = async (db: Database, write: string[]): Promise<string> => {
+    const src = join(tmp, "src");
+    mkdirSync(join(src, "dist"), { recursive: true });
+    writeFileSync(
+      join(src, "nimbus.extension.json"),
+      JSON.stringify({
+        id: "com.example.info",
+        version: "1.0.0",
+        entry: "dist/index.js",
+        permissions: { network: ["a.com"], filesystem: { read: [], write } },
+      }),
+    );
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const extensionsDir = join(tmp, "installed");
+    await dispatchAutomationRpc({
+      method: "extension.install",
+      params: { sourcePath: src },
+      db,
+      extensionsDir,
+      ownerGate: async () => true,
+    });
+    return extensionsDir;
+  };
+
+  const info = async (
+    db: Database,
+  ): Promise<{ extension: { access?: Record<string, unknown> } }> => {
+    const out = await dispatchAutomationRpc({
+      method: "extension.info",
+      params: { id: "com.example.info" },
+      db,
+      evidence: { ...evidence, homeDir: tmp },
+    });
+    if (out.kind !== "hit") throw new Error("miss");
+    return out.value as { extension: { access?: Record<string, unknown> } };
+  };
+
+  test("runs the self-write check on an installed extension", async () => {
+    const db = seededDb();
+    mkdirSync(join(tmp, "installed"), { recursive: true });
+    await installOne(db, [join(tmp, "installed")]);
+    const { extension } = await info(db);
+    expect(extension.access?.["networkReach"]).toBe("network access to a.com");
+    expect(String(extension.access?.["fileAccess"])).toContain(
+      "overlaps the extension's own files",
+    );
+    expect(extension.access?.["canRunHere"]).toBe(false);
+    db.close();
+  });
+
+  test("an unreadable installed manifest omits access", async () => {
+    const db = seededDb();
+    await installOne(db, []);
+    const row = listExtensions(db).find((r) => r.id === "com.example.info");
+    rmSync(row?.install_path ?? "", { recursive: true, force: true });
+    const { extension } = await info(db);
+    expect("access" in extension).toBe(false);
+    db.close();
+  });
+
+  test("the signature-disabled arm carries access too", async () => {
+    const db = seededDb();
+    await installOne(db, []);
+    signatureDisabledRegistry.mark("com.example.info", "signature_failed");
+    try {
+      const { extension } = await info(db);
+      expect(extension.access?.["networkReach"]).toBe("network access to a.com");
+    } finally {
+      signatureDisabledRegistry.reset();
+    }
+    db.close();
   });
 });

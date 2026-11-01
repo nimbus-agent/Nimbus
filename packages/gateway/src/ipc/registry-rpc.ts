@@ -643,7 +643,13 @@ async function handleInfo(
         publishedAt: v.publishedAt,
         packageSizeBytes: v.packageSizeBytes,
         ...qualityOf(v),
-        ...(i === 0 ? { permissions: manifest.permissions } : {}),
+        ...(i === 0
+          ? {
+              permissions: manifest.permissions,
+              // No install path exists yet, so the own-files check is skipped and never reported.
+              access: accessEvidence(o.evidence, manifest.permissions),
+            }
+          : {}),
       })),
     },
   };

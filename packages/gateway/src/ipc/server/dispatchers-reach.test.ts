@@ -9,17 +9,24 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { planNothing } from "../../../test/helpers/empty-update-plan.ts";
 import { AutoUpdateCache } from "../../extensions/auto-update-cache.ts";
 import type { AvailableUpdate } from "../../extensions/auto-update-types.ts";
 import type { ReachRunner } from "../../extensions/extension-reach.ts";
+import { buildTestRegistry } from "../../extensions/registry/__fixtures__/build-test-registry.ts";
+import { insertRegistry } from "../../extensions/registry/registry-store.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { createMockVault } from "../../vault/mock.ts";
 import { dispatchAutomationRpc } from "../automation-rpc.ts";
 import { ConsentCoordinatorImpl } from "../consent.ts";
 import { createStreamRegistry } from "../engine-ask-stream.ts";
 import type { ServerCtx } from "./context.ts";
-import { tryDispatchAutomationRpc, tryDispatchConnectorRpc } from "./dispatchers.ts";
+import {
+  tryDispatchAutomationRpc,
+  tryDispatchConnectorRpc,
+  tryDispatchRegistryRpc,
+} from "./dispatchers.ts";
 
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -270,5 +277,115 @@ describe("the runner reaches the consent prompts through the real dispatch", () 
     expect(prompts[0]).toContain("can't run here");
     expect(prompts[0]).not.toContain("not known here");
     expect(prompts[0]).not.toContain("not checked here");
+  });
+
+  test("extension.info states reach and the own-files outcome through the real dispatch", async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-reach-info-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { db, localIndex } = mkIndex();
+    const dataDir = join(root, "data");
+    mkdirSync(dataDir, { recursive: true });
+    const extensionsDir = join(dataDir, "extensions");
+    mkdirSync(extensionsDir, { recursive: true });
+    await dispatchAutomationRpc({
+      method: "extension.install",
+      params: { sourcePath: stageSource(root, "src", ["a.com"], [extensionsDir]) },
+      db,
+      extensionsDir,
+      ownerGate: async () => true,
+    });
+    const ctx = ctxWith(
+      {
+        localIndex,
+        extensionsDir,
+        connectorMesh: {
+          userMcpProtectedRoots: () => [],
+          isExtensionRunning: () => false,
+        } as never,
+        sandboxRunner: runner({
+          platform: "win32",
+          fullyActive: true,
+          scope: "all_or_nothing",
+          reason: null,
+        }),
+      },
+      [],
+    );
+    const out = (await tryDispatchAutomationRpc(ctx, "c1", {} as never, "extension.info", {
+      id: "reach.inst",
+    })) as { extension: { access?: { networkReach: string; fileAccess: string } } };
+    expect(out.extension.access?.networkReach).toContain("Windows cannot limit this to a.com");
+    expect(out.extension.access?.fileAccess).toContain("overlaps the extension's own files");
+    expect(out.extension.access?.networkReach).not.toContain("not known here");
+    expect(out.extension.access?.fileAccess).not.toContain("not checked here");
+  });
+
+  test("registry.info states reach through the real dispatch, and a clean remote path claims no pass", async () => {
+    const root = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-reach-rinfo-")));
+    cleanups.push(() => rmSync(root, { recursive: true, force: true }));
+    const { db, localIndex } = mkIndex();
+    const dataDir = join(root, "data");
+    const readable = join(root, "readable");
+    mkdirSync(dataDir, { recursive: true });
+    mkdirSync(readable, { recursive: true });
+    const regDir = join(root, "reg");
+    const built = await buildTestRegistry(regDir, {
+      id: "acme.tool",
+      versions: [{ version: "1.0.0" }],
+      manifestExtra: {
+        permissions: { network: ["a.com"], filesystem: { read: [readable], write: [] } },
+      },
+    });
+    insertRegistry(db, {
+      name: "main",
+      url: regDir,
+      rootKey: built.rootKey,
+      rootFingerprint: publisherKeyFingerprint(built.rootKey),
+      lastSequence: 0,
+      lastGeneratedAt: "2026-10-18T12:00:00Z",
+      addedAt: 1,
+      lastIndexSha256: null,
+    });
+    const ctx = ctxWith(
+      {
+        localIndex,
+        extensionsDir: join(dataDir, "extensions"),
+        connectorMesh: { userMcpProtectedRoots: () => [dataDir] } as never,
+        sandboxRunner: runner({
+          platform: "win32",
+          fullyActive: true,
+          scope: "all_or_nothing",
+          reason: null,
+        }),
+        registryFetch: {
+          fetchFn: () => Promise.reject(new Error("unexpected network")),
+          enforceAirGap: () => false,
+          now: () => Date.parse("2026-10-18T12:00:00Z"),
+          production: false,
+          builtin: null,
+        },
+      },
+      [],
+    );
+    const out = (await tryDispatchRegistryRpc(ctx, "c1", "registry.info", {
+      id: "acme.tool",
+      registry: "main",
+    })) as {
+      versions: Array<{
+        access?: {
+          networkReach: string;
+          fileAccess: string;
+          canRunHere: boolean | null;
+          checked: boolean;
+        };
+      }>;
+    };
+    const access = out.versions[0]?.access;
+    expect(access?.networkReach).toContain("Windows cannot limit this to a.com");
+    expect(access?.fileAccess).toContain(readable);
+    expect(access?.fileAccess).not.toContain("not checked here");
+    // The own-files check needs an install path a remote entry has not got: no pass is claimed.
+    expect(access?.canRunHere).toBe(true);
+    expect(access?.fileAccess).not.toMatch(/can run|own files/i);
   });
 });

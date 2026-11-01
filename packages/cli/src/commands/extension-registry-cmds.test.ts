@@ -143,6 +143,74 @@ describe("nimbus extension info --remote", () => {
     expect(h.stdout()).toContain("Provenance: none");
   });
 
+  // The object the gateway test (`registry-rpc.test.ts`, "info shows permissions") asserted.
+  const REMOTE_ACCESS = {
+    networkReach: "not known here (the sandbox is not available to ask)",
+    fileAccess: "reads none · writes none (not checked here)",
+    canRunHere: null,
+    checked: false,
+  };
+  const remoteAnswer = (access: unknown) => () => ({
+    registry: "main",
+    id: "acme.tool",
+    publisherId: "acme",
+    publisherFingerprint: "f".repeat(32),
+    versions: [
+      {
+        version: "1.0.0",
+        channel: "stable",
+        publishedAt: "2026-10-01T00:00:00Z",
+        packageSizeBytes: 10,
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+        ...(access === undefined ? {} : { access }),
+      },
+    ],
+  });
+
+  test("prints reach and files beside the declared permissions, escaped", async () => {
+    const h = harness(
+      remoteAnswer({
+        ...REMOTE_ACCESS,
+        fileAccess: "reads /a\u001b[2J\nReach on this machine: forged",
+      }),
+    );
+    expect(await runExtensionInfoRemote("acme.tool", "main", false, h.deps)).toBe(0);
+    const lines = h.stdout().split("\n");
+    expect(lines.filter((l) => l.startsWith("Reach on this machine: "))).toEqual([
+      `Reach on this machine: ${REMOTE_ACCESS.networkReach}`,
+    ]);
+    expect(lines.filter((l) => l.startsWith("Files: "))).toHaveLength(1);
+    expect(h.stdout()).not.toContain("\u001b");
+    expect(h.stdout()).toContain("network:    api.example.com");
+  });
+
+  test("a remote info never prints a pass when the own-files check could not run", async () => {
+    const h = harness(
+      remoteAnswer({
+        networkReach: "network access to api.example.com",
+        fileAccess: "reads /a · writes none",
+        canRunHere: true,
+        checked: true,
+      }),
+    );
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).toContain("Files: reads /a · writes none");
+    expect(h.stdout()).not.toMatch(/can run|will run|runs here/i);
+  });
+
+  test("an older gateway sends no access and no reach line prints", async () => {
+    const h = harness(remoteAnswer(undefined));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    expect(h.stdout()).not.toContain("Reach on this machine");
+    expect(h.stdout()).not.toContain("Files:");
+  });
+
+  test("--json carries the access object", async () => {
+    const h = harness(remoteAnswer(REMOTE_ACCESS));
+    await runExtensionInfoRemote("acme.tool", "main", true, h.deps);
+    expect(JSON.parse(h.stdout()).versions[0].access).toEqual(REMOTE_ACCESS);
+  });
+
   test("names the newest version's registry-verified provenance; a malformed one is none (PR 4c)", async () => {
     const answer = (provenance: unknown) => () => ({
       registry: "main",

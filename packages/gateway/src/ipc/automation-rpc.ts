@@ -1,5 +1,5 @@
 import type { Database } from "bun:sqlite";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import pino, { type Logger } from "pino";
 import {
@@ -62,6 +62,7 @@ import {
   setExtensionCredential,
 } from "../extensions/extension-credential-set.ts";
 import {
+  type AccessEvidence,
   accessEvidence,
   approvalFields,
   type ExtensionEvidenceDeps,
@@ -91,6 +92,10 @@ import {
   evaluateInstalledExtensions,
   type InstalledEvalDeps,
 } from "../extensions/installed-eval.ts";
+import {
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "../extensions/manifest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
@@ -776,6 +781,22 @@ async function handleExtensionList(
   };
 }
 
+/**
+ * Reach and the predicted file outcome for an installed extension, from the permissions its
+ * installed manifest declares and its own install path (so the own-files check runs). An
+ * unreadable manifest omits the field: a client then prints nothing rather than a guess.
+ */
+function installedAccess(row: ExtensionRow, ctx: AutomationCtx): { access?: AccessEvidence } {
+  try {
+    const path = resolveExtensionManifestPath(row.install_path);
+    if (path === undefined) return {};
+    const { permissions } = parseExtensionManifestJson(readFileSync(path, "utf8"));
+    return { access: accessEvidence(ctx.evidence, permissions, row.install_path) };
+  } catch {
+    return {};
+  }
+}
+
 async function handleExtensionInfo(
   rec: Record<string, unknown> | undefined,
   ctx: AutomationCtx,
@@ -800,6 +821,7 @@ async function handleExtensionInfo(
     verifiedPublisher: verifiedPublisherOf(ctx.db, row),
     ...publisherOf(row),
     ...(requires === undefined ? {} : { requires }),
+    ...installedAccess(row, ctx),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {

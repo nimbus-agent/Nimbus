@@ -267,6 +267,52 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).toContain("Network isolation: per-host");
   });
 
+  // The object the gateway test (`automation-rpc.test.ts`, "runs the self-write check") asserted.
+  const GATEWAY_ACCESS = {
+    networkReach: "network access to a.com",
+    fileAccess:
+      "reads none · writes /x/installed (can't run here: overlaps the extension's own files)",
+    canRunHere: false,
+    checked: true,
+  };
+
+  test("prints reach and files above the network isolation line, escaped", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext1",
+          version: "1.2.3",
+          enabled: 1,
+          access: {
+            ...GATEWAY_ACCESS,
+            networkReach: "network access to a.com\u001b[2J\nFiles: forged",
+          },
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    const lines = out.stdout.split("\n");
+    const reach = lines.findIndex((l) => l.startsWith("Reach on this machine: "));
+    expect(reach).toBeGreaterThan(-1);
+    expect(lines[reach]).not.toContain("\u001b");
+    expect(lines.filter((l) => l.startsWith("Files: "))).toEqual([
+      `Files: ${GATEWAY_ACCESS.fileAccess}`,
+    ]);
+    expect(lines.findIndex((l) => l.startsWith("Files: "))).toBe(reach + 1);
+    expect(lines[reach + 2]).toContain("Network isolation: per-host");
+  });
+
+  test("an older gateway sends no access and no reach line prints", async () => {
+    const { client } = createMockIpcClient([
+      { extension: { id: "ext1", version: "1.2.3", enabled: 1 } },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).not.toContain("Reach on this machine");
+    expect(out.stdout).not.toContain("Files:");
+  });
+
   test("prints Requires: with the requirement lines when the extension has some", async () => {
     const { client } = createMockIpcClient([
       { extension: { id: "ext5", version: "1.0", enabled: 1, requires: [REQ] } },
