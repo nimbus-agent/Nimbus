@@ -83,6 +83,33 @@ function assertNotProtected(p: string, kind: "read" | "write", env: ExtensionRun
 }
 
 /**
+ * The one check a declared path goes through, shared by the resolver and the pre-install preview so
+ * the two cannot drift. Returns the canonical path, or `null` for a read of the extension's own
+ * install path (dropped: the runtime grants it at spawn anyway, and on macOS/Linux it sits under the
+ * protected data dir, so checking it would refuse a harmless manifest; spec § 11 item 8). Throws the
+ * same errors, in the same order, the resolver always did. `install` is the CANONICAL install path;
+ * `undefined` skips only the own-read and self-write comparisons.
+ */
+export function checkDeclaredPath(
+  p: string,
+  kind: "read" | "write",
+  install: string | undefined,
+  env: ExtensionRunGrantEnv,
+): string | null {
+  const c = canonicalPath(p, kind, env);
+  if (kind === "read") {
+    if (install !== undefined && isSameOrInside(env.platform, c, install)) return null;
+  } else if (install !== undefined && pathsOverlap(env.platform, c, install)) {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_GRANT_SELF_WRITE",
+      `write path "${p}" overlaps the extension's own install path "${install}"`,
+    );
+  }
+  assertNotProtected(c, kind, env);
+  return c;
+}
+
+/**
  * Resolves an extension's DECLARED permissions into the grants a run approval stores, refusing —
  * before any prompt — anything unsatisfiable: a relative or missing path, any overlap with a
  * protected Nimbus directory, and any write that overlaps the extension's own install path (an
@@ -106,24 +133,13 @@ export function resolveExtensionRunGrants(
   }
   const read: string[] = [];
   for (const p of declared.filesystem.read) {
-    const c = canonicalPath(p, "read", env);
-    // The runtime grants the install path at spawn anyway — and on macOS/Linux it sits under the
-    // protected data dir, so checking it would refuse a harmless manifest (spec § 11 item 8).
-    if (isSameOrInside(env.platform, c, install)) continue;
-    assertNotProtected(c, "read", env);
-    read.push(c);
+    const c = checkDeclaredPath(p, "read", install, env);
+    if (c !== null) read.push(c);
   }
   const write: string[] = [];
   for (const p of declared.filesystem.write) {
-    const c = canonicalPath(p, "write", env);
-    if (pathsOverlap(env.platform, c, install)) {
-      throw new ExtensionRunGrantError(
-        "ERR_EXTENSION_GRANT_SELF_WRITE",
-        `write path "${p}" overlaps the extension's own install path "${installPath}"`,
-      );
-    }
-    assertNotProtected(c, "write", env);
-    write.push(c);
+    const c = checkDeclaredPath(p, "write", install, env);
+    if (c !== null) write.push(c);
   }
   return {
     network: dedupe(
