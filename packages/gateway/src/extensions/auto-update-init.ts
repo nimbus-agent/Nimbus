@@ -342,22 +342,35 @@ function recordDeclaredFingerprint(db: Database, extensionId: string): void {
   );
 }
 
+/** A line of information must not spend the desktop's 30 s call budget on a dropped network. */
+export const QUALITY_READ_DEADLINE_MS = 5_000;
+
 /**
  * The score comparison for an update, from the plan's resolver's verified root index (the memoised
  * read: an update with dependencies already made it for the plan, one without makes it here, one
  * verified read with its own egress row, before the prompt). Any failure is stated as unreadable;
  * an id the index no longer lists reads as `candidate-gone`. Never rejects.
  */
-async function currentQualityChange(
+export async function currentQualityChange(
   cached: AvailableUpdate,
   plan: UpdatePlan,
+  deadlineMs: number = QUALITY_READ_DEADLINE_MS,
 ): Promise<QualityChange> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const index = await plan.resolver.readRootIndex();
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("quality read deadline")), deadlineMs);
+    });
+    const read = plan.resolver.readRootIndex();
+    // The losing read must never surface as an unhandled rejection.
+    read.catch(() => undefined);
+    const index = await Promise.race([read, deadline]);
     const versions = index.extensions[cached.id]?.versions ?? {};
     return compareVersionQuality(versions, cached.fromVersion, cached.toVersion);
   } catch {
     return qualityUnreadable();
+  } finally {
+    clearTimeout(timer);
   }
 }
 

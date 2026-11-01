@@ -15,9 +15,14 @@ import {
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import { MockVault } from "../vault/mock.ts";
-import { createAutoUpdateRuntime, withUpdateAppliedHook } from "./auto-update-init.ts";
+import {
+  createAutoUpdateRuntime,
+  currentQualityChange,
+  QUALITY_READ_DEADLINE_MS,
+  withUpdateAppliedHook,
+} from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
-import type { AvailableUpdate } from "./auto-update-types.ts";
+import type { AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
 import { forwardDeps, recordInstall } from "./dependency-store.ts";
 import { computeExtensionPackageHashes } from "./package-hashes.ts";
 import { evictPublisherKey, writePublisherKey } from "./publisher-keys.ts";
@@ -27,6 +32,7 @@ import {
   resignIndex,
   type TestVersion,
 } from "./registry/__fixtures__/build-test-registry.ts";
+import { qualityUnreadable } from "./registry/version-evidence.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
@@ -1007,3 +1013,40 @@ describe("auto-update-init: a downgrade rewrites the dependency edges", () => {
 function getExtensionVersion(db: Database, id: string): string | undefined {
   return listExtensions(db).find((r) => r.id === id)?.version;
 }
+
+describe("currentQualityChange: the informational read has its own deadline", () => {
+  const cached = { id: "com.example.q", fromVersion: "1.0.0", toVersion: "1.1.0" } as AvailableUpdate;
+  const neverSettling = {
+    resolver: { readRootIndex: () => new Promise(() => undefined) },
+  } as unknown as UpdatePlan;
+
+  it("states the deadline as 5 seconds", () => {
+    expect(QUALITY_READ_DEADLINE_MS).toBe(5_000);
+  });
+
+  it("answers unreadable when the read never settles, without waiting for it", async () => {
+    const started = Date.now();
+    const change = await currentQualityChange(cached, neverSettling, 20);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(change).toEqual(qualityUnreadable());
+  });
+
+  it("a read that settles in time is not cut short and leaves no pending timer", async () => {
+    const plan = {
+      resolver: { readRootIndex: async () => ({ extensions: {} }) },
+    } as unknown as UpdatePlan;
+    const change = await currentQualityChange(cached, plan, 60_000);
+    expect(change.state === "not-compared" && change.why).toBe("candidate-gone");
+  });
+
+  it("a read that rejects after the deadline raises no unhandled rejection", async () => {
+    let rejectLate: (e: Error) => void = () => undefined;
+    const plan = {
+      resolver: { readRootIndex: () => new Promise((_, rej) => (rejectLate = rej)) },
+    } as unknown as UpdatePlan;
+    const change = await currentQualityChange(cached, plan, 10);
+    expect(change).toEqual(qualityUnreadable());
+    rejectLate(new Error("late"));
+    await new Promise((r) => setTimeout(r, 20));
+  });
+});

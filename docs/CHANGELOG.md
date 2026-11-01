@@ -29,7 +29,7 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
   nothing was compared. A downgrade has none. **What it does not do:** `Tested` counts the publisher's own tests, run by the
   registry's CI with no network, so it does not say the extension is correct or safe; `History` is what that registry
   records; `Checked` reads `no checks published` until a registry publishes checks; the comparison reads the signed index
-  only, and at approval an offline gateway may wait on its own read of the index and then says it could not read it;
+  only, and at approval an offline gateway waits at most 5 seconds on its own read of the index and then says it could not read it;
   there is no combined score or risk label, no threshold and no setting, a drop never blocks anything, and the update
   daemon never applied updates in the first place. It replaces the roadmap's quality-regression watcher, which would have
   held back an automatic apply. No registry page shows any of this. Proved against a real gateway in
