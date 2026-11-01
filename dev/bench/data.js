@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793481285699,
+  "lastUpdate": 1793510400805,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6c991eabf4cb110a4ddaf0ca844da62bfd437e7d",
-          "message": "fix(install): stop Windows PowerShell 5.1 native stderr from aborting gpg signature verification (#1179)\n\n## Root cause\n\n`released-install-smoke` → **`windows-2022 documented one-liner`** has\nnever once passed. Since #1175 fixed the earlier keyring bug, the `pwsh`\nstep passes and the **Windows PowerShell 5.1** step — reached for the\nfirst time in run `31767719056` — fails at `install.ps1:231`:\n\n```\ngpg.exe : gpg: error running '/usr/bin/gpg-agent': exit status 2\n+     & gpg --homedir $sigHomeName --quiet --import $keyPath *>$null\n    + FullyQualifiedErrorId : NativeCommandError\n```\n\nThe cause is **PowerShell behaviour, not gpg behaviour**, and it is two\nlayers:\n\n1. **Why gpg writes to stderr.** gpg 2.x autostarts a `gpg-agent`, and\nthe MSYS-compiled agent Git for Windows ships binds POSIX `AF_UNIX`\nsockets under the homedir, where `sun_path` caps a path at ~107 chars.\nOn a `windows-2022` runner the homedir resolves to\n`/c/Users/runneradmin/AppData/Local/Temp/nimbus-<36-char-guid>/gnupg-sig`,\nso `S.gpg-agent` lands at **105** (fits) but `S.gpg-agent.extra` at\n**111** (does not). The agent aborts with exit 2; gpg reports it\nopaquely.\n\n2. **Why only 5.1 dies.** Windows PowerShell 5.1 wraps *any* stderr\noutput from a native command in a terminating `NativeCommandError` while\n`$ErrorActionPreference = \"Stop\"` (set globally at `install.ps1:24`) —\nand **`*>$null` does not prevent it**, because the record is raised by\nthe native-command wrapper, not carried in the redirected stream.\nPowerShell 7 does no such conversion.\n\n**Layer 1 alone is harmless.** Measured on the runner: *both* shells hit\nthe too-long socket, and in both the subsequent keyring operation still\nsucceeds — importing a public key and verifying a detached signature\ntouch no secret key. Only 5.1's stderr→terminating-error conversion\nturns it fatal. That is the entire reason five legs are green and one is\nred, on the same runner, in the same job, seconds apart.\n\n## Evidence\n\nDiagnostics were added to the job temporarily, dispatched from this\nbranch, then stripped (this PR contains none of them).\n\n- Run `31780941563`, **cold runner** (zero `gpg-agent` processes, zero\nleftover work dirs) — the agent's own message, which `*>$null` had been\nhiding:\n  ```\n  gpg-agent[1639]: listening on socket '.../gnupg-sig/S.gpg-agent'\ngpg-agent[1639]: socket name '.../gnupg-sig/S.gpg-agent.extra' is too\nlong\n  -> exit=2\n  ```\n- Same run, the published `install.ps1` re-executed with the `*>$null`\npatched out in memory — same failure on the **true code path**.\n- Run `31781383717`, `pwsh` control arm: **identical** `GetTempPath()`,\nidentical 105/111-char socket paths, identical `is too long` / exit 2 —\nyet its one-liner prints `OK: GPG signature verified`. This is what\nisolates the cause to the shell's error handling rather than the path.\n- Local red/green of the mechanism: with `EAP=Stop` the statement after\nthe import is never reached (`NativeCommandError`); with `EAP=Continue`\nit is reached with exit 0.\n\n**Eliminated with evidence, not reasoning:** lingering `gpg-agent` from\nthe earlier step (fails cold, and again after `gpgconf --kill all`);\nstep ordering; a different `gpg` winning on PATH (both shells resolve\n`C:\\Program Files\\Git\\usr\\bin\\gpg.exe`); `harden-runner` blocking the\nspawn (the agent *runs*, creates its directories, binds its first\nsocket, and self-aborts on its own length check); `GetTempPath()`\ndiffering between shells (it does not — I asserted this in an earlier\ndraft and the pwsh control disproved it).\n\n## The fix\n\nRelax `$ErrorActionPreference` to `Continue` around **exactly** the gpg\ncalls, then restore it. This costs nothing: the trust decision is made\n*only* by parsing `--status-fd` output for `VALIDSIG` in\n`Resolve-SignatureVerdict`, never by whether those calls threw. A gpg\nthat genuinely fails still yields no `VALIDSIG` and is rejected on\nexactly the same path as before.\n\n`--no-autostart` is **secondary and is not what unbreaks this** — on its\nown it merely swapped one stderr line for a quieter one and still\naborted 5.1 (run `31781383717`). It is kept because it stops gpg\nspawning an agent that cannot bind its sockets, leaving no orphaned\nagent process on a user's machine. Verified against the real published\nv2.3.1 `SHA256SUMS`/`.asc` with every agent killed first: import exit 0,\n`VALIDSIG` present, primary fingerprint matching the pinned key, zero\nagents after.\n\n## A fail-open found on the way\n\nThe same conversion also reached `Test-NimbusSignature`'s runnability\nprobe, `& gpg --version`, inside a `try/catch` whose catch prints\n`SIGNATURE NOT CHECKED` and returns `$true`. So under 5.1 a gpg that\nmerely **warned** on stderr while exiting 0 silently downgraded the\nwhole publisher-authenticity check and let the install proceed. Same\none-line fix; the probe now keys on the exit code, which is what it\nclaims to test.\n\n## Verification\n\n- On the runner that reproduces the bug: a temporary step ran the\n**checked-out** installer under `shell: powershell` against the real\npublished v2.3.1 artefacts (run `31781680486`) →\n`OK: GPG signature verified (5A20457CCD8B53FFAA945240886ADA6B487CAB6E).`\n/ `OK: Nimbus installed.`\n- New regression test, `install-remote-windows.test.ts`, driven through\n**`powershell.exe` specifically** — every other test in that file uses\n`pwsh`, where this bug is invisible, so a `pwsh` test here would be a\ntest that cannot fail. **Red-proved**: against `origin/main`'s\n`install.ps1` it fails with `gpg is present but not runnable --\nSIGNATURE NOT CHECKED` followed by `OK: Nimbus installed.` (i.e. it\ncatches the real fail-open); with the fix it refuses to install.\n- `bun run preflight:fast` green; `bun test scripts/install/` 37 pass /\n0 fail.\n\n## Known limitation — please read before expecting green\n\n**This PR cannot turn the `windows-2022 documented one-liner` leg green,\nand it will stay red until a release ships.** That job fetches\n`install.ps1` from `releases/latest/download`, which serves the\n*published* (still-broken) script regardless of what is on `main`. The\nrunner-side proof above is the strongest evidence available before a\nrelease exists. The leg should be re-checked on the first release that\nincludes this commit — and #1167 should not be closed until it is.\n\nUnix `install.sh` is deliberately untouched: its sockets live under a\nshort `/tmp` and its shell has no equivalent stderr conversion.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved Windows installer signature verification when GPG emits\nnon-fatal warnings.\n* Prevented valid verification attempts from being incorrectly skipped\nor marked as unavailable.\n  * Continued rejecting unsigned or invalid release content.\n* Improved compatibility with Windows PowerShell 5.1 and avoided\nunnecessary GPG agent startup.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-14T12:23:13+03:00",
-          "tree_id": "25a296c727c770602b036404755b649037144bf9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6c991eabf4cb110a4ddaf0ca844da62bfd437e7d"
-        },
-        "date": 1786700095735,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.6896396499975,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.0700753999969,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 298.7905526999948,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "860cfd87df3ce98cfacedbd85ed43ce0dc1dee05",
+          "message": "feat(sandbox): ship the Linux network forwarder, so a child reaches only its declared hosts (#1841)\n\nThis PR turns on the Linux network forwarder from #1834 for users. Every\nLinux package now ships `nimbus-sandbox-helper`, so a sandboxed child\nreaches only its declared hosts, with no off switch. No package carries\na file capability any more: `setcap` and `libcap` are gone.\n\n## What a user has to do\n\n**Read this before upgrading.** Three kinds of setup stop working until\nthe owner acts. The owner chose a minor release, so the version number\ngives no warning of it:\n\n- **A user MCP server whose `--net` list is incomplete.** One started\nwith `npx -y pkg` needs `registry.npmjs.org` too. Remove the server and\nadd it again with the extra `--net`, since no command edits grants.\n- **An extension that declares a private or `localhost` name.** The name\nis refused, with a `net-forward:` line. A package may still declare a\nprivate address as a literal.\n- **A running gateway during a package upgrade.** Restart it. The `.deb`\npostinst now says so, and the `.rpm` has no install scripts, so only the\ndocs do.\n\nA refused host appears in `gateway-<date>.log` as `net-forward: <host>:\nundeclared name`. `nimbus doctor` points there.\n\n## Bugs in released versions this fixes\n\n- **Tarball, `curl | sh` and AppImage installs started no connector at\nall on Linux.** The gateway under `~/.local/bin` was not visible inside\nthe sandbox: `bwrap: execvp ... No such file or directory`. The `.deb`\nhid it because `/usr` is bound, and a test-only grant hid it in CI. The\none executable file is now bound read-only, never its directory, and\nthat grant is gone from the proof script.\n- **The AppImage's gateway died about a second after `nimbus start`\nreturned,** because the FUSE mount ended. `AppRun` now copies the\nbinaries once per build to `~/.cache/nimbus/appimage/<version>-<hash>/`\nand runs from there. That is about 223 MB per build, and old copies are\nnot pruned.\n- **`brew install` never worked on Linux,** with `Errno::ENOENT` on real\nLinuxbrew. The formula now installs all the binaries.\n- **The `.rpm` shipped without `vec0.so`,** so semantic search was\nprobably off there.\n- **Re-running `install.sh` with a gateway running left a mixed\ninstall:** `Text file busy`, with the CLI replaced and the rest not. It\nnow refuses first and changes nothing.\n\n## Who gets enforcement\n\n| Install | Helper | A connector that declares a network |\n|---|---|---|\n| `.deb`, `.rpm`, tarball, AppImage, Homebrew | Ships with it | Enforced\n|\n| Raw release binary, or a gateway replaced by hand | None | Whole\ninternet, with a log warning and doctor's `[warn]` |\n| Source build | None unless built | Same |\n| `NIMBUS_SANDBOX_HELPER_PATH` naming nothing | Refused | Refused, never\na fallback |\n| Helper present, but it cannot start | Refused | Refused, never a\nfallback |\n\n`nimbus doctor` says \"declared hosts are enforced\" only when a connected\ngateway reports it. With no gateway it says the forwarder can start\nhere.\n\n## Also in this PR\n\n- **Invariant I50,** with wiring, docs and tests, each test proved by\nbreaking the code once.\n- **Corrected docs.** `docs/sandbox.md` states the real limits: TCP\nonly, IPv4 loopback inside, a container needs a reaping init such as\n`docker run --init`, and the tools that still fail on Linux.\n\n## Known limits\n\n- **Still fails on Linux:** `gcp_gke_workload_restart`, Azure sovereign\nclouds, consumer OneDrive downloads, GCP workload identity, and AWS SSO\nportal hosts.\n- **Never run against a live account:** the `gcp` list.\n`serviceusage.googleapis.com`, `container.googleapis.com` and the STS\nregional default are from memory.\n- **macOS:** unchanged here. #1842 made a declared network start on\nmacOS, limited to its declared ports, and carries the real\n`sandbox-exec` tests. This PR ships the Linux side and states the same\nlimit in its docs.\n- **Windows `install.ps1` has no running-gateway refusal.**\n\n## Testing\n\n| Where | Result |\n|---|---|\n| Privileged Docker, sandbox directory | 713 pass, 3 skip, 0 fail, on\nBun 1.4.3 |\n| Real `.deb` on clean Ubuntu 24.04 | Helper is mode 755, static, no\ncapabilities, and doctor prints `[ok]` |\n| Real tarball on Ubuntu, Debian and Fedora images | The `github`\nconnector starts from `~/.local/bin` |\n| Real AppImage on a real FUSE mount | A sandboxed server, spawned after\nthe CLI exited, reached its declared host, and an undeclared one was\nrefused |\n| Real Linuxbrew | Installs, and `nimbus-sandbox-helper --check` passes\n|\n\nOnly this PR's restriction-on step on `ubuntu-24.04` proves this shape\non a stock kernel, because Docker hid three sandbox bugs in this area\nbefore. The published package is proved after release.\n\nSpec and plan are on `dev/asaf/linux-network-forwarder-spec`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Linux network-enabled sandboxed apps can route TCP connections through\na local forwarder that checks declared hosts and filters prohibited\naddresses.\n* Linux installers now include the sandbox helper, and `nimbus doctor`\nreports the network-enforcement status.\n* **Improvements**\n* If no helper is available, Linux network access may be unrestricted\nand `nimbus doctor` warns; if a configured helper cannot start, the app\nis refused.\n* Update commands provide installation-specific guidance. Install\nscripts avoid replacing files while Nimbus is running from the target\ndirectory.\n  * AppImages copy their binaries to a cache location before running.\n* **Documentation**\n* Updated installation, sandbox, and security guidance, including Linux\nnetworking limits and upgrade steps.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-01T07:12:08+02:00",
+          "tree_id": "b8561c6980cb3861c776971d4b817516dec71962",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/860cfd87df3ce98cfacedbd85ed43ce0dc1dee05"
+        },
+        "date": 1793510397175,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 226.5260284999993,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 226.43084019999952,
             "unit": "ms"
           }
         ]
