@@ -185,9 +185,9 @@ describe("localInstallEvidence and checked", () => {
     expect(e.tested).toEqual({
       state: "not-evaluated",
       why: "local",
-      text: "not evaluated (installed from a local folder)",
+      text: "not evaluated (from a local folder)",
     });
-    expect(e.history).toEqual({ state: "none", text: "none (installed from a local folder)" });
+    expect(e.history).toEqual({ state: "none", text: "none (from a local folder)" });
     expect(e.checked).toEqual({ state: "none", text: "no checks published" });
   });
   test("checked", () => {
@@ -286,7 +286,7 @@ describe("compareVersionQuality", () => {
     expect(qualityUnreadable()).toEqual({
       state: "not-compared",
       why: "registry-unreadable",
-      text: "quality not compared: the registry could not be read just now",
+      text: "quality not compared: the registry could not be read or verified just now",
     });
   });
 });
@@ -295,8 +295,8 @@ describe("evidenceApprovalFields", () => {
   const evidence = localInstallEvidence();
   test("one package states the three lines and no scope", () => {
     expect(evidenceApprovalFields(evidence, "com.example.a", 1)).toEqual({
-      tested: "not evaluated (installed from a local folder)",
-      history: "none (installed from a local folder)",
+      tested: "not evaluated (from a local folder)",
+      history: "none (from a local folder)",
       checked: "no checks published",
     });
     expect(evidenceApprovalFields(evidence, "com.example.a", 0)).not.toHaveProperty(

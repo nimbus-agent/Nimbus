@@ -200,7 +200,31 @@ describe("installFromRegistry", () => {
     expect(shown["checked"]).toBe(req["checked"]);
   });
 
-  test("a package without evidence (a migration's) adds none of the evidence fields", async () => {
+  test("an explicit older version states ITS score, with the no-network suffix for a declared network", async () => {
+    const quality = {
+      scorer: 1,
+      score: 66,
+      cases: 3,
+      passed: 2,
+      rubrics: {
+        exact: { cases: 1, passed: 1 },
+        "json-match": { cases: 1, passed: 1 },
+        "one-of": { cases: 1, passed: 0 },
+      },
+    };
+    await setup([{ version: "1.0.0", quality }, { version: "2.0.0" }], {
+      manifestExtra: {
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+      },
+    });
+    await installFromRegistry(deps(), { id: ID, version: "1.0.0" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["tested"]).toBe(
+      "2 of 3 cases passed (66/100), tests by the publisher, measured by main; tests ran with no network",
+    );
+  });
+
+  test("a package without evidence adds no evidence fields (migration-engine.ts installStaged builds such a package)", async () => {
     await setup([{ version: "1.0.0" }]);
     const d = deps();
     const pkg = await fetchVerifiedRegistryPackage(d, { id: ID }, join(tmp, "stage-no-evidence"));

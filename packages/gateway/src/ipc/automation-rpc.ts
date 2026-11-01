@@ -984,7 +984,8 @@ async function handleExtensionInstall(
             ...approvalFields(
               accessEvidence(ctx.evidence, request.planPermissions ?? request.permissions),
             ),
-            // A local root can still bring registry dependencies, so it states its evidence too.
+            // A local root brings only already-installed dependencies (no registry fetch), so its own lines
+            // are the local ones; `evidenceScope` still appears when the plan lists more than one package.
             ...evidenceApprovalFields(
               localInstallEvidence(),
               request.id,

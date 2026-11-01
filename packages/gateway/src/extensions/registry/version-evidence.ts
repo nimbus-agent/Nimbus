@@ -157,9 +157,9 @@ export function localInstallEvidence(): VersionEvidence {
     tested: {
       state: "not-evaluated",
       why: "local",
-      text: "not evaluated (installed from a local folder)",
+      text: "not evaluated (from a local folder)",
     },
-    history: { state: "none", text: "none (installed from a local folder)" },
+    history: { state: "none", text: "none (from a local folder)" },
     checked: NO_CHECKS,
   };
 }
@@ -219,7 +219,7 @@ export function compareVersionQuality(
 }
 
 export function qualityUnreadable(): QualityChange {
-  return notCompared("registry-unreadable", "the registry could not be read just now");
+  return notCompared("registry-unreadable", "the registry could not be read or verified just now");
 }
 
 /**

@@ -873,8 +873,8 @@ describe("extension.info", () => {
     const local = (await info("com.example.local")) as {
       evidence: { tested: { text: string }; history: { text: string }; checked: { text: string } };
     };
-    expect(local.evidence.tested.text).toBe("not evaluated (installed from a local folder)");
-    expect(local.evidence.history.text).toBe("none (installed from a local folder)");
+    expect(local.evidence.tested.text).toBe("not evaluated (from a local folder)");
+    expect(local.evidence.history.text).toBe("none (from a local folder)");
     expect(local.evidence.checked.text).toBe("no checks published");
     expect(local).not.toHaveProperty("evidenceIn");
     const reg = await info("com.example.reg");
@@ -1623,8 +1623,8 @@ describe("extension.install", () => {
         type: "extension.install",
         payload: seen[0] ?? {},
       }) as Record<string, unknown>;
-      expect(shown["tested"]).toBe("not evaluated (installed from a local folder)");
-      expect(shown["history"]).toBe("none (installed from a local folder)");
+      expect(shown["tested"]).toBe("not evaluated (from a local folder)");
+      expect(shown["history"]).toBe("none (from a local folder)");
       expect(shown["checked"]).toBe("no checks published");
       expect("evidenceScope" in shown).toBe(false);
     } finally {

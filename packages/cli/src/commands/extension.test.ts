@@ -326,9 +326,9 @@ describe("runExtensionInfo", () => {
             tested: {
               state: "not-evaluated",
               why: "local",
-              text: "not evaluated (installed from a local folder)",
+              text: "not evaluated (from a local folder)",
             },
-            history: { state: "none", text: "none (installed from a local folder)" },
+            history: { state: "none", text: "none (from a local folder)" },
             checked: { state: "none", text: "no checks published" },
           },
         },
@@ -336,8 +336,8 @@ describe("runExtensionInfo", () => {
       { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
     ]);
     await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
-    expect(out.stdout).toContain("Tested: not evaluated (installed from a local folder)");
-    expect(out.stdout).toContain("History: none (installed from a local folder)");
+    expect(out.stdout).toContain("Tested: not evaluated (from a local folder)");
+    expect(out.stdout).toContain("History: none (from a local folder)");
     expect(out.stdout).toContain("Checked: no checks published");
   });
 

@@ -32,10 +32,10 @@ import {
   resignIndex,
   type TestVersion,
 } from "./registry/__fixtures__/build-test-registry.ts";
-import { qualityUnreadable } from "./registry/version-evidence.ts";
 import { installFromRegistry } from "./registry/install-from-registry.ts";
 import type { RegistryFetchDeps } from "./registry/registry-fetch.ts";
 import { deleteRegistry, insertRegistry } from "./registry/registry-store.ts";
+import { qualityUnreadable } from "./registry/version-evidence.ts";
 import { getRunGrant, upsertRunGrant } from "./run-grant-store.ts";
 import { recordTrustStatements } from "./trust/trust-store.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
@@ -509,6 +509,73 @@ describe("auto-update-init: registry-sourced detect and apply", () => {
     );
     expect(payloads).toHaveLength(1);
     expect(payloads[0]?.["qualityChange"]).toBe("quality 92 → 90 (-2)");
+  });
+
+  describe("the approval's score read, through the real resolver, when the index changed or is gone", () => {
+    type SignedIndex = {
+      sequence: number;
+      extensions: Record<string, { versions: Record<string, unknown> } & Record<string, unknown>>;
+    };
+
+    async function approvalPayloadsAfter(
+      change: (regDir: string, index: SignedIndex, indexPath: string) => void,
+    ): Promise<Record<string, unknown>[]> {
+      const { runtime, regDir } = await installedFromRegistry();
+      await runtime.deps.forcePoll();
+      const indexPath = join(regDir, "index.json");
+      const index = JSON.parse(readFileSync(indexPath, "utf8")) as SignedIndex;
+      change(regDir, index, indexPath);
+      const payloads: Record<string, unknown>[] = [];
+      await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: ID, toVersion: "1.2.0" },
+        {
+          ...runtime.deps,
+          gate: async (a) => {
+            payloads.push(a.payload);
+            return { status: "rejected" as const };
+          },
+        },
+      );
+      return payloads;
+    }
+
+    it("an index re-signed without the offered version says the candidate is gone, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, index, path) => {
+        const entry = index.extensions[ID];
+        if (entry === undefined) throw new Error("no entry");
+        const { "1.2.0": _gone, ...rest } = entry.versions;
+        resignIndex(path, {
+          ...index,
+          sequence: index.sequence + 1,
+          extensions: { ...index.extensions, [ID]: { ...entry, versions: rest } },
+        });
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: 1.2.0 is no longer in the index",
+      );
+    });
+
+    it("an index re-signed without the extension says the candidate is gone, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, index, path) => {
+        resignIndex(path, { ...index, sequence: index.sequence + 1, extensions: {} });
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: 1.2.0 is no longer in the index",
+      );
+    });
+
+    it("an unreachable registry says it could not be read or verified, and the prompt proceeds", async () => {
+      const payloads = await approvalPayloadsAfter((_dir, _index, path) => {
+        rmSync(path);
+      });
+      expect(payloads).toHaveLength(1);
+      expect(payloads[0]?.["qualityChange"]).toBe(
+        "quality not compared: the registry could not be read or verified just now",
+      );
+    });
   });
 
   it("apply refuses a package whose sha differs from the one the index signed", async () => {
@@ -1015,7 +1082,11 @@ function getExtensionVersion(db: Database, id: string): string | undefined {
 }
 
 describe("currentQualityChange: the informational read has its own deadline", () => {
-  const cached = { id: "com.example.q", fromVersion: "1.0.0", toVersion: "1.1.0" } as AvailableUpdate;
+  const cached = {
+    id: "com.example.q",
+    fromVersion: "1.0.0",
+    toVersion: "1.1.0",
+  } as AvailableUpdate;
   const neverSettling = {
     resolver: { readRootIndex: () => new Promise(() => undefined) },
   } as unknown as UpdatePlan;

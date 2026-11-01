@@ -392,7 +392,8 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       <StructuredPreview
         details={{
           ...autoUpdateDetails(),
-          qualityChange: "quality not compared: the registry could not be read just now",
+          qualityChange:
+            "quality not compared: the registry could not be read or verified just now",
         }}
         action="extension.autoUpdate"
       />,

@@ -597,17 +597,12 @@ async function handleInfo(
   if (newest === undefined) {
     throw new RegistryError("ERR_REGISTRY_INDEX_INVALID", `"${id}" has no versions`);
   }
-  const bytes = await fetchRegistryBytes(
-    { ...fetch, db: o.db },
-    found.reg,
-    newest[1].manifest,
-    {
-      method: "registry.manifest",
-      extensionId: id,
-      version: newest[0],
-      maxBytes: MAX_MANIFEST_BYTES,
-    },
-  );
+  const bytes = await fetchRegistryBytes({ ...fetch, db: o.db }, found.reg, newest[1].manifest, {
+    method: "registry.manifest",
+    extensionId: id,
+    version: newest[0],
+    maxBytes: MAX_MANIFEST_BYTES,
+  });
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (!sha256HexEqualConstantTime(digest, newest[1].manifestSha256)) {
     throw new RegistryError(

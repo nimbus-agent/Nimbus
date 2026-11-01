@@ -66,6 +66,21 @@ describe("PendingUpdates", () => {
     expect(badge.className).toContain("text-green-700");
   });
 
+  it("shows the score comparison the gateway sent on the row, as text (project 6 PR 2)", async () => {
+    callMock.mockResolvedValue([sample({ qualityChange: { text: "quality 100 → 75 (-25)" } })]);
+    render(<PendingUpdates offline={false} />);
+    const line = await screen.findByTestId("quality-change-com.x.a");
+    expect(line.textContent).toBe("quality 100 → 75 (-25)");
+  });
+
+  it("shows no comparison line for an older gateway's row or a non-string text", async () => {
+    callMock.mockResolvedValue([sample(), sample({ id: "com.x.b", qualityChange: { text: 42 } })]);
+    render(<PendingUpdates offline={false} />);
+    await screen.findByTestId("pending-update-row-com.x.b");
+    expect(screen.queryByTestId("quality-change-com.x.a")).toBeNull();
+    expect(screen.queryByTestId("quality-change-com.x.b")).toBeNull();
+  });
+
   it("fires extension.update on click when verified", async () => {
     callMock.mockImplementation(async (method: string) => {
       if (method === "extension.checkForUpdates") return [sample()];

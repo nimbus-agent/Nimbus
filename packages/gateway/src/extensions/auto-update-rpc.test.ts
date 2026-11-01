@@ -1449,7 +1449,7 @@ describe("the update approval states how the score changes (quality layer PR 2)"
     const payloads = await ask(deps);
     expect(payloads).toHaveLength(1);
     expect(payloads[0]?.["qualityChange"]).toBe(
-      "quality not compared: the registry could not be read just now",
+      "quality not compared: the registry could not be read or verified just now",
     );
     expect(deps.performUpgrade).toHaveBeenCalledTimes(1);
   });
