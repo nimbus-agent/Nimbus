@@ -36,6 +36,7 @@ import { unboundSyncCapabilities } from "../../sync/sync-capabilities.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "../../testing/bun-test-support.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { ContinuityEntry } from "../continuity/continuity-table.ts";
+import type { ReachRunner } from "../extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "../extension-run-grants.ts";
 import { resolveExtensionManifestPath } from "../manifest.ts";
 import { readPublisherKey, writePublisherKey } from "../publisher-keys.ts";
@@ -60,6 +61,27 @@ import {
   recordMigrationFailed,
   recordMigrationPrepared,
 } from "./migration-store.ts";
+
+/** A runner with a live posture: healthy per-host on Linux unless told otherwise. */
+function reachRunner(
+  confine: () => string | null,
+  opts: {
+    platform?: "linux" | "darwin" | "win32";
+    fullyActive?: boolean;
+    reason?: string | null;
+  } = {},
+): ReachRunner {
+  const platform = opts.platform ?? "linux";
+  const scopes = { win32: "all_or_nothing", darwin: "per_port" } as const;
+  const scope = platform === "linux" ? undefined : scopes[platform];
+  return {
+    platform,
+    isFullyActive: () => opts.fullyActive ?? true,
+    degradedReason: () => opts.reason ?? null,
+    ...(scope === undefined ? {} : { networkScope: () => scope }),
+    canConfine: confine,
+  };
+}
 
 const EXT = "com.example.reader";
 const LEGACY = "fixture_reader";
@@ -199,7 +221,7 @@ function deps(over: Partial<MigrationEngineDeps> = {}): MigrationEngineDeps {
     isBundledConnector: () => false,
     env: grantEnv(),
     runtimeEnabled: true,
-    sandbox: { canConfine: () => null },
+    sandbox: reachRunner(() => null),
     extensionSync: {
       // Mirrors the real registrar's contract: (re)register a live, granted extension, else
       // unregister whatever it registered.
@@ -623,7 +645,12 @@ describe("the consent payload", () => {
     platform: NodeJS.Platform,
     canConfine: string | null = null,
   ): Promise<MigrationConsentPayload> {
-    const e = engine({ env: grantEnv(platform), sandbox: { canConfine: () => canConfine } });
+    const e = engine({
+      env: grantEnv(platform),
+      sandbox: reachRunner(() => canConfine, {
+        platform: platform as "linux" | "darwin" | "win32",
+      }),
+    });
     await e.evaluate();
     const seen: MigrationConsentPayload[] = [];
     await e.accept(onlyRow().id, consentThat(false, seen)).catch(() => {});
@@ -665,10 +692,29 @@ describe("the consent payload", () => {
 
   test("on Windows the network line does not claim a host restriction, and a sandbox refusal is named", async () => {
     const p = await payloadOn("win32", "the AppContainer helper is missing");
-    expect(p.network).toBe("network access (Windows cannot limit this to reader.example)");
-    expect(p.summary).toContain("network access (Windows cannot limit this to reader.example)");
+    const win =
+      "any internet host, and a private-network host may fail (Windows cannot limit this to reader.example)";
+    expect(p.network).toBe(win);
+    expect(p.summary).toContain(win);
     expect(p.sandbox).toBe(
       "sync will stay paused until the sandbox is fixed: the AppContainer helper is missing",
+    );
+  });
+
+  test("the migration prompt uses the live posture", async () => {
+    const e = engine({
+      env: grantEnv("linux"),
+      sandbox: reachRunner(() => null, {
+        platform: "linux",
+        fullyActive: false,
+        reason: "helper missing",
+      }),
+    });
+    await e.evaluate();
+    const seen: MigrationConsentPayload[] = [];
+    await e.accept(onlyRow().id, consentThat(false, seen)).catch(() => {});
+    expect(seen[0]?.network).toBe(
+      "the whole network (this machine cannot limit it to reader.example: helper missing)",
     );
   });
 
@@ -739,7 +785,10 @@ describe("credentials never leak", () => {
     await engine().evaluate();
     offline = false;
     await engine().evaluate();
-    const e = engine({ env: grantEnv("win32"), sandbox: { canConfine: () => "no helper" } });
+    const e = engine({
+      env: grantEnv("win32"),
+      sandbox: reachRunner(() => "no helper", { platform: "win32" }),
+    });
     await e.accept(onlyRow().id, consentThat(false, seen)).catch((err: unknown) => {
       errors.push(String(err));
     });
@@ -855,7 +904,7 @@ describe("in place", () => {
           };
         },
       },
-      sandbox: { canConfine: () => null },
+      sandbox: reachRunner(() => null),
       runtimeReadPaths: () => [join(tmp, "bun-bin")],
       table: [entry],
     });
@@ -1145,7 +1194,7 @@ describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept
           return { status: "ok", items: [], cursor: null, hasMore: false };
         },
       },
-      sandbox: { canConfine: () => REASON },
+      sandbox: reachRunner(() => REASON),
       runtimeReadPaths: () => [join(tmp, "bun-bin")],
       table: [entry],
     });
@@ -1153,7 +1202,7 @@ describe("Task 5.4: a sandbox that cannot confine keeps sync paused after accept
     const e = engine({
       extensionSync: registrar,
       scheduler: sched,
-      sandbox: { canConfine: () => REASON },
+      sandbox: reachRunner(() => REASON),
     });
     await e.evaluate();
     const row = await e.accept(onlyRow().id, consentThat(true, seen));
@@ -2061,7 +2110,7 @@ describe("Task 7.4: an extension that is already installed (replaces ruling B9)"
           return { status: "ok", items: [], cursor: null, hasMore: false };
         },
       },
-      sandbox: { canConfine: () => REASON },
+      sandbox: reachRunner(() => REASON),
       runtimeReadPaths: () => [join(tmp, "bun-bin")],
       table: [entry],
     });

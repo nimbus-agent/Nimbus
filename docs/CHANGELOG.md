@@ -18,6 +18,24 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-01 — Every permission surface states what the sandbox will actually do here (Phase 9.5 project 6, PR 1; no migration, no new invariant).**
+  Network reach is now worded from the live sandbox posture instead of from the OS name: the named hosts only where the
+  sandbox limits the extension to them; on macOS "any host on port N, including this machine and the local network";
+  on Windows "any internet host, and a private-network host may fail"; on Linux with no helper "the whole network"
+  with the reason; "will not start here" where the sandbox would refuse; "not known here" when no sandbox could be asked.
+  The same statement now appears in the `extension.install`, `extension.autoUpdate` and `extension.downgrade` approvals
+  (as `networkReach`), beside the `extension.run`, `extension.migrate` and `connector add --mcp` prompts it already
+  reached. Each of the install, update and downgrade approvals also carries a predicted outcome for every declared path
+  (`fileAccess`), made by the run approval's own path check: a path that does not exist here, one that overlaps
+  Nimbus's data or (once installed) the extension's own files, and a grant of the filesystem root, a whole drive, the
+  home folder or a folder above it are each named. `nimbus extension info` prints the pair as `Reach on this machine:` and `Files:`
+  (`access` in `--json`), as does `info --registry` / `--remote`; the desktop shows both as `Network:` and `Files:`.
+  A downgrade reads the rollback target's own manifest, never the update diff. **What it does not do:** it predicts, and
+  a path can change before the run approval, whose check stays authoritative; before an install, and in remote `info`,
+  the own-files check is skipped and not reported as passed; it enforces nothing and refuses nothing; and it does not
+  show anything on a registry page. The roadmap's over-request penalty on the Quality Score is dropped, because `*`
+  cannot be declared and a permission is a fact stated on its own line.
+
 - **2026-11-01 — Windows diagnostics stop claiming per-host network enforcement.** `diag.snapshot` reported
   `per_host` for a Windows runner with a working helper, because only an absent `networkScope` could mean anything else
   and Windows had none, while AppContainer `internetClient` opens every internet host or none of them. It now reports

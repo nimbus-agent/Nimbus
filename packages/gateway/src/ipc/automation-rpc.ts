@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 import pino, { type Logger } from "pino";
 import {
   deleteExtensionById,
@@ -60,6 +61,14 @@ import {
   extensionCredentialStatus,
   setExtensionCredential,
 } from "../extensions/extension-credential-set.ts";
+import {
+  type AccessEvidence,
+  accessEvidence,
+  approvalFields,
+  type ExtensionEvidenceDeps,
+  unreadableAccessEvidence,
+} from "../extensions/extension-evidence.ts";
+import type { ReachRunner } from "../extensions/extension-reach.ts";
 import type { ExtensionRunGrantEnv } from "../extensions/extension-run-grants.ts";
 import { deriveExtensionServiceId } from "../extensions/extension-service-id.ts";
 import {
@@ -84,6 +93,10 @@ import {
   evaluateInstalledExtensions,
   type InstalledEvalDeps,
 } from "../extensions/installed-eval.ts";
+import {
+  parseExtensionManifestJson,
+  resolveExtensionManifestPath,
+} from "../extensions/manifest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import { ExtensionRunGrantError } from "../extensions/run-grant-error.ts";
 import {
@@ -199,6 +212,10 @@ interface AutomationCtx {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  /** The sandbox runner the run approval describes network reach from. */
+  sandboxRunner?: ReachRunner;
+  /** What the install approval states reach and the file outcome from; absent says "not known here". */
+  evidence?: ExtensionEvidenceDeps;
   evalDeps?: AutomationEvalDeps;
   /** `[extensions] runtime` and not demo-rooted; absent means the default, `true`. */
   runtimeEnabled?: boolean;
@@ -765,6 +782,26 @@ async function handleExtensionList(
   };
 }
 
+/**
+ * Reach and the predicted file outcome for an installed extension, from the permissions its
+ * installed manifest declares and its own install path (so the own-files check runs). An
+ * unreadable manifest is stated on both lines, never omitted and never a guess.
+ */
+function installedAccess(row: ExtensionRow, ctx: AutomationCtx): { access: AccessEvidence } {
+  try {
+    const path = resolveExtensionManifestPath(row.install_path);
+    if (path === undefined) throw new Error("no manifest file in the install directory");
+    const { permissions } = parseExtensionManifestJson(readFileSync(path, "utf8"));
+    return { access: accessEvidence(ctx.evidence, permissions, row.install_path) };
+  } catch (e) {
+    automationRpcLog.debug(
+      { err: e instanceof Error ? e.message : "unexpected failure", id: row.id },
+      "extension.info could not read the installed manifest",
+    );
+    return { access: unreadableAccessEvidence() };
+  }
+}
+
 async function handleExtensionInfo(
   rec: Record<string, unknown> | undefined,
   ctx: AutomationCtx,
@@ -789,6 +826,7 @@ async function handleExtensionInfo(
     verifiedPublisher: verifiedPublisherOf(ctx.db, row),
     ...publisherOf(row),
     ...(requires === undefined ? {} : { requires }),
+    ...installedAccess(row, ctx),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {
@@ -918,7 +956,16 @@ async function handleExtensionInstall(
         requirementStatuses: ctx.requirementStatuses,
       }),
       ...(publisherKeyPath !== undefined && publisherKeyPath !== "" && { publisherKeyPath }),
-      approve: (request) => ownerGate({ type: "extension.install", payload: { ...request } }),
+      approve: (request) =>
+        ownerGate({
+          type: "extension.install",
+          payload: {
+            ...request,
+            ...approvalFields(
+              accessEvidence(ctx.evidence, request.planPermissions ?? request.permissions),
+            ),
+          },
+        }),
     });
   } catch (e) {
     // A rollback that left packages behind is warned and named in the refusal (never swallowed).
@@ -1149,6 +1196,10 @@ async function handleExtensionApproveRun(
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
       modelAccess: rawModelAccess === true,
+      evidence: {
+        ...(ctx.sandboxRunner === undefined ? {} : { sandbox: ctx.sandboxRunner }),
+        homeDir: homedir(),
+      },
       ...continuityTableOf(ctx),
     });
     // Registers its sync under the index id (or resumes a stale-grant pause) once the grant is live.
@@ -1329,6 +1380,8 @@ export async function dispatchAutomationRpc(options: {
   autoUpdate?: AutoUpdateRpcDeps;
   ownerGate?: AutomationOwnerGate;
   runGrantEnv?: ExtensionRunGrantEnv;
+  sandboxRunner?: ReachRunner;
+  evidence?: ExtensionEvidenceDeps;
   evalDeps?: AutomationEvalDeps;
   extensionsRuntimeEnabled?: boolean;
   extensionSync?: AutomationRpcExtensionSyncHandle;
@@ -1350,6 +1403,8 @@ export async function dispatchAutomationRpc(options: {
     ...(options.autoUpdate !== undefined && { autoUpdate: options.autoUpdate }),
     ...(options.ownerGate !== undefined && { ownerGate: options.ownerGate }),
     ...(options.runGrantEnv !== undefined && { runGrantEnv: options.runGrantEnv }),
+    ...(options.sandboxRunner !== undefined && { sandboxRunner: options.sandboxRunner }),
+    ...(options.evidence !== undefined && { evidence: options.evidence }),
     ...(options.evalDeps !== undefined && { evalDeps: options.evalDeps }),
     ...(options.extensionsRuntimeEnabled !== undefined && {
       runtimeEnabled: options.extensionsRuntimeEnabled,

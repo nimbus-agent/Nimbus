@@ -38,7 +38,11 @@ import { runConnector } from "./connector.ts";
 import { runExtensionKey } from "./extension-key.ts";
 import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
-import { runExtensionInfoRemote, runExtensionSearch } from "./extension-registry-cmds.ts";
+import {
+  accessLines,
+  runExtensionInfoRemote,
+  runExtensionSearch,
+} from "./extension-registry-cmds.ts";
 import { runExtensionReport } from "./extension-report.ts";
 import {
   parseRequirementStatuses,
@@ -97,6 +101,8 @@ type ExtensionListEntry = {
   version: string;
   /** V79: a starter pack has no code and never runs; absent from an older gateway. */
   kind?: "extension" | "starter-pack";
+  /** Reach on this machine and the predicted file outcome; absent from an older gateway. */
+  access?: unknown;
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -426,6 +432,7 @@ export async function runExtensionInfo(
   if (runLine !== null) console.log(`Run:       ${runLine}`);
   for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
+  for (const line of accessLines(e.access)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   // Any reason the gateway attached — pre-T2 or signature (I16) — is printed verbatim. The

@@ -18,6 +18,11 @@ import {
 } from "../extensions/connector-requirements.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import {
+  accessEvidence,
+  approvalFields,
+  type ExtensionEvidenceDeps,
+} from "../extensions/extension-evidence.ts";
+import {
   ExtensionInstallNotApprovedError,
   installedKindOf,
   isPromotedInstall,
@@ -84,6 +89,8 @@ export interface RegistryRpcOptions {
   /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
   extensionsDir?: string;
   vault?: NimbusVault;
+  /** `registry.install` only: what the approval states reach and the file outcome from. */
+  evidence?: ExtensionEvidenceDeps;
   /** `registry.install` only: the trust feed, refreshed best-effort first (spec § 6.2). */
   trustFeed?: FreshenHandle;
   /**
@@ -293,7 +300,13 @@ async function handleInstall(
         approve: (request) =>
           ownerGate({
             type: "extension.install",
-            payload: { ...request, ...(note === undefined ? {} : { trustFeedNote: note }) },
+            payload: {
+              ...request,
+              ...approvalFields(
+                accessEvidence(o.evidence, request.planPermissions ?? request.permissions),
+              ),
+              ...(note === undefined ? {} : { trustFeedNote: note }),
+            },
           }),
       },
       {
@@ -630,7 +643,13 @@ async function handleInfo(
         publishedAt: v.publishedAt,
         packageSizeBytes: v.packageSizeBytes,
         ...qualityOf(v),
-        ...(i === 0 ? { permissions: manifest.permissions } : {}),
+        ...(i === 0
+          ? {
+              permissions: manifest.permissions,
+              // No install path exists yet, so the own-files check is skipped and never reported.
+              access: accessEvidence(o.evidence, manifest.permissions),
+            }
+          : {}),
       })),
     },
   };

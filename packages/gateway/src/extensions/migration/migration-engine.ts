@@ -67,6 +67,7 @@ import {
   serializeRunCredentials,
   sortedNames,
 } from "../extension-credentials.ts";
+import { describeNetworkReach, type ReachRunner } from "../extension-reach.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -81,7 +82,6 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "../manifest.ts";
-import { networkAccessLine } from "../network-access-line.ts";
 import { isStrictlyInside } from "../path-containment.ts";
 import {
   BUILTIN_REGISTRY,
@@ -218,9 +218,7 @@ export interface MigrationEngineDeps {
   readonly env: ExtensionRunGrantEnv;
   /** `[extensions] runtime` (and not demo-rooted). `false` refuses accept before the prompt. */
   readonly runtimeEnabled: boolean;
-  readonly sandbox: {
-    canConfine(policy: ReturnType<typeof extensionSpawnPolicyForGrants>): string | null;
-  };
+  readonly sandbox: ReachRunner;
   /** The extension sync registrar (PR 3). */
   readonly extensionSync: { refresh(extensionId: string): void };
   /**
@@ -340,12 +338,12 @@ function buildConsentPayload(
   row: MigrationRow,
   entry: ContinuityEntry,
   manifest: ExtensionManifest,
-  platform: NodeJS.Platform,
+  sandbox: ReachRunner,
   confineRefusal: string | null,
   origin: MigrationAcceptOrigin,
 ): MigrationConsentPayload {
   const name = displayNameOf(entry);
-  const network = networkAccessLine(platform, entry.expectedPermissions.network);
+  const network = describeNetworkReach(sandbox, entry.expectedPermissions.network).text;
   const credentialNames = sortedNames(entry.credentials).join(", ");
   return {
     migrationId: row.id,
@@ -1135,7 +1133,7 @@ export function createMigrationEngine(deps: MigrationEngineDeps): MigrationEngin
     }
     clearLeftoverInstall(row, entry);
     const approved = await consent(
-      buildConsentPayload(row, entry, manifest, deps.env.platform, confineRefusal, origin),
+      buildConsentPayload(row, entry, manifest, deps.sandbox, confineRefusal, origin),
     );
     if (!approved) {
       throw new MigrationError(

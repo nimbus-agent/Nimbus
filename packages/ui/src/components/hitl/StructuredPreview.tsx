@@ -129,6 +129,10 @@ interface AutoUpdatePayload {
   signature?: SignatureStatus;
   badge?: PublisherBadge;
   notes: string[];
+  /** What the sandbox on this machine does with the new version's network hosts. */
+  networkReach?: string;
+  /** What the new version's file grants do here, as the run approval will judge them. */
+  fileAccess?: string;
   addedPermissions?: {
     network?: string[];
     filesystem?: { read?: string[]; write?: string[] };
@@ -357,6 +361,10 @@ function readAutoUpdatePayload(details: Record<string, unknown>): AutoUpdatePayl
   if (signature !== undefined) out.signature = signature;
   const badge = readPublisherBadge(details);
   if (badge !== undefined) out.badge = badge;
+  const reach = readStringField(details, "networkReach");
+  if (reach !== undefined) out.networkReach = reach;
+  const files = readStringField(details, "fileAccess");
+  if (files !== undefined) out.fileAccess = files;
   if (details["planPermissions"] !== undefined) {
     out.addedUnion = readPermissions(details["planPermissions"]);
   }
@@ -523,6 +531,21 @@ function AutoUpdatePreview({
       </p>
       <BadgeAndNotes badge={payload.badge} notes={payload.notes} />
       <AddedByUpdate payload={payload} />
+      {(payload.networkReach !== undefined || payload.fileAccess !== undefined) && (
+        <section data-testid="auto-update-access" className="text-sm">
+          <h3 className="font-semibold">
+            {direction === "upgrade"
+              ? "What the new version can reach here"
+              : "What the restored version can reach here"}
+          </h3>
+          {payload.networkReach !== undefined && (
+            <p data-testid="auto-update-network-reach">Network: {payload.networkReach}</p>
+          )}
+          {payload.fileAccess !== undefined && (
+            <p data-testid="auto-update-file-access">Files: {payload.fileAccess}</p>
+          )}
+        </section>
+      )}
       {payload.changelog !== undefined && payload.changelog !== "" && (
         <details>
           <summary className="text-sm cursor-pointer">Changelog</summary>
@@ -663,7 +686,13 @@ function MigratePreview({ details }: { readonly details: Record<string, unknown>
 }
 
 /** Fields `InstallPreview` renders as the badge or a note; everything else is shown generically. */
-const INSTALL_RENDERED = new Set(["verifiedPublisher", "publisherBadge", ...NOTE_FIELDS]);
+const INSTALL_RENDERED = new Set([
+  "verifiedPublisher",
+  "publisherBadge",
+  "networkReach",
+  "fileAccess",
+  ...NOTE_FIELDS,
+]);
 
 /**
  * `extension.install`: the verified-publisher badge and the notes first, then EVERY other field the
@@ -677,6 +706,18 @@ function InstallPreview({ details }: { readonly details: Record<string, unknown>
   return (
     <div data-testid="install-preview" className="flex flex-col gap-3">
       <BadgeAndNotes badge={readPublisherBadge(details)} notes={readNotes(details)} />
+      {(asText(details["networkReach"]) !== undefined ||
+        asText(details["fileAccess"]) !== undefined) && (
+        <section data-testid="install-access" className="text-sm">
+          <h3 className="font-semibold">What this install can reach here</h3>
+          {asText(details["networkReach"]) !== undefined && (
+            <p data-testid="install-network-reach">Network: {asText(details["networkReach"])}</p>
+          )}
+          {asText(details["fileAccess"]) !== undefined && (
+            <p data-testid="install-file-access">Files: {asText(details["fileAccess"])}</p>
+          )}
+        </section>
+      )}
       <PreviewRows record={rest} depth={0} />
     </div>
   );

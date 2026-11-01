@@ -4,7 +4,6 @@ export {
   handleConnectorAddMcp,
   handleConnectorSetConfig,
   handleConnectorSetInterval,
-  requireAddMcpPlatform,
   resolveConnectorAddMcp,
 } from "./config.ts";
 export type { ConnectorRpcHandlerContext } from "./context.ts";

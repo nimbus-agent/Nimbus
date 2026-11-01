@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { sha256HexEqualConstantTime } from "../util/timing-safe-compare.ts";
@@ -16,6 +17,8 @@ import {
   serializeRunCredentials,
   sortedNames,
 } from "./extension-credentials.ts";
+import { previewFileGrants } from "./extension-file-preview.ts";
+import { describeNetworkReach, type ReachRunner } from "./extension-reach.ts";
 import {
   type ExtensionRunGrantEnv,
   type ResolvedRunGrants,
@@ -30,7 +33,6 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { pendingMigrationForExtension } from "./migration/migration-store.ts";
-import { networkAccessLine } from "./network-access-line.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { refuseStarterPack } from "./starter-pack-refusal.ts";
@@ -52,6 +54,13 @@ export type ExtensionRunGate = (action: {
   payload: Record<string, unknown>;
 }) => Promise<boolean>;
 
+/**
+ * What the run approval states about this machine: the sandbox's live posture (absent means the
+ * prompt says so, never that nothing is limited) and the home folder a broad path grant is judged
+ * against.
+ */
+export type RunConsentEvidence = { readonly sandbox?: ReachRunner; readonly homeDir: string };
+
 export interface ApproveExtensionRunDeps {
   readonly db: Database;
   readonly env: ExtensionRunGrantEnv;
@@ -70,6 +79,8 @@ export interface ApproveExtensionRunDeps {
    * the production `CONTINUITY_TABLE`; tests inject a fixture entry.
    */
   readonly continuityTable?: readonly ContinuityEntry[];
+  /** The sandbox runner and home folder the prompt describes; absent means no runner is known. */
+  readonly evidence?: RunConsentEvidence;
 }
 
 export interface ApproveExtensionRunResult {
@@ -193,6 +204,7 @@ export type RunConsentSubject = {
 export function buildRunConsentPayload(
   subject: RunConsentSubject,
   env: ExtensionRunGrantEnv,
+  evidence: RunConsentEvidence,
 ): Record<string, unknown> {
   const {
     row,
@@ -225,10 +237,15 @@ export function buildRunConsentPayload(
           },
     treeDigest,
     network: [...grants.network],
-    // What the network grant means on THIS OS: the host list above is enforced on macOS and Linux,
-    // but the Windows sandbox cannot limit network access by host, so the list alone would overstate
-    // the confinement there. The same sentence the migration prompt shows.
-    networkAccess: networkAccessLine(env.platform, grants.network),
+    // What the network grant reaches on THIS machine, from the sandbox's live posture: the host list
+    // above is not a bound where the sandbox cannot filter by host. Worded by the same function as
+    // the migration and install prompts.
+    networkAccess: describeNetworkReach(evidence.sandbox, grants.network).text,
+    // What the path grants do here, through the approval's own check, including a broad grant.
+    fileAccess: previewFileGrants({ read: [...grants.read], write: [...grants.write] }, env, {
+      installPath,
+      homeDir: evidence.homeDir,
+    }).text,
     read: [...grants.read],
     write: [...grants.write],
     // The runtime's own read paths, added at every spawn, read-only. Shown, never stored (spec § 11
@@ -516,6 +533,7 @@ async function approveRun(
           trustBlocks,
         },
         deps.env,
+        deps.evidence ?? { homeDir: homedir() },
       ),
     ));
   if (!approved) {

@@ -32,6 +32,10 @@ import {
 } from "../index/negation-query.ts";
 import { isVecLoaded, lastVecLoadFailure } from "../index/sqlite-vec-load.ts";
 import { mediaSourceBytes } from "../multimodal/media-source-registry.ts";
+import {
+  type SandboxNetworkPosture,
+  sandboxNetworkPosture,
+} from "../platform/sandbox/sandbox-posture.ts";
 import type { SandboxRunner } from "../platform/sandbox/sandbox-runner.ts";
 import { ensureFullSqlite } from "../platform/sqlite-runtime.ts";
 import { describeSourceMapping, resolveSourceMapping } from "../sources/source-mapping.ts";
@@ -98,13 +102,6 @@ function agentLatencyPreviewParams(ctx: DiagnosticsRpcContext): {
   return p === undefined
     ? {}
     : { agentInvocationLatencyP50Ms: p.p50Ms, agentInvocationLatencyP95Ms: p.p95Ms };
-}
-
-type SandboxNetworkPosture = "per_host" | "per_port" | "all_or_nothing" | "refusing";
-
-function sandboxNetworkPosture(runner: SandboxRunner): SandboxNetworkPosture {
-  if (runner.isFullyActive()) return runner.networkScope?.() ?? "per_host";
-  return runner.networkRefused?.() === true ? "refusing" : "all_or_nothing";
 }
 
 export function buildSandboxDiagPayload(runner: SandboxRunner | undefined): {

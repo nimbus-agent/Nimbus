@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import pino from "pino";
 import { buildAgentSynthesisRunner } from "../../agents/_lib/agent-synthesis-runner.ts";
@@ -14,6 +15,10 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "../../egress/egress-ledger.ts"
 import { bindConsentChannel, NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import type { ConnectorDispatcher } from "../../engine/types.ts";
 import { resolveRuntimeById } from "../../exec/exec-runtimes.ts";
+import {
+  type ExtensionEvidenceDeps,
+  updateAccessEvidence,
+} from "../../extensions/extension-evidence.ts";
 import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
 import { migrationRedactionRoots } from "../../extensions/migration/migration-redact.ts";
 import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
@@ -1970,6 +1975,7 @@ function buildAutoUpdateDeps(
   ctx: ServerCtx,
   clientId: string,
   method: string,
+  evidence: ExtensionEvidenceDeps | undefined,
 ): Parameters<typeof dispatchAutomationRpc>[0]["autoUpdate"] {
   if (
     ctx.options.extensionsAutoUpdate === undefined ||
@@ -1979,8 +1985,11 @@ function buildAutoUpdateDeps(
     return undefined;
   }
   const toolExecutor = buildExtensionGateExecutor(ctx, ctx.options.localIndex, clientId);
+  const db = ctx.options.localIndex.getDatabase();
   return {
     ...ctx.options.extensionsAutoUpdate,
+    updateAccess: (cached, addedUnion, direction) =>
+      updateAccessEvidence(db, evidence, cached, addedUnion, direction, ctx.options.extensionsDir),
     gate: async (action) => {
       const r = await toolExecutor.gate(action);
       if (r === "proceed") return "proceed";
@@ -2052,6 +2061,41 @@ function extensionRunGrantEnvFor(ctx: ServerCtx, method: string): ExtensionRunGr
   return buildExtensionRunGrantEnv(mesh.userMcpProtectedRoots(), ctx.options.extensionsDir);
 }
 
+/** The methods whose approval or info states reach and the predicted file outcome. */
+const EXTENSION_EVIDENCE_METHODS: ReadonlySet<string> = new Set([
+  "extension.install",
+  "extension.info",
+  "extension.update",
+  "registry.install",
+  "registry.info",
+]);
+
+/**
+ * What an install or update approval describes this machine with: the live sandbox runner and the
+ * SAME run-grant environment `extension.approveRun` checks paths against, so the predicted file
+ * outcome is the approval's own check. No mesh means no environment: the paths are then reported
+ * as not checked, never as passing.
+ */
+function extensionEvidenceDepsFor(
+  ctx: ServerCtx,
+  method: string,
+): ExtensionEvidenceDeps | undefined {
+  if (!EXTENSION_EVIDENCE_METHODS.has(method)) return undefined;
+  const mesh = ctx.options.connectorMesh;
+  return {
+    homeDir: homedir(),
+    ...(ctx.options.sandboxRunner === undefined ? {} : { sandbox: ctx.options.sandboxRunner }),
+    ...(mesh === undefined
+      ? {}
+      : {
+          grantEnv: buildExtensionRunGrantEnv(
+            mesh.userMcpProtectedRoots(),
+            ctx.options.extensionsDir,
+          ),
+        }),
+  };
+}
+
 /** What `extension.eval` runs with: the Bun runtime's read paths, the sandbox dir and the runner. */
 function extensionEvalDepsFor(
   ctx: ServerCtx,
@@ -2079,7 +2123,8 @@ async function dispatchExtensionAutomationRpc(
     throw new RpcMethodError(-32603, "Local index is not available");
   }
   try {
-    const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method);
+    const evidence = extensionEvidenceDepsFor(ctx, method);
+    const autoUpdateDeps = buildAutoUpdateDeps(ctx, clientId, method, evidence);
     const ownerGate = buildExtensionOwnerGate(ctx, clientId, method);
     const runGrantEnv = extensionRunGrantEnvFor(ctx, method);
     const evalDeps = extensionEvalDepsFor(ctx, method);
@@ -2095,7 +2140,11 @@ async function dispatchExtensionAutomationRpc(
       ...(autoUpdateDeps === undefined ? {} : { autoUpdate: autoUpdateDeps }),
       ...(ownerGate === undefined ? {} : { ownerGate }),
       ...(runGrantEnv === undefined ? {} : { runGrantEnv }),
+      ...(ctx.options.sandboxRunner === undefined
+        ? {}
+        : { sandboxRunner: ctx.options.sandboxRunner }),
       ...(evalDeps === undefined ? {} : { evalDeps }),
+      ...(evidence === undefined ? {} : { evidence }),
       ...(ctx.options.extensionsRuntimeEnabled === undefined
         ? {}
         : { extensionsRuntimeEnabled: ctx.options.extensionsRuntimeEnabled }),
@@ -2217,6 +2266,9 @@ export async function tryDispatchConnectorRpc(
       syncScheduler: ctx.options.syncScheduler,
       ...(mesh === undefined ? {} : { connectorMesh: mesh }),
       platform: process.platform,
+      ...(ctx.options.sandboxRunner === undefined
+        ? {}
+        : { sandboxRunner: ctx.options.sandboxRunner }),
       notify: (m, p) => ctx.broadcastNotification(m, p),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
@@ -2357,10 +2409,12 @@ export async function tryDispatchRegistryRpc(
     const toolExecutor = buildExtensionGateExecutor(ctx, localIndex, clientId);
     ownerGate = async (action) => (await toolExecutor.gate(action)) === "proceed";
   }
+  const evidence = extensionEvidenceDepsFor(ctx, method);
   const out = await dispatchRegistryRpc({
     method,
     params,
     db: localIndex.getDatabase(),
+    ...(evidence === undefined ? {} : { evidence }),
     ...(ctx.options.registryFetch === undefined ? {} : { fetch: ctx.options.registryFetch }),
     ...(ownerGate === undefined ? {} : { ownerGate }),
     ...(ctx.options.extensionsDir === undefined

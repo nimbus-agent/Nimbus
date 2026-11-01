@@ -69,6 +69,7 @@ import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
 import { HITL_REQUIRED } from "./engine/executor.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
+import type { ReachRunner } from "./extensions/extension-reach.ts";
 import { resolveExtensionManifestPath } from "./extensions/manifest.ts";
 import {
   createMigrationEngine,
@@ -163,6 +164,27 @@ import { generateEd25519Keypair } from "./util/ed25519.ts";
 import { EphemeralVault } from "./vault/ephemeral.ts";
 import { createNimbusVault } from "./vault/factory.ts";
 import type { NimbusVault } from "./vault/nimbus-vault.ts";
+
+/** A runner with a live posture: healthy per-host on Linux unless told otherwise. */
+function reachRunner(
+  confine: () => string | null,
+  opts: {
+    platform?: "linux" | "darwin" | "win32";
+    fullyActive?: boolean;
+    reason?: string | null;
+  } = {},
+): ReachRunner {
+  const platform = opts.platform ?? "linux";
+  const scopes = { win32: "all_or_nothing", darwin: "per_port" } as const;
+  const scope = platform === "linux" ? undefined : scopes[platform];
+  return {
+    platform,
+    isFullyActive: () => opts.fullyActive ?? true,
+    degradedReason: () => opts.reason ?? null,
+    ...(scope === undefined ? {} : { networkScope: () => scope }),
+    canConfine: confine,
+  };
+}
 
 function baseInvariantWriteCtx() {
   return {
@@ -3869,7 +3891,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
             };
           },
         },
-        sandbox: { canConfine: () => null },
+        sandbox: reachRunner(() => null),
         runtimeReadPaths: () => [],
         table: [],
         readManifest: () => manifest,
@@ -8173,7 +8195,7 @@ describe("I46 — a renderer can create an extension run grant only through migr
         realpath: (p) => realpathSync.native(p),
       },
       runtimeEnabled: true,
-      sandbox: { canConfine: () => null },
+      sandbox: reachRunner(() => null),
       extensionSync: {
         refresh: (id) => {
           for (const [k, v] of registered) if (v === id) registered.delete(k);

@@ -46,6 +46,8 @@ interface InfoVersion {
     network: string[];
     filesystem: { read: string[]; write: string[] };
   };
+  /** Reach on this machine and the predicted file outcome. Absent from an older gateway. */
+  access?: unknown;
 }
 
 interface RemoteInfo {
@@ -154,6 +156,21 @@ export async function runExtensionSearch(
   return 0;
 }
 
+/**
+ * The two lines naming what this machine's sandbox will allow: nothing for an older gateway, which
+ * sends no `access`. Each string passes through `clean`, so a hostile one cannot add a line.
+ */
+export function accessLines(access: unknown): string[] {
+  if (typeof access !== "object" || access === null) return [];
+  const a = access as { networkReach?: unknown; fileAccess?: unknown };
+  const lines: string[] = [];
+  if (typeof a.networkReach === "string") {
+    lines.push(`Reach on this machine: ${clean(a.networkReach)}`);
+  }
+  if (typeof a.fileAccess === "string") lines.push(`Files: ${clean(a.fileAccess)}`);
+  return lines;
+}
+
 function formatPermissions(p: NonNullable<InfoVersion["permissions"]>): string[] {
   return [
     `  network:    ${p.network.length === 0 ? "(none)" : p.network.join(", ")}`,
@@ -203,6 +220,7 @@ export async function runExtensionInfoRemote(
     if (v.permissions !== undefined) {
       deps.stdout("Permissions (newest version, from the hash-checked manifest):\n");
       for (const l of formatPermissions(v.permissions)) deps.stdout(`${clean(l)}\n`);
+      for (const l of accessLines(v.access)) deps.stdout(`${l}\n`);
     }
   }
   return 0;

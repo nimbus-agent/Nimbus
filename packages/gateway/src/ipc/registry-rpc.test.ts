@@ -315,6 +315,8 @@ type FixtureVersion = {
   manifestOverride?: string;
   /** The manifest's `repository` (provenance). */
   repository?: string;
+  /** The manifest's declared `filesystem` permissions. */
+  filesystem?: { read: string[]; write: string[] };
   /** The version entry's `provenance`, as a registry's sign job records it. */
   provenance?: unknown;
   /** The version entry's raw `quality`, as a registry's sign job records it. */
@@ -339,7 +341,10 @@ function makeRegistry(
         name: v.name,
         version: v.version,
         entry: "dist/index.js",
-        permissions: { network: ["api.example.com"] },
+        permissions: {
+          network: ["api.example.com"],
+          ...(v.filesystem !== undefined && { filesystem: v.filesystem }),
+        },
         ...(v.repository !== undefined && { repository: v.repository }),
       });
       mkdirSync(join(dir, base), { recursive: true });
@@ -758,6 +763,13 @@ describe("registry.search and registry.info", () => {
           packageSizeBytes: 1234,
           quality: null,
           permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+          access: {
+            networkReach: "not known here (the sandbox is not available to ask)",
+            reachKind: "unknown",
+            fileAccess: "reads none · writes none (not checked here)",
+            canRunHere: null,
+            checked: false,
+          },
         },
         {
           version: "1.0.0",
@@ -768,6 +780,122 @@ describe("registry.search and registry.info", () => {
         },
       ],
     });
+  });
+
+  test("registry.info predicts files with no install path and states the live reach", async () => {
+    const readDir = join(tmp, "readable");
+    mkdirSync(readDir, { recursive: true });
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          {
+            version: "1.0.0",
+            channel: "stable",
+            name: "Tool",
+            filesystem: { read: [readDir], write: [] },
+          },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const out = await dispatchRegistryRpc({
+      method: "registry.info",
+      params: { id: "acme.tool", registry: "main" },
+      db,
+      fetch: fetchBag(),
+      evidence: {
+        homeDir: tmp,
+        sandbox: {
+          platform: "linux",
+          isFullyActive: () => true,
+          degradedReason: () => null,
+          canConfine: () => null,
+        },
+        grantEnv: {
+          platform: process.platform,
+          protectedRoots: [],
+          runtimeReadPaths: [],
+          realpath: (p: string) => p,
+        },
+      },
+    });
+    const access = (out as { value: { versions: Array<{ access: Record<string, unknown> }> } })
+      .value.versions[0]?.access;
+    expect(access?.["networkReach"]).toBe("network access to api.example.com");
+    expect(String(access?.["fileAccess"])).toContain(readDir);
+    expect(access?.["checked"]).toBe(true);
+    // No install path: the own-files check did not run, and nothing claims it did.
+    expect(String(access?.["fileAccess"])).not.toMatch(/can run|own files/i);
+  });
+
+  test("registry.info never resolves a Windows network path a manifest declares", async () => {
+    const unc = "\\\\192.0.2.1\\share\\x";
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          {
+            version: "1.0.0",
+            channel: "stable",
+            name: "Tool",
+            filesystem: { read: [unc], write: [] },
+          },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const resolved: string[] = [];
+    const out = await dispatchRegistryRpc({
+      method: "registry.info",
+      params: { id: "acme.tool", registry: "main" },
+      db,
+      fetch: fetchBag(),
+      evidence: {
+        homeDir: tmp,
+        sandbox: {
+          platform: "win32",
+          isFullyActive: () => true,
+          degradedReason: () => null,
+          canConfine: () => null,
+        },
+        grantEnv: {
+          platform: "win32",
+          protectedRoots: [],
+          runtimeReadPaths: [],
+          realpath: (p: string) => {
+            resolved.push(p);
+            return p;
+          },
+        },
+      },
+    });
+    const access = (out as { value: { versions: Array<{ access: Record<string, unknown> }> } })
+      .value.versions[0]?.access;
+    expect(resolved).not.toContain(unc);
+    expect(String(access?.["fileAccess"])).toContain(
+      `${unc} (network or device path, not checked here)`,
+    );
+    expect(access?.["canRunHere"]).toBeNull();
+    expect(access?.["checked"]).toBe(false);
+  });
+
+  test("only the newest version carries access, as permissions does", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Tool" },
+          { version: "1.1.0", channel: "stable", name: "Tool" },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const out = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: { versions: Array<{ version: string; access?: unknown }> };
+    };
+    expect(out.value.versions[0]?.access).toBeDefined();
+    expect(out.value.versions[1]?.access).toBeUndefined();
   });
 
   test("info refuses a manifest whose hash differs from the index", async () => {
@@ -868,6 +996,27 @@ describe("registry.install", () => {
         payload: { extensionId: "acme.tool", action: "install", ok: false },
       },
     });
+  });
+
+  test("a registry install approval states reach and the file outcome from the evidence", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const g = gateRecorder(true);
+    await dispatchRegistryRpc({
+      method: "registry.install",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      extensionsDir,
+      vault: new MockVault(),
+      ownerGate: g.gate,
+      evidence: { homeDir: tmp },
+    });
+    const payload = (g.asked[0] as { payload: Record<string, unknown> }).payload;
+    expect(payload["networkReach"]).toBe("not known here (the sandbox is not available to ask)");
+    expect(String(payload["fileAccess"])).toContain("reads none");
+    expect("canRunHere" in payload).toBe(false);
   });
 
   test("registry.install returns the installed dependencies", async () => {

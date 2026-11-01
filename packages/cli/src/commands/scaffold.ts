@@ -124,7 +124,7 @@ function buildReadme(name: string, platform: NodeJS.Platform, absDir: string): s
     ? "\nWindows PowerShell 5.1 mangles embedded quotes in native-command arguments; use PowerShell 7+ or cmd.\n"
     : "";
   const winNote = isWin
-    ? "\nOn Windows, any `--net` grant is all-or-nothing: it opens the network entirely rather than per host.\n"
+    ? "\nOn Windows, any `--net` grant is all-or-nothing: it opens every internet host rather than one host at a time.\n"
     : "";
   const macNote =
     platform === "darwin"

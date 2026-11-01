@@ -6,6 +6,7 @@ import { defaultLocalAuthHostDeps } from "../connectors/local-auth/local-auth-ho
 import type { ResolvedUserMcpRegistration } from "../connectors/user-mcp-registration.ts";
 import type { ToolExecutor } from "../engine/executor.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
+import { describeNetworkReach, type ReachRunner } from "../extensions/extension-reach.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
@@ -30,23 +31,11 @@ import {
   handleConnectorUserMcpCall,
   handleConnectorUserMcpTools,
   refuseExtensionBackedRemoval,
-  requireAddMcpPlatform,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
 export { ConnectorRpcError } from "./connector-rpc-shared.ts";
-
-/**
- * Shown in the `connector.addMcp` prompt on Windows when hosts are requested: the AppContainer
- * `internetClient` capability cannot be scoped per host, so the listed hosts are not a bound there.
- */
-const WIN32_USER_MCP_NETWORK_NOTE =
-  "Windows AppContainer network access is all-or-nothing (internetClient): this server can reach any host, not only the ones listed.";
-
-/** The same prompt on macOS: the profile filters by port and cannot name a host. */
-const DARWIN_USER_MCP_NETWORK_NOTE =
-  "macOS limits network access by port, not host: this server can reach any host on the declared ports, not only the ones listed.";
 
 /**
  * Extracted from the `connector.adoptLocalAuth` case below and exported so the WIRING — which
@@ -77,7 +66,7 @@ async function addMcpBehindOwnerGate(
   //    bad host, id collision) throws here and never prompts the owner.
   const resolved = resolveConnectorAddMcp(ctx);
   // 2. The payload the owner approves IS the resolved registration that step 5 stores.
-  const payload = buildAddMcpConsentPayload(resolved, requireAddMcpPlatform(ctx));
+  const payload = buildAddMcpConsentPayload(resolved, ctx.sandboxRunner);
   // 3. The HITL gate: anything but "proceed" stops here, before any write.
   const gateResult = await toolExecutor.gate({ type: "connector.addMcp", payload });
   if (gateResult !== "proceed") return { kind: "hit", value: gateResult };
@@ -98,7 +87,7 @@ async function addMcpBehindOwnerGate(
  */
 export function buildAddMcpConsentPayload(
   resolved: ResolvedUserMcpRegistration,
-  platform: NodeJS.Platform,
+  sandbox: ReachRunner | undefined,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = {
     serviceId: resolved.serviceId,
@@ -109,8 +98,9 @@ export function buildAddMcpConsentPayload(
     modelAccess: resolved.modelAccess,
   };
   if (resolved.netHosts.length > 0) {
-    if (platform === "win32") payload["networkNote"] = WIN32_USER_MCP_NETWORK_NOTE;
-    if (platform === "darwin") payload["networkNote"] = DARWIN_USER_MCP_NETWORK_NOTE;
+    // Only where the reach is wider than the listed hosts (or unknown): a per-host sandbox needs no note.
+    const reach = describeNetworkReach(sandbox, resolved.netHosts);
+    if (reach.kind !== "hosts" && reach.kind !== "none") payload["networkNote"] = reach.text;
   }
   return payload;
 }
@@ -128,6 +118,8 @@ export async function dispatchConnectorRpc(options: {
    * because no method but `connector.addMcp` reads it; that one refuses without it.
    */
   platform?: NodeJS.Platform;
+  /** The sandbox runner `connector.addMcp`'s prompt describes the network reach from. */
+  sandboxRunner?: ReachRunner;
   notify?: (method: string, params: Record<string, unknown>) => void;
   toolExecutor?: ToolExecutor;
   /**
@@ -152,6 +144,7 @@ export async function dispatchConnectorRpc(options: {
     syncScheduler,
     connectorMesh,
     platform,
+    sandboxRunner,
     notify,
     toolExecutor,
     userMcpExecutor,
@@ -168,6 +161,7 @@ export async function dispatchConnectorRpc(options: {
     syncScheduler,
     connectorMesh,
     ...(platform === undefined ? {} : { platform }),
+    ...(sandboxRunner === undefined ? {} : { sandboxRunner }),
     ...(notify === undefined ? {} : { notify }),
     ...(resolveCommand === undefined ? {} : { resolveCommand }),
     ...(realpath === undefined ? {} : { realpath }),
