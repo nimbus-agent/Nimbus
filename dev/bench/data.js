@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793554113783,
+  "lastUpdate": 1793559809445,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7cc73758147e8a539e949de283b4b08a2c8fc80d",
-          "message": "docs(install): restore the documented one-liner install, now proven against a published release (#1186)\n\nRestores the `curl | sh` / `irm | iex` one-liner to the user-facing\ninstall\ndocs. Docs only — no installer, workflow or product code is touched.\n\nCloses #1167.\n\n## Why now\n\n#1172 gave both installers a download mode, but deliberately did **not**\ndocument the one-liner, for two stated reasons. Both are now discharged:\n\n1. **The published script can do what the docs would claim.** `v2.4.1`\nis the\n   first release whose published `install.sh` and `install.ps1` are the\ndownload-capable scripts. Before it, that URL served the old\nlocal-staging\nscript — documenting the one-liner then would have repeated #1167\nexactly.\n2. **`released-install-smoke.yml` is no longer unproven.** Its\n`release:`\n   trigger fired on `v2.4.1` and **all six jobs passed**\n([run\n31791116081](https://github.com/nimbus-agent/Nimbus/actions/runs/31791116081)):\n`documented install` and `documented one-liner` on ubuntu-24.04,\nmacos-14 and\nwindows-2022 — the last covering **both** PowerShell 7 and stock Windows\nPowerShell 5.1, a leg that had never once passed before the\n`EAP=Continue`\nfix in #1179. That run is also the first green exercise anywhere of the\nGPG\n   true-positive path.\n\n## What the docs now say\n\nmacOS and Windows lead with **the exact spelling that green run\nexecuted**. Linux deliberately still leads with the `.deb` — the only\npath that resolves `bubblewrap`/`libcap2-bin` — and offers the one-liner\nbeneath it as the no-`sudo` alternative:\n\n```bash\ncurl -fsSL https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.sh | sh -s -- --yes\n```\n\n```powershell\n$url = \"https://github.com/nimbus-agent/Nimbus/releases/latest/download/install.ps1\"\n& ([scriptblock]::Create((irm $url))) -Yes\n```\n\nThe Windows form is spelled with `scriptblock` rather than `irm ... |\niex`\nbecause `iex` cannot pass `-Yes` through — the docs say so rather than\nleaving\nit looking like an affectation. The extract-then-run archive path stays\nbelow\nit, itself covered by the `documented install` jobs.\n\n**Every command that actually installs Nimbus is therefore backed by a\ngreen\npost-release job.** That is precisely the property #1167 lacked: the\nprevious\nfailure was not a broken URL — `documented-asset-urls.ts` was passing\nthroughout — but a URL that resolved to a script that could not run. One\ndocumented command remains covered by no job: the manual `gpg\n--recv-keys` /\n`gpg --verify` snippet in the install guide's Linux tab, which the\n`documented install` job skips. That gap is named in the changelog\nrather than\nrounded away.\n\n## Honesty corrections found while writing this\n\nEach was verified against the installer sources, not restated from the\nprevious\ndocs:\n\n- The Linux one-liner is **x86-64 only** (`detect_asset` has no Linux\narm64 arm)\nand only **warns** about `bubblewrap` rather than installing it. The\n`.deb`\nremains the only path that resolves dependencies, and is still\ndocumented\n  first for Linux.\n- The archive path performs **no download and therefore no\nverification** — it\ninstalls the binaries staged beside it. It was previously offered as the\ncautious alternative to the pipe; it is in fact the *less* checked of\nthe two,\n  and now says so.\n- Signature verification is skipped when **`gpg` is missing or\nunrunnable**, not\n  only when `SHA256SUMS.asc` is unavailable. Both cases print a labelled\n`SIGNATURE NOT CHECKED` notice — never a silent downgrade — and the docs\nnow\ndistinguish a *skipped* verification from a *failed* one, which installs\n  nothing.\n- The install guide's standing claim that the installer \"configures the\nGateway\nto autostart with your session\" was **false on all three platforms**,\nand is\nremoved. The same file's \"What the installer does\" section already said\nthe\n  opposite two screens further down.\n- **Found in review, and worse than reported:** the README's \"every\nrelease\n  artefact is GPG-signed … with a SHA-256 manifest and build-provenance\nattestations\" overstated in three ways at once. Checking the v2.4.1\nasset list\nsettles it: only the Linux artefacts and the AppImage carry a detached\n`.asc`\n  — the macOS tarballs, the Windows zip, the `.pkg`/`.msi` and every\n`nimbus-cli-*` carry none, so a reader following that sentence would go\nlooking\nfor a signature that does not exist. `SHA256SUMS` covers 36 of the 39\nassets\n(the 3 it omits are itself, its own `.asc`, and `latest.json`), so the\nmanifest\n  — not per-artefact signing — is the cross-platform proof. And\n  build-provenance attestation has exactly two `subject-path` sites in\n  `release.yml`: the gateway and CLI binaries, not the packages.\n\nA new \"Installing from a release\" section documents the remote path end\nto end:\nthe embedded release key and pinned primary fingerprint (no keyserver is\ncontacted), the exactly-one-manifest-line rule, the expired/revoked-key\nrefusal,\nand the deliberate absence of any fingerprint-override environment\nvariable.\n\n## Verification\n\n- Both documented one-liners executed **against the published scripts**\nin\n`--dry-run` / `-DryRun` — the Windows spelling via PowerShell on\nWindows, the\nUnix spelling via WSL Ubuntu. Both resolved and exited cleanly, which\nalso\nconfirms `releases/latest/download/install.sh` is now the\ndownload-capable\n  script.\n- The real end-to-end path is cited, not re-run locally: run\n31791116081.\n- `bun run preflight:fast` — PASSED.\n- `bun run audit:links` over the whole branch — 0 errors.\n(`preflight:fast`\n  does not run lychee.)\n- `bun test scripts/` — 1351 pass / 0 fail, the same 1377-test, 108-file\nscope as CI's `Unit + Coverage — ubuntu-24.04` step. The first push\nfailed\n  that step: `documented-asset-urls` read the shell-brace shorthand\n`…/download/install.{sh,ps1}` in my changelog entry as an asset\nliterally\nnamed `install.`, which nothing stages. Both names are now spelled in\nfull.\n`preflight:fast` does not run the test suite, so it could not have\ncaught this.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Documentation**\n- Expanded installation guidance for macOS, Linux, and Windows,\nincluding one-command installers and archive-based setup.\n- Added Linux guidance for no-`sudo` installations, dependency\nlimitations, platform-specific behavior, PATH updates, and shell\nreopening.\n- Added release resolution and detailed checksum/signature verification\nguidance, including unavailable-verification scenarios.\n  - Clarified that installers do not configure autostart.\n- **Changelog**\n- Documented restored one-line installation commands and cross-platform\npost-release verification.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-14T17:20:59Z",
-          "tree_id": "48660116c1d6fa7d12220f4d7d3067461d7217f3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7cc73758147e8a539e949de283b4b08a2c8fc80d"
-        },
-        "date": 1786728755301,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 322.81724204999773,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 321.15175175,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.10933849999964,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d6ceda6cd71d6ced9a154edb02c2b34ad2c13c94",
+          "message": "chore: release main (#1850)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.14.2</summary>\n\n##\n[10.14.2](https://github.com/nimbus-agent/Nimbus/compare/v10.14.1...v10.14.2)\n(2026-11-01)\n\n\n### Bug Fixes\n\n* **sandbox:** Windows diagnostics report all_or_nothing, not per_host\n([#1848](https://github.com/nimbus-agent/Nimbus/issues/1848))\n([770e59f](https://github.com/nimbus-agent/Nimbus/commit/770e59fbedaf7b13e4fd0317f307f153b8ef84fe))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-01T20:52:56+02:00",
+          "tree_id": "d6b8945bb2788bfc398074dacec3bb58783caba1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d6ceda6cd71d6ced9a154edb02c2b34ad2c13c94"
+        },
+        "date": 1793559805763,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 285.97938579999754,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 290.84051424999853,
             "unit": "ms"
           }
         ]
