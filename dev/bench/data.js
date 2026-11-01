@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793510400805,
+  "lastUpdate": 1793510775393,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ffa54b3eafdbf2370b39e850e0a3ee0209894a7d",
-          "message": "feat(agents): attribute Sentry error issues to people (#1182)\n\n## Summary\n\nCompletes sub-project C of the `nimbus negotiate` substrate. PR 1\n(#1177) attributed PagerDuty incidents; this attributes Sentry error\nissues.\n\nOne new graph edge — `person --assigned--> error_issue` — built from\nSentry's `assignedTo` actor.\n\n**The headline is what it does not need.** Unlike the PagerDuty half,\nthis needs **no connector change, no re-sync, and no new Sentry token\nscope**. `sentry-issue-mapping.ts` has stored `assignedTo` raw in\n`item.metadata` since #1172 for exactly this purpose, so `nimbus index\nregraph` rebuilds attribution for every Sentry issue already indexed,\nfrom stored rows alone, with no network call. There is a test that\nproves it rather than asserting it: it wipes `graph_relation` and\n`graph_entity`, confirms the graph is empty, regraphs, and confirms the\nedge returns.\n\nTwo deliberate refusals, both stated rather than hidden:\n\n- **A team assignment attributes to nobody.** Sentry allows assigning an\nissue to a team; a team has no canonical email, so minting a person row\nfor one would pollute every people-based brief. Only `type: \"user\"`\nactors resolve.\n- **Sentry gets no \"resolved by\" edge.** Determining who resolved a\nSentry issue needs a per-issue activity-feed request. The design\ndeclined that cost rather than guess.\n\n`nimbus negotiate` reports the count as `errorIssuesAssigned` on its own\nrendered line, kept **separate** from the PagerDuty incident counts and\nnever summed into them — an error group that never paged anyone is not\nan incident, which is the whole reason Sentry issues have their own\nentity type.\n\nNo migration: `assigned` was already registered at v7. `authorId` stays\n`null`.\n\nSpec and plan are in\n`docs/superpowers/{specs,plans}/2026-08-14-incident-attribution-*`, with\nboth review rounds.\n\n## Related Issue\n\nRelates to the `nimbus negotiate` substrate (sub-project C, second and\nfinal PR). No tracking issue.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`) — 597 pass across `graph/` +\n`agents/`, plus the negotiate e2e scenario\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a, none added\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable — untouched\n- [x] Does not touch `docs/README.md`\n\n## Coverage\n\n`engine/` and `vault/` were not modified, so neither coverage gate\napplies. No new source files — both new modules landed in #1177 and\ncleared the floor there. `audit:coverage-floor` is full-tier and did not\nrun locally; CI on Ubuntu is authoritative for it.\n\n## Testing\n\nBuilt task-by-task with a review after each, then a whole-branch review\nand one fix wave. Local gates: `typecheck` 0, `lint` 0, `lint:markdown`\n0, `preflight:fast` 28/28 green.\n\nTwo behaviours were **red-proven** rather than asserted:\n\n- Edge retirement — adding `\"assigned\"` to `CROSS_ITEM_RELATION_TYPES`\nmade the re-assignment test fail `Expected length: 1, Received length:\n2`. It is deliberately absent from that set so the populator's existing\nclear retires the edge and a re-assignment self-heals.\n- The `type: \"user\"` guard — removing it made a\nteam-actor-carrying-an-email case fail `Expected length: 0, Received\nlength: 1`. That is the one payload shape which would produce a *wrong*\nedge (a team address resolving to a person row) rather than merely no\nedge; every other fail-closed case degrades safely, so it was the only\none that could pin the guard.\n\n## Notes for Reviewers\n\n**The one seam worth your attention: `assigned` is now polysemous.**\nBefore this PR it only ever targeted `incident` entities; it now also\ntargets `error_issue`. Every read site was audited repo-wide and all are\nendpoint-type-scoped. The structural reason it is safe:\n`graph_entity.id` is `sha256(\"nimbus.graph.v1\\0\" + type + \"\\0\" +\nexternalId)` — type-namespaced — so an `error_issue` id can never equal\nan `incident` id, and a Sentry edge can neither satisfy nor break\n`negotiate`'s `unattributable` `NOT EXISTS`. If you add a reader of\n`type = 'assigned'`, constrain the target entity type.\n\n**Two gap-note details were corrected, including one inherited from\n#1177.** Both notes previously fell back to a shared default claiming\nthe edges are \"not yet emitted by the graph populator\" — false for\n`resolves`→`incident` since #1177 and for `assigned`→`error_issue` as of\nthis branch. Worse, the Sentry remediation was a no-op in its most\ncommon case: an unassigned Sentry issue is the norm, so a user with\nhundreds of unassigned issues was told the feature was unbuilt and to\nrun `nimbus index regraph`, which changes nothing. Both now state the\nactual cause, and the tests pin the exact detail text so a revert to the\nfalse default fails.\n\n**`docs/cli-reference.md` was corrected too** — it still described a\nsix-lane agent and claimed \"Incidents resolved … are not available at\nall\", both false since #1177. That drift was in a file no task touched;\nthis PR was the second to add rendered output to that section without\nupdating it.\n\n**Open risk carried forward from #1177, unchanged and accepted.**\nWhether a real Sentry user actor carries an `email` field is unverified\nagainst a live API response — no Sentry credentials exist for this\nproject, and a fixture built from the same assumption as the parser\nwould prove nothing. The populator fails closed: a missing or malformed\nemail yields **no edge rather than a wrong one**, and that posture is\ntested with six cases. If the assumption is wrong, this half emits zero\nedges — and the corrected gap note now names that as a possible cause\ninstead of blaming the populator.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-14T09:43:33Z",
-          "tree_id": "9eef6ce87882928c3d1cada6bd54db9676434eaf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ffa54b3eafdbf2370b39e850e0a3ee0209894a7d"
-        },
-        "date": 1786701288400,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.5409931999999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.1808793000011,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 226.43084019999952,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e61f18776bd423edb8be114a0f3d89350f710ec0",
+          "message": "chore: release main (#1844)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.14.0</summary>\n\n##\n[10.14.0](https://github.com/nimbus-agent/Nimbus/compare/v10.13.0...v10.14.0)\n(2026-11-01)\n\n\n### Features\n\n* **sandbox:** ship the Linux network forwarder, so a child reaches only\nits declared hosts\n([#1841](https://github.com/nimbus-agent/Nimbus/issues/1841))\n([860cfd8](https://github.com/nimbus-agent/Nimbus/commit/860cfd87df3ce98cfacedbd85ed43ce0dc1dee05))\n\n\n### Bug Fixes\n\n* **sandbox:** let a macOS child with a declared network start, limited\nto its declared ports\n([#1842](https://github.com/nimbus-agent/Nimbus/issues/1842))\n([c4730bb](https://github.com/nimbus-agent/Nimbus/commit/c4730bbbf0c03db327f6f1ddb03eee232111e77b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-01T05:19:01Z",
+          "tree_id": "120cbee54b4a68b95114546d309b269bf4e3a30e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e61f18776bd423edb8be114a0f3d89350f710ec0"
+        },
+        "date": 1793510771956,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 173.64078959999716,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 166.7566299499973,
             "unit": "ms"
           }
         ]
