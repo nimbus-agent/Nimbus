@@ -55,8 +55,10 @@ recorded is signed into that version.
 
 The **Registry liveness** workflow runs every Monday (and on demand). For the newest stable
 version of each package it checks that the hosts the manifest declares still answer, and re-runs
-the version's eval suites with the latest Nimbus release. Both run in the sandbox with no
-credentials. It signs only what it observed, dated and with the Nimbus version, into
+the version's eval suites and the baseline with the latest Nimbus release. The suites and the
+baseline run in the Nimbus eval sandbox with no credentials. The host check runs in the action's
+own process on the runner, also with no credentials: it only connects to the host (it sends no
+request and reads no reply beyond the TLS certificate). It signs only what it observed, dated and with the Nimbus version, into
 \`liveness.json\` on \`gh-pages\`, with a separate liveness key that cannot sign the index. A
 line is a dated observation: it never says the extension works. A registry whose index names no
 liveness key publishes none.
