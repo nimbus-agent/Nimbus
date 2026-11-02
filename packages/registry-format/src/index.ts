@@ -81,6 +81,7 @@ export {
 } from "./extension-id.ts";
 export { publisherKeyFingerprint } from "./fingerprint.ts";
 export {
+  canonicalKeyBytes,
   isValidSemver,
   MAX_INDEX_BYTES,
   parseRegistryIndex,
@@ -97,6 +98,7 @@ export {
   readRegistryStatements,
   registryIndexDigest,
   registryIndexSigningBytes,
+  sameKeyBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
@@ -111,6 +113,8 @@ export {
   livenessDigest,
   livenessSigningBytes,
   MAX_LIVENESS_BYTES,
+  NIMBUS_VERSION_RE,
+  parseLivenessEntry,
   parseLivenessFile,
   readLivenessEntry,
   signLivenessFile,
@@ -197,6 +201,7 @@ export {
   type ScoreDecision,
   type Scores,
 } from "./scores-file.ts";
+export { compareVersionsDesc } from "./semver.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

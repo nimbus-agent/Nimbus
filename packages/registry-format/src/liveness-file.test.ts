@@ -8,6 +8,7 @@ import {
   type LivenessFile,
   livenessDigest,
   MAX_LIVENESS_BYTES,
+  parseLivenessEntry,
   parseLivenessFile,
   readLivenessEntry,
   signLivenessFile,
@@ -217,5 +218,40 @@ describe("readLivenessEntry", () => {
       state: "found",
       entry,
     });
+  });
+});
+
+describe("parseLivenessEntry", () => {
+  const at = "2026-11-02T00:00:00Z";
+  test("accepts what readLivenessEntry finds", () => {
+    const good = [
+      ENTRY,
+      { checkedAt: at, tests: { cases: 2, passed: 1 } },
+      { checkedAt: at, baseline: { scorer: 1, passed: true, tools: 3 } },
+    ];
+    for (const g of good) {
+      const r = readLivenessEntry(docWith({ "pkg@1.0.0": g }), "pkg", "1.0.0");
+      expect(r.state).toBe("found");
+      expect(parseLivenessEntry(g)).toEqual((r as { entry: LivenessEntry }).entry);
+    }
+  });
+  test("throws ERR_LIVENESS_INVALID on what readLivenessEntry calls invalid, baseline refusals included", () => {
+    const bad = [
+      null,
+      [],
+      { checkedAt: at },
+      { checkedAt: at, hosts: { declared: 3, answered: 4 } },
+      { checkedAt: at, baseline: { scorer: 9, passed: true, tools: 3 } },
+    ];
+    for (const b of bad) {
+      expect(readLivenessEntry(docWith({ "pkg@1.0.0": b }), "pkg", "1.0.0").state).toBe("invalid");
+      let code: string | undefined;
+      try {
+        parseLivenessEntry(b);
+      } catch (e) {
+        code = (e as RegistryError).code;
+      }
+      expect(code).toBe("ERR_LIVENESS_INVALID");
+    }
   });
 });

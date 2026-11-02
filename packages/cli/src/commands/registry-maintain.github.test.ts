@@ -19,6 +19,7 @@ import { join, relative } from "node:path";
 import {
   parseRegistryConfig,
   publicKeyFromSeed,
+  publisherKeyFingerprint,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
 import { parse as parseYaml } from "yaml";
@@ -29,6 +30,8 @@ import { type MaintainBuild, runRegistryMaintain } from "./registry-maintain.ts"
 import {
   CHECKOUT_ACTION,
   DOWNLOAD_ARTIFACT_ACTION,
+  LIVENESS_DIR,
+  LIVENESS_KEY_SECRET,
   REGISTRY_ACTION_PATH,
   ROOT_KEY_SECRET,
   SCORES_ARTIFACT,
@@ -75,15 +78,18 @@ function tree(root: string): string[] {
 async function initGithub(
   extra: string[] = ["--action-ref", SHA],
   build: MaintainBuild = DEV,
-): Promise<{ dir: string; key: string; site: string; code: number }> {
+): Promise<{ dir: string; key: string; liveness: string; site: string; code: number }> {
   const dir = join(tmp, "reg");
   const key = join(tmp, "reg-key");
+  // Never the default under the real home directory.
+  const liveness = join(tmp, "reg-liveness-key");
+  const own = extra.includes("--liveness-key") ? [] : ["--liveness-key", liveness];
   const code = await runRegistryMaintain(
-    ["init", dir, "--key", key, "--github", ...extra],
+    ["init", dir, "--key", key, "--github", ...own, ...extra],
     io,
     build,
   );
-  return { dir, key, site: `${dir}-site`, code };
+  return { dir, key, liveness, site: `${dir}-site`, code };
 }
 
 function workflow(dir: string, name: string): { text: string; doc: Record<string, unknown> } {
@@ -117,12 +123,16 @@ function checkoutStep(doc: Record<string, unknown>, name: string): Step {
   return s;
 }
 
+/** A GitHub Actions expression, `${{ inner }}`. */
+const expr = (inner: string): string => `\${{ ${inner} }}`;
+
 describe("registry maintain init --github", () => {
   test("writes exactly the main-branch tree into <dir>, with no index.json", async () => {
     const { dir, code } = await initGithub();
     expect(code).toBe(0);
     expect(tree(dir)).toEqual([
       ".github/workflows/registry-check.yml",
+      ".github/workflows/registry-liveness.yml",
       ".github/workflows/registry-sign.yml",
       "README.md",
       "extensions/.gitattributes",
@@ -179,8 +189,12 @@ describe("registry maintain init --github", () => {
 
   test("every uses: in both workflows is pinned to a 40-hex SHA with a version comment", async () => {
     const { dir } = await initGithub();
-    const expected: Record<string, number> = { "registry-check.yml": 2, "registry-sign.yml": 6 };
-    for (const name of ["registry-check.yml", "registry-sign.yml"]) {
+    const expected: Record<string, number> = {
+      "registry-check.yml": 2,
+      "registry-liveness.yml": 6,
+      "registry-sign.yml": 6,
+    };
+    for (const name of ["registry-check.yml", "registry-liveness.yml", "registry-sign.yml"]) {
       const usesLines = workflow(dir, name)
         .text.split("\n")
         .filter((l) => /^\s*-?\s*uses:/.test(l));
@@ -207,7 +221,7 @@ describe("registry maintain init --github", () => {
   test("lintWorkflow finds nothing in either workflow, bash syntax included where bash runs", async () => {
     const { dir } = await initGithub();
     const bash = makeBashChecker() ?? undefined;
-    for (const name of ["registry-check.yml", "registry-sign.yml"]) {
+    for (const name of ["registry-check.yml", "registry-liveness.yml", "registry-sign.yml"]) {
       expect(lintWorkflow(name, workflow(dir, name).text, bash)).toEqual([]);
     }
   });
@@ -483,6 +497,7 @@ describe("registry maintain init --github", () => {
     ["--site", ["--site", "x"]],
     ["--default-branch", ["--default-branch", "trunk"]],
     ["--no-publisher-namespace", ["--no-publisher-namespace"]],
+    ["--liveness-key", ["--liveness-key", "x"]],
   ] as const)("%s without --github refuses", async (_name, flag) => {
     const code = await runRegistryMaintain(
       ["init", join(tmp, "reg"), "--key", join(tmp, "k"), ...flag],
@@ -509,7 +524,19 @@ describe("registry maintain init --github", () => {
     const dir = join(tmp, "site", "reg");
     const key = join(tmp, "k");
     const code = await runRegistryMaintain(
-      ["init", dir, "--key", key, "--github", "--action-ref", SHA, "--site", join(tmp, "site")],
+      [
+        "init",
+        dir,
+        "--key",
+        key,
+        "--github",
+        "--liveness-key",
+        join(tmp, "lk"),
+        "--action-ref",
+        SHA,
+        "--site",
+        join(tmp, "site"),
+      ],
       io,
       DEV,
     );
@@ -525,7 +552,17 @@ describe("registry maintain init --github", () => {
   ])("refuses a --key path %s, before generating any key", async (_what, rel) => {
     const key = join(tmp, ...rel);
     const code = await runRegistryMaintain(
-      ["init", join(tmp, "reg"), "--key", key, "--github", "--action-ref", SHA],
+      [
+        "init",
+        join(tmp, "reg"),
+        "--key",
+        key,
+        "--github",
+        "--liveness-key",
+        join(tmp, "lk"),
+        "--action-ref",
+        SHA,
+      ],
       io,
       DEV,
     );
@@ -609,5 +646,187 @@ describe("registry maintain init --github", () => {
     expect(err.join("")).toContain(".nojekyll exists");
     expect(readFileSync(join(tmp, "reg-site", ".nojekyll"), "utf8")).toBe("mine");
     expect(existsSync(key)).toBe(false);
+  });
+});
+
+describe("registry maintain init --github: the liveness workflow and key", () => {
+  const ENV_TEXT = 'Create the environment "registry-liveness"';
+
+  test("registry-liveness.yml: weekly + dispatch, read-only, own concurrency group, two jobs", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-liveness.yml");
+    expect(doc["on"]).toEqual({ schedule: [{ cron: "23 5 * * 1" }], workflow_dispatch: null });
+    expect(doc["permissions"]).toEqual({ contents: "read" });
+    expect(doc["concurrency"]).toEqual({ group: "registry-liveness", "cancel-in-progress": false });
+    expect(Object.keys(doc["jobs"] as object)).toEqual(["check", "sign"]);
+  });
+
+  test("the check job runs extension code with no secret and the token only in the gateway step", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-liveness.yml");
+    const check = job(doc, "check");
+    expect(check["timeout-minutes"]).toBe(60);
+    expect(check["runs-on"]).toBe("ubuntu-24.04");
+    expect(check["environment"]).toBeUndefined();
+    expect(check["permissions"]).toEqual({ contents: "read" });
+    expect(check["outputs"]).toEqual({ "nimbus-version": expr("steps.gateway.outputs.version") });
+    expect(JSON.stringify(check)).not.toContain("secrets.");
+    expect(checkoutStep(doc, "check").with).toEqual({
+      "fetch-depth": 0,
+      "persist-credentials": false,
+    });
+    const tokenSteps = steps(doc, "check").filter((s) =>
+      JSON.stringify(s).includes("github.token"),
+    );
+    expect(tokenSteps.map((s) => s.name)).toEqual(["Download the latest Nimbus gateway"]);
+    expect((tokenSteps[0] as Step & { env?: unknown }).env).toEqual({
+      GH_TOKEN: expr("github.token"),
+    });
+    expect(usesStep(doc, "check", REGISTRY_ACTION_PATH).with).toEqual({
+      mode: "liveness-check",
+      "default-branch": "main",
+      "nimbus-gateway": GATEWAY_PATH,
+      "nimbus-version": expr("steps.gateway.outputs.version"),
+    });
+    const upload = usesStep(doc, "check", "actions/upload-artifact@");
+    expect(upload.with).toEqual({
+      name: "registry-liveness",
+      path: "liveness-results.json",
+      "if-no-files-found": "error",
+    });
+  });
+
+  test("the latest-release gateway step resolves, validates and verifies only its line", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-liveness.yml");
+    const step = steps(doc, "check").find((s) => s.name === "Download the latest Nimbus gateway") as
+      | (Step & { id?: string; shell?: string })
+      | undefined;
+    expect(step?.id).toBe("gateway");
+    expect(step?.shell).toBe("bash");
+    const text = step?.run ?? "";
+    const lines = text.split("\n").map((l) => l.trim());
+    for (const line of [
+      "set -euo pipefail",
+      'tag="$(gh release view --repo nimbus-agent/Nimbus --json tagName -q .tagName)"',
+      `version="\${tag#v}"`,
+      "grep -E '^[0-9a-f]{64}  nimbus-gateway-linux-x64$' SHA256SUMS > CHECKSUM.txt",
+      'test "$(wc -l < CHECKSUM.txt)" -eq 1',
+      "sha256sum -c CHECKSUM.txt",
+      "chmod +x nimbus-gateway-linux-x64",
+      `echo "version=\${version}" >> "$GITHUB_OUTPUT"`,
+    ]) {
+      expect(lines).toContain(line);
+    }
+    expect(text).toContain(String.raw`^[0-9]+\.[0-9]+\.[0-9]+$`);
+    expect(text).toContain(
+      `base="https://github.com/nimbus-agent/Nimbus/releases/download/\${tag}"`,
+    );
+    expect(text).toContain('"$base/nimbus-gateway-linux-x64"');
+    expect(text).toContain('"$base/SHA256SUMS"');
+    expect(text).not.toContain("sha256sum -c SHA256SUMS");
+  });
+
+  test("the sign job holds only the liveness key: own environment, no shell, download outside the workspace", async () => {
+    const { dir } = await initGithub();
+    const { doc } = workflow(dir, "registry-liveness.yml");
+    const sign = job(doc, "sign");
+    expect(sign["needs"]).toBe("check");
+    expect(sign["timeout-minutes"]).toBe(15);
+    expect(sign["environment"]).toBe("registry-liveness");
+    expect(sign["permissions"]).toEqual({ contents: "write" });
+    expect(runLines(doc, "sign")).toEqual([]);
+    // The checkout keeps its credentials: the action pushes gh-pages with them.
+    expect(checkoutStep(doc, "sign").with?.["persist-credentials"]).toBeUndefined();
+    const download = usesStep(doc, "sign", "actions/download-artifact@");
+    expect(download.with).toEqual({ name: "registry-liveness", path: LIVENESS_DIR });
+    expect(LIVENESS_DIR.startsWith(`${expr("runner.temp")}/`)).toBe(true);
+    expect(usesStep(doc, "sign", REGISTRY_ACTION_PATH).with).toEqual({
+      mode: "liveness-sign",
+      "default-branch": "main",
+      "liveness-key": `\${{ secrets.${LIVENESS_KEY_SECRET} }}`,
+      results: `${LIVENESS_DIR}/liveness-results.json`,
+      "nimbus-version": expr("needs.check.outputs.nimbus-version"),
+    });
+    expect(JSON.stringify(sign)).not.toContain(ROOT_KEY_SECRET);
+    expect(JSON.stringify(sign)).not.toContain("github.token");
+  });
+
+  test("prints the liveness fingerprint and file, and the first index carries exactly that key", async () => {
+    const { site, liveness, key } = await initGithub();
+    const text = out.join("");
+    const seed = decodeBase64(readFileSync(liveness, "utf8").trim());
+    const pub = encodeBase64(publicKeyFromSeed(seed));
+    const index = readIndexFile(join(site, "index.json"));
+    expect(index.livenessKey).toBe(pub);
+    expect(verifyIndexSignature(index)).toBe(true);
+    expect(text).toContain(`liveness fingerprint: ${publisherKeyFingerprint(pub)}`);
+    expect(text).toContain(`liveness key file:    ${liveness}`);
+    expect(pub).not.toBe(index.rootKey);
+    expect(readFileSync(key, "utf8")).not.toBe(readFileSync(liveness, "utf8"));
+    expect(text.split(readFileSync(liveness, "utf8").trim()).length - 1).toBe(0);
+  });
+
+  test("the owner steps create the no-reviewer environment before the liveness secret, before pushing main", async () => {
+    const { dir, liveness } = await initGithub();
+    const text = out.join("");
+    const secret = `gh secret set ${LIVENESS_KEY_SECRET} --env registry-liveness --repo <owner>/<repo>`;
+    const env = text.indexOf(ENV_TEXT);
+    expect(env).toBeGreaterThan(-1);
+    expect(text.indexOf(secret)).toBeGreaterThan(env);
+    expect(text).toContain(`${secret} < '${liveness}'`);
+    expect(text).toContain(`Get-Content -Raw '${liveness}' | ${secret}`);
+    expect(text).toMatch(/no required reviewers/);
+    expect(text).toMatch(/false dated check lines/);
+    expect(env).toBeGreaterThan(text.indexOf(`gh secret set ${ROOT_KEY_SECRET}`));
+    expect(text.indexOf(secret)).toBeLessThan(text.indexOf(`push ${dir} to the repository's main`));
+  });
+
+  test.each([
+    ["inside <dir>", ["reg", ".nimbus", "lk"]],
+    ["inside the site folder", ["reg-site", "lk"]],
+    ["equal to a file path in <dir>", ["reg", "README.md"]],
+  ])("refuses a --liveness-key path %s, before generating any key", async (_what, rel) => {
+    const lk = join(tmp, ...rel);
+    const { key, code, dir } = await initGithub(["--action-ref", SHA, "--liveness-key", lk]);
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("liveness key");
+    expect(err.join("")).toContain("pushed to GitHub");
+    expect(existsSync(lk)).toBe(false);
+    expect(existsSync(key)).toBe(false);
+    expect(existsSync(dir)).toBe(false);
+  });
+
+  test("refuses a --liveness-key equal to --key, before generating any key", async () => {
+    const same = join(tmp, "reg-key");
+    const { key, code } = await initGithub(["--action-ref", SHA, "--liveness-key", same]);
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("root key");
+    expect(existsSync(key)).toBe(false);
+  });
+
+  test("an existing liveness key file is not overwritten without --force, and nothing is written", async () => {
+    const lk = join(tmp, "lk");
+    writeFileSync(lk, "mine\n");
+    const { key, code } = await initGithub(["--action-ref", SHA, "--liveness-key", lk]);
+    expect(code).toBe(2);
+    expect(err.join("")).toContain("without --force");
+    expect(readFileSync(lk, "utf8")).toBe("mine\n");
+    expect(existsSync(key)).toBe(false);
+  });
+
+  test("a plain (non --github) init makes no liveness key and the index names none", async () => {
+    const dir = join(tmp, "plain");
+    expect(await runRegistryMaintain(["init", dir, "--key", join(tmp, "pk")], io)).toBe(0);
+    expect(readIndexFile(join(dir, "index.json")).livenessKey).toBeUndefined();
+  });
+
+  test("the README describes the weekly liveness checks and never says the extension works", async () => {
+    const { dir } = await initGithub();
+    const readme = readFileSync(join(dir, "README.md"), "utf8");
+    expect(readme).not.toContain("No other runtime check of the package is performed");
+    expect(readme).toContain("Registry liveness");
+    expect(readme).toContain("liveness.json");
+    expect(readme).toMatch(/never says[^.]*works/);
   });
 });

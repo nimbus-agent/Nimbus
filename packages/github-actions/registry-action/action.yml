@@ -11,10 +11,10 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign | score (a registry) | score-package (a registry that publishes with `nimbus registry maintain add`) | trust-check | trust-sign (the Nimbus trust feed)."
+    description: "Which job this is — one of: check | sign | score (a registry) | score-package (a registry that publishes with `nimbus registry maintain add`) | liveness-check (observe each package's newest stable version, keyless) | liveness-sign (sign liveness.json from liveness-check's results, with the liveness key alone) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
-    description: "The branch pull requests merge into (sign, score and trust-sign). Empty means origin's HEAD."
+    description: "The branch pull requests merge into (sign, score, liveness-sign and trust-sign). Empty means origin's HEAD."
     required: false
     default: ""
   root-key:
@@ -39,6 +39,21 @@ inputs:
 
   scores:
     description: "score and score-package: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
+    required: false
+    default: ""
+
+  liveness-key:
+    description: "The registry liveness signing key (liveness-sign; the base64 of its 32-byte Ed25519 seed). liveness-check, score, score-package and check with nimbus-gateway refuse it: those jobs run extension code and hold no secret."
+    required: false
+    default: ""
+
+  results:
+    description: "liveness-check: where the results file is written; liveness-sign: the results file to sign from, untrusted and re-checked entry by entry (relative to the workspace, or absolute); empty means liveness-results.json."
+    required: false
+    default: ""
+
+  nimbus-version:
+    description: "liveness-check and liveness-sign: the Nimbus release number (for example 10.14.1) whose gateway nimbus-gateway points at. liveness-check records it in the results; liveness-sign refuses a results file that names a different one."
     required: false
     default: ""
 

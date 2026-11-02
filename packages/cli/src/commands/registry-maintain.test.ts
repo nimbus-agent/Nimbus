@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -557,6 +558,196 @@ describe("registry maintain revoke-key / takedown / set-report-url (trust layer 
       ),
     ).toBe(0);
     expect(readIndexFile(join(second, "index.json")).reportUrl).toBe("https://example.com/r2");
+  });
+
+  test("USAGE lists set-liveness-key, --report-url and --liveness-key", async () => {
+    expect(await runRegistryMaintain(["nope"], io)).toBe(2);
+    const usage = err.join("");
+    expect(usage).toContain("set-liveness-key");
+    expect(usage).toContain("--report-url");
+    expect(usage).toContain("--liveness-key");
+  });
+});
+
+describe("registry maintain set-liveness-key", () => {
+  const PUB_SEED = new Uint8Array(32).fill(52);
+  const livenessPub = (seedFill: number): string =>
+    encodeBase64(publicKeyFromSeed(new Uint8Array(32).fill(seedFill)));
+
+  async function populated() {
+    const { dir, key } = await init();
+    expect(
+      await runRegistryMaintain(
+        ["add", dir, await makeExtension("a", { seed: PUB_SEED }), "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    expect(
+      await runRegistryMaintain(["set-report-url", dir, "https://example.com/r", "--key", key], io),
+    ).toBe(0);
+    const fp = publisherKeyFingerprint(encodeBase64(publicKeyFromSeed(PUB_SEED)));
+    expect(
+      await runRegistryMaintain(
+        ["revoke-key", dir, fp, "--publisher", "example", "--reason", "leaked", "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    out.length = 0;
+    return { dir, key };
+  }
+
+  test("an existing registry opts in: every field is carried and only livenessKey is added", async () => {
+    const { dir, key } = await populated();
+    const before = readIndexFile(join(dir, "index.json"));
+    const pub = livenessPub(7);
+    expect(await runRegistryMaintain(["set-liveness-key", dir, pub, "--key", key], io)).toBe(0);
+    const after = readIndexFile(join(dir, "index.json"));
+    expect(verifyIndexSignature(after)).toBe(true);
+    expect(after.sequence).toBe(before.sequence + 1);
+    expect(after.livenessKey).toBe(pub);
+    const { signature: _a, sequence: _b, generatedAt: _c, livenessKey: _d, ...rest } = after;
+    const { signature: _e, sequence: _f, generatedAt: _g, ...was } = before;
+    expect(rest).toEqual(was);
+    expect(after.reportUrl).toBe("https://example.com/r");
+    expect(Array.isArray(after.statements)).toBe(true);
+    expect(Object.keys(after.extensions)).toEqual(Object.keys(before.extensions));
+    expect(out.join("")).toContain(`liveness fingerprint: ${publisherKeyFingerprint(pub)}`);
+  });
+
+  test("a later add carries the liveness key", async () => {
+    const { dir, key } = await populated();
+    const pub = livenessPub(8);
+    await runRegistryMaintain(["set-liveness-key", dir, pub, "--key", key], io);
+    const ext = await makeExtension("b", { seed: PUB_SEED, version: "1.1.0" });
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(0);
+    expect(readIndexFile(join(dir, "index.json")).livenessKey).toBe(pub);
+  });
+
+  test.each([
+    ["not base64 of 32 bytes", "abc"],
+    ["44 characters with no padding", "A".repeat(44)],
+    ["43 characters then a letter", `${"A".repeat(43)}A`],
+  ])("refuses a public key that is %s", async (_what, bad) => {
+    const { dir, key } = await init();
+    const before = readFileSync(join(dir, "index.json"), "utf8");
+    expect(await runRegistryMaintain(["set-liveness-key", dir, bad, "--key", key], io)).toBe(2);
+    expect(readFileSync(join(dir, "index.json"), "utf8")).toBe(before);
+  });
+
+  test("refuses the registry's own root key as the liveness key", async () => {
+    const { dir, key } = await init();
+    const root = readIndexFile(join(dir, "index.json")).rootKey;
+    const before = readFileSync(join(dir, "index.json"), "utf8");
+    expect(await runRegistryMaintain(["set-liveness-key", dir, root, "--key", key], io)).toBe(2);
+    expect(err.join("")).toContain("root key");
+    expect(readFileSync(join(dir, "index.json"), "utf8")).toBe(before);
+  });
+
+  /** The same 32 bytes spelled with non-zero padding bits in the last character. */
+  const alias = (k: string): string => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    return `${k.slice(0, 42)}${chars[chars.indexOf(k[42] as string) + 1]}=`;
+  };
+
+  test("a non-canonical alias of the root key is refused as the root key", async () => {
+    const { dir, key } = await init();
+    const root = readIndexFile(join(dir, "index.json")).rootKey;
+    const before = readFileSync(join(dir, "index.json"), "utf8");
+    expect(alias(root)).not.toBe(root);
+    expect(Buffer.from(alias(root), "base64").equals(Buffer.from(root, "base64"))).toBe(true);
+    expect(
+      await runRegistryMaintain(["set-liveness-key", dir, alias(root), "--key", key], io),
+    ).toBe(2);
+    expect(err.join("")).toContain("root key");
+    expect(readFileSync(join(dir, "index.json"), "utf8")).toBe(before);
+  });
+
+  test("a non-canonical liveness key is refused as malformed", async () => {
+    const { dir, key } = await init();
+    expect(
+      await runRegistryMaintain(["set-liveness-key", dir, alias(livenessPub(3)), "--key", key], io),
+    ).toBe(2);
+    expect(err.join("")).toContain("canonical");
+  });
+
+  test("--generate says to keep the key file outside every clone", async () => {
+    const { dir, key } = await init();
+    await runRegistryMaintain(
+      ["set-liveness-key", dir, "--generate", "--liveness-key", join(tmp, "lk2"), "--key", key],
+      io,
+    );
+    expect(out.join("")).toContain("outside every clone");
+  });
+
+  test("needs exactly one of a public key and --generate", async () => {
+    const { dir, key } = await init();
+    expect(await runRegistryMaintain(["set-liveness-key", dir, "--key", key], io)).toBe(2);
+    expect(
+      await runRegistryMaintain(
+        ["set-liveness-key", dir, livenessPub(9), "--generate", "--key", key],
+        io,
+      ),
+    ).toBe(2);
+  });
+
+  test("--generate writes a 0600 key file, signs its public half, prints no seed, and needs --force to overwrite", async () => {
+    const { dir, key } = await init();
+    const lk = join(tmp, "lk");
+    expect(
+      await runRegistryMaintain(
+        ["set-liveness-key", dir, "--generate", "--liveness-key", lk, "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    const seedText = readFileSync(lk, "utf8").trim();
+    const pub = encodeBase64(publicKeyFromSeed(new Uint8Array(Buffer.from(seedText, "base64"))));
+    expect(readIndexFile(join(dir, "index.json")).livenessKey).toBe(pub);
+    expect(out.join("")).not.toContain(seedText);
+    expect(out.join("")).toContain(lk);
+    if (process.platform !== "win32") expect(statSync(lk).mode & 0o777).toBe(0o600);
+    const sequence = readIndexFile(join(dir, "index.json")).sequence;
+    err.length = 0;
+    expect(
+      await runRegistryMaintain(
+        ["set-liveness-key", dir, "--generate", "--liveness-key", lk, "--key", key],
+        io,
+      ),
+    ).toBe(2);
+    expect(err.join("")).toContain("without --force");
+    expect(readFileSync(lk, "utf8").trim()).toBe(seedText);
+    expect(readIndexFile(join(dir, "index.json")).sequence).toBe(sequence);
+    expect(
+      await runRegistryMaintain(
+        ["set-liveness-key", dir, "--generate", "--liveness-key", lk, "--force", "--key", key],
+        io,
+      ),
+    ).toBe(0);
+    expect(readFileSync(lk, "utf8").trim()).not.toBe(seedText);
+  });
+
+  test("--generate refuses a key path inside <dir> or equal to the root key", async () => {
+    const { dir, key } = await init();
+    for (const lk of [join(dir, "lk"), key]) {
+      err.length = 0;
+      expect(
+        await runRegistryMaintain(
+          ["set-liveness-key", dir, "--generate", "--liveness-key", lk, "--key", key, "--force"],
+          io,
+        ),
+      ).toBe(2);
+      expect(readIndexFile(join(dir, "index.json")).sequence).toBe(1);
+    }
+    expect(existsSync(join(dir, "lk"))).toBe(false);
+  });
+
+  test("refuses when the root key is the wrong one", async () => {
+    const { dir } = await init();
+    const other = join(tmp, "other-key");
+    writeFileSync(other, `${encodeBase64(generateEd25519Keypair().privkey)}\n`);
+    expect(
+      await runRegistryMaintain(["set-liveness-key", dir, livenessPub(5), "--key", other], io),
+    ).toBe(2);
+    expect(err.join("")).toContain("different key");
   });
 });
 

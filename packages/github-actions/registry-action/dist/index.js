@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:9518441f06cebbf5decb4209fc8e56eb271aa5e67518f7af4e3616e1389f3a3b
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:e383f4f78785e6b0afec8fc053b29372eb822d7f2cdd0e76bf2f9e3b1a5bab85
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4207,7 +4207,7 @@ __export(exports_git_tree, {
 });
 
 // src/main.ts
-import { isAbsolute as isAbsolute2, join as join10 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join11 } from "node:path";
 
 // ../shared/gha-io.ts
 import { appendFileSync } from "node:fs";
@@ -5036,6 +5036,14 @@ var import_semver = __toESM(require_semver2(), 1);
 
 // ../../registry-format/src/permissions-validator.ts
 var HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+var DEFAULT_NETWORK_PORT = 443;
+function parseNetworkEntry(entry) {
+  const idx = entry.lastIndexOf(":");
+  if (idx === -1) {
+    return { host: entry, port: DEFAULT_NETWORK_PORT };
+  }
+  return { host: entry.slice(0, idx), port: Number(entry.slice(idx + 1)) };
+}
 function validateAndNormalizePermissions(input) {
   if (Array.isArray(input)) {
     return { network: [], filesystem: { read: [], write: [] } };
@@ -5449,6 +5457,7 @@ function parseExtensionManifestForRegistry(text) {
 }
 
 // ../../registry-format/src/semver.ts
+var import_semver2 = __toESM(require_semver2(), 1);
 var NUMERIC_ID_RE = /^(?:0|[1-9]\d*)$/;
 var ID_CHARS_RE = /^[0-9A-Za-z-]+$/;
 var ALL_DIGITS_RE = /^\d+$/;
@@ -5471,6 +5480,9 @@ function isValidSemver(v) {
     return false;
   const parts = core.split(".");
   return parts.length === 3 && parts.every((p) => NUMERIC_ID_RE.test(p));
+}
+function compareVersionsDesc(a, b) {
+  return import_semver2.default.rcompare(a, b);
 }
 
 // ../../registry-format/src/role-pack.ts
@@ -5985,6 +5997,25 @@ function readRegistryReportUrl(index) {
   } catch {
     return;
   }
+}
+function canonicalKeyBytes(b64) {
+  if (typeof b64 !== "string" || !KEY_RE3.test(b64))
+    return;
+  const bytes = new Uint8Array(Buffer.from(b64, "base64"));
+  if (bytes.length !== 32)
+    return;
+  return Buffer.from(bytes).toString("base64") === b64 ? bytes : undefined;
+}
+function sameKeyBytes(a, b) {
+  const x = canonicalKeyBytes(a);
+  const y = canonicalKeyBytes(b);
+  return x !== undefined && y !== undefined && Buffer.from(x).equals(y);
+}
+function readRegistryLivenessKey(index) {
+  const v = index.livenessKey;
+  if (v === undefined)
+    return;
+  return typeof v === "string" && canonicalKeyBytes(v) !== undefined ? v : "invalid";
 }
 function registryIndexSigningBytes(index) {
   const { signature: _omitted, ...rest } = index;
@@ -9330,16 +9361,203 @@ async function inspectPackage(tgz, work) {
   };
 }
 // ../../registry-format/src/liveness-file.ts
+import { createHash as createHash5, sign as sign3 } from "node:crypto";
 var import_tweetnacl4 = __toESM(require_nacl_fast(), 1);
+var LIVENESS_FILE = "liveness.json";
 var MAX_LIVENESS_BYTES = 4 * 1024 * 1024;
+var LIVENESS_TEST_FAILURES = ["run-failed", "run-timeout", "sandbox-unavailable"];
+var KEY_RE4 = /^[A-Za-z0-9+/]{43}=$/;
+var SIGNATURE_RE5 = /^[A-Za-z0-9+/]{86}==$/;
+var NIMBUS_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,64})?$/;
+var MAX_HOSTS = 1000;
+function invalid4(detail) {
+  return new RegistryError("ERR_LIVENESS_INVALID", detail);
+}
+function parseLivenessFile(bytes) {
+  if (bytes.byteLength > MAX_LIVENESS_BYTES) {
+    throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `liveness.json exceeds ${String(MAX_LIVENESS_BYTES)} bytes`);
+  }
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    throw invalid4("liveness.json is not valid UTF-8");
+  }
+  if (text.startsWith("\uFEFF"))
+    text = text.slice(1);
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    throw invalid4("liveness.json is not valid JSON");
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw invalid4("liveness.json must be an object");
+  }
+  return readEnvelope(raw);
+}
+var REQUIRED_KEYS = [
+  "format",
+  "livenessKey",
+  "sequence",
+  "generatedAt",
+  "nimbusVersion",
+  "extensions",
+  "signature"
+];
+var ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+function isIsoUtc(v) {
+  if (typeof v !== "string" || !ISO_UTC_RE.test(v))
+    return false;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms))
+    return false;
+  return new Date(ms).toISOString().slice(0, 10) === v.slice(0, 10);
+}
+function readSequence(v) {
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0) {
+    throw invalid4("sequence must be a positive integer");
+  }
+  return v;
+}
+function readPatterned(v, re, detail) {
+  if (typeof v !== "string" || !re.test(v))
+    throw invalid4(detail);
+  return v;
+}
+function readEnvelope(o) {
+  for (const k of REQUIRED_KEYS) {
+    if (!Object.hasOwn(o, k))
+      throw invalid4(`liveness.json is missing key: ${k}`);
+  }
+  if (o["format"] !== 1)
+    throw invalid4("unsupported liveness format");
+  const sequence = readSequence(o["sequence"]);
+  const livenessKey = readPatterned(o["livenessKey"], KEY_RE4, "livenessKey is malformed");
+  const signature = readPatterned(o["signature"], SIGNATURE_RE5, "signature is malformed");
+  const generatedAt = o["generatedAt"];
+  if (!isIsoUtc(generatedAt))
+    throw invalid4("generatedAt is not a timestamp");
+  const nimbusVersion = readPatterned(o["nimbusVersion"], NIMBUS_VERSION_RE, "nimbusVersion is malformed");
+  return {
+    ...o,
+    format: 1,
+    livenessKey,
+    sequence,
+    generatedAt,
+    nimbusVersion,
+    extensions: o["extensions"],
+    signature
+  };
+}
+function livenessSigningBytes(doc) {
+  const { signature: _omitted, ...rest } = doc;
+  return new TextEncoder().encode(canonicalize(rest));
+}
+function verifyLivenessFile(doc, indexLivenessKey) {
+  return new Promise((resolve) => {
+    if (doc.livenessKey !== indexLivenessKey) {
+      throw new RegistryError("ERR_LIVENESS_KEY_MISMATCH", "liveness key differs from the key the index names");
+    }
+    let ok;
+    try {
+      ok = import_tweetnacl4.default.sign.detached.verify(livenessSigningBytes(doc), new Uint8Array(Buffer.from(doc.signature, "base64")), new Uint8Array(Buffer.from(doc.livenessKey, "base64")));
+    } catch {
+      ok = false;
+    }
+    if (!ok) {
+      throw new RegistryError("ERR_LIVENESS_SIGNATURE_INVALID", "liveness signature does not verify");
+    }
+    resolve();
+  });
+}
+function signLivenessFile(unsigned, seed) {
+  return new Promise((resolve) => {
+    const { signature: _omitted, ...rest } = unsigned;
+    const sig = sign3(null, livenessSigningBytes(rest), privateKeyFromSeed(seed));
+    resolve({ ...rest, signature: sig.toString("base64") });
+  });
+}
+function isObject3(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function onlyKeys(o, allowed) {
+  return Object.keys(o).every((k) => allowed.includes(k));
+}
+function isCount(v, min, max) {
+  return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+}
+function readHosts(raw) {
+  if (!isObject3(raw) || !onlyKeys(raw, ["declared", "answered"]))
+    throw invalid4("hosts");
+  const declared = raw["declared"];
+  if (!isCount(declared, 1, MAX_HOSTS))
+    throw invalid4("hosts.declared");
+  const answered = raw["answered"];
+  if (!isCount(answered, 0, declared))
+    throw invalid4("hosts.answered");
+  return { declared, answered };
+}
+function readTests(raw) {
+  if (!isObject3(raw))
+    throw invalid4("tests");
+  if (Object.hasOwn(raw, "failure")) {
+    const failure = raw["failure"];
+    if (!onlyKeys(raw, ["failure"]))
+      throw invalid4("tests");
+    if (!LIVENESS_TEST_FAILURES.includes(failure)) {
+      throw invalid4("tests.failure");
+    }
+    return { failure };
+  }
+  if (!onlyKeys(raw, ["cases", "passed"]))
+    throw invalid4("tests");
+  const cases = raw["cases"];
+  if (!isCount(cases, 1, MAX_EVAL_CASES))
+    throw invalid4("tests.cases");
+  const passed = raw["passed"];
+  if (!isCount(passed, 0, cases))
+    throw invalid4("tests.passed");
+  return { cases, passed };
+}
+function readBaseline(raw) {
+  try {
+    return parseEvalBaseline(raw);
+  } catch (e) {
+    if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_QUALITY_INVALID") {
+      throw invalid4("baseline");
+    }
+    throw e;
+  }
+}
+function parseLivenessEntry(raw) {
+  if (!isObject3(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
+    throw invalid4("entry");
+  }
+  const checkedAt = raw["checkedAt"];
+  if (!isIsoUtc(checkedAt))
+    throw invalid4("checkedAt");
+  const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
+  const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
+  const baseline = Object.hasOwn(raw, "baseline") ? readBaseline(raw["baseline"]) : undefined;
+  if (hosts === undefined && tests === undefined && baseline === undefined) {
+    throw invalid4("entry carries no result");
+  }
+  return {
+    checkedAt,
+    ...hosts === undefined ? {} : { hosts },
+    ...tests === undefined ? {} : { tests },
+    ...baseline === undefined ? {} : { baseline }
+  };
+}
 // ../../registry-format/src/provenance.ts
 var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function readManifestRepository(rawManifest) {
-  if (!isObject3(rawManifest))
+  if (!isObject4(rawManifest))
     return;
   const v = rawManifest["repository"];
   return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
@@ -9367,16 +9585,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject3(entry))
+  if (!isObject4(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject3(result) ? result["statement"] : undefined;
-  if (!isObject3(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject4(result) ? result["statement"] : undefined;
+  if (!isObject4(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject3(result) ? result["signature"] : undefined;
-  const cert = isObject3(signature) ? signature["certificate"] : undefined;
-  if (!isObject3(cert))
+  const signature = isObject4(result) ? result["signature"] : undefined;
+  const cert = isObject4(signature) ? signature["certificate"] : undefined;
+  if (!isObject4(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -9754,7 +9972,7 @@ function admitPublisherStatements(index, candidates, opts = {}) {
   };
 }
 // ../../registry-format/src/sign.ts
-import { createPublicKey, sign as sign3, verify } from "node:crypto";
+import { createPublicKey, sign as sign4, verify } from "node:crypto";
 function publicKeyFromSeed(seed) {
   const jwk = createPublicKey(privateKeyFromSeed(seed)).export({ format: "jwk" });
   return new Uint8Array(Buffer.from(jwk.x, "base64url"));
@@ -9763,7 +9981,7 @@ var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
   return new Promise((resolve) => {
     const { signature: _omitted, ...rest } = unsigned;
-    const sig = sign3(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
+    const sig = sign4(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
     resolve({ ...rest, signature: sig.toString("base64") });
   });
 }
@@ -9776,22 +9994,22 @@ var TAKEDOWN_REQUIRED = ["kind", "extensionId", "versions", "reason"];
 var PLACEHOLDER_KEY = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE = `${"A".repeat(86)}==`;
 var PLACEHOLDER_PUBLISHER = "placeholder";
-function invalid4(detail) {
+function invalid5(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
 function exactKeys2(o, allowed, required) {
   for (const k of Object.keys(o)) {
     if (!allowed.includes(k))
-      throw invalid4(`a request has an unknown key: ${k}`);
+      throw invalid5(`a request has an unknown key: ${k}`);
   }
   for (const k of required) {
     if (!Object.hasOwn(o, k))
-      throw invalid4(`a request is missing key: ${k}`);
+      throw invalid5(`a request is missing key: ${k}`);
   }
 }
 function parseRegistryRequest(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid4("a request must be an object");
+    throw invalid5("a request must be an object");
   }
   const o = raw;
   const signer = {
@@ -9825,18 +10043,18 @@ function parseRegistryRequest(raw) {
       reason: s.reason
     };
   }
-  throw invalid4("a request's kind must be key.revoke or extension.takedown");
+  throw invalid5("a request's kind must be key.revoke or extension.takedown");
 }
 function takedownPublisher(req, index) {
   const entry = Object.hasOwn(index.extensions, req.extensionId) ? index.extensions[req.extensionId] : undefined;
   if (entry !== undefined) {
     if (req.publisherId !== undefined && req.publisherId !== entry.publisher.id) {
-      throw invalid4(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
+      throw invalid5(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
     }
     return entry.publisher.id;
   }
   if (req.publisherId === undefined) {
-    throw invalid4(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
+    throw invalid5(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
   }
   return req.publisherId;
 }
@@ -9846,13 +10064,13 @@ function assertRequestSignable(req, index) {
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
-    throw invalid4("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+    throw invalid5("a registry cannot revoke its own root key this way; re-initialise the registry instead");
   }
 }
 async function signRegistryRequest(req, index, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== index.rootKey) {
-    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
+    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
   }
   assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
@@ -9889,7 +10107,7 @@ function alreadyCarried(index, req, role = "registry") {
 async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== feedRootKey) {
-    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
+    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
   }
   assertFeedRequestSignable(req, feedRootKey);
   return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
@@ -9897,12 +10115,12 @@ async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
 function assertFeedRequestSignable(req, feedRootKey) {
   if (req.kind === "extension.takedown") {
     if (req.publisherId === undefined) {
-      throw invalid4(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
+      throw invalid5(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
     }
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(feedRootKey)) {
-    throw invalid4("the trust feed cannot revoke its own root key");
+    throw invalid5("the trust feed cannot revoke its own root key");
   }
 }
 // ../../registry-format/src/scores-file.ts
@@ -10036,10 +10254,10 @@ var FEED_STATEMENTS_DIR = "statements/";
 var PLACEHOLDER_KEY2 = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE2 = `${"A".repeat(86)}==`;
 var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
-function invalid5(detail) {
+function invalid6(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject5 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -10047,17 +10265,17 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject4(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject5(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject4(raw))
-    throw invalid5("a publisher file must be an object");
+  if (!isObject5(raw))
+    throw invalid6("a publisher file must be an object");
   for (const k of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k)) {
-      throw invalid5(`a publisher file has an unknown key: ${k}`);
+      throw invalid6(`a publisher file has an unknown key: ${k}`);
     }
   }
   const s = parseTrustStatement({
@@ -10069,14 +10287,14 @@ function parsePublisherFile(path, raw) {
     signature: PLACEHOLDER_SIGNATURE2
   });
   if (baseName(path, FEED_PUBLISHERS_DIR) !== s.publisherId) {
-    throw invalid5(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
+    throw invalid6(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
   }
   return { publisherId: s.publisherId, keys: [...s.keys].sort(codeUnitCompare), github: s.github };
 }
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject4(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject5(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -10248,10 +10466,10 @@ async function buildTrustFeed(prev, source, seed, at) {
   return { plan, feed };
 }
 // ../../registry-format/src/validate-publish.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
-var import_semver5 = __toESM(require_semver2(), 1);
+var import_semver6 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
@@ -10422,7 +10640,7 @@ function assertRegistryState(m, publisher, serviceId, signed) {
   }
   assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver5.default.compare(v, m.version) === 0);
+    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver6.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
     }
@@ -10468,7 +10686,7 @@ function assertFileSet(m, files) {
     throw fileSetInvalid(`package must hold ${PACKAGE_MANIFEST_FILE} and the entry ${entry}`);
   }
 }
-var sha256Hex = (b) => createHash5("sha256").update(b).digest("hex");
+var sha256Hex = (b) => createHash6("sha256").update(b).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
@@ -10945,7 +11163,7 @@ import { tmpdir as osTmpdir2 } from "node:os";
 import { basename, dirname, isAbsolute, join as join5 } from "node:path";
 
 // src/candidates.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 function extensionDirs(git, ref, cwd) {
   const dirs = new Map;
   const paths = new Set;
@@ -10961,7 +11179,7 @@ function extensionDirs(git, ref, cwd) {
   }
   return { dirs, paths };
 }
-var sha256Hex2 = (b) => createHash6("sha256").update(b).digest("hex");
+var sha256Hex2 = (b) => createHash7("sha256").update(b).digest("hex");
 function assertSignedIntact(git, index, ref, paths, cwd, verb) {
   const problems = [];
   const signedDirs = new Set;
@@ -11834,8 +12052,219 @@ async function runCheck(opts, deps = SHARED2) {
   }
 }
 
+// src/liveness-check.ts
+import { createHash as createHash9 } from "node:crypto";
+import { mkdtempSync as mkdtempSync7, rmSync as rmSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { tmpdir as osTmpdir5 } from "node:os";
+import { join as join8 } from "node:path";
+
+// src/host-probe.ts
+import { promises as dnsPromises } from "node:dns";
+import { BlockList, isIP, connect as netConnect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+var TLS_PORTS = new Set([443, 465, 636, 853, 993, 995, 8443]);
+var HOST_LOOKUP_TIMEOUT_MS = 5000;
+var HOST_CONNECT_TIMEOUT_MS = 5000;
+var MAX_HOSTS_PER_RUN = 500;
+var HOST_CONCURRENCY = 8;
+var V4_BLOCKED = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+];
+var V6_BLOCKED = [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+  ["100::", 64],
+  ["2001::", 23],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48]
+];
+var BLOCKED = new BlockList;
+for (const [net, prefix] of V4_BLOCKED)
+  BLOCKED.addSubnet(net, prefix, "ipv4");
+for (const [net, prefix] of V6_BLOCKED)
+  BLOCKED.addSubnet(net, prefix, "ipv6");
+function ipv6Groups(address) {
+  let host;
+  try {
+    host = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  } catch {
+    return;
+  }
+  const halves = host.split("::");
+  if (halves.length > 2)
+    return;
+  const head = halves[0] === "" ? [] : (halves[0] ?? "").split(":");
+  const tail = halves.length === 2 && halves[1] !== "" ? (halves[1] ?? "").split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 0)
+    return;
+  const groups = [
+    ...head,
+    ...new Array(halves.length === 2 ? missing : 0).fill("0"),
+    ...tail
+  ];
+  if (groups.length !== 8)
+    return;
+  const out = groups.map((g) => /^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN);
+  return out.some(Number.isNaN) ? undefined : out;
+}
+function dottedV4(g) {
+  const hi = g[6] ?? 0;
+  const lo = g[7] ?? 0;
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+function judgeEmbeddedV4(g, bare) {
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 65535 && g[5] === 0) {
+    return !BLOCKED.check(dottedV4(g), "ipv4");
+  }
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 65535 || g[5] === 0)) {
+    return !BLOCKED.check(dottedV4(g), "ipv4") && (g[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
+  }
+  return;
+}
+function isPublicV6(bare) {
+  if (bare.length === 0)
+    return false;
+  const g = ipv6Groups(bare);
+  if (g === undefined)
+    return false;
+  return judgeEmbeddedV4(g, bare) ?? !BLOCKED.check(bare, "ipv6");
+}
+function isPublicAddress(address) {
+  const bare = address.split("%")[0] ?? "";
+  const family = isIP(bare);
+  if (family === 4)
+    return !address.includes("%") && !BLOCKED.check(bare, "ipv4");
+  return family === 6 && isPublicV6(bare);
+}
+async function realLookup(host) {
+  const literal = isIP(host);
+  if (literal !== 0)
+    return [{ address: host, family: literal === 6 ? 6 : 4 }];
+  const resolver = new dnsPromises.Resolver({ timeout: HOST_LOOKUP_TIMEOUT_MS, tries: 1 });
+  const timer = setTimeout(() => resolver.cancel(), HOST_LOOKUP_TIMEOUT_MS);
+  try {
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+    if (v4.status === "rejected" && v6.status === "rejected")
+      throw v4.reason;
+    return [
+      ...v4.status === "fulfilled" ? v4.value.map((a) => ({ address: a, family: 4 })) : [],
+      ...v6.status === "fulfilled" ? v6.value.map((a) => ({ address: a, family: 6 })) : []
+    ];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function realConnect(o) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const socket = o.tls ? tlsConnect({ host: o.address, port: o.port, servername: o.servername }) : netConnect({ host: o.address, port: o.port, family: o.family });
+    const done = (ok) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(ok);
+    };
+    timer = setTimeout(() => done(false), o.timeoutMs);
+    socket.setTimeout(o.timeoutMs, () => done(false));
+    socket.on("error", () => done(false));
+    socket.on("close", () => done(false));
+    socket.on(o.tls ? "secureConnect" : "connect", () => done(true));
+  });
+}
+var REAL_HOST_PROBE = { lookup: realLookup, connect: realConnect };
+function withTimeout(p, ms) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+}
+async function probeHost(entry, deps = REAL_HOST_PROBE, opts = {}) {
+  const lookupMs = opts.lookupTimeoutMs ?? HOST_LOOKUP_TIMEOUT_MS;
+  const connectMs = opts.connectTimeoutMs ?? HOST_CONNECT_TIMEOUT_MS;
+  try {
+    const answers = await withTimeout(deps.lookup(entry.host), lookupMs);
+    const first = answers[0];
+    if (first === undefined)
+      return false;
+    if (!answers.every((a) => isPublicAddress(a.address)))
+      return false;
+    return await withTimeout(deps.connect({
+      address: first.address,
+      family: first.family,
+      port: entry.port,
+      servername: entry.host,
+      tls: TLS_PORTS.has(entry.port),
+      timeoutMs: connectMs
+    }), connectMs + 500);
+  } catch {
+    return false;
+  }
+}
+function dedupeHosts(entries) {
+  const seen = new Map;
+  for (const e of entries) {
+    const key = `${e.host.toLowerCase()}:${String(e.port)}`;
+    if (!seen.has(key))
+      seen.set(key, e);
+  }
+  return [...seen.values()];
+}
+function createHostAllowance(max = MAX_HOSTS_PER_RUN) {
+  return { left: max };
+}
+function reserveHosts(entries, allowance, max = MAX_HOSTS_PER_RUN) {
+  const hosts = dedupeHosts(entries);
+  if (hosts.length === 0)
+    return { kind: "none" };
+  if (hosts.length > max)
+    return { kind: "too-many" };
+  if (hosts.length > allowance.left)
+    return { kind: "spent" };
+  allowance.left -= hosts.length;
+  return { kind: "ok", hosts };
+}
+async function probeHosts(entries, deps = REAL_HOST_PROBE) {
+  const work = dedupeHosts(entries);
+  let answered = 0;
+  let next = 0;
+  const worker = async () => {
+    while (next < work.length) {
+      const entry = work[next];
+      next += 1;
+      if (await probeHost(entry, deps))
+        answered += 1;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
+  return { declared: work.length, answered };
+}
+
 // src/score-package.ts
-import { createHash as createHash7 } from "node:crypto";
+import { createHash as createHash8 } from "node:crypto";
 import {
   closeSync as closeSync4,
   mkdirSync as mkdirSync2,
@@ -11854,7 +12283,7 @@ var SHARED3 = {
   runBaseline: baselineRoleRunner(),
   now: Date.now
 };
-var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
+var sha256Hex3 = (b) => createHash8("sha256").update(b).digest("hex");
 function notATgz(path, why) {
   return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
 }
@@ -11876,6 +12305,13 @@ function readAtMost2(path, max) {
     closeSync4(fd);
   }
 }
+function packageBytesProblem(bytes) {
+  if (bytes.byteLength > MAX_PACKAGE_BYTES)
+    return `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`;
+  if (bytes[0] !== 31 || bytes[1] !== 139)
+    return "is not gzip data";
+  return;
+}
 function readPackageBytes(path) {
   if (!path.endsWith(".tgz"))
     throw notATgz(path, "does not end in .tgz");
@@ -11886,11 +12322,9 @@ function readPackageBytes(path) {
     const why = e.code ?? "an error";
     throw notATgz(path, `cannot be read as a file (${why})`);
   }
-  if (bytes.byteLength > MAX_PACKAGE_BYTES) {
-    throw notATgz(path, `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`);
-  }
-  if (bytes[0] !== 31 || bytes[1] !== 139)
-    throw notATgz(path, "is not gzip data");
+  const problem = packageBytesProblem(bytes);
+  if (problem !== undefined)
+    throw notATgz(path, problem);
   return bytes;
 }
 async function runScorePackage(opts, deps = SHARED3) {
@@ -11923,16 +12357,218 @@ async function runScorePackage(opts, deps = SHARED3) {
   return run.scores;
 }
 
-// src/sign.ts
-import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
-import { tmpdir as osTmpdir5 } from "node:os";
-import { join as join9 } from "node:path";
+// src/liveness-check.ts
+var LIVENESS_RUN_BUDGET_MS = 45 * 60000;
+var LIVENESS_RESULTS_FORMAT = 1;
+var SHARED4 = {
+  git: exports_git_tree,
+  io: GHA_IO,
+  tmpdir: osTmpdir5,
+  runRole: roleRunner(),
+  runBaseline: baselineRoleRunner(),
+  probe: REAL_HOST_PROBE,
+  now: Date.now
+};
+var sha256Hex4 = (b) => createHash9("sha256").update(b).digest("hex");
+function assertNimbusVersion(v) {
+  if (!NIMBUS_VERSION_RE.test(v)) {
+    throw new Error(`input "nimbus-version" must be a Nimbus release number such as 10.14.1; got ${JSON.stringify(clip(v))}`);
+  }
+}
+function newestStableVersions(index) {
+  const out = [];
+  for (const id of Object.keys(index.extensions).sort(codeUnitCompare)) {
+    const versions = index.extensions[id]?.versions ?? {};
+    const stable = Object.keys(versions).filter((v) => versions[v]?.channel === "stable" && isValidSemver(v)).sort(compareVersionsDesc);
+    const [newest] = stable;
+    if (newest !== undefined)
+      out.push({ id, version: newest });
+  }
+  return out;
+}
+function testFailure(code) {
+  if (code === "ERR_EVAL_SANDBOX_UNAVAILABLE")
+    return "sandbox-unavailable";
+  if (code === "ERR_EVAL_TIMEOUT")
+    return "run-timeout";
+  return "run-failed";
+}
+function declaredHosts(network) {
+  const hosts = [];
+  for (const raw of network) {
+    const e = parseNetworkEntry(raw);
+    if (e.host !== "" && Number.isInteger(e.port) && e.port >= 1 && e.port <= 65535)
+      hosts.push(e);
+  }
+  return hosts;
+}
+function readCheckedPackage(c, ref, packagePath, expectedSha256) {
+  const { deps, opts } = c;
+  const packageBytes = deps.git.readBlob(PAGES_REF, packagePath, { cwd: opts.workspace });
+  const problem = packageBytesProblem(packageBytes);
+  if (problem !== undefined) {
+    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+    return;
+  }
+  if (sha256Hex4(packageBytes) !== expectedSha256) {
+    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
+    return;
+  }
+  return packageBytes;
+}
+async function checkHosts(c, ref, network) {
+  const r = reserveHosts(declaredHosts(network), c.hostAllowance);
+  if (r.kind === "none")
+    return;
+  if (r.kind === "too-many") {
+    c.deps.io.log(`liveness: ${ref}: host check skipped: it declares more than ${String(MAX_HOSTS_PER_RUN)} distinct hosts`);
+    return;
+  }
+  if (r.kind === "spent") {
+    c.deps.io.log(`liveness: ${ref}: host check skipped: run host allowance spent`);
+    return;
+  }
+  return probeHosts(r.hosts, c.deps.probe);
+}
+function assembleEntry(c, ref, observed) {
+  const { checkedAt, hosts, tests, baseline } = observed;
+  const raw = {
+    checkedAt,
+    ...hosts !== undefined && hosts.declared > 0 && { hosts },
+    ...tests !== undefined && { tests },
+    ...baseline !== undefined && { baseline }
+  };
+  try {
+    return parseLivenessEntry(raw);
+  } catch (e) {
+    c.deps.io.log(`liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`);
+    return;
+  }
+}
+async function checkPackage(c, id, version) {
+  const { deps, opts } = c;
+  const ref = `${id}@${version}`;
+  const v = c.index.extensions[id]?.versions[version];
+  if (v === undefined)
+    return;
+  const at = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
+  if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+    deps.io.log(`liveness: ${ref} not checked: the run's time budget is spent`);
+    return;
+  }
+  const packageBytes = readCheckedPackage(c, ref, v.package, v.packageSha256);
+  if (packageBytes === undefined)
+    return;
+  const checkedAt = new Date(deps.now()).toISOString();
+  const dir = mkdtempSync7(join8(c.work, "pkg-"));
+  try {
+    const tgz = join8(dir, "package.tgz");
+    writeFileSync6(tgz, packageBytes, { flag: "wx" });
+    const inspected = await inspectPackage(tgz, dir);
+    const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
+    if (isStarterPack(manifest))
+      return;
+    const hasEvals = inspected.files.some((f) => isEvalSuiteFile(f));
+    const hosts = await checkHosts(c, ref, manifest.permissions.network);
+    const cand = {
+      verdict: { id, version, packageSha256: v.packageSha256 },
+      packageBytes
+    };
+    let baseline;
+    let tests;
+    if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+      deps.io.log(`liveness: ${ref}: baseline and suites not run: the time budget is spent`);
+    } else {
+      baseline = await runBaseline(c, cand, at);
+      if (hasEvals)
+        tests = await runSuites(c, cand, at);
+    }
+    return assembleEntry(c, ref, { checkedAt, hosts, tests, baseline });
+  } finally {
+    removeQuietly((p) => rmSync6(p, { recursive: true, force: true }), dir);
+  }
+}
+var BUDGET_TIMEOUT_NOTE = "budget-shortened run timed out; not recorded";
+async function runBaseline(c, cand, at) {
+  const { deps } = c;
+  const ref = `${cand.verdict.id}@${cand.verdict.version}`;
+  const timeoutMs = Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now));
+  const r = await baselineCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runBaseline);
+  if ("baseline" in r)
+    return r.baseline;
+  const shortened = timeoutMs < BASELINE_ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT";
+  deps.io.log(shortened ? `liveness: ${ref} baseline: ${BUDGET_TIMEOUT_NOTE}` : `liveness: no baseline for ${ref} (${r.error.code})`);
+  return;
+}
+async function runSuites(c, cand, at) {
+  const { deps } = c;
+  const left = budgetLeft(at, deps.now);
+  const ref = `${cand.verdict.id}@${cand.verdict.version}`;
+  if (left < SCORE_MIN_RUN_MS) {
+    deps.io.log(`liveness: suites of ${ref} not run: under ${duration(SCORE_MIN_RUN_MS)} of the time budget left`);
+    return;
+  }
+  const timeoutMs = Math.min(ROLE_TIMEOUT_MS, left);
+  const r = await scoreCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runRole, deps.io.log);
+  if ("error" in r) {
+    if (timeoutMs < ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT") {
+      deps.io.log(`liveness: suites of ${ref}: ${BUDGET_TIMEOUT_NOTE}`);
+      return;
+    }
+    return { failure: testFailure(r.error.code) };
+  }
+  if (r.quality.cases < 1)
+    return;
+  return { cases: r.quality.cases, passed: r.quality.passed };
+}
+async function runLivenessCheck(opts, deps = SHARED4) {
+  assertNimbusVersion(opts.nimbusVersion);
+  const deadline = deps.now() + LIVENESS_RUN_BUDGET_MS;
+  assertGateway(opts.gateway);
+  deps.git.fetchRefs([PAGES_BRANCH], { cwd: opts.workspace });
+  const index = await readVerifiedIndex(deps.git, opts.workspace);
+  if (readRegistryLivenessKey(index) === undefined) {
+    deps.io.log("::notice::this registry's index names no liveness key, so no checks were run; run `nimbus registry maintain set-liveness-key`");
+    return writeResults(opts, deps, Object.create(null));
+  }
+  const work = mkdtempSync7(join8(deps.tmpdir(), "nimbus-registry-liveness-"));
+  const extensions = Object.create(null);
+  try {
+    const ctx = { opts, deps, work, deadline, index, hostAllowance: createHostAllowance() };
+    for (const { id, version } of newestStableVersions(index)) {
+      try {
+        const entry = await checkPackage(ctx, id, version);
+        if (entry !== undefined)
+          extensions[`${id}@${version}`] = entry;
+      } catch (e) {
+        deps.io.log(`liveness: ${id}@${version} not checked: ${clip(e instanceof Error ? e.message : String(e))}`);
+      }
+    }
+  } finally {
+    rmSync6(work, { recursive: true, force: true });
+  }
+  return writeResults(opts, deps, extensions);
+}
+function writeResults(opts, deps, extensions) {
+  const results = {
+    format: LIVENESS_RESULTS_FORMAT,
+    nimbusVersion: opts.nimbusVersion,
+    extensions
+  };
+  writeFileAtomic(opts.out, `${JSON.stringify(results, null, 2)}
+`);
+  deps.io.log(`liveness: wrote ${String(Object.keys(extensions).length)} entr(ies)`);
+  return results;
+}
+
+// src/liveness-sign.ts
+import { closeSync as closeSync5, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync2 } from "node:fs";
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { mkdtempSync as mkdtempSync7, rmSync as rmSync6 } from "node:fs";
+import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var BOT_NAME = "github-actions[bot]";
 var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
 var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
@@ -11953,9 +12589,9 @@ function run(args, opts) {
   }).toString("utf8").trim();
 }
 function commitSite(parent, files, message, cwd) {
-  const scratch = mkdtempSync7(join8(tmpdir(), "nimbus-registry-site-"));
+  const scratch = mkdtempSync8(join9(tmpdir(), "nimbus-registry-site-"));
   try {
-    const env = { ...process.env, GIT_INDEX_FILE: join8(scratch, "index") };
+    const env = { ...process.env, GIT_INDEX_FILE: join9(scratch, "index") };
     run(["read-tree", parent], { cwd, env });
     for (const f of files) {
       assertSafeTreePath(f.path);
@@ -11970,7 +12606,7 @@ function commitSite(parent, files, message, cwd) {
       env: { ...process.env, ...BOT_ENV }
     });
   } finally {
-    rmSync6(scratch, { recursive: true, force: true });
+    rmSync7(scratch, { recursive: true, force: true });
   }
 }
 var NON_FAST_FORWARD = /non-fast-forward|fetch first|\[rejected\]/;
@@ -11990,15 +12626,226 @@ function pushCommit(commit, branch, cwd) {
   }
 }
 
+// src/liveness-sign.ts
+var MAX_LIVENESS_RESULTS_BYTES = 4 * 1024 * 1024;
+var RESULTS_MAX_AGE_MS = 24 * 3600000;
+var RESULTS_MAX_SKEW_MS = 5 * 60000;
+var SHARED5 = { git: exports_git_tree, io: GHA_IO, now: Date.now };
+var MAX_ATTEMPTS = 3;
+var KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
+var ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
+var ENVELOPE_KEYS = new Set(["format", "nimbusVersion", "extensions"]);
+function parseLivenessKey(raw) {
+  const s = raw.trim();
+  if (!KEY_INPUT_RE.test(s)) {
+    throw new Error('input "liveness-key" is not a liveness signing key: expected the base64 of a 32-byte Ed25519 seed');
+  }
+  return new Uint8Array(Buffer.from(s, "base64"));
+}
+function isPlainObject3(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function entryProblem(key, raw, now) {
+  if (!ENTRY_KEY_RE.test(key))
+    return "its key is not <id>@<version>";
+  let entry;
+  try {
+    entry = parseLivenessEntry(raw);
+  } catch {
+    return "it is not a valid liveness entry";
+  }
+  const at = Date.parse(entry.checkedAt);
+  if (at > now + RESULTS_MAX_SKEW_MS)
+    return "its checkedAt is in the future";
+  if (at < now - RESULTS_MAX_AGE_MS)
+    return "its checkedAt is more than 24 hours old";
+  return entry;
+}
+function readCappedFile(path, max) {
+  const fd = openSync5(path, "r");
+  try {
+    const size = fstatSync3(fd).size;
+    if (size > max) {
+      throw new Error(`refusing the results file: ${String(size)} bytes exceeds the ${String(max)} byte limit`);
+    }
+    const bytes = readFileSync2(fd);
+    if (bytes.byteLength > max) {
+      throw new Error(`refusing the results file: it grew past the ${String(max)} byte limit`);
+    }
+    return bytes;
+  } finally {
+    closeSync5(fd);
+  }
+}
+function readEnvelope2(path, expectedVersion) {
+  const bytes = readCappedFile(path, MAX_LIVENESS_RESULTS_BYTES);
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("refusing the results file: it is not valid UTF-8");
+  }
+  let doc;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    throw new Error("refusing the results file: it is not valid JSON");
+  }
+  if (!isPlainObject3(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
+    throw new Error("refusing the results file: it is not an object of exactly format, nimbusVersion and extensions");
+  }
+  if (doc["format"] !== 1)
+    throw new Error("refusing the results file: format must be 1");
+  const version = doc["nimbusVersion"];
+  if (typeof version !== "string" || !NIMBUS_VERSION_RE.test(version)) {
+    throw new Error("refusing the results file: nimbusVersion is not a Nimbus release number");
+  }
+  if (version !== expectedVersion) {
+    throw new Error(`refusing the results file: it was produced for Nimbus ${code(version)}, not the ${code(expectedVersion)} this job was told`);
+  }
+  const raw = doc["extensions"];
+  if (!isPlainObject3(raw)) {
+    throw new Error("refusing the results file: extensions is not an object");
+  }
+  return { nimbusVersion: version, raw };
+}
+function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
+  const { nimbusVersion, raw } = readEnvelope2(path, expectedVersion);
+  const extensions = Object.create(null);
+  for (const key of Object.keys(raw)) {
+    if (!Object.hasOwn(raw, key))
+      continue;
+    const r = entryProblem(key, raw[key], now);
+    if (typeof r === "string") {
+      io.annotate("warning", `dropped results entry ${code(key)}: ${r}`);
+    } else {
+      extensions[key] = r;
+    }
+  }
+  return { format: 1, nimbusVersion, extensions };
+}
+async function previousSequence(git, cwd, indexKey, io) {
+  if (!git.listTreeEntries(PAGES_REF, LIVENESS_FILE, { cwd }).some((e) => e.path === LIVENESS_FILE)) {
+    return 0;
+  }
+  let prev;
+  try {
+    prev = parseLivenessFile(git.readBlob(PAGES_REF, LIVENESS_FILE, { cwd }));
+  } catch {
+    io.annotate("warning", `the previous ${LIVENESS_FILE} does not parse; starting at sequence 1`);
+    return 0;
+  }
+  try {
+    await verifyLivenessFile(prev, indexKey);
+  } catch {
+    io.log(`the previous ${LIVENESS_FILE} does not verify against the index key; its entries are not reused`);
+  }
+  return prev.sequence;
+}
+async function verifyCommittedBytes(bytes, indexKey) {
+  await verifyLivenessFile(parseLivenessFile(bytes), indexKey);
+}
+async function attemptSign(opts, seed, ownKey, deps) {
+  const cwd = opts.workspace;
+  const { git, io } = deps;
+  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git, cwd);
+  const indexKey = readRegistryLivenessKey(index);
+  if (indexKey === undefined) {
+    throw new Error("refusing to sign: this registry's index names no liveness key; run `nimbus registry maintain set-liveness-key`");
+  }
+  if (indexKey === "invalid") {
+    throw new Error("refusing to sign: this registry's index names a malformed liveness key");
+  }
+  if (!sameKeyBytes(indexKey, ownKey)) {
+    throw new Error(`refusing to sign: the liveness-key input (public key fingerprint ${publisherKeyFingerprint(ownKey)}) is not this registry's liveness key (fingerprint ${publisherKeyFingerprint(indexKey)})`);
+  }
+  if (canonicalKeyBytes(index.rootKey) === undefined) {
+    throw new Error("refusing to sign: this registry's index names a malformed root key");
+  }
+  if (sameKeyBytes(indexKey, index.rootKey)) {
+    throw new Error(`refusing to sign: the liveness key (fingerprint ${publisherKeyFingerprint(indexKey)}) is this registry's root key; the two must be different keys`);
+  }
+  const read = readLivenessResults(opts.results, deps.now(), opts.nimbusVersion, io);
+  const allowed = new Set(newestStableVersions(index).map((e) => `${e.id}@${e.version}`));
+  const extensions = {};
+  for (const key of Object.keys(read.extensions)) {
+    const entry = read.extensions[key];
+    if (entry === undefined)
+      continue;
+    if (allowed.has(key)) {
+      extensions[key] = entry;
+    } else {
+      io.annotate("warning", `dropped results entry ${code(key)}: it is not the newest stable version of a listed extension`);
+    }
+  }
+  const checked = Object.keys(read.extensions).length;
+  const kept = Object.keys(extensions).length;
+  if (kept === 0)
+    return { commit: undefined, sequence: 0, kept, checked };
+  const sequence = await previousSequence(git, cwd, indexKey, io) + 1;
+  const signed = await signLivenessFile({
+    format: 1,
+    livenessKey: indexKey,
+    sequence,
+    generatedAt: new Date(deps.now()).toISOString(),
+    nimbusVersion: read.nimbusVersion,
+    extensions
+  }, seed);
+  const bytes = new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}
+`);
+  await verifyCommittedBytes(bytes, indexKey);
+  const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: LIVENESS_FILE, bytes }], `Publish liveness.json sequence ${String(sequence)}`, cwd);
+  return { commit, sequence, kept, checked };
+}
+function report(io, a, pushed) {
+  const head = pushed ? `Signed ${code(LIVENESS_FILE)} sequence ${String(a.sequence)} with ${String(a.kept)} entries; pushed to ${code(PAGES_BRANCH)}.` : "There is nothing to publish: no results entry was fit to sign, so nothing was committed.";
+  if (!pushed) {
+    io.annotate("warning", `liveness-sign published nothing: ${String(a.checked)} results entries passed validation and ${String(a.kept)} were for a newest stable version; check the liveness-check job`);
+  }
+  io.summary(["## Liveness sign", "", head].join(`
+`));
+  io.log(pushed ? `signed liveness sequence ${String(a.sequence)}` : "nothing to publish; no commit");
+}
+async function signLoop(opts, seed, deps) {
+  const ownKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
+  const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
+  for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
+    const a = await attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps);
+    if (a.commit === undefined) {
+      report(deps.io, a, false);
+      return;
+    }
+    await deps.beforePush?.(attempt);
+    if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
+      report(deps.io, a, true);
+      return;
+    }
+    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+  }
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
+}
+async function runLivenessSign(opts, deps = SHARED5) {
+  const seed = parseLivenessKey(opts.livenessKey);
+  try {
+    await signLoop(opts, seed, deps);
+  } finally {
+    seed.fill(0);
+  }
+}
+
 // src/sign.ts
-var SHARED4 = {
+import { mkdtempSync as mkdtempSync9, rmSync as rmSync8 } from "node:fs";
+import { tmpdir as osTmpdir6 } from "node:os";
+import { join as join10 } from "node:path";
+var SHARED6 = {
   validate: validatePublish,
   sign: signIndex,
   git: exports_git_tree,
   io: GHA_IO,
-  tmpdir: osTmpdir5
+  tmpdir: osTmpdir6
 };
-var MAX_ATTEMPTS = 3;
+var MAX_ATTEMPTS2 = 3;
 var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey(raw) {
   const s = raw.trim();
@@ -12013,7 +12860,7 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
     r = await verifyNeverThrowing(deps.verify, {
-      pkgPath: join9(at.work, `provenance-${v.packageSha256}.tgz`),
+      pkgPath: join10(at.work, `provenance-${v.packageSha256}.tgz`),
       packageBytes,
       repository: v.repository,
       verifiedAt: at.verifiedAt
@@ -12051,7 +12898,7 @@ async function takeCandidate(o, b, run, opts, deps) {
     ...q.baseline !== undefined && { baseline: q.baseline }
   });
 }
-async function attemptSign(opts, run, deps) {
+async function attemptSign2(opts, run, deps) {
   const { seed, rootKey } = run;
   const { git } = deps;
   const cwd = opts.workspace;
@@ -12077,7 +12924,7 @@ async function attemptSign(opts, run, deps) {
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
-  const work = mkdtempSync8(join9(deps.tmpdir(), "nimbus-registry-sign-"));
+  const work = mkdtempSync9(join10(deps.tmpdir(), "nimbus-registry-sign-"));
   const batch = { extensions, files, added, skipped, publishedAt, work };
   try {
     for await (const o of validateUnsigned({
@@ -12098,7 +12945,7 @@ async function attemptSign(opts, run, deps) {
       await takeCandidate(o, batch, run, opts, deps);
     }
   } finally {
-    rmSync7(work, { recursive: true, force: true });
+    rmSync8(work, { recursive: true, force: true });
   }
   const requested = await signRequests(git, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
   const reportUrl = reportUrlFor(index, opts.repository);
@@ -12185,7 +13032,7 @@ function qualityNote(x) {
 function baselineNote(x) {
   return x.baseline === undefined ? "" : `, baseline: ${baselineFact(x.baseline)}`;
 }
-function report(io, a, pushed) {
+function report2(io, a, pushed) {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
   if (a.added.length === 0 && a.statements.length === 0) {
@@ -12211,21 +13058,21 @@ function warnSkipped(io, a) {
   for (const s of a.skipped)
     io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
 }
-async function signLoop(opts, seed, scores, deps) {
+async function signLoop2(opts, seed, scores, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   let last;
   const run = { seed, rootKey, memo: new Map, scores };
   try {
-    for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
-      last = await attemptSign({ ...opts, defaultBranch }, run, deps);
+    for (let attempt = 1;attempt <= MAX_ATTEMPTS2; attempt++) {
+      last = await attemptSign2({ ...opts, defaultBranch }, run, deps);
       if (last.commit === undefined) {
-        report(deps.io, last, false);
+        report2(deps.io, last, false);
         return;
       }
       await deps.beforePush?.(attempt);
       if (pushCommit(last.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-        report(deps.io, last, true);
+        report2(deps.io, last, true);
         return;
       }
       deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
@@ -12236,13 +13083,13 @@ async function signLoop(opts, seed, scores, deps) {
     throw e;
   }
   warnSkipped(deps.io, last);
-  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
 }
-async function runSign(opts, deps = SHARED4) {
+async function runSign(opts, deps = SHARED6) {
   const seed = parseRootKey(opts.rootKey);
   try {
     const scores = opts.scores === undefined ? undefined : readScores(opts.scores);
-    await signLoop(opts, seed, scores, deps);
+    await signLoop2(opts, seed, scores, deps);
   } finally {
     seed.fill(0);
   }
@@ -12349,7 +13196,7 @@ function planLines(plan, skipped) {
 }
 
 // src/trust-check.ts
-var SHARED5 = { git: exports_git_tree, io: GHA_IO };
+var SHARED7 = { git: exports_git_tree, io: GHA_IO };
 function assertSourceOnly(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");
@@ -12358,7 +13205,7 @@ function assertSourceOnly(changes) {
     throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
   }
 }
-async function runTrustCheck(opts, deps = SHARED5) {
+async function runTrustCheck(opts, deps = SHARED7) {
   const { git } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
@@ -12393,8 +13240,8 @@ async function runTrustCheck(opts, deps = SHARED5) {
 }
 
 // src/trust-sign.ts
-var SHARED6 = { git: exports_git_tree, io: GHA_IO };
-var MAX_ATTEMPTS2 = 3;
+var SHARED8 = { git: exports_git_tree, io: GHA_IO };
+var MAX_ATTEMPTS3 = 3;
 var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey2(raw) {
   const s = raw.trim();
@@ -12403,7 +13250,7 @@ function parseRootKey2(raw) {
   }
   return new Uint8Array(Buffer.from(s, "base64"));
 }
-async function attemptSign2(opts, seed, rootKey, git) {
+async function attemptSign3(opts, seed, rootKey, git) {
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
   git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
@@ -12423,7 +13270,7 @@ async function attemptSign2(opts, seed, rootKey, git) {
   const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: TRUST_FEED_FILE, bytes }], `Sign trust feed sequence ${String(feed.sequence)}`, cwd);
   return { commit, plan, skipped, sequence: feed.sequence };
 }
-function report2(io, a, pushed) {
+function report3(io, a, pushed) {
   for (const s of [...a.skipped, ...a.plan.skipped]) {
     io.annotate("warning", `skipped ${s.path}: ${s.reason}`);
   }
@@ -12432,28 +13279,28 @@ function report2(io, a, pushed) {
 `));
   io.log(pushed ? `signed trust feed sequence ${String(a.sequence)}` : "nothing to sign; no commit");
 }
-async function signLoop2(opts, seed, deps) {
+async function signLoop3(opts, seed, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1;attempt <= MAX_ATTEMPTS2; attempt++) {
-    const a = await attemptSign2({ ...opts, defaultBranch }, seed, rootKey, deps.git);
+  for (let attempt = 1;attempt <= MAX_ATTEMPTS3; attempt++) {
+    const a = await attemptSign3({ ...opts, defaultBranch }, seed, rootKey, deps.git);
     if (a.commit === undefined) {
-      report2(deps.io, a, false);
+      report3(deps.io, a, false);
       return;
     }
     await deps.beforePush?.(attempt);
     if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
-      report2(deps.io, a, true);
+      report3(deps.io, a, true);
       return;
     }
     deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
   }
-  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
+  throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS3)} times`);
 }
-async function runTrustSign(opts, deps = SHARED6) {
+async function runTrustSign(opts, deps = SHARED8) {
   const seed = parseRootKey2(opts.rootKey);
   try {
-    await signLoop2(opts, seed, deps);
+    await signLoop3(opts, seed, deps);
   } finally {
     seed.fill(0);
   }
@@ -12465,6 +13312,8 @@ var MODES = [
   "sign",
   "score",
   "score-package",
+  "liveness-check",
+  "liveness-sign",
   "trust-check",
   "trust-sign"
 ];
@@ -12472,13 +13321,31 @@ function parseMode(raw) {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined)
     return mode;
-  throw new Error(`input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
+  throw new Error(`input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "liveness-sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
 }
 function takeRootKey() {
   const rootKey = requireInput("root-key");
   maskSecret(rootKey);
   delete process.env[inputEnvName("root-key")];
   return rootKey;
+}
+function takeLivenessSignKeys() {
+  const key = getInput("liveness-key");
+  const root = getInput("root-key");
+  for (const [name, value] of [
+    ["liveness-key", key],
+    ["root-key", root]
+  ]) {
+    if (value !== "")
+      maskSecret(value);
+    delete process.env[inputEnvName(name)];
+  }
+  if (key === "")
+    throw new Error('input "liveness-key" is required');
+  if (root !== "") {
+    throw new Error('input "root-key" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone');
+  }
+  return key;
 }
 function requireInput(name) {
   const v = getInput(name);
@@ -12526,67 +13393,107 @@ function refuseSecrets(names, refusal) {
     throw new Error(refusal(first));
 }
 function refuseSecretsInScore(mode) {
-  refuseSecrets(["root-key", "github-token"], (name) => `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`);
+  refuseSecrets(["root-key", "github-token", "liveness-key"], (name) => `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`);
+}
+function refuseSecretsInLivenessCheck() {
+  refuseSecrets(["root-key", "github-token", "liveness-key"], (name) => `input "${name}" must not be set in liveness-check mode: liveness-check runs extension code and holds no secrets`);
 }
 function checkInputs() {
   const gateway = getInput("nimbus-gateway");
   if (gateway === "")
     return { githubToken: takeGithubToken() };
-  refuseSecrets(["github-token"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
+  refuseSecrets(["github-token", "root-key", "liveness-key"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
   return { gateway };
 }
 function scoresPath(ws, input) {
   const rel = input === "" ? "scores.json" : input;
-  return isAbsolute2(rel) ? rel : join10(ws, rel);
+  return isAbsolute2(rel) ? rel : join11(ws, rel);
 }
 function resolveInWorkspace(ws, input) {
-  return isAbsolute2(input) ? input : join10(ws, input);
+  return isAbsolute2(input) ? input : join11(ws, input);
 }
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
+function livenessResultsPath() {
+  const results = getInput("results");
+  return resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results);
+}
+async function runScorePackageMode() {
+  refuseSecretsInScore("score-package");
+  await runScorePackage({
+    package: resolveInWorkspace(workspace(), requireInput("package")),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores"))
+  });
+}
+async function runScoreMode() {
+  refuseSecretsInScore("score");
+  const defaultBranch = getInput("default-branch");
+  await runScore({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores")),
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runLivenessCheckMode() {
+  refuseSecretsInLivenessCheck();
+  await runLivenessCheck({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    nimbusVersion: getInput("nimbus-version"),
+    out: livenessResultsPath()
+  });
+}
+async function runLivenessSignMode() {
+  const livenessKey = takeLivenessSignKeys();
+  const defaultBranch = getInput("default-branch");
+  await runLivenessSign({
+    workspace: workspace(),
+    livenessKey,
+    results: livenessResultsPath(),
+    nimbusVersion: getInput("nimbus-version"),
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runTrustSignMode() {
+  const rootKey = takeRootKey();
+  const defaultBranch = getInput("default-branch");
+  await runTrustSign({
+    workspace: workspace(),
+    rootKey,
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runSignMode() {
+  const rootKey = takeRootKey();
+  const githubToken = takeGithubToken();
+  const scores = getInput("scores");
+  await runSign({
+    ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
+    githubToken,
+    ...scores !== "" && { scores: scoresPath(workspace(), scores) }
+  });
+}
+var HANDLERS = {
+  check: (baseRef) => runCheck({ workspace: workspace(), baseRef, ...checkInputs() }),
+  "score-package": runScorePackageMode,
+  score: runScoreMode,
+  "liveness-check": runLivenessCheckMode,
+  "liveness-sign": runLivenessSignMode,
+  "trust-check": (baseRef) => runTrustCheck({ workspace: workspace(), baseRef }),
+  "trust-sign": runTrustSignMode,
+  sign: runSignMode
+};
 async function main() {
   try {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
-    if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
-    } else if (mode === "score-package") {
-      refuseSecretsInScore("score-package");
-      await runScorePackage({
-        package: resolveInWorkspace(workspace(), requireInput("package")),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores"))
-      });
-    } else if (mode === "score") {
-      refuseSecretsInScore("score");
-      const defaultBranch = getInput("default-branch");
-      await runScore({
-        workspace: workspace(),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores")),
-        ...defaultBranch !== "" && { defaultBranch }
-      });
-    } else if (mode === "trust-check") {
-      await runTrustCheck({ workspace: workspace(), baseRef });
-    } else if (mode === "trust-sign") {
-      const rootKey = takeRootKey();
-      const defaultBranch = getInput("default-branch");
-      await runTrustSign({
-        workspace: workspace(),
-        rootKey,
-        ...defaultBranch !== "" && { defaultBranch }
-      });
-    } else {
-      const rootKey = takeRootKey();
-      const githubToken = takeGithubToken();
-      const scores = getInput("scores");
-      await runSign({
-        ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
-        githubToken,
-        ...scores !== "" && { scores: scoresPath(workspace(), scores) }
-      });
-    }
+    const handler = HANDLERS[mode];
+    if (handler === undefined)
+      throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
+    await handler(baseRef);
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
     process.exitCode = 1;

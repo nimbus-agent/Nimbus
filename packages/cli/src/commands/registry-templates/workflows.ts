@@ -32,6 +32,12 @@ export const SCORES_ARTIFACT = "registry-scores";
  */
 export const SCORES_DIR = `\${{ runner.temp }}/registry-scores`;
 
+/** The artifact the liveness check job uploads `liveness-results.json` as, and the sign job downloads. */
+export const LIVENESS_ARTIFACT = "registry-liveness";
+
+/** Where the liveness sign job extracts that artifact: the runner's temp directory, never the workspace. */
+export const LIVENESS_DIR = `\${{ runner.temp }}/registry-liveness`;
+
 /** The registry action, referenced by path in the Nimbus repository. */
 export const REGISTRY_ACTION_PATH = "nimbus-agent/Nimbus/packages/github-actions/registry-action";
 
@@ -40,6 +46,12 @@ export const ROOT_KEY_SECRET = "NIMBUS_REGISTRY_ROOT_KEY";
 
 /** The environment whose required reviewers approve every signing run. */
 export const SIGNING_ENVIRONMENT = "registry-signing";
+
+/** The environment secret the liveness workflow passes as the action's `liveness-key` input. */
+export const LIVENESS_KEY_SECRET = "NIMBUS_REGISTRY_LIVENESS_KEY";
+
+/** The environment that holds the liveness key: no required reviewers, the default branch only. */
+export const LIVENESS_ENVIRONMENT = "registry-liveness";
 
 /** The Linux gateway release asset the score and check jobs run a version's code with. */
 const GATEWAY_ASSET = "nimbus-gateway-linux-x64";
@@ -69,7 +81,12 @@ export function actionUses(pin: ActionPin): string {
  * release asset the job did not download.
  */
 function gatewaySetupSteps(pin: ActionPin): string {
-  return `      - name: Set up the sandbox
+  return `${SANDBOX_STEP}
+${pinnedGatewayStep(pin)}`;
+}
+
+/** The sandbox half of the setup, shared by every job that runs extension code. */
+export const SANDBOX_STEP = `      - name: Set up the sandbox
         # System changes need root. The probe must NOT run as root: root bypasses the userns
         # restriction, so a probe under sudo would pass even if the sysctl writes did not apply.
         run: |
@@ -81,8 +98,10 @@ function gatewaySetupSteps(pin: ActionPin): string {
           lib64=()
           if [ -d /lib64 ]; then lib64=(--ro-bind /lib64 /lib64); fi
           bwrap --unshare-user --unshare-net --new-session --ro-bind /usr /usr --ro-bind /etc /etc --ro-bind /lib /lib "\${lib64[@]}" --proc /proc --dev /dev --tmpfs /tmp /usr/bin/true
+`;
 
-      - name: Download the Nimbus gateway
+function pinnedGatewayStep(pin: ActionPin): string {
+  return `      - name: Download the Nimbus gateway
         # Checks only this asset's line of SHA256SUMS; checking the whole file fails on every
         # release asset this job did not download.
         run: |
@@ -93,6 +112,36 @@ function gatewaySetupSteps(pin: ActionPin): string {
           test "$(wc -l < CHECKSUM.txt)" -eq 1
           sha256sum -c CHECKSUM.txt
           chmod +x ${GATEWAY_ASSET}
+`;
+}
+
+/**
+ * The latest published release's gateway, for the liveness check: the tag is resolved at run time
+ * (`gh release view`, the one step that holds the job's token), validated as a plain `x.y.z`, and
+ * only that tag's own line of `SHA256SUMS` is checked. Its version is the step's `version` output.
+ */
+function latestGatewayStep(): string {
+  return `      - name: Download the latest Nimbus gateway
+        id: gateway
+        shell: bash
+        env:
+          GH_TOKEN: \${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh release view --repo nimbus-agent/Nimbus --json tagName -q .tagName)"
+          version="\${tag#v}"
+          if ! [[ "$version" =~ ^[0-9]+\\.[0-9]+\\.[0-9]+$ ]]; then
+            echo "the latest release has no plain x.y.z version; refusing" >&2
+            exit 1
+          fi
+          base="https://github.com/nimbus-agent/Nimbus/releases/download/\${tag}"
+          curl -fsSL --retry 3 -o ${GATEWAY_ASSET} "$base/${GATEWAY_ASSET}"
+          curl -fsSL --retry 3 -o SHA256SUMS "$base/SHA256SUMS"
+          grep -E '^[0-9a-f]{64}  ${GATEWAY_ASSET}$' SHA256SUMS > CHECKSUM.txt
+          test "$(wc -l < CHECKSUM.txt)" -eq 1
+          sha256sum -c CHECKSUM.txt
+          chmod +x ${GATEWAY_ASSET}
+          echo "version=\${version}" >> "$GITHUB_OUTPUT"
 `;
 }
 
@@ -230,5 +279,96 @@ ${gatewaySetupSteps(pin)}
           github-token: \${{ github.token }}
           # Untrusted input: each entry is bound to its version's id, version and package digest.
           scores: ${SCORES_DIR}/scores.json
+`;
+}
+
+/**
+ * `registry-liveness.yml`: weekly dated facts about each package's newest stable version. The
+ * `check` job runs extension code and holds no secret, no environment and a read-only token (used
+ * once, to resolve the latest release); the `sign` job holds only the liveness key, runs no shell
+ * and reads the check job's results file as untrusted input. The liveness key is not the root key.
+ */
+export function registryLivenessWorkflow(pin: ActionPin, defaultBranch: string): string {
+  return `# Weekly liveness checks. In a job that holds no secret, it checks that each package's declared
+# hosts still answer and re-runs its eval suites with the latest Nimbus release. The sign job then
+# signs those dated facts into liveness.json with the liveness key (not the root key) and pushes
+# them to gh-pages. A line says what was observed on that date; it never says the extension works.
+name: Registry liveness
+
+on:
+  schedule:
+    - cron: "23 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: registry-liveness
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check hosts and suites
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # Runs extension code: no environment, no secret, no token beyond read-only contents.
+    permissions:
+      contents: read
+    outputs:
+      nimbus-version: \${{ steps.gateway.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: ${CHECKOUT_ACTION} # ${CHECKOUT_VERSION}
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+${SANDBOX_STEP}
+${latestGatewayStep()}
+      - name: Check
+        uses: ${actionUses(pin)}
+        with:
+          mode: liveness-check
+          default-branch: ${JSON.stringify(defaultBranch)}
+          nimbus-gateway: ${GATEWAY_INPUT}
+          nimbus-version: \${{ steps.gateway.outputs.version }}
+
+      - name: Upload the results
+        uses: ${UPLOAD_ARTIFACT_ACTION}
+        with:
+          name: ${LIVENESS_ARTIFACT}
+          path: liveness-results.json
+          if-no-files-found: error
+
+  sign:
+    name: Sign and publish liveness.json
+    needs: check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # No required reviewers: a leaked liveness key can only publish false dated check lines.
+    environment: ${LIVENESS_ENVIRONMENT}
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: ${CHECKOUT_ACTION} # ${CHECKOUT_VERSION}
+
+      - name: Download the results
+        uses: ${DOWNLOAD_ARTIFACT_ACTION}
+        with:
+          name: ${LIVENESS_ARTIFACT}
+          # Outside the checkout: the check job controls this artifact.
+          path: ${LIVENESS_DIR}
+
+      - name: Sign
+        uses: ${actionUses(pin)}
+        with:
+          mode: liveness-sign
+          default-branch: ${JSON.stringify(defaultBranch)}
+          liveness-key: \${{ secrets.${LIVENESS_KEY_SECRET} }}
+          # Untrusted input: each entry is re-checked, and the Nimbus version must match this run's.
+          results: ${LIVENESS_DIR}/liveness-results.json
+          nimbus-version: \${{ needs.check.outputs.nimbus-version }}
 `;
 }

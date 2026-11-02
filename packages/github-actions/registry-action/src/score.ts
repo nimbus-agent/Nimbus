@@ -346,7 +346,7 @@ type VersionDeps = Pick<ScoreDeps, "runRole" | "runBaseline" | "now" | "io"> & {
 };
 
 /** The run budget left, in milliseconds; unbounded without a deadline. */
-const budgetLeft = (at: VersionAt, now: () => number): number =>
+export const budgetLeft = (at: VersionAt, now: () => number): number =>
   at.deadline === undefined ? Number.POSITIVE_INFINITY : at.deadline - now();
 
 /**

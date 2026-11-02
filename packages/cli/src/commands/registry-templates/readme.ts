@@ -3,7 +3,12 @@
  * owner's next steps it prints once (design § 7.5, § 7.6).
  */
 import { bashQuote, pwshQuote } from "../../lib/shell-quote.ts";
-import { ROOT_KEY_SECRET, SIGNING_ENVIRONMENT } from "./workflows.ts";
+import {
+  LIVENESS_ENVIRONMENT,
+  LIVENESS_KEY_SECRET,
+  ROOT_KEY_SECRET,
+  SIGNING_ENVIRONMENT,
+} from "./workflows.ts";
 
 export function registryReadme(opts: {
   requirePublisherNamespace: boolean;
@@ -18,7 +23,7 @@ export function registryReadme(opts: {
 This repository is a signed Nimbus extension registry. \`${main}\` holds the sources: one
 \`extensions/<id>/<version>/\` directory per published version (\`manifest.json\`,
 \`package.tgz\`, \`publish-request.json\`), the registry rules in \`nimbus-registry.json\`, and the
-two workflows. It never holds a signed \`index.json\`. The published site (the signed
+workflows. It never holds a signed \`index.json\`. The published site (the signed
 \`index.json\` and the files it references) lives on the \`gh-pages\` branch, written only by the
 sign workflow.
 
@@ -40,11 +45,23 @@ ${namespace}The **Registry check** workflow validates it against the signed inde
 reviewer. It also runs the package, in the sandbox with no network and no credentials, in two
 ways. For any version that is not a starter pack, it starts the server to list its tools and
 checks each definition's shape (the baseline). When the version holds \`evals/\`, it runs its eval
-suites. The summary shows what each one gave. No other runtime check of the package is performed.
+suites. The summary shows what each one gave.
 A green check is a reviewer aid, not a guarantee: a pull request can edit the check workflow
 itself. The sign workflow does both runs again in its own \`score\` job. A version with \`evals/\`
 and no valid score is not signed; a baseline never stops a version being signed, and whatever it
 recorded is signed into that version.
+
+## Weekly liveness checks
+
+The **Registry liveness** workflow runs every Monday (and on demand). For the newest stable
+version of each package it checks that the hosts the manifest declares still answer, and re-runs
+the version's eval suites and the baseline with the latest Nimbus release. The suites and the
+baseline run in the Nimbus eval sandbox with no credentials. The host check runs in the action's
+own process on the runner, also with no credentials: it only connects to the host (it sends no
+request and reads no reply beyond the TLS certificate). It signs only what it observed, dated and with the Nimbus version, into
+\`liveness.json\` on \`gh-pages\`, with a separate liveness key that cannot sign the index. A
+line is a dated observation: it never says the extension works. A registry whose index names no
+liveness key publishes none.
 
 ## Rotating or revoking a publisher key
 
@@ -95,33 +112,52 @@ export function ownerNextSteps(opts: {
   dir: string;
   site: string;
   keyPath: string;
+  /** The liveness key file `init --github` wrote (it always writes one). */
+  livenessKeyPath: string;
   defaultBranch: string;
 }): string {
   const secret = `${ROOT_KEY_SECRET} --env ${SIGNING_ENVIRONMENT} --repo ${REPO_PLACEHOLDER}`;
-  return `Next steps (nothing has been pushed; replace ${REPO_PLACEHOLDER} with the registry repository):
-  1. Make sure the repository is public: the check and score jobs fetch without credentials.
-  2. Push ${opts.site} as the gh-pages branch.
-  3. Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers, and set its
+  const livenessSecret = `${LIVENESS_KEY_SECRET} --env ${LIVENESS_ENVIRONMENT} --repo ${REPO_PLACEHOLDER}`;
+  const steps: string[] = [
+    "Make sure the repository is public: the check and score jobs fetch without credentials.",
+    `Push ${opts.site} as the gh-pages branch.`,
+    `Create the environment "${SIGNING_ENVIRONMENT}" with required reviewers, and set its
      deployment branches to ${opts.defaultBranch} only (Deployment branches and tags: Selected
      branches), so a by-hand run from another branch, with its own copy of the sign workflow,
-     cannot reach the root key.
-  4. Store the root key as a secret of THAT environment (--env matters: a repository-level
+     cannot reach the root key.`,
+    `Store the root key as a secret of THAT environment (--env matters: a repository-level
      secret is not gated by the environment's required reviewers):
        bash/zsh:    gh secret set ${secret} < ${bashQuote(opts.keyPath)}
-       PowerShell:  Get-Content -Raw ${pwshQuote(opts.keyPath)} | gh secret set ${secret}
-  5. Set GitHub Pages to serve the gh-pages branch.
-  6. Protect gh-pages against force-push and deletion, without requiring pull requests,
+       PowerShell:  Get-Content -Raw ${pwshQuote(opts.keyPath)} | gh secret set ${secret}`,
+    `Create the environment "${LIVENESS_ENVIRONMENT}" with no required reviewers, and set its
+     deployment branches to ${opts.defaultBranch} only. It needs no approval because a leaked
+     liveness key can only publish false dated check lines: it cannot sign the index.`,
+    `Store the liveness key as a secret of THAT environment:
+       bash/zsh:    gh secret set ${livenessSecret} < ${bashQuote(opts.livenessKeyPath)}
+       PowerShell:  Get-Content -Raw ${pwshQuote(opts.livenessKeyPath)} | gh secret set ${livenessSecret}`,
+  ];
+  steps.push(
+    `Set GitHub Pages to serve the gh-pages branch.`,
+    `Protect gh-pages against force-push and deletion, without requiring pull requests,
      reviews or status checks, so the sign workflow's GITHUB_TOKEN push still lands.
      Without this, anyone with write access can force-push gh-pages back to an older signed
      index, and the next signing run then publishes a different index at a sequence number
-     that was already used. The sign workflow does not check this setting; it is yours to keep.
-  7. Only now push ${opts.dir} to the repository's ${opts.defaultBranch} branch. The push starts
+     that was already used. The sign workflow does not check this setting; it is yours to keep.`,
+    `Only now push ${opts.dir} to the repository's ${opts.defaultBranch} branch. The push starts
      the first sign run, which needs the environment and its secret: pushed earlier, that run
-     fails and GitHub creates "${SIGNING_ENVIRONMENT}" itself, with no required reviewers.
-  8. Protect ${opts.defaultBranch}: require pull requests. If the repository was empty, step 2 made
+     fails and GitHub creates "${SIGNING_ENVIRONMENT}" itself, with no required reviewers.`,
+    `Protect ${opts.defaultBranch}: require pull requests. If the repository was empty, step 2 made
      gh-pages its default branch: set the default branch to ${opts.defaultBranch} (Settings, General)
-     so pull requests and forks target it.
-On Windows the CLI sets no ACL on the key file: it inherits its folder's permissions. Keep it
+     so pull requests and forks target it.`,
+  );
+  const numbered = steps
+    .map(
+      (text, i) => `  ${String(i + 1)}. ${text}
+`,
+    )
+    .join("");
+  return `Next steps (nothing has been pushed; replace ${REPO_PLACEHOLDER} with the registry repository):
+${numbered}On Windows the CLI sets no ACL on the key file: it inherits its folder's permissions. Keep it
 under your user profile (the default ~/.nimbus/registry-key), never on a shared or synced path.
 `;
 }

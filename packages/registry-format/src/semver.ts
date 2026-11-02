@@ -1,6 +1,7 @@
 // Strict SemVer 2.0.0: the version is joined into a path, so no range syntax, `v` prefix or whitespace.
 // Parsed in parts rather than by one regex: MAJOR.MINOR.PATCH, then an optional `-` pre-release and
 // an optional `+` build, each a non-empty dot-separated list of identifiers.
+import semver from "semver";
 
 /** A numeric identifier: `0`, or digits with no leading zero. */
 const NUMERIC_ID_RE = /^(?:0|[1-9]\d*)$/;
@@ -33,4 +34,9 @@ export function isValidSemver(v: string): boolean {
   if (pre !== undefined && !pre.split(".").every(isPrereleaseId)) return false;
   const parts = core.split(".");
   return parts.length === 3 && parts.every((p) => NUMERIC_ID_RE.test(p));
+}
+
+/** Newest first, for `Array.prototype.sort`. Both inputs must already be valid SemVer. */
+export function compareVersionsDesc(a: string, b: string): number {
+  return semver.rcompare(a, b);
 }
