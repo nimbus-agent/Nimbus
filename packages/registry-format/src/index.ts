@@ -174,6 +174,13 @@ export {
   rolePackDigest,
 } from "./role-pack.ts";
 export { ancestorsOf, type RotationEdge, successorsOf } from "./rotation-graph.ts";
+export {
+  judgeScoreEntry,
+  MAX_SCORES_BYTES,
+  readScores,
+  type ScoreDecision,
+  type Scores,
+} from "./scores-file.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

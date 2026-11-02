@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:61e115ea3108eea75443e8731e382c3115dab73e02f13734b1b1593038fef9f3
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:e71be5a5ea3799df145006b21672b423769e919aec5cd1fb54d5a07e908f8c41
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9954,6 +9954,128 @@ function assertFeedRequestSignable(req, feedRootKey) {
     throw invalid4("the trust feed cannot revoke its own root key");
   }
 }
+// ../../registry-format/src/scores-file.ts
+import { closeSync as closeSync3, openSync as openSync3, readSync as readSync2 } from "node:fs";
+var MAX_SCORES_BYTES = 4 * 1024 * 1024;
+var errorText = (e) => e instanceof Error ? e.message : String(e);
+function refuseScores(path, why) {
+  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
+}
+var READ_CHUNK_BYTES = 64 * 1024;
+function readAtMost(path, max) {
+  const fd = openSync3(path, "r");
+  try {
+    const chunks = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
+      const got = readSync2(fd, chunk, 0, chunk.length, null);
+      if (got === 0)
+        break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function isPlainObject2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function readScores(path) {
+  let bytes;
+  try {
+    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
+  } catch (e) {
+    throw refuseScores(path, `could not be read: ${errorText(e)}`);
+  }
+  if (bytes.byteLength > MAX_SCORES_BYTES) {
+    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw refuseScores(path, "is not valid JSON");
+  }
+  if (!isPlainObject2(parsed))
+    throw refuseScores(path, "is not a JSON object");
+  return new Map(Object.entries(parsed));
+}
+var MAX_REASON_DETAIL_CHARS = 300;
+var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
+var BASELINE_UNBOUND = "its scores.json entry is not a baseline entry for this package (want exactly packageSha256 and baseline); ignored";
+var BASELINE_INVALID = "its scores.json baseline is invalid; signed without a baseline";
+function failedCode(error) {
+  const c = isPlainObject2(error) ? error["code"] : undefined;
+  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
+}
+var sortedKeys = (o) => Object.keys(o).sort(codeUnitCompare).join(",");
+function baselineOf(raw) {
+  try {
+    return { baseline: parseEvalBaseline(raw["baseline"]) };
+  } catch {
+    return { baselineIgnored: BASELINE_INVALID };
+  }
+}
+function judgeBaselineOnly(scores, v) {
+  const raw = scores.get(`${v.id}@${v.version}`);
+  if (raw === undefined)
+    return { ok: true };
+  if (!isPlainObject2(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
+    return { ok: true, baselineIgnored: BASELINE_UNBOUND };
+  }
+  return { ok: true, ...baselineOf(raw) };
+}
+function judgeSuite(scores, v) {
+  const raw = scores.get(`${v.id}@${v.version}`);
+  if (raw === undefined) {
+    return {
+      ok: false,
+      reason: "it has eval suites and scores.json has no score for it; not signed without a score"
+    };
+  }
+  if (!isPlainObject2(raw))
+    return { ok: false, reason: MALFORMED };
+  const keys = sortedKeys(raw);
+  const withBaseline = keys.startsWith("baseline,");
+  const core = withBaseline ? keys.slice("baseline,".length) : keys;
+  if (core !== "packageSha256,quality" && core !== "error,packageSha256") {
+    return { ok: false, reason: MALFORMED };
+  }
+  if (raw["packageSha256"] !== v.packageSha256) {
+    return {
+      ok: false,
+      reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
+    };
+  }
+  if (Object.hasOwn(raw, "error")) {
+    return {
+      ok: false,
+      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`
+    };
+  }
+  let quality;
+  try {
+    quality = parseEvalQuality(raw["quality"]);
+  } catch (e) {
+    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
+    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
+  }
+  if (!withBaseline || v.starterPack)
+    return { ok: true, quality };
+  return { ok: true, quality, ...baselineOf(raw) };
+}
+function judgeScoreEntry(scores, v) {
+  if (scores === undefined)
+    return { ok: true };
+  if (v.hasEvals)
+    return judgeSuite(scores, v);
+  if (v.starterPack)
+    return { ok: true };
+  return judgeBaselineOnly(scores, v);
+}
 // ../../registry-format/src/trust-feed-build.ts
 var TRUST_FEED_FILE = "trust.json";
 var FEED_CONFIG_FILE = "nimbus-trust.json";
@@ -11758,129 +11880,6 @@ async function runScorePackage(opts, deps = SHARED3) {
 import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
 import { tmpdir as osTmpdir5 } from "node:os";
 import { join as join10 } from "node:path";
-
-// ../../registry-format/src/scores-file.ts
-import { closeSync as closeSync3, openSync as openSync3, readSync as readSync2 } from "node:fs";
-var MAX_SCORES_BYTES = 4 * 1024 * 1024;
-var errorText = (e) => e instanceof Error ? e.message : String(e);
-function refuseScores(path, why) {
-  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
-}
-var READ_CHUNK_BYTES = 64 * 1024;
-function readAtMost(path, max) {
-  const fd = openSync3(path, "r");
-  try {
-    const chunks = [];
-    let total = 0;
-    while (total < max) {
-      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
-      const got = readSync2(fd, chunk, 0, chunk.length, null);
-      if (got === 0)
-        break;
-      chunks.push(chunk.subarray(0, got));
-      total += got;
-    }
-    return Buffer.concat(chunks, total);
-  } finally {
-    closeSync3(fd);
-  }
-}
-function isPlainObject2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function readScores(path) {
-  let bytes;
-  try {
-    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
-  } catch (e) {
-    throw refuseScores(path, `could not be read: ${errorText(e)}`);
-  }
-  if (bytes.byteLength > MAX_SCORES_BYTES) {
-    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw refuseScores(path, "is not valid JSON");
-  }
-  if (!isPlainObject2(parsed))
-    throw refuseScores(path, "is not a JSON object");
-  return new Map(Object.entries(parsed));
-}
-var MAX_REASON_DETAIL_CHARS = 300;
-var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
-var BASELINE_UNBOUND = "its scores.json entry is not a baseline entry for this package (want exactly packageSha256 and baseline); ignored";
-var BASELINE_INVALID = "its scores.json baseline is invalid; signed without a baseline";
-function failedCode(error) {
-  const c = isPlainObject2(error) ? error["code"] : undefined;
-  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
-}
-var sortedKeys = (o) => Object.keys(o).sort(codeUnitCompare).join(",");
-function baselineOf(raw) {
-  try {
-    return { baseline: parseEvalBaseline(raw["baseline"]) };
-  } catch {
-    return { baselineIgnored: BASELINE_INVALID };
-  }
-}
-function judgeBaselineOnly(scores, v) {
-  const raw = scores.get(`${v.id}@${v.version}`);
-  if (raw === undefined)
-    return { ok: true };
-  if (!isPlainObject2(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
-    return { ok: true, baselineIgnored: BASELINE_UNBOUND };
-  }
-  return { ok: true, ...baselineOf(raw) };
-}
-function judgeSuite(scores, v) {
-  const raw = scores.get(`${v.id}@${v.version}`);
-  if (raw === undefined) {
-    return {
-      ok: false,
-      reason: "it has eval suites and scores.json has no score for it; not signed without a score"
-    };
-  }
-  if (!isPlainObject2(raw))
-    return { ok: false, reason: MALFORMED };
-  const keys = sortedKeys(raw);
-  const withBaseline = keys.startsWith("baseline,");
-  const core = withBaseline ? keys.slice("baseline,".length) : keys;
-  if (core !== "packageSha256,quality" && core !== "error,packageSha256") {
-    return { ok: false, reason: MALFORMED };
-  }
-  if (raw["packageSha256"] !== v.packageSha256) {
-    return {
-      ok: false,
-      reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
-    };
-  }
-  if (Object.hasOwn(raw, "error")) {
-    return {
-      ok: false,
-      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`
-    };
-  }
-  let quality;
-  try {
-    quality = parseEvalQuality(raw["quality"]);
-  } catch (e) {
-    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
-    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
-  }
-  if (!withBaseline || v.starterPack)
-    return { ok: true, quality };
-  return { ok: true, quality, ...baselineOf(raw) };
-}
-function judgeScoreEntry(scores, v) {
-  if (scores === undefined)
-    return { ok: true };
-  if (v.hasEvals)
-    return judgeSuite(scores, v);
-  if (v.starterPack)
-    return { ok: true };
-  return judgeBaselineOnly(scores, v);
-}
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";

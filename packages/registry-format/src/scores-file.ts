@@ -5,8 +5,7 @@
  * `<id>@<version>` and bound to a package by `packageSha256`.
  *
  * A baseline in an entry is optional and never blocks: a malformed or unbound one is ignored with
- * a reason (`baselineIgnored`), while the `quality` rules stay exactly as they were. This file
- * reads the filesystem (`readScores`), so it is not part of the pure index surface, but it imports
+ * a reason (`baselineIgnored`), while the `quality` rules stay exactly as they were. It imports
  * nothing from gateway, cli or ui and uses no ES2024+ runtime API (it runs under the runner's Node).
  */
 import { closeSync, openSync, readSync } from "node:fs";

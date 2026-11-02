@@ -33,12 +33,6 @@ import {
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
 // Not on the package's pure index surface (it reads the filesystem), so imported by path.
-import {
-  judgeScoreEntry,
-  readScores,
-  type ScoreDecision,
-  type Scores,
-} from "@nimbus-dev/registry-format/src/scores-file.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import {
   DEFAULT_BUILD,
