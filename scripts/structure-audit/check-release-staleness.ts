@@ -572,9 +572,12 @@ if (import.meta.main) {
     const { intended, intendedBumpAgeHours } = readIntended(train);
     const published = readPublished(train);
     const publishedAgeHours = published ? ageHours(published.publishedAt) : null;
-    const channels = await Promise.all(
-      train.channels.map((ch) => readChannel(ch, published?.version ?? null)),
-    );
+    // One at a time: the other reads block the event loop, which could run out the served
+    // index's timeout while its response was waiting to be processed.
+    const channels: ChannelReading[] = [];
+    for (const ch of train.channels) {
+      channels.push(await readChannel(ch, published?.version ?? null));
+    }
 
     allResults.push(
       ...evaluateTrain({
