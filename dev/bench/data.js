@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793629955257,
+  "lastUpdate": 1793641510802,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b619319898adc3e11728a7e7df92cc6a72dfedd2",
-          "message": "ci(audit): make audit:doc-refs actually scan the skill files (#1193)\n\n`audit:doc-refs` declares `.claude/commands/*.md` as a doc source. It\nhas been\nmatching **zero files** for as long as that glob has existed.\n\n`Bun.Glob.scan` skips dot-directories unless `dot: true` is passed, and\nevery\n`DOCS_GLOBS` pattern lives under `.claude/`. Measured directly:\n\n```\nnew Glob(\".claude/commands/*.md\").scanSync({cwd})              → 0\nnew Glob(\".claude/commands/*.md\").scanSync({cwd, dot: true})   → 21\n```\n\nSo the gate reported *\"688 refs across 16 docs — all resolve\"* — the\nhardcoded\nlist only — while the 21 files the glob was added to cover were never\nopened.\nEvery path, command and count in the skills was unchecked, which is why\nthe\ndrift below survived.\n\n**After:** `1172 refs across 41 docs` — a 70% increase in what is\nactually\nverified. `.claude/agents/*.md` is added too; it was not in `DOCS_GLOBS`\nat all.\n\n## What turning it on immediately caught\n\n**1. A real defect in `nimbus-architecture.md`.** Its \"where does new\ncode go\"\ntable sent every new migration to `packages/gateway/src/db/migrations/`\n— a\ndirectory that does not exist. The real location is\n`packages/gateway/src/index/migrations/`, which is also what the\n`nimbus-db-migrations` skill says, so the two skills contradicted each\nother and\nan agent following the architecture table would create a file the\nmigration\nrunner never reads.\n\n**2. A false positive in the gate itself.** `nimbus-file-map.md`\ndescribes this\nvery gate as catching \"broken `` `[text](path)` `` and backtick path\nrefs\".\nRead literally that is a link to a file named `path`. Quoted syntax is\nnot a\nreference, so the markdown-link pass now masks inline code spans first —\npreserving length, so byte offsets still map to the correct line.\n`extractBacktickPaths` deliberately does **not** mask, because a\nbackticked\npath *is* a reference there.\n\n## Making it testable\n\nThe module had **no exports and no tests** — it ended in a bare\ntop-level\n`await run()`, so importing it executed the whole audit and could\n`process.exit(1)` in the importing process. That is precisely why a gate\nthis\nload-bearing had no cover. It is now `if (import.meta.main) await\nrun()`, which\nleaves `bun run audit:doc-refs` unchanged (`import.meta.main` is true\nwhen it is\nthe entry point) and makes the helpers importable.\n\n## Verification\n\n10 new tests, including the direct red-prove of the defect: scanning\neach glob\n**without** `dot: true` asserts zero hits, and **with** it asserts a\nnon-zero\nfloor. The false-positive fix is pinned by the real `nimbus-file-map.md`\nline,\nplus a case proving a genuine link on the *same* line is still found —\nmasking\nmust not blind the pass.\n\n- `bun test ./scripts/structure-audit/check-doc-references.test.ts` — 10\npass, 0 fail\n- `bun run audit:doc-refs` — 1172 refs across 41 docs, all resolve\n- `bun run preflight:fast` — all 29 gates pass\n\nThe skill-file count assertion is a floor rather than an equality on\npurpose:\nskills get added and removed, and a brittle count would fail for the\nwrong\nreason. Zero is the failure mode that matters.",
-          "timestamp": "2026-08-15T07:12:12+03:00",
-          "tree_id": "035fb955132479b5e5202595593dc2ad53bcf843",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b619319898adc3e11728a7e7df92cc6a72dfedd2"
-        },
-        "date": 1786767802423,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.68266825000137,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.8975516999999,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 229.5119607000015,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "00482fb2182709843f24b873150dd19e4eb3fd4d",
+          "message": "ci(release): read the linux channel from the site users install from (#1855)\n\n`audit:release-staleness` read the linux channel's `Packages` file from\n`linux-repo`'s Git branch. Since the switch to `actions` deploy on\n2026-11-02, that branch no longer moves on a release, so the file stays\nat 10.14.2.\n\nLeft alone, the daily drift job would report the linux channel stale\nfrom 6 hours after 10.15.0 publishes, even with users getting 10.15.0,\nand it could never see a real lag. #1851 should have caught this and did\nnot.\n\n## The change\n\nThe linux channel now reads the apt index users fetch,\n`https://nimbus-agent.github.io/linux-repo/apt/dists/stable/main/binary-amd64/Packages`.\nThat is right in both deploy modes, so a rollback to Git mode needs no\nchange here.\n\n- A 404 is `absent`, which reports stale. A 5xx, timeout or network\nfailure is `indeterminate`.\n- The fetch has a 10-second limit, like the npm read beside it.\n- The `Packages.gz` fallback is gone. It read the Git branch too, and\nthe site serves the plain index.\n- `docs/ci-secrets.md` now says to read the site, not the branch.\n\n## Evidence\n\n| Claim | How it was checked |\n|---|---|\n| The real site reads correctly | `readServedLinuxChannel` against the\nlive URL returned `read`, `10.14.2` |\n| The audit runs end to end | A local run reported no linux finding |\n| The manifest test fails without the change | With `main`'s\n`release-train.json` restored: 1 fail, the test that pins the served URL\n|\n| Status handling | Unit tests for 200, 404, 503 and a thrown network\nerror, through an injected fetch |\n| Static gates | `bun run preflight:fast` passed |\n\n**Not proved until 10.15.0:** a version change seen through the served\nindex.\n\nThe same local run also reports `sdk:nimbus-client` and\n`sdk:nimbus-vscode` behind npm 2.1.0. Those are why the drift job is\nalready red every day, and this PR does not touch them.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Linux release-staleness checks now read the served package index, so\nreported versions reflect what is available for installation. Missing\nindexes are distinguished from temporary service or network errors,\nwhich are reported as indeterminate.\n* **Documentation**\n* Updated deployment guidance to identify the served package index as\nthe source checked in both deployment modes. This clarifies where Linux\nrelease-staleness information comes from.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T19:30:57+02:00",
+          "tree_id": "24a8c73b24081952854123c303ee95b923110b3e",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/00482fb2182709843f24b873150dd19e4eb3fd4d"
+        },
+        "date": 1793641506107,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 313.1130209499981,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 312.52166614999226,
             "unit": "ms"
           }
         ]
