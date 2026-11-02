@@ -5,13 +5,13 @@
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { type RoleRun, type RoleSpawnOptions, roleRunner } from "./score.ts";
 import {
   BASELINE_MIN_RUN_MS,
   BASELINE_ROLE_TIMEOUT_MS,
   baselineRoleRunner,
   judgeBaselineRun,
 } from "./score-baseline.ts";
+import { type RoleRun, type RoleSpawnOptions, roleRunner } from "./score-role.ts";
 
 const WANT = { id: "acme/x", version: "1.0.0" };
 

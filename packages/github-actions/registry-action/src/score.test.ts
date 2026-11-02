@@ -32,6 +32,15 @@ import { signIndex, validatePublish } from "../../../registry-format/src/index.t
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
 import {
+  runScore,
+  type ScoreDeps,
+  type ScoresFile,
+  scoreCandidate,
+  scoreVersion,
+  writeFileAtomic,
+} from "./score.ts";
+import { BASELINE_MIN_RUN_MS, BASELINE_ROLE_TIMEOUT_MS } from "./score-baseline.ts";
+import {
   type KillProcess,
   ROLE_DRAIN_GRACE_MS,
   ROLE_KILL_BOUND_MS,
@@ -41,17 +50,10 @@ import {
   type RoleRun,
   type RoleSpawnOptions,
   roleRunner,
-  runScore,
   SCORE_MIN_RUN_MS,
   SCORE_RUN_BUDGET_MS,
-  type ScoreDeps,
-  type ScoresFile,
   type SpawnLike,
-  scoreCandidate,
-  scoreVersion,
-  writeFileAtomic,
-} from "./score.ts";
-import { BASELINE_MIN_RUN_MS, BASELINE_ROLE_TIMEOUT_MS } from "./score-baseline.ts";
+} from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   copyRegistryRepo,
@@ -359,6 +361,19 @@ describe("score mode", () => {
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("eval of acme/bad@1.0.0 failed (ERR_EVAL_ROLE_FAILED)");
     expect(warnings[0]).toContain(remedy);
+  });
+
+  test("a long role error leaves the remedy whole in the warning", async () => {
+    await publish({ id: "acme/bad", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    await score(
+      fakeRole(() =>
+        run({
+          stdout: `${JSON.stringify({ ok: false, error: { code: "ERR_EVAL_SUITE_INVALID", message: "m".repeat(2000) } })}\n`,
+        }),
+      ),
+    );
+    expect(warnings.some((w) => w.endsWith("time budget that later versions need."))).toBe(true);
   });
 
   test("with no failed version the summary carries no remedy", async () => {

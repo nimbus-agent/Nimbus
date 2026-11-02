@@ -17,8 +17,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { packExtensionDir } from "../../../registry-format/src/index.ts";
 import type { ActionIo } from "./report.ts";
-import type { RoleRun } from "./score.ts";
 import { runScorePackage, type ScorePackageDeps } from "./score-package.ts";
+import type { RoleRun } from "./score-role.ts";
 import { makeExtension, write } from "./testing/registry-repo.ts";
 
 setDefaultTimeout(60_000);
@@ -132,6 +132,11 @@ async function packedSha(dir: string): Promise<string> {
   return sha256(readFileSync(tgz));
 }
 
+/** The source directory is never what a role is handed: it still holds the post-run tampering. */
+function roleDirIsNotSource(dir: string): boolean {
+  return readFileSync(join(dir, "dist", "index.js"), "utf8").includes("tampered");
+}
+
 describe("score-package", () => {
   test("a directory is packed, and its packageSha256 equals the hash of packExtensionDir's bytes", async () => {
     const dir = await packageDir({ id: "acme/plain" });
@@ -140,6 +145,29 @@ describe("score-package", () => {
       "acme/plain@1.0.0": { packageSha256: await packedSha(dir), baseline: BASELINE },
     });
     expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(r);
+  });
+
+  test("the role runs the bytes that were hashed, not the source directory", async () => {
+    const dir = await packageDir({ id: "acme/plain", dist: "export default 'original';\n" });
+    const expectedSha = await packedSha(dir);
+    let seen: { dist: string; repacked: string } | undefined;
+    const r = await score(dir, {
+      runBaseline: async (gw, roleDir) => {
+        // The source changes after the run started: the role must not see it.
+        writeFileSync(join(dir, "dist", "index.js"), "export default 'tampered';\n");
+        const again = join(tmp, "repacked.tgz");
+        await packExtensionDir(roleDir, again);
+        seen = {
+          dist: readFileSync(join(roleDir, "dist", "index.js"), "utf8"),
+          repacked: sha256(readFileSync(again)),
+        };
+        return deps.runBaseline(gw, roleDir);
+      },
+    });
+    expect(seen?.dist).toBe("export default 'original';\n");
+    expect(seen?.repacked).toBe(expectedSha);
+    expect(r["acme/plain@1.0.0"]?.packageSha256).toBe(expectedSha);
+    expect(roleDirIsNotSource(dir)).toBe(true);
   });
 
   test("a .tgz is hashed as given", async () => {

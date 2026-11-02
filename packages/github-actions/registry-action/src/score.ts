@@ -74,9 +74,6 @@ import {
   type ScoreError,
 } from "./score-role.ts";
 
-// Every name the callers and tests have always imported from here.
-export * from "./score-role.ts";
-
 export interface ScoreDeps {
   validate: typeof validatePublish;
   git: typeof gitTree;
@@ -473,9 +470,7 @@ export function reportScores(io: ActionIo, r: ScoreRun): void {
     if ("error" in e) {
       io.annotate(
         "warning",
-        clip(
-          `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`,
-        ),
+        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`,
       );
       failed.push(ref);
     }

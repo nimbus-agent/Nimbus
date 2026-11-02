@@ -78,8 +78,9 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   inside `quality`, and never a reason to refuse or skip a publish. A pass means only that the server
   started and every tool it listed had a well-formed definition; it says nothing about what the
   tools do. `failure` is always a code from that fixed set, never text from the extension. The run
-  budget is shared: no baseline starts with under 2 minutes left (its two attempts need up to 94
-  seconds), a version that gets none is signed without one, with a warning from the score job.
+  baseline role has its own 3-minute deadline (`BASELINE_ROLE_TIMEOUT_MS`), or what is left of the
+  run budget if that is shorter. The budget is shared: no baseline starts with under 2 minutes left
+  (its two attempts need up to 94 seconds), a version that gets none is signed without one, with a warning from the score job.
   **A registry whose gateway is older than the release that added `--baseline` gets no baseline:**
   the role exits 2 on the flag, `score` annotates a warning naming the version and records only the
   suite result (nothing for a version without a suite), and the run stays green.

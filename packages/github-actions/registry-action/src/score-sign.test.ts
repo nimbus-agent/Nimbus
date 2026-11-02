@@ -18,7 +18,8 @@ import {
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import { type RoleRun, runScore } from "./score.ts";
+import { runScore } from "./score.ts";
+import type { RoleRun } from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   makeExtension,

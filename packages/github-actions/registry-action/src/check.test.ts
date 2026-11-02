@@ -19,7 +19,7 @@ import { signIndex, validatePublish } from "../../../registry-format/src/index.t
 import { type CheckDeps, runCheck } from "./check.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import type { RoleRun, RunRole } from "./score.ts";
+import type { RoleRun, RunRole } from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   copyRegistryRepo,
@@ -614,6 +614,9 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     const md = summaries[0] ?? "";
     expect(md).not.toContain("**Baseline:**");
     expect(md).not.toContain("**Quality:**");
+    // The server was started, so the closing sentence never says no runtime check was performed.
+    expect(md).not.toContain("No runtime check of the package is performed");
+    expect(md).toContain("started once");
     expect(logs.join("\n")).toContain("check passed: acme/echo@1.0.0");
   });
 

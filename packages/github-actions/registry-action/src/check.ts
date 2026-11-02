@@ -47,8 +47,9 @@ import {
   statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
-import { assertGateway, type RunRole, roleRunner, type ScoreEntry, scoreVersion } from "./score.ts";
+import { assertGateway, type ScoreEntry, scoreVersion } from "./score.ts";
 import { baselineFact, baselineRoleRunner } from "./score-baseline.ts";
+import { type RunRole, roleRunner } from "./score-role.ts";
 
 /** Inputs `check` needs. */
 export interface CheckOptions {
@@ -255,23 +256,21 @@ function baselineLine(e: ScoreEntry): string | undefined {
 }
 
 /** The closing sentence: what this check did and did not run. */
-function runtimeSentence(e: ScoreEntry | undefined): string {
-  if (e === undefined) {
+function runtimeSentence(e: ScoreEntry | undefined, baselineAttempted: boolean): string {
+  const suites = e !== undefined && ("quality" in e || "error" in e);
+  if (!suites && !baselineAttempted) {
     return (
       "No runtime check of the package is performed: this check validated the signature, the " +
       "registry rules and the package's file set, not what the code does."
     );
   }
-  const suites = "quality" in e || "error" in e;
-  if (suites && e.baseline === undefined) {
-    return (
-      "The package's eval suites were run in the platform sandbox, offline and without " +
-      "credentials; nothing else about what the code does was checked."
-    );
+  // Extension code ran whenever a baseline was attempted, whether or not a result came back.
+  let ran = "The package's server was started once to list its tools";
+  if (suites) {
+    ran = baselineAttempted
+      ? "The package's eval suites were run, and its server was started once to list its tools,"
+      : "The package's eval suites were run";
   }
-  const ran = suites
-    ? "The package's eval suites were run, and its server was started once to list its tools,"
-    : "The package's server was started once to list its tools";
   return `${ran} in the platform sandbox, offline and without credentials; nothing else about what the code does was checked.`;
 }
 
@@ -287,6 +286,7 @@ function checkSummary(
   admitted: readonly TrustStatement[] = [],
   provenance?: CheckedProvenance,
   score?: ScoreEntry,
+  baselineAttempted = false,
 ): string {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
@@ -314,7 +314,7 @@ function checkSummary(
     `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`,
     `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`,
     "",
-    runtimeSentence(score),
+    runtimeSentence(score, baselineAttempted),
   );
   return lines.join("\n");
 }
@@ -418,6 +418,11 @@ async function checkScore(
   );
 }
 
+/** Whether this check started the package's server for a baseline: a gateway, and not a starter pack. */
+function attemptsBaseline(v: PublishVerdict, opts: CheckOptions): boolean {
+  return opts.gateway !== undefined && !v.starterPack;
+}
+
 /** Run the `check` mode. Throws (failing the step) on any refusal. */
 export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Promise<void> {
   const { git } = deps;
@@ -460,7 +465,9 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
     const verdict = await deps.validate(candidate, admitted.index, config, work);
     const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
     const score = await checkScore(verdict, candidate.packageBytes, work, opts, deps);
-    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score));
+    deps.io.summary(
+      checkSummary(verdict, admitted.admitted, provenance, score, attemptsBaseline(verdict, opts)),
+    );
     deps.io.log(
       `check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`,
     );

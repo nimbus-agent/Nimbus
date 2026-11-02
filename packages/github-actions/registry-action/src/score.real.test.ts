@@ -24,8 +24,9 @@ import {
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import { roleRunner, runScore } from "./score.ts";
+import { runScore } from "./score.ts";
 import { baselineRoleRunner } from "./score-baseline.ts";
+import { roleRunner } from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   makeExtension,

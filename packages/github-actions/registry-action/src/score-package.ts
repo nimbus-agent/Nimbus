@@ -27,15 +27,13 @@ import {
 import { type ActionIo, GHA_IO } from "./report.ts";
 import {
   assertGateway,
-  type RunRole,
   reportScores,
-  roleRunner,
-  SCORE_RUN_BUDGET_MS,
   type ScoresFile,
   scoreVersion,
   writeFileAtomic,
 } from "./score.ts";
 import { baselineRoleRunner } from "./score-baseline.ts";
+import { type RunRole, roleRunner, SCORE_RUN_BUDGET_MS } from "./score-role.ts";
 
 export interface ScorePackageOptions {
   /** The `package` input: a package directory or a `.tgz`. */
