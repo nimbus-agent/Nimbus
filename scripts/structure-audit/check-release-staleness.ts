@@ -235,6 +235,8 @@ export interface ChannelSpec {
   kind: "brew" | "scoop" | "linux" | "winget";
   repo?: string;
   path?: string;
+  /** linux only: the served apt `Packages` index. */
+  url?: string;
   package?: string;
   wingetRepo?: string;
 }
@@ -290,17 +292,34 @@ function decodeContents(base64Envelope: string): string {
   return Buffer.from(base64Envelope.replace(/\s/g, ""), "base64").toString("utf8");
 }
 
-/** Fallback: some apt repos serve only Packages.gz — decode it in-memory. */
-function tryLinuxGz(ch: ChannelSpec): ChannelReading | null {
-  const gz = runGh(["gh", "api", `repos/${ch.repo}/contents/${ch.path}.gz`, "--jq", ".content"]);
-  if (!gz.ok) return null;
+/**
+ * The linux channel's version, from the apt index users actually fetch. It must not come from
+ * `linux-repo`'s Git branch: in `actions` deploy mode that branch no longer changes on a release,
+ * so reading it would report a lag that does not exist and miss one that does. The served index
+ * is right in either mode. Bounded like the npm read; a timeout or 5xx is transient, not staleness.
+ */
+export async function readServedLinuxChannel(
+  url: string,
+  fetchIndex: (url: string, init: RequestInit) => Promise<Response> = fetch,
+): Promise<ChannelReading> {
   try {
-    const bytes = Buffer.from(gz.stdout.replace(/\s/g, ""), "base64");
-    const text = new TextDecoder().decode(Bun.gunzipSync(bytes));
-    return { kind: ch.kind, status: "read", version: parseLinuxVersion(text), covered: null };
+    const res = await fetchIndex(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) {
+      return {
+        kind: "linux",
+        status: classifyReadFailure(res.status),
+        version: null,
+        covered: null,
+      };
+    }
+    return {
+      kind: "linux",
+      status: "read",
+      version: parseLinuxVersion(await res.text()),
+      covered: null,
+    };
   } catch {
-    // corrupt / non-gzip payload — transient, not a staleness finding
-    return { kind: ch.kind, status: "indeterminate", version: null, covered: null };
+    return { kind: "linux", status: "indeterminate", version: null, covered: null };
   }
 }
 
@@ -340,13 +359,15 @@ function readWingetChannel(ch: ChannelSpec, publishedVersion: string | null): Ch
 }
 
 /** Read one channel's live version (or winget coverage). Public reads only. */
-function readChannel(ch: ChannelSpec, publishedVersion: string | null): ChannelReading {
+async function readChannel(
+  ch: ChannelSpec,
+  publishedVersion: string | null,
+): Promise<ChannelReading> {
   if (ch.kind === "winget") return readWingetChannel(ch, publishedVersion);
+  if (ch.kind === "linux") return readServedLinuxChannel(ch.url ?? "");
 
   const res = runGh(["gh", "api", `repos/${ch.repo}/contents/${ch.path}`, "--jq", ".content"]);
   if (!res.ok) {
-    const linuxGz = ch.kind === "linux" ? tryLinuxGz(ch) : null;
-    if (linuxGz !== null) return linuxGz;
     return {
       kind: ch.kind,
       status: classifyReadFailure(res.httpStatus),
@@ -355,12 +376,7 @@ function readChannel(ch: ChannelSpec, publishedVersion: string | null): ChannelR
     };
   }
   const text = decodeContents(res.stdout);
-  const version =
-    ch.kind === "brew"
-      ? parseBrewVersion(text)
-      : ch.kind === "scoop"
-        ? parseScoopVersion(text)
-        : parseLinuxVersion(text);
+  const version = ch.kind === "brew" ? parseBrewVersion(text) : parseScoopVersion(text);
   return { kind: ch.kind, status: "read", version, covered: null };
 }
 
@@ -556,7 +572,9 @@ if (import.meta.main) {
     const { intended, intendedBumpAgeHours } = readIntended(train);
     const published = readPublished(train);
     const publishedAgeHours = published ? ageHours(published.publishedAt) : null;
-    const channels = train.channels.map((ch) => readChannel(ch, published?.version ?? null));
+    const channels = await Promise.all(
+      train.channels.map((ch) => readChannel(ch, published?.version ?? null)),
+    );
 
     allResults.push(
       ...evaluateTrain({

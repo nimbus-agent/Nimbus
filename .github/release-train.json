@@ -15,8 +15,7 @@
         { "kind": "scoop", "repo": "nimbus-agent/scoop-bucket", "path": "bucket/nimbus.json" },
         {
           "kind": "linux",
-          "repo": "nimbus-agent/linux-repo",
-          "path": "apt/dists/stable/main/binary-amd64/Packages"
+          "url": "https://nimbus-agent.github.io/linux-repo/apt/dists/stable/main/binary-amd64/Packages"
         },
         { "kind": "winget", "package": "NimbusAgent.Nimbus", "wingetRepo": "microsoft/winget-pkgs" }
       ]
