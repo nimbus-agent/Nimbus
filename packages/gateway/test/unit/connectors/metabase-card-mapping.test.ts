@@ -61,7 +61,6 @@ describe("mapMetabaseCardToItem", () => {
       card_id: 42,
       name: "Revenue by month",
       description: "Which months brought in the most revenue?",
-      card_type: "question",
       collection_id: "7",
       collection_name: "Finance",
       dashboard_id: null,
@@ -88,6 +87,18 @@ describe("mapMetabaseCardToItem", () => {
   test("returns null when the row is not a plain object", () => {
     expect(mapMetabaseCardToItem(null, ctx())).toBeNull();
     expect(mapMetabaseCardToItem("nope", ctx())).toBeNull();
+  });
+
+  test("returns null for models and metrics", () => {
+    expect(mapMetabaseCardToItem(makeCard({ type: "model" }), ctx())).toBeNull();
+    expect(mapMetabaseCardToItem(makeCard({ type: "metric" }), ctx())).toBeNull();
+  });
+
+  test("older responses with no type: a question maps, a dataset: true model does not", () => {
+    const untyped = makeCard();
+    delete untyped["type"];
+    expect(mapMetabaseCardToItem(untyped, ctx())?.externalId).toBe("card/42");
+    expect(mapMetabaseCardToItem({ ...untyped, dataset: true }, ctx())).toBeNull();
   });
 
   test("returns null when id is missing, empty or non-numeric", () => {

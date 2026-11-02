@@ -327,6 +327,15 @@ describe("metabase-sync against Bun.serve fake API", () => {
       expect(metabaseItems(harness.db).map((i) => i.id)).toEqual(["metabase:card/3"]);
     });
 
+    test("models and metrics returned by /api/card are not indexed", async () => {
+      const { harness, result } = await runSync({
+        dashboards: [],
+        cards: [card(1), card(2, { type: "model" }), card(3, { type: "metric" })],
+      });
+      expect(result.itemsUpserted).toBe(1);
+      expect(metabaseItems(harness.db).map((i) => i.id)).toEqual(["metabase:card/1"]);
+    });
+
     test("a 500 on /api/card leaves dashboards indexed and the sync successful", async () => {
       const { harness, result } = await runSync({
         dashboards: [dashboard(7)],

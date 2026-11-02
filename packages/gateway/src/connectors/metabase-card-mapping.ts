@@ -32,6 +32,15 @@ function nativeSql(row: Record<string, unknown>): string | null {
 }
 
 /**
+ * `/api/card` also returns models and metrics. Older versions have no `type` and mark a model
+ * with `dataset: true`.
+ */
+function isSavedQuestion(row: Record<string, unknown>): boolean {
+  const type = stringField(row, "type");
+  return type === undefined ? row["dataset"] !== true : type === "question";
+}
+
+/**
  * Copies a listed set of fields and never spreads the record: `result_metadata` (data-derived
  * fingerprints), `visualization_settings` and `parameters` must not reach the index.
  */
@@ -40,7 +49,7 @@ export function mapMetabaseCardToItem(
   ctx: MetabaseMappingContext,
 ): MetabaseCardMappedRow | null {
   const row = asRecord(raw);
-  if (row === undefined) {
+  if (row === undefined || !isSavedQuestion(row)) {
     return null;
   }
 
@@ -68,7 +77,6 @@ export function mapMetabaseCardToItem(
     card_id: id,
     name,
     description,
-    card_type: stringField(row, "type") ?? null,
     collection_id: collectionKey,
     collection_name: collectionName,
     dashboard_id: numberField(row, "dashboard_id") ?? null,
