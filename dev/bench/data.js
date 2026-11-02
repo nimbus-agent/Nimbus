@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793644597306,
+  "lastUpdate": 1793646726396,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "025b8d895d4a821a066951b93d59af03de1e7b44",
-          "message": "ci(docs): correct the duplication-gate comment to the measured numbers (#1198)\n\nThe duplication job's comment claimed the ratchet was *\"pinned just\nabove the\ncurrent strict duplication (~4.41%)\"*. That number matches **neither**\nfigure:\n\n| | value |\n|---|---|\n| threshold in `.jscpd.json` | **4** |\n| actual duplicated lines | **3.48%** (6,122 of 176k, 600 clones) |\n| the comment | ~4.41% |\n\nSo there is **0.52pp of slack**, not \"just above\".\n\n## The part worth writing down\n\nThe threshold gates the **LINE** percentage, not the token percentage.\nThat\nmatters because jscpd prints both, and the token figure is **4.19% —\nabove the\n4 threshold**. Anyone reading that column concludes this job should be\nfailing\nand goes looking for a broken gate.\n\nVerified rather than assumed, by bisecting the config against the real\nrun:\n\n- `threshold: 3.6` (above lines 3.48, below tokens 4.19) → **exit 0**\n- `threshold: 3.4` (below lines 3.48) → **exit 1**\n\nOnly line-gating explains both. Config restored afterwards; the only\nchange in\nthis PR is the comment.\n\nComment-only — no behaviour change. `bun run audit:workflow-lint` OK.",
-          "timestamp": "2026-08-15T09:27:02+03:00",
-          "tree_id": "ba71cdbe7b58c1dba07558b6195ba91b0b6683a1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/025b8d895d4a821a066951b93d59af03de1e7b44"
-        },
-        "date": 1786775917279,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.55422265000124,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.85517870000115,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 320.83119220000447,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "90515ccbb2c4d74aa5db31cfe17d9c0dcf44e669",
+          "message": "chore: release main (#1863)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.17.0</summary>\n\n##\n[10.17.0](https://github.com/nimbus-agent/Nimbus/compare/v10.16.0...v10.17.0)\n(2026-11-02)\n\n\n### Features\n\n* **gateway:** index Metabase saved questions\n([#1856](https://github.com/nimbus-agent/Nimbus/issues/1856))\n([878766d](https://github.com/nimbus-agent/Nimbus/commit/878766d65391e94c2fc1f3b636bdb93e230d0ee6))\n* **registry:** publish a signed liveness.json from a scheduled, keyless\ncheck ([#1862](https://github.com/nimbus-agent/Nimbus/issues/1862))\n([caf8a0a](https://github.com/nimbus-agent/Nimbus/commit/caf8a0a51ded491d651b1637b1ed4e95524f6598))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-02T21:00:50+02:00",
+          "tree_id": "f700f12c0f9600905afd1a7434df17d4d00449fd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/90515ccbb2c4d74aa5db31cfe17d9c0dcf44e669"
+        },
+        "date": 1793646721979,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 294.77398214999704,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 291.1856792499915,
             "unit": "ms"
           }
         ]
