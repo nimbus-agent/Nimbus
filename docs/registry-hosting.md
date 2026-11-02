@@ -7,13 +7,14 @@ A Nimbus extension registry is a folder of signed static files (see [architectur
 - `main` holds sources: `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}`, publishers' signed key statements under `statements/<statement id>.json` (a `key.rotate` or `key.revoke` sent with `nimbus extension publish --statement`; the sign run admits them into the index, and one never leaves it once signed), maintainers' block requests under `trust-requests/<name>.json` (an unsigned `key.revoke` or `extension.takedown` written by `nimbus registry maintain revoke-key|takedown --github <clone>`; the sign run signs it with the root key, once), the rules in `nimbus-registry.json`, and two workflows. It never holds a signed `index.json`. The first sign run also sets the index's `reportUrl` to this repository's issue form, where `nimbus extension report` sends users.
 - `gh-pages` holds the published site: the signed `index.json` and the files it references. Only the sign workflow writes it.
 - **Registry check** runs on every pull request to `main` with a read-only token and no secrets. It starts the server of any new version that is not a starter pack, to list its tools, and runs the version's eval suites when it has `evals/` (see [Eval scores](#eval-scores)). It is a reviewer aid.
+- **Registry liveness** runs every Monday (and by hand). Its `check` job holds no secret and runs extension code; its `sign` job holds only the liveness key, runs no extension code, and writes only `liveness.json` to `gh-pages` (see [Liveness checks](#liveness-checks)). A registry whose index names no liveness key publishes no checks.
 - **Registry sign** runs after a merge (or by hand): a `score` job with no secrets does the same two runs for the unsigned versions, then the `sign` job runs behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.
 
 ## Owner steps
 
 Step 1 prints these steps (numbered there from "Make sure the repository is public") with your folder and key paths filled in; replace `<owner>/<repo>` in them with your repository. Below, `nimbus-agent/extensions` is the example.
 
-1. **Scaffold.** `nimbus registry maintain init ./extensions --github`. This writes the repository folder, a sibling `./extensions-site` for `gh-pages`, and a root key at `~/.nimbus/registry-key`. The site folder holds the signed empty `index.json`, a copy of `nimbus-registry.json`, an empty `.nojekyll` (so GitHub Pages' Jekyll does not drop paths that start with `_` or `.`) and a `.gitattributes` of `* -text` (so git never rewrites the line endings of signed bytes); every sign run builds on the previous site tree and keeps both. It prints the key's fingerprint and the steps below with your paths filled in; it never prints the key. Nothing is pushed. The workflows reference the registry action pinned to the commit your CLI was built from; a development build needs `--action-ref <40-hex>`.
+1. **Scaffold.** `nimbus registry maintain init ./extensions --github`. This writes the repository folder (with `registry-liveness.yml` beside the other two workflows), a sibling `./extensions-site` for `gh-pages`, and a root key at `~/.nimbus/registry-key`. The site folder holds the signed empty `index.json`, a copy of `nimbus-registry.json`, an empty `.nojekyll` (so GitHub Pages' Jekyll does not drop paths that start with `_` or `.`) and a `.gitattributes` of `* -text` (so git never rewrites the line endings of signed bytes); every sign run builds on the previous site tree and keeps both. It also generates a second key, the liveness key, at `~/.nimbus/registry-liveness-key` (`--liveness-key <path>` changes it), writes its public half into the signed index as `livenessKey`, and writes `registry-liveness.yml` beside the other two workflows. It prints both fingerprints and the steps below with your paths filled in; it never prints either key. Nothing is pushed. The workflows reference the registry action pinned to the commit your CLI was built from; a development build needs `--action-ref <40-hex>`.
 2. **Make the repository public.** The check job and the sign workflow's score job fetch `gh-pages` and `main` without credentials; in a private repository the score job fails, and a failed score job skips every sign run.
 3. **Push the site.** Push `./extensions-site` as the `gh-pages` branch of `nimbus-agent/extensions`. Do not push `main` yet.
 4. **Create the `registry-signing` environment** (Settings, Environments) and add **required reviewers**. Under **Deployment branches and tags**, choose **Selected branches** and allow only `main` (or your `--default-branch`). The sign workflow can also be started by hand (`workflow_dispatch`) from any branch, and that branch's own copy of the workflow would then be the one offered the key; the branch rule stops that run at the environment, without depending on the reviewer spotting a changed workflow.
@@ -30,8 +31,19 @@ Step 1 prints these steps (numbered there from "Make sure the repository is publ
    On Windows the CLI sets no ACL on the key file; it inherits its folder's permissions. Keep it under your user profile and never on a shared or synced path.
 6. **Serve `gh-pages` with GitHub Pages** (Settings, Pages, branch `gh-pages`). Clients add the registry at the Pages URL with `nimbus registry add`.
 7. **Protect `gh-pages` against force-push and deletion**, without requiring pull requests, reviews or status checks, so the sign workflow's `GITHUB_TOKEN` push still lands.
-8. **Only now push `main`.** Push `./extensions` as `main`. The push starts the first **Registry sign** run, which needs the environment and its secret: pushed before steps 4 and 5, that run fails, and GitHub creates `registry-signing` itself, with no required reviewers.
-9. **Protect `main`:** require pull requests. If you used `--default-branch`, push and protect that branch instead; both workflows follow it. If the repository was empty when you pushed `gh-pages` in step 3, GitHub made `gh-pages` its default branch: set the default branch back to `main` (Settings, General) so pull requests and forks target it.
+8. **Create the `registry-liveness` environment** with no required reviewers, and under **Deployment branches and tags** allow only `main` (or your `--default-branch`). It has no reviewers because a leaked liveness key can only publish false dated check lines: it cannot sign the index, and the client treats the lines as evidence only (I51). Store the liveness key (by default `~/.nimbus/registry-liveness-key`, written by step 1) as a secret of that environment:
+
+   ```bash
+   gh secret set NIMBUS_REGISTRY_LIVENESS_KEY --env registry-liveness --repo nimbus-agent/extensions < '/home/me/.nimbus/registry-liveness-key'
+   ```
+
+   ```powershell
+   Get-Content -Raw 'C:\Users\me\.nimbus\registry-liveness-key' | gh secret set NIMBUS_REGISTRY_LIVENESS_KEY --env registry-liveness --repo nimbus-agent/extensions
+   ```
+
+   The liveness key file must stay outside both registry folders and must not be the root key file; `init` refuses either.
+9. **Only now push `main`.** Push `./extensions` as `main`. The push starts the first **Registry sign** run, which needs the environment and its secret: pushed before steps 4 and 5, that run fails, and GitHub creates `registry-signing` itself, with no required reviewers.
+10. **Protect `main`:** require pull requests. If you used `--default-branch`, push and protect that branch instead; both workflows follow it. If the repository was empty when you pushed `gh-pages` in step 3, GitHub made `gh-pages` its default branch: set the default branch back to `main` (Settings, General) so pull requests and forks target it.
 
 ## Approving a signing run
 
@@ -98,11 +110,33 @@ The generated check and score jobs set up the sandbox with `sudo`: install `bubb
 
 Take the exact steps and pins from a scratch `init --github` run. A registry that does not adopt this keeps working as before: without the `scores` input, sign records no quality.
 
+**Adding liveness checks to an existing registry.** Two parts, in this order:
+
+1. Name a liveness key in the index. In your registry folder's signing checkout, run `nimbus registry maintain set-liveness-key <dir> --generate` (the key goes to `~/.nimbus/registry-liveness-key`, or the `--liveness-key <path>` you give; `--force` overwrites an existing file) or `nimbus registry maintain set-liveness-key <dir> <public key>` when you hold the key elsewhere. It re-signs the index at `sequence + 1` with your root key (`--key <root key file>`, default `~/.nimbus/registry-key`). It refuses a public key equal to the root key, and a key file inside `<dir>` or equal to the root key file. Push the new site to `gh-pages` as you do for any index change. A new `livenessKey` replaces clients' floor for that registry.
+2. Copy `registry-liveness.yml` from a scratch `init --github` run into `.github/workflows/` (same scratch-folder method as above), create the `registry-liveness` environment and store the secret as in step 8 of the owner steps.
+
+Until both are done the registry publishes no checks, and clients show `no checks published`.
+
 ## Liveness checks
 
-A registry can publish a second signed file, `liveness.json`, beside `index.json`. It records what the registry's own scheduled checks observed about each published version. The client reads it only to show a dated `Checked:` line. **Nothing produces this file yet.** The registry action's liveness modes and the `maintain init --github` workflow come in the next PR, and recording a package's test fixtures comes after that. Until then no registry publishes one.
+A registry can publish a second signed file, `liveness.json`, beside `index.json`. It records what the registry's own scheduled checks observed about each published version. The client reads it only to show a dated `Checked:` line. A registry made with `nimbus registry maintain init --github` has the producer: the **Registry liveness** workflow. The official `nimbus-mcp-servers` registry is not wired to it yet; that is a later PR, after a Nimbus release that carries this one, so until then no live registry publishes the file.
 
 The index names the key. An optional signed index field `livenessKey` (the same base64 form as other keys) holds the public key that signs `liveness.json`. It is a separate, low-privilege key from the root key, so the scheduled job that signs checks never holds the key that signs the index. An index without `livenessKey` publishes no checks.
+
+**The workflow.** It runs on a weekly schedule (Mondays, 05:23 UTC) and by hand. Two jobs:
+
+- `check` holds no secret, no environment and a read-only token. It runs the action's `liveness-check` mode, which refuses `root-key`, `github-token` and `liveness-key`. It reads the verified `gh-pages` index, takes the newest stable version of each extension, and writes an untrusted results file as an artifact.
+- `sign` needs `check`, runs in the `registry-liveness` environment, holds only the liveness key, and runs `liveness-sign`. It reads the results file as untrusted input, signs and commits only `liveness.json` to `gh-pages`. It never touches `index.json` and runs no extension code.
+
+Both jobs use the latest Nimbus release, resolved when the job runs and checked against that release's `SHA256SUMS`. The file records that release in `nimbusVersion`.
+
+**What the `check` job checks, per extension (the runner ran each check; nothing is run on your machine or on a client):**
+
+- The package: its SHA-256 must equal the index's `packageSha256`. A package whose bytes differ gets no entry.
+- The declared hosts: each distinct host and port in the manifest. The job looks the name up (5 seconds). If any answer is a private, loopback, link-local or reserved address, the host counts as not answering and the job makes no contact with it. Otherwise it opens a TCP connection to the address it resolved (5 seconds). On ports 443, 465, 636, 853, 993, 995 and 8443 it then does a TLS handshake and verifies the certificate for the declared name. It never sends a request and never reads a reply. A host answering means the runner reached it; it says nothing about the service's API.
+- The suites and the baseline: the same two `__nimbus-eval` role runs the score job makes, in the same sandbox (no network, no write, no credential; I49). A package with no `evals/` records the baseline only. A starter pack runs nothing.
+
+**Bounds.** At most 500 distinct host and port pairs per run, 8 at a time. One 45 minute budget for the whole run, inside a 60 minute job. A package reached with the budget spent gets no entry and reads `no checks published for this version`. A timeout under a deadline the budget shortened is never recorded as a failure. The `sign` job refuses a results file older than 24 hours or dated more than 5 minutes ahead, drops any entry that is not for the index's newest stable version of an extension it lists, and re-parses every entry with the format's own parser. It publishes nothing, with a warning, when no entry survives. It refuses, committing nothing, when the index names no liveness key, when the secret is not that key, or when it equals the root key (compared as canonical bytes). It makes up to 3 non-forced push attempts, each from a fresh fetch of `gh-pages`.
 
 The file is JSON, at most 4 MiB:
 
@@ -121,7 +155,7 @@ What a client does with it:
 - Any failure shows `no checks available` and blocks nothing: no install, update or spawn depends on this file (invariant I51 in [SECURITY-INVARIANTS.md](./SECURITY-INVARIANTS.md#i51--a-registrys-liveness-and-baseline-evidence-is-shown-never-acted-on)).
 - A check dated more than 14 days before it is read shows `stale`.
 
-Each line names the registry that measured it. A host answering, or a test passing, on the registry's runner does not prove the service's API is unchanged. The exact texts are under `extension info` in [cli-reference.md](./cli-reference.md).
+Each line names the registry that measured it. The checking job's runner produced the observation, not Nimbus and not the client. A host answering, or a test passing, on the registry's runner does not prove the service's API is unchanged. The exact texts are under `extension info` in [cli-reference.md](./cli-reference.md).
 
 ## Bounds, stated plainly
 
