@@ -44,7 +44,7 @@ function mbGet(ctx: SyncContext, creds: MetabaseCreds, path: string) {
   });
 }
 
-function extractArray(parsed: unknown): unknown[] {
+export function extractArray(parsed: unknown): unknown[] {
   if (Array.isArray(parsed)) {
     return parsed;
   }
