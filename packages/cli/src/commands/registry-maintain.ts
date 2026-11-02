@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   alreadyCarried,
   emptyIndex,
+  judgeScoreEntry,
   type PublishVerdict,
   packExtensionDir,
   parseRegistryConfig,
@@ -26,13 +27,15 @@ import {
   RegistryError,
   type RegistryIndex,
   type RegistryRequest,
+  readScores,
+  type ScoreDecision,
+  type Scores,
   signIndex,
   signRegistryRequest,
   trustStatementId,
   validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
-// Not on the package's pure index surface (it reads the filesystem), so imported by path.
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import {
   DEFAULT_BUILD,

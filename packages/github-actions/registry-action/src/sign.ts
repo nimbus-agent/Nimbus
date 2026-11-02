@@ -32,12 +32,15 @@ import {
   codeUnitCompare,
   type EvalBaseline,
   type EvalQuality,
+  judgeScoreEntry,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryIndex,
   readRegistryReportUrl,
+  readScores,
+  type Scores,
   signIndex,
   signRegistryRequest,
   type TrustStatement,
@@ -46,11 +49,6 @@ import {
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
-import {
-  judgeScoreEntry,
-  readScores,
-  type Scores,
-} from "../../../registry-format/src/scores-file.ts";
 import {
   addVersion,
   admitStatements,
