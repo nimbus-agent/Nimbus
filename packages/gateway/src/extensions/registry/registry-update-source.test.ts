@@ -470,3 +470,52 @@ describe("collectRegistryUpdates never offers a blocked version (I48)", () => {
     expect(ledger("registry.manifest")).toBe(1);
   });
 });
+
+/** A registry-signed score of `passed` of `cases`, as the index carries it. */
+function scored(passed: number, cases: number): Record<string, unknown> {
+  return {
+    scorer: 1,
+    score: Math.floor((passed * 100) / cases),
+    cases,
+    passed,
+    rubrics: {
+      exact: { cases, passed },
+      "json-match": { cases: 0, passed: 0 },
+      "one-of": { cases: 0, passed: 0 },
+    },
+  };
+}
+
+describe("collectRegistryUpdates reads the score change from the index it already verified", () => {
+  test("both versions scored: the update carries both sides, and no fetch is added", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [
+        { version: "1.0.0", quality: scored(92, 100) },
+        { version: "1.2.0", quality: scored(71, 100) },
+      ],
+    });
+    addRegistry("main", dir, true);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates[0]?.qualityChange).toEqual({
+      state: "compared",
+      from: { score: 92, cases: 100, passed: 92 },
+      to: { score: 71, cases: 100, passed: 71 },
+      delta: -21,
+      text: "quality 92 → 71 (-21)",
+    });
+    expect(ledger("registry.index")).toBe(1);
+    expect(ledger("registry.manifest")).toBe(1);
+  });
+
+  test("an unscored candidate is stated as not compared", async () => {
+    const dir = await buildRegistry("main", {
+      "com.a": [{ version: "1.0.0", quality: scored(9, 10) }, { version: "1.2.0" }],
+    });
+    addRegistry("main", dir, true);
+    const out = await collectRegistryUpdates(deps(), [row("com.a", "main")], signal);
+    expect(out.updates[0]?.qualityChange).toMatchObject({
+      state: "not-compared",
+      why: "candidate-unscored",
+    });
+  });
+});

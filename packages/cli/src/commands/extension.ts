@@ -25,6 +25,7 @@ import {
   readSecretValue,
   type SecretInputIo,
 } from "../lib/secret-input.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import {
   signatureLabel,
   type VerifiedPublisherCli,
@@ -40,6 +41,7 @@ import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extensi
 import { runExtensionPublish } from "./extension-publish.ts";
 import {
   accessLines,
+  evidenceLines,
   runExtensionInfoRemote,
   runExtensionSearch,
 } from "./extension-registry-cmds.ts";
@@ -103,6 +105,10 @@ type ExtensionListEntry = {
   kind?: "extension" | "starter-pack";
   /** Reach on this machine and the predicted file outcome; absent from an older gateway. */
   access?: unknown;
+  /** A local install's own tested / history / checked lines; absent from an older gateway. */
+  evidence?: unknown;
+  /** The registry a registry-sourced install came from, whose index holds its evidence. */
+  evidenceIn?: unknown;
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -390,6 +396,19 @@ function printExtensionInfoDeps(e: ExtensionListEntry): void {
   }
 }
 
+/**
+ * An installed extension has no index on hand and `info` starts no registry read, so a
+ * registry-sourced one names where to look; a local one prints the gateway's own three lines.
+ */
+function installedEvidenceLines(e: ExtensionListEntry): string[] {
+  if (typeof e.evidenceIn === "string") {
+    return [
+      `Tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --registry ${stripControlChars(e.evidenceIn)}`,
+    ];
+  }
+  return evidenceLines(e.evidence);
+}
+
 export async function runExtensionInfo(
   client: IPCClient,
   rest: string[],
@@ -433,6 +452,7 @@ export async function runExtensionInfo(
   for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
   for (const line of accessLines(e.access)) console.log(line);
+  for (const line of installedEvidenceLines(e)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   // Any reason the gateway attached — pre-T2 or signature (I16) — is printed verbatim. The
@@ -1350,6 +1370,12 @@ export interface AvailableUpdateCli {
   readonly addedPackages?: readonly { readonly id: string }[];
   /** Why the update does not fit, one line each. Absent from an older gateway. */
   readonly conflicts?: readonly { readonly reason?: string }[];
+  /**
+   * How the new version's registry-signed score compares with the installed one's, as the gateway
+   * worded it. The CLI prints `text` and computes nothing; `--json` carries the whole object.
+   * Absent from an older gateway.
+   */
+  readonly qualityChange?: { readonly text?: unknown };
 }
 
 export interface UpdateApplyResultCli {
@@ -1409,7 +1435,9 @@ function formatUpdateRow(u: AvailableUpdateCli): string {
   const conflicts = (u.conflicts ?? [])
     .map((c) => `\tconflict: ${stripControl(c.reason ?? "conflict")}`)
     .join("");
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${conflicts}`;
+  const quality =
+    typeof u.qualityChange?.text === "string" ? `\t${stripControl(u.qualityChange.text)}` : "";
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${quality}${conflicts}`;
 }
 
 async function listExtensionUpdates(

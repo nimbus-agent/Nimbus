@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
+  isStarterPack,
   provenanceMatching,
   publisherKeyFingerprint,
   RegistryError,
@@ -55,6 +56,7 @@ import {
   type RegistryRow,
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
+import { versionEvidence } from "../extensions/registry/version-evidence.ts";
 import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
 import {
   type FreshenHandle,
@@ -579,11 +581,8 @@ async function handleInfo(
 ): Promise<Hit> {
   const id = stringParam(rec, "id");
   const registryName = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
-  const found = await resolveRegistryEntry(
-    { ...requireFetch(o.fetch), db: o.db },
-    id,
-    registryName,
-  );
+  const fetch = requireFetch(o.fetch);
+  const found = await resolveRegistryEntry({ ...fetch, db: o.db }, id, registryName);
   // `reportOnly`: the report destination comes from the signed index alone, so an extension whose
   // newest manifest is missing or fails its hash (the case most worth reporting) still has one.
   if (rec?.["reportOnly"] === true) {
@@ -598,17 +597,12 @@ async function handleInfo(
   if (newest === undefined) {
     throw new RegistryError("ERR_REGISTRY_INDEX_INVALID", `"${id}" has no versions`);
   }
-  const bytes = await fetchRegistryBytes(
-    { ...requireFetch(o.fetch), db: o.db },
-    found.reg,
-    newest[1].manifest,
-    {
-      method: "registry.manifest",
-      extensionId: id,
-      version: newest[0],
-      maxBytes: MAX_MANIFEST_BYTES,
-    },
-  );
+  const bytes = await fetchRegistryBytes({ ...fetch, db: o.db }, found.reg, newest[1].manifest, {
+    method: "registry.manifest",
+    extensionId: id,
+    version: newest[0],
+    maxBytes: MAX_MANIFEST_BYTES,
+  });
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (!sha256HexEqualConstantTime(digest, newest[1].manifestSha256)) {
     throw new RegistryError(
@@ -632,6 +626,17 @@ async function handleInfo(
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
       reportUrl: reportUrlOf(found, o),
       provenance,
+      evidence: versionEvidence({
+        registry: found.reg.name,
+        versions: entry.versions,
+        version: newest[0],
+        declaresNetwork: manifest.permissions.network.length > 0,
+        starterPack: isStarterPack(manifest),
+        now: fetch.now(),
+      }),
+      // The evidence describes the newest LISTED version, which can be a beta a plain install
+      // would not take, so the reply says which one.
+      evidenceFor: { version: newest[0], channel: newest[1].channel },
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

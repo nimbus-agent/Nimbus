@@ -18,6 +18,24 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-01 — An extension's package states who tested it, how long it has been listed and what was checked, and an update shows a score drop (Phase 9.5 project 6, PR 2; no migration, no new invariant).**
+  `nimbus extension info --registry/--remote` prints `Tested:`, `History:` and `Checked:` for the newest listed version (a line above them names that version and its channel, `evidenceFor` in `--json`), from the
+  registry's signed index, each line naming the registry that signed it (`evidence` in `--json`). The same three lines
+  are in the `extension.install` approval (`tested`, `history`, `checked`, plus `evidenceScope` when the plan installs more
+  than one package, because the lines are for the root only), in the terminal and the desktop app; plain `info` of a local
+  install prints them as not evaluated, and of a registry install points at `info --registry <the registry it came from>`. `nimbus extension update`
+  rows, the desktop's pending-updates list and the `extension.autoUpdate` approval carry a comparison of the installed and offered versions' signed scores
+  (`qualityChange`): `quality 100 → 75 (-25)`, a case-count note when the two were measured on different suites, or why
+  nothing was compared. A downgrade has none. Until a registry publishes scores, which no live registry does yet, every owner sees
+  `not evaluated` and `quality not compared: neither version is scored`. **What it does not do:** `Tested` counts the publisher's own tests as the registry
+  signed them (the official scoring action runs them with no network), so it does not say the extension is correct or safe; `History` is what that registry
+  records; `Checked` reads `no checks published` until a registry publishes checks; the comparison reads the signed index
+  only, and at approval an offline gateway waits at most 5 seconds on its own read of the index and then says it could not read it;
+  there is no combined score or risk label, no threshold and no setting, a drop never blocks anything, and the update
+  daemon never applied updates in the first place. It replaces the roadmap's quality-regression watcher, which would have
+  held back an automatic apply. No registry page shows any of this. Proved against a real gateway in
+  `registry-acceptance.e2e.test.ts` (`registry.info` evidence, the update list and the approval text from a real signed index).
+
 - **2026-11-01 — Every permission surface states what the sandbox will actually do here (Phase 9.5 project 6, PR 1; no migration, no new invariant).**
   Network reach is now worded from the live sandbox posture instead of from the OS name: the named hosts only where the
   sandbox limits the extension to them; on macOS "any host on port N, including this machine and the local network";

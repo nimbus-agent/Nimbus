@@ -3,6 +3,7 @@ import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import type { DependencyConflict, InstallPlan, SourceKey } from "./dependency-types.ts";
 import type { PlannedPackage } from "./install-plan-text.ts";
 import type { RegistryDependencyResolver } from "./registry/registry-dependency-fetcher.ts";
+import type { QualityChange } from "./registry/version-evidence.ts";
 
 export type UpdateChannel = "stable" | "beta";
 
@@ -143,6 +144,12 @@ export interface AvailableUpdate {
   dependsOn?: Readonly<Record<string, DependencySpec>>;
   /** Set when the new version's verified manifest is a starter pack: it has no code to run. */
   toStarterPack?: true;
+  /**
+   * How the new version's signed score compares with the installed version's, from the index this
+   * detection already verified (no new fetch). Never stored (the cache is in memory) and never a
+   * block: it informs. Absent for an entry an older gateway detected.
+   */
+  qualityChange?: QualityChange;
 }
 
 export const ACTION_TYPE_AUTO_UPDATE = "extension.autoUpdate" as const;

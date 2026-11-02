@@ -14,6 +14,8 @@ export interface AvailableUpdateUi {
   readonly verificationStatus: "verified" | "signature_failed" | "publisher_key_conflict";
   /** R6, computed by the gateway when it served the list. Absent from an older gateway. */
   readonly verifiedPublisher?: { readonly github: string; readonly verifiedAt: string } | null;
+  /** How the offered version's signed score compares with the installed one's. Absent from an older gateway. */
+  readonly qualityChange?: { readonly text?: unknown };
 }
 
 export interface UpdateApplyResultUi {
@@ -313,6 +315,14 @@ export function PendingUpdates({
                       </span>
                     )}
                   </span>
+                  {typeof u.qualityChange?.text === "string" && (
+                    <span
+                      className="text-xs text-neutral-600"
+                      data-testid={`quality-change-${u.id}`}
+                    >
+                      {u.qualityChange.text}
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"

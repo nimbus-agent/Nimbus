@@ -18,6 +18,7 @@ import {
   setInstalledAsDependency,
 } from "../automation/extension-store.ts";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
+import { consentDisplayPayload } from "../engine/executor.ts";
 import { forwardDeps, recordInstall, reverseDeps } from "../extensions/dependency-store.ts";
 import { signatureDisabledRegistry } from "../extensions/hard-disable.ts";
 import { resolveExtensionManifestPath } from "../extensions/manifest.ts";
@@ -854,6 +855,34 @@ describe("extension.info", () => {
     expect(v.extension.id).toBe("com.example.a");
   });
 
+  test("a local install states its own evidence; a registry-sourced one points at its registry", async () => {
+    const db = seededDb();
+    seedExtensionRow(db, "com.example.local", "/p/local");
+    seedExtensionRow(db, "com.example.reg", "/p/reg");
+    setExtensionSource(db, "com.example.reg", {
+      registry: "main\nforged",
+      rootFingerprint: "f".repeat(32),
+      channel: "stable",
+    });
+    const info = async (id: string) =>
+      (
+        (await dispatchAutomationRpc({ method: "extension.info", params: { id }, db })) as {
+          value: { extension: Record<string, unknown> };
+        }
+      ).value.extension;
+    const local = (await info("com.example.local")) as {
+      evidence: { tested: { text: string }; history: { text: string }; checked: { text: string } };
+    };
+    expect(local.evidence.tested.text).toBe("not evaluated (from a local folder)");
+    expect(local.evidence.history.text).toBe("none (from a local folder)");
+    expect(local.evidence.checked.text).toBe("no checks published");
+    expect(local).not.toHaveProperty("evidenceIn");
+    const reg = await info("com.example.reg");
+    expect(String(reg["evidenceIn"])).toStartWith("main");
+    expect(String(reg["evidenceIn"])).not.toContain("\n");
+    expect(reg).not.toHaveProperty("evidence");
+  });
+
   test("throws AutomationRpcError when extension missing", async () => {
     const db = seededDb();
     await expect(
@@ -1563,6 +1592,41 @@ describe("extension.install", () => {
       }
       expect(caught).toBeInstanceOf(AutomationRpcError);
       expect((caught as AutomationRpcError).rpcCode).toBe(-32602);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  test("a local install's approval states the local evidence", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "nimbus-ext-local-evidence-"));
+    try {
+      const src = join(tmpDir, "src");
+      mkdirSync(join(src, "dist"), { recursive: true });
+      writeFileSync(
+        join(src, "nimbus.extension.json"),
+        JSON.stringify({ id: "com.example.localev", version: "1.0.0", entry: "dist/index.js" }),
+      );
+      writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+      const seen: Array<Record<string, unknown>> = [];
+      await dispatchAutomationRpc({
+        method: "extension.install",
+        params: { sourcePath: src },
+        db: seededDb(),
+        extensionsDir: join(tmpDir, "installed"),
+        ownerGate: async (action) => {
+          seen.push(action.payload ?? {});
+          return true;
+        },
+      });
+      expect(seen).toHaveLength(1);
+      const shown = consentDisplayPayload({
+        type: "extension.install",
+        payload: seen[0] ?? {},
+      }) as Record<string, unknown>;
+      expect(shown["tested"]).toBe("not evaluated (from a local folder)");
+      expect(shown["history"]).toBe("none (from a local folder)");
+      expect(shown["checked"]).toBe("no checks published");
+      expect("evidenceScope" in shown).toBe(false);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }

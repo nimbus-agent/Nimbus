@@ -68,6 +68,11 @@ import {
   verifySignedManifest,
 } from "./registry/registry-manifest.ts";
 import { collectRegistryUpdates } from "./registry/registry-update-source.ts";
+import {
+  compareVersionQuality,
+  type QualityChange,
+  qualityUnreadable,
+} from "./registry/version-evidence.ts";
 import { getRunGrant } from "./run-grant-store.ts";
 import { publisherKeyConflict, publisherKeyDecision } from "./trust/publisher-key-decision.ts";
 import { assertNotBlocked, TrustBlockError } from "./trust/trust-blocks.ts";
@@ -139,6 +144,8 @@ export interface AutoUpdateRuntimeBag {
   appendAudit: (type: string, payload: Record<string, unknown>) => Promise<void>;
   getInstalledVersion: (id: string) => Promise<string | null>;
   hasPrevVersion: (id: string, version: string) => Promise<boolean>;
+  /** The score comparison re-read just before the approval (never rejects); absent ⇒ none stated. */
+  qualityChangeNow?: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<QualityChange>;
   /** Optional for test bags; the production bag (below) always answers from the run-grant store. */
   hasRunGrant?: (id: string) => Promise<boolean>;
   /** Whether the update's source registry still exists under the detected root fingerprint. */
@@ -333,6 +340,38 @@ function recordDeclaredFingerprint(db: Database, extensionId: string): void {
     extensionId,
     declared === undefined ? null : publisherKeyFingerprint(declared),
   );
+}
+
+/** A line of information must not spend the desktop's 30 s call budget on a dropped network. */
+export const QUALITY_READ_DEADLINE_MS = 5_000;
+
+/**
+ * The score comparison for an update, from the plan's resolver's verified root index (the memoised
+ * read: an update with dependencies already made it for the plan, one without makes it here, one
+ * verified read with its own egress row, before the prompt). Any failure is stated as unreadable;
+ * an id the index no longer lists reads as `candidate-gone`. Never rejects.
+ */
+export async function currentQualityChange(
+  cached: AvailableUpdate,
+  plan: UpdatePlan,
+  deadlineMs: number = QUALITY_READ_DEADLINE_MS,
+): Promise<QualityChange> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error("quality read deadline")), deadlineMs);
+    });
+    const read = plan.resolver.readRootIndex();
+    // The losing read must never surface as an unhandled rejection.
+    read.catch(() => undefined);
+    const index = await Promise.race([read, deadline]);
+    const versions = index.extensions[cached.id]?.versions ?? {};
+    return compareVersionQuality(versions, cached.fromVersion, cached.toVersion);
+  } catch {
+    return qualityUnreadable();
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -705,6 +744,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
         if (!listExtensions(opts.db).some((r) => r.id === id)) return false;
         return existsSync(prevVersionDir(opts.extensionsDir, id, version));
       }),
+    qualityChangeNow: (cached, plan) => currentQualityChange(cached, plan),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
     isSourceCurrent: (cached) =>
       Promise.try(() => currentSourceRegistry(fetchDeps, cached) !== undefined),
