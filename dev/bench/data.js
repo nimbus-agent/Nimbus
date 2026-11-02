@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793642368177,
+  "lastUpdate": 1793643522753,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7b7c8bf9cd81cae9781451d26866051728640f82",
-          "message": "ci(coverage): actually measure mcp-launcher, and drop two dead scope arms (#1195)\n\n`build-lcov.sh` has run `packages/mcp-launcher`'s tests since #1047, and\nits\ncomment describes that as closing a *\"measurement gap, not a testing\ngap\"*.\n\nIt did not. The package was never in\n`scripts/coverage/instrument-scope.ts`'s\nscope, so **nothing it loaded was instrumented** and it emitted no\ncoverage\nrecords at all — Sonar went on reporting `resolve-binary.ts` and\n`exit-status.ts` at 0% while their 15 tests passed.\n\nRunning a package's tests and *measuring* it are separate switches. Only\none was\nflipped, and the comment claimed both.\n\n## Red/green proof\n\nRan mcp-launcher's tests through the real istanbul pipeline\n(`istanbul-register` + `report-coverage` preloads, then\n`merge-coverage`), with\nand without the scope fix:\n\n| | result |\n|---|---|\n| **without** the fix | `merge-coverage: merged 0 shard(s)` — **zero**\nmcp-launcher records |\n| **with** the fix | `exit-status.ts` **100.0%** line / 100.0% branch ·\n`resolve-binary.ts` **88.0%** / 92.9% |\n\nSo the 0% was an artifact of never being measured, not untested code.\n\n## Also removed: two dead alternations\n\n`FIRST_PARTY` read `packages/(gateway|cli|sdk|client)/src/`.\n`packages/sdk` and\n`packages/client` **do not exist in this monorepo** — they were\nextracted to\nnimbus-sdk / nimbus-client. A scope regex naming packages that cannot\nmatch\nreads as coverage being collected somewhere it is not, which is the same\nconfusion that hid the mcp-launcher gap. Now\n`(gateway|cli|mcp-launcher)`, with\na test pinning that the departed packages are not claimed.\n\n## Closing the enforcement half too\n\nBeing *measured* and being *gated* are also separate.\n`discoverSourceFiles()` in\nthe floor gate globs gateway/cli/mcp-connectors only, so even with lcov\nrecords\nthe floor could not see mcp-launcher. Added — safe today, since both\nfiles clear\nthe 85% line / 80% branch floor by the numbers above. The point is that\na\nregression in them now fails instead of going unnoticed.\n\nThis also makes an existing exclusion meaningful rather than dead:\n`exclusions.ts:61` exempts `packages/mcp-launcher/src/index.ts`, a file\nthe\ndiscovery glob never enumerated in the first place.\n\n## Verification\n\n- `bun test scripts/coverage/instrument-scope.test.ts\nscripts/coverage-floor/` — 109 pass, 0 fail\n- `bun run preflight:fast` — all 29 gates pass\n- The `build-lcov.sh` comment is corrected rather than left standing; it\nwas the\n  thing asserting the gap was closed.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n  * Expanded coverage checks to include the MCP launcher source files.\n* Added safeguards confirming test files and extracted SDK/client\npackages remain excluded from coverage instrumentation.\n\n* **Chores**\n* Updated coverage tracking to reflect current first-party components,\nincluding gateway, CLI, and MCP launcher code.\n  * Documented coverage scope and recorded resulting coverage metrics.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-15T05:14:58Z",
-          "tree_id": "7e6bc91a8a182fcfb1ccd1191523d18e45576c52",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7b7c8bf9cd81cae9781451d26866051728640f82"
-        },
-        "date": 1786771591044,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.69571044999793,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.92944774999194,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 267.8547426999961,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "csrt03223@gmail.com",
+            "name": "Chandrashekar Tirunagiri",
+            "username": "tcsr200216"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "878766d65391e94c2fc1f3b636bdb93e230d0ee6",
+          "message": "feat(gateway): index Metabase saved questions (#1856)\n\n## Summary\n\nIndex Metabase saved questions as `metabase:card` items. The connector\nonly indexed dashboards, which are containers. The saved question is the\nanalysis someone wrote, and many questions aren't on any dashboard, so\nthey couldn't be found.\n\nThe sync now requests `GET /api/card` after dashboards and maps each\nsaved question with a new `metabase-card-mapping.ts`.\n\n## Related Issue\n\nFixes #975\n\n## Type of Change\n\n- [ ] Bug fix (non-breaking change that fixes an issue)\n- [x] New feature (non-breaking change that adds functionality)\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [ ] All existing tests pass (`bun test`). Not fully shown locally: in\nLinux Docker, 22 tests fail on this branch, and the same 22 fail on\nuntouched main. The ones I read need the sandbox that container lacks,\nso CI is the final result.\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md`, a screenshot of the rendered\npage (light + dark) is attached in the Screenshots / Output section\nbelow. This PR doesn't touch that file.\n\n## Scope\n\n- Saved questions only. `/api/card` also returns models and metrics, and\nthese are skipped because the issue asks for saved questions. Live\ntesting also changed two smaller things from my plan: the only dashboard\nfield kept is `dashboard_id`, and network errors on the cards request\nare caught.\n- No graph edge. I left the stretch goal out.\n- No changes to dashboard ids, dashboard mapping or other connector\nconfig. Two dashboard mapper helpers and `extractArray` are now exported\nfor reuse and the mapper test.\n\n## Implementation\n\n- `GET /api/card` goes through the existing `mbGet`, and the response is\nread with `extractArray`.\n- The collection names already fetched for dashboards are reused.\n- The external id is `card/<id>`, so the item id is\n`metabase:card/<id>`. Rows with a missing or empty id are skipped.\n- A failed cards request is non-fatal, including a thrown network error,\nso dashboards stay indexed and the sync returns success. A failed\n`/api/dashboard` still returns early as before, which skips cards in\nthat sync.\n\n## Privacy and data handling\n\n- The saved SQL of a native question is kept in `metadata.native_query`,\ncapped at 16,384 characters.\n- Query-results endpoints are never called.\n- Query results, rows and cell values are not stored.\n- `result_metadata`, which holds data-derived fingerprints, is not\nstored.\n- Parameters and template tag defaults are not stored.\n- GUI-built questions keep `query_type`, `database_id` and `table_id`,\nnot the query tree.\n\nSaved SQL can contain literal values an author typed, such as `WHERE\nemail = 'a@example.com'`. I treated that as the question's definition\nrather than returned data. I asked about this boundary on the issue and\nhaven't had a reply, so please say if you'd rather leave SQL out.\nRemoving `native_query` is a small change.\n\n## Embedding and body\n\n`metabase:card` is in neither prose set, so it gets local embedding and\nthe default 512-character body. `bodyPreview` is the description,\nfalling back to the name.\n\n## Compatibility\n\n- **Endpoint checked:** `GET /api/card`, against a local\n`metabase/metabase:v0.65.2` (hash `86e10ed`) and Metabase's source.\n- **Current versions:** on v0.65.2, the SQL is at\n`dataset_query.stages[0].native`. A `type` of `question` is indexed, and\n`model` or `metric` is skipped.\n- **Older versions:** the mapper also reads\n`dataset_query.native.query`, and a row with no `type` counts as a\nquestion unless it has `dataset: true`. The v0.49 migration sets `type =\n'model'` where `dataset` is true and defaults the column to `question`.\nI checked this in source, not on an older instance.\n- **Limit:** self-hosted versions vary, and I only tested v0.65.2 live.\n\n## Coverage\n\n- [x] New or changed source files are covered by tests\n\n| File | Line | Branch |\n|---|---|---|\n| `metabase-card-mapping.ts` | 100% | 97.9% |\n| `metabase-sync.ts` | 100% | 97.1% |\n| `metabase-dashboard-mapping.ts` | 100% | 100% |\n\nThese come from running only the Metabase tests with the repo's Istanbul\npreloads in `oven/bun:1.4`, so CI's coverage gates are still the\ndeciding result. `bun run verify:docker --full` can't produce a coverage\nreport on my Mac, because `--exclude=./coverage` also removes\n`scripts/coverage`.\n\n## Testing\n\nBefore, on main at `51953ee8`, with a fake server offering dashboard 7\nand card 7:\n\n```text\nrequested paths: [\"/api/collection\",\"/api/dashboard\"]\nitemsUpserted: 1\nitems: metabase:7 (dashboard)\n```\n\nAfter, on this branch:\n\n```text\nrequested paths: [\"/api/collection\",\"/api/dashboard\",\"/api/card\"]\nitemsUpserted: 2\nitems: metabase:7 (dashboard), metabase:card/7 (card)\n```\n\nNew fake-server and mapper tests cover questions being indexed, the `{\ndata: [...] }` wrapper, missing and empty ids, models and metrics being\nskipped, older `dataset: true` models, dashboard 7 and card 7 both\nsurviving, a 500 and a network error on `/api/card`, no results endpoint\nbeing called, and forbidden fields being absent.\n\n| Check | Result |\n|---|---|\n| `bun test metabase` | 74 pass, 0 fail (macOS) |\n| `bun run verify:docker --changed` | 55 pass, 0 fail (Linux,\n`oven/bun:1.4`) |\n| `bun run typecheck` | Passed |\n| `bun run lint` | Passed |\n| `bun run preflight:fast` | 21 of 22 gates passed (macOS) |\n| Whole suite, this branch | 33,986 pass, 352 skip, 22 fail (Linux\nDocker) |\n| Whole suite, `51953ee8` | 33,969 pass, 352 skip, 22 fail (Linux\nDocker) |\n\nThe failing `preflight:fast` gate is `audit:js-licenses`, on\n`@img/sharp-libvips-darwin-arm64@1.3.4`. It fails the same way on\nuntouched main on my Mac, and in Linux arm64 Docker it fails on both for\nthe Linux arm64 builds of that package. I didn't change the allowlist,\nand I don't know yet how it behaves on CI.\n\nThe same 22 tests fail on this branch and on untouched main in Docker.\nThe ones I read are sandbox preconditions and\n`ERR_TOOLGEN_SANDBOX_DEGRADED`. In the `verify:docker --full` run, the\nother failures were `audit:action-dist` and the coverage gates, because\nthe Docker copy leaves out `dist` and `scripts/coverage` on a Mac.\n\nLive sync of the final code against a local v0.65.2 with sample data\nonly:\n\n```text\nrequests: GET /api/collection, GET /api/dashboard, GET /api/card\n/api/card returned: 38 questions, 2 metrics, 1 model\nstored: 2 dashboards, 38 cards\nsame id: metabase:2 (dashboard) and metabase:card/2 (card) both present\n```\n\nNo stored item contained `result_metadata`, a fingerprint, a template\ntag default or the creator's email.\n\n## Known limitations\n\n- SQL in metadata isn't full-text searchable. `item_fts` covers title\nand body, and a search for text inside the SQL found nothing.\n- SQL can contain literal values an author typed.\n- Self-hosted Metabase versions vary.\n- Questions aren't linked to dashboards. On v0.65.2, the list has no\ndashboard membership data, and `dashboard_id` was null for a question\nplaced on a dashboard.\n- A question archived after being indexed keeps its existing row,\nbecause the sync doesn't delete.\n\n## AI assistance\n\nI used AI tools to help explore the repository and code, support the\nimplementation, and plan and review the tests. I reviewed the changes\nand the validation results myself.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Metabase sync now indexes saved questions alongside dashboards, making\nthem available in search. Saved-question entries include a preview and\nquery details when available.\n  * Models and metrics are excluded from saved-question indexing.\n* **Bug Fixes**\n* A saved-question sync failure no longer prevents dashboards from being\nindexed successfully.\n* **Documentation**\n* Updated the roadmap to reflect saved-question indexing as part of the\nMetabase scope.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Asaf <asafgolombek@gmail.com>",
+          "timestamp": "2026-11-02T20:10:27+02:00",
+          "tree_id": "157328165d668cf02db46bbfa60be4229766d1f8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/878766d65391e94c2fc1f3b636bdb93e230d0ee6"
+        },
+        "date": 1793643518393,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 217.62605835000195,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.6433672500043,
             "unit": "ms"
           }
         ]
