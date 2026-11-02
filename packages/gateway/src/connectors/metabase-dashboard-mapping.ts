@@ -14,11 +14,11 @@ export function dashboardUrl(baseUrl: string, id: number): string {
   return `${trimTrailingSlash(baseUrl)}/dashboard/${encodeURIComponent(String(id))}`;
 }
 
-function parseIsoMs(v: unknown): number | null {
+export function parseIsoMs(v: unknown): number | null {
   return typeof v === "string" && Number.isFinite(Date.parse(v)) ? Date.parse(v) : null;
 }
 
-function collectionIdKey(raw: unknown): string | null {
+export function collectionIdKey(raw: unknown): string | null {
   if (typeof raw === "number" && Number.isFinite(raw)) {
     return String(raw);
   }
