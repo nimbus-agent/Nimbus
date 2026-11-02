@@ -21,6 +21,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  codeUnitCompare,
   compareVersionsDesc,
   type EvalBaseline,
   inspectPackage,
@@ -128,7 +129,7 @@ export function newestStableVersions(
   index: RegistryIndex,
 ): ReadonlyArray<{ id: string; version: string }> {
   const out: Array<{ id: string; version: string }> = [];
-  for (const id of Object.keys(index.extensions).sort()) {
+  for (const id of Object.keys(index.extensions).sort(codeUnitCompare)) {
     const versions = index.extensions[id]?.versions ?? {};
     const stable = Object.keys(versions)
       .filter((v) => versions[v]?.channel === "stable" && isValidSemver(v))

@@ -70,7 +70,7 @@ const MAX_ATTEMPTS = 3;
 
 const KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
 const ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
-const ENVELOPE_KEYS = ["format", "nimbusVersion", "extensions"];
+const ENVELOPE_KEYS: ReadonlySet<string> = new Set(["format", "nimbusVersion", "extensions"]);
 
 function parseLivenessKey(raw: string): Uint8Array {
   const s = raw.trim();
@@ -142,7 +142,7 @@ function readEnvelope(
   } catch {
     throw new Error("refusing the results file: it is not valid JSON");
   }
-  if (!isPlainObject(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.includes(k))) {
+  if (!isPlainObject(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
     throw new Error(
       "refusing the results file: it is not an object of exactly format, nimbusVersion and extensions",
     );

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:be72b852393e808397f15deedb36947e16e32af5ff91136c8d63dc8d14ff7615
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:e383f4f78785e6b0afec8fc053b29372eb822d7f2cdd0e76bf2f9e3b1a5bab85
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -12377,7 +12377,7 @@ function assertNimbusVersion(v) {
 }
 function newestStableVersions(index) {
   const out = [];
-  for (const id of Object.keys(index.extensions).sort()) {
+  for (const id of Object.keys(index.extensions).sort(codeUnitCompare)) {
     const versions = index.extensions[id]?.versions ?? {};
     const stable = Object.keys(versions).filter((v) => versions[v]?.channel === "stable" && isValidSemver(v)).sort(compareVersionsDesc);
     const [newest] = stable;
@@ -12634,7 +12634,7 @@ var SHARED5 = { git: exports_git_tree, io: GHA_IO, now: Date.now };
 var MAX_ATTEMPTS = 3;
 var KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
 var ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
-var ENVELOPE_KEYS = ["format", "nimbusVersion", "extensions"];
+var ENVELOPE_KEYS = new Set(["format", "nimbusVersion", "extensions"]);
 function parseLivenessKey(raw) {
   const s = raw.trim();
   if (!KEY_INPUT_RE.test(s)) {
@@ -12691,7 +12691,7 @@ function readEnvelope2(path, expectedVersion) {
   } catch {
     throw new Error("refusing the results file: it is not valid JSON");
   }
-  if (!isPlainObject3(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.includes(k))) {
+  if (!isPlainObject3(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
     throw new Error("refusing the results file: it is not an object of exactly format, nimbusVersion and extensions");
   }
   if (doc["format"] !== 1)
