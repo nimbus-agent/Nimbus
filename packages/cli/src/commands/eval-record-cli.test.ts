@@ -11,7 +11,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EvalRecordDocument } from "@nimbus-dev/registry-format";
-import { type RecordPlan, sameFileName, writeRecordedSuite } from "./eval-record-cli.ts";
+import {
+  prepareRecord,
+  type RecordPlan,
+  sameFileName,
+  writeRecordedSuite,
+} from "./eval-record-cli.ts";
 
 const made: string[] = [];
 afterEach(() => {
@@ -99,5 +104,45 @@ describe("writeRecordedSuite re-checks right before writing", () => {
     writeRecordedSuite(pkg, planFor(pkg, false), doc);
     expect(readdirSync(join(pkg, "evals"))).toEqual(["golden.eval.json"]);
     expect(existsSync(join(pkg, "evals", "golden.eval.json"))).toBe(true);
+  });
+});
+
+describe("prepareRecord", () => {
+  const inputsText = JSON.stringify({
+    format: 1,
+    name: "g",
+    cases: [{ name: "a", tool: "echo", input: {} }],
+  });
+
+  function prep(pkg: string, inputs: string) {
+    return prepareRecord({ pkg, record: inputs, out: undefined, force: false }, () => {});
+  }
+
+  test("an inputs path that is not a regular file is refused before any launch", () => {
+    const pkg = pkgDir();
+    const r = prep(pkg, pkg);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.message).toContain("not a regular file");
+  });
+
+  test("an inputs file with a single BOM is accepted", () => {
+    const pkg = pkgDir();
+    const f = join(pkg, "i.json");
+    writeFileSync(f, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(inputsText)]));
+    expect(prep(pkg, f).ok).toBe(true);
+  });
+
+  test("a stale temp file of this target is swept; other files stay", () => {
+    const pkg = pkgDir();
+    mkdirSync(join(pkg, "evals"));
+    const stale = join(pkg, "evals", ".golden.eval.json.0123456789ab.tmp");
+    const other = join(pkg, "evals", ".other.eval.json.0123456789ab.tmp");
+    writeFileSync(stale, "partial");
+    writeFileSync(other, "keep");
+    const f = join(pkg, "i.json");
+    writeFileSync(f, inputsText);
+    expect(prep(pkg, f).ok).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(other)).toBe(true);
   });
 });

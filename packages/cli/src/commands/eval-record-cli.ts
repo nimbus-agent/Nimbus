@@ -4,9 +4,10 @@
  * spawned, so a refusal costs no sandbox run and writes nothing; `writeRecordedSuite` runs only
  * after the role answered with a suite.
  */
-import { lstatSync, mkdirSync, readdirSync, readFileSync, type Stats, statSync } from "node:fs";
+import { lstatSync, mkdirSync, readdirSync, readFileSync, type Stats } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import {
+  codeUnitCompare,
   type EVAL_RECORD_SKIP_REASONS,
   type EvalRecordDocument,
   type EvalRecordSkip,
@@ -18,8 +19,13 @@ import {
   parseEvalSuite,
   serialiseEvalSuite,
 } from "@nimbus-dev/registry-format";
+import { readRegularFileBounded } from "../lib/read-regular-file-bounded.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
-import { WriteFileError, writeFileExclusive } from "../lib/write-file-exclusive.ts";
+import {
+  sweepStaleTempFiles,
+  WriteFileError,
+  writeFileExclusive,
+} from "../lib/write-file-exclusive.ts";
 
 export const DEFAULT_RECORD_OUT = "evals/golden.eval.json";
 
@@ -30,6 +36,7 @@ const SKIP_TEXT: Record<(typeof EVAL_RECORD_SKIP_REASONS)[number], string> = {
   "call-failed": "the tool call failed",
   "error-flag-differs": "its error flag differed between the two runs",
   "reply-too-large": "its reply was too large to record",
+  "reply-too-deep": "its reply was nested too deeply to record",
   "changes-type": "a value changed type between runs",
   "changes-shape": "its reply changed shape between runs",
   "changes-not-json": "its reply changed between runs and is not JSON",
@@ -56,11 +63,10 @@ function lstatOrNull(path: string): Stats | null {
 }
 
 function readInputs(inputsAbs: string): { cases: number } | string {
+  const read = readRegularFileBounded(inputsAbs, MAX_EVAL_RECORD_INPUTS_BYTES);
+  if (!read.ok) return `inputs file ${inputsAbs} ${read.why}`;
   try {
-    if (statSync(inputsAbs).size > MAX_EVAL_RECORD_INPUTS_BYTES) {
-      return `${inputsAbs} is larger than ${MAX_EVAL_RECORD_INPUTS_BYTES} bytes`;
-    }
-    return { cases: parseEvalRecordInputs(inputsAbs, readFileSync(inputsAbs)).cases.length };
+    return { cases: parseEvalRecordInputs(inputsAbs, read.bytes).cases.length };
   } catch (e) {
     return e instanceof Error ? e.message : String(e);
   }
@@ -116,7 +122,7 @@ export function sameFileName(
 function existingTotals(evalsDir: string, targetName: string, warn: (s: string) => void) {
   let suites = 0;
   let cases = 0;
-  for (const name of readdirSync(evalsDir).sort()) {
+  for (const name of readdirSync(evalsDir).sort(codeUnitCompare)) {
     if (sameFileName(name, targetName) || !isEvalSuiteFile(`evals/${name}`)) continue;
     try {
       cases += parseEvalSuite(name, readFileSync(join(evalsDir, name))).cases.length;
@@ -170,10 +176,12 @@ export function prepareRecord(
   const evalsDir = join(pkgAbs, "evals");
   const problem = targetProblem(evalsDir, out.abs, out.rel, args.force);
   if (problem !== null) return { ok: false, message: problem };
-  const totals =
-    lstatOrNull(evalsDir) === null
-      ? { suites: 0, cases: 0 }
-      : existingTotals(evalsDir, out.rel.slice("evals/".length), warn);
+  const evalsExists = lstatOrNull(evalsDir) !== null;
+  // A killed earlier run can leave its temp file in evals/, where `extension pack` would pack it.
+  if (evalsExists) sweepStaleTempFiles(out.abs);
+  const totals = evalsExists
+    ? existingTotals(evalsDir, out.rel.slice("evals/".length), warn)
+    : { suites: 0, cases: 0 };
   const capped = capProblem(totals, inputs.cases);
   if (capped !== null) return { ok: false, message: capped };
   return { ok: true, plan: { inputsAbs, outRel: out.rel, outAbs: out.abs, force: args.force } };

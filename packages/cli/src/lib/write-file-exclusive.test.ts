@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  linkSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WriteFileError, writeFileExclusive } from "./write-file-exclusive.ts";
+import { sweepStaleTempFiles, WriteFileError, writeFileExclusive } from "./write-file-exclusive.ts";
 
 let dir: string;
 beforeEach(() => {
@@ -70,5 +78,99 @@ describe("writeFileExclusive", () => {
     writeFileSync(p, "old");
     writeFileExclusive(p, bytes("new"), { overwrite: true });
     expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+});
+
+describe("writeFileExclusive atomicity", () => {
+  const failing = (): void => {
+    throw Object.assign(new Error("disk"), { code: "ENOSPC" });
+  };
+
+  test("a failed write in either mode leaves no temp file", () => {
+    const p = join(dir, "a.txt");
+    expect(() => writeFileExclusive(p, bytes("x"), { writeFd: failing })).toThrow(/ENOSPC/);
+    expect(readdirSync(dir)).toEqual([]);
+    writeFileSync(p, "old");
+    expect(() => writeFileExclusive(p, bytes("x"), { overwrite: true, writeFd: failing })).toThrow(
+      /ENOSPC/,
+    );
+    expect(readFileSync(p, "utf8")).toBe("old");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("the target appears only complete: the bytes are written to a temp file before it exists", () => {
+    const p = join(dir, "a.txt");
+    const seen: boolean[] = [];
+    writeFileExclusive(p, bytes("whole"), {
+      writeFd: (fd, data) => {
+        seen.push(existsSync(p));
+        writeFileSync(fd, data);
+      },
+    });
+    expect(seen).toEqual([false]);
+    expect(readFileSync(p, "utf8")).toBe("whole");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("no-overwrite mode publishes with a link: EEXIST keeps the old file and the old message", () => {
+    const p = join(dir, "a.txt");
+    writeFileSync(p, "old");
+    let linked = 0;
+    const link = (existing: string, target: string): void => {
+      linked += 1;
+      linkSync(existing, target);
+    };
+    expect(() => writeFileExclusive(p, bytes("new"), { link })).toThrow(
+      `${p} exists; refusing to overwrite it`,
+    );
+    expect(linked).toBe(1);
+    expect(readFileSync(p, "utf8")).toBe("old");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("a target created between the write and the link is never replaced", () => {
+    const p = join(dir, "a.txt");
+    const link = (existing: string, target: string): void => {
+      writeFileSync(target, "raced in");
+      linkSync(existing, target);
+    };
+    expect(() => writeFileExclusive(p, bytes("new"), { link })).toThrow(/exists; refusing/);
+    expect(readFileSync(p, "utf8")).toBe("raced in");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("a filesystem without hard links falls back to an exclusive create", () => {
+    const p = join(dir, "a.txt");
+    const link = (): void => {
+      throw Object.assign(new Error("no links"), { code: "EPERM" });
+    };
+    writeFileExclusive(p, bytes("fallback"), { link });
+    expect(readFileSync(p, "utf8")).toBe("fallback");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+    expect(() => writeFileExclusive(p, bytes("again"), { link })).toThrow(/exists; refusing/);
+    expect(readFileSync(p, "utf8")).toBe("fallback");
+  });
+});
+
+describe("sweepStaleTempFiles", () => {
+  test("removes only this target's temp files", () => {
+    const p = join(dir, "golden.eval.json");
+    const stale = ".golden.eval.json.0123456789ab.tmp";
+    writeFileSync(join(dir, stale), "partial");
+    for (const keep of [
+      ".other.eval.json.0123456789ab.tmp",
+      ".golden.eval.json.0123456789a.tmp",
+      "golden.eval.json",
+      ".golden.eval.json.0123456789ab.tmp.keep",
+    ]) {
+      writeFileSync(join(dir, keep), "keep");
+    }
+    sweepStaleTempFiles(p);
+    expect(existsSync(join(dir, stale))).toBe(false);
+    expect(readdirSync(dir).length).toBe(4);
+  });
+
+  test("a missing directory is not an error", () => {
+    expect(() => sweepStaleTempFiles(join(dir, "nope", "a.json"))).not.toThrow();
   });
 });
