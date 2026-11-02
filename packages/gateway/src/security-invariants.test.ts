@@ -10113,19 +10113,24 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     const out = await installFromRegistry(deps, { id: ID });
     const installedLivenessRows = rows("registry.liveness") - extra;
 
-    const extensionRows = listExtensions(db).map((e) => ({
-      id: e.id,
-      version: e.version,
-      enabled: e.enabled,
-    }));
-    const result = {
-      id: (out as { id: string }).id,
-      version: (out as { version?: string }).version,
-      entryHash: (out as { entryHash?: string }).entryHash,
-      sourceRegistry: (out as { sourceRegistry?: string }).sourceRegistry,
-    };
+    // Whole rows, not a projection. Two things differ between runs for reasons that have nothing
+    // to do with the evidence, and only these are normalised: the run's own temp root (each run
+    // installs under a fresh directory; replaced by "<tmp>" in every string) and the wall-clock
+    // columns `installed_at` and `last_verified_at` (set from Date.now() at the moment of the
+    // install, so they differ by milliseconds between runs; removed). Every other column and every
+    // other key of the install result is compared.
+    const WALL_CLOCK = new Set(["installed_at", "last_verified_at"]);
+    const norm = (v: unknown): unknown =>
+      JSON.parse(
+        JSON.stringify(v, (k, x) => (WALL_CLOCK.has(k) ? undefined : x))
+          .split(JSON.stringify(tmp).slice(1, -1))
+          .join("<tmp>"),
+      );
+    const extensionRows = norm(db.query("SELECT * FROM extension").all());
+    const grantRows = norm(db.query("SELECT * FROM extension_run_grant").all());
+    const result = norm(out);
     db.close();
-    return { asked, result, extensionRows, installedLivenessRows, extra };
+    return { asked, result, extensionRows, grantRows, installedLivenessRows, extra };
   }
 
   test("the same install four ways differs only in the Checked line", async () => {
@@ -10146,9 +10151,10 @@ describe("I51 — liveness and baseline evidence is inert", () => {
       expect(r.asked[0]).toHaveProperty("checked");
       expect(r.result).toEqual(first.result);
       expect(r.extensionRows).toEqual(first.extensionRows);
+      expect(r.grantRows).toEqual(first.grantRows);
       expect(strip(r.asked[0] ?? {})).toEqual(strip(first.asked[0] ?? {}));
     }
-    expect(runs[0]?.extensionRows).toHaveLength(1);
+    expect(first.extensionRows).toHaveLength(1);
     expect(runs[1]?.asked[0]?.["checked"]).toStartWith(
       "no declared host answered · tests could not be run (run failed) (checked 2026-11-01",
     );
@@ -10158,7 +10164,7 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     expect(runs[1]?.installedLivenessRows).toBeGreaterThan(0);
   });
 
-  test("update detection and the package fetch the migration engine uses request no liveness file", async () => {
+  test("update detection and fetchVerifiedRegistryPackage (the migration engine's fetch) request no liveness file; migration accept and spawn are covered by source pins only", async () => {
     const r = await run("tests-failed");
     expect(r.extra).toBe(0);
   });
