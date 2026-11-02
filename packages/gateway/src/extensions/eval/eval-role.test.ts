@@ -540,12 +540,12 @@ describe("defaultEvalRun with injected loaders", () => {
     });
   });
 
-  test("an invalid inputs file is ERR_EVAL_SUITE_INVALID, before anything is spawned", async () => {
+  test("an invalid inputs file is ERR_EVAL_RECORD_INPUTS_INVALID, before anything is spawned", async () => {
     const seen = newSeen();
     const inputsFile = writeInputs([], "{ not json");
     await expect(
       defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen)),
-    ).rejects.toMatchObject({ code: "ERR_EVAL_SUITE_INVALID" });
+    ).rejects.toMatchObject({ code: "ERR_EVAL_RECORD_INPUTS_INVALID" });
     expect(seen.ids).toEqual([]);
   });
 
@@ -554,7 +554,20 @@ describe("defaultEvalRun with injected loaders", () => {
     const inputsFile = writeInputs([], " ".repeat(MAX_EVAL_RECORD_INPUTS_BYTES + 1));
     await expect(
       defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen)),
-    ).rejects.toMatchObject({ code: "ERR_EVAL_SUITE_INVALID" });
+    ).rejects.toMatchObject({ code: "ERR_EVAL_RECORD_INPUTS_INVALID" });
+    expect(seen.ids).toEqual([]);
+  });
+
+  test("a directory, a missing file and a bad document are each an inputs error with the prefix", async () => {
+    const seen = newSeen();
+    for (const inputsFile of [root, join(root, "nope.json"), writeInputs([], "{ not json")]) {
+      const err = await defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen)).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err).toMatchObject({ code: "ERR_EVAL_RECORD_INPUTS_INVALID" });
+      expect((err as Error).message.startsWith("inputs file: ")).toBe(true);
+    }
     expect(seen.ids).toEqual([]);
   });
 

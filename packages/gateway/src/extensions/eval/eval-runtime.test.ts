@@ -857,4 +857,47 @@ describe("runEvalRecordSession", () => {
     expect(calls).toBe(1);
     expect(stageEntries()).toEqual([]);
   });
+
+  test("a crash reply in pass 1 respawns and both passes complete", async () => {
+    let n = 0;
+    const crashy: ToolImpl = async (input) => {
+      n += 1;
+      if (n === 1) throw new Error("boom");
+      return echo(input);
+    };
+    const { createClient, created } = fakeFactory([{ tools: { echo: crashy } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      inputs("a", "b"),
+      deps(createClient),
+    );
+    expect(out.first[0]).toEqual({ kind: "failed", reason: "crash" });
+    expect(out.first[1]?.kind).toBe("reply");
+    expect(out.second.map((r) => r.kind)).toEqual(["reply", "reply"]);
+    expect(created).toHaveLength(3);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a start failure on a pass-2 respawn propagates; no stage is left and every client is disconnected", async () => {
+    const { createClient, created } = fakeFactory([{ tools: { echo } }, { listThrows: true }]);
+    const code = await codeOf(
+      runEvalRecordSession(source([exactCase("a", "echo", "x")]), inputs("a"), deps(createClient)),
+    );
+    expect(code).toBe("ERR_EVAL_START_FAILED");
+    expect(created).toHaveLength(2);
+    expect(created.map((c) => c.disconnects)).toEqual([1, 1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a zero-input run calls nothing: two empty passes, no client made", async () => {
+    const { createClient, created } = fakeFactory([{ tools: { echo } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      { name: "rec", cases: [] },
+      deps(createClient),
+    );
+    expect(out).toEqual({ first: [], second: [] });
+    expect(created).toHaveLength(0);
+    expect(stageEntries()).toEqual([]);
+  });
 });

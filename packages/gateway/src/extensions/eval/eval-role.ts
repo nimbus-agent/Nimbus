@@ -1,4 +1,4 @@
-import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { format } from "node:util";
 
@@ -289,24 +289,44 @@ export async function defaultEvalBaselineRun(
   return { ok: true, extensionId: src.extensionId, version: src.version, baseline };
 }
 
-function inputsTooLarge(): EvalRunError {
-  return new EvalRunError(
-    "ERR_EVAL_SUITE_INVALID",
-    `the inputs file exceeds ${String(MAX_EVAL_RECORD_INPUTS_BYTES)} bytes`,
-  );
+function inputsInvalid(why: string): EvalRunError {
+  return new EvalRunError("ERR_EVAL_RECORD_INPUTS_INVALID", `inputs file: ${why}`);
+}
+
+/** At most MAX + 1 bytes from `fd`, however large or endless the source is. */
+function readBounded(fd: number): Buffer {
+  const buf = Buffer.alloc(MAX_EVAL_RECORD_INPUTS_BYTES + 1);
+  let filled = 0;
+  while (filled < buf.length) {
+    const n = readSync(fd, buf, filled, buf.length - filled, null);
+    if (n === 0) break;
+    filled += n;
+  }
+  return buf.subarray(0, filled);
 }
 
 /**
- * The inputs file, read through ONE descriptor: its size is checked on that descriptor and again
- * on the bytes read, so a file swapped or grown between a stat and a read cannot slip past the cap.
+ * The inputs file, read through ONE descriptor: it must be a regular file within the cap, and the
+ * read itself stops one byte past the cap, so a file that grows, or a device, is never read
+ * without limit. Text from the OS is not copied into the error.
  */
 function readInputsFile(path: string): Uint8Array {
-  const fd = openSync(path, "r");
+  let fd: number;
   try {
-    if (fstatSync(fd).size > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsTooLarge();
-    const bytes = readFileSync(fd);
-    if (bytes.byteLength > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsTooLarge();
+    fd = openSync(path, "r");
+  } catch {
+    throw inputsInvalid("could not be opened");
+  }
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) throw inputsInvalid("not a regular file");
+    if (st.size > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsInvalid("too large");
+    const bytes = readBounded(fd);
+    if (bytes.byteLength > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsInvalid("too large");
     return bytes;
+  } catch (e) {
+    if (e instanceof EvalRunError) throw e;
+    throw inputsInvalid("could not be read");
   } finally {
     closeSync(fd);
   }
@@ -317,7 +337,7 @@ function parseInputsFile(path: string): EvalRecordInputs {
   try {
     return parseEvalRecordInputs("inputs", bytes);
   } catch (e) {
-    if (e instanceof RegistryError) throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
+    if (e instanceof RegistryError) throw inputsInvalid(e.message);
     throw e;
   }
 }
