@@ -16,6 +16,7 @@ import { dirname, join, resolve } from "node:path";
 import {
   alreadyCarried,
   emptyIndex,
+  type PublishVerdict,
   packExtensionDir,
   parseRegistryConfig,
   publicKeyFromSeed,
@@ -31,6 +32,13 @@ import {
   validatePublish,
   verifyIndexSignature,
 } from "@nimbus-dev/registry-format";
+// Not on the package's pure index surface (it reads the filesystem), so imported by path.
+import {
+  judgeScoreEntry,
+  readScores,
+  type ScoreDecision,
+  type Scores,
+} from "@nimbus-dev/registry-format/src/scores-file.ts";
 import { encodeBase64, generateEd25519Keypair } from "../lib/extension-signing.ts";
 import {
   DEFAULT_BUILD,
@@ -54,6 +62,7 @@ import {
 import { buildPublishCandidate, DEFAULT_REGISTRY_CONFIG } from "../lib/publish-candidate.ts";
 import { readIndexFile, writeIndexAtomic } from "../lib/registry-index.ts";
 import { admitAllStatements, readStatementArgs } from "../lib/statement-files.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 
 export type { MaintainBuild, MaintainIo } from "../lib/maintain-shared.ts";
 
@@ -65,7 +74,7 @@ import {
 } from "./registry-templates/workflows.ts";
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--scores <scores.json>] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>]\n";
 
 function keyPathOf(p: ParsedArgs): string {
   return p.options.get("--key") ?? join(homedir(), ".nimbus", "registry-key");
@@ -298,8 +307,55 @@ function admitStatementArgs(index: RegistryIndex, paths: readonly string[]) {
   }
 }
 
+/** One line, with no control character, however hostile the text: for anything from a file. */
+function oneSafeLine(text: string): string {
+  return stripControlChars(text).replaceAll(/[\u2028\u2029]/g, " ");
+}
+
+/**
+ * The `--scores` file, read once and before the source package is touched. The file is the owner's
+ * input but its content is untrusted, and so is its path in a message: nothing is printed raw.
+ */
+function readScoresArg(p: ParsedArgs): Scores | undefined {
+  const path = p.options.get("--scores");
+  if (path === undefined) return undefined;
+  try {
+    return readScores(path);
+  } catch (e) {
+    throw new MaintainError(oneSafeLine(e instanceof Error ? e.message : String(e)));
+  }
+}
+
+/** The version entry `maintain add` signs: the fixed fields, then a score and a baseline if decided. */
+function versionEntry(
+  v: PublishVerdict,
+  rel: string,
+  decision: Extract<ScoreDecision, { ok: true }>,
+) {
+  return {
+    channel: v.channel,
+    name: v.name,
+    manifest: `${rel}/manifest.json`,
+    manifestSha256: v.manifestSha256,
+    package: `${rel}/package.tgz`,
+    packageSha256: v.packageSha256,
+    packageSizeBytes: v.packageSizeBytes,
+    entryHash: v.entryHash,
+    publishedAt: new Date().toISOString(),
+    ...(decision.quality === undefined ? {} : { quality: decision.quality }),
+    ...(decision.baseline === undefined ? {} : { baseline: decision.baseline }),
+  };
+}
+
+/** `, quality N/100` and `, baseline passed|failed`, each only when that field was signed. */
+function scoreSummary(decision: Extract<ScoreDecision, { ok: true }>): string {
+  const quality = decision.quality === undefined ? "" : `, quality ${decision.quality.score}/100`;
+  if (decision.baseline === undefined) return quality;
+  return `${quality}, baseline ${decision.baseline.passed ? "passed" : "failed"}`;
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
-  const p = parseArgs(args, ["--key", "--channel"], [], ["--statement"]);
+  const p = parseArgs(args, ["--key", "--channel", "--scores"], [], ["--statement"]);
   const [dir, source] = p.positional;
   if (dir === undefined || source === undefined || p.positional.length !== 2) {
     throw new MaintainError("add needs <dir> <package.tgz|extension-dir>");
@@ -308,6 +364,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   if (channel !== "stable" && channel !== "beta") {
     throw new MaintainError("--channel must be stable or beta");
   }
+  const scores = readScoresArg(p);
   const seed = loadSeed(keyPathOf(p));
   const index = loadOwnedIndex(dir, seed);
   // Statements first: a rotation and the first version signed by the new key are added together.
@@ -332,23 +389,24 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     const v = await validatePublish(candidate, admission.index, config, work);
     const existing = index.extensions[v.id];
 
+    // The score decision comes BEFORE the first write: a refusal leaves the folder untouched.
+    const decision = judgeScoreEntry(scores, v);
+    if (!decision.ok) {
+      throw new MaintainError(
+        `refusing to add ${v.id}@${v.version}: ${oneSafeLine(decision.reason)}`,
+      );
+    }
+    if (decision.baselineIgnored !== undefined) {
+      io.stdout(`${v.id}@${v.version}: ${oneSafeLine(decision.baselineIgnored)}\n`);
+    }
+
     const rel = `extensions/${v.id}/${v.version}`;
     const destDir = join(dir, "extensions", ...v.id.split("/"), v.version);
     mkdirSync(destDir, { recursive: true });
     writeFileSync(join(destDir, "manifest.json"), candidate.manifestBytes);
     writeFileSync(join(destDir, "package.tgz"), candidate.packageBytes);
 
-    const entry = {
-      channel: v.channel,
-      name: v.name,
-      manifest: `${rel}/manifest.json`,
-      manifestSha256: v.manifestSha256,
-      package: `${rel}/package.tgz`,
-      packageSha256: v.packageSha256,
-      packageSizeBytes: v.packageSizeBytes,
-      entryHash: v.entryHash,
-      publishedAt: new Date().toISOString(),
-    };
+    const entry = versionEntry(v, rel, decision);
     const next = await resign(dir, seed, admission.index, {
       ...index.extensions,
       [v.id]: {
@@ -360,7 +418,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
       (s) => ` statement ${trustStatementId(s).slice(0, 12)}`,
     );
     io.stdout(
-      `added ${v.id}@${v.version} (${channel})${statements.join(",")}; sequence ${String(next.sequence)}\n`,
+      `added ${v.id}@${v.version} (${channel})${statements.join(",")}${scoreSummary(decision)}; sequence ${String(next.sequence)}\n`,
     );
   } finally {
     rmSync(work, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
