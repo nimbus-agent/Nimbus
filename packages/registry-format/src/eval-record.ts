@@ -202,8 +202,9 @@ function buildCase(
 
 /**
  * Turn two fresh runs' replies (in input order) into a suite plus the cases that could not be
- * recorded. With no case left it still returns the empty suite; the caller refuses it. A non-empty
- * suite must parse and fit the suite file cap, else this throws.
+ * recorded. With no case left it still returns the empty suite; the caller refuses it. A case
+ * that would push the serialised suite past the suite file cap is skipped as `reply-too-large`
+ * and the rest are still tried, so this never throws for size.
  */
 export function buildRecordedSuite(
   inputs: EvalRecordInputs,
@@ -215,19 +216,30 @@ export function buildRecordedSuite(
   }
   const cases: unknown[] = [];
   const skipped: EvalRecordSkip[] = [];
+  const suite = { format: 1 as const, name: inputs.name, cases };
   inputs.cases.forEach((c, i) => {
     const r = buildCase(c, first[i] as EvalReply, second[i] as EvalReply);
-    if (r.ok) cases.push(r.value);
-    else skipped.push({ case: c.name, why: r.why });
+    if (!r.ok) {
+      skipped.push({ case: c.name, why: r.why });
+      return;
+    }
+    cases.push(r.value);
+    if (suiteBytes(suite).length > MAX_EVAL_SUITE_FILE_BYTES) {
+      cases.pop();
+      skipped.push({ case: c.name, why: "reply-too-large" });
+    }
   });
-  const suite = { format: 1 as const, name: inputs.name, cases };
   if (cases.length > 0) serialiseEvalSuite(suite);
   return { suite, skipped };
 }
 
+function suiteBytes(suite: RecordedSuite["suite"]): Uint8Array {
+  return new TextEncoder().encode(`${JSON.stringify(suite, null, 2)}\n`);
+}
+
 /** The suite as the bytes `parseEvalSuite` reads back: 2-space JSON and a trailing newline. */
 export function serialiseEvalSuite(suite: RecordedSuite["suite"]): Uint8Array {
-  const bytes = new TextEncoder().encode(`${JSON.stringify(suite, null, 2)}\n`);
+  const bytes = suiteBytes(suite);
   if (bytes.length > MAX_EVAL_SUITE_FILE_BYTES) {
     refuse("record", `the recorded suite is larger than ${MAX_EVAL_SUITE_FILE_BYTES} bytes`);
   }
@@ -248,6 +260,9 @@ export type EvalRecordDocument =
       error: { code: string; message: string; skipped?: readonly EvalRecordSkip[] };
     };
 
+const DOC_ID_MAX = 256;
+const DOC_MESSAGE_MAX = 1000;
+
 function hasOnlyKeys(o: Record<string, unknown>, allowed: readonly string[]): boolean {
   return Object.keys(o).every((k) => allowed.includes(k));
 }
@@ -258,7 +273,7 @@ function parseSkipped(raw: unknown): EvalRecordSkip[] | null {
   for (const s of raw) {
     if (!isPlainObject(s) || !hasOnlyKeys(s, ["case", "why"])) return null;
     const why = s["why"];
-    if (typeof s["case"] !== "string") return null;
+    if (typeof s["case"] !== "string" || s["case"].length > NAME_MAX) return null;
     if (typeof why !== "string" || !(EVAL_RECORD_SKIP_REASONS as readonly string[]).includes(why)) {
       return null;
     }
@@ -272,6 +287,7 @@ function parseRecordError(raw: unknown): Extract<EvalRecordDocument, { ok: false
   const e = raw["error"];
   if (!isPlainObject(e) || !hasOnlyKeys(e, ["code", "message", "skipped"])) return null;
   if (typeof e["code"] !== "string" || typeof e["message"] !== "string") return null;
+  if (e["message"].length > DOC_MESSAGE_MAX) return null;
   if (e["skipped"] === undefined)
     return { ok: false, error: { code: e["code"], message: e["message"] } };
   const skipped = parseSkipped(e["skipped"]);
@@ -282,6 +298,7 @@ function parseRecordError(raw: unknown): Extract<EvalRecordDocument, { ok: false
 function parseRecordSuccess(raw: Record<string, unknown>): EvalRecordDocument | null {
   if (!hasOnlyKeys(raw, ["ok", "extensionId", "version", "suite", "skipped"])) return null;
   if (typeof raw["extensionId"] !== "string" || typeof raw["version"] !== "string") return null;
+  if (raw["extensionId"].length > DOC_ID_MAX || raw["version"].length > DOC_ID_MAX) return null;
   const skipped = parseSkipped(raw["skipped"]);
   if (skipped === null || !isPlainObject(raw["suite"])) return null;
   try {

@@ -170,10 +170,22 @@ describe("buildRecordedSuite", () => {
     expect(rc.skipped).toEqual([]);
     expect(roundTrip(rc).expect).toMatchObject({ value: (cap as { text: string }).text });
   });
-  test("a reply of exactly the reply cap is not skipped as too large", () => {
+  test("a cap-size reply is skipped and the others are kept", () => {
     const edge = reply("y".repeat(MAX_EVAL_REPLY_BYTES));
-    // too big for a suite file, so the whole suite is refused, not skipped as reply-too-large
-    expect(() => one(edge, edge)).toThrow(/ERR_REGISTRY_EVAL_SUITE_INVALID/);
+    const r = buildRecordedSuite(
+      inputsFor(3),
+      [reply("a"), edge, reply("c")],
+      [reply("a"), edge, reply("c")],
+    );
+    expect(r.skipped).toEqual([{ case: "c1", why: "reply-too-large" }]);
+    expect(r.suite.cases.map((c) => (c as EvalCase).name)).toEqual(["c0", "c2"]);
+  });
+  test("a big case is skipped and a later small one is recorded", () => {
+    const big = reply("z".repeat(600 * 1024));
+    const r = buildRecordedSuite(inputsFor(3), [big, big, reply("s")], [big, big, reply("s")]);
+    expect(r.suite.cases.map((c) => (c as EvalCase).name)).toEqual(["c0", "c2"]);
+    expect(r.skipped).toEqual([{ case: "c1", why: "reply-too-large" }]);
+    expect(() => serialiseEvalSuite(r.suite)).not.toThrow();
   });
 });
 
@@ -234,6 +246,23 @@ describe("self-check property", () => {
       expect(judgeCase(c, b).pass).toBe(true);
     }
   });
+  test("negative control: generated cases reject other replies", () => {
+    const wrong = [reply("7"), reply('"s"'), reply("[]"), reply("{}"), reply("not json")];
+    const built = [
+      one(j({ id: 1, s: "a" }), j({ id: 2, s: "b" })),
+      one(j({ a: { b: [true] } }), j({ a: { b: [false] } })),
+      one(j({ $type: "q", n: 1 }), j({ $type: "r", n: 1 })),
+    ];
+    for (const r of built) {
+      const c = roundTrip(r);
+      for (const w of wrong) expect(judgeCase(c, w).pass).toBe(false);
+    }
+    const c0 = roundTrip(built[0] as ReturnType<typeof one>);
+    expect(judgeCase(c0, j({ id: 3 })).pass).toBe(false);
+    expect(judgeCase(c0, j({ s: "x" })).pass).toBe(false);
+    expect(judgeCase(c0, j({ id: "3", s: "x" })).pass).toBe(false);
+    expect(judgeCase(roundTrip(one(reply("t"), reply("t"))), reply("7")).pass).toBe(false);
+  });
   test("zero recordable cases still returns an empty suite and the skips", () => {
     const r = one(failed, failed);
     expect(r.suite.cases).toEqual([]);
@@ -252,9 +281,15 @@ describe("serialiseEvalSuite", () => {
   });
   test("a suite over 1 MiB is refused", () => {
     const big = "z".repeat(600 * 1024);
-    expect(() =>
-      buildRecordedSuite(inputsFor(2), [reply(big), reply(big)], [reply(big), reply(big)]),
-    ).toThrow(/ERR_REGISTRY_EVAL_SUITE_INVALID/);
+    const mk = (n: string) => ({
+      name: n,
+      tool: "t",
+      input: {},
+      expect: { rubric: "exact", value: big, error: false },
+    });
+    expect(() => serialiseEvalSuite({ format: 1, name: "s", cases: [mk("a"), mk("b")] })).toThrow(
+      /ERR_REGISTRY_EVAL_SUITE_INVALID/,
+    );
   });
 });
 
@@ -303,5 +338,16 @@ describe("parseEvalRecordDocument", () => {
       parseEvalRecordDocument(doc({ ok: false, error: { code: "C", message: "m", x: 1 } })),
     ).toBeNull();
     expect(parseEvalRecordDocument("nope")).toBeNull();
+  });
+  test("caps ids, messages and skipped case names", () => {
+    const ok = { ok: true, extensionId: "e", version: "1", suite, skipped: [] };
+    expect(parseEvalRecordDocument(doc({ ...ok, extensionId: "e".repeat(256) }))).not.toBeNull();
+    expect(parseEvalRecordDocument(doc({ ...ok, extensionId: "e".repeat(257) }))).toBeNull();
+    expect(parseEvalRecordDocument(doc({ ...ok, version: "1".repeat(257) }))).toBeNull();
+    const longCase = [{ case: "c".repeat(121), why: "call-failed" }];
+    expect(parseEvalRecordDocument(doc({ ...ok, skipped: longCase }))).toBeNull();
+    const err = (message: string) => doc({ ok: false, error: { code: "C", message } });
+    expect(parseEvalRecordDocument(err("m".repeat(1000)))).not.toBeNull();
+    expect(parseEvalRecordDocument(err("m".repeat(1001)))).toBeNull();
   });
 });
