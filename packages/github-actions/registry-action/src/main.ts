@@ -48,12 +48,28 @@ function takeRootKey(): string {
   return rootKey;
 }
 
-/** The `liveness-key` input, masked and dropped from the environment before anything else runs. */
-function takeLivenessKey(): string {
-  const key = requireInput("liveness-key");
-  maskSecret(key);
-  // Every git child inherits this process's environment: the key must not ride along.
-  delete process.env[inputEnvName("liveness-key")];
+/**
+ * The `liveness-sign` inputs: `liveness-key` and `root-key` are both read, masked and dropped from
+ * the environment BEFORE either is validated, so no refusal can leave one of them behind. Then a
+ * missing liveness key and a set root key are refused.
+ */
+function takeLivenessSignKeys(): string {
+  const key = getInput("liveness-key");
+  const root = getInput("root-key");
+  for (const [name, value] of [
+    ["liveness-key", key],
+    ["root-key", root],
+  ] as const) {
+    if (value !== "") maskSecret(value);
+    // Every git child inherits this process's environment: a key must not ride along.
+    delete process.env[inputEnvName(name)];
+  }
+  if (key === "") throw new Error('input "liveness-key" is required');
+  if (root !== "") {
+    throw new Error(
+      'input "root-key" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone',
+    );
+  }
   return key;
 }
 
@@ -148,15 +164,6 @@ function refuseSecretsInLivenessCheck(): void {
   );
 }
 
-/** `liveness-sign` holds the liveness key only: a `root-key` handed to it is refused. */
-function refuseSecretsInLivenessSign(): void {
-  refuseSecrets(
-    ["root-key"],
-    (name) =>
-      `input "${name}" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone`,
-  );
-}
-
 /**
  * The `check` mode's inputs. With `nimbus-gateway` set, check runs extension code, so a
  * `github-token` is refused (and provenance is left to the sign job); without it, as before.
@@ -219,8 +226,7 @@ export async function main(): Promise<void> {
         out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results),
       });
     } else if (mode === "liveness-sign") {
-      const livenessKey = takeLivenessKey();
-      refuseSecretsInLivenessSign();
+      const livenessKey = takeLivenessSignKeys();
       const defaultBranch = getInput("default-branch");
       const results = getInput("results");
       await runLivenessSign({

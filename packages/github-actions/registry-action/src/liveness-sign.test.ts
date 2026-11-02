@@ -325,6 +325,86 @@ describe("runLivenessSign", () => {
     });
   });
 
+  test("an unparsable previous liveness.json restarts at sequence 1, with a warning", async () => {
+    syncMaintainer(repo, "gh-pages");
+    write(repo.maintainer, "liveness.json", "this is not json\n");
+    pushMaintainer(repo, "gh-pages", "garbage liveness");
+    await sign(results(envelope({ "acme/echo@1.0.0": GOOD })));
+    expect(originLiveness().sequence).toBe(1);
+    expect(warnings.join("\n")).toContain("does not parse");
+  });
+
+  test("a race that adds a liveness.json with a higher sequence makes the retry use it plus 1", async () => {
+    await sign(results(envelope({ "acme/echo@1.0.0": GOOD })), {
+      beforePush: async (n) => {
+        if (n !== 1) return;
+        syncMaintainer(repo, "gh-pages");
+        const higher = await signLivenessFile(
+          {
+            format: 1,
+            livenessKey: LIVENESS_KEY,
+            sequence: 9,
+            generatedAt: new Date(NOW - 1000).toISOString(),
+            nimbusVersion: VERSION,
+            extensions: { "acme/echo@1.0.0": GOOD },
+          },
+          LIVENESS_SEED,
+        );
+        write(repo.maintainer, "liveness.json", `${JSON.stringify(higher, null, 2)}\n`);
+        pushMaintainer(repo, "gh-pages", "concurrent liveness run");
+      },
+    });
+    expect(originLiveness().sequence).toBe(10);
+  });
+
+  test("a race that makes an entry no longer newest stable drops it on the retry", async () => {
+    const before = originHead(repo, "gh-pages");
+    await sign(results(envelope({ "acme/echo@1.0.0": GOOD })), {
+      beforePush: async (n) => {
+        if (n !== 1) return;
+        syncMaintainer(repo, "gh-pages");
+        const { signature: _s, ...rest } = originIndex(repo);
+        const echo = rest.extensions["acme/echo"];
+        const v = echo?.versions["1.0.0"];
+        if (echo === undefined || v === undefined) throw new Error("fixture changed");
+        const demoted = {
+          ...rest,
+          extensions: {
+            ...rest.extensions,
+            "acme/echo": { ...echo, versions: { "1.0.0": { ...v, channel: "beta" } } },
+          },
+        };
+        const next = await signIndex(demoted as never, ROOT_SEED);
+        write(repo.maintainer, "index.json", `${JSON.stringify(next, null, 2)}\n`);
+        pushMaintainer(repo, "gh-pages", "demote to beta");
+      },
+    });
+    expect(originHead(repo, "gh-pages")).not.toBe(before);
+    expect(() => originFile(repo, "gh-pages", "liveness.json")).toThrow();
+    expect(warnings.join("\n")).toContain("published nothing");
+  });
+
+  test("a push error that is not a non-fast-forward is thrown, not retried", async () => {
+    const hook = join(repo.origin, "hooks", "pre-receive");
+    writeFileSync(hook, "#!/bin/sh\necho declined by policy >&2\nexit 1\n", { mode: 0o755 });
+    let attempts = 0;
+    await expect(
+      sign(results(envelope({ "acme/echo@1.0.0": GOOD })), {
+        beforePush: () => {
+          attempts++;
+        },
+      }),
+    ).rejects.toThrow(/git push to gh-pages failed/);
+    expect(attempts).toBe(1);
+  });
+
+  test("every entry dropped emits a warning with counts, so a broken check job is not silent", async () => {
+    await sign(results(envelope({ "acme/ghost@1.0.0": GOOD })));
+    const w = warnings.join("\n");
+    expect(w).toContain("liveness-sign published nothing");
+    expect(w).toContain("1 results entries passed validation and 0 were");
+  });
+
   test("a push that loses a race retries from a fresh fetch and succeeds", async () => {
     let raced = 0;
     await sign(results(envelope({ "acme/echo@1.0.0": GOOD })), {

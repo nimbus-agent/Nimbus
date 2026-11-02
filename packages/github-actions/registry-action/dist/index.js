@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:03ac4d80ded8b9efc9ca13e133f22234dabd33eaf355cbca9f2d4a01f99ec92d
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:ac69b391666f00dd686a9bbf05622c7a5fae5166671d6ddaf97953ceb816c5be
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -12683,9 +12683,10 @@ async function attemptSign(opts, seed, ownKey, deps) {
       io.annotate("warning", `dropped results entry ${code(key)}: it is not the newest stable version of a listed extension`);
     }
   }
+  const checked = Object.keys(read.extensions).length;
   const kept = Object.keys(extensions).length;
   if (kept === 0)
-    return { commit: undefined, sequence: 0, kept };
+    return { commit: undefined, sequence: 0, kept, checked };
   const sequence = await previousSequence(git, cwd, indexKey, io) + 1;
   const signed = await signLivenessFile({
     format: 1,
@@ -12699,10 +12700,13 @@ async function attemptSign(opts, seed, ownKey, deps) {
   const bytes = new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}
 `);
   const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: LIVENESS_FILE, bytes }], `Publish liveness.json sequence ${String(sequence)}`, cwd);
-  return { commit, sequence, kept };
+  return { commit, sequence, kept, checked };
 }
 function report(io, a, pushed) {
   const head = pushed ? `Signed ${code(LIVENESS_FILE)} sequence ${String(a.sequence)} with ${String(a.kept)} entries; pushed to ${code(PAGES_BRANCH)}.` : "There is nothing to publish: no results entry was fit to sign, so nothing was committed.";
+  if (!pushed) {
+    io.annotate("warning", `liveness-sign published nothing: ${String(a.checked)} results entries passed validation and ${String(a.kept)} were for a newest stable version; check the liveness-check job`);
+  }
   io.summary(["## Liveness sign", "", head].join(`
 `));
   io.log(pushed ? `signed liveness sequence ${String(a.sequence)}` : "nothing to publish; no commit");
@@ -13229,10 +13233,22 @@ function takeRootKey() {
   delete process.env[inputEnvName("root-key")];
   return rootKey;
 }
-function takeLivenessKey() {
-  const key = requireInput("liveness-key");
-  maskSecret(key);
-  delete process.env[inputEnvName("liveness-key")];
+function takeLivenessSignKeys() {
+  const key = getInput("liveness-key");
+  const root = getInput("root-key");
+  for (const [name, value] of [
+    ["liveness-key", key],
+    ["root-key", root]
+  ]) {
+    if (value !== "")
+      maskSecret(value);
+    delete process.env[inputEnvName(name)];
+  }
+  if (key === "")
+    throw new Error('input "liveness-key" is required');
+  if (root !== "") {
+    throw new Error('input "root-key" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone');
+  }
   return key;
 }
 function requireInput(name) {
@@ -13286,9 +13302,6 @@ function refuseSecretsInScore(mode) {
 function refuseSecretsInLivenessCheck() {
   refuseSecrets(["root-key", "github-token", "liveness-key"], (name) => `input "${name}" must not be set in liveness-check mode: liveness-check runs extension code and holds no secrets`);
 }
-function refuseSecretsInLivenessSign() {
-  refuseSecrets(["root-key"], (name) => `input "${name}" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone`);
-}
 function checkInputs() {
   const gateway = getInput("nimbus-gateway");
   if (gateway === "")
@@ -13338,8 +13351,7 @@ async function main() {
         out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results)
       });
     } else if (mode === "liveness-sign") {
-      const livenessKey = takeLivenessKey();
-      refuseSecretsInLivenessSign();
+      const livenessKey = takeLivenessSignKeys();
       const defaultBranch = getInput("default-branch");
       const results = getInput("results");
       await runLivenessSign({

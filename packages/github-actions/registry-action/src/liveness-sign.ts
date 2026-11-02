@@ -13,7 +13,8 @@
  * Every attempt starts from a fresh fetch of `gh-pages`, and refuses - nothing committed - when the
  * index names no liveness key, the `liveness-key` input is not that key, or it is the root key. A
  * push that loses a race starts over, at most `MAX_ATTEMPTS` times. The key is parsed in memory only
- * and zeroed afterwards; refusals name fingerprints of PUBLIC keys. `main.ts` masks the input and
+ * and zeroed afterwards (best-effort: the decoded Buffer may be pooled and the input string is
+ * immutable, so copies can outlive the zeroing - the mask and the scoped environment are the defence); refusals name fingerprints of PUBLIC keys. `main.ts` masks the input and
  * drops it from the environment first.
  */
 import { readFileSync, statSync } from "node:fs";
@@ -163,6 +164,8 @@ export function readLivenessResults(
 }
 
 interface Attempt {
+  /** Results entries that passed validation, before the newest-stable filter. */
+  checked: number;
   commit: string | undefined;
   sequence: number;
   kept: number;
@@ -241,8 +244,9 @@ async function attemptSign(
       );
     }
   }
+  const checked = Object.keys(read.extensions).length;
   const kept = Object.keys(extensions).length;
-  if (kept === 0) return { commit: undefined, sequence: 0, kept };
+  if (kept === 0) return { commit: undefined, sequence: 0, kept, checked };
   const sequence = (await previousSequence(git, cwd, indexKey, io)) + 1;
   const signed = await signLivenessFile(
     {
@@ -263,13 +267,19 @@ async function attemptSign(
     `Publish liveness.json sequence ${String(sequence)}`,
     cwd,
   );
-  return { commit, sequence, kept };
+  return { commit, sequence, kept, checked };
 }
 
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   const head = pushed
     ? `Signed ${code(LIVENESS_FILE)} sequence ${String(a.sequence)} with ${String(a.kept)} entries; pushed to ${code(PAGES_BRANCH)}.`
     : "There is nothing to publish: no results entry was fit to sign, so nothing was committed.";
+  if (!pushed) {
+    io.annotate(
+      "warning",
+      `liveness-sign published nothing: ${String(a.checked)} results entries passed validation and ${String(a.kept)} were for a newest stable version; check the liveness-check job`,
+    );
+  }
   io.summary(["## Liveness sign", "", head].join("\n"));
   io.log(
     pushed ? `signed liveness sequence ${String(a.sequence)}` : "nothing to publish; no commit",

@@ -339,6 +339,20 @@ describe("main", () => {
     expect(process.env["INPUT_LIVENESS-KEY"]).toBeUndefined();
   });
 
+  test("liveness-sign with an empty liveness-key and a root-key still masks and drops both", async () => {
+    const root = "definitely-secret-root";
+    process.env["INPUT_MODE"] = "liveness-sign";
+    process.env["INPUT_LIVENESS-KEY"] = "";
+    process.env["INPUT_ROOT-KEY"] = root;
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain(`::add-mask::${root}`);
+    expect(all.replace(`::add-mask::${root}`, "")).not.toContain(root);
+    expect(process.env["INPUT_ROOT-KEY"]).toBeUndefined();
+    expect(process.env["INPUT_LIVENESS-KEY"]).toBeUndefined();
+  });
+
   test("liveness-sign masks the liveness-key and drops it from the environment once read", async () => {
     const value = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
     process.env["INPUT_MODE"] = "liveness-sign";
