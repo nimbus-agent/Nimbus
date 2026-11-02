@@ -80,13 +80,20 @@ function ipv6Groups(address: string): number[] | undefined {
 
 /** True only for a syntactically valid address outside every blocked range. */
 export function isPublicAddress(address: string): boolean {
-  const bare = address.split("%")[0] ?? "";
-  const family = isIP(bare);
-  if (family === 4) return !BLOCKED.check(bare, "ipv4");
-  if (family !== 6) return false;
+  const family = isIP(address.split("%")[0] ?? "");
+  // A zone is meaningful only on IPv6; `1.1.1.1%x` is not an address.
+  const bare = family === 6 ? (address.split("%")[0] ?? "") : address;
+  if (family === 4 && !address.includes("%")) return !BLOCKED.check(bare, "ipv4");
+  if (family !== 6 || bare.length === 0) return false;
   const g = ipv6Groups(bare);
   if (g === undefined) return false;
   // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96): judge the embedded IPv4 address.
+  // IPv4-translated (::ffff:0:0:0/96, RFC 2765) embeds the address the same way.
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) {
+    const hi = g[6] ?? 0;
+    const lo = g[7] ?? 0;
+    return !BLOCKED.check(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`, "ipv4");
+  }
   const zeroPrefix = g.slice(0, 5).every((x) => x === 0);
   if (zeroPrefix && (g[5] === 0xffff || g[5] === 0)) {
     const hi = g[6] ?? 0;
@@ -189,14 +196,21 @@ export async function probeHost(
   }
 }
 
-/** Distinct host:port pairs, at most `MAX_HOSTS_PER_RUN` probed, `HOST_CONCURRENCY` at a time. */
+/** The format's `hosts.declared` ceiling. */
+const MAX_DECLARED = 1000;
+
+/**
+ * Distinct (case-folded host, port) pairs, at most `MAX_HOSTS_PER_RUN` probed, `HOST_CONCURRENCY`
+ * at a time. `declared` is capped at 1000. With no entries `declared` is 0, which the liveness
+ * format refuses: a caller must omit `hosts` from the entry in that case.
+ */
 export async function probeHosts(
   entries: ReadonlyArray<{ host: string; port: number }>,
   deps: HostProbeDeps = REAL_HOST_PROBE,
 ): Promise<{ declared: number; answered: number }> {
   const seen = new Map<string, { host: string; port: number }>();
   for (const e of entries) {
-    const key = `${e.host}:${String(e.port)}`;
+    const key = `${e.host.toLowerCase()}:${String(e.port)}`;
     if (!seen.has(key)) seen.set(key, e);
   }
   const distinct = [...seen.values()];
@@ -211,5 +225,5 @@ export async function probeHosts(
     }
   };
   await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
-  return { declared: distinct.length, answered };
+  return { declared: Math.min(distinct.length, MAX_DECLARED), answered };
 }

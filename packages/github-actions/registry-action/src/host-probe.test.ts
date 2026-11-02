@@ -88,6 +88,9 @@ describe("isPublicAddress", () => {
       "::ffff:7f00:1",
       "::127.0.0.1",
       "::10.0.0.1",
+      "::ffff:0:7f00:1",
+      "::ffff:0:a00:1",
+      "1.1.1.1%x",
       "",
       "not-an-ip",
       "1.1.1",
@@ -296,6 +299,22 @@ describe("probeHosts", () => {
     expect(r.answered).toBe(MAX_HOSTS_PER_RUN);
     expect(peak).toBeLessThanOrEqual(HOST_CONCURRENCY);
     expect(peak).toBeGreaterThan(1);
+  });
+  test("zero entries declare zero; case-folded duplicates count once", async () => {
+    expect(await probeHosts([])).toEqual({ declared: 0, answered: 0 });
+    const r = await probeHosts(
+      [
+        { host: "A.example", port: 443 },
+        { host: "a.example", port: 443 },
+      ],
+      fakeDeps([{ address: "1.1.1.1", family: 4 }]),
+    );
+    expect(r).toEqual({ declared: 1, answered: 1 });
+  });
+  test("declared is capped at 1000", async () => {
+    const entries = Array.from({ length: 1200 }, (_, i) => ({ host: `h${i}.example`, port: 443 }));
+    const r = await probeHosts(entries, fakeDeps([{ address: "10.0.0.1", family: 4 }]));
+    expect(r).toEqual({ declared: 1000, answered: 0 });
   });
   test("counts answered hosts", async () => {
     const deps: HostProbeDeps = {
