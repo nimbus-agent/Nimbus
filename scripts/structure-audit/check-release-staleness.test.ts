@@ -12,6 +12,7 @@ import {
   parseBrewVersion,
   parseLinuxVersion,
   parseScoopVersion,
+  readServedLinuxChannel,
   resolveWingetCoverage,
   selectPublished,
   wingetDirPath,
@@ -55,6 +56,56 @@ describe("parseLinuxVersion", () => {
   });
   test("null when the package block is absent", () => {
     expect(parseLinuxVersion("Package: something-else\nVersion: 1.0.0\n")).toBeNull();
+  });
+});
+
+describe("readServedLinuxChannel", () => {
+  const url = "https://example.test/apt/dists/stable/main/binary-amd64/Packages";
+
+  test("reads the version from the index at the given URL", async () => {
+    const asked: string[] = [];
+    const reading = await readServedLinuxChannel(url, async (u) => {
+      asked.push(u);
+      return new Response("Package: nimbus-headless\nVersion: 10.15.0\n");
+    });
+    expect(asked).toEqual([url]);
+    expect(reading).toEqual({ kind: "linux", status: "read", version: "10.15.0", covered: null });
+  });
+  test("a 404 is absent, so a site that lost its index is a finding", async () => {
+    const reading = await readServedLinuxChannel(
+      url,
+      async () => new Response("", { status: 404 }),
+    );
+    expect(reading.status).toBe("absent");
+  });
+  test("a 5xx is transient, not staleness", async () => {
+    const reading = await readServedLinuxChannel(
+      url,
+      async () => new Response("", { status: 503 }),
+    );
+    expect(reading.status).toBe("indeterminate");
+  });
+  test("a network failure is transient, not staleness", async () => {
+    const reading = await readServedLinuxChannel(url, async () => {
+      throw new TypeError("connection refused");
+    });
+    expect(reading).toEqual({
+      kind: "linux",
+      status: "indeterminate",
+      version: null,
+      covered: null,
+    });
+  });
+  test("the committed linux channel reads the served site, not linux-repo's Git branch", () => {
+    const raw = readFileSync(
+      join(import.meta.dir, "..", "..", ".github", "release-train.json"),
+      "utf8",
+    );
+    const linux = loadTrainManifest(raw).trains[0]?.channels.find((c) => c.kind === "linux");
+    expect(linux?.url).toBe(
+      "https://nimbus-agent.github.io/linux-repo/apt/dists/stable/main/binary-amd64/Packages",
+    );
+    expect(linux?.repo).toBeUndefined();
   });
 });
 

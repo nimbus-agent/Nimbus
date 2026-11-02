@@ -274,6 +274,10 @@ under the `Contents: write` the Release Bot already has, and `deploy-site.yml` u
 `GITHUB_TOKEN`. Anyone who can write to `linux-repo` can deploy the site in either mode. The last
 three `site-*` releases are kept. `README.md`, `LICENSE` and `.nojekyll` are served only in Git mode.
 
+In `actions` mode `linux-repo`'s `main` does not move on a release, so to see what users get, read
+the site rather than the branch: `audit:release-staleness` reads the served `Packages` index, which
+is right in both modes.
+
 The job runs `linux-repo-config.ts` from the released tag's tree, so `actions` mode works only for a
 tag that already contains `--stage-yum-rpms`. An older tag fails at that step, loudly, before
 anything is handed off. To serve an older tree, use the rollback below rather than re-publishing.
