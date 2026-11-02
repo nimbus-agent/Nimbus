@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { type EvalBaselineDocument, parseEvalBaselineDocument } from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../src/platform/sandbox/sandbox-cwd.ts";
 import {
@@ -22,6 +23,7 @@ import {
   EVAL_FIXTURE_ID,
   EVAL_FIXTURE_STDERR_MARKER,
   EVAL_FIXTURE_SUITE,
+  EVAL_FIXTURE_TOOL_COUNT,
   evalSandboxAvailable,
   GATEWAY_ENTRY,
   installDefaultHelper,
@@ -82,6 +84,19 @@ function documentOf(r: RoleResult): RoleDocument {
   return JSON.parse(lines[0] ?? "") as RoleDocument;
 }
 
+/** The same one-line rule, for the baseline's document (parsed by the shared validator). */
+function baselineDocumentOf(r: RoleResult): EvalBaselineDocument {
+  const context = `exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr (tail) ---\n${r.stderr.slice(-6000)}`;
+  if (r.code !== 0) throw new Error(`role failed: ${context}`);
+  const lines = r.stdout.split("\n").filter((l) => l !== "");
+  if (lines.length !== 1 || !r.stdout.endsWith("\n")) {
+    throw new Error(`expected exactly one stdout line: ${context}`);
+  }
+  const doc = parseEvalBaselineDocument(lines[0] ?? "");
+  if (doc === null) throw new Error(`not a baseline document: ${context}`);
+  return doc;
+}
+
 describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed extension", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-eval-e2e-"));
   const scaffoldRoot = join(tmp, "scaffold");
@@ -101,9 +116,9 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
   let restoreHelper: () => void = () => {};
   let first: RoleResult | undefined;
 
-  function evalRole(dir: string): Promise<RoleResult> {
+  function evalRole(dir: string, ...flags: string[]): Promise<RoleResult> {
     return runCommand(
-      ["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir],
+      ["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir, ...flags],
       REPO,
       roleEnv,
       ROLE_TIMEOUT_MS,
@@ -206,6 +221,39 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
     },
     ROLE_TIMEOUT_MS + 10_000,
   );
+
+  // The proof of the Mastra contract the baseline relies on (`listToolDefinitionsWithErrors`: the
+  // result keyed by the server key, each definition carrying its raw `name` and `inputSchema`):
+  // a fake client cannot give it, so this runs the real role, the real `MCPClient` and a real
+  // sandboxed child.
+  test(
+    "--baseline lists the real package's tools: passed, one JSON document",
+    async () => {
+      const r = await evalRole(pkg, "--baseline");
+      const doc = baselineDocumentOf(r);
+      if (!doc.ok) throw new Error(`baseline error: ${JSON.stringify(doc.error)}\n${r.stderr}`);
+      expect(doc.extensionId).toBe(EXTENSION_ID);
+      expect(doc.baseline).toEqual({ scorer: 1, passed: true, tools: EVAL_FIXTURE_TOOL_COUNT });
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  test(
+    "--baseline on a server that exits at once is no-listing, never a thrown error",
+    async () => {
+      const doc = baselineDocumentOf(await evalRole(deadPkg, "--baseline"));
+      expect(doc.ok).toBe(true);
+      if (!doc.ok) return;
+      expect(doc.baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  test("--baseline with --suite is a usage error: exit 2 and no stdout", async () => {
+    const r = await evalRole(pkg, "--baseline", "--suite", "evals/basic.eval.json");
+    expect(r.code).toBe(2);
+    expect(r.stdout).toBe("");
+  });
 
   test("every eval stage was made under the redirected sandbox dir, and none is left behind", () => {
     if (first === undefined) throw new Error("the scoring test did not run");

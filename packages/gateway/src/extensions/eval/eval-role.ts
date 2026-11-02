@@ -1,10 +1,10 @@
 import { format } from "node:util";
 
-import type { EvalRoleDocument } from "@nimbus-dev/registry-format";
+import type { EvalBaselineDocument, EvalRoleDocument } from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
-import type { EvalMcpClient, EvalRuntimeDeps } from "./eval-runtime.ts";
+import type { EvalBaselineDeps, EvalMcpClient, EvalRuntimeDeps } from "./eval-runtime.ts";
 import { EvalRunError, loadEvalPackage, messageOf } from "./eval-source.ts";
 
 /**
@@ -19,24 +19,35 @@ export interface EvalRoleDeps {
   writeStderr: (s: string) => void;
   exit: (code: number) => void;
   run: (args: { packageDir: string; suiteFile?: string }) => Promise<EvalRoleDocument>;
+  runBaseline: (args: { packageDir: string }) => Promise<EvalBaselineDocument>;
 }
 
-const USAGE = "usage: __nimbus-eval --package <absolute dir> [--suite <file>] [--json]\n";
+const USAGE =
+  "usage: __nimbus-eval --package <absolute dir> [--suite <file> | --baseline] [--json]\n";
 
-type RoleArgs = { packageDir: string; suiteFile?: string };
+type RoleArgs = { packageDir: string; baseline: true } | { packageDir: string; suiteFile?: string };
 
 /** A flag's value: present and not itself a flag (`--package --json` is a usage error). */
 function isFlagValue(value: string | undefined): value is string {
   return value !== undefined && !value.startsWith("--");
 }
 
-/** `--json` is a no-op; anything unknown, repeated or valueless is a usage error (null). */
+/**
+ * `--json` is a no-op; anything unknown, repeated or valueless is a usage error (null), and so is
+ * `--baseline` beside `--suite` or repeated.
+ */
 function parseArgs(argv: readonly string[]): RoleArgs | null {
   let packageDir: string | undefined;
   let suiteFile: string | undefined;
+  let baseline = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--json") continue;
+    if (a === "--baseline") {
+      if (baseline) return null;
+      baseline = true;
+      continue;
+    }
     const isPkg = a === "--package";
     if (!isPkg && a !== "--suite") return null;
     const value = argv[++i];
@@ -46,6 +57,7 @@ function parseArgs(argv: readonly string[]): RoleArgs | null {
     else suiteFile = value;
   }
   if (packageDir === undefined) return null;
+  if (baseline) return suiteFile === undefined ? { packageDir, baseline: true } : null;
   return suiteFile === undefined ? { packageDir } : { packageDir, suiteFile };
 }
 
@@ -136,6 +148,8 @@ export function adaptEvalClient(client: McpClientLike, readContent: ContentReade
   };
 }
 
+type EvalListingClientLike = ReturnType<EvalBaselineDeps["createClient"]>;
+
 /** What a run loads from outside this module; injected in tests, `REAL_EVAL_LOADERS` otherwise. */
 export interface EvalRunLoaders {
   /** `@mastra/mcp`, imported only here: inside the run, after console output is redirected. */
@@ -146,6 +160,8 @@ export interface EvalRunLoaders {
   canConfine: () => Promise<(p: SandboxPolicy) => string | null>;
   sandboxDir: () => Promise<string>;
   runtimeReadPaths: () => Promise<readonly string[]>;
+  /** The baseline's listing client factory; `@mastra/mcp` is imported inside the call. */
+  listingClient: () => Promise<EvalBaselineDeps["createClient"]>;
 }
 
 export const REAL_EVAL_LOADERS: EvalRunLoaders = {
@@ -167,6 +183,12 @@ export const REAL_EVAL_LOADERS: EvalRunLoaders = {
     (await import("../../platform/paths.ts")).createPlatformPathsForCurrentOs().sandboxDir,
   runtimeReadPaths: async () =>
     (await import("../../exec/exec-runtimes.ts")).resolveRuntimeById("bun").requiredReadPaths(),
+  listingClient: async () => {
+    const { MCPClient } = await import("@mastra/mcp");
+    // The one client the baseline drives, over the same server definitions as a suite run.
+    return (id, servers) =>
+      new MCPClient({ id, servers: evalServerDefs(servers) }) as unknown as EvalListingClientLike;
+  },
 };
 
 /**
@@ -184,7 +206,7 @@ export async function loadEvalClientFactory(
 
 /** The real run: load and verify the package, then run its suites in the sandbox. */
 export async function defaultEvalRun(
-  args: RoleArgs,
+  args: { packageDir: string; suiteFile?: string },
   loaders: EvalRunLoaders = REAL_EVAL_LOADERS,
 ): Promise<EvalRoleDocument> {
   const runtime = await import("./eval-runtime.ts");
@@ -206,7 +228,29 @@ export async function defaultEvalRun(
   return { ok: true, extensionId: src.extensionId, version: src.version, report };
 }
 
-function toErrorDocument(e: unknown): EvalRoleDocument {
+/** The baseline run: load and verify the package (no suites read), then list its tools in the sandbox. */
+export async function defaultEvalBaselineRun(
+  args: { packageDir: string },
+  loaders: EvalRunLoaders = REAL_EVAL_LOADERS,
+): Promise<EvalBaselineDocument> {
+  const runtime = await import("./eval-runtime.ts");
+  const src = await loadEvalPackage(args.packageDir, { baselineOnly: true });
+  const [createClient, canConfine, sandboxDir, runtimeReadPaths] = await Promise.all([
+    loaders.listingClient(),
+    loaders.canConfine(),
+    loaders.sandboxDir(),
+    loaders.runtimeReadPaths(),
+  ]);
+  const baseline = await runtime.runEvalBaselineSession(src, {
+    sandboxDir,
+    runtimeReadPaths,
+    canConfine,
+    createClient,
+  });
+  return { ok: true, extensionId: src.extensionId, version: src.version, baseline };
+}
+
+function toErrorDocument(e: unknown): { ok: false; error: { code: string; message: string } } {
   if (e instanceof EvalRunError) return { ok: false, error: { code: e.code, message: e.message } };
   return { ok: false, error: { code: "ERR_EVAL_INTERNAL", message: messageOf(e) } };
 }
@@ -234,11 +278,17 @@ export const REAL_ROLE_DEPS: EvalRoleDeps = {
   },
   exit: exitAfterFlush,
   run: defaultEvalRun,
+  runBaseline: defaultEvalBaselineRun,
 };
 
-async function runToDocument(deps: EvalRoleDeps, args: RoleArgs): Promise<EvalRoleDocument> {
+async function runToDocument(
+  deps: EvalRoleDeps,
+  args: RoleArgs,
+): Promise<EvalRoleDocument | EvalBaselineDocument> {
   try {
-    return await deps.run(args);
+    return "baseline" in args
+      ? await deps.runBaseline({ packageDir: args.packageDir })
+      : await deps.run(args);
   } catch (e: unknown) {
     return toErrorDocument(e);
   }

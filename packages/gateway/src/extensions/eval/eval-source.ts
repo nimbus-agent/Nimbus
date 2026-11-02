@@ -181,11 +181,12 @@ function selectSuites(bytes: PackageMap, suiteFile: string | undefined): EvalSui
 /**
  * Load a package directory, verify it, and read its suites. Stages nothing. Every package file is
  * read ONCE (`readEvalPackageFiles`): the manifest, the suites and `filesDigest` all derive from
- * that one map, so a file swapped between two uses cannot make them disagree.
+ * that one map, so a file swapped between two uses cannot make them disagree. With `baselineOnly`
+ * the suites are never parsed and `suites` is empty.
  */
 export async function loadEvalPackage(
   dir: string,
-  opts: { suiteFile?: string; readFiles?: EvalPackageReader } = {},
+  opts: { suiteFile?: string; readFiles?: EvalPackageReader; baselineOnly?: boolean } = {},
 ): Promise<EvalPackageSource> {
   if (!isAbsolute(dir)) throw invalid("the package directory must be an absolute path");
   try {
@@ -200,7 +201,9 @@ export async function loadEvalPackage(
     if (!files.includes(entryRel)) {
       throw invalid(`the entry "${entryRel}" is not among the package files`);
     }
-    const suites = selectSuites(bytes, opts.suiteFile);
+    // The baseline reads no suite: a package with no `evals/`, or a broken suite file, still has
+    // tools to list.
+    const suites = opts.baselineOnly === true ? [] : selectSuites(bytes, opts.suiteFile);
     return {
       dir,
       extensionId: manifest.id,

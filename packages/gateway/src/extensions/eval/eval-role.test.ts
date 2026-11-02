@@ -2,11 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EvalReport, EvalRoleDocument } from "@nimbus-dev/registry-format";
+import {
+  type EvalBaselineDocument,
+  type EvalReport,
+  type EvalRoleDocument,
+  parseEvalBaselineDocument,
+} from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
   adaptEvalClient,
+  defaultEvalBaselineRun,
   defaultEvalRun,
   type EvalRoleDeps,
   type EvalRunLoaders,
@@ -27,13 +33,18 @@ interface Harness {
   err: string[];
   exits: number[];
   calls: { packageDir: string; suiteFile?: string }[];
+  baselineCalls: { packageDir: string }[];
 }
 
-function harness(run: EvalRoleDeps["run"]): Harness {
+function harness(
+  run: EvalRoleDeps["run"],
+  runBaseline: EvalRoleDeps["runBaseline"] = async () => BASELINE_OK,
+): Harness {
   const out: string[] = [];
   const err: string[] = [];
   const exits: number[] = [];
   const calls: { packageDir: string; suiteFile?: string }[] = [];
+  const baselineCalls: { packageDir: string }[] = [];
   const deps: EvalRoleDeps = {
     writeStdout: (s) => out.push(s),
     writeStderr: (s) => err.push(s),
@@ -42,9 +53,20 @@ function harness(run: EvalRoleDeps["run"]): Harness {
       calls.push(a);
       return run(a);
     },
+    runBaseline: (a) => {
+      baselineCalls.push(a);
+      return runBaseline(a);
+    },
   };
-  return { deps, out, err, exits, calls };
+  return { deps, out, err, exits, calls, baselineCalls };
 }
+
+const BASELINE_OK: EvalBaselineDocument = {
+  ok: true,
+  extensionId: "a.b",
+  version: "1.0.0",
+  baseline: { scorer: 1, passed: true, tools: 3 },
+};
 
 const OK: EvalRoleDocument = { ok: true, extensionId: "a.b", version: "1.0.0", report: REPORT };
 
@@ -77,6 +99,58 @@ describe("runEvalRole", () => {
     expect(JSON.parse(h.out[0] ?? "")).toEqual(OK);
     expect(h.exits).toEqual([0]);
     expect(h.calls).toEqual([{ packageDir: "/p", suiteFile: "s.eval.json" }]);
+  });
+
+  test("--baseline prints exactly one document the validator accepts, and never calls run", async () => {
+    const h = harness(async () => OK);
+    await runEvalRole(["--package", "/p", "--baseline", "--json"], h.deps);
+    expect(h.out).toHaveLength(1);
+    expect(parseEvalBaselineDocument(h.out[0] ?? "")).toEqual(BASELINE_OK);
+    expect(h.baselineCalls).toEqual([{ packageDir: "/p" }]);
+    expect(h.calls).toEqual([]);
+    expect(h.exits).toEqual([0]);
+  });
+
+  test.each([
+    [["--package", "/p", "--baseline", "--suite", "x"]],
+    [["--package", "/p", "--suite", "x", "--baseline"]],
+    [["--package", "/p", "--baseline", "--baseline"]],
+    [["--baseline"]],
+  ])("baseline usage error %j exits 2 with empty stdout", async (argv) => {
+    const h = harness(async () => OK);
+    await runEvalRole(argv, h.deps);
+    expect(h.out).toEqual([]);
+    expect(h.exits).toEqual([2]);
+    expect(h.baselineCalls).toEqual([]);
+    expect(h.calls).toEqual([]);
+  });
+
+  test("a baseline EvalRunError prints ok:false and still exits 0", async () => {
+    const h = harness(
+      async () => OK,
+      async () => {
+        throw new EvalRunError("ERR_EVAL_SANDBOX_UNAVAILABLE", "no sandbox");
+      },
+    );
+    await runEvalRole(["--package", "/p", "--baseline"], h.deps);
+    expect(parseEvalBaselineDocument(h.out[0] ?? "")).toEqual({
+      ok: false,
+      error: { code: "ERR_EVAL_SANDBOX_UNAVAILABLE", message: "no sandbox" },
+    });
+    expect(h.exits).toEqual([0]);
+  });
+
+  test("console output during a baseline run goes to stderr", async () => {
+    const h = harness(
+      async () => OK,
+      async () => {
+        console.log("baseline noise");
+        return BASELINE_OK;
+      },
+    );
+    await runEvalRole(["--package", "/p", "--baseline"], h.deps);
+    expect(h.out).toHaveLength(1);
+    expect(h.err.join("")).toContain("baseline noise");
   });
 
   test("without --suite the suiteFile key is absent", async () => {
@@ -310,6 +384,21 @@ describe("defaultEvalRun with injected loaders", () => {
       canConfine: async () => () => confine,
       sandboxDir: async () => sandboxDir,
       runtimeReadPaths: async () => [join(root, "runtime")],
+      listingClient: async () => (id, servers) => {
+        seen.ids.push(id);
+        const [key] = Object.keys(servers);
+        return {
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              [String(key)]: { echo: { name: "echo", inputSchema: { type: "object" } } },
+            },
+            errors: {},
+          }),
+          disconnect: async () => {
+            seen.disconnects += 1;
+          },
+        };
+      },
     };
   }
 
@@ -331,6 +420,29 @@ describe("defaultEvalRun with injected loaders", () => {
     expect(seen.disconnects).toBe(1);
     const stageRoot = join(sandboxDir, EXTENSION_STAGE_DIR_NAME);
     expect(existsSync(stageRoot) ? readdirSync(stageRoot) : []).toEqual([]);
+  });
+
+  test("the baseline run needs no suites: a package without evals/ is baselined", async () => {
+    rmSync(join(pkg, "evals"), { recursive: true, force: true });
+    const seen = newSeen();
+    const doc = await defaultEvalBaselineRun({ packageDir: pkg }, loaders(seen));
+    expect(doc).toEqual({
+      ok: true,
+      extensionId: "acme.roletest",
+      version: "2.0.0",
+      baseline: { scorer: 1, passed: true, tools: 1 },
+    });
+    expect(seen.disconnects).toBe(1);
+    const stageRoot = join(sandboxDir, EXTENSION_STAGE_DIR_NAME);
+    expect(existsSync(stageRoot) ? readdirSync(stageRoot) : []).toEqual([]);
+  });
+
+  test("a baseline run in a sandbox that cannot confine refuses before any client is made", async () => {
+    const seen = newSeen();
+    await expect(
+      defaultEvalBaselineRun({ packageDir: pkg }, loaders(seen, "no sandbox")),
+    ).rejects.toMatchObject({ code: "ERR_EVAL_SANDBOX_UNAVAILABLE" });
+    expect(seen.ids).toEqual([]);
   });
 
   test("a suite file keeps only that suite", async () => {
@@ -355,6 +467,7 @@ describe("the real role dependencies", () => {
     expect(() => REAL_ROLE_DEPS.writeStdout("")).not.toThrow();
     expect(() => REAL_ROLE_DEPS.writeStderr("")).not.toThrow();
     expect(REAL_ROLE_DEPS.run).toBe(defaultEvalRun);
+    expect(REAL_ROLE_DEPS.runBaseline).toBe(defaultEvalBaselineRun);
   });
 
   test("exitAfterFlush exits only once the stdout flush callback runs", () => {
