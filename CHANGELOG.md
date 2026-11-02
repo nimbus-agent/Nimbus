@@ -2,6 +2,14 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.17.0](https://github.com/nimbus-agent/Nimbus/compare/v10.16.0...v10.17.0) (2026-11-02)
+
+
+### Features
+
+* **gateway:** index Metabase saved questions ([#1856](https://github.com/nimbus-agent/Nimbus/issues/1856)) ([878766d](https://github.com/nimbus-agent/Nimbus/commit/878766d65391e94c2fc1f3b636bdb93e230d0ee6))
+* **registry:** publish a signed liveness.json from a scheduled, keyless check ([#1862](https://github.com/nimbus-agent/Nimbus/issues/1862)) ([caf8a0a](https://github.com/nimbus-agent/Nimbus/commit/caf8a0a51ded491d651b1637b1ed4e95524f6598))
+
 ## [10.16.0](https://github.com/nimbus-agent/Nimbus/compare/v10.15.0...v10.16.0) (2026-11-02)
 
 
