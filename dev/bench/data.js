@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793641510802,
+  "lastUpdate": 1793642368177,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7c68c2131eb5212474626653fb58fba9912d657f",
-          "message": "ci(release): fail when the manifest names a version that was never tagged (#1192)\n\nAdds the one check that would have caught the #1183 → #1184 release\noutage on\nthe run it started, rather than two releases later with the pipeline\nalready\ndead.\n\n## What the guard could not see\n\nrelease-please finds its place by matching the manifest version to a\ntag. When\na release PR merges, the merge writes the new version into\n`.release-please-manifest.json` and the run is supposed to create the\nmatching\ntag. On #1183 the manifest advanced to `2.5.0` and **no `v2.5.0` tag was\never\ncreated**.\n\nEvery existing signal read healthy:\n\n- the merge commit was `chore: release main`, so `facing` was **0** and\nthe\n  guard exited a few lines later with *\"No feat/fix since v2.4.1 —\n  release-please correctly produced nothing\"*;\n- `prs_created` was **true**, because the run had opened the *next*\nrelease PR;\n- `unaccounted` was **0**, because the reconcile step keys off the\n  `autorelease: pending` label, which that PR did not carry.\n\nThe commit comparison structurally cannot catch this: it baselines off\nthe\nnewest **tag**, and the entire failure is that the manifest moved on\nwhile the\ntag did not.\n\n## Why that is fatal rather than cosmetic\n\nWith no `v2.5.0` to anchor to, the next run re-walked the whole history\n—\n`commits: 915` in its own log — regenerated the entire changelog, and\npicked up\na `Release-As: 1.12.0` trailer from 2026-08-11 that was **only back in\nrange\nbecause the anchor was lost**. It then wrote the manifest *backwards* to\n`1.12.0`, over a published `2.4.1`, and took `package.json` and\n`GATEWAY_VERSION` with it. Every subsequent push failed and no release\ncould be\ncut at all until #1188.\n\n## The check\n\nPlaced **above** the commit comparison, next to the `unaccounted` check,\nfor\nexactly the reason above — below it, `facing == 0` short-circuits first.\n\n> the manifest declares 2.5.0 but tag v2.5.0 does not exist — a release\nwas\n> consumed without being cut. release-please has lost its anchor and the\nNEXT\n> run will re-walk the whole history.\n\nIt also says what *not* to do, because both obvious reflexes make it\nworse:\nhand-creating the tag silences the symptom while leaving the tag\npointing at\nwhatever tree is current, and a `Release-As:` trailer cuts a second\nversion on\ntop. The message points at reconciling the manifest to the newest\npublished tag\ninstead.\n\nSkipped when `releases_created` or `reconciled` is true — the tag was\ncreated\nmoments earlier and a read issued seconds after a write can still miss\nit. Both\ncome straight back from the action, so they cannot race with themselves;\nthis\nis the same discipline the `prs_created` note below already documents.\n\n## Verification\n\nThe block was **executed**, not eyeballed — lifted verbatim into a\ncontainer\nwith a stubbed `gh`, across all four states:\n\n| scenario | result |\n|---|---|\n| healthy: manifest 2.4.1, tag exists | `exit 0` — `Anchor ok` |\n| **the #1183 failure: manifest 2.5.0, no tag** | **`exit 1`** with the\nanchor error |\n| release cut this run (`releases_created=true`), tag not yet readable |\n`exit 0` — skipped, no race |\n| reconcile created it this run (`reconciled=true`) | `exit 0` — skipped\n|\n\n`HEAD_SHA` is passed explicitly rather than leaning on the runner's\nimplicit\n`GITHUB_SHA`, because this step runs under `set -u` where an unset name\nis a\nhard error.\n\n- `bun run audit:workflow-lint` — OK (25 workflows)\n- `bun run preflight:fast` — all 29 gates pass\n\nAgainst `main` as it stands today (manifest `2.4.1`, tag `v2.4.1`\npublished)\nthis guard passes, so it does not red the branch on landing.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved release validation by confirming the workflow commit matches\na corresponding version tag.\n* Added clear failure handling for missing release manifests, tags, and\ntag lookup errors.\n  * Added confirmation logging when release verification succeeds.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-15T04:29:36Z",
-          "tree_id": "2209b81dd213af6be96c96a7349485bdd74c91d2",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7c68c2131eb5212474626653fb58fba9912d657f"
-        },
-        "date": 1786769054361,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 281.54422984999985,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 278.5322434999998,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 312.52166614999226,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9eb518cd02abcebffecf6b3a56fa91d90b4867f7",
+          "message": "chore: release main (#1860)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.16.0</summary>\n\n##\n[10.16.0](https://github.com/nimbus-agent/Nimbus/compare/v10.15.0...v10.16.0)\n(2026-11-02)\n\n\n### Features\n\n* **registry:** show a registry's signed liveness checks on the Checked\nline\n([932c79d](https://github.com/nimbus-agent/Nimbus/commit/932c79df4d0fd1b5bd20f830b68ddff05e58fd17))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-02T19:49:30+02:00",
+          "tree_id": "24a04e93cc6d4e2e4888b7f5874d9af38eb04321",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9eb518cd02abcebffecf6b3a56fa91d90b4867f7"
+        },
+        "date": 1793642363437,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 264.89560290000156,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 267.8547426999961,
             "unit": "ms"
           }
         ]
