@@ -100,6 +100,14 @@ function readAtMost(path: string, max: number): Uint8Array {
   }
 }
 
+/** Why `bytes` cannot be a package (too large, not gzip), or `undefined` when they can. */
+export function packageBytesProblem(bytes: Uint8Array): string | undefined {
+  if (bytes.byteLength > MAX_PACKAGE_BYTES)
+    return `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`;
+  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return "is not gzip data";
+  return undefined;
+}
+
 /** The package's bytes, read once: the read itself says why a path is not a file. */
 function readPackageBytes(path: string): Uint8Array {
   if (!path.endsWith(".tgz")) throw notATgz(path, "does not end in .tgz");
@@ -110,10 +118,8 @@ function readPackageBytes(path: string): Uint8Array {
     const why = (e as NodeJS.ErrnoException).code ?? "an error";
     throw notATgz(path, `cannot be read as a file (${why})`);
   }
-  if (bytes.byteLength > MAX_PACKAGE_BYTES) {
-    throw notATgz(path, `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`);
-  }
-  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) throw notATgz(path, "is not gzip data");
+  const problem = packageBytesProblem(bytes);
+  if (problem !== undefined) throw notATgz(path, problem);
   return bytes;
 }
 

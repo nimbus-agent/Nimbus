@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  MAX_PACKAGE_BYTES,
   parseLivenessEntry,
   type RegistryIndex,
   signIndex,
@@ -236,17 +237,40 @@ describe("runLivenessCheck", () => {
     expect(calls.some((c) => c.includes("acme/pack"))).toBe(false);
   });
 
-  test("a package that differs from the index's hash gets no entry and a logged line", async () => {
-    const index = originIndex(repo);
-    const path = index.extensions["acme/a"]?.versions["1.0.0"]?.package ?? "";
+  /** Replaces acme/a@1.0.0's package on gh-pages without touching the signed index. */
+  function replaceAPackage(bytes: Uint8Array): void {
+    const path = originIndex(repo).extensions["acme/a"]?.versions["1.0.0"]?.package ?? "";
     syncMaintainer(repo, "gh-pages");
-    write(repo.maintainer, path, "tampered bytes");
+    write(repo.maintainer, path, bytes);
     pushMaintainer(repo, "gh-pages", "tamper");
     git(repo.maintainer, "checkout", "-q", "main");
+  }
+
+  test("a package that differs from the index's hash gets no entry and a logged line", async () => {
+    replaceAPackage(Uint8Array.from([0x1f, 0x8b, 1, 2, 3]));
     const r = await check();
     expect(Object.keys(r.extensions)).toEqual(["acme/other@1.0.0"]);
     expect(logs.some((l) => l.includes("acme/a@1.0.0") && l.includes("packageSha256"))).toBe(true);
     expect(calls.some((c) => c.includes("acme/a"))).toBe(false);
+  });
+
+  test("a blob that is not gzip data is refused before hashing", async () => {
+    replaceAPackage(new TextEncoder().encode("tampered bytes"));
+    const r = await check();
+    expect(Object.keys(r.extensions)).toEqual(["acme/other@1.0.0"]);
+    expect(logs.some((l) => l.includes("acme/a@1.0.0") && l.includes("is not gzip data"))).toBe(
+      true,
+    );
+  });
+
+  test("a blob over MAX_PACKAGE_BYTES is refused before hashing", async () => {
+    const big = new Uint8Array(MAX_PACKAGE_BYTES + 1);
+    big[0] = 0x1f;
+    big[1] = 0x8b;
+    replaceAPackage(big);
+    const r = await check();
+    expect(Object.keys(r.extensions)).toEqual(["acme/other@1.0.0"]);
+    expect(logs.some((l) => l.includes("acme/a@1.0.0") && l.includes("is larger than"))).toBe(true);
   });
 
   test("a spent budget leaves later packages out, each logged", async () => {
@@ -288,13 +312,95 @@ describe("runLivenessCheck", () => {
     expect(other.extensions["acme/a@1.0.0"]?.tests).toEqual({ failure: "run-failed" });
   });
 
+  const roleError = (dir: string, code: string): RoleRun => {
+    const m = idOf(dir);
+    return run(
+      `${JSON.stringify({ ok: false, extensionId: m.id, version: m.version, error: { code, message: "x" } })}\n`,
+    );
+  };
+
+  test("the probe spending the budget skips the baseline and suites; the hosts result is kept", async () => {
+    let t = nowMs;
+    const r = await check({
+      now: () => t,
+      probe: {
+        lookup: async () => {
+          t += LIVENESS_RUN_BUDGET_MS - 1_000;
+          return [{ address: "93.184.216.34", family: 4 }];
+        },
+        connect: async () => true,
+      },
+    });
+    expect(r.extensions["acme/a@1.0.0"]).toEqual({
+      checkedAt: "2026-11-02T10:00:00.000Z",
+      hosts: { declared: 1, answered: 1 },
+    });
+    expect(calls).toEqual([]);
+    expect(logs.some((l) => l.includes("acme/a@1.0.0") && l.includes("budget is spent"))).toBe(
+      true,
+    );
+  });
+
+  test("a budget-shortened suite that times out is not recorded; a full-cap timeout is run-timeout", async () => {
+    let t = nowMs;
+    const shortened = await check({
+      now: () => t,
+      runBaseline: async (_gw, dir) => {
+        t += LIVENESS_RUN_BUDGET_MS - 90_000; // leaves 90 s: over the suite minimum, under its cap
+        return deps().runBaseline(_gw, dir);
+      },
+      runRole: async () => ({ ...run(""), code: null, timedOut: true }),
+    });
+    expect(shortened.extensions["acme/a@1.0.0"]?.baseline).toEqual(BASELINE);
+    expect(shortened.extensions["acme/a@1.0.0"]?.tests).toBeUndefined();
+    expect(logs.some((l) => l.includes("budget-shortened run timed out; not recorded"))).toBe(true);
+
+    nowMs = Date.parse("2026-11-02T10:00:00Z");
+    const full = await check({ runRole: async () => ({ ...run(""), code: null, timedOut: true }) });
+    expect(full.extensions["acme/a@1.0.0"]?.tests).toEqual({ failure: "run-timeout" });
+  });
+
+  test("a role-reported ERR_EVAL_TIMEOUT follows the same ruling as a runner timeout", async () => {
+    const full = await check({ runRole: async (_gw, dir) => roleError(dir, "ERR_EVAL_TIMEOUT") });
+    expect(full.extensions["acme/a@1.0.0"]?.tests).toEqual({ failure: "run-timeout" });
+
+    let t = nowMs;
+    const shortened = await check({
+      now: () => t,
+      runBaseline: async (_gw, dir) => {
+        t += LIVENESS_RUN_BUDGET_MS - 90_000;
+        return deps().runBaseline(_gw, dir);
+      },
+      runRole: async (_gw, dir) => roleError(dir, "ERR_EVAL_TIMEOUT"),
+    });
+    expect(shortened.extensions["acme/a@1.0.0"]?.tests).toBeUndefined();
+  });
+
+  test("a budget-shortened baseline that times out is not recorded", async () => {
+    let t = nowMs;
+    const r = await check({
+      now: () => t,
+      probe: {
+        lookup: async () => {
+          t += LIVENESS_RUN_BUDGET_MS - 150_000; // 150 s left: over the baseline minimum, under its cap
+          return [{ address: "93.184.216.34", family: 4 }];
+        },
+        connect: async () => true,
+      },
+      runBaseline: async () => ({ ...run(""), code: null, timedOut: true }),
+    });
+    expect(r.extensions["acme/a@1.0.0"]?.baseline).toBeUndefined();
+    expect(r.extensions["acme/a@1.0.0"]?.hosts).toEqual({ declared: 1, answered: 1 });
+    expect(logs.some((l) => l.includes("baseline: budget-shortened run timed out"))).toBe(true);
+  });
+
   test("a baseline that cannot be obtained is left out of the entry", async () => {
     const r = await check({ runBaseline: async () => ({ ...run(""), code: 2 }) });
     expect(Object.keys(r.extensions)).toEqual(["acme/a@1.0.0"]);
     expect(r.extensions["acme/a@1.0.0"]?.baseline).toBeUndefined();
   });
 
-  test.each(["", "v10.14.1", "10.14", "10.14.1\nx", "../1.0.0"])(
+  test.each(["", "v10.15.0", "10.15", "10.14.1\nx", "../1.0.0"])(
     "an invalid nimbus-version %p is refused before any work",
     async (v) => {
       await expect(check({}, v)).rejects.toThrow('input "nimbus-version"');

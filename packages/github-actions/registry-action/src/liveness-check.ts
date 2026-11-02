@@ -20,6 +20,7 @@ import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
   compareVersionsDesc,
+  type EvalBaseline,
   inspectPackage,
   isEvalSuiteFile,
   isStarterPack,
@@ -43,6 +44,7 @@ import {
   baselineCandidate,
   baselineRoleRunner,
 } from "./score-baseline.ts";
+import { packageBytesProblem } from "./score-package.ts";
 import {
   clip,
   duration,
@@ -67,8 +69,6 @@ export type LivenessResults = {
 export interface LivenessCheckOptions {
   /** The registry repository's checkout. */
   workspace: string;
-  /** Accepted for symmetry with the other modes; the index is read from gh-pages. */
-  defaultBranch?: string;
   /** The `nimbus-gateway` input: an absolute path to a gateway executable. */
   gateway: string;
   /** The `nimbus-version` input: the release the gateway was downloaded from. */
@@ -169,6 +169,11 @@ async function checkPackage(
     return undefined;
   }
   const packageBytes = deps.git.readBlob(PAGES_REF, v.package, { cwd: opts.workspace });
+  const problem = packageBytesProblem(packageBytes);
+  if (problem !== undefined) {
+    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+    return undefined;
+  }
   if (sha256Hex(packageBytes) !== v.packageSha256) {
     deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
     return undefined;
@@ -188,21 +193,15 @@ async function checkPackage(
     const hostList = declaredHosts(manifest.permissions.network);
     const hosts = hostList.length === 0 ? undefined : await probeHosts(hostList, deps.probe);
     const cand = { verdict: { id, version, packageSha256: v.packageSha256 }, packageBytes };
-    const baselineRun = await baselineCandidate(
-      cand,
-      {
-        gateway: opts.gateway,
-        work: c.work,
-        timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now)),
-      },
-      deps.runBaseline,
-    );
-    const baseline = "baseline" in baselineRun ? baselineRun.baseline : undefined;
-    if (baseline === undefined && "error" in baselineRun) {
-      deps.io.log(`liveness: no baseline for ${ref} (${baselineRun.error.code})`);
-    }
+    // The probe spends time too: what the roles may use is read AFTER it.
+    let baseline: EvalBaseline | undefined;
     let tests: LivenessEntry["tests"];
-    if (hasEvals) tests = await runSuites(c, cand, at);
+    if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+      deps.io.log(`liveness: ${ref}: baseline and suites not run: the time budget is spent`);
+    } else {
+      baseline = await runBaseline(c, cand, at);
+      if (hasEvals) tests = await runSuites(c, cand, at);
+    }
     const raw = {
       checkedAt,
       ...(hosts !== undefined && hosts.declared > 0 && { hosts }),
@@ -220,6 +219,36 @@ async function checkPackage(
   } finally {
     removeQuietly((p) => rmSync(p, { recursive: true, force: true }), dir);
   }
+}
+
+/** Never sign a fact the budget caused: a timeout of a run the budget shortened is not recorded. */
+const BUDGET_TIMEOUT_NOTE = "budget-shortened run timed out; not recorded";
+
+/** The baseline within the budget, or `undefined` for none (logged). */
+async function runBaseline(
+  c: Ctx,
+  cand: {
+    verdict: { id: string; version: string; packageSha256: string };
+    packageBytes: Uint8Array;
+  },
+  at: { gateway: string; work: string; deadline: number },
+): Promise<EvalBaseline | undefined> {
+  const { deps } = c;
+  const ref = `${cand.verdict.id}@${cand.verdict.version}`;
+  const timeoutMs = Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now));
+  const r = await baselineCandidate(
+    cand,
+    { gateway: at.gateway, work: at.work, timeoutMs },
+    deps.runBaseline,
+  );
+  if ("baseline" in r) return r.baseline;
+  const shortened = timeoutMs < BASELINE_ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT";
+  deps.io.log(
+    shortened
+      ? `liveness: ${ref} baseline: ${BUDGET_TIMEOUT_NOTE}`
+      : `liveness: no baseline for ${ref} (${r.error.code})`,
+  );
+  return undefined;
 }
 
 /** The suites within the budget; `undefined` when skipped for budget (not a failure). */
@@ -240,13 +269,20 @@ async function runSuites(
     );
     return undefined;
   }
+  const timeoutMs = Math.min(ROLE_TIMEOUT_MS, left);
   const r = await scoreCandidate(
     cand,
-    { gateway: at.gateway, work: at.work, timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) },
+    { gateway: at.gateway, work: at.work, timeoutMs },
     deps.runRole,
     deps.io.log,
   );
-  if ("error" in r) return { failure: testFailure(r.error.code) };
+  if ("error" in r) {
+    if (timeoutMs < ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT") {
+      deps.io.log(`liveness: suites of ${ref}: ${BUDGET_TIMEOUT_NOTE}`);
+      return undefined;
+    }
+    return { failure: testFailure(r.error.code) };
+  }
   if (r.quality.cases < 1) return undefined;
   return { cases: r.quality.cases, passed: r.quality.passed };
 }

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:194c316c39add8aa0272e2743f1e974d34242c891326f87a7420fc6e12c5cf2c
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:26a43b1ffe32d70c64b8d8387eb56353b0f968347feaaafb5c1317fab2f38f07
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -11934,10 +11934,10 @@ async function runCheck(opts, deps = SHARED2) {
 }
 
 // src/liveness-check.ts
-import { createHash as createHash7 } from "node:crypto";
-import { mkdtempSync as mkdtempSync6, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
-import { tmpdir as osTmpdir4 } from "node:os";
-import { join as join7 } from "node:path";
+import { createHash as createHash8 } from "node:crypto";
+import { mkdtempSync as mkdtempSync7, rmSync as rmSync6, writeFileSync as writeFileSync6 } from "node:fs";
+import { tmpdir as osTmpdir5 } from "node:os";
+import { join as join8 } from "node:path";
 
 // src/host-probe.ts
 import { lookup as dnsLookup } from "node:dns";
@@ -12117,19 +12117,113 @@ async function probeHosts(entries, deps = REAL_HOST_PROBE) {
   return { declared: Math.min(distinct.length, MAX_DECLARED), answered };
 }
 
+// src/score-package.ts
+import { createHash as createHash7 } from "node:crypto";
+import {
+  closeSync as closeSync4,
+  mkdirSync as mkdirSync2,
+  mkdtempSync as mkdtempSync6,
+  openSync as openSync4,
+  readSync as readSync3,
+  rmSync as rmSync5,
+  writeFileSync as writeFileSync5
+} from "node:fs";
+import { tmpdir as osTmpdir4 } from "node:os";
+import { join as join7 } from "node:path";
+var SHARED3 = {
+  io: GHA_IO,
+  tmpdir: osTmpdir4,
+  runRole: roleRunner(),
+  runBaseline: baselineRoleRunner(),
+  now: Date.now
+};
+var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
+function notATgz(path, why) {
+  return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
+}
+function readAtMost2(path, max) {
+  const fd = openSync4(path, "r");
+  try {
+    const chunks = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, max - total));
+      const got = readSync3(fd, chunk, 0, chunk.length, null);
+      if (got === 0)
+        break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
+    }
+    return new Uint8Array(Buffer.concat(chunks, total));
+  } finally {
+    closeSync4(fd);
+  }
+}
+function packageBytesProblem(bytes) {
+  if (bytes.byteLength > MAX_PACKAGE_BYTES)
+    return `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`;
+  if (bytes[0] !== 31 || bytes[1] !== 139)
+    return "is not gzip data";
+  return;
+}
+function readPackageBytes(path) {
+  if (!path.endsWith(".tgz"))
+    throw notATgz(path, "does not end in .tgz");
+  let bytes;
+  try {
+    bytes = readAtMost2(path, MAX_PACKAGE_BYTES + 1);
+  } catch (e) {
+    const why = e.code ?? "an error";
+    throw notATgz(path, `cannot be read as a file (${why})`);
+  }
+  const problem = packageBytesProblem(bytes);
+  if (problem !== undefined)
+    throw notATgz(path, problem);
+  return bytes;
+}
+async function runScorePackage(opts, deps = SHARED3) {
+  const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
+  assertGateway(opts.gateway);
+  const packageBytes = readPackageBytes(opts.package);
+  const work = mkdtempSync6(join7(deps.tmpdir(), "nimbus-registry-score-package-"));
+  const run = emptyRun();
+  try {
+    const inspectDir = join7(work, "inspect");
+    mkdirSync2(inspectDir);
+    const tgz = join7(inspectDir, "package.tgz");
+    writeFileSync5(tgz, packageBytes, { flag: "wx" });
+    const inspected = await inspectPackage(tgz, inspectDir);
+    const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
+    const verdict = {
+      id: manifest.id,
+      version: manifest.version,
+      packageSha256: sha256Hex3(packageBytes),
+      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
+      starterPack: isStarterPack(manifest)
+    };
+    await recordVersion(run, { verdict, packageBytes }, { gateway: opts.gateway, work, deadline, mode: "score-package" }, deps);
+  } finally {
+    rmSync5(work, { recursive: true, force: true });
+  }
+  writeFileAtomic(opts.out, `${JSON.stringify(run.scores, null, 2)}
+`);
+  reportScores(deps.io, run, "score-package");
+  return run.scores;
+}
+
 // src/liveness-check.ts
 var LIVENESS_RUN_BUDGET_MS = 45 * 60000;
 var LIVENESS_RESULTS_FORMAT = 1;
-var SHARED3 = {
+var SHARED4 = {
   git: exports_git_tree,
   io: GHA_IO,
-  tmpdir: osTmpdir4,
+  tmpdir: osTmpdir5,
   runRole: roleRunner(),
   runBaseline: baselineRoleRunner(),
   probe: REAL_HOST_PROBE,
   now: Date.now
 };
-var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
+var sha256Hex4 = (b) => createHash8("sha256").update(b).digest("hex");
 function assertNimbusVersion(v) {
   if (!NIMBUS_VERSION_RE.test(v)) {
     throw new Error(`input "nimbus-version" must be a Nimbus release number such as 10.14.1; got ${JSON.stringify(clip(v))}`);
@@ -12174,15 +12268,20 @@ async function checkPackage(c, id, version) {
     return;
   }
   const packageBytes = deps.git.readBlob(PAGES_REF, v.package, { cwd: opts.workspace });
-  if (sha256Hex3(packageBytes) !== v.packageSha256) {
+  const problem = packageBytesProblem(packageBytes);
+  if (problem !== undefined) {
+    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+    return;
+  }
+  if (sha256Hex4(packageBytes) !== v.packageSha256) {
     deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
     return;
   }
   const checkedAt = new Date(deps.now()).toISOString();
-  const dir = mkdtempSync6(join7(c.work, "pkg-"));
+  const dir = mkdtempSync7(join8(c.work, "pkg-"));
   try {
-    const tgz = join7(dir, "package.tgz");
-    writeFileSync5(tgz, packageBytes, { flag: "wx" });
+    const tgz = join8(dir, "package.tgz");
+    writeFileSync6(tgz, packageBytes, { flag: "wx" });
     const inspected = await inspectPackage(tgz, dir);
     const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
     if (isStarterPack(manifest))
@@ -12191,18 +12290,15 @@ async function checkPackage(c, id, version) {
     const hostList = declaredHosts(manifest.permissions.network);
     const hosts = hostList.length === 0 ? undefined : await probeHosts(hostList, deps.probe);
     const cand = { verdict: { id, version, packageSha256: v.packageSha256 }, packageBytes };
-    const baselineRun = await baselineCandidate(cand, {
-      gateway: opts.gateway,
-      work: c.work,
-      timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now))
-    }, deps.runBaseline);
-    const baseline = "baseline" in baselineRun ? baselineRun.baseline : undefined;
-    if (baseline === undefined && "error" in baselineRun) {
-      deps.io.log(`liveness: no baseline for ${ref} (${baselineRun.error.code})`);
-    }
+    let baseline;
     let tests;
-    if (hasEvals)
-      tests = await runSuites(c, cand, at);
+    if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+      deps.io.log(`liveness: ${ref}: baseline and suites not run: the time budget is spent`);
+    } else {
+      baseline = await runBaseline(c, cand, at);
+      if (hasEvals)
+        tests = await runSuites(c, cand, at);
+    }
     const raw = {
       checkedAt,
       ...hosts !== undefined && hosts.declared > 0 && { hosts },
@@ -12216,8 +12312,20 @@ async function checkPackage(c, id, version) {
       return;
     }
   } finally {
-    removeQuietly((p) => rmSync5(p, { recursive: true, force: true }), dir);
+    removeQuietly((p) => rmSync6(p, { recursive: true, force: true }), dir);
   }
+}
+var BUDGET_TIMEOUT_NOTE = "budget-shortened run timed out; not recorded";
+async function runBaseline(c, cand, at) {
+  const { deps } = c;
+  const ref = `${cand.verdict.id}@${cand.verdict.version}`;
+  const timeoutMs = Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now));
+  const r = await baselineCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runBaseline);
+  if ("baseline" in r)
+    return r.baseline;
+  const shortened = timeoutMs < BASELINE_ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT";
+  deps.io.log(shortened ? `liveness: ${ref} baseline: ${BUDGET_TIMEOUT_NOTE}` : `liveness: no baseline for ${ref} (${r.error.code})`);
+  return;
 }
 async function runSuites(c, cand, at) {
   const { deps } = c;
@@ -12227,20 +12335,26 @@ async function runSuites(c, cand, at) {
     deps.io.log(`liveness: suites of ${ref} not run: under ${duration(SCORE_MIN_RUN_MS)} of the time budget left`);
     return;
   }
-  const r = await scoreCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) }, deps.runRole, deps.io.log);
-  if ("error" in r)
+  const timeoutMs = Math.min(ROLE_TIMEOUT_MS, left);
+  const r = await scoreCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runRole, deps.io.log);
+  if ("error" in r) {
+    if (timeoutMs < ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT") {
+      deps.io.log(`liveness: suites of ${ref}: ${BUDGET_TIMEOUT_NOTE}`);
+      return;
+    }
     return { failure: testFailure(r.error.code) };
+  }
   if (r.quality.cases < 1)
     return;
   return { cases: r.quality.cases, passed: r.quality.passed };
 }
-async function runLivenessCheck(opts, deps = SHARED3) {
+async function runLivenessCheck(opts, deps = SHARED4) {
   assertNimbusVersion(opts.nimbusVersion);
   const deadline = deps.now() + LIVENESS_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
   deps.git.fetchRefs([PAGES_BRANCH], { cwd: opts.workspace });
   const index = await readVerifiedIndex(deps.git, opts.workspace);
-  const work = mkdtempSync6(join7(deps.tmpdir(), "nimbus-registry-liveness-"));
+  const work = mkdtempSync7(join8(deps.tmpdir(), "nimbus-registry-liveness-"));
   const extensions = Object.create(null);
   try {
     const ctx = { opts, deps, work, deadline, index };
@@ -12254,7 +12368,7 @@ async function runLivenessCheck(opts, deps = SHARED3) {
       }
     }
   } finally {
-    rmSync5(work, { recursive: true, force: true });
+    rmSync6(work, { recursive: true, force: true });
   }
   const results = {
     format: LIVENESS_RESULTS_FORMAT,
@@ -12265,95 +12379,6 @@ async function runLivenessCheck(opts, deps = SHARED3) {
 `);
   deps.io.log(`liveness: wrote ${String(Object.keys(extensions).length)} entr(ies)`);
   return results;
-}
-
-// src/score-package.ts
-import { createHash as createHash8 } from "node:crypto";
-import {
-  closeSync as closeSync4,
-  mkdirSync as mkdirSync2,
-  mkdtempSync as mkdtempSync7,
-  openSync as openSync4,
-  readSync as readSync3,
-  rmSync as rmSync6,
-  writeFileSync as writeFileSync6
-} from "node:fs";
-import { tmpdir as osTmpdir5 } from "node:os";
-import { join as join8 } from "node:path";
-var SHARED4 = {
-  io: GHA_IO,
-  tmpdir: osTmpdir5,
-  runRole: roleRunner(),
-  runBaseline: baselineRoleRunner(),
-  now: Date.now
-};
-var sha256Hex4 = (b) => createHash8("sha256").update(b).digest("hex");
-function notATgz(path, why) {
-  return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
-}
-function readAtMost2(path, max) {
-  const fd = openSync4(path, "r");
-  try {
-    const chunks = [];
-    let total = 0;
-    while (total < max) {
-      const chunk = Buffer.alloc(Math.min(64 * 1024, max - total));
-      const got = readSync3(fd, chunk, 0, chunk.length, null);
-      if (got === 0)
-        break;
-      chunks.push(chunk.subarray(0, got));
-      total += got;
-    }
-    return new Uint8Array(Buffer.concat(chunks, total));
-  } finally {
-    closeSync4(fd);
-  }
-}
-function readPackageBytes(path) {
-  if (!path.endsWith(".tgz"))
-    throw notATgz(path, "does not end in .tgz");
-  let bytes;
-  try {
-    bytes = readAtMost2(path, MAX_PACKAGE_BYTES + 1);
-  } catch (e) {
-    const why = e.code ?? "an error";
-    throw notATgz(path, `cannot be read as a file (${why})`);
-  }
-  if (bytes.byteLength > MAX_PACKAGE_BYTES) {
-    throw notATgz(path, `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`);
-  }
-  if (bytes[0] !== 31 || bytes[1] !== 139)
-    throw notATgz(path, "is not gzip data");
-  return bytes;
-}
-async function runScorePackage(opts, deps = SHARED4) {
-  const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
-  assertGateway(opts.gateway);
-  const packageBytes = readPackageBytes(opts.package);
-  const work = mkdtempSync7(join8(deps.tmpdir(), "nimbus-registry-score-package-"));
-  const run = emptyRun();
-  try {
-    const inspectDir = join8(work, "inspect");
-    mkdirSync2(inspectDir);
-    const tgz = join8(inspectDir, "package.tgz");
-    writeFileSync6(tgz, packageBytes, { flag: "wx" });
-    const inspected = await inspectPackage(tgz, inspectDir);
-    const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
-    const verdict = {
-      id: manifest.id,
-      version: manifest.version,
-      packageSha256: sha256Hex4(packageBytes),
-      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
-      starterPack: isStarterPack(manifest)
-    };
-    await recordVersion(run, { verdict, packageBytes }, { gateway: opts.gateway, work, deadline, mode: "score-package" }, deps);
-  } finally {
-    rmSync6(work, { recursive: true, force: true });
-  }
-  writeFileAtomic(opts.out, `${JSON.stringify(run.scores, null, 2)}
-`);
-  reportScores(deps.io, run, "score-package");
-  return run.scores;
 }
 
 // src/sign.ts
