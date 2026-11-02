@@ -43,6 +43,8 @@ function tempPathFor(path: string): string {
 }
 
 const errorCode = (e: unknown): string | undefined => (e as NodeJS.ErrnoException).code;
+/** The error's code for a message, or "an error" when it has none. */
+const codeText = (e: unknown): string => errorCode(e) ?? "an error";
 
 /** Writes the temp file; failures are reported against `shown`, the path the caller asked for. */
 function writeTemp(
@@ -55,14 +57,14 @@ function writeTemp(
   try {
     fd = openSync(temp, "wx");
   } catch (e) {
-    throw new WriteFileError(`could not create ${shown}: ${errorCode(e) ?? "an error"}`);
+    throw new WriteFileError(`could not create ${shown}: ${codeText(e)}`);
   }
   try {
     writeFd(fd, bytes);
   } catch (e) {
     closeSync(fd);
     rmSync(temp, { force: true });
-    throw new WriteFileError(`could not write ${shown}: ${errorCode(e) ?? "an error"}`);
+    throw new WriteFileError(`could not write ${shown}: ${codeText(e)}`);
   }
   closeSync(fd);
 }
@@ -85,7 +87,7 @@ function publishExclusive(
       createDirectly(path, bytes, opts.writeFd ?? writeFileSync);
       return;
     }
-    throw new WriteFileError(`could not create ${path}: ${code ?? "an error"}`);
+    throw new WriteFileError(`could not create ${path}: ${codeText(e)}`);
   }
 }
 
@@ -101,14 +103,14 @@ function createDirectly(
   } catch (e) {
     if (errorCode(e) === "EEXIST")
       throw new WriteFileError(`${path} exists; refusing to overwrite it`);
-    throw new WriteFileError(`could not create ${path}: ${errorCode(e) ?? "an error"}`);
+    throw new WriteFileError(`could not create ${path}: ${codeText(e)}`);
   }
   try {
     writeFd(fd, bytes);
   } catch (e) {
     closeSync(fd);
     rmSync(path, { force: true });
-    throw new WriteFileError(`could not write ${path}: ${errorCode(e) ?? "an error"}`);
+    throw new WriteFileError(`could not write ${path}: ${codeText(e)}`);
   }
   closeSync(fd);
 }
@@ -126,7 +128,7 @@ export function writeFileExclusive(
       try {
         renameSync(temp, path);
       } catch (e) {
-        throw new WriteFileError(`could not replace ${path}: ${errorCode(e) ?? "an error"}`);
+        throw new WriteFileError(`could not replace ${path}: ${codeText(e)}`);
       }
       return;
     }

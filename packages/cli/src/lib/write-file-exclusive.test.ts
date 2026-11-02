@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   existsSync,
   linkSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -150,6 +151,60 @@ describe("writeFileExclusive atomicity", () => {
     expect(() => writeFileExclusive(p, bytes("again"), { link })).toThrow(/exists; refusing/);
     expect(readFileSync(p, "utf8")).toBe("fallback");
   });
+
+  test("the fallback's own write failing removes what it created, and the temp file", () => {
+    const p = join(dir, "a.txt");
+    const link = (): void => {
+      throw Object.assign(new Error("no links"), { code: "ENOTSUP" });
+    };
+    let calls = 0;
+    // The first write is the temp file; the second is the fallback's direct create.
+    const writeFd = (fd: number, data: Uint8Array): void => {
+      calls++;
+      if (calls === 2) throw new Error("disk gone");
+      writeFileSync(fd, data);
+    };
+    expect(() => writeFileExclusive(p, bytes("x"), { link, writeFd })).toThrow(
+      /could not write .*a\.txt: an error/,
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("a link error with another code is a could-not-create error, and the temp file goes", () => {
+    const p = join(dir, "a.txt");
+    const link = (): void => {
+      throw Object.assign(new Error("denied"), { code: "EACCES" });
+    };
+    expect(() => writeFileExclusive(p, bytes("x"), { link })).toThrow(
+      /could not create .*a\.txt: EACCES/,
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("a link error with no code is a could-not-create error", () => {
+    const p = join(dir, "a.txt");
+    const link = (): void => {
+      throw new Error("odd");
+    };
+    expect(() => writeFileExclusive(p, bytes("x"), { link })).toThrow(
+      /could not create .*a\.txt: an error/,
+    );
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  test("an overwrite onto a directory is a could-not-replace error, and the temp file goes", () => {
+    const p = join(dir, "a.txt");
+    mkdirSync(join(p, "inside"), { recursive: true });
+    expect(() => writeFileExclusive(p, bytes("x"), { overwrite: true })).toThrow(
+      /could not replace .*a\.txt/,
+    );
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("errors are WriteFileError instances", () => {
+    const p = join(dir, "missing", "a.txt");
+    expect(() => writeFileExclusive(p, bytes("x"))).toThrow(WriteFileError);
+  });
 });
 
 describe("sweepStaleTempFiles", () => {
@@ -172,5 +227,13 @@ describe("sweepStaleTempFiles", () => {
 
   test("a missing directory is not an error", () => {
     expect(() => sweepStaleTempFiles(join(dir, "nope", "a.json"))).not.toThrow();
+  });
+
+  test("a directory with a temp file's name is left alone", () => {
+    const p = join(dir, "golden.eval.json");
+    const name = ".golden.eval.json.0123456789ab.tmp";
+    mkdirSync(join(dir, name));
+    sweepStaleTempFiles(p);
+    expect(existsSync(join(dir, name))).toBe(true);
   });
 });
