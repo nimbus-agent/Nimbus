@@ -82,39 +82,60 @@ export function parseLivenessFile(bytes: Uint8Array): LivenessFile {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw invalid("liveness.json must be an object");
   }
-  const o = raw as Record<string, unknown>;
-  for (const k of [
-    "format",
-    "livenessKey",
-    "sequence",
-    "generatedAt",
-    "nimbusVersion",
-    "extensions",
-    "signature",
-  ]) {
+  return readEnvelope(raw as Record<string, unknown>);
+}
+
+const REQUIRED_KEYS = [
+  "format",
+  "livenessKey",
+  "sequence",
+  "generatedAt",
+  "nimbusVersion",
+  "extensions",
+  "signature",
+] as const;
+
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+
+/**
+ * Strict ISO-8601 UTC only. A looser `Date.parse` accepts parenthesised free text and zone-less
+ * stamps, which would let signed text reach an owner-facing surface or make the day depend on the
+ * owner's time zone. The round trip refuses a day that does not exist (2026-02-30).
+ */
+function isIsoUtc(v: unknown): v is string {
+  if (typeof v !== "string" || !ISO_UTC_RE.test(v)) return false;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms)) return false;
+  return new Date(ms).toISOString().slice(0, 10) === v.slice(0, 10);
+}
+
+function readSequence(v: unknown): number {
+  if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0) {
+    throw invalid("sequence must be a positive integer");
+  }
+  return v;
+}
+
+function readPatterned(v: unknown, re: RegExp, detail: string): string {
+  if (typeof v !== "string" || !re.test(v)) throw invalid(detail);
+  return v;
+}
+
+function readEnvelope(o: Record<string, unknown>): LivenessFile {
+  for (const k of REQUIRED_KEYS) {
     if (!Object.hasOwn(o, k)) throw invalid(`liveness.json is missing key: ${k}`);
   }
   if (o["format"] !== 1) throw invalid("unsupported liveness format");
-  const sequence = o["sequence"];
-  if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid("sequence must be a positive integer");
-  }
-  const livenessKey = o["livenessKey"];
-  if (typeof livenessKey !== "string" || !KEY_RE.test(livenessKey)) {
-    throw invalid("livenessKey is malformed");
-  }
-  const signature = o["signature"];
-  if (typeof signature !== "string" || !SIGNATURE_RE.test(signature)) {
-    throw invalid("signature is malformed");
-  }
+  const sequence = readSequence(o["sequence"]);
+  const livenessKey = readPatterned(o["livenessKey"], KEY_RE, "livenessKey is malformed");
+  const signature = readPatterned(o["signature"], SIGNATURE_RE, "signature is malformed");
   const generatedAt = o["generatedAt"];
-  if (typeof generatedAt !== "string" || Number.isNaN(Date.parse(generatedAt))) {
-    throw invalid("generatedAt is not a timestamp");
-  }
-  const nimbusVersion = o["nimbusVersion"];
-  if (typeof nimbusVersion !== "string" || !NIMBUS_VERSION_RE.test(nimbusVersion)) {
-    throw invalid("nimbusVersion is malformed");
-  }
+  if (!isIsoUtc(generatedAt)) throw invalid("generatedAt is not a timestamp");
+  const nimbusVersion = readPatterned(
+    o["nimbusVersion"],
+    NIMBUS_VERSION_RE,
+    "nimbusVersion is malformed",
+  );
   return {
     ...o,
     format: 1,
@@ -226,9 +247,7 @@ function parseEntry(raw: unknown): LivenessEntry {
     throw invalid("entry");
   }
   const checkedAt = raw["checkedAt"];
-  if (typeof checkedAt !== "string" || Number.isNaN(Date.parse(checkedAt))) {
-    throw invalid("checkedAt");
-  }
+  if (!isIsoUtc(checkedAt)) throw invalid("checkedAt");
   const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
   const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
   const baseline = Object.hasOwn(raw, "baseline") ? parseEvalBaseline(raw["baseline"]) : undefined;
