@@ -1259,6 +1259,21 @@ CREATE TABLE trust_statement_source (
     PRIMARY KEY (statement_id, source)
 );
 CREATE INDEX idx_trust_statement_source_source ON trust_statement_source(source);
+
+-- V80 -- the floor for each registry's liveness.json (2026-11-02; quality layer PR 5a-1).
+-- One row per registry name: the liveness key the verified index named when the file was accepted,
+-- the highest sequence accepted and the digest of the document accepted at it. A lower sequence, or
+-- different content at an equal one, is refused and reads as "no checks available"; it blocks
+-- nothing else. A different key replaces the row; `registry remove` deletes it. No backfill.
+-- Authoritative source: packages/gateway/src/index/registry-liveness-v80-sql.ts
+CREATE TABLE registry_liveness_state (
+    registry             TEXT PRIMARY KEY,
+    liveness_key         TEXT NOT NULL,
+    last_sequence        INTEGER NOT NULL,
+    last_document_sha256 TEXT NOT NULL,
+    last_generated_at    TEXT NOT NULL,
+    last_fetched_at      INTEGER NOT NULL
+);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
