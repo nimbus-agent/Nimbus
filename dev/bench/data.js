@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793643522753,
+  "lastUpdate": 1793644597306,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e4828bcdf854731ab3be71dd043d04d1e4ac8eb5",
-          "message": "ci(org): bring create-nimbus-connector inside the org-drift gates (#1194)\n\n`create-nimbus-connector` publishes to npm, has 9 workflows and a live\n`General`\nruleset — and sat outside **every** list that keeps the org consistent:\n\n| gate | before |\n|---|---|\n| `general-branch.json` `repos` (ruleset drift) | absent |\n| `general-branch.json` `bypass.by_repo` | absent |\n| `org-drift-sweep.yml` sha-pins matrix | absent |\n| `check-cla-coverage.ts` `GATED_REPOS` | absent |\n| `check-review-coverage.ts` `GATED_REPOS` | absent |\n| the three App-token `repositories:` scopes | absent |\n\nSo its branch protection, action pinning, CLA workflow and review config\ncould\ndrift indefinitely without anything going red.\n\n## The part that would have made this change fake\n\nAdding it to the workflow's `repositories:` scopes is **necessary but\nnot\nsufficient** — that only widens the App token. `check-cla-coverage.ts`\nand\n`check-review-coverage.ts` iterate their own hardcoded `GATED_REPOS`\nconsts,\nso the audits would have kept checking the old set and still reported\ngreen.\nOnly `check-ruleset-drift.ts` reads `general-branch.json`.\n\nI caught that because the counts did not move: after the workflow-only\nedit the\naudits still printed `OK (6 repos)` and `OK (5 repos, 1 exempt)`. With\nthe\nconsts updated they print:\n\n```\naudit:ruleset-drift:   OK (6 repos)          # was 5\naudit:cla-coverage:    OK (7 repos)          # was 6\naudit:review-coverage: OK (6 repos, 1 exempt) # was 5\n```\n\nThe count moving is the evidence the repo is actually being checked\nrather than\nmerely listed.\n\n## Verified it does not red the weekly sweep\n\nChecked against live GitHub **before** adding it, since a scheduled\nworkflow\ngoing red on Monday is the failure mode here:\n\n- **Ruleset shape** — its `General` ruleset's comparable fields (name,\ntarget,\nenforcement, ref conditions, every `pull_request` parameter) are\n**byte-identical**\n  to Nimbus's. It carries all three `required_rule_types`. The baseline\ndeliberately does not diff `required_status_checks`/`code_quality`,\nwhich is\nwhere it legitimately differs (its contexts are `check`,\n`cla-assistant`,\n  `Analyze (javascript-typescript)`).\n- **Bypass actors** — genuinely empty, so `\"create-nimbus-connector\":\n[]` is the\n  honest entry rather than a placeholder.\n- **Action pinning** — all 22 `uses:` refs across its 8 workflows are\n40-hex\n  SHA-pinned.\n- **CLA** — `cla.yml` present, pinned to\n`contributor-assistant/github-action@ca4a40a7…`\n  — the *same* SHA as Nimbus's.\n- **Review config** — `.coderabbit.yaml` present with\n`reviews.auto_review.enabled: true`.\n\nThen all three audits were run locally against the real API with it\nincluded:\nall pass, counts as above.\n\n- `bun test` over the three audits' test files — 44 pass, 0 fail\n- `bun run preflight:fast` — all 29 gates pass\n\n## Not included\n\nThe sha-pins matrix entry is added, but that job checks out each repo in\nCI, so\nits verification happens on the next sweep rather than here. Its pinning\nis\nalready clean per the scan above, so it should pass; if it does not, it\nwill\nsay which ref.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Chores**\n  * Expanded repository governance coverage for additional projects.\n* Updated automated checks for branch protection, contributor agreement\ncoverage, review coverage, and configuration consistency.\n  * Added required workflow verification for newly covered repositories.\n\n* **Impact**\n  * Improves consistency and compliance across managed projects.\n  * No changes to end-user functionality.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-15T08:56:04+03:00",
-          "tree_id": "ca9a9760a7cb46d228fe21b8e23677caed8f183d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e4828bcdf854731ab3be71dd043d04d1e4ac8eb5"
-        },
-        "date": 1786774044226,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.1534355500029,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.79443834999984,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 217.6433672500043,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "caf8a0a51ded491d651b1637b1ed4e95524f6598",
+          "message": "feat(registry): publish a signed liveness.json from a scheduled, keyless check (#1862)\n\nPhase 9.5 project 6, PR 5a-2 of the quality layer. A registry made with\n`nimbus registry maintain init --github`, or one that opts in, can now\npublish a signed, dated `liveness.json` every week. The format and the\nclient that shows it shipped in 5a-1, #1858.\n\n## Two new registry-action modes\n\n**`liveness-check` holds no secret.** It reads the verified index from\n`gh-pages` and takes the newest stable version of each extension. For\neach one it:\n- checks the package's size, gzip magic and its hash against the index;\n- checks each declared host;\n- re-runs its suites and baseline through the `__nimbus-eval` role,\nunder the same isolation as scoring;\n- writes an untrusted results file.\n\nIt refuses `root-key`, `github-token` and `liveness-key`. When the index\nnames no liveness key, it runs no extension code at all.\n\n**`liveness-sign` holds only the liveness key.** It re-validates every\nresult. Anything that is not the index's newest stable version, or that\nis stale or dated in the future, is dropped. It then:\n- signs `liveness.json` and re-verifies the exact bytes it will commit;\n- commits only that file beside `index.json`, with up to 3 non-forced\nattempts.\n\nIt refuses a key that differs from the one the index names, and a key\nequal to the root key. Both are compared as canonical bytes. When\nnothing survives, it publishes nothing and raises a warning.\n\n## The host check\n\nIt is credential-free and only asks whether something answers. No\nrequest is sent and no status code is read:\n- **DNS:** if any answer is private, loopback, link-local or reserved,\nthe host fails and nothing is contacted. IPv4-mapped, IPv4-compatible,\nNAT64, 6to4 and IPv4-translated forms are judged by their embedded IPv4\naddress.\n- **Connect:** a TCP connect by IP, so a second lookup cannot rebind.\n- **TLS:** on ports that speak TLS from the start, a handshake that\nverifies the certificate for the declared name.\n- **Bounds:** 5 s for the lookup and 5 s for the connect, 8 in flight,\nand one allowance of 500 hosts for the whole run. A list that does not\nfit gets no `hosts` line, so a cut-short list is never signed.\n\n## Fairness rules\n\n- **Version:** the run uses the latest Nimbus release,\nchecksum-verified. The signing job checks that the results name the same\nversion as its own input.\n- **Budget:** a timeout under a deadline the run budget shortened is\nnever recorded. Only a role that ran to its full cap is signed as\n`run-timeout`.\n\n## For registry owners\n\n- `maintain init --github` creates a liveness key (`--liveness-key`,\ndefault `~/.nimbus/registry-liveness-key`) and writes its public half\ninto the first signed index. It adds\n`.github/workflows/registry-liveness.yml`: weekly plus manual dispatch,\na check job and a sign job. Its owner steps add the `registry-liveness`\nenvironment and the `NIMBUS_REGISTRY_LIVENESS_KEY` secret.\n- That environment has no required reviewers. A leaked liveness key can\nonly publish false dated check lines, and I51 keeps those inert.\n- An existing registry opts in with `maintain set-liveness-key <dir>\n(<public key> | --generate)`. The index's other fields are carried over\nunchanged.\n- `nimbus-registry.json` is unchanged, so older action pins keep\nworking.\n\n## Client change\n\nA non-canonical `livenessKey` in an index now reads as malformed, so the\nclient shows `no checks available`.\n\n## Verification\n\n- **Tests:** action, registry-format, maintain and gateway registry\ntests: 1629 pass, 0 fail.\n- **End-to-end:** a new test, `liveness-producer-e2e.test.ts`, runs root\nsign, then `liveness-check`, then `liveness-sign`, then the 5a-1 client.\nThe signed entry renders on the Checked line, and `index.json` stays\nbyte-identical.\n- **Gates:** `typecheck`, `typecheck:tests`, `audit:boundaries`,\n`audit:doc-refs`, status-drift and `preflight:fast` all pass. The action\ndist matches a Bun 1.4.3 build byte for byte. `lintWorkflow` passes the\nnew workflow, and the existing check and sign templates are\nbyte-identical to before.\n- **Complexity:** no new or changed function exceeds cognitive\ncomplexity 15.\n- **Red-proofs:** each guard below made its test fail when reverted.\n  - the any-private-answer rule;\n  - the stalled handshake;\n  - the package hash;\n  - the secret refusals;\n  - the budget re-check;\n  - the key mismatch;\n  - the version cross-check;\n  - index untouched;\n  - non-fast-forward-only retry;\n  - canonical key bytes;\n  - the run-wide host allowance;\n  - the early exit.\n\n## Not done here\n\n- **No real run yet:** the workflow has not run on a real registry. The\nofficial registry is wired in 5b, a `nimbus-mcp-servers` PR after a\nrelease with this one.\n- **Known risk:** the check job runs the latest gateway under a pinned\naction. If a later release changed the eval role's reply, every package\nwould read `run failed` until the action pin moves. This is stated in\n`docs/registry-hosting.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* GitHub-hosted registries can now opt into scheduled liveness checks,\nwhich assess published packages and their declared network hosts.\n* Liveness results can be validated, signed with a separate key, and\npublished as a standalone registry file.\n* Registry setup can generate a liveness key and workflow; existing\nregistries can configure a liveness key with a new CLI command.\n* **Documentation**\n* Added setup and hosting guidance for liveness workflows, key\nmanagement, and CLI commands. Clarified that the official registry does\nnot currently publish liveness data.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T18:24:59Z",
+          "tree_id": "1d9febd41544595337dd816a787fed17f745b90a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/caf8a0a51ded491d651b1637b1ed4e95524f6598"
+        },
+        "date": 1793644592983,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 314.66810504999955,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 320.83119220000447,
             "unit": "ms"
           }
         ]
