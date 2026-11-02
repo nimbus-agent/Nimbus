@@ -15,8 +15,8 @@ const QUALITY = {
     "json-match": { cases: 0, passed: 0 },
     "one-of": { cases: 0, passed: 0 },
   },
-};
-const BASELINE = { scorer: 1, passed: true, tools: 3 };
+} as const;
+const BASELINE = { scorer: 1, passed: true, tools: 3 } as const;
 
 const V = { id: "acme/x", version: "1.0.0", packageSha256: SHA };
 const suite = { ...V, hasEvals: true, starterPack: false };

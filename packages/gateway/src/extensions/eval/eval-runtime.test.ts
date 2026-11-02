@@ -696,6 +696,55 @@ describe("runEvalBaselineSession", () => {
     expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
   });
 
+  test("attempt 1 is disconnected and its stage removed before attempt 2's client is built", async () => {
+    const events: string[] = [];
+    let n = 0;
+    const createClient: EvalBaselineDeps["createClient"] = () => {
+      const attempt = ++n;
+      events.push(`create${attempt} stages=${stageEntries().length}`);
+      return {
+        listToolDefinitionsWithErrors: async () => {
+          throw new Error("no");
+        },
+        disconnect: async () => {
+          events.push(`disconnect${attempt}`);
+        },
+      };
+    };
+    await runEvalBaselineSession(source([]), baselineDeps(createClient));
+    expect(events).toEqual(["create1 stages=1", "disconnect1", "create2 stages=1", "disconnect2"]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a createClient that throws is no-listing after two attempts, without its text", async () => {
+    let calls = 0;
+    const baseline = await runEvalBaselineSession(
+      source([]),
+      baselineDeps(() => {
+        calls += 1;
+        throw new Error("forged client text");
+      }),
+    );
+    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+    expect(JSON.stringify(baseline)).not.toContain("forged");
+    expect(calls).toBe(2);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a staging failure is a thrown EvalRunError, never a failed baseline", async () => {
+    const src = source([]);
+    rmSync(join(pkg, "dist", "index.js")); // gone after load: the stage copy fails for real
+    const { createClient, created } = listingFactory([{}]);
+    const err = await runEvalBaselineSession(src, baselineDeps(createClient)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    expect((err as EvalRunError).code).toBe("ERR_EVAL_PACKAGE_INVALID");
+    expect(created).toHaveLength(0);
+    expect(stageEntries()).toEqual([]);
+  });
+
   test("a disconnect that never settles does not hang the run, and no stage is left", async () => {
     const { createClient } = listingFactory([{ disconnect: () => new Promise(() => {}) }]);
     const baseline = await runEvalBaselineSession(

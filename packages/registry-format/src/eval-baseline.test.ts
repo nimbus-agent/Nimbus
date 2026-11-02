@@ -11,8 +11,8 @@ import {
 } from "./eval-baseline.ts";
 import type { RegistryVersionEntry } from "./index-format.ts";
 
-const PASSED = { scorer: 1, passed: true, tools: 4 };
-const FAILED = { scorer: 1, passed: false, tools: 0, failure: "no-listing" };
+const PASSED = { scorer: 1, passed: true, tools: 4 } as const;
+const FAILED = { scorer: 1, passed: false, tools: 0, failure: "no-listing" } as const;
 
 const entry = (baseline?: unknown): RegistryVersionEntry =>
   ({ ...(baseline !== undefined && { baseline }) }) as unknown as RegistryVersionEntry;
