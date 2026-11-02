@@ -91,6 +91,7 @@ export {
   type RegistryPacksRead,
   type RegistryPackVersionEntry,
   type RegistryVersionEntry,
+  readRegistryLivenessKey,
   readRegistryPacks,
   readRegistryReportUrl,
   readRegistryStatements,
@@ -100,6 +101,21 @@ export {
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
 export { type InspectedPackage, inspectPackage } from "./inspect.ts";
+export {
+  LIVENESS_FILE,
+  LIVENESS_TEST_FAILURES,
+  type LivenessEntry,
+  type LivenessEntryRead,
+  type LivenessFile,
+  type LivenessTestFailure,
+  livenessDigest,
+  livenessSigningBytes,
+  MAX_LIVENESS_BYTES,
+  parseLivenessFile,
+  readLivenessEntry,
+  signLivenessFile,
+  verifyLivenessFile,
+} from "./liveness-file.ts";
 export {
   CONNECTOR_ID_RE,
   DEFAULT_EXTENSION_ENTRY,
