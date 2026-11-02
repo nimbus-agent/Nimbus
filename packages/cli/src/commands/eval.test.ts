@@ -887,6 +887,8 @@ describe("runEval --record", () => {
     ],
     [["--package", "p", "--record", "i.json", "--extension", "x"], "--record cannot be combined"],
     [["--package", "p", "--record", "i.json", "--installed"], "--record cannot be combined"],
+    [["--package", "p", "--record", "i.json", "--threshold", "80"], "--record cannot be combined"],
+    [["--package", "p", "--record", "i.json", "--yes"], "--record cannot be combined"],
     [["--package", "p", "--out", "evals/a.eval.json"], "--out and --force need --record"],
     [["--package", "p", "--force"], "--out and --force need --record"],
     [["--package", "p", "--record"], "--record needs a value"],

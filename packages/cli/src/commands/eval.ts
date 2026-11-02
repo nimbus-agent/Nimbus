@@ -400,6 +400,9 @@ function recordUsageProblem(p: ParsedArgs): string | null {
   if (p.suite !== undefined || p.extension !== undefined || p.installed) {
     return `--record cannot be combined with --suite, --extension or --installed\n${USAGE}`;
   }
+  if (p.thresholdArg !== undefined || p.yes) {
+    return `--record cannot be combined with --threshold or --yes\n${USAGE}`;
+  }
   return null;
 }
 
@@ -644,6 +647,16 @@ async function runRecord(p: ParsedArgs & { pkg: string; record: string }, d: Eva
   return 0;
 }
 
+/** The modes that are not a plain `--package` run: installed, one extension, or `--record`. */
+function dispatchMode(p: ParsedArgs, d: EvalCliDeps): Promise<number> | null {
+  if (p.installed) return runAllInstalledEval(p, d);
+  if (p.extension !== undefined) return runInstalledEval(p, d);
+  if (p.record !== undefined && p.pkg !== undefined) {
+    return runRecord({ ...p, pkg: p.pkg, record: p.record }, d);
+  }
+  return null;
+}
+
 /**
  * Returns the process exit code: 2 on a usage or eval error; with `--installed`, 1 when any
  * extension regressed against its registry's score; otherwise 0 when the eval ran (any score).
@@ -652,13 +665,12 @@ export async function runEval(args: readonly string[], deps?: EvalCliDeps): Prom
   const d = deps ?? defaultDeps();
   const p = parseArgs(args);
   const problem = usageProblem(p);
-  if (problem === null && p.installed) return await runAllInstalledEval(p, d);
-  if (problem === null && p.extension !== undefined) return await runInstalledEval(p, d);
+  const mode = problem === null ? dispatchMode(p, d) : null;
+  if (mode !== null) return await mode;
   if (problem !== null || p.pkg === undefined) {
     d.err(problem ?? USAGE);
     return 2;
   }
-  if (p.record !== undefined) return await runRecord({ ...p, pkg: p.pkg, record: p.record }, d);
   const plan = d.launch();
   if (!plan.ok) return reportFailure(d, p.json, cliFailure("ERR_EVAL_LAUNCH", plan.message), "");
   const cmd = [...plan.cmd, ...roleArgsFor(p.pkg, p.suite)];
