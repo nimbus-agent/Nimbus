@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:614bbe27eabf7264888eb55b4f3d4f06a78c63bdea849e1fb1029b244743d0c2
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:57ce889ed5cb332bd2141c45521da31efabb3aeb1c970e7ef6ffdf7afe23b0e9
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4269,6 +4269,44 @@ class RegistryError extends Error {
     this.name = "RegistryError";
   }
 }
+// ../../registry-format/src/eval-baseline.ts
+var EVAL_BASELINE_SCORER_VERSION = 1;
+var EVAL_BASELINE_FAILURES = ["no-listing", "listing-timeout", "invalid-tool"];
+var MAX_EVAL_BASELINE_TOOLS = 1e6;
+function bad(why) {
+  return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
+}
+function isObject(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function isFailure(v) {
+  return EVAL_BASELINE_FAILURES.includes(v);
+}
+function parseEvalBaseline(raw) {
+  if (!isObject(raw))
+    throw bad("baseline must be an object");
+  const passed = raw["passed"];
+  if (typeof passed !== "boolean")
+    throw bad("baseline.passed must be a boolean");
+  const want = passed ? ["passed", "scorer", "tools"] : ["failure", "passed", "scorer", "tools"];
+  const have = Object.keys(raw).sort();
+  if (have.join(",") !== want.join(",")) {
+    throw bad(`baseline must have exactly the keys ${want.join(", ")}`);
+  }
+  if (raw["scorer"] !== EVAL_BASELINE_SCORER_VERSION) {
+    throw bad("baseline.scorer is not a known scorer");
+  }
+  const tools = raw["tools"];
+  if (typeof tools !== "number" || !Number.isInteger(tools) || tools < 0 || tools > MAX_EVAL_BASELINE_TOOLS) {
+    throw bad(`baseline.tools must be an integer from 0 to ${String(MAX_EVAL_BASELINE_TOOLS)}`);
+  }
+  if (passed)
+    return { scorer: 1, passed: true, tools };
+  const failure = raw["failure"];
+  if (!isFailure(failure))
+    throw bad("baseline.failure is not a known failure code");
+  return { scorer: 1, passed: false, tools, failure };
+}
 // ../../registry-format/src/eval-suite.ts
 import {
   closeSync,
@@ -4316,12 +4354,12 @@ var UNSAFE_SEGMENTS = new Set(["", ".", ".."]);
 var EVAL_SCORER_VERSION = 1;
 
 // ../../registry-format/src/eval-quality.ts
-function bad(why) {
+function bad2(why) {
   return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
 }
 function plainObject(raw, what) {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw bad(`${what} must be an object`);
+    throw bad2(`${what} must be an object`);
   }
   return raw;
 }
@@ -4330,13 +4368,13 @@ function exactKeys(o, keys, what) {
   const extra = have.filter((k) => !keys.includes(k));
   const missing = keys.filter((k) => !have.includes(k));
   if (extra.length > 0)
-    throw bad(`${what} has unexpected keys: ${extra.join(", ")}`);
+    throw bad2(`${what} has unexpected keys: ${extra.join(", ")}`);
   if (missing.length > 0)
-    throw bad(`${what} is missing keys: ${missing.join(", ")}`);
+    throw bad2(`${what} is missing keys: ${missing.join(", ")}`);
 }
 function int(v, min, max, what) {
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) {
-    throw bad(`${what} must be an integer from ${min} to ${max}`);
+    throw bad2(`${what} must be an integer from ${min} to ${max}`);
   }
   return v;
 }
@@ -4344,12 +4382,12 @@ function parseEvalQuality(raw) {
   const o = plainObject(raw, "quality");
   exactKeys(o, ["scorer", "score", "cases", "passed", "rubrics"], "quality");
   if (o["scorer"] !== EVAL_SCORER_VERSION)
-    throw bad("quality.scorer is not a known scorer");
+    throw bad2("quality.scorer is not a known scorer");
   const cases = int(o["cases"], 1, MAX_EVAL_CASES, "quality.cases");
   const passed = int(o["passed"], 0, cases, "quality.passed");
   const score = int(o["score"], 0, 100, "quality.score");
   if (score !== Math.floor(passed * 100 / cases)) {
-    throw bad("quality.score does not match passed and cases");
+    throw bad2("quality.score does not match passed and cases");
   }
   const rubricsRaw = plainObject(o["rubrics"], "quality.rubrics");
   exactKeys(rubricsRaw, EVAL_RUBRIC_KINDS, "quality.rubrics");
@@ -4366,19 +4404,19 @@ function parseEvalQuality(raw) {
     sumPassed += p;
   }
   if (sumCases !== cases || sumPassed !== passed) {
-    throw bad("quality.rubrics do not sum to the totals");
+    throw bad2("quality.rubrics do not sum to the totals");
   }
   return { scorer: 1, score, cases, passed, rubrics };
 }
 // ../../registry-format/src/eval-role-document.ts
-function isObject(v) {
+function isObject2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function isResult(v) {
-  return isObject(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
+  return isObject2(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
 }
 function parseEvalReport(raw) {
-  if (!isObject(raw) || !Array.isArray(raw["results"]))
+  if (!isObject2(raw) || !Array.isArray(raw["results"]))
     return null;
   if (!raw["results"].every(isResult))
     return null;
@@ -4402,11 +4440,11 @@ function parseEvalRoleDocument(text) {
   } catch {
     return null;
   }
-  if (!isObject(raw))
+  if (!isObject2(raw))
     return null;
   if (raw["ok"] === false) {
     const e = raw["error"];
-    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
+    if (isObject2(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
       return { ok: false, error: { code: e["code"], message: e["message"] } };
     }
     return null;
@@ -9269,9 +9307,9 @@ var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject2 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function readManifestRepository(rawManifest) {
-  if (!isObject2(rawManifest))
+  if (!isObject3(rawManifest))
     return;
   const v = rawManifest["repository"];
   return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
@@ -9299,16 +9337,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject2(entry))
+  if (!isObject3(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject2(result) ? result["statement"] : undefined;
-  if (!isObject2(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject3(result) ? result["statement"] : undefined;
+  if (!isObject3(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject2(result) ? result["signature"] : undefined;
-  const cert = isObject2(signature) ? signature["certificate"] : undefined;
-  if (!isObject2(cert))
+  const signature = isObject3(result) ? result["signature"] : undefined;
+  const cert = isObject3(signature) ? signature["certificate"] : undefined;
+  if (!isObject3(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -9849,7 +9887,7 @@ var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
 function invalid5(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -9857,13 +9895,13 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject3(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject4(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject3(raw))
+  if (!isObject4(raw))
     throw invalid5("a publisher file must be an object");
   for (const k of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k)) {
@@ -9886,7 +9924,7 @@ function parsePublisherFile(path, raw) {
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject3(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject4(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -10328,6 +10366,7 @@ async function validatePublish(c, signed, config, work) {
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
       hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
+      starterPack: isStarterPack(m),
       permissions: m.permissions,
       ...repository !== undefined && { repository },
       ...repository === undefined && raw["repository"] !== undefined && { repositoryIgnored: true }
@@ -11439,9 +11478,132 @@ async function runCheck(opts, deps = SHARED2) {
 }
 
 // src/sign.ts
-import { closeSync as closeSync3, mkdtempSync as mkdtempSync5, openSync as openSync3, readSync as readSync2, rmSync as rmSync5 } from "node:fs";
+import { mkdtempSync as mkdtempSync5, rmSync as rmSync5 } from "node:fs";
 import { tmpdir as osTmpdir3 } from "node:os";
 import { join as join6 } from "node:path";
+
+// ../../registry-format/src/scores-file.ts
+import { closeSync as closeSync3, openSync as openSync3, readSync as readSync2 } from "node:fs";
+var MAX_SCORES_BYTES = 4 * 1024 * 1024;
+var errorText = (e) => e instanceof Error ? e.message : String(e);
+function refuseScores(path, why) {
+  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
+}
+var READ_CHUNK_BYTES = 64 * 1024;
+function readAtMost(path, max) {
+  const fd = openSync3(path, "r");
+  try {
+    const chunks = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
+      const got = readSync2(fd, chunk, 0, chunk.length, null);
+      if (got === 0)
+        break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    closeSync3(fd);
+  }
+}
+function isPlainObject2(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function readScores(path) {
+  let bytes;
+  try {
+    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
+  } catch (e) {
+    throw refuseScores(path, `could not be read: ${errorText(e)}`);
+  }
+  if (bytes.byteLength > MAX_SCORES_BYTES) {
+    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw refuseScores(path, "is not valid JSON");
+  }
+  if (!isPlainObject2(parsed))
+    throw refuseScores(path, "is not a JSON object");
+  return new Map(Object.entries(parsed));
+}
+var MAX_REASON_DETAIL_CHARS = 300;
+var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
+var BASELINE_UNBOUND = "its scores.json entry is not a baseline entry for this package (want exactly packageSha256 and baseline); ignored";
+var BASELINE_INVALID = "its scores.json baseline is invalid; signed without a baseline";
+function failedCode(error) {
+  const c = isPlainObject2(error) ? error["code"] : undefined;
+  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
+}
+var sortedKeys = (o) => Object.keys(o).sort(codeUnitCompare).join(",");
+function baselineOf(raw) {
+  try {
+    return { baseline: parseEvalBaseline(raw["baseline"]) };
+  } catch {
+    return { baselineIgnored: BASELINE_INVALID };
+  }
+}
+function judgeBaselineOnly(scores, v) {
+  const raw = scores.get(`${v.id}@${v.version}`);
+  if (raw === undefined)
+    return { ok: true };
+  if (!isPlainObject2(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
+    return { ok: true, baselineIgnored: BASELINE_UNBOUND };
+  }
+  return { ok: true, ...baselineOf(raw) };
+}
+function judgeSuite(scores, v) {
+  const raw = scores.get(`${v.id}@${v.version}`);
+  if (raw === undefined) {
+    return {
+      ok: false,
+      reason: "it has eval suites and scores.json has no score for it; not signed without a score"
+    };
+  }
+  if (!isPlainObject2(raw))
+    return { ok: false, reason: MALFORMED };
+  const keys = sortedKeys(raw);
+  const withBaseline = keys.startsWith("baseline,");
+  const core = withBaseline ? keys.slice("baseline,".length) : keys;
+  if (core !== "packageSha256,quality" && core !== "error,packageSha256") {
+    return { ok: false, reason: MALFORMED };
+  }
+  if (raw["packageSha256"] !== v.packageSha256) {
+    return {
+      ok: false,
+      reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
+    };
+  }
+  if (Object.hasOwn(raw, "error")) {
+    return {
+      ok: false,
+      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`
+    };
+  }
+  let quality;
+  try {
+    quality = parseEvalQuality(raw["quality"]);
+  } catch (e) {
+    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
+    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
+  }
+  if (!withBaseline || v.starterPack)
+    return { ok: true, quality };
+  return { ok: true, quality, ...baselineOf(raw) };
+}
+function judgeScoreEntry(scores, v) {
+  if (scores === undefined)
+    return { ok: true };
+  if (v.hasEvals)
+    return judgeSuite(scores, v);
+  if (v.starterPack)
+    return { ok: true };
+  return judgeBaselineOnly(scores, v);
+}
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
@@ -11522,94 +11684,6 @@ function parseRootKey(raw) {
   }
   return new Uint8Array(Buffer.from(s, "base64"));
 }
-var MAX_SCORES_BYTES = 4 * 1024 * 1024;
-var errorText = (e) => e instanceof Error ? e.message : String(e);
-function refuseScores(path, why) {
-  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
-}
-var READ_CHUNK_BYTES = 64 * 1024;
-function readAtMost(path, max) {
-  const fd = openSync3(path, "r");
-  try {
-    const chunks = [];
-    let total = 0;
-    while (total < max) {
-      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
-      const got = readSync2(fd, chunk, 0, chunk.length, null);
-      if (got === 0)
-        break;
-      chunks.push(chunk.subarray(0, got));
-      total += got;
-    }
-    return Buffer.concat(chunks, total);
-  } finally {
-    closeSync3(fd);
-  }
-}
-function isPlainObject2(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-function readScores(path) {
-  let bytes;
-  try {
-    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
-  } catch (e) {
-    throw refuseScores(path, `could not be read: ${errorText(e)}`);
-  }
-  if (bytes.byteLength > MAX_SCORES_BYTES) {
-    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw refuseScores(path, "is not valid JSON");
-  }
-  if (!isPlainObject2(parsed))
-    throw refuseScores(path, "is not a JSON object");
-  return new Map(Object.entries(parsed));
-}
-var MAX_REASON_DETAIL_CHARS = 300;
-var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
-function failedCode(error) {
-  const c = isPlainObject2(error) ? error["code"] : undefined;
-  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
-}
-function qualityFor(scores, v) {
-  if (scores === undefined || !v.hasEvals)
-    return { ok: true };
-  const raw = scores.get(`${v.id}@${v.version}`);
-  if (raw === undefined) {
-    return {
-      ok: false,
-      reason: "it has eval suites and scores.json has no score for it; not signed without a score"
-    };
-  }
-  if (!isPlainObject2(raw))
-    return { ok: false, reason: MALFORMED };
-  const keys = Object.keys(raw).sort(codeUnitCompare).join(",");
-  if (keys !== "packageSha256,quality" && keys !== "error,packageSha256") {
-    return { ok: false, reason: MALFORMED };
-  }
-  if (raw["packageSha256"] !== v.packageSha256) {
-    return {
-      ok: false,
-      reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
-    };
-  }
-  if (Object.hasOwn(raw, "error")) {
-    return {
-      ok: false,
-      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`
-    };
-  }
-  try {
-    return { ok: true, quality: parseEvalQuality(raw["quality"]) };
-  } catch (e) {
-    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
-    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
-  }
-}
 async function provenanceFor(v, packageBytes, at, deps, memo) {
   if (v.repository === undefined)
     return;
@@ -11630,10 +11704,13 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
 }
 async function takeCandidate(o, b, run, opts, deps) {
   const { candidate, verdict: v } = o;
-  const q = qualityFor(run.scores, v);
+  const q = judgeScoreEntry(run.scores, v);
   if (!q.ok) {
     b.skipped.push({ dir: o.dir, reason: q.reason });
     return;
+  }
+  if (q.baselineIgnored !== undefined) {
+    deps.io.annotate("warning", `${v.id}@${v.version}: ${q.baselineIgnored}`);
   }
   const base = `extensions/${v.id}/${v.version}`;
   const provenance = await provenanceFor(v, candidate.packageBytes, { work: b.work, verifiedAt: b.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run.memo);

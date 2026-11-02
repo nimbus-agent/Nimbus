@@ -18,6 +18,19 @@ export {
 export { codeUnitCompare } from "./code-unit-compare.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export {
+  EVAL_BASELINE_FAILURES,
+  EVAL_BASELINE_SCORER_VERSION,
+  type EvalBaseline,
+  type EvalBaselineDocument,
+  type EvalBaselineFailure,
+  judgeToolDefinitions,
+  MAX_EVAL_BASELINE_TOOLS,
+  parseEvalBaseline,
+  parseEvalBaselineDocument,
+  readVersionBaseline,
+  type VersionBaseline,
+} from "./eval-baseline.ts";
+export {
   parseEvalQuality,
   readVersionQuality,
   type VersionQuality,

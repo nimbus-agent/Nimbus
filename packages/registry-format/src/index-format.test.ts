@@ -553,4 +553,19 @@ describe("index version entry quality (carried raw)", () => {
       await verifyRegistryIndexPinned(parsed, ROOT_KEY);
     });
   }
+
+  for (const [label, baseline] of [
+    ["malformed", { passed: "yes", extra: 1 }],
+    ["valid", { scorer: 1, passed: true, tools: 3 }],
+  ] as const) {
+    test(`a ${label} baseline survives parse and signature verification unchanged`, async () => {
+      const idx = structuredClone(unsigned) as unknown as Mutable;
+      idx.extensions["acme/deploy"]!.versions["1.0.0"]!["baseline"] = baseline;
+      const signed = sign(idx);
+      const parsed = parseRegistryIndex(enc(signed));
+      expect(parsed.extensions["acme/deploy"]!.versions["1.0.0"]!.baseline).toEqual(baseline);
+      await verifyRegistryIndexSelf(parsed);
+      await verifyRegistryIndexPinned(parsed, ROOT_KEY);
+    });
+  }
 });

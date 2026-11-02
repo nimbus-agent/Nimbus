@@ -24,9 +24,10 @@ import {
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
+import { MAX_SCORES_BYTES } from "../../../registry-format/src/scores-file.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import { MAX_SCORES_BYTES, runSign, type SignDeps } from "./sign.ts";
+import { runSign, type SignDeps } from "./sign.ts";
 import {
   copyRegistryRepo,
   makeExtension,
@@ -191,6 +192,16 @@ describe("sign with the scores input", () => {
     merge();
     await sign(writeScores({ "acme/plain@1.0.0": { packageSha256: p.pkgSha, quality: QUALITY } }));
     expect(entryOf("acme/plain")?.quality).toBeUndefined();
+  });
+
+  test("an unusable baseline entry is a warning, never a skip", async () => {
+    const p = await publish({ id: "acme/plain" });
+    merge();
+    await sign(
+      writeScores({ "acme/plain@1.0.0": { packageSha256: p.pkgSha, baseline: { x: 1 } } }),
+    );
+    expect(entryOf("acme/plain")).toBeDefined();
+    expect(warnings.join("\n")).toMatch(/acme\/plain@1\.0\.0: .*baseline/);
   });
 
   /** The entry is written under `acme/scored@1.0.0`; the candidate is `acme/scored@<version>`. */

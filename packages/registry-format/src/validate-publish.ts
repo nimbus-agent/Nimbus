@@ -79,6 +79,11 @@ export interface PublishVerdict {
    * `sign` read this, never re-derive it. Fixtures alone under `evals/` do not count.
    */
   readonly hasEvals: boolean;
+  /**
+   * True when the manifest is `kind: "starter-pack"`: it never runs, so it has no baseline and no
+   * eval to score; the registry reads this, never re-derives it.
+   */
+  readonly starterPack: boolean;
   /** The manifest's declared sandbox permissions, as the gateway parses them. */
   permissions: SandboxPermissions;
   /** The manifest's well-formed `repository` (`owner/repo`), when it declares one (provenance). */
@@ -514,6 +519,7 @@ export async function validatePublish(
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
       hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
+      starterPack: isStarterPack(m),
       permissions: m.permissions,
       ...(repository !== undefined && { repository }),
       ...(repository === undefined &&
