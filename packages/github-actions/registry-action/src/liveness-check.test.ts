@@ -18,6 +18,7 @@ import { join } from "node:path";
 import {
   MAX_PACKAGE_BYTES,
   parseLivenessEntry,
+  publicKeyFromSeed,
   type RegistryIndex,
   signIndex,
   validatePublish,
@@ -41,6 +42,7 @@ import {
   pushMaintainer,
   type RegistryRepo,
   ROOT_KEY_INPUT,
+  ROOT_SEED,
   syncMaintainer,
   write,
   writePublish,
@@ -74,6 +76,29 @@ const run = (stdout: string): RoleRun => ({
   overflow: false,
 });
 
+const LIVENESS_KEY = Buffer.from(publicKeyFromSeed(new Uint8Array(32).fill(5))).toString("base64");
+
+/** Re-sign `gh-pages`' index so it names a liveness key (or none, when `value` is undefined). */
+async function setIndexLivenessKey(repo: RegistryRepo, value: string | undefined): Promise<void> {
+  syncMaintainer(repo, "gh-pages");
+  const {
+    signature: _s,
+    livenessKey: _k,
+    ...rest
+  } = originIndex(repo) as unknown as Record<string, unknown>;
+  const next = await signIndex(
+    { ...rest, ...(value !== undefined && { livenessKey: value }) } as never,
+    ROOT_SEED,
+  );
+  write(
+    repo.maintainer,
+    "index.json",
+    `${JSON.stringify(next, null, 2)}
+`,
+  );
+  pushMaintainer(repo, "gh-pages", "set liveness key");
+}
+
 let templateDir: string;
 let template: RegistryRepo;
 
@@ -101,6 +126,7 @@ beforeAll(async () => {
     { workspace: template.workspace, rootKey: ROOT_KEY_INPUT },
     { validate: validatePublish, sign: signIndex, git: gitTree, io, tmpdir: () => scratch },
   );
+  await setIndexLivenessKey(template, LIVENESS_KEY);
 });
 
 afterAll(() => {
@@ -416,5 +442,75 @@ describe("runLivenessCheck", () => {
         deps(),
       ),
     ).rejects.toThrow('input "nimbus-gateway" must be an absolute path');
+  });
+});
+
+describe("the run-wide host allowance", () => {
+  const hostsOf = (prefix: string, n: number): string[] =>
+    Array.from({ length: n }, (_, i) => `${prefix}${String(i)}.example.com`);
+
+  /** A fresh registry holding the given packages, signed, and naming a liveness key. */
+  async function registryWith(
+    pkgs: ReadonlyArray<{ id: string; network: string[] }>,
+  ): Promise<RegistryRepo> {
+    const r = await makeRegistryRepo(join(tmp, "big"));
+    for (const o of pkgs) writePublish(r.maintainer, await makeExtension(scratch, o));
+    pushMaintainer(r, "main", "publish");
+    const io: ActionIo = { annotate: () => {}, summary: () => {}, log: () => {} };
+    await runSign(
+      { workspace: r.workspace, rootKey: ROOT_KEY_INPUT },
+      { validate: validatePublish, sign: signIndex, git: gitTree, io, tmpdir: () => scratch },
+    );
+    await setIndexLivenessKey(r, LIVENESS_KEY);
+    return r;
+  }
+
+  test("two packages whose hosts together exceed the cap: the second gets no hosts", async () => {
+    repo = await registryWith([
+      { id: "acme/first", network: hostsOf("a", 300) },
+      { id: "acme/second", network: hostsOf("b", 300) },
+    ]);
+    const r = await check();
+    expect(r.extensions["acme/first@1.0.0"]?.hosts).toEqual({ declared: 300, answered: 300 });
+    expect(r.extensions["acme/second@1.0.0"]).toBeDefined();
+    expect(r.extensions["acme/second@1.0.0"]?.hosts).toBeUndefined();
+    expect(probed).toHaveLength(300);
+    expect(
+      logs.some((l) => l.includes("acme/second@1.0.0") && l.includes("run host allowance spent")),
+    ).toBe(true);
+  });
+
+  test("a package over the cap alone gets no hosts, and spends none of the allowance", async () => {
+    repo = await registryWith([
+      { id: "acme/a-huge", network: hostsOf("h", 501) },
+      { id: "acme/b-small", network: hostsOf("s", 5) },
+    ]);
+    const r = await check();
+    expect(r.extensions["acme/a-huge@1.0.0"]?.hosts).toBeUndefined();
+    expect(r.extensions["acme/b-small@1.0.0"]?.hosts).toEqual({ declared: 5, answered: 5 });
+    expect(logs.some((l) => l.includes("acme/a-huge@1.0.0") && l.includes("more than 500"))).toBe(
+      true,
+    );
+    for (const e of Object.values(r.extensions)) {
+      if (e.hosts !== undefined) expect(e.hosts.answered).toBeLessThanOrEqual(e.hosts.declared);
+    }
+  });
+});
+
+describe("an index that names no liveness key", () => {
+  test("runs no extension code and probes nothing, and writes an empty results file", async () => {
+    await setIndexLivenessKey(repo, undefined);
+    const r = await check();
+    expect(r.extensions).toEqual({});
+    expect(calls).toEqual([]);
+    expect(probed).toEqual([]);
+    expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({
+      format: 1,
+      nimbusVersion: "10.14.1",
+      extensions: {},
+    });
+    expect(logs.some((l) => l.startsWith("::notice::") && l.includes("set-liveness-key"))).toBe(
+      true,
+    );
   });
 });

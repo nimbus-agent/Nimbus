@@ -2,6 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { createServer as createNetServer, type Socket } from "node:net";
 import {
+  createHostAllowance,
   HOST_CONCURRENCY,
   type HostProbeDeps,
   isPublicAddress,
@@ -9,6 +10,7 @@ import {
   probeHost,
   probeHosts,
   REAL_HOST_PROBE,
+  reserveHosts,
   TLS_PORTS,
 } from "./host-probe.ts";
 
@@ -280,7 +282,7 @@ describe("REAL_HOST_PROBE.connect", () => {
 });
 
 describe("probeHosts", () => {
-  test("caps at 500 lookups, dedupes, and bounds concurrency at 8", async () => {
+  test("probes every distinct entry, declares exactly that many, and bounds concurrency at 8", async () => {
     let inFlight = 0;
     let peak = 0;
     let lookups = 0;
@@ -295,12 +297,11 @@ describe("probeHosts", () => {
       },
       connect: () => Promise.resolve(true),
     };
-    const entries = Array.from({ length: 600 }, (_, i) => ({ host: `h${i}.example`, port: 443 }));
+    const entries = Array.from({ length: 100 }, (_, i) => ({ host: `h${i}.example`, port: 443 }));
     const first = entries[0] as (typeof entries)[number];
     const r = await probeHosts([...entries, first], deps);
-    expect(lookups).toBeLessThanOrEqual(MAX_HOSTS_PER_RUN);
-    expect(r.declared).toBe(600);
-    expect(r.answered).toBe(MAX_HOSTS_PER_RUN);
+    expect(lookups).toBe(100);
+    expect(r).toEqual({ declared: 100, answered: 100 });
     expect(peak).toBeLessThanOrEqual(HOST_CONCURRENCY);
     expect(peak).toBeGreaterThan(1);
   });
@@ -314,11 +315,6 @@ describe("probeHosts", () => {
       fakeDeps([{ address: "1.1.1.1", family: 4 }]),
     );
     expect(r).toEqual({ declared: 1, answered: 1 });
-  });
-  test("declared is capped at 1000", async () => {
-    const entries = Array.from({ length: 1200 }, (_, i) => ({ host: `h${i}.example`, port: 443 }));
-    const r = await probeHosts(entries, fakeDeps([{ address: "10.0.0.1", family: 4 }]));
-    expect(r).toEqual({ declared: 1000, answered: 0 });
   });
   test("counts answered hosts", async () => {
     const deps: HostProbeDeps = {
@@ -334,5 +330,33 @@ describe("probeHosts", () => {
       deps,
     );
     expect(r).toEqual({ declared: 2, answered: 1 });
+  });
+});
+
+describe("reserveHosts", () => {
+  const list = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({ host: `${prefix}${i}.example`, port: 443 }));
+
+  test("one allowance covers the whole run: a later list that does not fit is refused whole", () => {
+    const allowance = createHostAllowance();
+    const first = reserveHosts(list("a", 300), allowance);
+    expect(first.kind).toBe("ok");
+    expect(allowance.left).toBe(MAX_HOSTS_PER_RUN - 300);
+    expect(reserveHosts(list("b", 300), allowance).kind).toBe("spent");
+    expect(allowance.left).toBe(MAX_HOSTS_PER_RUN - 300);
+    expect(reserveHosts(list("c", 200), allowance).kind).toBe("ok");
+    expect(allowance.left).toBe(0);
+  });
+  test("a single list over the cap is refused whole and takes nothing", () => {
+    const allowance = createHostAllowance();
+    expect(reserveHosts(list("a", MAX_HOSTS_PER_RUN + 1), allowance).kind).toBe("too-many");
+    expect(allowance.left).toBe(MAX_HOSTS_PER_RUN);
+  });
+  test("duplicates count once; an empty list takes nothing", () => {
+    const allowance = createHostAllowance();
+    const r = reserveHosts([...list("a", 3), { host: "A0.example", port: 443 }], allowance);
+    expect(r.kind === "ok" && r.hosts.length).toBe(3);
+    expect(allowance.left).toBe(MAX_HOSTS_PER_RUN - 3);
+    expect(reserveHosts([], allowance).kind).toBe("none");
   });
 });

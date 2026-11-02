@@ -2,7 +2,8 @@
  * The credential-free host probe behind a registry's liveness check: "does anyone answer at the host
  * a manifest declares". It resolves the name, refuses the host outright when ANY answer is private,
  * loopback, link-local or otherwise unroutable (nothing is contacted then), and otherwise opens ONE
- * connection to the first answer by IP address and closes it. It never writes a byte to the socket.
+ * connection to the first answer by IP address and closes it. It sends no application data and reads
+ * none (on a TLS port it reads the server's certificate during the handshake).
  *
  * Bundled for the runner's Node: only `node:dns`, `node:net` and `node:tls`, no Bun API and no
  * ES2024+ runtime API (no `Promise.try`).
@@ -78,30 +79,42 @@ function ipv6Groups(address: string): number[] | undefined {
   return out.some(Number.isNaN) ? undefined : out;
 }
 
-/** True only for a syntactically valid address outside every blocked range. */
-export function isPublicAddress(address: string): boolean {
-  const family = isIP(address.split("%")[0] ?? "");
-  // A zone is meaningful only on IPv6; `1.1.1.1%x` is not an address.
-  const bare = family === 6 ? (address.split("%")[0] ?? "") : address;
-  if (family === 4 && !address.includes("%")) return !BLOCKED.check(bare, "ipv4");
-  if (family !== 6 || bare.length === 0) return false;
+/** The IPv4 address written in the last two groups, as dotted text. */
+function dottedV4(g: readonly number[]): string {
+  const hi = g[6] ?? 0;
+  const lo = g[7] ?? 0;
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+
+/**
+ * Judges an address that embeds an IPv4 one by the embedded address: IPv4-mapped (::ffff:0:0/96),
+ * IPv4-translated (::ffff:0:0:0/96, RFC 2765) and IPv4-compatible (::/96). `undefined` when `g` is
+ * none of those forms.
+ */
+function judgeEmbeddedV4(g: readonly number[], bare: string): boolean | undefined {
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) {
+    return !BLOCKED.check(dottedV4(g), "ipv4");
+  }
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0)) {
+    return !BLOCKED.check(dottedV4(g), "ipv4") && (g[5] === 0xffff || !BLOCKED.check(bare, "ipv6"));
+  }
+  return undefined;
+}
+
+function isPublicV6(bare: string): boolean {
+  if (bare.length === 0) return false;
   const g = ipv6Groups(bare);
   if (g === undefined) return false;
-  // IPv4-mapped (::ffff:0:0/96) and IPv4-compatible (::/96): judge the embedded IPv4 address.
-  // IPv4-translated (::ffff:0:0:0/96, RFC 2765) embeds the address the same way.
-  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 0xffff && g[5] === 0) {
-    const hi = g[6] ?? 0;
-    const lo = g[7] ?? 0;
-    return !BLOCKED.check(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`, "ipv4");
-  }
-  const zeroPrefix = g.slice(0, 5).every((x) => x === 0);
-  if (zeroPrefix && (g[5] === 0xffff || g[5] === 0)) {
-    const hi = g[6] ?? 0;
-    const lo = g[7] ?? 0;
-    const v4 = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-    return !BLOCKED.check(v4, "ipv4") && (g[5] === 0xffff || !BLOCKED.check(bare, "ipv6"));
-  }
-  return !BLOCKED.check(bare, "ipv6");
+  return judgeEmbeddedV4(g, bare) ?? !BLOCKED.check(bare, "ipv6");
+}
+
+/** True only for a syntactically valid address outside every blocked range. */
+export function isPublicAddress(address: string): boolean {
+  const bare = address.split("%")[0] ?? "";
+  const family = isIP(bare);
+  // A zone is meaningful only on IPv6; `1.1.1.1%x` is not an address.
+  if (family === 4) return !address.includes("%") && !BLOCKED.check(bare, "ipv4");
+  return family === 6 && isPublicV6(bare);
 }
 
 export type HostProbeDeps = {
@@ -196,25 +209,56 @@ export async function probeHost(
   }
 }
 
-/** The format's `hosts.declared` ceiling. */
-const MAX_DECLARED = 1000;
-
-/**
- * Distinct (case-folded host, port) pairs, at most `MAX_HOSTS_PER_RUN` probed, `HOST_CONCURRENCY`
- * at a time. `declared` is capped at 1000. With no entries `declared` is 0, which the liveness
- * format refuses: a caller must omit `hosts` from the entry in that case.
- */
-export async function probeHosts(
+/** Distinct (case-folded host, port) pairs, in first-seen order. */
+export function dedupeHosts(
   entries: ReadonlyArray<{ host: string; port: number }>,
-  deps: HostProbeDeps = REAL_HOST_PROBE,
-): Promise<{ declared: number; answered: number }> {
+): Array<{ host: string; port: number }> {
   const seen = new Map<string, { host: string; port: number }>();
   for (const e of entries) {
     const key = `${e.host.toLowerCase()}:${String(e.port)}`;
     if (!seen.has(key)) seen.set(key, e);
   }
-  const distinct = [...seen.values()];
-  const work = distinct.slice(0, MAX_HOSTS_PER_RUN);
+  return [...seen.values()];
+}
+
+/** The run-wide allowance of host probes: ONE for the whole run, shared by every package. */
+export type HostAllowance = { left: number };
+
+export function createHostAllowance(max: number = MAX_HOSTS_PER_RUN): HostAllowance {
+  return { left: max };
+}
+
+/**
+ * Reserves a package's hosts from the run allowance. The whole deduplicated list fits or none of it
+ * is taken: a list cut short would sign a count larger than what was observed.
+ */
+export function reserveHosts(
+  entries: ReadonlyArray<{ host: string; port: number }>,
+  allowance: HostAllowance,
+  max: number = MAX_HOSTS_PER_RUN,
+):
+  | { kind: "ok"; hosts: Array<{ host: string; port: number }> }
+  | { kind: "none" }
+  | { kind: "too-many" }
+  | { kind: "spent" } {
+  const hosts = dedupeHosts(entries);
+  if (hosts.length === 0) return { kind: "none" };
+  if (hosts.length > max) return { kind: "too-many" };
+  if (hosts.length > allowance.left) return { kind: "spent" };
+  allowance.left -= hosts.length;
+  return { kind: "ok", hosts };
+}
+
+/**
+ * Probes every distinct (case-folded host, port) pair, `HOST_CONCURRENCY` at a time. `declared` is
+ * exactly the number probed, so `answered <= declared`. Callers bound the list with `reserveHosts`.
+ * With no entries `declared` is 0, which the liveness format refuses: a caller must omit `hosts`.
+ */
+export async function probeHosts(
+  entries: ReadonlyArray<{ host: string; port: number }>,
+  deps: HostProbeDeps = REAL_HOST_PROBE,
+): Promise<{ declared: number; answered: number }> {
+  const work = dedupeHosts(entries);
   let answered = 0;
   let next = 0;
   const worker = async (): Promise<void> => {
@@ -225,5 +269,5 @@ export async function probeHosts(
     }
   };
   await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
-  return { declared: Math.min(distinct.length, MAX_DECLARED), answered };
+  return { declared: work.length, answered };
 }

@@ -10,7 +10,9 @@
  * An entry is validated here with `parseLivenessEntry` before it is written, so this job can never
  * write one that `liveness-sign` would refuse.
  *
- * Bounds: one run budget (`LIVENESS_RUN_BUDGET_MS`); a package reached with the budget spent gets no
+ * Bounds: one run budget (`LIVENESS_RUN_BUDGET_MS`) and ONE host allowance (`MAX_HOSTS_PER_RUN`)
+ * for the whole run: a package whose distinct hosts do not all fit in what remains gets no `hosts`,
+ * never a count cut short. A package reached with the budget spent gets no
  * entry (which reads "no checks published for this version") and one log line. Packages are
  * checked in id order. A package whose bytes differ from the index's `packageSha256` gets no entry.
  */
@@ -32,9 +34,18 @@ import {
   parseLivenessEntry,
   parseNetworkEntry,
   type RegistryIndex,
+  readRegistryLivenessKey,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
-import { type HostProbeDeps, probeHosts, REAL_HOST_PROBE } from "./host-probe.ts";
+import {
+  createHostAllowance,
+  type HostAllowance,
+  type HostProbeDeps,
+  MAX_HOSTS_PER_RUN,
+  probeHosts,
+  REAL_HOST_PROBE,
+  reserveHosts,
+} from "./host-probe.ts";
 import { PAGES_BRANCH, PAGES_REF, readVerifiedIndex } from "./registry-state.ts";
 import { type ActionIo, GHA_IO } from "./report.ts";
 import { assertGateway, budgetLeft, scoreCandidate, writeFileAtomic } from "./score.ts";
@@ -151,7 +162,87 @@ type Ctx = {
   work: string;
   deadline: number;
   index: RegistryIndex;
+  hostAllowance: HostAllowance;
 };
+
+type TimeBox = { gateway: string; work: string; deadline: number };
+type Candidate = {
+  verdict: { id: string; version: string; packageSha256: string };
+  packageBytes: Uint8Array;
+};
+
+/** The package's bytes, or `undefined` (logged) when they cannot be checked. */
+function readCheckedPackage(
+  c: Ctx,
+  ref: string,
+  packagePath: string,
+  expectedSha256: string,
+): Uint8Array | undefined {
+  const { deps, opts } = c;
+  const packageBytes = deps.git.readBlob(PAGES_REF, packagePath, { cwd: opts.workspace });
+  const problem = packageBytesProblem(packageBytes);
+  if (problem !== undefined) {
+    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+    return undefined;
+  }
+  if (sha256Hex(packageBytes) !== expectedSha256) {
+    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
+    return undefined;
+  }
+  return packageBytes;
+}
+
+/**
+ * The host check, charged to the run-wide allowance. `undefined` (logged where it is a refusal)
+ * when there is nothing to probe, the list is over the cap, or the allowance cannot cover all of it.
+ */
+async function checkHosts(
+  c: Ctx,
+  ref: string,
+  network: readonly string[],
+): Promise<{ declared: number; answered: number } | undefined> {
+  const r = reserveHosts(declaredHosts(network), c.hostAllowance);
+  if (r.kind === "none") return undefined;
+  if (r.kind === "too-many") {
+    c.deps.io.log(
+      `liveness: ${ref}: host check skipped: it declares more than ${String(MAX_HOSTS_PER_RUN)} distinct hosts`,
+    );
+    return undefined;
+  }
+  if (r.kind === "spent") {
+    c.deps.io.log(`liveness: ${ref}: host check skipped: run host allowance spent`);
+    return undefined;
+  }
+  return probeHosts(r.hosts, c.deps.probe);
+}
+
+/** The entry for what was observed, or `undefined` (logged) when the format refuses it. */
+function assembleEntry(
+  c: Ctx,
+  ref: string,
+  observed: {
+    checkedAt: string;
+    hosts: { declared: number; answered: number } | undefined;
+    tests: LivenessEntry["tests"];
+    baseline: EvalBaseline | undefined;
+  },
+): LivenessEntry | undefined {
+  const { checkedAt, hosts, tests, baseline } = observed;
+  const raw = {
+    checkedAt,
+    ...(hosts !== undefined && hosts.declared > 0 && { hosts }),
+    ...(tests !== undefined && { tests }),
+    ...(baseline !== undefined && { baseline }),
+  };
+  try {
+    return parseLivenessEntry(raw);
+  } catch (e) {
+    c.deps.io.log(
+      `liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`,
+    );
+    return undefined;
+  }
+}
 
 /** One package's entry, or undefined for no entry. Throws only for what the caller logs. */
 async function checkPackage(
@@ -163,21 +254,13 @@ async function checkPackage(
   const ref = `${id}@${version}`;
   const v = c.index.extensions[id]?.versions[version];
   if (v === undefined) return undefined;
-  const at = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
+  const at: TimeBox = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
   if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
     deps.io.log(`liveness: ${ref} not checked: the run's time budget is spent`);
     return undefined;
   }
-  const packageBytes = deps.git.readBlob(PAGES_REF, v.package, { cwd: opts.workspace });
-  const problem = packageBytesProblem(packageBytes);
-  if (problem !== undefined) {
-    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
-    return undefined;
-  }
-  if (sha256Hex(packageBytes) !== v.packageSha256) {
-    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
-    return undefined;
-  }
+  const packageBytes = readCheckedPackage(c, ref, v.package, v.packageSha256);
+  if (packageBytes === undefined) return undefined;
   const checkedAt = new Date(deps.now()).toISOString();
   const dir = mkdtempSync(join(c.work, "pkg-"));
   try {
@@ -190,9 +273,11 @@ async function checkPackage(
     );
     if (isStarterPack(manifest)) return undefined;
     const hasEvals = inspected.files.some((f) => isEvalSuiteFile(f));
-    const hostList = declaredHosts(manifest.permissions.network);
-    const hosts = hostList.length === 0 ? undefined : await probeHosts(hostList, deps.probe);
-    const cand = { verdict: { id, version, packageSha256: v.packageSha256 }, packageBytes };
+    const hosts = await checkHosts(c, ref, manifest.permissions.network);
+    const cand: Candidate = {
+      verdict: { id, version, packageSha256: v.packageSha256 },
+      packageBytes,
+    };
     // The probe spends time too: what the roles may use is read AFTER it.
     let baseline: EvalBaseline | undefined;
     let tests: LivenessEntry["tests"];
@@ -202,20 +287,7 @@ async function checkPackage(
       baseline = await runBaseline(c, cand, at);
       if (hasEvals) tests = await runSuites(c, cand, at);
     }
-    const raw = {
-      checkedAt,
-      ...(hosts !== undefined && hosts.declared > 0 && { hosts }),
-      ...(tests !== undefined && { tests }),
-      ...(baseline !== undefined && { baseline }),
-    };
-    try {
-      return parseLivenessEntry(raw);
-    } catch (e) {
-      deps.io.log(
-        `liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`,
-      );
-      return undefined;
-    }
+    return assembleEntry(c, ref, { checkedAt, hosts, tests, baseline });
   } finally {
     removeQuietly((p) => rmSync(p, { recursive: true, force: true }), dir);
   }
@@ -297,10 +369,17 @@ export async function runLivenessCheck(
   assertGateway(opts.gateway);
   deps.git.fetchRefs([PAGES_BRANCH], { cwd: opts.workspace });
   const index = await readVerifiedIndex(deps.git, opts.workspace);
+  if (readRegistryLivenessKey(index) === undefined) {
+    // Nothing could be signed, so run no extension code: liveness-sign refuses on its own.
+    deps.io.log(
+      "::notice::this registry's index names no liveness key, so no checks were run; run `nimbus registry maintain set-liveness-key`",
+    );
+    return writeResults(opts, deps, Object.create(null) as Record<string, LivenessEntry>);
+  }
   const work = mkdtempSync(join(deps.tmpdir(), "nimbus-registry-liveness-"));
   const extensions = Object.create(null) as Record<string, LivenessEntry>;
   try {
-    const ctx: Ctx = { opts, deps, work, deadline, index };
+    const ctx: Ctx = { opts, deps, work, deadline, index, hostAllowance: createHostAllowance() };
     for (const { id, version } of newestStableVersions(index)) {
       try {
         // NOSONAR S9382: sequential by design - one sandboxed role at a time
@@ -315,6 +394,14 @@ export async function runLivenessCheck(
   } finally {
     rmSync(work, { recursive: true, force: true });
   }
+  return writeResults(opts, deps, extensions);
+}
+
+function writeResults(
+  opts: LivenessCheckOptions,
+  deps: LivenessCheckDeps,
+  extensions: Record<string, LivenessEntry>,
+): LivenessResults {
   const results: LivenessResults = {
     format: LIVENESS_RESULTS_FORMAT,
     nimbusVersion: opts.nimbusVersion,
