@@ -653,16 +653,30 @@ describe("runEvalBaselineSession", () => {
     expect(stageEntries()).toEqual([]);
   });
 
-  test("a throw on both attempts is no-listing, and its text appears nowhere in the result", async () => {
+  /** The thrown error of a baseline session that must not resolve. */
+  async function faultOf(p: Promise<unknown>): Promise<EvalRunError> {
+    const err = await p.then(
+      (b) => {
+        throw new Error(`expected a throw, got ${JSON.stringify(b)}`);
+      },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    return err as EvalRunError;
+  }
+
+  test("a listing call that rejects is a thrown fault at once, carrying none of its text", async () => {
     const { createClient, created } = listingFactory([{ throws: "forged" }]);
-    const baseline = await runEvalBaselineSession(source([]), baselineDeps(createClient));
-    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
-    expect(JSON.stringify(baseline)).not.toContain("forged");
-    expect(created).toHaveLength(2);
+    const err = await faultOf(runEvalBaselineSession(source([]), baselineDeps(createClient)));
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(err.message).not.toContain("forged");
+    expect(created).toHaveLength(1);
+    expect(created.map((c) => c.disconnects)).toEqual([1]);
+    expect(stageEntries()).toEqual([]);
   });
 
-  test("a failure then a success is passed", async () => {
-    const { createClient, created } = listingFactory([{ throws: "first" }, {}]);
+  test("a failed listing then a good one is passed", async () => {
+    const { createClient, created } = listingFactory([{ errors: { k: "first" } }, {}]);
     const baseline = await runEvalBaselineSession(source([]), baselineDeps(createClient));
     expect(baseline).toEqual({ scorer: 1, passed: true, tools: 1 });
     expect(created).toHaveLength(2);
@@ -690,10 +704,14 @@ describe("runEvalBaselineSession", () => {
     expect(created).toHaveLength(1);
   });
 
-  test("a listing with no entry for the server is no-listing", async () => {
-    const { createClient } = listingFactory([{ definitions: { other: { echo: GOOD_DEF } } }]);
-    const baseline = await runEvalBaselineSession(source([]), baselineDeps(createClient));
-    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+  test("a listing with no error and no entry for the server is a thrown fault at once", async () => {
+    const { createClient, created } = listingFactory([
+      { definitions: { other: { echo: GOOD_DEF } } },
+    ]);
+    const err = await faultOf(runEvalBaselineSession(source([]), baselineDeps(createClient)));
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(created).toHaveLength(1);
+    expect(stageEntries()).toEqual([]);
   });
 
   test("attempt 1 is disconnected and its stage removed before attempt 2's client is built", async () => {
@@ -703,9 +721,10 @@ describe("runEvalBaselineSession", () => {
       const attempt = ++n;
       events.push(`create${attempt} stages=${stageEntries().length}`);
       return {
-        listToolDefinitionsWithErrors: async () => {
-          throw new Error("no");
-        },
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {},
+          errors: { server: "no" },
+        }),
         disconnect: async () => {
           events.push(`disconnect${attempt}`);
         },
@@ -716,18 +735,20 @@ describe("runEvalBaselineSession", () => {
     expect(stageEntries()).toEqual([]);
   });
 
-  test("a createClient that throws is no-listing after two attempts, without its text", async () => {
+  test("a createClient that throws is a thrown fault at once, without its text", async () => {
     let calls = 0;
-    const baseline = await runEvalBaselineSession(
-      source([]),
-      baselineDeps(() => {
-        calls += 1;
-        throw new Error("forged client text");
-      }),
+    const err = await faultOf(
+      runEvalBaselineSession(
+        source([]),
+        baselineDeps(() => {
+          calls += 1;
+          throw new Error("forged client text");
+        }),
+      ),
     );
-    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
-    expect(JSON.stringify(baseline)).not.toContain("forged");
-    expect(calls).toBe(2);
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(err.message).not.toContain("forged");
+    expect(calls).toBe(1);
     expect(stageEntries()).toEqual([]);
   });
 

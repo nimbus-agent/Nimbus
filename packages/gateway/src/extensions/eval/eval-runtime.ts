@@ -343,17 +343,33 @@ const LISTING_TIMEOUT: EvalBaseline = {
   failure: "listing-timeout",
 };
 
-/** What one attempt's listing says. Child-supplied text is never copied into the result. */
+/**
+ * The client itself failed, on the runner's side. No child can be at fault: Mastra reports a
+ * server's own failure in `errors`, so a failed baseline must not be signed for this. The text is
+ * fixed, so nothing the client or a child said reaches a document.
+ */
+function listingClientFault(): EvalRunError {
+  return new EvalRunError(
+    "ERR_EVAL_START_FAILED",
+    "the MCP client failed on the runner before it could report a tool listing",
+  );
+}
+
+/**
+ * What one attempt's listing says. Only an `errors` entry can be the package's doing, so only that
+ * is `no-listing`; a rejection or a listing with neither an error nor our server is a client fault.
+ * Child-supplied text is never copied into the result.
+ */
 function judgeListing(settled: Settled, serverKey: string): EvalBaseline {
   if (settled.kind === "timeout") return LISTING_TIMEOUT;
-  if (settled.kind === "threw") return NO_LISTING;
+  if (settled.kind === "threw") throw listingClientFault();
   const listing = settled.value as Awaited<
     ReturnType<EvalListingClient["listToolDefinitionsWithErrors"]>
   >;
   if (Object.keys(listing.errors).length > 0) return NO_LISTING;
   const defs = listing.definitions;
   if (typeof defs !== "object" || defs === null || !Object.hasOwn(defs, serverKey)) {
-    return NO_LISTING;
+    throw listingClientFault();
   }
   return judgeToolDefinitions(defs[serverKey]);
 }
@@ -373,7 +389,8 @@ async function baselineAttempt(
         [serverKey]: spec,
       });
     } catch {
-      return NO_LISTING;
+      // No child exists yet, and the constructor sees only the config this gateway built.
+      throw listingClientFault();
     }
     const live = client;
     const settled = await settleWithin(
@@ -398,8 +415,10 @@ async function baselineAttempt(
  * stale-stage sweep) spawn the package's server under the SAME eval spec as `runEvalSession`, list
  * its tool definitions and judge them structurally. One more attempt, from a fresh stage, after a
  * `no-listing` or `listing-timeout`; an `invalid-tool` is a fact about the definitions and is not
- * retried. A stage or sandbox failure throws `EvalRunError`; every client is disconnected and every
- * stage removed whatever happens. This is a displayed fact, not a score.
+ * retried. A stage or sandbox failure, or a fault in the client itself, throws `EvalRunError` at
+ * once: none of them is the package's, and a failed baseline is signed into an immutable version.
+ * Every client is disconnected and every stage removed whatever happens. This is a displayed fact,
+ * not a score.
  */
 export async function runEvalBaselineSession(
   src: EvalPackageSource,
