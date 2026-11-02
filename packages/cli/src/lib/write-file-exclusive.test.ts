@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WriteFileError, writeFileExclusive } from "./write-file-exclusive.ts";
@@ -50,5 +50,25 @@ describe("writeFileExclusive", () => {
       /could not write .*: ENOSPC/,
     );
     expect(existsSync(p)).toBe(false);
+  });
+
+  test("a failed overwrite leaves the old file byte-identical and no temp file behind", () => {
+    const p = join(dir, "a.txt");
+    writeFileSync(p, "old body");
+    const writeFd = (): void => {
+      throw Object.assign(new Error("disk"), { code: "ENOSPC" });
+    };
+    expect(() => writeFileExclusive(p, bytes("new"), { overwrite: true, writeFd })).toThrow(
+      /could not write .*: ENOSPC/,
+    );
+    expect(readFileSync(p, "utf8")).toBe("old body");
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
+  });
+
+  test("a successful overwrite leaves only the target in the directory", () => {
+    const p = join(dir, "a.txt");
+    writeFileSync(p, "old");
+    writeFileExclusive(p, bytes("new"), { overwrite: true });
+    expect(readdirSync(dir)).toEqual(["a.txt"]);
   });
 });

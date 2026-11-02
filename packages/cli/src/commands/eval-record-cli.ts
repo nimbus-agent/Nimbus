@@ -78,7 +78,35 @@ function resolveOut(pkgAbs: string, out: string): { rel: string; abs: string } |
   if (!isEvalSuiteFile(rel)) {
     return "--out must be a file directly in evals/ named <name>.eval.json";
   }
+  const name = rel.slice("evals/".length);
+  if (hasUnsafeNameChar(name)) return "--out must not contain ':' or control characters";
+  if (isReservedDeviceName(name)) return "--out must not name a Windows reserved device";
   return { rel, abs };
+}
+
+/** `:` (an NTFS alternate data stream) or a control character, refused on every OS. */
+function hasUnsafeNameChar(name: string): boolean {
+  for (const ch of name) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (ch === ":" || code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
+
+const RESERVED_DEVICE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i;
+
+/** CON, PRN, AUX, NUL, COM1-9, LPT1-9 before the first dot: a device on Windows, refused everywhere. */
+function isReservedDeviceName(name: string): boolean {
+  return RESERVED_DEVICE.test(name.split(".")[0] ?? "");
+}
+
+/** Whether two file names are the same file: case-insensitive wherever the filesystem usually is. */
+export function sameFileName(
+  a: string,
+  b: string,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  return platform === "linux" ? a === b : a.toLowerCase() === b.toLowerCase();
 }
 
 /**
@@ -89,7 +117,7 @@ function existingTotals(evalsDir: string, targetName: string, warn: (s: string) 
   let suites = 0;
   let cases = 0;
   for (const name of readdirSync(evalsDir).sort()) {
-    if (name === targetName || !isEvalSuiteFile(`evals/${name}`)) continue;
+    if (sameFileName(name, targetName) || !isEvalSuiteFile(`evals/${name}`)) continue;
     try {
       cases += parseEvalSuite(name, readFileSync(join(evalsDir, name))).cases.length;
       suites += 1;
@@ -161,6 +189,10 @@ export function writeRecordedSuite(
   const dir = lstatOrNull(evalsDir);
   if (dir === null) mkdirSync(evalsDir);
   else if (!dir.isDirectory()) throw new WriteFileError("evals is not a plain directory");
+  const target = lstatOrNull(plan.outAbs);
+  if (target !== null && !target.isFile()) {
+    throw new WriteFileError(`${plan.outRel} is not a regular file; refusing to replace it`);
+  }
   writeFileExclusive(plan.outAbs, serialiseEvalSuite(doc.suite), { overwrite: plan.force });
 }
 

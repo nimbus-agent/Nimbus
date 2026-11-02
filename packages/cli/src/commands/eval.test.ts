@@ -920,6 +920,12 @@ describe("runEval --record", () => {
     ["a subdirectory", "evals/sub/x.eval.json"],
     ["a file outside evals/", "x.eval.json"],
     ["a non-suite name", "evals/x.json"],
+    ["a colon in the name", "evals/a:b.eval.json"],
+    ["a control character in the name", "evals/ab.eval.json"],
+    ["the reserved device CON", "evals/CON.eval.json"],
+    ["the reserved device nul", "evals/nul.eval.json"],
+    ["the reserved device COM1", "evals/com1.eval.json"],
+    ["the reserved device LPT9", "evals/Lpt9.eval.json"],
   ])("--out with %s is refused before the role is spawned, writing nothing", async (_n, out) => {
     const s = setup();
     expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--out", out], s.deps)).toBe(2);
@@ -964,6 +970,20 @@ describe("runEval --record", () => {
     expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--force"], s.deps)).toBe(0);
     expect(parseEvalSuite("x", readFileSync(target)).name).toBe("golden");
   });
+
+  test.skipIf(!canSymlink())(
+    "--force onto a symlinked target is refused before the role is spawned",
+    async () => {
+      const s = setup();
+      mkdirSync(join(s.pkg, "evals"));
+      const real = join(s.root, "real.txt");
+      writeFileSync(real, "KEEP");
+      symlinkSync(real, join(s.pkg, "evals", "golden.eval.json"), "file");
+      expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--force"], s.deps)).toBe(2);
+      expect(s.calls).toEqual([]);
+      expect(readFileSync(real, "utf8")).toBe("KEEP");
+    },
+  );
 
   function nineteenSuites(): Record<string, string> {
     const files: Record<string, string> = {};
