@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793609066185,
+  "lastUpdate": 1793610201217,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5aca6dd78ea93117981e5ffdde45fa338c5a1897",
-          "message": "chore: release main (#1190)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.2</summary>\n\n##\n[2.4.2](https://github.com/nimbus-agent/Nimbus/compare/v2.4.1...v2.4.2)\n(2026-08-15)\n\n\n### Bug Fixes\n\n* **egress:** count the whole prove window, not the first page of it\n([#1189](https://github.com/nimbus-agent/Nimbus/issues/1189))\n([1743437](https://github.com/nimbus-agent/Nimbus/commit/1743437229cc4b9fec8387fede74ced92f8d0453))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-15T06:34:49+03:00",
-          "tree_id": "8e566c1ee9cb876f41539d31b250db89d39ac79a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5aca6dd78ea93117981e5ffdde45fa338c5a1897"
-        },
-        "date": 1786765599733,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.6450028999949,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.2377903500077,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 227.3093427000007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "d25dcdb9406fc89b755464b5430425419774f2d9",
+          "message": "chore: release main (#1853)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.15.0</summary>\n\n##\n[10.15.0](https://github.com/nimbus-agent/Nimbus/compare/v10.14.2...v10.15.0)\n(2026-11-02)\n\n\n### Features\n\n* **extensions:** show what the sandbox will actually do, on every\npermission surface\n([#1852](https://github.com/nimbus-agent/Nimbus/issues/1852))\n([51953ee](https://github.com/nimbus-agent/Nimbus/commit/51953ee8f308ec56fcc30ad6d31c7979e0e8df66))\n* **extensions:** state who tested a package, and show a score drop on\nupdate ([#1854](https://github.com/nimbus-agent/Nimbus/issues/1854))\n([ec4ebf6](https://github.com/nimbus-agent/Nimbus/commit/ec4ebf6a20966e1683b74bf2daef800706bd9d52))\n* **registry:** sign a Nimbus-owned baseline for every package, and let\nmaintain add sign scores\n([#1857](https://github.com/nimbus-agent/Nimbus/issues/1857))\n([81202a5](https://github.com/nimbus-agent/Nimbus/commit/81202a56afa77bd0ebe2325241fb4c69d084db18))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-02T10:52:45+02:00",
+          "tree_id": "48644ee1dd2aab6ad07f82c731e9bd5e74e6bf13",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/d25dcdb9406fc89b755464b5430425419774f2d9"
+        },
+        "date": 1793610197470,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 280.9724678500021,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 281.16663435000373,
             "unit": "ms"
           }
         ]
