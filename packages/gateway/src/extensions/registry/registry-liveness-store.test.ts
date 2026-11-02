@@ -48,6 +48,14 @@ describe("recordLivenessAccepted", () => {
   });
 });
 
+describe("key alternation", () => {
+  test("K1@5, K2@1, K1@3 are each accepted", () => {
+    expect(recordLivenessAccepted(db, "r", f(5, "a", "K1"))).toBe("accepted");
+    expect(recordLivenessAccepted(db, "r", f(1, "b", "K2"))).toBe("accepted");
+    expect(recordLivenessAccepted(db, "r", f(3, "c", "K1"))).toBe("accepted");
+  });
+});
+
 describe("floor deletion", () => {
   test("deleteLivenessFloor removes the row", () => {
     recordLivenessAccepted(db, "r", f(1));

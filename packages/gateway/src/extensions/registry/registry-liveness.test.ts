@@ -175,6 +175,21 @@ describe("readRegistryLiveness", () => {
     expect(Date.now() - started).toBeLessThan(500);
   });
 
+  test("a fetch that ignores the signal and never resolves is still bounded, and records no floor", async () => {
+    const started = Date.now();
+    const r = await read(
+      deps(() => json(null), {
+        fetchFn: () => new Promise<Response>(() => {}),
+        livenessTimeoutMs: 100,
+      }),
+    );
+    expect(r).toEqual({ state: "unavailable" });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(
+      (db.query("SELECT COUNT(*) AS n FROM registry_liveness_state").get() as { n: number }).n,
+    ).toBe(0);
+  });
+
   test("air gap is unavailable with no egress row", async () => {
     const doc = await file();
     expect(await read(deps(() => json(doc), { enforceAirGap: () => true }))).toEqual({
