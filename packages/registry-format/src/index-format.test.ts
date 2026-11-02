@@ -4,6 +4,7 @@ import nacl from "tweetnacl";
 import { MAX_ROLE_PACK_MANIFEST_BYTES } from "./caps.ts";
 import { publisherKeyFingerprint } from "./fingerprint.ts";
 import {
+  canonicalKeyBytes,
   MAX_INDEX_BYTES,
   parseRegistryIndex,
   type RegistryIndex,
@@ -13,6 +14,7 @@ import {
   readRegistryStatements,
   registryIndexDigest,
   registryIndexSigningBytes,
+  sameKeyBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
@@ -588,5 +590,28 @@ describe("readRegistryLivenessKey", () => {
   test("invalid for anything else", () => {
     expect(readRegistryLivenessKey({ ...parsed, livenessKey: 42 })).toBe("invalid");
     expect(readRegistryLivenessKey({ ...parsed, livenessKey: "short" })).toBe("invalid");
+  });
+});
+
+describe("canonicalKeyBytes / sameKeyBytes", () => {
+  const alias = `${ROOT_KEY.slice(0, 42)}${"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"["ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/".indexOf(ROOT_KEY[42] as string) + 1]}=`;
+
+  test("a canonical key gives its 32 bytes; a padding-bit alias, junk and non-strings give none", () => {
+    expect(canonicalKeyBytes(ROOT_KEY)).toEqual(KEYPAIR.publicKey);
+    expect(alias).not.toBe(ROOT_KEY);
+    expect(canonicalKeyBytes(alias)).toBeUndefined();
+    expect(canonicalKeyBytes("short")).toBeUndefined();
+    expect(canonicalKeyBytes(42)).toBeUndefined();
+  });
+
+  test("sameKeyBytes compares canonical keys by bytes and never an alias", () => {
+    expect(sameKeyBytes(ROOT_KEY, ROOT_KEY)).toBe(true);
+    expect(sameKeyBytes(ROOT_KEY, alias)).toBe(false);
+    expect(sameKeyBytes(ROOT_KEY, encodeBase64(nacl.sign.keyPair().publicKey))).toBe(false);
+  });
+
+  test("readRegistryLivenessKey calls an alias invalid", () => {
+    const parsed = { livenessKey: alias } as unknown as RegistryIndex;
+    expect(readRegistryLivenessKey(parsed)).toBe("invalid");
   });
 });

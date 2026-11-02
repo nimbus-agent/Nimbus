@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:ac69b391666f00dd686a9bbf05622c7a5fae5166671d6ddaf97953ceb816c5be
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:1cc6303a502d97305a4f7edb35789db958319f3b554e884154dbf42c75d781de
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5998,11 +5998,24 @@ function readRegistryReportUrl(index) {
     return;
   }
 }
+function canonicalKeyBytes(b64) {
+  if (typeof b64 !== "string" || !KEY_RE3.test(b64))
+    return;
+  const bytes = new Uint8Array(Buffer.from(b64, "base64"));
+  if (bytes.length !== 32)
+    return;
+  return Buffer.from(bytes).toString("base64") === b64 ? bytes : undefined;
+}
+function sameKeyBytes(a, b) {
+  const x = canonicalKeyBytes(a);
+  const y = canonicalKeyBytes(b);
+  return x !== undefined && y !== undefined && Buffer.from(x).equals(y);
+}
 function readRegistryLivenessKey(index) {
   const v = index.livenessKey;
   if (v === undefined)
     return;
-  return typeof v === "string" && KEY_RE3.test(v) ? v : "invalid";
+  return typeof v === "string" && canonicalKeyBytes(v) !== undefined ? v : "invalid";
 }
 function registryIndexSigningBytes(index) {
   const { signature: _omitted, ...rest } = index;
@@ -12664,10 +12677,10 @@ async function attemptSign(opts, seed, ownKey, deps) {
   if (indexKey === "invalid") {
     throw new Error("refusing to sign: this registry's index names a malformed liveness key");
   }
-  if (indexKey !== ownKey) {
+  if (!sameKeyBytes(indexKey, ownKey)) {
     throw new Error(`refusing to sign: the liveness-key input (public key fingerprint ${publisherKeyFingerprint(ownKey)}) is not this registry's liveness key (fingerprint ${publisherKeyFingerprint(indexKey)})`);
   }
-  if (indexKey === index.rootKey) {
+  if (sameKeyBytes(indexKey, index.rootKey)) {
     throw new Error(`refusing to sign: the liveness key (fingerprint ${publisherKeyFingerprint(indexKey)}) is this registry's root key; the two must be different keys`);
   }
   const read = readLivenessResults(opts.results, deps.now(), opts.nimbusVersion, io);

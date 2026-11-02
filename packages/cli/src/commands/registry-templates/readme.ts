@@ -45,7 +45,8 @@ ${namespace}The **Registry check** workflow validates it against the signed inde
 reviewer. It also runs the package, in the sandbox with no network and no credentials, in two
 ways. For any version that is not a starter pack, it starts the server to list its tools and
 checks each definition's shape (the baseline). When the version holds \`evals/\`, it runs its eval
-suites. The summary shows what each one gave. A green check is a reviewer aid, not a guarantee: a pull request can edit the check workflow
+suites. The summary shows what each one gave.
+A green check is a reviewer aid, not a guarantee: a pull request can edit the check workflow
 itself. The sign workflow does both runs again in its own \`score\` job. A version with \`evals/\`
 and no valid score is not signed; a baseline never stops a version being signed, and whatever it
 recorded is signed into that version.

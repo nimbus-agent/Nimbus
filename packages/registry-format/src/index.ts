@@ -81,6 +81,7 @@ export {
 } from "./extension-id.ts";
 export { publisherKeyFingerprint } from "./fingerprint.ts";
 export {
+  canonicalKeyBytes,
   isValidSemver,
   MAX_INDEX_BYTES,
   parseRegistryIndex,
@@ -97,6 +98,7 @@ export {
   readRegistryStatements,
   registryIndexDigest,
   registryIndexSigningBytes,
+  sameKeyBytes,
   verifyRegistryIndexPinned,
   verifyRegistryIndexSelf,
 } from "./index-format.ts";

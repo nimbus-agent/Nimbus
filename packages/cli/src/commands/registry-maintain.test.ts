@@ -643,6 +643,42 @@ describe("registry maintain set-liveness-key", () => {
     expect(readFileSync(join(dir, "index.json"), "utf8")).toBe(before);
   });
 
+  /** The same 32 bytes spelled with non-zero padding bits in the last character. */
+  const alias = (k: string): string => {
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    return `${k.slice(0, 42)}${chars[chars.indexOf(k[42] as string) + 1]}=`;
+  };
+
+  test("a non-canonical alias of the root key is refused as the root key", async () => {
+    const { dir, key } = await init();
+    const root = readIndexFile(join(dir, "index.json")).rootKey;
+    const before = readFileSync(join(dir, "index.json"), "utf8");
+    expect(alias(root)).not.toBe(root);
+    expect(Buffer.from(alias(root), "base64").equals(Buffer.from(root, "base64"))).toBe(true);
+    expect(
+      await runRegistryMaintain(["set-liveness-key", dir, alias(root), "--key", key], io),
+    ).toBe(2);
+    expect(err.join("")).toContain("root key");
+    expect(readFileSync(join(dir, "index.json"), "utf8")).toBe(before);
+  });
+
+  test("a non-canonical liveness key is refused as malformed", async () => {
+    const { dir, key } = await init();
+    expect(
+      await runRegistryMaintain(["set-liveness-key", dir, alias(livenessPub(3)), "--key", key], io),
+    ).toBe(2);
+    expect(err.join("")).toContain("canonical");
+  });
+
+  test("--generate says to keep the key file outside every clone", async () => {
+    const { dir, key } = await init();
+    await runRegistryMaintain(
+      ["set-liveness-key", dir, "--generate", "--liveness-key", join(tmp, "lk2"), "--key", key],
+      io,
+    );
+    expect(out.join("")).toContain("outside every clone");
+  });
+
   test("needs exactly one of a public key and --generate", async () => {
     const { dir, key } = await init();
     expect(await runRegistryMaintain(["set-liveness-key", dir, "--key", key], io)).toBe(2);

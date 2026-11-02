@@ -265,6 +265,14 @@ describe("runLivenessSign", () => {
       await refuse(ROOT_KEY_INPUT, /root key/);
     });
 
+    test("a non-canonical alias of the root key in the index is refused", async () => {
+      const root = b64(publicKeyFromSeed(ROOT_SEED));
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      const alias = `${root.slice(0, 42)}${chars[chars.indexOf(root[42] as string) + 1]}=`;
+      await setIndexLivenessKey(repo, alias);
+      await refuse(ROOT_KEY_INPUT, /malformed|root key/);
+    });
+
     test("a malformed key", async () => {
       await refuse("not-a-key", /liveness-key/);
     });

@@ -346,11 +346,30 @@ export function readRegistryReportUrl(index: RegistryIndex): string | undefined 
   }
 }
 
-/** The index's liveness key: `undefined` when absent, `"invalid"` when present but malformed. */
+/**
+ * The 32 bytes of a canonical base64 Ed25519 public key, or `undefined`. Canonical means the text
+ * round-trips: a final character with non-zero padding bits decodes to the same bytes as another
+ * spelling, so keys must be compared as these bytes, never as text.
+ */
+export function canonicalKeyBytes(b64: unknown): Uint8Array | undefined {
+  if (typeof b64 !== "string" || !KEY_RE.test(b64)) return undefined;
+  const bytes = new Uint8Array(Buffer.from(b64, "base64"));
+  if (bytes.length !== 32) return undefined;
+  return Buffer.from(bytes).toString("base64") === b64 ? bytes : undefined;
+}
+
+/** True when both are canonical keys naming the same 32 bytes. */
+export function sameKeyBytes(a: unknown, b: unknown): boolean {
+  const x = canonicalKeyBytes(a);
+  const y = canonicalKeyBytes(b);
+  return x !== undefined && y !== undefined && Buffer.from(x).equals(y);
+}
+
+/** The index's liveness key: `undefined` when absent, `"invalid"` when present but not canonical. */
 export function readRegistryLivenessKey(index: RegistryIndex): string | undefined | "invalid" {
   const v = index.livenessKey;
   if (v === undefined) return undefined;
-  return typeof v === "string" && KEY_RE.test(v) ? v : "invalid";
+  return typeof v === "string" && canonicalKeyBytes(v) !== undefined ? v : "invalid";
 }
 
 /** SHA-256 (hex) of the index's signing bytes: what a client stores to refuse equivocation. */

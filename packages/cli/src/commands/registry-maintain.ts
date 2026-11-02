@@ -15,6 +15,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
   alreadyCarried,
+  canonicalKeyBytes,
   emptyIndex,
   judgeScoreEntry,
   type PublishVerdict,
@@ -73,7 +74,7 @@ import {
 } from "./registry-templates/workflows.ts";
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--report-url <https url>] [--github [--liveness-key <path>] [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--scores <scores.json>] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>] | set-liveness-key <dir> (<public key> | --generate [--liveness-key <path>] [--force]) [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--report-url <https url>] [--github [--liveness-key <path>] [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--scores <scores.json>] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>] | set-liveness-key <dir> (<public key> | --generate [--liveness-key <path>] [--force]) [--key <path>] (--generate: keep the key file outside every clone of the registry repo)\n";
 
 function keyPathOf(p: ParsedArgs): string {
   return p.options.get("--key") ?? join(homedir(), ".nimbus", "registry-key");
@@ -82,9 +83,6 @@ function keyPathOf(p: ParsedArgs): string {
 function livenessKeyPathOf(p: ParsedArgs): string {
   return p.options.get("--liveness-key") ?? join(homedir(), ".nimbus", "registry-liveness-key");
 }
-
-/** A raw Ed25519 public key as base64: 32 bytes, so 43 characters and one `=`. */
-const PUBLIC_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 
 /** Read the folder's index and require it to be signed by THIS key before anything is changed. */
 function loadOwnedIndex(dir: string, seed: Uint8Array): RegistryIndex {
@@ -586,13 +584,19 @@ function livenessKeyArg(p: ParsedArgs, dir: string, rootKeyPath: string, rootKey
     if (p.options.has("--liveness-key") || p.flags.has("--force")) {
       throw new MaintainError("--liveness-key and --force go with --generate");
     }
-    if (!PUBLIC_KEY_RE.test(given as string)) {
-      throw new MaintainError(
-        "the liveness key must be an Ed25519 public key (base64 of 32 bytes)",
-      );
-    }
-    if (given === rootKey) {
+    // Compared as decoded bytes, and before the canonical check, so a non-canonical spelling of
+    // the root key is refused as the root key (its padding bits decode away to the same 32 bytes).
+    const rootBytes = canonicalKeyBytes(rootKey);
+    if (
+      rootBytes !== undefined &&
+      Buffer.from(rootBytes).equals(Buffer.from(given as string, "base64"))
+    ) {
       throw new MaintainError("the liveness key must differ from the registry's root key");
+    }
+    if (canonicalKeyBytes(given) === undefined) {
+      throw new MaintainError(
+        "the liveness key must be an Ed25519 public key (canonical base64 of 32 bytes)",
+      );
     }
     return { publicKey: given as string };
   }
@@ -627,6 +631,9 @@ async function maintainSetLivenessKey(args: string[], io: MaintainIo): Promise<v
   io.stdout(`liveness fingerprint: ${publisherKeyFingerprint(publicKey)}\n`);
   if (written !== undefined) {
     io.stdout(`liveness key file:    ${written.path} (keep it secret and backed up)\n`);
+    io.stdout(
+      "keep that file outside every clone of the registry repository (this command can only check <dir>)\n",
+    );
   }
 }
 

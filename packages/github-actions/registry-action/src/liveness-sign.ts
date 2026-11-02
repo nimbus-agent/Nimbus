@@ -28,6 +28,7 @@ import {
   publicKeyFromSeed,
   publisherKeyFingerprint,
   readRegistryLivenessKey,
+  sameKeyBytes,
   signLivenessFile,
   verifyLivenessFile,
 } from "../../../registry-format/src/index.ts";
@@ -219,12 +220,12 @@ async function attemptSign(
   if (indexKey === "invalid") {
     throw new Error("refusing to sign: this registry's index names a malformed liveness key");
   }
-  if (indexKey !== ownKey) {
+  if (!sameKeyBytes(indexKey, ownKey)) {
     throw new Error(
       `refusing to sign: the liveness-key input (public key fingerprint ${publisherKeyFingerprint(ownKey)}) is not this registry's liveness key (fingerprint ${publisherKeyFingerprint(indexKey)})`,
     );
   }
-  if (indexKey === index.rootKey) {
+  if (sameKeyBytes(indexKey, index.rootKey)) {
     throw new Error(
       `refusing to sign: the liveness key (fingerprint ${publisherKeyFingerprint(indexKey)}) is this registry's root key; the two must be different keys`,
     );
