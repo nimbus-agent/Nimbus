@@ -186,6 +186,7 @@ describe("installFromRegistry", () => {
     await setup([{ version: "1.0.0" }]);
     await installFromRegistry(deps(), { id: ID });
     const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["baseline"]).toBe("no baseline check published");
     expect(req["tested"]).toBe("not evaluated");
     expect(String(req["history"])).toStartWith("first published ");
     expect(String(req["history"])).toContain("(recorded by main)");
@@ -195,6 +196,7 @@ describe("installFromRegistry", () => {
       type: "extension.install",
       payload: { ...req },
     }) as Record<string, unknown>;
+    expect(shown["baseline"]).toBe(req["baseline"]);
     expect(shown["tested"]).toBe(req["tested"]);
     expect(shown["history"]).toBe(req["history"]);
     expect(shown["checked"]).toBe(req["checked"]);
@@ -231,7 +233,7 @@ describe("installFromRegistry", () => {
     const { evidence: _evidence, ...bare } = pkg;
     await installVerifiedRegistryPackage(d, bare, "stable");
     const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
-    for (const k of ["tested", "history", "checked", "evidenceScope"]) {
+    for (const k of ["baseline", "tested", "history", "checked", "evidenceScope"]) {
       expect(k in req).toBe(false);
     }
   });

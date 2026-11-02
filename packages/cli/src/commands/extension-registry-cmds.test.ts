@@ -214,6 +214,13 @@ describe("nimbus extension info --remote", () => {
   // The texts the gateway test (`registry-rpc.test.ts`, "info states who tested the newest
   // version, its history and its checks") asserted for a scored newest version.
   const GATEWAY_EVIDENCE = {
+    baseline: {
+      state: "checked",
+      passed: true,
+      tools: 3,
+      checkedBy: "main",
+      text: "starts and lists 3 valid tools (checked by main)",
+    },
     tested: {
       state: "scored",
       score: 66,
@@ -279,6 +286,7 @@ describe("nimbus extension info --remote", () => {
       "Files: ",
       "Publisher: ",
       "Provenance: ",
+      "Baseline: ",
       "Tested: ",
       "History: ",
       "Checked: ",
@@ -287,9 +295,23 @@ describe("nimbus extension info --remote", () => {
     ].map(at);
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
+    expect(out).toContain("Baseline: starts and lists 3 valid tools (checked by main)\n");
     expect(out).toContain(`Tested: ${GATEWAY_EVIDENCE.tested.text}\n`);
     expect(out).toContain(`History: ${GATEWAY_EVIDENCE.history.text}\n`);
     expect(out).toContain("Checked: no checks published\n");
+  });
+
+  test("a hostile baseline text stays on one line", async () => {
+    const h = harness(
+      evidenceAnswer({
+        ...GATEWAY_EVIDENCE,
+        baseline: { ...GATEWAY_EVIDENCE.baseline, text: "fine\u001b[2J\nBaseline: forged" },
+      }),
+    );
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    const lines = h.stdout().split("\n");
+    expect(lines.filter((l) => l.startsWith("Baseline: "))).toHaveLength(1);
+    expect(h.stdout()).not.toContain("\u001b");
   });
 
   test("a hostile evidence text stays on one line", async () => {
@@ -307,10 +329,10 @@ describe("nimbus extension info --remote", () => {
     expect(h.stdout()).not.toContain("\u001b");
   });
 
-  test("an older gateway sends no evidence and none of the three labels print", async () => {
+  test("an older gateway sends no evidence and none of the four labels print", async () => {
     const h = harness(evidenceAnswer(undefined));
     await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
-    expect(h.stdout()).not.toMatch(/^(Tested|History|Checked): /m);
+    expect(h.stdout()).not.toMatch(/^(Baseline|Tested|History|Checked): /m);
   });
 
   test("names the newest version's registry-verified provenance; a malformed one is none (PR 4c)", async () => {

@@ -9478,6 +9478,83 @@ describe("I49 — extension code runs for evaluation only offline, without crede
       "extensions/eval/eval-runtime.ts",
       "extensions/installed-eval.ts",
     ]);
+    // The baseline door is a second entry to the same spawn: only the role (`--baseline`) and the
+    // runtime that defines it name it.
+    const baselineCallers = files
+      .filter((f) => /\brunEvalBaselineSession\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(baselineCallers).toEqual([
+      "extensions/eval/eval-role.ts",
+      "extensions/eval/eval-runtime.ts",
+    ]);
+  });
+
+  test("behavioural: the baseline door gets the same zero-reach policy, eval id and baseline-only env", async () => {
+    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
+      "./platform/sandbox/sandbox-policy.ts"
+    );
+    const { isExtensionBaselineEnvKey } = await import("./extensions/spawn-env.ts");
+    const { loadEvalPackage } = await import("./extensions/eval/eval-source.ts");
+    const { runEvalBaselineSession } = await import("./extensions/eval/eval-runtime.ts");
+    const { pkg, sandboxDir, runtimeReadPaths } = writePackage();
+    const src = await loadEvalPackage(pkg, { baselineOnly: true });
+    expect(src.suites).toEqual([]);
+    const order: string[] = [];
+    const policies: unknown[] = [];
+    const specs: { env: Record<string, string> }[] = [];
+    const baseline = await runEvalBaselineSession(src, {
+      sandboxDir,
+      runtimeReadPaths,
+      canConfine: (p) => {
+        order.push("canConfine");
+        policies.push(p);
+        return null;
+      },
+      createClient: (_id, servers) => {
+        order.push("createClient");
+        const [key] = Object.keys(servers);
+        for (const spec of Object.values(servers)) specs.push(spec);
+        return {
+          listToolDefinitionsWithErrors: async () => ({
+            definitions: {
+              [String(key)]: { echo: { name: "echo", inputSchema: { type: "object" } } },
+            },
+            errors: {},
+          }),
+          disconnect: async () => {},
+        };
+      },
+    });
+    expect(baseline).toEqual({ scorer: 1, passed: true, tools: 1 });
+    expect(order).toEqual(["canConfine", "createClient"]);
+    expect(policies).toEqual([
+      {
+        id: `eval.${src.serviceId}`,
+        permissions: { network: [], filesystem: { read: runtimeReadPaths, write: [] } },
+      },
+    ]);
+    expect(specs).toHaveLength(1);
+    const env = specs[0]?.env ?? {};
+    const policy = JSON.parse(env[SANDBOX_POLICY_ENV] ?? "null") as {
+      id: string;
+      permissions: { network: unknown[]; filesystem: { read: string[]; write: string[] } };
+    };
+    expect(policy.id).toBe(`eval.${src.serviceId}`);
+    expect(policy.permissions.network).toEqual([]);
+    expect(policy.permissions.filesystem).toEqual({ read: runtimeReadPaths, write: [] });
+    const cwd = env[SANDBOX_CWD_ENV] ?? "";
+    expect(isAbsolute(cwd)).toBe(true);
+    expect(relative(sandboxDir, cwd).startsWith("..")).toBe(false);
+    const plantedValues = Object.values(PLANTED);
+    for (const [k, v] of Object.entries(env)) {
+      expect(Object.hasOwn(PLANTED, k)).toBe(false);
+      expect(plantedValues).not.toContain(v);
+      const allowed =
+        isExtensionBaselineEnvKey(k) || k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV;
+      expect(allowed).toBe(true);
+    }
+    expect(readdirSync(sandboxDir).filter((n) => n !== "ext-stage")).toEqual([]);
   });
 
   test("behavioural: a gateway-hosted eval the LOCAL owner denies at the real executor gate runs nothing and stages nothing", async () => {

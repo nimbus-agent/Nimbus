@@ -32,6 +32,15 @@ import { signIndex, validatePublish } from "../../../registry-format/src/index.t
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
 import {
+  runScore,
+  type ScoreDeps,
+  type ScoresFile,
+  scoreCandidate,
+  scoreVersion,
+  writeFileAtomic,
+} from "./score.ts";
+import { BASELINE_MIN_RUN_MS, BASELINE_ROLE_TIMEOUT_MS } from "./score-baseline.ts";
+import {
   type KillProcess,
   ROLE_DRAIN_GRACE_MS,
   ROLE_KILL_BOUND_MS,
@@ -41,14 +50,10 @@ import {
   type RoleRun,
   type RoleSpawnOptions,
   roleRunner,
-  runScore,
+  SCORE_MIN_RUN_MS,
   SCORE_RUN_BUDGET_MS,
-  type ScoreDeps,
-  type ScoresFile,
   type SpawnLike,
-  scoreCandidate,
-  writeFileAtomic,
-} from "./score.ts";
+} from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   copyRegistryRepo,
@@ -88,6 +93,12 @@ function okDoc(id: string, version: string, report: unknown = REPORT): string {
   return `${JSON.stringify({ ok: true, extensionId: id, version, report })}\n`;
 }
 
+const BASELINE = { scorer: 1 as const, passed: true as const, tools: 3 };
+
+function baselineDoc(id: string, version: string, baseline: unknown = BASELINE): string {
+  return `${JSON.stringify({ ok: true, extensionId: id, version, baseline })}\n`;
+}
+
 const run = (over: Partial<RoleRun> = {}): RoleRun => ({
   code: 0,
   stdout: "",
@@ -119,6 +130,9 @@ let out: string;
 let summaries: string[];
 let warnings: string[];
 let logs: string[];
+/** Every role run in order, suite or baseline: the order is part of what is tested. */
+let order: string[];
+let baselineCalls: { dir: string; timeoutMs: number | undefined }[];
 let roleCalls: { gateway: string; dir: string; files: string[]; timeoutMs: number | undefined }[];
 /** The fake clock score mode reads its run budget from. */
 let clock: number;
@@ -136,6 +150,8 @@ beforeEach(() => {
   warnings = [];
   logs = [];
   roleCalls = [];
+  baselineCalls = [];
+  order = [];
   clock = 1_000_000;
 });
 
@@ -166,23 +182,60 @@ function fakeRole(answer: (ref: string) => RoleRun | Promise<RoleRun>): ScoreDep
       id: string;
       version: string;
     };
+    order.push(`suite ${m.id}@${m.version}`);
     return answer(`${m.id}@${m.version}`);
   };
 }
 
-function deps(runRole: ScoreDeps["runRole"]): ScoreDeps {
+/** A fake baseline role answering per `<id>@<version>`. */
+function fakeBaseline(
+  answer: (ref: string) => RoleRun | Promise<RoleRun>,
+): ScoreDeps["runBaseline"] {
+  return async (_gw, dir, timeoutMs) => {
+    baselineCalls.push({ dir, timeoutMs });
+    const m = JSON.parse(readFileSync(join(dir, "nimbus.extension.json"), "utf8")) as {
+      id: string;
+      version: string;
+    };
+    order.push(`baseline ${m.id}@${m.version}`);
+    return answer(`${m.id}@${m.version}`);
+  };
+}
+
+const baselineOk = fakeBaseline((ref) => {
+  const [id = "", version = ""] = ref.split("@");
+  return run({ stdout: baselineDoc(id, version) });
+});
+
+/** A gateway older than `--baseline`: the role exits 2 on the flag it does not know. */
+const oldGateway = fakeBaseline(() =>
+  run({
+    code: 2,
+    stderrTail: "usage: __nimbus-eval --package <absolute dir> [--suite <file>] [--json]\n",
+  }),
+);
+
+function deps(
+  runRole: ScoreDeps["runRole"],
+  runBaseline: ScoreDeps["runBaseline"] = baselineOk,
+): ScoreDeps {
   return {
     git: gitTree,
     io,
     tmpdir: () => scratch,
     validate: validatePublish,
     runRole,
+    runBaseline,
     now: () => clock,
   };
 }
 
-const score = (runRole: ScoreDeps["runRole"], gw = gateway): Promise<ScoresFile> =>
-  runScore({ workspace: repo.workspace, gateway: gw, out }, deps(runRole));
+const score = (
+  runRole: ScoreDeps["runRole"],
+  gw = gateway,
+  runBaseline: ScoreDeps["runBaseline"] = baselineOk,
+): Promise<ScoresFile> =>
+  runScore({ workspace: repo.workspace, gateway: gw, out }, deps(runRole, runBaseline));
 
 const readScores = (): unknown => JSON.parse(readFileSync(out, "utf8"));
 
@@ -207,15 +260,20 @@ describe("score mode", () => {
     expect(roleCalls).toEqual([]);
   });
 
-  test("an evals candidate is scored from the extracted package; one without evals/ is absent", async () => {
+  test("an evals candidate is scored from the extracted package; one without evals/ gets a baseline alone", async () => {
     const withEvals = await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
-    await publish({ id: "acme/plain" });
+    const plain = await publish({ id: "acme/plain" });
     pushMaintainer(repo, "main", "publish two");
 
     const r = await score(echoOk);
 
     expect(r).toEqual({
-      "acme/scored@1.0.0": { packageSha256: withEvals.pkgSha, quality: QUALITY },
+      "acme/scored@1.0.0": {
+        packageSha256: withEvals.pkgSha,
+        quality: QUALITY,
+        baseline: BASELINE,
+      },
+      "acme/plain@1.0.0": { packageSha256: plain.pkgSha, baseline: BASELINE },
     });
     expect(readScores()).toEqual(r);
     expect(roleCalls).toHaveLength(1);
@@ -305,6 +363,19 @@ describe("score mode", () => {
     expect(warnings[0]).toContain(remedy);
   });
 
+  test("a long role error leaves the remedy whole in the warning", async () => {
+    await publish({ id: "acme/bad", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    await score(
+      fakeRole(() =>
+        run({
+          stdout: `${JSON.stringify({ ok: false, error: { code: "ERR_EVAL_SUITE_INVALID", message: "m".repeat(2000) } })}\n`,
+        }),
+      ),
+    );
+    expect(warnings.some((w) => w.endsWith("time budget that later versions need."))).toBe(true);
+  });
+
   test("with no failed version the summary carries no remedy", async () => {
     await publish({ id: "acme/good", evals: { "basic.eval.json": SUITE } });
     pushMaintainer(repo, "main", "publish");
@@ -360,6 +431,7 @@ describe("score mode", () => {
     expect(r).toEqual({
       "acme/scored@1.0.0": {
         packageSha256: p.pkgSha,
+        baseline: BASELINE,
         error: { code: "ERR_EVAL_SUITE_INVALID", message: "bad suite" },
       },
     });
@@ -425,7 +497,11 @@ describe("score mode", () => {
     expect(first !== undefined && "error" in first ? first.error.code : "").toBe(
       "ERR_EVAL_ROLE_FAILED",
     );
-    expect(r["acme/second@1.0.0"]).toEqual({ packageSha256: second.pkgSha, quality: QUALITY });
+    expect(r["acme/second@1.0.0"]).toEqual({
+      packageSha256: second.pkgSha,
+      quality: QUALITY,
+      baseline: BASELINE,
+    });
   });
 
   test("a version that failed its eval binds nothing for the next candidate (sign will not sign it)", async () => {
@@ -447,7 +523,11 @@ describe("score mode", () => {
           : run({ stdout: okDoc("acme/x", "1.1.0") }),
       ),
     );
-    expect(r["acme/x@1.1.0"]).toEqual({ packageSha256: next.pkgSha, quality: QUALITY });
+    expect(r["acme/x@1.1.0"]).toEqual({
+      packageSha256: next.pkgSha,
+      quality: QUALITY,
+      baseline: BASELINE,
+    });
   });
 
   test("a scored version binds the next candidate, as sign will", async () => {
@@ -543,6 +623,267 @@ describe("score mode", () => {
       'input "nimbus-gateway" must be an absolute path to an existing file',
     );
     expect(existsSync(out)).toBe(false);
+  });
+});
+
+/** `score` with the clock moved so that exactly `left` ms of the run budget remain once candidates are reached. */
+function scoreWithBudgetLeft(
+  left: number,
+  runRole: ScoreDeps["runRole"],
+  runBaseline: ScoreDeps["runBaseline"] = baselineOk,
+): Promise<ScoresFile> {
+  return runScore(
+    { workspace: repo.workspace, gateway, out },
+    {
+      ...deps(runRole, runBaseline),
+      validate: (...a) => {
+        clock += SCORE_RUN_BUDGET_MS - left;
+        return validatePublish(...a);
+      },
+    },
+  );
+}
+
+describe("score mode: the baseline", () => {
+  test("a package without a suite gets {packageSha256, baseline}, and the suite role never runs", async () => {
+    const p = await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish");
+    const r = await score(echoOk);
+    expect(r).toEqual({ "acme/plain@1.0.0": { packageSha256: p.pkgSha, baseline: BASELINE } });
+    expect(readScores()).toEqual(r);
+    expect(roleCalls).toEqual([]);
+    expect(baselineCalls).toHaveLength(1);
+    expect(basename(baselineCalls[0]?.dir ?? "")).toBe("x");
+    expect(baselineCalls[0]?.timeoutMs).toBe(BASELINE_ROLE_TIMEOUT_MS);
+  });
+
+  test("a package with a suite gets both, and the baseline runs before the suite", async () => {
+    const p = await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    const r = await score(echoOk);
+    expect(r).toEqual({
+      "acme/scored@1.0.0": { packageSha256: p.pkgSha, quality: QUALITY, baseline: BASELINE },
+    });
+    expect(order).toEqual(["baseline acme/scored@1.0.0", "suite acme/scored@1.0.0"]);
+  });
+
+  test("a gateway older than --baseline: a suite package keeps its quality, a plain one has no entry, a warning names each, the run stays green", async () => {
+    const s = await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish two");
+    const r = await score(echoOk, gateway, oldGateway);
+    expect(r).toEqual({ "acme/scored@1.0.0": { packageSha256: s.pkgSha, quality: QUALITY } });
+    expect(warnings).toHaveLength(2);
+    expect(warnings.some((w) => w.includes("acme/plain@1.0.0") && w.includes("exited 2"))).toBe(
+      true,
+    );
+    expect(warnings.some((w) => w.includes("acme/scored@1.0.0"))).toBe(true);
+    expect(JSON.stringify(readScores())).not.toContain("usage:");
+  });
+
+  test("the role's stderr reaches a warning as one clipped line, and never scores.json", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish");
+    const noisy = fakeBaseline(() =>
+      run({ code: 1, stderrTail: `boom\n::error::injected\n${"x".repeat(5000)}` }),
+    );
+    const r = await score(echoOk, gateway, noisy);
+    expect(r).toEqual({});
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).not.toMatch(/[\r\n]/);
+    expect((warnings[0] ?? "").length).toBeLessThan(1400);
+    expect(JSON.stringify(readScores())).not.toContain("injected");
+  });
+
+  test("a starter pack calls neither runner and has no entry", async () => {
+    await publish({ id: "acme/pack", starterPack: true });
+    pushMaintainer(repo, "main", "publish");
+    const r = await score(echoOk);
+    expect(r).toEqual({});
+    expect(order).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  test("under BASELINE_MIN_RUN_MS left no baseline starts: a plain package has no entry and a warning", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish");
+    const r = await scoreWithBudgetLeft(BASELINE_MIN_RUN_MS - 1, echoOk);
+    expect(r).toEqual({});
+    expect(order).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("acme/plain@1.0.0");
+  });
+
+  test("a suite package with SCORE_MIN_RUN_MS or more left still runs its suite, with no baseline", async () => {
+    const p = await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    const r = await scoreWithBudgetLeft(SCORE_MIN_RUN_MS, echoOk);
+    expect(r).toEqual({ "acme/scored@1.0.0": { packageSha256: p.pkgSha, quality: QUALITY } });
+    expect(order).toEqual(["suite acme/scored@1.0.0"]);
+  });
+
+  test("under SCORE_MIN_RUN_MS a suite package keeps ERR_EVAL_BUDGET", async () => {
+    await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish");
+    const r = await scoreWithBudgetLeft(SCORE_MIN_RUN_MS - 1, echoOk);
+    const e = r["acme/scored@1.0.0"];
+    expect(e !== undefined && "error" in e ? e.error.code : "").toBe("ERR_EVAL_BUDGET");
+    expect(order).toEqual([]);
+  });
+
+  test("the baseline's deadline is the shorter of its own and what is left", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish");
+    await scoreWithBudgetLeft(150_000, echoOk);
+    expect(baselineCalls[0]?.timeoutMs).toBe(150_000);
+  });
+
+  test("a failed baseline is written, annotated, and the candidate still binds the next one", async () => {
+    await publish({ id: "acme/x", version: "1.0.0" });
+    const next = await publish({ id: "acme/x", version: "1.1.0" });
+    pushMaintainer(repo, "main", "publish two");
+    const failedDoc = baselineDoc("acme/x", "1.0.0", {
+      scorer: 1,
+      passed: false,
+      tools: 0,
+      failure: "no-listing",
+    });
+    const r = await score(
+      echoOk,
+      gateway,
+      fakeBaseline((ref) =>
+        ref === "acme/x@1.0.0"
+          ? run({ stdout: failedDoc })
+          : run({ stdout: baselineDoc("acme/x", "1.1.0") }),
+      ),
+    );
+    expect(r["acme/x@1.0.0"]).toMatchObject({
+      baseline: { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+    });
+    // 1.1.0 is validated against the signed index plus 1.0.0 (same publisher key), so it is scored too.
+    expect(r["acme/x@1.1.0"]).toEqual({ packageSha256: next.pkgSha, baseline: BASELINE });
+    expect(warnings.some((w) => w.includes("acme/x@1.0.0") && w.includes("no-listing"))).toBe(true);
+  });
+
+  test("the summary states the baseline as a fact per version, never as a verdict", async () => {
+    await publish({ id: "acme/a-plain" });
+    await publish({ id: "acme/b-broken" });
+    await publish({ id: "acme/c-scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish three");
+    await score(
+      echoOk,
+      gateway,
+      fakeBaseline((ref) => {
+        const [id = "", version = ""] = ref.split("@");
+        return ref.startsWith("acme/b-")
+          ? run({
+              stdout: baselineDoc(id, version, {
+                scorer: 1,
+                passed: false,
+                tools: 2,
+                failure: "invalid-tool",
+              }),
+            })
+          : run({ stdout: baselineDoc(id, version) });
+      }),
+    );
+    const summary = summaries.join("\n");
+    expect(summary).toContain("- `acme/a-plain@1.0.0`: baseline: starts and lists 3 valid tools");
+    expect(summary).toContain("- `acme/b-broken@1.0.0`: baseline: failed with `invalid-tool`");
+    expect(summary).toContain(
+      "- `acme/c-scored@1.0.0`: 50/100 (1 of 2 cases passed); baseline: starts and lists 3 valid tools",
+    );
+    expect(summary).not.toContain("Not signed");
+    expect(summary).not.toMatch(/\b(works|passed all|safe)\b/i);
+  });
+
+  test("a version that ends with no entry is listed with why; no claim of no version", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish a plain version");
+    const r = await score(
+      echoOk,
+      gateway,
+      fakeBaseline(() => run({ code: 2, stderrTail: "usage: __nimbus-eval\n" })),
+    );
+    expect(r).toEqual({});
+    const summary = summaries.join("\n");
+    expect(summary).not.toContain("No unsigned version to score.");
+    expect(summary).toContain("**No entry recorded:**");
+    expect(summary).toContain("- `acme/plain@1.0.0`: no baseline check (`ERR_EVAL_ROLE_FAILED`)");
+    expect(warnings.join("\n")).toContain("it is signed without a baseline");
+  });
+
+  test("a suite result with no baseline says why beside the score", async () => {
+    await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish a scored version");
+    await score(
+      echoOk,
+      gateway,
+      fakeBaseline(() => run({ code: 2 })),
+    );
+    expect(summaries.join("\n")).toContain(
+      "- `acme/scored@1.0.0`: 50/100 (1 of 2 cases passed); no baseline check (`ERR_EVAL_ROLE_FAILED`)",
+    );
+  });
+
+  test("a no-listing baseline prints the sandbox line; another failure does not", async () => {
+    const notice = "Check the job's sandbox setup before trusting it";
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish a plain version");
+    const failing = (failure: string) =>
+      fakeBaseline((ref) => {
+        const [id = "", version = ""] = ref.split("@");
+        return run({
+          stdout: baselineDoc(id, version, { scorer: 1, passed: false, tools: 0, failure }),
+        });
+      });
+    await score(echoOk, gateway, failing("no-listing"));
+    expect(summaries.join("\n")).toContain(notice);
+    expect(summaries.join("\n")).toContain("the result is signed into the version");
+    summaries = [];
+    await score(echoOk, gateway, failing("invalid-tool"));
+    expect(summaries.join("\n")).not.toContain(notice);
+  });
+
+  test("scores.json stays {} and the summary says so when nothing was recorded", async () => {
+    const r = await score(echoOk);
+    expect(r).toEqual({});
+    expect(readScores()).toEqual({});
+    expect(summaries.join("\n")).toContain("No unsigned version to score.");
+  });
+});
+
+describe("scoreVersion", () => {
+  test("a starter pack is nothing to record", async () => {
+    const calls: string[] = [];
+    const never: RoleRun = run();
+    const e = await scoreVersion(
+      {
+        verdict: {
+          id: "acme/pack",
+          version: "1.0.0",
+          packageSha256: "a".repeat(64),
+          hasEvals: false,
+          starterPack: true,
+        },
+        packageBytes: new Uint8Array(),
+      },
+      { gateway, work: scratch },
+      {
+        runRole: async () => {
+          calls.push("suite");
+          return never;
+        },
+        runBaseline: async () => {
+          calls.push("baseline");
+          return never;
+        },
+        now: () => clock,
+        io,
+      },
+    );
+    expect(e).toBeUndefined();
+    expect(calls).toEqual([]);
   });
 });
 

@@ -13,6 +13,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  type EvalBaseline,
+  type EvalBaselineDocument,
+  parseEvalBaselineDocument,
+} from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../src/platform/sandbox/sandbox-cwd.ts";
 import {
@@ -22,6 +27,7 @@ import {
   EVAL_FIXTURE_ID,
   EVAL_FIXTURE_STDERR_MARKER,
   EVAL_FIXTURE_SUITE,
+  EVAL_FIXTURE_TOOL_COUNT,
   evalSandboxAvailable,
   GATEWAY_ENTRY,
   installDefaultHelper,
@@ -82,6 +88,56 @@ function documentOf(r: RoleResult): RoleDocument {
   return JSON.parse(lines[0] ?? "") as RoleDocument;
 }
 
+/** The same one-line rule, for the baseline's document (parsed by the shared validator). */
+function baselineDocumentOf(r: RoleResult): EvalBaselineDocument {
+  const context = `exit ${r.code}\n--- stdout ---\n${r.stdout}\n--- stderr (tail) ---\n${r.stderr.slice(-6000)}`;
+  if (r.code !== 0) throw new Error(`role failed: ${context}`);
+  const lines = r.stdout.split("\n").filter((l) => l !== "");
+  if (lines.length !== 1 || !r.stdout.endsWith("\n")) {
+    throw new Error(`expected exactly one stdout line: ${context}`);
+  }
+  const doc = parseEvalBaselineDocument(lines[0] ?? "");
+  if (doc === null) throw new Error(`not a baseline document: ${context}`);
+  return doc;
+}
+
+/**
+ * A package whose server speaks MCP's stdio framing by hand and lists exactly `tools`, so a listing
+ * no SDK server would send reaches the real `MCPClient`.
+ */
+function writeRawListingPackage(dir: string, id: string, tools: readonly unknown[]): void {
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  const server = `const TOOLS = ${JSON.stringify(JSON.stringify(tools))};
+let buf = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (d) => {
+  buf += d;
+  for (let i = buf.indexOf("\\n"); i >= 0; i = buf.indexOf("\\n")) {
+    const line = buf.slice(0, i);
+    buf = buf.slice(i + 1);
+    if (line.trim() === "") continue;
+    const m = JSON.parse(line);
+    if (m.id === undefined) continue;
+    const result =
+      m.method === "initialize"
+        ? { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "raw", version: "1.0.0" } }
+        : m.method === "tools/list"
+          ? { tools: JSON.parse(TOOLS) }
+          : {};
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+  }
+});
+`;
+  writeFileSync(join(dir, "dist", "index.js"), server, "utf8");
+  writeFileSync(
+    join(dir, "nimbus.extension.json"),
+    JSON.stringify({ id, version: "1.0.0", entry: "dist/index.js" }, null, 2),
+    "utf8",
+  );
+}
+
+const GOOD_RAW_TOOL = { name: "a", inputSchema: { type: "object" } };
+
 describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed extension", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-eval-e2e-"));
   const scaffoldRoot = join(tmp, "scaffold");
@@ -101,9 +157,9 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
   let restoreHelper: () => void = () => {};
   let first: RoleResult | undefined;
 
-  function evalRole(dir: string): Promise<RoleResult> {
+  function evalRole(dir: string, ...flags: string[]): Promise<RoleResult> {
     return runCommand(
-      ["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir],
+      ["bun", GATEWAY_ENTRY, "__nimbus-eval", "--package", dir, ...flags],
       REPO,
       roleEnv,
       ROLE_TIMEOUT_MS,
@@ -206,6 +262,78 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
     },
     ROLE_TIMEOUT_MS + 10_000,
   );
+
+  // The proof of the Mastra contract the baseline relies on (`listToolDefinitionsWithErrors`: the
+  // result keyed by the server key, each definition carrying its raw `name` and `inputSchema`):
+  // a fake client cannot give it, so this runs the real role, the real `MCPClient` and a real
+  // sandboxed child.
+  test(
+    "--baseline lists the real package's tools: passed, one JSON document",
+    async () => {
+      const r = await evalRole(pkg, "--baseline");
+      const doc = baselineDocumentOf(r);
+      if (!doc.ok) throw new Error(`baseline error: ${JSON.stringify(doc.error)}\n${r.stderr}`);
+      expect(doc.extensionId).toBe(EXTENSION_ID);
+      expect(doc.baseline).toEqual({ scorer: 1, passed: true, tools: EVAL_FIXTURE_TOOL_COUNT });
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  test(
+    "--baseline on a server that exits at once is no-listing, never a thrown error",
+    async () => {
+      const doc = baselineDocumentOf(await evalRole(deadPkg, "--baseline"));
+      expect(doc.ok).toBe(true);
+      if (!doc.ok) return;
+      expect(doc.baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  // What the real `MCPClient` does to a listing the docs state limits for. A fake cannot show it.
+  test.each([
+    [
+      "a tool named __proto__ is invalid-tool, though the client's record shows no such key",
+      "e2e.rawproto",
+      [GOOD_RAW_TOOL, { name: "__proto__", inputSchema: { type: "object", properties: { x: 1 } } }],
+      { scorer: 1, passed: false, tools: 2, failure: "invalid-tool" },
+    ],
+    [
+      "a duplicate name leaves only the last tool: the stated limit",
+      "e2e.rawdup",
+      [{ name: "a", inputSchema: { type: "object", properties: { x: 1 } } }, GOOD_RAW_TOOL],
+      { scorer: 1, passed: true, tools: 1 },
+    ],
+    [
+      "a non-array required fails the client's own parsing: no-listing",
+      "e2e.rawrequired",
+      [{ name: "a", inputSchema: { type: "object", required: "x" } }],
+      { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+    ],
+    [
+      "a type other than object fails the client's own parsing: no-listing",
+      "e2e.rawtype",
+      [{ name: "a", inputSchema: { type: "array" } }],
+      { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+    ],
+  ])(
+    "--baseline: %s",
+    async (_title, id, tools, want) => {
+      const dir = join(tmp, id);
+      writeRawListingPackage(dir, id, tools);
+      const r = await evalRole(dir, "--baseline");
+      const doc = baselineDocumentOf(r);
+      if (!doc.ok) throw new Error(`baseline error: ${JSON.stringify(doc.error)}\n${r.stderr}`);
+      expect(doc.baseline).toEqual(want as EvalBaseline);
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  test("--baseline with --suite is a usage error: exit 2 and no stdout", async () => {
+    const r = await evalRole(pkg, "--baseline", "--suite", "evals/basic.eval.json");
+    expect(r.code).toBe(2);
+    expect(r.stdout).toBe("");
+  });
 
   test("every eval stage was made under the redirected sandbox dir, and none is left behind", () => {
     if (first === undefined) throw new Error("the scoring test did not run");

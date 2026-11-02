@@ -29,6 +29,8 @@ export interface TestVersion {
   requires?: { connectors: string[] };
   /** The index entry's registry-signed `quality`, carried raw (a test may make it malformed). */
   quality?: unknown;
+  /** The index entry's registry-signed `baseline`, carried raw (a test may make it malformed). */
+  baseline?: unknown;
 }
 
 export interface TestRegistry {
@@ -219,6 +221,7 @@ async function buildTestVersion(
       entryHash: opts.entryHashOverride ?? entryHash,
       publishedAt: "2026-10-18T10:00:00Z",
       ...(v.quality === undefined ? {} : { quality: v.quality }),
+      ...(v.baseline === undefined ? {} : { baseline: v.baseline }),
     },
   };
 }

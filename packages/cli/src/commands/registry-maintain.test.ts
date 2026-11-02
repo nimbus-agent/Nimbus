@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -12,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  packExtensionDir,
   parseTrustStatement,
   publicKeyFromSeed,
   publisherKeyFingerprint,
@@ -58,10 +60,23 @@ const sha = (b: Uint8Array): string => createHash("sha256").update(b).digest("he
 
 async function makeExtension(
   name: string,
-  opts: { version?: string; signed?: boolean; seed?: Uint8Array; id?: string } = {},
+  opts: {
+    version?: string;
+    signed?: boolean;
+    seed?: Uint8Array;
+    id?: string;
+    suite?: boolean;
+  } = {},
 ): Promise<string> {
   const dir = join(tmp, name);
   mkdirSync(join(dir, "dist"), { recursive: true });
+  if (opts.suite === true) {
+    mkdirSync(join(dir, "evals"), { recursive: true });
+    writeFileSync(
+      join(dir, "evals", "basic.eval.json"),
+      JSON.stringify({ format: 1, name: "basic", cases: [] }),
+    );
+  }
   writeFileSync(join(dir, "dist", "index.js"), "export default 1;\n");
   const pair = opts.seed === undefined ? generateEd25519Keypair() : undefined;
   const privkey = opts.seed ?? (pair as { privkey: Uint8Array }).privkey;
@@ -542,5 +557,192 @@ describe("registry maintain revoke-key / takedown / set-report-url (trust layer 
       ),
     ).toBe(0);
     expect(readIndexFile(join(second, "index.json")).reportUrl).toBe("https://example.com/r2");
+  });
+});
+
+describe("registry maintain add --scores", () => {
+  const QUALITY = {
+    scorer: 1,
+    score: 50,
+    cases: 2,
+    passed: 1,
+    rubrics: {
+      exact: { cases: 2, passed: 1 },
+      "json-match": { cases: 0, passed: 0 },
+      "one-of": { cases: 0, passed: 0 },
+    },
+  };
+  const BASELINE = { scorer: 1, passed: true, tools: 3 };
+  const ID_VERSION = "com.example.tool@1.0.0";
+
+  /** The sha256 of the bytes `maintain add` publishes for this directory. */
+  async function packedSha(extDir: string): Promise<string> {
+    const tgz = join(tmp, "probe.tgz");
+    await packExtensionDir(extDir, tgz);
+    return sha(readFileSync(tgz));
+  }
+
+  function writeScores(entries: Record<string, unknown>): string {
+    const path = join(tmp, "scores.json");
+    writeFileSync(path, JSON.stringify(entries));
+    return path;
+  }
+
+  function versionOf(dir: string) {
+    return readIndexFile(join(dir, "index.json")).extensions["com.example.tool"]?.versions["1.0.0"];
+  }
+
+  /** Everything a refused add must leave alone. */
+  function folderState(dir: string): { index: string; hasExtension: boolean } {
+    return {
+      index: readFileSync(join(dir, "index.json"), "utf8"),
+      hasExtension: existsSync(join(dir, "extensions", "com.example.tool")),
+    };
+  }
+
+  async function expectRefusedAdd(dir: string, args: string[], message: string): Promise<void> {
+    const before = folderState(dir);
+    err.length = 0;
+    expect(await runRegistryMaintain(["add", dir, ...args], io)).toBe(2);
+    expect(err.join("")).toContain(message);
+    expect(folderState(dir)).toEqual(before);
+  }
+
+  async function addWith(dir: string, key: string, ext: string, scores: string): Promise<number> {
+    return await runRegistryMaintain(["add", dir, ext, "--scores", scores, "--key", key], io);
+  }
+
+  test("a valid quality and baseline are both signed into the entry", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    const scores = writeScores({
+      [ID_VERSION]: { packageSha256: await packedSha(ext), quality: QUALITY, baseline: BASELINE },
+    });
+    expect(await addWith(dir, key, ext, scores)).toBe(0);
+    expect(verifyIndexSignature(readIndexFile(join(dir, "index.json")))).toBe(true);
+    expect(versionOf(dir)?.quality).toEqual(QUALITY);
+    expect(versionOf(dir)?.baseline).toEqual(BASELINE);
+    expect(out.join("")).toContain(", quality 50/100, baseline passed");
+  });
+
+  test("a suite package with no entry is refused and the folder is untouched", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    await expectRefusedAdd(
+      dir,
+      [ext, "--scores", writeScores({}), "--key", key],
+      "refusing to add com.example.tool@1.0.0",
+    );
+  });
+
+  test("another package hash is refused the same way", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    const scores = writeScores({
+      [ID_VERSION]: { packageSha256: "0".repeat(64), quality: QUALITY },
+    });
+    await expectRefusedAdd(
+      dir,
+      [ext, "--scores", scores, "--key", key],
+      "refusing to add com.example.tool@1.0.0",
+    );
+  });
+
+  test("an unreadable or non-JSON file refuses before the package is read", async () => {
+    const { dir, key } = await init();
+    const notJson = join(tmp, "bad.json");
+    writeFileSync(notJson, "{nope");
+    // The source does not exist: were it read first, the refusal would be about the source.
+    const missingSource = join(tmp, "no-such-extension");
+    for (const file of [notJson, join(tmp, "absent.json")]) {
+      await expectRefusedAdd(
+        dir,
+        [missingSource, "--scores", file, "--key", key],
+        "refusing to sign: the scores input",
+      );
+    }
+  });
+
+  test("a no-suite package with a valid baseline signs the baseline", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    const scores = writeScores({
+      [ID_VERSION]: { packageSha256: await packedSha(ext), baseline: BASELINE },
+    });
+    expect(await addWith(dir, key, ext, scores)).toBe(0);
+    expect(versionOf(dir)?.baseline).toEqual(BASELINE);
+    expect(versionOf(dir)).not.toHaveProperty("quality");
+    expect(out.join("")).toContain(", baseline passed");
+    expect(out.join("")).not.toContain("quality");
+  });
+
+  test("a failed baseline is signed and reported as failed", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    const failed = { scorer: 1, passed: false, tools: 0, failure: "no-listing" };
+    const scores = writeScores({
+      [ID_VERSION]: { packageSha256: await packedSha(ext), baseline: failed },
+    });
+    expect(await addWith(dir, key, ext, scores)).toBe(0);
+    expect(versionOf(dir)?.baseline).toEqual(failed);
+    expect(out.join("")).toContain(", baseline failed");
+  });
+
+  test("a malformed baseline beside a valid quality signs the quality and says so", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    const scores = writeScores({
+      [ID_VERSION]: {
+        packageSha256: await packedSha(ext),
+        quality: QUALITY,
+        baseline: { scorer: 1, passed: true },
+      },
+    });
+    expect(await addWith(dir, key, ext, scores)).toBe(0);
+    expect(versionOf(dir)?.quality).toEqual(QUALITY);
+    expect(versionOf(dir)).not.toHaveProperty("baseline");
+    const text = out.join("");
+    expect(text).not.toContain(", baseline passed");
+    const ignored = text.split("\n").filter((l) => l.includes("baseline is invalid"));
+    expect(ignored).toHaveLength(1);
+    expect(ignored[0]).toContain("signed without a baseline");
+  });
+
+  test("nothing from the scores file path reaches the terminal as a control character", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    // The path is the owner's argument, yet the error that names it must stay on one safe line.
+    const hostile = join(tmp, "scores\u001b[31m\nforged.json");
+    err.length = 0;
+    expect(await addWith(dir, key, ext, hostile)).toBe(2);
+    const text = err.join("");
+    expect(text).not.toContain("\u001b");
+    expect(text.trimEnd().split("\n")).toHaveLength(1);
+  });
+
+  test("a missing --scores value is a usage error", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext");
+    await expectRefusedAdd(dir, [ext, "--key", key, "--scores"], "--scores needs a value");
+  });
+
+  test("without --scores neither field is written", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    expect(await runRegistryMaintain(["add", dir, ext, "--key", key], io)).toBe(0);
+    expect(versionOf(dir)).not.toHaveProperty("quality");
+    expect(versionOf(dir)).not.toHaveProperty("baseline");
+    expect(out.join("")).not.toContain("baseline");
+  });
+
+  test("a score file keyed on a directory packed bytes matches that directory", async () => {
+    const { dir, key } = await init();
+    const ext = await makeExtension("ext", { suite: true });
+    const scores = writeScores({
+      [ID_VERSION]: { packageSha256: await packedSha(ext), quality: QUALITY },
+    });
+    expect(await addWith(dir, key, ext, scores)).toBe(0);
+    expect(versionOf(dir)?.packageSha256).toBe(await packedSha(ext));
+    expect(versionOf(dir)?.quality).toEqual(QUALITY);
   });
 });

@@ -439,6 +439,7 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       <StructuredPreview
         details={{
           id: "acme.tool",
+          baseline: "starts and lists 3 valid tools (checked by main)",
           tested,
           history: "first published 2026-01-02 (10 days ago) · 3 versions (recorded by main)",
           checked: "no checks published",
@@ -449,6 +450,16 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       />,
     );
     expect(screen.getByTestId("install-evidence").textContent).toContain("What is known about it");
+    expect(screen.getByTestId("install-baseline").textContent).toBe(
+      "Baseline: starts and lists 3 valid tools (checked by main)",
+    );
+    const rows = screen.getAllByTestId(/^install-(baseline|tested|history|checked)$/);
+    expect(rows.map((r) => r.getAttribute("data-testid"))).toEqual([
+      "install-baseline",
+      "install-tested",
+      "install-history",
+      "install-checked",
+    ]);
     expect(screen.getByTestId("install-tested").textContent).toBe(`Tested: ${tested}`);
     expect(screen.getByTestId("install-history").textContent).toContain("(recorded by main)");
     expect(screen.getByTestId("install-checked").textContent).toBe("Checked: no checks published");
@@ -456,15 +467,17 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       "the other package in this plan",
     );
     // Not printed a second time as generic rows (the label or the value).
-    for (const key of ["tested", "history", "checked", "evidenceScope"]) {
+    for (const key of ["baseline", "tested", "history", "checked", "evidenceScope"]) {
       expect(screen.queryByText(key)).toBeNull();
     }
     expect(screen.getAllByText("no checks published", { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText("starts and lists 3 valid tools", { exact: false })).toHaveLength(1);
   });
 
   it("an install from a gateway that sends no evidence shows no evidence section", () => {
     render(<StructuredPreview details={{ id: "acme.tool" }} action="extension.install" />);
     expect(screen.queryByTestId("install-evidence")).toBeNull();
+    expect(screen.queryByTestId("install-baseline")).toBeNull();
   });
 
   it("a rollback heading does not say 'new version'", () => {

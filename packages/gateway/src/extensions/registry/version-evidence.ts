@@ -6,7 +6,12 @@
  * strings go through `oneLine` so none can forge a line of an approval prompt; a malformed score's
  * reason is never quoted here.
  */
-import { type RegistryVersionEntry, readVersionQuality } from "@nimbus-dev/registry-format";
+import {
+  type EvalBaselineFailure,
+  type RegistryVersionEntry,
+  readVersionBaseline,
+  readVersionQuality,
+} from "@nimbus-dev/registry-format";
 import { oneLine } from "../install-plan-text.ts";
 
 export type TestedEvidence =
@@ -23,6 +28,20 @@ export type TestedEvidence =
       readonly why: "unscored" | "malformed" | "starter-pack" | "local";
       readonly text: string;
     };
+export type BaselineEvidence =
+  | {
+      readonly state: "checked";
+      readonly passed: boolean;
+      readonly tools: number;
+      readonly failure?: EvalBaselineFailure;
+      readonly checkedBy: string;
+      readonly text: string;
+    }
+  | {
+      readonly state: "none";
+      readonly why: "unchecked" | "malformed" | "starter-pack" | "local";
+      readonly text: string;
+    };
 export type HistoryEvidence =
   | {
       readonly state: "known";
@@ -34,6 +53,7 @@ export type HistoryEvidence =
   | { readonly state: "none"; readonly text: string };
 export type CheckedEvidence = { readonly state: "none"; readonly text: string };
 export type VersionEvidence = {
+  readonly baseline: BaselineEvidence;
   readonly tested: TestedEvidence;
   readonly history: HistoryEvidence;
   readonly checked: CheckedEvidence;
@@ -106,6 +126,67 @@ function testedEvidence(o: {
   };
 }
 
+function toolCount(n: number): string {
+  return n === 1 ? "1 tool" : `${n} tools`;
+}
+
+function baselineText(
+  b: { readonly passed: boolean; readonly tools: number; readonly failure?: EvalBaselineFailure },
+  by: string,
+): string {
+  if (b.passed) {
+    if (b.tools === 0) return `starts and lists no tools (checked by ${by})`;
+    const noun = b.tools === 1 ? "tool" : "tools";
+    return `starts and lists ${b.tools} valid ${noun} (checked by ${by})`;
+  }
+  if (b.failure === "listing-timeout") {
+    return `did not answer a tool listing in time when checked offline with no credentials (checked by ${by})`;
+  }
+  if (b.failure === "invalid-tool") {
+    return b.tools === 1
+      ? `lists 1 tool, without a valid name or input schema (checked by ${by})`
+      : `lists ${toolCount(b.tools)}, at least one without a valid name or input schema (checked by ${by})`;
+  }
+  return `did not start or answer a valid tool listing when checked offline with no credentials (checked by ${by})`;
+}
+
+function baselineEvidence(o: {
+  readonly registry: string;
+  readonly versions: Readonly<Record<string, RegistryVersionEntry>>;
+  readonly version: string;
+  readonly starterPack: boolean;
+}): BaselineEvidence {
+  if (o.starterPack) {
+    return {
+      state: "none",
+      why: "starter-pack",
+      text: "not run (a starter pack runs nothing)",
+    };
+  }
+  const entry = o.versions[o.version];
+  const read = entry === undefined ? { state: "unchecked" as const } : readVersionBaseline(entry);
+  if (read.state === "invalid") {
+    return {
+      state: "none",
+      why: "malformed",
+      text: "no baseline check (the registry's record for this version is malformed)",
+    };
+  }
+  if (read.state === "unchecked") {
+    return { state: "none", why: "unchecked", text: "no baseline check published" };
+  }
+  const b = read.baseline;
+  const checkedBy = oneLine(o.registry);
+  return {
+    state: "checked",
+    passed: b.passed,
+    tools: b.tools,
+    ...(b.passed ? {} : { failure: b.failure }),
+    checkedBy,
+    text: baselineText(b, checkedBy),
+  };
+}
+
 function agoText(days: number): string {
   if (days < 0) return "dated in the future";
   if (days === 0) return "today";
@@ -146,6 +227,7 @@ export function versionEvidence(o: {
   readonly now: number;
 }): VersionEvidence {
   return {
+    baseline: baselineEvidence(o),
     tested: testedEvidence(o),
     history: historyEvidence(o.registry, o.versions, o.now),
     checked: NO_CHECKS,
@@ -154,6 +236,7 @@ export function versionEvidence(o: {
 
 export function localInstallEvidence(): VersionEvidence {
   return {
+    baseline: { state: "none", why: "local", text: "not run (from a local folder)" },
     tested: {
       state: "not-evaluated",
       why: "local",
@@ -223,7 +306,7 @@ export function qualityUnreadable(): QualityChange {
 }
 
 /**
- * The approval fields stating a package's evidence: the three lines, and, when the plan installs
+ * The approval fields stating a package's evidence: the four lines (the baseline first), and, when the plan installs
  * more than one package, a scope line saying the lines are for the root only. One builder for both
  * install doors so each states the scope the same way.
  */
@@ -232,12 +315,14 @@ export function evidenceApprovalFields(
   id: string,
   planSize: number,
 ): {
+  readonly baseline: string;
   readonly tested: string;
   readonly history: string;
   readonly checked: string;
   readonly evidenceScope?: string;
 } {
   const base = {
+    baseline: evidence.baseline.text,
     tested: evidence.tested.text,
     history: evidence.history.text,
     checked: evidence.checked.text,

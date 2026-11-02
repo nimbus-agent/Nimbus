@@ -41,6 +41,8 @@ export interface RegistryVersionEntry {
   publishedAt: string;
   /** Registry-signed eval quality; carried RAW; read with `readVersionQuality`. */
   readonly quality?: unknown;
+  /** Nimbus-owned baseline check; carried RAW; read with `readVersionBaseline`. Never a score. */
+  readonly baseline?: unknown;
 }
 
 export interface RegistryExtensionEntry {

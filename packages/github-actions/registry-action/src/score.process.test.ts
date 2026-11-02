@@ -24,7 +24,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ROLE_DRAIN_GRACE_MS, ROLE_STDOUT_MAX_BYTES, roleRunner } from "./score.ts";
+import { ROLE_DRAIN_GRACE_MS, ROLE_STDOUT_MAX_BYTES, roleRunner } from "./score-role.ts";
 
 /** Whether `pid` is a live process (a zombie awaiting its reaper is not). */
 function isAlive(pid: number): boolean {

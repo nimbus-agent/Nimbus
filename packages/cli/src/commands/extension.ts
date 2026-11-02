@@ -37,6 +37,7 @@ import { NIMBUS_VERSION } from "../version.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { runExtensionKey } from "./extension-key.ts";
+import { runExtensionPack } from "./extension-pack.ts";
 import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import {
@@ -398,12 +399,12 @@ function printExtensionInfoDeps(e: ExtensionListEntry): void {
 
 /**
  * An installed extension has no index on hand and `info` starts no registry read, so a
- * registry-sourced one names where to look; a local one prints the gateway's own three lines.
+ * registry-sourced one names where to look; a local one prints the gateway's own lines.
  */
 function installedEvidenceLines(e: ExtensionListEntry): string[] {
   if (typeof e.evidenceIn === "string") {
     return [
-      `Tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --registry ${stripControlChars(e.evidenceIn)}`,
+      `Baseline, tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --registry ${stripControlChars(e.evidenceIn)}`,
     ];
   }
   return evidenceLines(e.evidence);
@@ -1180,11 +1181,12 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
- * Subcommands that need no gateway. `publish` and `key` get the RAW args: `stripFlags` drops
- * `--channel` and its value, which would silently publish a beta as stable, and a `--reason` text.
+ * Subcommands that need no gateway. `publish`, `key` and `pack` get the RAW args: `stripFlags` drops
+ * `--channel` and its value, which would silently publish a beta as stable, a `--reason` text, and
+ * `--out`.
  */
 async function runExtensionOffline(sub: string, args: string[]): Promise<boolean> {
   if (sub === "publish") {
@@ -1194,6 +1196,11 @@ async function runExtensionOffline(sub: string, args: string[]): Promise<boolean
   }
   if (sub === "key") {
     const code = await runExtensionKey(args.slice(1));
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  if (sub === "pack") {
+    const code = await runExtensionPack(args.slice(1));
     if (code !== 0) process.exit(code);
     return true;
   }

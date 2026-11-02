@@ -25,6 +25,9 @@ export const GATEWAY_ENTRY = join(REPO, "packages", "gateway", "src", "index.ts"
 export const EVAL_FIXTURE_ID = "e2e.evalecho";
 export const EVAL_FIXTURE_STDERR_MARKER = "NIMBUS-EVAL-E2E-STDERR-MARKER";
 
+/** The tools the fixture package lists: the scaffold's `echo` plus `fail`, `net`, `structured`, `die`. */
+export const EVAL_FIXTURE_TOOL_COUNT = 5;
+
 /** What the suite scores against the fixture package, whichever path runs it. */
 export const EVAL_FIXTURE_EXPECTED = {
   cases: 7,

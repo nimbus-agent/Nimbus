@@ -24,21 +24,23 @@
  * The root key is a secret. It is parsed in memory only, never written to disk, and never named in
  * a message: refusals name fingerprints of PUBLIC keys. `main.ts` masks the input before this runs.
  */
-import { closeSync, mkdtempSync, openSync, readSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
   alreadyCarried,
   codeUnitCompare,
+  type EvalBaseline,
   type EvalQuality,
-  type PublishVerdict,
-  parseEvalQuality,
+  judgeScoreEntry,
   publicKeyFromSeed,
   publisherKeyFingerprint,
   RegistryError,
   type RegistryExtensionEntry,
   type RegistryIndex,
   readRegistryReportUrl,
+  readScores,
+  type Scores,
   signIndex,
   signRegistryRequest,
   type TrustStatement,
@@ -74,6 +76,7 @@ import {
   readVerifiedIndex,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
+import { baselineFact } from "./score-baseline.ts";
 import { commitSite, pushCommit, type SiteFile } from "./site-commit.ts";
 
 /** Inputs `sign` needs. */
@@ -141,130 +144,7 @@ interface Added {
   version: string;
   channel: string;
   quality?: EvalQuality;
-}
-
-/** The most bytes the `scores` input may hold; a larger file fails the run. */
-export const MAX_SCORES_BYTES = 4 * 1024 * 1024;
-
-/** `scores.json`, read once: its entries by key (`<id>@<version>`), still UNTRUSTED. */
-export type Scores = ReadonlyMap<string, unknown>;
-
-const errorText = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-function refuseScores(path: string, why: string): Error {
-  return new Error(`refusing to sign: the scores input (${path}) ${why}`);
-}
-
-/** How much `readAtMost` reads at a time. */
-const READ_CHUNK_BYTES = 64 * 1024;
-
-/**
- * At most `max` bytes of the file at `path`, however large the file is, read in chunks so the
- * memory held is what the file holds (up to `max`), never `max` up front.
- */
-function readAtMost(path: string, max: number): Uint8Array {
-  const fd = openSync(path, "r");
-  try {
-    const chunks: Buffer[] = [];
-    let total = 0;
-    while (total < max) {
-      const chunk = Buffer.alloc(Math.min(READ_CHUNK_BYTES, max - total));
-      const got = readSync(fd, chunk, 0, chunk.length, null);
-      if (got === 0) break;
-      chunks.push(chunk.subarray(0, got));
-      total += got;
-    }
-    return Buffer.concat(chunks, total);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-/**
- * The `scores` input, read once. A file that is unreadable, over `MAX_SCORES_BYTES`, not JSON or
- * not a JSON object fails the run: a broken artifact is not "no scores". The entries go into a
- * `Map`, so an untrusted key (`__proto__`, `toString`) is only ever a key.
- */
-export function readScores(path: string): Scores {
-  let bytes: Uint8Array;
-  try {
-    bytes = readAtMost(path, MAX_SCORES_BYTES + 1);
-  } catch (e) {
-    throw refuseScores(path, `could not be read: ${errorText(e)}`);
-  }
-  if (bytes.byteLength > MAX_SCORES_BYTES) {
-    throw refuseScores(path, `is larger than ${String(MAX_SCORES_BYTES)} bytes`);
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch {
-    throw refuseScores(path, "is not valid JSON");
-  }
-  if (!isPlainObject(parsed)) throw refuseScores(path, "is not a JSON object");
-  return new Map(Object.entries(parsed));
-}
-
-/** What a candidate's `scores.json` entry decides: sign (with a quality, or none), or skip. */
-export type QualityDecision = { ok: true; quality?: EvalQuality } | { ok: false; reason: string };
-
-/** The longest validator message a skip reason repeats. */
-const MAX_REASON_DETAIL_CHARS = 300;
-
-const MALFORMED =
-  "its scores.json entry is malformed (want exactly packageSha256 and one of quality or error); not signed without a score";
-
-/** A failed entry's error code when it looks like one; otherwise a fixed one. */
-function failedCode(error: unknown): string {
-  const c = isPlainObject(error) ? error["code"] : undefined;
-  return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
-}
-
-/**
- * The `quality` to sign for `v`, judged from the untrusted `scores` (ruling R8). No input, or no
- * eval suite in the package: sign with no quality. Otherwise only an entry under `v`'s own
- * `<id>@<version>`, for `v`'s own `packageSha256`, holding a quality `parseEvalQuality` accepts
- * signs it, and the quality signed is the one `parseEvalQuality` rebuilt (exactly its five keys).
- */
-export function qualityFor(
-  scores: Scores | undefined,
-  v: Pick<PublishVerdict, "id" | "version" | "packageSha256" | "hasEvals">,
-): QualityDecision {
-  if (scores === undefined || !v.hasEvals) return { ok: true };
-  const raw = scores.get(`${v.id}@${v.version}`);
-  if (raw === undefined) {
-    return {
-      ok: false,
-      reason: "it has eval suites and scores.json has no score for it; not signed without a score",
-    };
-  }
-  if (!isPlainObject(raw)) return { ok: false, reason: MALFORMED };
-  const keys = Object.keys(raw).sort(codeUnitCompare).join(",");
-  if (keys !== "packageSha256,quality" && keys !== "error,packageSha256") {
-    return { ok: false, reason: MALFORMED };
-  }
-  if (raw["packageSha256"] !== v.packageSha256) {
-    return {
-      ok: false,
-      reason: "its scores.json entry is for another package (packageSha256 differs); not signed",
-    };
-  }
-  if (Object.hasOwn(raw, "error")) {
-    return {
-      ok: false,
-      reason: `its eval failed (${failedCode(raw["error"])}); not signed without a score`,
-    };
-  }
-  try {
-    return { ok: true, quality: parseEvalQuality(raw["quality"]) };
-  } catch (e) {
-    const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
-    return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
-  }
+  baseline?: EvalBaseline;
 }
 
 interface Attempt {
@@ -346,10 +226,13 @@ async function takeCandidate(
   deps: SignDeps,
 ): Promise<void> {
   const { candidate, verdict: v } = o;
-  const q = qualityFor(run.scores, v);
+  const q = judgeScoreEntry(run.scores, v);
   if (!q.ok) {
     b.skipped.push({ dir: o.dir, reason: q.reason });
     return;
+  }
+  if (q.baselineIgnored !== undefined) {
+    deps.io.annotate("warning", `${v.id}@${v.version}: ${q.baselineIgnored}`);
   }
   const base = `extensions/${v.id}/${v.version}`;
   const provenance = await provenanceFor(
@@ -359,7 +242,11 @@ async function takeCandidate(
     { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") },
     run.memo,
   );
-  addVersion(b.extensions, v, b.publishedAt, provenance, q.quality);
+  addVersion(b.extensions, v, b.publishedAt, {
+    ...(provenance !== undefined && { provenance }),
+    ...(q.quality !== undefined && { quality: q.quality }),
+    ...(q.baseline !== undefined && { baseline: q.baseline }),
+  });
   b.files.push(
     { path: `${base}/manifest.json`, bytes: candidate.manifestBytes },
     { path: `${base}/package.tgz`, bytes: candidate.packageBytes },
@@ -369,6 +256,7 @@ async function takeCandidate(
     version: v.version,
     channel: v.channel,
     ...(q.quality !== undefined && { quality: q.quality }),
+    ...(q.baseline !== undefined && { baseline: q.baseline }),
   });
 }
 
@@ -550,6 +438,11 @@ function qualityNote(x: Added): string {
   return `, quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
 }
 
+/** `, baseline: …` for a version signed with a baseline, as a stated fact; empty otherwise. */
+function baselineNote(x: Added): string {
+  return x.baseline === undefined ? "" : `, baseline: ${baselineFact(x.baseline)}`;
+}
+
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
@@ -557,7 +450,8 @@ function report(io: ActionIo, a: Attempt, pushed: boolean): void {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
-    for (const x of a.added) lines.push(`- ${code(versionRef(x))} (${x.channel})${qualityNote(x)}`);
+    for (const x of a.added)
+      lines.push(`- ${code(versionRef(x))} (${x.channel})${qualityNote(x)}${baselineNote(x)}`);
     for (const id of a.statements) lines.push(`- statement ${code(id)}`);
   }
   if (a.skipped.length > 0) {

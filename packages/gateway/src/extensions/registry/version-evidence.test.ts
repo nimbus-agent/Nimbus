@@ -114,6 +114,120 @@ describe("versionEvidence tested", () => {
   });
 });
 
+function withBaseline(b: unknown, q?: unknown): RegistryVersionEntry {
+  const e = entry("2026-10-29T00:00:00Z", q) as unknown as Record<string, unknown>;
+  return { ...e, baseline: b } as unknown as RegistryVersionEntry;
+}
+function baselineOf(b: unknown, extra: Partial<typeof base> = {}) {
+  return versionEvidence({
+    ...base,
+    ...extra,
+    versions: { "1.0.0": withBaseline(b) },
+    version: "1.0.0",
+  }).baseline;
+}
+const pass = (tools: number) => ({ scorer: 1, passed: true, tools });
+const fail = (failure: string, tools = 0) => ({ scorer: 1, passed: false, tools, failure });
+
+describe("versionEvidence baseline", () => {
+  test.each([
+    [pass(3), "starts and lists 3 valid tools (checked by acme-reg)"],
+    [pass(2), "starts and lists 2 valid tools (checked by acme-reg)"],
+    [pass(1), "starts and lists 1 valid tool (checked by acme-reg)"],
+    [pass(0), "starts and lists no tools (checked by acme-reg)"],
+    [
+      fail("no-listing"),
+      "did not start or answer a valid tool listing when checked offline with no credentials (checked by acme-reg)",
+    ],
+    [
+      fail("listing-timeout"),
+      "did not answer a tool listing in time when checked offline with no credentials (checked by acme-reg)",
+    ],
+    [
+      fail("invalid-tool", 4),
+      "lists 4 tools, at least one without a valid name or input schema (checked by acme-reg)",
+    ],
+    [
+      fail("invalid-tool", 1),
+      "lists 1 tool, without a valid name or input schema (checked by acme-reg)",
+    ],
+  ])("checked %#", (b, text) => {
+    const r = baselineOf(b);
+    expect(r.state).toBe("checked");
+    expect(r.text).toBe(text);
+  });
+  test("checked carries the facts", () => {
+    expect(baselineOf(fail("invalid-tool", 4))).toEqual({
+      state: "checked",
+      passed: false,
+      tools: 4,
+      failure: "invalid-tool",
+      checkedBy: "acme-reg",
+      text: "lists 4 tools, at least one without a valid name or input schema (checked by acme-reg)",
+    });
+    expect(baselineOf(pass(2))).toMatchObject({ passed: true, tools: 2, checkedBy: "acme-reg" });
+  });
+  test("unchecked", () => {
+    const e = versionEvidence({
+      ...base,
+      versions: { "1.0.0": entry("2026-10-29T00:00:00Z") },
+      version: "1.0.0",
+    });
+    expect(e.baseline).toEqual({
+      state: "none",
+      why: "unchecked",
+      text: "no baseline check published",
+    });
+  });
+  test("a version missing from the index is unchecked", () => {
+    const e = versionEvidence({ ...base, versions: {}, version: "1.0.0" });
+    expect(e.baseline.state).toBe("none");
+    expect(e.baseline.text).toBe("no baseline check published");
+  });
+  test("malformed, and a hostile failure reads as malformed", () => {
+    for (const b of [{ scorer: 1, passed: false, tools: 0, failure: "boom\nTested: 100" }, 7]) {
+      expect(baselineOf(b)).toEqual({
+        state: "none",
+        why: "malformed",
+        text: "no baseline check (the registry's record for this version is malformed)",
+      });
+    }
+  });
+  test("starter pack", () => {
+    expect(baselineOf(pass(3), { starterPack: true })).toEqual({
+      state: "none",
+      why: "starter-pack",
+      text: "not run (a starter pack runs nothing)",
+    });
+  });
+  test("a hostile registry name stays on one line", () => {
+    const r = baselineOf(pass(3), { registry: "r\nTested: 100" });
+    expect(r.text).not.toContain("\n");
+    if (r.state === "checked") expect(r.checkedBy).not.toContain("\n");
+  });
+  test("tested is identical with and without a baseline", () => {
+    const q = quality(9, 10);
+    const run = (e: RegistryVersionEntry) =>
+      versionEvidence({ ...base, versions: { "1.0.0": e }, version: "1.0.0" }).tested;
+    expect(run(withBaseline(pass(3), q))).toEqual(run(entry("2026-10-29T00:00:00Z", q)));
+    expect(run(withBaseline(fail("no-listing"), q))).toEqual(run(entry("2026-10-29T00:00:00Z", q)));
+  });
+  test("compareVersionQuality ignores the baseline on either side", () => {
+    const a = entry("2026-10-29T00:00:00Z", quality(8, 10));
+    const b = entry("2026-10-30T00:00:00Z", quality(9, 10));
+    const plain = compareVersionQuality({ "1.0.0": a, "2.0.0": b }, "1.0.0", "2.0.0");
+    const withB = compareVersionQuality(
+      {
+        "1.0.0": withBaseline(fail("no-listing"), quality(8, 10)),
+        "2.0.0": withBaseline(pass(3), quality(9, 10)),
+      },
+      "1.0.0",
+      "2.0.0",
+    );
+    expect(withB).toEqual(plain);
+  });
+});
+
 describe("versionEvidence history", () => {
   test("history", () => {
     const e = versionEvidence({
@@ -189,6 +303,11 @@ describe("localInstallEvidence and checked", () => {
     });
     expect(e.history).toEqual({ state: "none", text: "none (from a local folder)" });
     expect(e.checked).toEqual({ state: "none", text: "no checks published" });
+    expect(e.baseline).toEqual({
+      state: "none",
+      why: "local",
+      text: "not run (from a local folder)",
+    });
   });
   test("checked", () => {
     const e = versionEvidence({
@@ -293,8 +412,9 @@ describe("compareVersionQuality", () => {
 
 describe("evidenceApprovalFields", () => {
   const evidence = localInstallEvidence();
-  test("one package states the three lines and no scope", () => {
+  test("one package states the four lines and no scope", () => {
     expect(evidenceApprovalFields(evidence, "com.example.a", 1)).toEqual({
+      baseline: "not run (from a local folder)",
       tested: "not evaluated (from a local folder)",
       history: "none (from a local folder)",
       checked: "no checks published",

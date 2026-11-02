@@ -24,9 +24,10 @@ import {
   validatePublish,
   verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
+import { MAX_SCORES_BYTES } from "../../../registry-format/src/scores-file.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import { MAX_SCORES_BYTES, runSign, type SignDeps } from "./sign.ts";
+import { runSign, type SignDeps } from "./sign.ts";
 import {
   copyRegistryRepo,
   makeExtension,
@@ -191,6 +192,42 @@ describe("sign with the scores input", () => {
     merge();
     await sign(writeScores({ "acme/plain@1.0.0": { packageSha256: p.pkgSha, quality: QUALITY } }));
     expect(entryOf("acme/plain")?.quality).toBeUndefined();
+  });
+
+  test("a valid baseline is signed into the entry, beside the quality, and the summary states it as fact", async () => {
+    const BASELINE = { scorer: 1, passed: true, tools: 3 };
+    const s = await publish({ id: "acme/scored", evals: EVALS });
+    const plain = await publish({ id: "acme/plain" });
+    merge();
+    await sign(
+      writeScores({
+        "acme/scored@1.0.0": { packageSha256: s.pkgSha, quality: QUALITY, baseline: BASELINE },
+        "acme/plain@1.0.0": { packageSha256: plain.pkgSha, baseline: BASELINE },
+      }),
+    );
+    await verifyRegistryIndexPinned(originIndex(repo), ROOT_PUBLIC_KEY);
+    expect(entryOf("acme/scored")?.baseline).toEqual(BASELINE);
+    expect(entryOf("acme/plain")?.baseline).toEqual(BASELINE);
+    // The quality is exactly what it was without a baseline.
+    expect(entryOf("acme/scored")?.quality).toEqual(QUALITY);
+    const summary = summaries.join("\n");
+    expect(summary).toContain(
+      "quality 50/100 (1 of 2 cases passed), baseline: starts and lists 3 valid tools",
+    );
+    expect(summary).toContain(
+      "`acme/plain@1.0.0` (stable), baseline: starts and lists 3 valid tools",
+    );
+    expect(warnings).toEqual([]);
+  });
+
+  test("an unusable baseline entry is a warning, never a skip", async () => {
+    const p = await publish({ id: "acme/plain" });
+    merge();
+    await sign(
+      writeScores({ "acme/plain@1.0.0": { packageSha256: p.pkgSha, baseline: { x: 1 } } }),
+    );
+    expect(entryOf("acme/plain")).toBeDefined();
+    expect(warnings.join("\n")).toMatch(/acme\/plain@1\.0\.0: .*baseline/);
   });
 
   /** The entry is written under `acme/scored@1.0.0`; the candidate is `acme/scored@<version>`. */
