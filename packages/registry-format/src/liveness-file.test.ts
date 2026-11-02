@@ -4,6 +4,7 @@ import nacl from "tweetnacl";
 import { MAX_EVAL_CASES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
+  type LivenessEntry,
   type LivenessFile,
   livenessDigest,
   MAX_LIVENESS_BYTES,
@@ -207,7 +208,7 @@ describe("readLivenessEntry", () => {
   });
 
   test("tests and baseline entries are read", () => {
-    const entry = {
+    const entry: LivenessEntry = {
       checkedAt: "2026-11-02T00:00:00Z",
       tests: { failure: "run-timeout" },
       baseline: { scorer: 1, passed: true, tools: 3 },
