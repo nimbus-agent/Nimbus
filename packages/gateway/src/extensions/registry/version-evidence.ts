@@ -8,6 +8,7 @@
  */
 import {
   type EvalBaselineFailure,
+  type LivenessEntry,
   type LivenessTestFailure,
   type RegistryVersionEntry,
   readVersionBaseline,
@@ -301,13 +302,10 @@ export function checkedEvidence(o: {
   if (read.entry.state === "invalid") {
     return { state: "unavailable", why: "malformed-entry", text: "no checks available" };
   }
-  const e = read.entry.entry;
-  const when = Date.parse(e.checkedAt);
-  const day = Number.isFinite(when) ? new Date(when).toISOString().slice(0, 10) : "an unknown day";
-  const days = Number.isFinite(when) ? Math.floor(o.now / DAY_MS) - Math.floor(when / DAY_MS) : 0;
-  const stale = days > LIVENESS_STALE_DAYS;
-  const checkedBy = oneLine(o.registry);
-  const nimbusVersion = oneLine(read.nimbusVersion);
+  return checkedFound(o, read.entry.entry, read.nimbusVersion);
+}
+
+function checkedParts(e: LivenessEntry): string[] {
   const parts: string[] = [];
   if (e.hosts !== undefined) {
     parts.push(
@@ -323,30 +321,47 @@ export function checkedEvidence(o: {
         : `tests: ${e.tests.passed} of ${e.tests.cases} cases passed`,
     );
   }
-  if (e.baseline !== undefined) {
-    const b = e.baseline;
-    parts.push(baselineWording(b));
-  }
+  if (e.baseline !== undefined) parts.push(baselineWording(e.baseline));
+  return parts;
+}
+
+type CheckedBaseline = NonNullable<Extract<CheckedEvidence, { state: "checked" }>["baseline"]>;
+
+function checkedBaseline(b: NonNullable<LivenessEntry["baseline"]>): CheckedBaseline {
+  return {
+    passed: b.passed,
+    tools: b.tools,
+    ...(b.passed ? {} : { failure: b.failure }),
+  };
+}
+
+function checkedFound(
+  o: { readonly registry: string; readonly now: number },
+  e: LivenessEntry,
+  nimbusVersionRaw: string,
+): CheckedEvidence {
+  const when = Date.parse(e.checkedAt);
+  const known = Number.isFinite(when);
+  // The structured date is re-rendered, never the signed string.
+  const checkedAt = known ? new Date(when).toISOString() : "";
+  const day = known ? checkedAt.slice(0, 10) : "an unknown day";
+  const days = known ? Math.floor(o.now / DAY_MS) - Math.floor(when / DAY_MS) : 0;
+  const stale = days > LIVENESS_STALE_DAYS;
+  const checkedBy = oneLine(o.registry);
+  const nimbusVersion = oneLine(nimbusVersionRaw);
+  const parts = checkedParts(e);
   const body = parts.length === 0 ? "no checks recorded" : parts.join(" · ");
   const staleText = stale ? ", stale" : "";
   const text = `${body} (checked ${day}, ${agoText(days)}${staleText}, with Nimbus ${nimbusVersion}, by ${checkedBy}); ${LIVENESS_CAVEAT}`;
   return {
     state: "checked",
-    checkedAt: e.checkedAt,
+    checkedAt,
     stale,
     nimbusVersion,
     checkedBy,
     ...(e.hosts === undefined ? {} : { hosts: e.hosts }),
     ...(e.tests === undefined ? {} : { tests: e.tests }),
-    ...(e.baseline === undefined
-      ? {}
-      : {
-          baseline: {
-            passed: e.baseline.passed,
-            tools: e.baseline.tools,
-            ...(e.baseline.passed ? {} : { failure: e.baseline.failure }),
-          },
-        }),
+    ...(e.baseline === undefined ? {} : { baseline: checkedBaseline(e.baseline) }),
     text,
   };
 }

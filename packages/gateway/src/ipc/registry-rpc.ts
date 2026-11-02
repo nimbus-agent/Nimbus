@@ -617,17 +617,21 @@ async function handleInfo(
   const { manifest } = parseExtensionManifestForRegistry(text);
   // The newest version's signed liveness entry: a missing or unreadable file only changes the
   // Checked line (I51), and the read never throws.
-  const liveness = await readRegistryLiveness(
-    {
-      ...fetch,
-      db: o.db,
-      ...(o.livenessTimeoutMs === undefined ? {} : { livenessTimeoutMs: o.livenessTimeoutMs }),
-    },
-    found.reg,
-    found.index,
-    id,
-    newest[0],
-  );
+  // A starter pack runs nothing and reads "not checked", so it makes no liveness request.
+  const starterPack = isStarterPack(manifest);
+  const liveness = starterPack
+    ? undefined
+    : await readRegistryLiveness(
+        {
+          ...fetch,
+          db: o.db,
+          ...(o.livenessTimeoutMs === undefined ? {} : { livenessTimeoutMs: o.livenessTimeoutMs }),
+        },
+        found.reg,
+        found.index,
+        id,
+        newest[0],
+      );
   // Provenance (trust layer PR 4c): the newest version only — the one whose manifest was just
   // fetched and hash-checked — and only when that publisher-signed manifest names the same
   // repository the registry verified the build from.
@@ -647,8 +651,8 @@ async function handleInfo(
         versions: entry.versions,
         version: newest[0],
         declaresNetwork: manifest.permissions.network.length > 0,
-        starterPack: isStarterPack(manifest),
-        liveness,
+        starterPack,
+        ...(liveness === undefined ? {} : { liveness }),
         now: fetch.now(),
       }),
       // The evidence describes the newest LISTED version, which can be a beta a plain install

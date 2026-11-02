@@ -516,7 +516,8 @@ async function withLivenessEvidence(
 ): Promise<VerifiedRegistryPackage> {
   if (pkg.evidence === undefined) return pkg;
   const liveness =
-    pkg.index === undefined
+    // A starter pack runs nothing, so its line reads "not checked" whatever the file says: no request.
+    pkg.index === undefined || isStarterPack(pkg.manifest)
       ? undefined
       : await readRegistryLiveness(
           {
