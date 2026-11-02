@@ -547,6 +547,42 @@ function noEntryLines(r: ScoreRun): string[] {
   return lines;
 }
 
+const remedyFor = (mode: Exclude<ScoreMode, "check">): string =>
+  mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
+
+const isNoListing = (e: ScoreEntry): boolean =>
+  e.baseline?.passed === false && e.baseline.failure === "no-listing";
+
+/** One summary line per entry, appended to `lines`; annotates each failed eval. Returns their refs. */
+function entryLines(
+  io: ActionIo,
+  r: ScoreRun,
+  mode: Exclude<ScoreMode, "check">,
+  lines: string[],
+): string[] {
+  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
+  const failed: string[] = [];
+  for (const [ref, e] of Object.entries(r.scores)) {
+    if ("error" in e) {
+      io.annotate(
+        "warning",
+        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedyFor(mode)}`,
+      );
+      failed.push(ref);
+    }
+    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
+    lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
+  }
+  return failed;
+}
+
+/** The versions with a failed eval, listed apart, with the remedy; nothing when there are none. */
+function failedLines(failed: readonly string[], mode: Exclude<ScoreMode, "check">): string[] {
+  if (failed.length === 0) return [];
+  const heading = mode === "score" ? "**Not signed** (no score):" : "**No score:**";
+  return ["", heading, "", ...failed.map((ref) => `- ${code(ref)}`), "", remedyFor(mode)];
+}
+
 /**
  * The job summary of a score run. A version with a failed eval is listed apart; a baseline is a
  * stated fact (`baselineFact`) beside the version and never a reason to list it there. Every
@@ -564,31 +600,10 @@ export function reportScores(
   if (entries.length === 0 && noEntry.length === 0 && r.skipped.length === 0) {
     lines.push("No unsigned version to score.");
   }
-  const remedy = mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
-  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
-  const failed: string[] = [];
-  for (const [ref, e] of entries) {
-    if ("error" in e) {
-      io.annotate(
-        "warning",
-        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedy}`,
-      );
-      failed.push(ref);
-    }
-    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
-    lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
-  }
+  const failed = entryLines(io, r, mode, lines);
   if (noEntry.length > 0) lines.push("", "**No entry recorded:**", "", ...noEntry);
-  if (failed.length > 0) {
-    lines.push("", mode === "score" ? "**Not signed** (no score):" : "**No score:**", "");
-    for (const ref of failed) lines.push(`- ${code(ref)}`);
-    lines.push("", remedy);
-  }
-  if (
-    entries.some(([, e]) => e.baseline?.passed === false && e.baseline.failure === "no-listing")
-  ) {
-    lines.push("", NO_LISTING_NOTICE[mode]);
-  }
+  lines.push(...failedLines(failed, mode));
+  if (entries.some(([, e]) => isNoListing(e))) lines.push("", NO_LISTING_NOTICE[mode]);
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
     for (const s of r.skipped) lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);

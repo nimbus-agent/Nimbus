@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:6bc1da098999c3ed2d8704c4cf391b78a9da17871e54fdb337e9527fd2394e8d
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:7e42b749795c273eb917545e350269b85fc1bc7c8aa5f3fa057de3a226a401d6
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4289,7 +4289,7 @@ function parseEvalBaseline(raw) {
   if (typeof passed !== "boolean")
     throw bad("baseline.passed must be a boolean");
   const want = passed ? ["passed", "scorer", "tools"] : ["failure", "passed", "scorer", "tools"];
-  const have = Object.keys(raw).sort();
+  const have = Object.keys(raw).sort(codeUnitCompare);
   if (have.join(",") !== want.join(",")) {
     throw bad(`baseline must have exactly the keys ${want.join(", ")}`);
   }
@@ -11226,7 +11226,7 @@ var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
 var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
 var roleCode = (c) => /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
 function lastLine(s) {
-  return s.split(/\r?\n/).filter((l) => l.trim() !== "").at(-1) ?? "";
+  return s.split(/\r?\n/).findLast((l) => l.trim() !== "") ?? "";
 }
 var fail = (code, message) => ({
   error: { code, message: clip(message) }
@@ -11250,7 +11250,9 @@ function judgeBaselineRun(r, want, timeoutMs = BASELINE_ROLE_TIMEOUT_MS) {
   }
   if (r.code !== 0) {
     const last = lastLine(r.stderrTail);
-    return fail("ERR_EVAL_ROLE_FAILED", `the baseline role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`);
+    const exit = r.code === null ? "without an exit code" : String(r.code);
+    const tail = last === "" ? "" : ": " + last;
+    return fail("ERR_EVAL_ROLE_FAILED", `the baseline role exited ${exit}${tail}`);
   }
   const lines = r.stdout.split(`
 `).filter((l) => l.trim() !== "");
@@ -11522,6 +11524,27 @@ function noEntryLines(r) {
   }
   return lines;
 }
+var remedyFor = (mode) => mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
+var isNoListing = (e) => e.baseline?.passed === false && e.baseline.failure === "no-listing";
+function entryLines(io, r, mode, lines) {
+  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
+  const failed = [];
+  for (const [ref, e] of Object.entries(r.scores)) {
+    if ("error" in e) {
+      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedyFor(mode)}`);
+      failed.push(ref);
+    }
+    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
+    lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
+  }
+  return failed;
+}
+function failedLines(failed, mode) {
+  if (failed.length === 0)
+    return [];
+  const heading = mode === "score" ? "**Not signed** (no score):" : "**No score:**";
+  return ["", heading, "", ...failed.map((ref) => `- ${code(ref)}`), "", remedyFor(mode)];
+}
 function reportScores(io, r, mode = "score") {
   const lines = ["## Registry score", ""];
   const entries = Object.entries(r.scores);
@@ -11529,28 +11552,12 @@ function reportScores(io, r, mode = "score") {
   if (entries.length === 0 && noEntry.length === 0 && r.skipped.length === 0) {
     lines.push("No unsigned version to score.");
   }
-  const remedy = mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
-  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
-  const failed = [];
-  for (const [ref, e] of entries) {
-    if ("error" in e) {
-      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedy}`);
-      failed.push(ref);
-    }
-    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
-    lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
-  }
+  const failed = entryLines(io, r, mode, lines);
   if (noEntry.length > 0)
     lines.push("", "**No entry recorded:**", "", ...noEntry);
-  if (failed.length > 0) {
-    lines.push("", mode === "score" ? "**Not signed** (no score):" : "**No score:**", "");
-    for (const ref of failed)
-      lines.push(`- ${code(ref)}`);
-    lines.push("", remedy);
-  }
-  if (entries.some(([, e]) => e.baseline?.passed === false && e.baseline.failure === "no-listing")) {
+  lines.push(...failedLines(failed, mode));
+  if (entries.some(([, e]) => isNoListing(e)))
     lines.push("", NO_LISTING_NOTICE[mode]);
-  }
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
     for (const s of r.skipped)
@@ -11701,7 +11708,9 @@ function scoreLines(s) {
   const quality = s.entry === undefined ? undefined : qualityLine(s.entry);
   return [quality, baselineLine(s)].filter((l) => l !== undefined);
 }
-function checkSummary(v, admitted = [], provenance, score = { asked: false }) {
+var NOT_ASKED = { asked: false };
+function checkSummary(v, admitted = [], provenance, checked) {
+  const score = checked ?? NOT_ASKED;
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {

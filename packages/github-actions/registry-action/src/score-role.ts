@@ -340,12 +340,7 @@ export const roleCode = (c: string): string =>
   /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
 
 export function lastLine(s: string): string {
-  return (
-    s
-      .split(/\r?\n/)
-      .filter((l) => l.trim() !== "")
-      .at(-1) ?? ""
-  );
+  return s.split(/\r?\n/).findLast((l) => l.trim() !== "") ?? "";
 }
 
 export const fail = (code: string, message: string): { error: ScoreError } => ({

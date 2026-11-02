@@ -75,10 +75,9 @@ export function judgeBaselineRun(
   }
   if (r.code !== 0) {
     const last = lastLine(r.stderrTail);
-    return fail(
-      "ERR_EVAL_ROLE_FAILED",
-      `the baseline role exited ${r.code === null ? "without an exit code" : String(r.code)}${last === "" ? "" : `: ${last}`}`,
-    );
+    const exit = r.code === null ? "without an exit code" : String(r.code);
+    const tail = last === "" ? "" : ": " + last;
+    return fail("ERR_EVAL_ROLE_FAILED", `the baseline role exited ${exit}${tail}`);
   }
   const lines = r.stdout.split("\n").filter((l) => l.trim() !== "");
   const doc = lines.length === 1 ? parseEvalBaselineDocument(lines[0] ?? "") : null;

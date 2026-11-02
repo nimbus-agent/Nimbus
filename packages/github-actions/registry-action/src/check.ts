@@ -289,13 +289,17 @@ function scoreLines(s: CheckedScore): string[] {
   return [quality, baselineLine(s)].filter((l) => l !== undefined);
 }
 
+/** No score was asked for: the `nimbus-gateway` input was empty. */
+const NOT_ASKED: CheckedScore = { asked: false };
+
 /** The reviewer's job summary for an accepted publish. */
 function checkSummary(
   v: PublishVerdict,
   admitted: readonly TrustStatement[] = [],
   provenance?: CheckedProvenance,
-  score: CheckedScore = { asked: false },
+  checked?: CheckedScore,
 ): string {
+  const score = checked ?? NOT_ASKED;
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {

@@ -141,15 +141,23 @@ describe("nimbus extension pack", () => {
     const dir = await signedExtension();
     for (const code of ["EDQUOT", "EFBIG", undefined]) {
       const out = join(tmp, `partial-${String(code)}.tgz`);
-      const failing = (path: string, data: Uint8Array): void => {
-        writeFileSync(path, data.subarray(0, 10));
+      const failing = (fd: number, data: Uint8Array): void => {
+        writeFileSync(fd, data.subarray(0, 10));
         throw Object.assign(new Error("disk said no"), code === undefined ? {} : { code });
       };
       errors = "";
-      expect(await runExtensionPack([dir, "--out", out], { ...deps, writeFile: failing })).toBe(2);
+      expect(await runExtensionPack([dir, "--out", out], { ...deps, writeFd: failing })).toBe(2);
       expect(existsSync(out)).toBe(false);
       expect(errors).toContain(`could not write ${out}: ${code ?? "an error"}`);
     }
+  });
+
+  test("an --out that cannot be created leaves an existing file alone and says why", async () => {
+    const dir = await signedExtension();
+    const out = join(tmp, "missing-parent", "x.tgz");
+    expect(await runExtensionPack([dir, "--out", out], deps)).toBe(2);
+    expect(errors).toContain(`could not create ${out}: ENOENT`);
+    expect(existsSync(out)).toBe(false);
   });
 
   test("an error that is not a refusal is rethrown, not swallowed", async () => {

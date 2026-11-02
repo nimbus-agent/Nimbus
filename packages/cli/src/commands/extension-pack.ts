@@ -10,7 +10,16 @@
  * existing `--out` is refused without a check-then-write gap and is never touched.
  */
 import { createHash } from "node:crypto";
-import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PACKAGE_MANIFEST_FILE, packExtensionDir } from "@nimbus-dev/registry-format";
@@ -22,8 +31,8 @@ const USAGE = "usage: nimbus extension pack <dir> --out <file>\n";
 export interface PackCmdDeps {
   log: (s: string) => void;
   err: (s: string) => void;
-  /** The one write of the output; a parameter so a test can fail it part-way. */
-  writeFile?: (path: string, data: Uint8Array, opts: { flag: "wx" }) => void;
+  /** Writes the bytes to an open descriptor; a parameter so a test can fail it part-way. */
+  writeFd?: (fd: number, data: Uint8Array) => void;
 }
 
 const DEFAULT_DEPS: PackCmdDeps = {
@@ -50,23 +59,34 @@ function assertPackageDir(dir: string): void {
 }
 
 /**
- * Writes `bytes` to a path that must not exist yet; a failed write leaves nothing behind. `wx` fails
- * with `EEXIST` whenever something is at the path, so after any other error the path holds either
- * nothing or the partial file this call created, and removing it is safe.
+ * Writes `bytes` to a path that must not exist yet. The exclusive open is the only step that can
+ * find something already there, and it creates nothing when it fails (an existing file, but also
+ * `EMFILE` or `EACCES`), so a failed open touches nothing. Only a failure AFTER this call created
+ * the file removes it.
  */
 function writeNew(
   out: string,
   bytes: Uint8Array,
-  write: NonNullable<PackCmdDeps["writeFile"]>,
+  writeFd: NonNullable<PackCmdDeps["writeFd"]>,
 ): void {
+  let fd: number;
   try {
-    write(out, bytes, { flag: "wx" });
+    fd = openSync(out, "wx");
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw new MaintainError(`${out} exists; refusing to overwrite it`);
-    rmSync(out, { force: true });
-    throw new MaintainError(`could not write ${out}: ${code ?? "an error"}`);
+    throw new MaintainError(`could not create ${out}: ${code ?? "an error"}`);
   }
+  try {
+    writeFd(fd, bytes);
+  } catch (e) {
+    closeSync(fd);
+    rmSync(out, { force: true });
+    throw new MaintainError(
+      `could not write ${out}: ${(e as NodeJS.ErrnoException).code ?? "an error"}`,
+    );
+  }
+  closeSync(fd);
 }
 
 /** Packs `dir` in a private directory and returns the bytes. */
@@ -98,7 +118,7 @@ export async function runExtensionPack(
     }
     assertPackageDir(dir);
     const bytes = await packToBytes(dir);
-    writeNew(out, bytes, deps.writeFile ?? writeFileSync);
+    writeNew(out, bytes, deps.writeFd ?? writeFileSync);
     deps.log(`wrote ${stripControlChars(out)}\n`);
     deps.log(`sha256 ${createHash("sha256").update(bytes).digest("hex")}\n`);
     return 0;

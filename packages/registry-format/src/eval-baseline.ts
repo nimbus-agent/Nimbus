@@ -6,6 +6,7 @@
  * rather than throwing. `failure` is a code from a fixed set, never text from the child.
  * Pure: no Bun, no gateway imports, no ES2024+ runtime API (it runs under the runner's Node).
  */
+import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
 import type { RegistryVersionEntry } from "./index-format.ts";
 
@@ -52,7 +53,7 @@ export function parseEvalBaseline(raw: unknown): EvalBaseline {
   const passed = raw["passed"];
   if (typeof passed !== "boolean") throw bad("baseline.passed must be a boolean");
   const want = passed ? ["passed", "scorer", "tools"] : ["failure", "passed", "scorer", "tools"];
-  const have = Object.keys(raw).sort();
+  const have = Object.keys(raw).sort(codeUnitCompare);
   if (have.join(",") !== want.join(",")) {
     throw bad(`baseline must have exactly the keys ${want.join(", ")}`);
   }

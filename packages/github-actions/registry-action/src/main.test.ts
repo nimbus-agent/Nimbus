@@ -232,21 +232,22 @@ describe("main", () => {
     },
   );
 
-  test("score-package without a package input fails the step", async () => {
+  test.each([
+    { what: "without a package input", env: {}, error: 'input "package" is required' },
+    {
+      what: "with a relative nimbus-gateway",
+      env: { INPUT_PACKAGE: "absent-package", "INPUT_NIMBUS-GATEWAY": "nimbus-gateway" },
+      error: 'input "nimbus-gateway" must be an absolute path',
+    },
+  ])("score-package $what fails the step", async ({ env, error }) => {
     process.env["INPUT_MODE"] = "score-package";
     delete process.env["INPUT_PACKAGE"];
+    for (const [k, v] of Object.entries(env)) {
+      process.env[k] = k === "INPUT_PACKAGE" ? join(process.cwd(), v) : v;
+    }
     await main();
     expect(process.exitCode).toBe(1);
-    expect(out.join("")).toContain('::error::input "package" is required');
-  });
-
-  test("score-package with a relative nimbus-gateway fails the step", async () => {
-    process.env["INPUT_MODE"] = "score-package";
-    process.env["INPUT_PACKAGE"] = join(process.cwd(), "absent-package");
-    process.env["INPUT_NIMBUS-GATEWAY"] = "nimbus-gateway";
-    await main();
-    expect(process.exitCode).toBe(1);
-    expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
+    expect(out.join("")).toContain(`::error::${error}`);
   });
 
   test("an unknown mode fails the step", async () => {
