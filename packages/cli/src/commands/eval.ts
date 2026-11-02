@@ -12,13 +12,16 @@
  */
 import { isAbsolute, relative, resolve } from "node:path";
 import {
+  type EvalRecordDocument,
   type EvalReport,
   type EvalRoleDocument,
+  parseEvalRecordDocument,
   parseEvalRoleDocument,
 } from "@nimbus-dev/registry-format";
 import { type GatewayLaunchPlan, resolveGatewayLaunch } from "../lib/resolve-gateway-launch.ts";
 import { BATCH_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { WriteFileError } from "../lib/write-file-exclusive.ts";
 
 import {
   DEFAULT_EVAL_THRESHOLD,
@@ -28,6 +31,7 @@ import {
   reportInstalledFailure,
   runEvalInstalled,
 } from "./eval-installed.ts";
+import { prepareRecord, renderRecorded, skipLines, writeRecordedSuite } from "./eval-record-cli.ts";
 import { type PackCall, withTerminalConsentClient } from "./pack.ts";
 
 export type { ExtensionEvalEntry } from "./eval-installed.ts";
@@ -59,7 +63,7 @@ export interface EvalCliDeps {
 }
 
 const USAGE =
-  "usage: nimbus eval --package <dir> [--suite <file>] [--json]\n       nimbus eval --extension <id> [--json]\n       nimbus eval --installed [--threshold <n>] [--json]";
+  "usage: nimbus eval --package <dir> [--suite <file>] [--json]\n       nimbus eval --package <dir> --record <inputs.json> [--out <file>] [--force] [--json]\n       nimbus eval --extension <id> [--json]\n       nimbus eval --installed [--threshold <n>] [--json]";
 
 const EVAL_ROLE_PIPE_GRACE_MS = 2000;
 
@@ -287,6 +291,11 @@ interface ParsedArgs {
   /** `--threshold`, as given; parsed once into `threshold` (or `bad`) by `parseArgs`. */
   thresholdArg?: string;
   threshold?: number;
+  /** `--record`: the inputs file; the role runs each case twice and the CLI writes the suite. */
+  record?: string;
+  /** `--out`: where `--record` writes, package-relative. */
+  out?: string;
+  force: boolean;
   installed: boolean;
   yes: boolean;
   json: boolean;
@@ -299,23 +308,29 @@ interface ParsedArgs {
  */
 const VALUE_FLAGS: ReadonlyMap<
   string,
-  { key: "pkg" | "suite" | "extension" | "thresholdArg"; flagPrefix: string }
+  {
+    key: "pkg" | "suite" | "extension" | "thresholdArg" | "record" | "out";
+    flagPrefix: string;
+  }
 > = new Map([
   ["--package", { key: "pkg", flagPrefix: "--" }],
   ["--suite", { key: "suite", flagPrefix: "--" }],
   ["--extension", { key: "extension", flagPrefix: "-" }],
   ["--threshold", { key: "thresholdArg", flagPrefix: "--" }],
+  ["--record", { key: "record", flagPrefix: "--" }],
+  ["--out", { key: "out", flagPrefix: "--" }],
 ]);
 
 function applySwitch(out: ParsedArgs, a: string): void {
   if (a === "--json") out.json = true;
   else if (a === "--yes" || a === "-y") out.yes = true;
   else if (a === "--installed") out.installed = true;
+  else if (a === "--force") out.force = true;
   else out.bad = `unknown argument: ${a}`;
 }
 
 function parseArgs(args: readonly string[]): ParsedArgs {
-  const out: ParsedArgs = { json: false, yes: false, installed: false };
+  const out: ParsedArgs = { json: false, yes: false, installed: false, force: false };
   for (let i = 0; i < args.length; i++) {
     const a = args[i] ?? "";
     const flag = VALUE_FLAGS.get(a);
@@ -377,8 +392,22 @@ function installedUsageProblem(p: ParsedArgs): string | null {
   return null;
 }
 
+function recordUsageProblem(p: ParsedArgs): string | null {
+  if (p.record === undefined) {
+    return p.out !== undefined || p.force ? `--out and --force need --record\n${USAGE}` : null;
+  }
+  if (p.pkg === undefined) return `--record needs --package\n${USAGE}`;
+  if (p.suite !== undefined || p.extension !== undefined || p.installed) {
+    return `--record cannot be combined with --suite, --extension or --installed\n${USAGE}`;
+  }
+  return null;
+}
+
 function usageProblem(p: ParsedArgs): string | null {
   if (p.bad !== undefined) return `${p.bad}\n${USAGE}`;
+  const recordProblem = recordUsageProblem(p);
+  if (recordProblem !== null) return recordProblem;
+  if (p.record !== undefined) return null;
   if (p.installed) return installedUsageProblem(p);
   if (p.threshold !== undefined) return `--threshold needs --installed\n${USAGE}`;
   if (p.extension !== undefined) {
@@ -419,10 +448,12 @@ type EvalCliErrorCode =
   | "ERR_EVAL_NO_DOCUMENT"
   | "ERR_EVAL_IPC"
   | "ERR_EVAL_BAD_RESPONSE"
+  | "ERR_EVAL_RECORD_REFUSED"
+  | "ERR_EVAL_RECORD_WRITE"
   | "ERR_EXTENSION_EVAL_NOT_APPROVED";
 
-type RoleOutcome =
-  | { kind: "document"; doc: EvalRoleDocument; text: string }
+type RoleOutcome<D = EvalRoleDocument> =
+  | { kind: "document"; doc: D; text: string }
   | { kind: "failure"; code: EvalCliErrorCode; message: string };
 
 function noDocumentMessage(code: number | null): string {
@@ -430,7 +461,10 @@ function noDocumentMessage(code: number | null): string {
   return `the eval role exited ${code} without a document`;
 }
 
-function interpretRoleResult(res: EvalSpawnResult): RoleOutcome {
+function interpretRoleResult<D = EvalRoleDocument>(
+  res: EvalSpawnResult,
+  parse: (text: string) => D | null = parseEvalRoleDocument as (text: string) => D | null,
+): RoleOutcome<D> {
   if (res.timedOut) {
     return {
       kind: "failure",
@@ -446,7 +480,7 @@ function interpretRoleResult(res: EvalSpawnResult): RoleOutcome {
     };
   }
   const text = new TextDecoder().decode(res.stdout).trim();
-  const doc = parseEvalRoleDocument(text);
+  const doc = parse(text);
   if (doc === null) {
     return { kind: "failure", code: "ERR_EVAL_NO_DOCUMENT", message: noDocumentMessage(res.code) };
   }
@@ -568,6 +602,48 @@ async function runInstalledEval(p: ParsedArgs, d: EvalCliDeps): Promise<number> 
   return 0;
 }
 
+/** `--record`: refuse what can be refused, spawn the role once, write the suite it returns. */
+async function runRecord(p: ParsedArgs & { pkg: string; record: string }, d: EvalCliDeps) {
+  const prep = prepareRecord({ pkg: p.pkg, record: p.record, out: p.out, force: p.force }, d.err);
+  if (!prep.ok) {
+    return reportFailure(d, p.json, cliFailure("ERR_EVAL_RECORD_REFUSED", prep.message), "");
+  }
+  const plan = d.launch();
+  if (!plan.ok) return reportFailure(d, p.json, cliFailure("ERR_EVAL_LAUNCH", plan.message), "");
+  const pkgAbs = resolve(p.pkg);
+  const cmd = [
+    ...plan.cmd,
+    "__nimbus-eval",
+    "--package",
+    pkgAbs,
+    "--record",
+    prep.plan.inputsAbs,
+    "--json",
+  ];
+  const res = await d.spawnRole(cmd, plan.cwd, EVAL_ROLE_WALL_CLOCK_MS);
+  const tail = new TextDecoder().decode(res.stderr).trim();
+  const outcome = interpretRoleResult<EvalRecordDocument>(res, parseEvalRecordDocument);
+  if (outcome.kind === "failure") {
+    return reportFailure(d, p.json, cliFailure(outcome.code, outcome.message), tail);
+  }
+  const { doc, text } = outcome;
+  if (!doc.ok) {
+    const prose = `${doc.error.code}: ${doc.error.message}`;
+    const lines = skipLines(doc.error.skipped ?? []);
+    const extra = [tail, ...lines].filter((l) => l !== "").join("\n");
+    return reportFailure(d, p.json, { prose, document: text }, extra);
+  }
+  try {
+    writeRecordedSuite(pkgAbs, prep.plan, doc);
+  } catch (e) {
+    const message = e instanceof WriteFileError ? e.message : `could not record: ${String(e)}`;
+    return reportFailure(d, p.json, cliFailure("ERR_EVAL_RECORD_WRITE", message), tail);
+  }
+  if (p.json) d.log(JSON.stringify({ ...doc, written: prep.plan.outRel }));
+  else for (const line of renderRecorded(prep.plan.outRel, doc)) d.log(line);
+  return 0;
+}
+
 /**
  * Returns the process exit code: 2 on a usage or eval error; with `--installed`, 1 when any
  * extension regressed against its registry's score; otherwise 0 when the eval ran (any score).
@@ -582,6 +658,7 @@ export async function runEval(args: readonly string[], deps?: EvalCliDeps): Prom
     d.err(problem ?? USAGE);
     return 2;
   }
+  if (p.record !== undefined) return await runRecord({ ...p, pkg: p.pkg, record: p.record }, d);
   const plan = d.launch();
   if (!plan.ok) return reportFailure(d, p.json, cliFailure("ERR_EVAL_LAUNCH", plan.message), "");
   const cmd = [...plan.cmd, ...roleArgsFor(p.pkg, p.suite)];

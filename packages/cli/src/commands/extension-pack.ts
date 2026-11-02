@@ -10,21 +10,13 @@
  * existing `--out` is refused without a check-then-write gap and is never touched.
  */
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  lstatSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from "node:fs";
+import { lstatSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PACKAGE_MANIFEST_FILE, packExtensionDir } from "@nimbus-dev/registry-format";
 import { MaintainError, parseArgs } from "../lib/maintain-shared.ts";
 import { stripControlChars } from "../lib/strip-control-chars.ts";
+import { WriteFileError, writeFileExclusive } from "../lib/write-file-exclusive.ts";
 
 const USAGE = "usage: nimbus extension pack <dir> --out <file>\n";
 
@@ -58,35 +50,18 @@ function assertPackageDir(dir: string): void {
   if (!hasManifest) throw new MaintainError(`${dir} has no ${PACKAGE_MANIFEST_FILE}`);
 }
 
-/**
- * Writes `bytes` to a path that must not exist yet. The exclusive open is the only step that can
- * find something already there, and it creates nothing when it fails (an existing file, but also
- * `EMFILE` or `EACCES`), so a failed open touches nothing. Only a failure AFTER this call created
- * the file removes it.
- */
+/** `writeFileExclusive` (a path that must not exist yet), with its failure as a `MaintainError`. */
 function writeNew(
   out: string,
   bytes: Uint8Array,
   writeFd: NonNullable<PackCmdDeps["writeFd"]>,
 ): void {
-  let fd: number;
   try {
-    fd = openSync(out, "wx");
+    writeFileExclusive(out, bytes, { writeFd });
   } catch (e) {
-    const code = (e as NodeJS.ErrnoException).code;
-    if (code === "EEXIST") throw new MaintainError(`${out} exists; refusing to overwrite it`);
-    throw new MaintainError(`could not create ${out}: ${code ?? "an error"}`);
+    if (e instanceof WriteFileError) throw new MaintainError(e.message);
+    throw e;
   }
-  try {
-    writeFd(fd, bytes);
-  } catch (e) {
-    closeSync(fd);
-    rmSync(out, { force: true });
-    throw new MaintainError(
-      `could not write ${out}: ${(e as NodeJS.ErrnoException).code ?? "an error"}`,
-    );
-  }
-  closeSync(fd);
 }
 
 /** Packs `dir` in a private directory and returns the bytes. */

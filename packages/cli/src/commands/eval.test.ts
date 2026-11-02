@@ -1,5 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { parseEvalSuite } from "@nimbus-dev/registry-format";
 import {
   type ByteKeeper,
   EVAL_ROLE_STDOUT_MAX_BYTES,
@@ -724,5 +736,320 @@ describe("readCapped and its keepers", () => {
     });
     const out = await readCapped(stuck, lastBytesKeeper(10), Promise.resolve());
     expect(out.byteLength).toBeLessThanOrEqual(3);
+  });
+});
+
+describe("runEval --record", () => {
+  const NOTE =
+    "these expectations are what the package answered offline, with no credentials and no network: review them before committing";
+
+  function canSymlink(): boolean {
+    const probe = mkdtempSync(join(tmpdir(), "nimbus-symlink-probe-"));
+    try {
+      symlinkSync(probe, join(probe, "l"), "dir");
+      return true;
+    } catch {
+      return false;
+    } finally {
+      rmSync(probe, { recursive: true, force: true });
+    }
+  }
+
+  const made: string[] = [];
+  afterEach(() => {
+    for (const d of made.splice(0)) {
+      rmSync(d, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    }
+  });
+
+  function tmpDir(): string {
+    const d = mkdtempSync(join(tmpdir(), "nimbus-eval-record-"));
+    made.push(d);
+    return d;
+  }
+
+  function inputsOf(n: number): string {
+    return JSON.stringify({
+      format: 1,
+      name: "golden",
+      cases: Array.from({ length: n }, (_, i) => ({
+        name: `case-${i}`,
+        tool: "echo",
+        input: { text: `t${i}` },
+      })),
+    });
+  }
+
+  function recordedCase(name: string): Record<string, unknown> {
+    return {
+      name,
+      tool: "echo",
+      input: { text: name },
+      expect: { rubric: "exact", value: name },
+    };
+  }
+
+  function suiteText(names: readonly string[]): string {
+    return JSON.stringify({ format: 1, name: "s", cases: names.map(recordedCase) });
+  }
+
+  function recordDoc(
+    skipped: { case: string; why: string }[] = [],
+    names: readonly string[] = ["case-0"],
+  ): Record<string, unknown> {
+    return {
+      ok: true,
+      extensionId: "acme/tool",
+      version: "1.0.0",
+      suite: { format: 1, name: "golden", cases: names.map(recordedCase) },
+      skipped,
+    };
+  }
+
+  /** A package dir, an inputs file beside it, and a harness whose role answers `doc`. */
+  function setup(opts: { inputs?: string; doc?: Record<string, unknown> } = {}) {
+    const root = tmpDir();
+    const pkg = join(root, "pkg");
+    mkdirSync(pkg);
+    const inputs = join(root, "inputs.json");
+    writeFileSync(inputs, opts.inputs ?? inputsOf(1));
+    const h = harness({ stdout: enc(JSON.stringify(opts.doc ?? recordDoc())) });
+    return { root, pkg, inputs, ...h };
+  }
+
+  function writeSuites(pkg: string, files: Record<string, string>): void {
+    mkdirSync(join(pkg, "evals"), { recursive: true });
+    for (const [name, body] of Object.entries(files)) writeFileSync(join(pkg, "evals", name), body);
+  }
+
+  test("records, spawns the role with --record and --json, and writes a suite parseEvalSuite reads", async () => {
+    const s = setup();
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(0);
+    expect(s.calls[0]?.cmd).toEqual([
+      "gw",
+      "--x",
+      "__nimbus-eval",
+      "--package",
+      resolve(s.pkg),
+      "--record",
+      resolve(s.inputs),
+      "--json",
+    ]);
+    const written = readFileSync(join(s.pkg, "evals", "golden.eval.json"));
+    expect(parseEvalSuite("x", written).cases.map((c) => c.name)).toEqual(["case-0"]);
+    expect(s.logs[0]).toBe("wrote evals/golden.eval.json: 1 cases recorded, 0 skipped");
+    expect(s.logs.at(-1)).toBe(NOTE);
+  });
+
+  test("prints one stripped line per skip and the fixed note", async () => {
+    const s = setup({
+      doc: recordDoc([
+        { case: "bad\u001b[31mname", why: "call-failed" },
+        { case: "shifty", why: "changes-shape" },
+      ]),
+    });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(0);
+    expect(s.logs).toEqual([
+      "wrote evals/golden.eval.json: 1 cases recorded, 2 skipped",
+      "  bad[31mname: the tool call failed",
+      "  shifty: its reply changed shape between runs",
+      NOTE,
+    ]);
+    for (const l of s.logs) expect(l).not.toContain("\u001b");
+  });
+
+  test("--out names another suite file; a leading ./ and backslashes are accepted", async () => {
+    const s = setup();
+    expect(
+      await runEval(
+        ["--package", s.pkg, "--record", s.inputs, "--out", ".\\evals\\mine.eval.json"],
+        s.deps,
+      ),
+    ).toBe(0);
+    expect(existsSync(join(s.pkg, "evals", "mine.eval.json"))).toBe(true);
+    expect(s.logs[0]).toContain("wrote evals/mine.eval.json");
+  });
+
+  test("--json prints the record document plus written", async () => {
+    const doc = recordDoc([{ case: "x", why: "call-failed" }]);
+    const s = setup({ doc });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--json"], s.deps)).toBe(0);
+    expect(s.logs).toHaveLength(1);
+    expect(JSON.parse(s.logs[0] ?? "")).toEqual({ ...doc, written: "evals/golden.eval.json" });
+    expect(existsSync(join(s.pkg, "evals", "golden.eval.json"))).toBe(true);
+  });
+
+  test.each([
+    [["--record", "i.json"], "--record needs --package"],
+    [
+      ["--package", "p", "--record", "i.json", "--suite", "evals/a.eval.json"],
+      "--record cannot be combined",
+    ],
+    [["--package", "p", "--record", "i.json", "--extension", "x"], "--record cannot be combined"],
+    [["--package", "p", "--record", "i.json", "--installed"], "--record cannot be combined"],
+    [["--package", "p", "--out", "evals/a.eval.json"], "--out and --force need --record"],
+    [["--package", "p", "--force"], "--out and --force need --record"],
+    [["--package", "p", "--record"], "--record needs a value"],
+  ])("usage %j is refused before the role is spawned", async (args, want) => {
+    const h = harness({});
+    expect(await runEval(args, h.deps)).toBe(2);
+    expect(h.errs.join("\n")).toContain(want);
+    expect(h.errs.join("\n")).toContain("usage: nimbus eval --package");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("an unreadable or invalid inputs file is refused before the role is spawned", async () => {
+    const s = setup({ inputs: "{not json" });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    const missing = setup();
+    expect(
+      await runEval(
+        ["--package", missing.pkg, "--record", join(missing.root, "nope.json")],
+        missing.deps,
+      ),
+    ).toBe(2);
+    expect(missing.calls).toEqual([]);
+  });
+
+  test.each([
+    ["a .. escape", "../x.eval.json"],
+    ["a deeper .. escape", "evals/../../x.eval.json"],
+    ["an absolute path", join(tmpdir(), "x.eval.json")],
+    ["a wrong-case suffix", "evals/a.EVAL.JSON"],
+    ["a subdirectory", "evals/sub/x.eval.json"],
+    ["a file outside evals/", "x.eval.json"],
+    ["a non-suite name", "evals/x.json"],
+  ])("--out with %s is refused before the role is spawned, writing nothing", async (_n, out) => {
+    const s = setup();
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--out", out], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    expect(s.errs.join("\n")).toContain("--out");
+    expect(existsSync(join(s.pkg, "evals"))).toBe(false);
+    expect(existsSync(join(s.root, "x.eval.json"))).toBe(false);
+  });
+
+  test("evals/ that is a plain file is refused before the role is spawned", async () => {
+    const s = setup();
+    writeFileSync(join(s.pkg, "evals"), "not a dir");
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    expect(s.errs.join("\n")).toContain("evals");
+  });
+
+  // Skipped where this OS user cannot create a directory symlink (a Windows account without the
+  // privilege): the refusal itself is lstat-based and platform-independent.
+  test.skipIf(!canSymlink())(
+    "a symlinked evals/ is refused before the role is spawned",
+    async () => {
+      const s = setup();
+      const elsewhere = join(s.root, "elsewhere");
+      mkdirSync(elsewhere);
+      symlinkSync(elsewhere, join(s.pkg, "evals"), "dir");
+      expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+      expect(s.calls).toEqual([]);
+      expect(s.errs.join("\n")).toContain("evals");
+      expect(readdirSync(elsewhere)).toEqual([]);
+    },
+  );
+
+  test("an existing target is refused without --force, untouched, and replaced with it", async () => {
+    const s = setup();
+    writeSuites(s.pkg, { "golden.eval.json": "OLD" });
+    const target = join(s.pkg, "evals", "golden.eval.json");
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    expect(s.errs.join("\n")).toContain("--force");
+    expect(readFileSync(target, "utf8")).toBe("OLD");
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs, "--force"], s.deps)).toBe(0);
+    expect(parseEvalSuite("x", readFileSync(target)).name).toBe("golden");
+  });
+
+  function nineteenSuites(): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 19; i++) {
+      files[`s${i}.eval.json`] = suiteText(Array.from({ length: 10 }, (_, j) => `s${i}-c${j}`));
+    }
+    return files;
+  }
+
+  test("19 other suites of 190 cases plus 11 new cases is refused before spawning", async () => {
+    const s = setup({ inputs: inputsOf(11) });
+    writeSuites(s.pkg, nineteenSuites());
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    expect(s.errs.join("\n")).toContain("200");
+    expect(existsSync(join(s.pkg, "evals", "golden.eval.json"))).toBe(false);
+  });
+
+  test("19 other suites of 190 cases plus 10 new cases fits", async () => {
+    const s = setup({ inputs: inputsOf(10) });
+    writeSuites(s.pkg, nineteenSuites());
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(0);
+  });
+
+  test("20 other suites refuse a new one; the --out target itself is not counted", async () => {
+    const s = setup();
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 20; i++) files[`s${i}.eval.json`] = suiteText([`c${i}`]);
+    writeSuites(s.pkg, files);
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.calls).toEqual([]);
+    expect(s.errs.join("\n")).toContain("20");
+    // Recording over one of the 20 replaces it, so the total stays 20.
+    expect(
+      await runEval(
+        ["--package", s.pkg, "--record", s.inputs, "--out", "evals/s3.eval.json", "--force"],
+        s.deps,
+      ),
+    ).toBe(0);
+  });
+
+  test("a broken existing suite only warns and is not counted", async () => {
+    const s = setup();
+    writeSuites(s.pkg, { "broken.eval.json": "{nope", "ok.eval.json": suiteText(["a"]) });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(0);
+    expect(s.errs.join("\n")).toContain("broken.eval.json");
+    expect(s.calls).toHaveLength(1);
+  });
+
+  test("ERR_EVAL_RECORD_EMPTY writes nothing, lists the skips and exits 2", async () => {
+    const s = setup({
+      doc: {
+        ok: false,
+        error: {
+          code: "ERR_EVAL_RECORD_EMPTY",
+          message: "nothing could be recorded",
+          skipped: [{ case: "case-0", why: "call-failed" }],
+        },
+      },
+    });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.errs.join("\n")).toContain("ERR_EVAL_RECORD_EMPTY: nothing could be recorded");
+    expect(s.errs.join("\n")).toContain("case-0: the tool call failed");
+    expect(existsSync(join(s.pkg, "evals"))).toBe(false);
+  });
+
+  test("a role error with --json prints the role's document and writes nothing", async () => {
+    const text = JSON.stringify({
+      ok: false,
+      error: { code: "ERR_EVAL_SANDBOX_UNAVAILABLE", message: "no sandbox" },
+    });
+    const root = tmpDir();
+    const pkg = join(root, "pkg");
+    mkdirSync(pkg);
+    writeFileSync(join(root, "i.json"), inputsOf(1));
+    const h = harness({ stdout: enc(text), code: 2 });
+    expect(
+      await runEval(["--package", pkg, "--record", join(root, "i.json"), "--json"], h.deps),
+    ).toBe(2);
+    expect(h.logs).toEqual([text]);
+    expect(existsSync(join(pkg, "evals"))).toBe(false);
+  });
+
+  test("a document that is not a record document is ERR_EVAL_NO_DOCUMENT", async () => {
+    const s = setup({ doc: { ok: true, report: {} } });
+    expect(await runEval(["--package", s.pkg, "--record", s.inputs], s.deps)).toBe(2);
+    expect(s.errs.join("\n")).toContain("the eval role printed no valid document");
   });
 });
