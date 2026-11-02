@@ -871,8 +871,14 @@ describe("extension.info", () => {
         }
       ).value.extension;
     const local = (await info("com.example.local")) as {
-      evidence: { tested: { text: string }; history: { text: string }; checked: { text: string } };
+      evidence: {
+        baseline: { text: string };
+        tested: { text: string };
+        history: { text: string };
+        checked: { text: string };
+      };
     };
+    expect(local.evidence.baseline.text).toBe("not run (from a local folder)");
     expect(local.evidence.tested.text).toBe("not evaluated (from a local folder)");
     expect(local.evidence.history.text).toBe("none (from a local folder)");
     expect(local.evidence.checked.text).toBe("no checks published");

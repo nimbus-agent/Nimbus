@@ -844,6 +844,7 @@ describe("registry.search and registry.info", () => {
       reportUrl: null,
       provenance: null,
       evidence: {
+        baseline: { state: "none", why: "unchecked", text: "no baseline check published" },
         tested: {
           state: "not-evaluated",
           why: "unscored",

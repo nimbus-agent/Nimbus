@@ -176,7 +176,7 @@ export function accessLines(access: unknown): string[] {
 }
 
 /**
- * `Tested:`, `History:` and `Checked:`, each the gateway's own `text`: nothing here is computed.
+ * `Baseline:`, `Tested:`, `History:` and `Checked:`, each the gateway's own `text`: nothing here is computed.
  * An older gateway sends no `evidence`, so nothing prints; a part that is not a string is skipped,
  * and each string passes through `clean`, so a hostile one cannot add a line.
  */
@@ -185,6 +185,7 @@ export function evidenceLines(evidence: unknown): string[] {
   const e = evidence as Record<string, unknown>;
   const lines: string[] = [];
   for (const [key, label] of [
+    ["baseline", "Baseline"],
     ["tested", "Tested"],
     ["history", "History"],
     ["checked", "Checked"],

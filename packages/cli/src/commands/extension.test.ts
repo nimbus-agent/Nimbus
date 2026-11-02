@@ -315,7 +315,7 @@ describe("runExtensionInfo", () => {
 
   // The texts the gateway test (`automation-rpc.test.ts`, "a local install states its own
   // evidence") asserted.
-  test("a local install prints its three evidence lines", async () => {
+  test("a local install prints its four evidence lines", async () => {
     const { client } = createMockIpcClient([
       {
         extension: {
@@ -323,6 +323,7 @@ describe("runExtensionInfo", () => {
           version: "1.2.3",
           enabled: 1,
           evidence: {
+            baseline: { state: "none", why: "local", text: "not run (from a local folder)" },
             tested: {
               state: "not-evaluated",
               why: "local",
@@ -336,6 +337,7 @@ describe("runExtensionInfo", () => {
       { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
     ]);
     await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    expect(out.stdout).toContain("Baseline: not run (from a local folder)");
     expect(out.stdout).toContain("Tested: not evaluated (from a local folder)");
     expect(out.stdout).toContain("History: none (from a local folder)");
     expect(out.stdout).toContain("Checked: no checks published");
@@ -350,7 +352,7 @@ describe("runExtensionInfo", () => {
     expect(out.stdout).toContain(
       "Tested, history, checks: read from main: nimbus extension info ext1 --registry main\n",
     );
-    expect(out.stdout).not.toMatch(/^(Tested|History|Checked): /m);
+    expect(out.stdout).not.toMatch(/^(Baseline|Tested|History|Checked): /m);
   });
 
   test("prints Requires: with the requirement lines when the extension has some", async () => {

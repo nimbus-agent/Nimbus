@@ -700,6 +700,7 @@ const INSTALL_RENDERED = new Set([
   "publisherBadge",
   "networkReach",
   "fileAccess",
+  "baseline",
   "tested",
   "history",
   "checked",
@@ -712,6 +713,7 @@ const INSTALL_EVIDENCE_ROWS: ReadonlyArray<{
   readonly id: string;
   readonly label: string;
 }> = [
+  { key: "baseline", id: "install-baseline", label: "Baseline" },
   { key: "tested", id: "install-tested", label: "Tested" },
   { key: "history", id: "install-history", label: "History" },
   { key: "checked", id: "install-checked", label: "Checked" },

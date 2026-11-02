@@ -155,6 +155,11 @@ function signedQuality(passed: number, cases: number): Record<string, unknown> {
   };
 }
 
+/** 1.0.0 carries a registry-signed passing baseline of 3 tools; the other versions carry none. */
+const BASELINE_BY_VERSION: Record<string, Record<string, unknown>> = {
+  "1.0.0": { scorer: 1, passed: true, tools: 3 },
+};
+
 /** 1.0.0 scores 4 of 4, 2.0.0 scores 3 of 4: the update is a drop. 3.0.0 is unscored. */
 const QUALITY_BY_VERSION: Record<string, Record<string, unknown>> = {
   "1.0.0": signedQuality(4, 4),
@@ -210,7 +215,12 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
       publisherId,
       versions: versions.map((version) => {
         const q = QUALITY_BY_VERSION[version];
-        return q === undefined ? { version } : { version, quality: q };
+        const baseline = BASELINE_BY_VERSION[version];
+        return {
+          version,
+          ...(q === undefined ? {} : { quality: q }),
+          ...(baseline === undefined ? {} : { baseline }),
+        };
       }),
     });
     const indexPath = join(regDir, "index.json");
@@ -332,11 +342,16 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
   test("registry.info states who tested the newest version, from the registry row's name", async () => {
     const info = await client.call<{
       evidence: {
+        baseline: { state: string; text: string; passed?: boolean; tools?: number };
         tested: { state: string; text: string; measuredBy?: string };
         history: { state: string; text: string };
         checked: { state: string; text: string };
       };
     }>("registry.info", { id: EXTENSION_ID });
+    expect(info.evidence.baseline).toMatchObject({ state: "checked", passed: true, tools: 3 });
+    expect(info.evidence.baseline.text).toBe(
+      `starts and lists 3 valid tools (checked by ${REGISTRY})`,
+    );
     expect(info.evidence.tested).toMatchObject({ state: "scored", measuredBy: REGISTRY });
     expect(info.evidence.tested.text).toBe(
       `4 of 4 cases passed (100/100), tests by the publisher, measured by ${REGISTRY}`,
