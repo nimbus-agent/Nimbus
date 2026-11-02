@@ -797,6 +797,54 @@ describe("score mode: the baseline", () => {
     expect(summary).not.toMatch(/\b(works|passed all|safe)\b/i);
   });
 
+  test("a version that ends with no entry is listed with why; no claim of no version", async () => {
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish a plain version");
+    const r = await score(
+      echoOk,
+      gateway,
+      fakeBaseline(() => run({ code: 2, stderrTail: "usage: __nimbus-eval\n" })),
+    );
+    expect(r).toEqual({});
+    const summary = summaries.join("\n");
+    expect(summary).not.toContain("No unsigned version to score.");
+    expect(summary).toContain("**No entry recorded:**");
+    expect(summary).toContain("- `acme/plain@1.0.0`: no baseline check (`ERR_EVAL_ROLE_FAILED`)");
+    expect(warnings.join("\n")).toContain("it is signed without a baseline");
+  });
+
+  test("a suite result with no baseline says why beside the score", async () => {
+    await publish({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    pushMaintainer(repo, "main", "publish a scored version");
+    await score(
+      echoOk,
+      gateway,
+      fakeBaseline(() => run({ code: 2 })),
+    );
+    expect(summaries.join("\n")).toContain(
+      "- `acme/scored@1.0.0`: 50/100 (1 of 2 cases passed); no baseline check (`ERR_EVAL_ROLE_FAILED`)",
+    );
+  });
+
+  test("a no-listing baseline prints the sandbox line; another failure does not", async () => {
+    const notice = "Check the job's sandbox setup before trusting it";
+    await publish({ id: "acme/plain" });
+    pushMaintainer(repo, "main", "publish a plain version");
+    const failing = (failure: string) =>
+      fakeBaseline((ref) => {
+        const [id = "", version = ""] = ref.split("@");
+        return run({
+          stdout: baselineDoc(id, version, { scorer: 1, passed: false, tools: 0, failure }),
+        });
+      });
+    await score(echoOk, gateway, failing("no-listing"));
+    expect(summaries.join("\n")).toContain(notice);
+    expect(summaries.join("\n")).toContain("the result is signed into the version");
+    summaries = [];
+    await score(echoOk, gateway, failing("invalid-tool"));
+    expect(summaries.join("\n")).not.toContain(notice);
+  });
+
   test("scores.json stays {} and the summary says so when nothing was recorded", async () => {
     const r = await score(echoOk);
     expect(r).toEqual({});

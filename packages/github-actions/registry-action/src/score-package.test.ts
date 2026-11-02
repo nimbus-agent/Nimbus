@@ -1,6 +1,8 @@
 /**
- * `score-package` over a real directory or `.tgz` with FAKE roles injected: the hash binding to
- * `maintain add`'s packer, the entries recorded, and the refusals that make a job red.
+ * `score-package` over a real `.tgz` with FAKE roles injected: the entries recorded, the wording of
+ * a mode with no sign run, and the refusals that make a job red. The hash binding to `maintain add`
+ * across the two runtimes is proved over the built bundle in
+ * `packages/gateway/test/integration/registry-action-score-package.test.ts`.
  */
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { createHash } from "node:crypto";
@@ -15,11 +17,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { packExtensionDir } from "../../../registry-format/src/index.ts";
 import type { ActionIo } from "./report.ts";
 import { runScorePackage, type ScorePackageDeps } from "./score-package.ts";
 import type { RoleRun } from "./score-role.ts";
-import { makeExtension, write } from "./testing/registry-repo.ts";
+import { makeExtension } from "./testing/registry-repo.ts";
 
 setDefaultTimeout(60_000);
 
@@ -115,88 +116,54 @@ const deps: ScorePackageDeps = {
 const score = (pkg: string, over: Partial<ScorePackageDeps> = {}) =>
   runScorePackage({ package: pkg, gateway, out }, { ...deps, ...over });
 
-/** An unpacked package directory for `o`, holding exactly the files `makeExtension` packs. */
-async function packageDir(o: Parameters<typeof makeExtension>[1]): Promise<string> {
+/** The package `o` describes as a `.tgz` file, with its bytes. */
+async function packageTgz(
+  o: Parameters<typeof makeExtension>[1],
+): Promise<{ path: string; sha: string }> {
   const ext = await makeExtension(scratch, o);
-  const dir = mkdtempSync(join(tmp, "pkg-"));
-  write(dir, "nimbus.extension.json", ext.manifest);
-  write(dir, "README.md", "echo\n");
-  if (o?.starterPack !== true) write(dir, "dist/index.js", o?.dist ?? "export default 1;\n");
-  for (const [name, text] of Object.entries(o?.evals ?? {})) write(dir, `evals/${name}`, text);
-  return dir;
+  const path = join(tmp, "package.tgz");
+  writeFileSync(path, ext.pkg);
+  return { path, sha: sha256(ext.pkg) };
 }
 
-async function packedSha(dir: string): Promise<string> {
-  const tgz = join(tmp, `${sha256(Buffer.from(dir)).slice(0, 8)}.tgz`);
-  await packExtensionDir(dir, tgz);
-  return sha256(readFileSync(tgz));
-}
-
-/** The source directory is never what a role is handed: it still holds the post-run tampering. */
-function roleDirIsNotSource(dir: string): boolean {
-  return readFileSync(join(dir, "dist", "index.js"), "utf8").includes("tampered");
-}
+/** Anything the mode prints that a registry with no sign run must not read. */
+const SIGN_WORDING = /\bsign\b|sign run|default branch|signed without|still signed/i;
 
 describe("score-package", () => {
-  test("a directory is packed, and its packageSha256 equals the hash of packExtensionDir's bytes", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
-    const r = await score(dir);
-    expect(r).toEqual({
-      "acme/plain@1.0.0": { packageSha256: await packedSha(dir), baseline: BASELINE },
-    });
+  test("a .tgz is hashed as given", async () => {
+    const { path, sha } = await packageTgz({ id: "acme/plain" });
+    const r = await score(path);
+    expect(r).toEqual({ "acme/plain@1.0.0": { packageSha256: sha, baseline: BASELINE } });
     expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(r);
   });
 
-  test("the role runs the bytes that were hashed, not the source directory", async () => {
-    const dir = await packageDir({ id: "acme/plain", dist: "export default 'original';\n" });
-    const expectedSha = await packedSha(dir);
-    let seen: { dist: string; repacked: string } | undefined;
-    const r = await score(dir, {
+  test("the role runs the bytes that were hashed, not the file as it later stands", async () => {
+    const { path, sha } = await packageTgz({
+      id: "acme/plain",
+      dist: "export default 'original';\n",
+    });
+    let seen = "";
+    const r = await score(path, {
       runBaseline: async (gw, roleDir) => {
-        // The source changes after the run started: the role must not see it.
-        writeFileSync(join(dir, "dist", "index.js"), "export default 'tampered';\n");
-        const again = join(tmp, "repacked.tgz");
-        await packExtensionDir(roleDir, again);
-        seen = {
-          dist: readFileSync(join(roleDir, "dist", "index.js"), "utf8"),
-          repacked: sha256(readFileSync(again)),
-        };
+        // The file changes after the run started: the role must not see it.
+        writeFileSync(path, "tampered");
+        seen = readFileSync(join(roleDir, "dist", "index.js"), "utf8");
         return deps.runBaseline(gw, roleDir);
       },
     });
-    expect(seen?.dist).toBe("export default 'original';\n");
-    expect(seen?.repacked).toBe(expectedSha);
-    expect(r["acme/plain@1.0.0"]?.packageSha256).toBe(expectedSha);
-    expect(roleDirIsNotSource(dir)).toBe(true);
-  });
-
-  test("a .tgz is hashed as given", async () => {
-    const ext = await makeExtension(scratch, { id: "acme/plain" });
-    const tgz = join(tmp, "given.tgz");
-    writeFileSync(tgz, ext.pkg);
-    const r = await score(tgz);
-    expect(r["acme/plain@1.0.0"]?.packageSha256).toBe(sha256(ext.pkg));
-  });
-
-  test("a directory and its own packed .tgz give the same entry key and hash", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
-    const tgz = join(tmp, "own.tgz");
-    await packExtensionDir(dir, tgz);
-    const fromDir = await score(dir);
-    const fromTgz = await score(tgz);
-    expect(fromTgz).toEqual(fromDir);
-    expect(Object.keys(fromTgz)).toEqual(["acme/plain@1.0.0"]);
+    expect(seen).toBe("export default 'original';\n");
+    expect(r["acme/plain@1.0.0"]?.packageSha256).toBe(sha);
+    expect(readFileSync(path, "utf8")).toBe("tampered");
   });
 
   test("a suite package gets its quality and its baseline, the baseline run first", async () => {
-    const dir = await packageDir({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
-    const r = await score(dir);
+    const { path, sha } = await packageTgz({
+      id: "acme/scored",
+      evals: { "basic.eval.json": SUITE },
+    });
+    const r = await score(path);
     expect(r).toEqual({
-      "acme/scored@1.0.0": {
-        packageSha256: await packedSha(dir),
-        quality: QUALITY,
-        baseline: BASELINE,
-      },
+      "acme/scored@1.0.0": { packageSha256: sha, quality: QUALITY, baseline: BASELINE },
     });
     expect(calls).toEqual(["baseline acme/scored@1.0.0", "suite acme/scored@1.0.0"]);
     expect(summaries.join("\n")).toContain(
@@ -205,47 +172,131 @@ describe("score-package", () => {
   });
 
   test("a package without a suite gets a baseline alone, and the suite role never runs", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
-    await score(dir);
+    const { path } = await packageTgz({ id: "acme/plain" });
+    await score(path);
     expect(calls).toEqual(["baseline acme/plain@1.0.0"]);
   });
 
-  test("a starter pack gives {} and runs nothing", async () => {
-    const dir = await packageDir({ id: "acme/pack", starterPack: true });
-    const r = await score(dir);
+  test("a starter pack gives {}, runs nothing, and the summary says why", async () => {
+    const { path } = await packageTgz({ id: "acme/pack", starterPack: true });
+    const r = await score(path);
     expect(r).toEqual({});
     expect(JSON.parse(readFileSync(out, "utf8"))).toEqual({});
     expect(calls).toEqual([]);
+    const summary = summaries.join("\n");
+    expect(summary).toContain("- `acme/pack@1.0.0`: a starter pack never runs");
+    expect(summary).not.toContain("No unsigned version");
+    expect(summary).not.toMatch(SIGN_WORDING);
   });
 
-  test("a gateway older than --baseline: no entry for a plain package, a warning, a green run", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
-    const r = await score(dir, {
+  test("a gateway older than --baseline: no entry, a warning, a green run, and the summary says why", async () => {
+    const { path } = await packageTgz({ id: "acme/plain" });
+    const r = await score(path, {
       runBaseline: async () => ({ ...run(""), code: 2, stderrTail: "usage: __nimbus-eval\n" }),
     });
     expect(r).toEqual({});
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain("acme/plain@1.0.0");
+    expect(warnings[0]).toContain("scores.json holds no baseline for it");
+    const summary = summaries.join("\n");
+    expect(summary).toContain("- `acme/plain@1.0.0`: no baseline check (`ERR_EVAL_ROLE_FAILED`)");
+    expect(summary).not.toContain("No unsigned version");
+    expect(`${summary}\n${warnings.join("\n")}`).not.toMatch(SIGN_WORDING);
+  });
+
+  test("a failed eval names maintain add and never a sign run", async () => {
+    const { path, sha } = await packageTgz({
+      id: "acme/scored",
+      evals: { "basic.eval.json": SUITE },
+    });
+    const r = await score(path, {
+      runRole: async () => ({ ...run(""), code: 1, stderrTail: "boom\n" }),
+    });
+    expect(r["acme/scored@1.0.0"]?.packageSha256).toBe(sha);
+    const text = `${summaries.join("\n")}\n${warnings.join("\n")}`;
+    expect(text).toContain("`maintain add` refuses a package with eval suites");
+    expect(text).toContain("**No score:**");
+    expect(text).not.toMatch(SIGN_WORDING);
+  });
+
+  test("a spent budget says so without naming a sign run", async () => {
+    const { path } = await packageTgz({ id: "acme/scored", evals: { "basic.eval.json": SUITE } });
+    let t = 0;
+    const r = await score(path, {
+      now: () => {
+        // Past the whole 14-minute budget from the second read on.
+        const at = t;
+        t = 15 * 60_000;
+        return at;
+      },
+    });
+    const entry = r["acme/scored@1.0.0"];
+    expect(entry !== undefined && "error" in entry && entry.error.code).toBe("ERR_EVAL_BUDGET");
+    expect(calls).toEqual([]);
+    const text = `${summaries.join("\n")}\n${warnings.join("\n")}\n${JSON.stringify(r)}`;
+    expect(text).toContain("no baseline check (`ERR_EVAL_BUDGET`)");
+    expect(text).not.toMatch(SIGN_WORDING);
+  });
+
+  test("a no-listing baseline prints the sandbox line, in this mode's words", async () => {
+    const { path } = await packageTgz({ id: "acme/plain" });
+    await score(path, {
+      runBaseline: async (_gw, dir) => {
+        const m = manifestOf(dir);
+        return run(
+          `${JSON.stringify({
+            ok: true,
+            extensionId: m.id,
+            version: m.version,
+            baseline: { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+          })}\n`,
+        );
+      },
+    });
+    const summary = summaries.join("\n");
+    expect(summary).toContain("Check the job's sandbox setup before trusting it");
+    expect(summary).toContain("`maintain add` signs the result into the version");
+    expect(summary).not.toMatch(SIGN_WORDING);
   });
 
   test("a package that fails inspectPackage fails the job and writes nothing", async () => {
     const bad = join(tmp, "bad.tgz");
-    writeFileSync(bad, "not a tarball");
+    // Gzip's magic, so this reaches the inspector rather than the input's own refusal.
+    writeFileSync(bad, Buffer.from([0x1f, 0x8b, 0x00, 0x00]));
     await expect(score(bad)).rejects.toThrow();
     expect(existsSync(out)).toBe(false);
     expect(calls).toEqual([]);
   });
 
-  test("a directory with no manifest fails the job", async () => {
-    const dir = mkdtempSync(join(tmp, "empty-"));
-    write(dir, "README.md", "x\n");
-    await expect(score(dir)).rejects.toThrow();
+  test("a directory is refused, and the refusal names nimbus extension pack", async () => {
+    const dir = mkdtempSync(join(tmp, "pkg-"));
+    await expect(score(dir)).rejects.toThrow("nimbus extension pack");
+    expect(existsSync(out)).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  test("a directory named like a .tgz is refused the same way", async () => {
+    const dir = join(tmp, "dir.tgz");
+    mkdirSync(dir);
+    await expect(score(dir)).rejects.toThrow("nimbus extension pack");
     expect(existsSync(out)).toBe(false);
   });
 
-  test("a missing path fails the job and names the input", async () => {
-    await expect(score(join(tmp, "absent"))).rejects.toThrow('input "package"');
+  test("a missing path is refused, names the input and the command", async () => {
+    await expect(score(join(tmp, "absent.tgz"))).rejects.toThrow('input "package"');
+    await expect(score(join(tmp, "absent.tgz"))).rejects.toThrow("nimbus extension pack");
     expect(existsSync(out)).toBe(false);
+  });
+
+  test("a file that is not a .tgz is refused, by name and by content", async () => {
+    const named = join(tmp, "package.zip");
+    writeFileSync(named, "x");
+    await expect(score(named)).rejects.toThrow("does not end in .tgz");
+    const content = join(tmp, "text.tgz");
+    writeFileSync(content, "not gzip");
+    await expect(score(content)).rejects.toThrow("is not gzip data");
+    expect(existsSync(out)).toBe(false);
+    expect(calls).toEqual([]);
   });
 
   test("assertGateway refuses a relative gateway path before anything is read", async () => {
@@ -256,8 +307,8 @@ describe("score-package", () => {
   });
 
   test("the work directory is removed, and scores.json is written whole through a rename", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
-    await score(dir);
+    const { path } = await packageTgz({ id: "acme/plain" });
+    await score(path);
     expect(
       readdirSync(scratch).filter((n) => n.startsWith("nimbus-registry-score-package-")),
     ).toEqual([]);
@@ -267,9 +318,9 @@ describe("score-package", () => {
   });
 
   test("an output path in a missing directory fails and leaves no temp file", async () => {
-    const dir = await packageDir({ id: "acme/plain" });
+    const { path } = await packageTgz({ id: "acme/plain" });
     await expect(
-      runScorePackage({ package: dir, gateway, out: join(tmp, "nope", "scores.json") }, deps),
+      runScorePackage({ package: path, gateway, out: join(tmp, "nope", "scores.json") }, deps),
     ).rejects.toThrow();
     expect(existsSync(join(tmp, "nope"))).toBe(false);
   });

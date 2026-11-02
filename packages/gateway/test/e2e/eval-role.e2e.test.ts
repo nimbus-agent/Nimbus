@@ -13,7 +13,11 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type EvalBaselineDocument, parseEvalBaselineDocument } from "@nimbus-dev/registry-format";
+import {
+  type EvalBaseline,
+  type EvalBaselineDocument,
+  parseEvalBaselineDocument,
+} from "@nimbus-dev/registry-format";
 
 import { EXTENSION_STAGE_DIR_NAME } from "../../src/platform/sandbox/sandbox-cwd.ts";
 import {
@@ -96,6 +100,43 @@ function baselineDocumentOf(r: RoleResult): EvalBaselineDocument {
   if (doc === null) throw new Error(`not a baseline document: ${context}`);
   return doc;
 }
+
+/**
+ * A package whose server speaks MCP's stdio framing by hand and lists exactly `tools`, so a listing
+ * no SDK server would send reaches the real `MCPClient`.
+ */
+function writeRawListingPackage(dir: string, id: string, tools: readonly unknown[]): void {
+  mkdirSync(join(dir, "dist"), { recursive: true });
+  const server = `const TOOLS = ${JSON.stringify(JSON.stringify(tools))};
+let buf = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (d) => {
+  buf += d;
+  for (let i = buf.indexOf("\\n"); i >= 0; i = buf.indexOf("\\n")) {
+    const line = buf.slice(0, i);
+    buf = buf.slice(i + 1);
+    if (line.trim() === "") continue;
+    const m = JSON.parse(line);
+    if (m.id === undefined) continue;
+    const result =
+      m.method === "initialize"
+        ? { protocolVersion: m.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "raw", version: "1.0.0" } }
+        : m.method === "tools/list"
+          ? { tools: JSON.parse(TOOLS) }
+          : {};
+    process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id: m.id, result }) + "\\n");
+  }
+});
+`;
+  writeFileSync(join(dir, "dist", "index.js"), server, "utf8");
+  writeFileSync(
+    join(dir, "nimbus.extension.json"),
+    JSON.stringify({ id, version: "1.0.0", entry: "dist/index.js" }, null, 2),
+    "utf8",
+  );
+}
+
+const GOOD_RAW_TOOL = { name: "a", inputSchema: { type: "object" } };
 
 describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed extension", () => {
   const tmp = mkdtempSync(join(tmpdir(), "nimbus-eval-e2e-"));
@@ -245,6 +286,45 @@ describe.skipIf(!sandboxAvailable)("the __nimbus-eval role over a real sandboxed
       expect(doc.ok).toBe(true);
       if (!doc.ok) return;
       expect(doc.baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+    },
+    ROLE_TIMEOUT_MS + 10_000,
+  );
+
+  // What the real `MCPClient` does to a listing the docs state limits for. A fake cannot show it.
+  test.each([
+    [
+      "a tool named __proto__ is invalid-tool, though the client's record shows no such key",
+      "e2e.rawproto",
+      [GOOD_RAW_TOOL, { name: "__proto__", inputSchema: { type: "object", properties: { x: 1 } } }],
+      { scorer: 1, passed: false, tools: 2, failure: "invalid-tool" },
+    ],
+    [
+      "a duplicate name leaves only the last tool: the stated limit",
+      "e2e.rawdup",
+      [{ name: "a", inputSchema: { type: "object", properties: { x: 1 } } }, GOOD_RAW_TOOL],
+      { scorer: 1, passed: true, tools: 1 },
+    ],
+    [
+      "a non-array required fails the client's own parsing: no-listing",
+      "e2e.rawrequired",
+      [{ name: "a", inputSchema: { type: "object", required: "x" } }],
+      { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+    ],
+    [
+      "a type other than object fails the client's own parsing: no-listing",
+      "e2e.rawtype",
+      [{ name: "a", inputSchema: { type: "array" } }],
+      { scorer: 1, passed: false, tools: 0, failure: "no-listing" },
+    ],
+  ])(
+    "--baseline: %s",
+    async (_title, id, tools, want) => {
+      const dir = join(tmp, id);
+      writeRawListingPackage(dir, id, tools);
+      const r = await evalRole(dir, "--baseline");
+      const doc = baselineDocumentOf(r);
+      if (!doc.ok) throw new Error(`baseline error: ${JSON.stringify(doc.error)}\n${r.stderr}`);
+      expect(doc.baseline).toEqual(want as EvalBaseline);
     },
     ROLE_TIMEOUT_MS + 10_000,
   );

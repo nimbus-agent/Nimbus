@@ -1,22 +1,26 @@
 /**
- * `mode: score` — runs each new extension version's eval suites (eval spec § 4.6, ruling R8).
+ * `mode: score` — runs each new extension version's code in the sandbox (eval spec § 4.6, ruling R8).
  *
  * Extension code is untrusted, so it runs ONLY here: a job with no secrets, no environment and a
- * read-only token, never the job that holds the registry root key. For every unsigned candidate
- * that `sign` would consider (validated exactly as `sign` validates it, `candidates.ts`) whose
- * package holds an eval suite (`PublishVerdict.hasEvals`), the package is unpacked again with the
- * same safe extractor into a directory this mode owns, and the gateway's `__nimbus-eval` role —
- * which confines the extension in the platform sandbox with no network — is run over it.
+ * read-only token, never the job that holds the registry root key. Every unsigned candidate that
+ * `sign` would consider (validated exactly as `sign` validates it, `candidates.ts`) and that is not
+ * a starter pack gets a baseline run: its server is started to list its tools (`score-baseline.ts`).
+ * One whose package also holds an eval suite (`PublishVerdict.hasEvals`) then gets a suite run. Each
+ * run unpacks the package again with the same safe extractor into a directory this mode owns, and
+ * runs the gateway's `__nimbus-eval` role, which confines the extension in the platform sandbox with
+ * no network, over it.
  *
- * The role's ONE stdout document is validated with registry-format's `parseEvalRoleDocument` and
- * must name the candidate's own `<id>@<version>`. Anything else (a timeout, stdout past 8 MiB, a
- * non-zero exit, garbage) is an error entry, never a partial score. `scores.json` is always
- * written, `{}` when nothing was scored, through a temp sibling and a rename. `sign` reads it as
- * untrusted input bound to each candidate's `packageSha256`.
+ * The role's ONE stdout document is validated with registry-format's validators and must name the
+ * candidate's own `<id>@<version>`. For a suite run, anything else (a timeout, stdout past 8 MiB, a
+ * non-zero exit, garbage) is an error entry, never a partial score; for a baseline run it is no
+ * baseline and a warning. `scores.json` is always written, `{}` when nothing was recorded, through a
+ * temp sibling and a rename. `sign` reads it as untrusted input bound to each candidate's
+ * `packageSha256`.
  *
- * The whole run has one time budget (`SCORE_RUN_BUDGET_MS`): each role run gets the role's own
- * deadline or what is left of the budget, whichever is shorter, and once under a minute is left
- * every further evals candidate is an `ERR_EVAL_BUDGET` entry without running. Hanging suites,
+ * The whole run has one time budget (`SCORE_RUN_BUDGET_MS`): every role run, baseline or suite, gets
+ * its own deadline or what is left of the budget, whichever is shorter. Under two minutes left, no
+ * baseline starts; once under a minute is left, every further evals candidate is an
+ * `ERR_EVAL_BUDGET` entry without running. Hanging suites,
  * which a publisher can merge on purpose, therefore cannot turn the job red; a red score job would
  * skip the whole sign run, trust requests (takedowns, key revocations) included. The relief is per
  * run only: no state is kept across runs, and `sign` never signs a version whose eval failed, so
@@ -264,10 +268,43 @@ const SHARED: ScoreDeps = {
   now: Date.now,
 };
 
+/** Which mode is scoring: what a message may say about signing depends on it. */
+export type ScoreMode = "score" | "check" | "score-package";
+
 export interface ScoreRun {
   scores: ScoresFile;
   skipped: Skipped[];
+  /** Versions with no baseline, by `<id>@<version>`: the code that says why. */
+  noBaseline: Map<string, string>;
+  /** Versions that are starter packs: they never run, so nothing is recorded. */
+  starterPacks: string[];
 }
+
+/** Says what the summary must say when a version's result reads `no-listing`. */
+const NO_LISTING_NOTICE: Record<Exclude<ScoreMode, "check">, string> = {
+  score:
+    "A `no-listing` baseline can also mean that no sandboxed child could start on this runner. Check the job's sandbox setup before trusting it: the result is signed into the version.",
+  "score-package":
+    "A `no-listing` baseline can also mean that no sandboxed child could start on this runner. Check the job's sandbox setup before trusting it: `maintain add` signs the result into the version.",
+};
+
+/** What happens to a version with no baseline, by mode. */
+const NO_BASELINE_TAIL: Record<ScoreMode, string> = {
+  score: "it is signed without a baseline",
+  check: "nothing is signed in this mode",
+  "score-package": "scores.json holds no baseline for it",
+};
+
+/** What happens to a version whose baseline failed, by mode. */
+const FAILED_BASELINE_TAIL: Record<ScoreMode, string> = {
+  score: "the version is still signed",
+  check: "nothing is signed in this mode",
+  "score-package": "the result is recorded in scores.json",
+};
+
+/** Why `maintain add` will not take a package whose eval failed: `score-package`'s remedy. */
+const MAINTAIN_ADD_REMEDY =
+  "`maintain add` refuses a package with eval suites until its entry in scores.json holds a score.";
 
 /** When an unscored version is tried again: no state is kept across runs. */
 const RETRY_NOTE =
@@ -281,11 +318,13 @@ const FAILED_REMEDY =
   "A version whose eval failed is not signed, so it is scored again on every sign run (a push to the default branch or a workflow_dispatch) until it scores or its directory is removed from the default branch; meanwhile each attempt spends time budget that later versions need.";
 
 /** The entry of an evals candidate the run had no budget left for. */
-const budgetSpent = (packageSha256: string): SuiteEntry => ({
+const budgetSpent = (packageSha256: string, mode: ScoreMode): SuiteEntry => ({
   packageSha256,
   ...fail(
     "ERR_EVAL_BUDGET",
-    `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}`,
+    mode === "score"
+      ? `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}`
+      : "not scored: the run's time budget was spent",
   ),
 });
 
@@ -295,11 +334,16 @@ type VersionCandidate = {
   packageBytes: Uint8Array;
 };
 
-/** Where and until when a version is scored; no `deadline` means no run budget (`check`). */
-type VersionAt = { gateway: string; work: string; deadline?: number };
+/**
+ * Where and until when a version is scored; no `deadline` means no run budget (`check`). `mode` sets
+ * what the warnings say about signing, and is `score` when absent.
+ */
+type VersionAt = { gateway: string; work: string; deadline?: number; mode?: ScoreMode };
 
-/** What `scoreVersion` runs with. */
-type VersionDeps = Pick<ScoreDeps, "runRole" | "runBaseline" | "now" | "io">;
+/** What `scoreVersion` runs with. `noBaseline` hears the code when a version gets no baseline. */
+type VersionDeps = Pick<ScoreDeps, "runRole" | "runBaseline" | "now" | "io"> & {
+  noBaseline?: (code: string) => void;
+};
 
 /** The run budget left, in milliseconds; unbounded without a deadline. */
 const budgetLeft = (at: VersionAt, now: () => number): number =>
@@ -307,9 +351,9 @@ const budgetLeft = (at: VersionAt, now: () => number): number =>
 
 /**
  * Run the baseline for one version within the budget. A baseline that could not be obtained (the
- * budget, a refusing sandbox, a gateway older than the flag) is one clipped warning and `undefined`:
- * the version is then signed without one. A baseline that failed is returned and warned about too.
- * The role's own error text reaches the warning only, never `scores.json`.
+ * budget, a refusing sandbox, a gateway older than the flag) is one clipped warning and `undefined`,
+ * and `noBaseline` hears why. A baseline that failed is returned and warned about too. The role's
+ * own error text reaches the warning only, never `scores.json`.
  */
 async function baselineWithinBudget(
   c: VersionCandidate,
@@ -317,12 +361,14 @@ async function baselineWithinBudget(
   deps: VersionDeps,
 ): Promise<EvalBaseline | undefined> {
   const ref = `${c.verdict.id}@${c.verdict.version}`;
+  const mode = at.mode ?? "score";
   const left = budgetLeft(at, deps.now);
   if (left < BASELINE_MIN_RUN_MS) {
     deps.io.annotate(
       "warning",
-      `baseline check of ${ref} not run: under ${duration(BASELINE_MIN_RUN_MS)} of the score job's time budget left; it is signed without a baseline`,
+      `baseline check of ${ref} not run: under ${duration(BASELINE_MIN_RUN_MS)} of the score job's time budget left; ${NO_BASELINE_TAIL[mode]}`,
     );
+    deps.noBaseline?.("ERR_EVAL_BUDGET");
     return undefined;
   }
   const r = await baselineCandidate(
@@ -335,15 +381,16 @@ async function baselineWithinBudget(
     deps.io.annotate(
       "warning",
       clip(
-        `no baseline check for ${ref} (${r.error.code}): ${r.error.message}; it is signed without a baseline`,
+        `no baseline check for ${ref} (${r.error.code}): ${r.error.message}; ${NO_BASELINE_TAIL[mode]}`,
       ),
     );
+    deps.noBaseline?.(r.error.code);
     return undefined;
   }
   if (!r.baseline.passed) {
     deps.io.annotate(
       "warning",
-      clip(`baseline check of ${ref} failed: ${r.baseline.failure}; the version is still signed`),
+      clip(`baseline check of ${ref} failed: ${r.baseline.failure}; ${FAILED_BASELINE_TAIL[mode]}`),
     );
   }
   return r.baseline;
@@ -359,7 +406,9 @@ function suiteWithinBudget(
   deps: VersionDeps,
 ): Promise<SuiteEntry> {
   const left = budgetLeft(at, deps.now);
-  if (left < SCORE_MIN_RUN_MS) return Promise.resolve(budgetSpent(c.verdict.packageSha256));
+  if (left < SCORE_MIN_RUN_MS) {
+    return Promise.resolve(budgetSpent(c.verdict.packageSha256, at.mode ?? "score"));
+  }
   return scoreCandidate(
     c,
     {
@@ -393,7 +442,32 @@ export async function scoreVersion(
   return baseline === undefined ? suite : { ...suite, baseline };
 }
 
-/** Validate every unsigned candidate as `sign` does and score each one with an eval suite. */
+/** Score one version into `run`: its entry if any, and why it has no baseline or no entry. */
+export async function recordVersion(
+  run: ScoreRun,
+  c: VersionCandidate,
+  at: VersionAt,
+  deps: VersionDeps,
+): Promise<ScoreEntry | undefined> {
+  const ref = `${c.verdict.id}@${c.verdict.version}`;
+  if (c.verdict.starterPack) run.starterPacks.push(ref);
+  const entry = await scoreVersion(c, at, {
+    ...deps,
+    noBaseline: (why) => run.noBaseline.set(ref, why),
+  });
+  if (entry !== undefined) run.scores[ref] = entry;
+  return entry;
+}
+
+/** A run with nothing in it yet. Keys are `<id>@<version>`: a null prototype keeps them inert. */
+export const emptyRun = (): ScoreRun => ({
+  scores: Object.create(null) as ScoresFile,
+  skipped: [],
+  noBaseline: new Map(),
+  starterPacks: [],
+});
+
+/** Validate every unsigned candidate as `sign` does and record what each one gets. */
 async function scoreAll(
   opts: ScoreOptions & { defaultBranch: string },
   deps: ScoreDeps,
@@ -411,12 +485,10 @@ async function scoreAll(
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
   const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "score");
-  const skipped: Skipped[] = [];
-  const admission = admitStatements(git, index, mainRef, cwd, skipped);
+  const run = emptyRun();
+  const admission = admitStatements(git, index, mainRef, cwd, run.skipped);
   const extensions: Record<string, RegistryExtensionEntry> = { ...index.extensions };
   const publishedAt = git.commitTime(mainRef, { cwd });
-  // Keys are `<id>@<version>` from validated manifests; a null prototype keeps them inert anyway.
-  const scores = Object.create(null) as ScoresFile;
   for await (const o of validateUnsigned({
     git,
     validate: deps.validate,
@@ -429,22 +501,22 @@ async function scoreAll(
     bindings: () => ({ ...admission.index, extensions }),
   })) {
     if (o.kind === "skipped") {
-      skipped.push({ dir: o.dir, reason: o.reason });
+      run.skipped.push({ dir: o.dir, reason: o.reason });
       continue;
     }
     const v = o.verdict;
     // NOSONAR S9382: sequential by design - one sandboxed role at a time, inside the validation loop
-    const entry = await scoreVersion(
+    const entry = await recordVersion(
+      run,
       { verdict: v, packageBytes: o.candidate.packageBytes },
       { gateway: opts.gateway, work, deadline },
       deps,
     );
-    if (entry !== undefined) scores[`${v.id}@${v.version}`] = entry;
     // `sign` will not sign a version with evals and no score: later candidates must not bind to it.
     if (entry !== undefined && "error" in entry) continue;
     addVersion(extensions, v, publishedAt);
   }
-  return { scores, skipped };
+  return run;
 }
 
 /** The line for a version's eval suite result; the version's baseline, when it has one, follows. */
@@ -457,33 +529,65 @@ function suiteText(e: ScoreEntry): string | undefined {
   return undefined;
 }
 
+/** The line for a version's baseline: the fact, or why it has none; nothing for no attempt. */
+function baselineText(e: ScoreEntry, why: string | undefined): string | undefined {
+  if (e.baseline !== undefined) return `baseline: ${baselineFact(e.baseline)}`;
+  return why === undefined ? undefined : `no baseline check (${code(why)})`;
+}
+
+/** The versions that ended with no entry, each with why. */
+function noEntryLines(r: ScoreRun): string[] {
+  const lines: string[] = [];
+  for (const ref of r.starterPacks) {
+    lines.push(`- ${code(ref)}: a starter pack never runs, so nothing is recorded`);
+  }
+  for (const [ref, why] of r.noBaseline) {
+    if (r.scores[ref] === undefined) lines.push(`- ${code(ref)}: no baseline check (${code(why)})`);
+  }
+  return lines;
+}
+
 /**
- * The job summary of a score run. A version with a failed eval is listed under **Not signed**; a
- * baseline is a stated fact (`baselineFact`) beside the version and never a reason to list it there.
+ * The job summary of a score run. A version with a failed eval is listed apart; a baseline is a
+ * stated fact (`baselineFact`) beside the version and never a reason to list it there. Every
+ * version seen is named, with or without an entry. `score-package` has no sign run and no default
+ * branch, so its wording names neither.
  */
-export function reportScores(io: ActionIo, r: ScoreRun): void {
+export function reportScores(
+  io: ActionIo,
+  r: ScoreRun,
+  mode: Exclude<ScoreMode, "check"> = "score",
+): void {
   const lines = ["## Registry score", ""];
   const entries = Object.entries(r.scores);
-  if (entries.length === 0) lines.push("No unsigned version to score.");
+  const noEntry = noEntryLines(r);
+  if (entries.length === 0 && noEntry.length === 0 && r.skipped.length === 0) {
+    lines.push("No unsigned version to score.");
+  }
+  const remedy = mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
+  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
   const failed: string[] = [];
   for (const [ref, e] of entries) {
     if ("error" in e) {
       io.annotate(
         "warning",
-        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`,
+        `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedy}`,
       );
       failed.push(ref);
     }
-    const parts = [
-      suiteText(e),
-      e.baseline === undefined ? undefined : `baseline: ${baselineFact(e.baseline)}`,
-    ];
+    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
     lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
   }
+  if (noEntry.length > 0) lines.push("", "**No entry recorded:**", "", ...noEntry);
   if (failed.length > 0) {
-    lines.push("", "**Not signed** (no score):", "");
+    lines.push("", mode === "score" ? "**Not signed** (no score):" : "**No score:**", "");
     for (const ref of failed) lines.push(`- ${code(ref)}`);
-    lines.push("", FAILED_REMEDY);
+    lines.push("", remedy);
+  }
+  if (
+    entries.some(([, e]) => e.baseline?.passed === false && e.baseline.failure === "no-listing")
+  ) {
+    lines.push("", NO_LISTING_NOTICE[mode]);
   }
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");

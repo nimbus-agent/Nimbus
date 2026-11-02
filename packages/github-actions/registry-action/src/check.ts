@@ -247,37 +247,46 @@ function qualityLine(e: ScoreEntry): string | undefined {
 }
 
 /**
- * The summary line for the baseline this check measured: what it saw, as a fact. A pass is only
- * that the server started and listed tools with valid definitions.
+ * What this check learned by running the package. `asked` means the gateway was asked to, which is
+ * all a check can say when no result came back: an old gateway or a refusing sandbox runs nothing.
+ * `noBaseline` is the code that says why there is no baseline.
  */
-function baselineLine(e: ScoreEntry): string | undefined {
-  if (e.baseline === undefined) return undefined;
-  return `- **Baseline:** ${baselineFact(e.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+interface CheckedScore {
+  asked: boolean;
+  entry?: ScoreEntry;
+  noBaseline?: string;
 }
 
-/** The closing sentence: what this check did and did not run. */
-function runtimeSentence(e: ScoreEntry | undefined, baselineAttempted: boolean): string {
-  const suites = e !== undefined && ("quality" in e || "error" in e);
-  if (!suites && !baselineAttempted) {
+/**
+ * The summary line for the baseline this check measured: what it saw, as a fact. A pass is only
+ * that the server started and listed tools with valid definitions. A missing one says why.
+ */
+function baselineLine(s: CheckedScore): string | undefined {
+  if (s.entry?.baseline !== undefined) {
+    return `- **Baseline:** ${baselineFact(s.entry.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+  }
+  return s.noBaseline === undefined ? undefined : `- **Baseline:** none (${code(s.noBaseline)})`;
+}
+
+/** The closing sentence: what this check asked to run, never a claim that it did. */
+function runtimeSentence(s: CheckedScore): string {
+  if (!s.asked) {
     return (
       "No runtime check of the package is performed: this check validated the signature, the " +
       "registry rules and the package's file set, not what the code does."
     );
   }
-  // Extension code ran whenever a baseline was attempted, whether or not a result came back.
-  let ran = "The package's server was started once to list its tools";
-  if (suites) {
-    ran = baselineAttempted
-      ? "The package's eval suites were run, and its server was started once to list its tools,"
-      : "The package's eval suites were run";
-  }
+  const suites = s.entry !== undefined && ("quality" in s.entry || "error" in s.entry);
+  const ran = suites
+    ? "The gateway was asked to run the package's eval suites and to start its server, up to twice, to list its tools,"
+    : "The package's server was asked to start, up to twice, to list its tools";
   return `${ran} in the platform sandbox, offline and without credentials; nothing else about what the code does was checked.`;
 }
 
 /** The reviewer's lines for what this check measured, in order: quality, then baseline. */
-function scoreLines(score: ScoreEntry | undefined): string[] {
-  if (score === undefined) return [];
-  return [qualityLine(score), baselineLine(score)].filter((l) => l !== undefined);
+function scoreLines(s: CheckedScore): string[] {
+  const quality = s.entry === undefined ? undefined : qualityLine(s.entry);
+  return [quality, baselineLine(s)].filter((l) => l !== undefined);
 }
 
 /** The reviewer's job summary for an accepted publish. */
@@ -285,8 +294,7 @@ function checkSummary(
   v: PublishVerdict,
   admitted: readonly TrustStatement[] = [],
   provenance?: CheckedProvenance,
-  score?: ScoreEntry,
-  baselineAttempted = false,
+  score: CheckedScore = { asked: false },
 ): string {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
@@ -314,7 +322,7 @@ function checkSummary(
     `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`,
     `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`,
     "",
-    runtimeSentence(score, baselineAttempted),
+    runtimeSentence(score),
   );
   return lines.join("\n");
 }
@@ -395,8 +403,8 @@ async function checkProvenance(
 
 /**
  * What the score job would record for this version (its baseline, and its eval score when the
- * package holds a suite), measured the same way, when the `nimbus-gateway` input is set;
- * `undefined` otherwise, or when there is nothing to record (a starter pack). Never throws.
+ * package holds a suite), measured the same way, when the `nimbus-gateway` input is set. Nothing is
+ * asked of a starter pack, which never runs, or without that input. Never throws.
  */
 async function checkScore(
   v: PublishVerdict,
@@ -404,23 +412,27 @@ async function checkScore(
   work: string,
   opts: CheckOptions,
   deps: CheckDeps,
-): Promise<ScoreEntry | undefined> {
-  if (opts.gateway === undefined) return undefined;
-  return scoreVersion(
+): Promise<CheckedScore> {
+  if (opts.gateway === undefined || v.starterPack) return { asked: false };
+  let noBaseline: string | undefined;
+  const entry = await scoreVersion(
     { verdict: v, packageBytes },
-    { gateway: opts.gateway, work },
+    { gateway: opts.gateway, work, mode: "check" },
     {
       runRole: deps.runRole ?? roleRunner(),
       runBaseline: deps.runBaseline ?? baselineRoleRunner(),
       now: Date.now,
       io: deps.io,
+      noBaseline: (why) => {
+        noBaseline = why;
+      },
     },
   );
-}
-
-/** Whether this check started the package's server for a baseline: a gateway, and not a starter pack. */
-function attemptsBaseline(v: PublishVerdict, opts: CheckOptions): boolean {
-  return opts.gateway !== undefined && !v.starterPack;
+  return {
+    asked: true,
+    ...(entry !== undefined && { entry }),
+    ...(noBaseline !== undefined && { noBaseline }),
+  };
 }
 
 /** Run the `check` mode. Throws (failing the step) on any refusal. */
@@ -465,9 +477,7 @@ export async function runCheck(opts: CheckOptions, deps: CheckDeps = SHARED): Pr
     const verdict = await deps.validate(candidate, admitted.index, config, work);
     const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
     const score = await checkScore(verdict, candidate.packageBytes, work, opts, deps);
-    deps.io.summary(
-      checkSummary(verdict, admitted.admitted, provenance, score, attemptsBaseline(verdict, opts)),
-    );
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score));
     deps.io.log(
       `check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`,
     );

@@ -2,8 +2,7 @@
  * The process half of the score modes: the one place the gateway's `__nimbus-eval` role is spawned
  * and watched (deadline, stdout cap, process-group kill, minimal environment), and the helpers that
  * turn its output into a bounded message. Split out of `score.ts` so the suite run and the baseline
- * run share it without importing each other; `score.ts` re-exports every name, so callers are
- * unchanged. Runs under the runner's Node: no ES2024+ runtime API.
+ * run share it without importing each other. Runs under the runner's Node: no ES2024+ runtime API.
  */
 import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";

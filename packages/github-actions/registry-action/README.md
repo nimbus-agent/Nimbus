@@ -72,27 +72,38 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   package's server in the same sandbox, lists its tool definitions and checks each one structurally
   (a name of 1 to 128 characters with no whitespace; an `inputSchema` that is an object with
   `type: "object"`, `properties` absent or an object of objects or booleans, and `required` absent
-  or an array of strings). The entry's `baseline` is `{ "scorer": 1, "passed": true, "tools": N }`
+  or an array of strings). It sees the tools the listing kept: a duplicate name shows only its last
+  tool, and a listing the MCP client's own parsing rejects reads as `no-listing`. The entry's `baseline` is `{ "scorer": 1, "passed": true, "tools": N }`
   or `{ "scorer": 1, "passed": false, "tools": N, "failure": "no-listing" | "listing-timeout" |
   "invalid-tool" }`: a stated fact about what happened when it was checked, never a score, never
   inside `quality`, and never a reason to refuse or skip a publish. A pass means only that the server
-  started and every tool it listed had a well-formed definition; it says nothing about what the
-  tools do. `failure` is always a code from that fixed set, never text from the extension. The run
-  baseline role has its own 3-minute deadline (`BASELINE_ROLE_TIMEOUT_MS`), or what is left of the
+  started and every tool the listing kept had a well-formed definition; it says nothing about what
+  the tools do. `failure` is always a code from that fixed set, never text from the extension. When
+  a baseline reads `no-listing`, the job summary says to check the sandbox setup before trusting it,
+  because a runner where no child can start reads the same and the result is signed into the
+  version. A fault in the MCP client on the runner gets no baseline and a warning. The baseline
+  role has its own 3-minute deadline (`BASELINE_ROLE_TIMEOUT_MS`), or what is left of the
   run budget if that is shorter. The budget is shared: no baseline starts with under 2 minutes left
   (its two attempts need up to 94 seconds), a version that gets none is signed without one, with a warning from the score job.
   **A registry whose gateway is older than the release that added `--baseline` gets no baseline:**
   the role exits 2 on the flag, `score` annotates a warning naming the version and records only the
   suite result (nothing for a version without a suite), and the run stays green.
 - **`score-package`** — for a registry that publishes with `nimbus registry maintain add` instead of
-  pull requests: scores ONE package, given by the `package` input as a directory or a `.tgz`. Like
-  `score` it runs extension code, so it runs in a job with NO secrets and refuses a `root-key` or
-  `github-token` input. A directory is packed with `packExtensionDir`, the packer `maintain add`
-  uses, so `packageSha256` is the hash `maintain add` computes; a `.tgz` is hashed as given. It
-  does not run `validatePublish` (`maintain add` validates against the real index afterwards, and
-  the hash binds the two). A package that cannot be inspected, or a missing path, fails the job:
-  there is nothing to publish. Writes the same `scores.json` as `score`, with one entry (`{}` for a
-  starter pack, which never runs).
+  pull requests: scores ONE package, given by the `package` input as a `.tgz` file. Like `score` it
+  runs extension code, so it runs in a job with NO secrets and refuses a `root-key` or `github-token`
+  input. A directory is refused, with a message that names `nimbus extension pack`: this mode runs
+  under Node and `maintain add` under Bun, the two gzip the same tree into different bytes, and a
+  directory packed on each side never hashes alike. So a job that runs no extension code packs once
+  (`nimbus extension pack <dir> --out <file>`), and this mode and `maintain add` both take that file,
+  which is hashed as given. It does not run `validatePublish` (`maintain add` validates against the
+  real index afterwards, and the hash binds the two). A package that cannot be inspected, or a path
+  that is not a `.tgz` file, fails the job: there is nothing to publish. Writes the same
+  `scores.json` as `score`, with one entry (`{}` for a starter pack, which never runs, or a package
+  with no suite that got no baseline; the summary says why). **The job must run the same sandbox
+  setup and probe as the generated `score` job**, the steps `Set up the sandbox` and `Download the
+  Nimbus gateway` that `gatewaySetupSteps` writes in `packages/cli/src/commands/registry-templates/workflows.ts`:
+  on stock Ubuntu 24.04 no sandboxed child starts without them, and a package with no suite would
+  then be signed `no-listing` for good. See `docs/registry-hosting.md`.
 - **`trust-check`** — on a pull request to the trust feed: the reviewer aid. Refuses a pull
   request that changes anything outside `publishers/`, `requests/` and `statements/`, or adds a
   source file the feed would not sign, and summarises what the merged result would sign under a
@@ -103,7 +114,7 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   the Nimbus trust root key and pushes it to `gh-pages`. Every block already in the feed is
   carried; nothing new means no commit.
 
-All five modes read the repository from the git tree, never the working directory: an entry under
+Every mode but `score-package`, which reads one file, reads the repository from the git tree, never the working directory: an entry under
 `extensions/` (or a trust feed's `publishers/`, `requests/`, `statements/`) that is not a regular
 `100644` file (a symlink or a submodule above all) is refused or skipped.
 
@@ -122,9 +133,9 @@ signs the result into the index entry's `quality` (above).
 | `mode` | yes | `check`, `sign`, `score`, `score-package`, `trust-check` or `trust-sign`. Anything else fails. |
 | `default-branch` | no (`sign`, `score`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
 | `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. In `check`, mutually exclusive with `nimbus-gateway` (both set fails the check). |
-| `package` | `score-package` | The package to score: a directory or a `.tgz`, relative to the workspace or absolute. |
+| `package` | `score-package` | The package to score: a `.tgz` file made by `nimbus extension pack`, relative to the workspace or absolute. A directory, or anything else, is refused. |
 | `nimbus-gateway` | `score`, `score-package`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored; mutually exclusive with `github-token` (both set fails the check, and provenance is left to the sign job). Never pass it to a job that holds secrets. |
-| `scores` | no (`score`, `sign`) | A path, relative to the workspace or absolute. `score`: where it writes `scores.json`; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. Download the score job's artifact outside the checkout (`init --github` uses `path: ${{ runner.temp }}/registry-scores` and `scores: ${{ runner.temp }}/registry-scores/scores.json`): the score job controls that artifact, and extracted into the workspace it could write into `.git/` of the job holding the root key. |
+| `scores` | no (`score`, `score-package`, `sign`) | A path, relative to the workspace or absolute. `score` and `score-package`: where it writes `scores.json`; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. Download the score job's artifact outside the checkout (`init --github` uses `path: ${{ runner.temp }}/registry-scores` and `scores: ${{ runner.temp }}/registry-scores/scores.json`): the score job controls that artifact, and extracted into the workspace it could write into `.git/` of the job holding the root key. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 
 ## Building

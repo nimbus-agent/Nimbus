@@ -134,7 +134,7 @@ export async function baselineCandidate(
 
 /**
  * A baseline stated as fact, for the job summaries: what the check saw, never a verdict. A pass is
- * only that the server started and every tool it listed was structurally valid; a failure is the
+ * only that the server started and every tool the listing kept was structurally valid; a failure is the
  * code from the fixed set. (The number is validated to an integer by `parseEvalBaseline`.)
  */
 export function baselineFact(b: EvalBaseline): string {

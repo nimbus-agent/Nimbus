@@ -120,20 +120,34 @@ function isValidToolDefinition(def: unknown): boolean {
   return isObject(def) && isValidToolName(def["name"]) && isValidInputSchema(def["inputSchema"]);
 }
 
+/** A list, or a record whose prototype nothing has replaced. */
+function hasPlainShape(definitions: object): boolean {
+  if (Array.isArray(definitions)) return true;
+  const proto: unknown = Object.getPrototypeOf(definitions);
+  return proto === Object.prototype || proto === null;
+}
+
 /**
  * Judge a tool listing's raw definitions (a record or a list of them, each with its server-supplied
  * `name` and `inputSchema`). Structural only, no schema compiler: valid means a plain object with
  * `type: "object"`, `properties` absent or an object of objects or booleans, `required` absent or
  * an array of strings. `tools` is the count, capped at the maximum; anything that is not an
  * object or a list is `no-listing`.
+ *
+ * It sees what the listing kept. A client that collects definitions by name turns a tool named
+ * `__proto__` into the record's prototype, where no key shows it, so a record with a foreign
+ * prototype is `invalid-tool`. A duplicate name overwrites the earlier tool and leaves no trace,
+ * so it cannot be detected here: that is a stated limit.
  */
 export function judgeToolDefinitions(definitions: unknown): EvalBaseline {
   if (typeof definitions !== "object" || definitions === null) {
     return { scorer: 1, passed: false, tools: 0, failure: "no-listing" };
   }
   const list = Object.values(definitions);
-  const tools = Math.min(list.length, MAX_EVAL_BASELINE_TOOLS);
-  if (!list.every(isValidToolDefinition)) {
+  const plain = hasPlainShape(definitions);
+  // The tool that replaced the prototype was listed too, so it counts.
+  const tools = Math.min(list.length + (plain ? 0 : 1), MAX_EVAL_BASELINE_TOOLS);
+  if (!plain || !list.every(isValidToolDefinition)) {
     return { scorer: 1, passed: false, tools, failure: "invalid-tool" };
   }
   return { scorer: 1, passed: true, tools };

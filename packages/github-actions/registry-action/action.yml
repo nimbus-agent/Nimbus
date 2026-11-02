@@ -33,7 +33,7 @@ inputs:
     default: ""
 
   package:
-    description: "score-package: the package to score, a directory or a .tgz (relative to the workspace, or absolute). It runs extension code in the platform sandbox, and the job holds no secret: root-key and github-token are refused. A directory is packed with the deterministic packer `nimbus registry maintain add` uses, so the packageSha256 in scores.json is the one maintain add computes."
+    description: "score-package: the package to score, a .tgz file made by `nimbus extension pack` (relative to the workspace, or absolute). A directory, or anything else, is refused: this mode runs under Node and `nimbus registry maintain add` under Bun, and the two gzip a directory into different bytes, so give both the same file. It runs extension code in the platform sandbox, and the job holds no secret: root-key and github-token are refused. The job needs the same sandbox setup as a generated score job."
     required: false
     default: ""
 

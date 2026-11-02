@@ -4,10 +4,14 @@
  */
 import { describe, expect, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import {
   BASELINE_MIN_RUN_MS,
   BASELINE_ROLE_TIMEOUT_MS,
+  baselineCandidate,
   baselineRoleRunner,
   judgeBaselineRun,
 } from "./score-baseline.ts";
@@ -106,6 +110,29 @@ describe("judgeBaselineRun", () => {
     const message = "error" in r ? r.error.message : "";
     expect(message).not.toMatch(/[\r\n]/);
     expect(message.length).toBeLessThanOrEqual(1000);
+  });
+});
+
+describe("baselineCandidate", () => {
+  test("a package that fails inspection is an error, no role runs, and the directory goes", async () => {
+    const work = mkdtempSync(join(tmpdir(), "nimbus-baseline-candidate-"));
+    try {
+      let ran = false;
+      const r = await baselineCandidate(
+        { verdict: WANT, packageBytes: new TextEncoder().encode("not a tarball") },
+        { gateway: "/abs/gw", work },
+        async () => {
+          ran = true;
+          return run();
+        },
+      );
+      expect("error" in r && r.error.code).toBe("ERR_EVAL_ROLE_FAILED");
+      expect("error" in r && r.error.message).toStartWith("the baseline check could not be run: ");
+      expect(ran).toBe(false);
+      expect(readdirSync(work)).toEqual([]);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });
 

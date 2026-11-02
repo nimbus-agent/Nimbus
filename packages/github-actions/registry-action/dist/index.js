@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:3a4d16d08189c133fe5e5698a4d9379303f828f546d4d680d951409c445442eb
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:d7c34723eeba641dd34b7135e89d2cd93905ea0349f7126e09c3cd4b0cc17475
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4207,7 +4207,7 @@ __export(exports_git_tree, {
 });
 
 // src/main.ts
-import { isAbsolute as isAbsolute2, join as join11 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join10 } from "node:path";
 
 // ../shared/gha-io.ts
 import { appendFileSync } from "node:fs";
@@ -4236,7 +4236,7 @@ function emitAnnotation(level, message) {
 // src/check.ts
 import { mkdtempSync as mkdtempSync5, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir3 } from "node:os";
-import { join as join7 } from "node:path";
+import { join as join6 } from "node:path";
 
 // ../../registry-format/src/caps.ts
 var MAX_MANIFEST_BYTES = 64 * 1024;
@@ -4339,15 +4339,13 @@ import {
   closeSync,
   constants,
   fstatSync,
-  lstatSync as lstatSync2,
+  lstatSync,
   openSync,
-  readdirSync as readdirSync2,
+  readdirSync,
   readSync
 } from "node:fs";
 
 // ../../registry-format/src/package-set.ts
-import { lstatSync, readdirSync } from "node:fs";
-import { join } from "node:path";
 var PACKAGE_MANIFEST_FILE = "nimbus.extension.json";
 var EVALS_DIR = "evals";
 var DIST_DIR = "dist";
@@ -4360,40 +4358,6 @@ function isPackageFile(relPath) {
   if (relPath.startsWith(`${EVALS_DIR}/`))
     return relPath.length > EVALS_DIR.length + 1;
   return !relPath.includes("/") && DOC_FILE_RE.test(relPath);
-}
-function collectTree(root, rel, out) {
-  for (const name of readdirSync(join(root, rel))) {
-    const relPath = `${rel}/${name}`;
-    const st = lstatSync(join(root, relPath));
-    if (st.isSymbolicLink())
-      throw new Error(`refusing to pack a symlink: ${relPath}`);
-    if (st.isDirectory())
-      collectTree(root, relPath, out);
-    else if (st.isFile())
-      out.push(relPath);
-    else
-      throw new Error(`refusing to pack a special file: ${relPath}`);
-  }
-}
-function listPackageFiles(dir) {
-  const out = [];
-  for (const name of readdirSync(dir)) {
-    if (name !== DIST_DIR && name !== EVALS_DIR && !isPackageFile(name))
-      continue;
-    const st = lstatSync(join(dir, name));
-    if (st.isSymbolicLink())
-      throw new Error(`refusing to pack a symlink: ${name}`);
-    if (name === DIST_DIR || name === EVALS_DIR) {
-      if (st.isDirectory())
-        collectTree(dir, name, out);
-      else
-        throw new Error(`refusing to pack ${name}: it is not a directory`);
-    } else if (st.isFile())
-      out.push(name);
-    else
-      throw new Error(`refusing to pack a special file: ${name}`);
-  }
-  return out.sort(codeUnitCompare);
 }
 
 // ../../registry-format/src/eval-suite.ts
@@ -6052,7 +6016,7 @@ async function verifyRegistryIndexPinned(index, pinnedRootKey) {
 // ../../registry-format/src/inspect.ts
 import { createHash as createHash4 } from "node:crypto";
 import { closeSync as closeSync2, fstatSync as fstatSync2, mkdirSync, openSync as openSync2, readFileSync } from "node:fs";
-import { join as join2, resolve, sep } from "node:path";
+import { join, resolve, sep } from "node:path";
 
 // ../../../node_modules/.bun/tar@7.5.22/node_modules/tar/dist/esm/index.min.js
 import Qr from "events";
@@ -9330,7 +9294,7 @@ async function inspectPackage(tgz, work) {
   if (declaredBytes > MAX_UNPACKED_BYTES) {
     throw extractFailed("package unpacked size exceeds 200 MiB");
   }
-  const out = join2(work, "x");
+  const out = join(work, "x");
   mkdirSync(out);
   await So({
     file: tgz,
@@ -9341,7 +9305,7 @@ async function inspectPackage(tgz, work) {
       return type === "File" || type === "Directory";
     }
   });
-  const manifestBytes = readRegularFile(join2(out, PACKAGE_MANIFEST_FILE), () => manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`), MAX_MANIFEST_BYTES);
+  const manifestBytes = readRegularFile(join(out, PACKAGE_MANIFEST_FILE), () => manifestInvalid(`package has no ${PACKAGE_MANIFEST_FILE} at its root`), MAX_MANIFEST_BYTES);
   let manifest;
   try {
     manifest = JSON.parse(manifestBytes.toString("utf8"));
@@ -9364,22 +9328,6 @@ async function inspectPackage(tgz, work) {
     entryHash: createHash4("sha256").update(entryBytes).digest("hex"),
     files: files.toSorted(codeUnitCompare)
   };
-}
-// ../../registry-format/src/pack.ts
-async function packExtensionDir(srcDir, outFile) {
-  const files = listPackageFiles(srcDir);
-  await Qn({
-    gzip: { level: 9 },
-    file: outFile,
-    cwd: srcDir,
-    portable: true,
-    mtime: new Date(0),
-    noDirRecurse: true,
-    onWriteEntry: (entry) => {
-      const stat = entry.stat;
-      stat.mode = stat.mode & ~4095 | 420;
-    }
-  }, files);
 }
 // ../../registry-format/src/provenance.ts
 var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
@@ -10299,7 +10247,7 @@ async function buildTrustFeed(prev, source, seed, at) {
 // ../../registry-format/src/validate-publish.ts
 import { createHash as createHash5 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join2 } from "node:path";
 var import_semver5 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
@@ -10539,9 +10487,9 @@ async function validatePublish(c, signed, config, work) {
   if (c.packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
-  const scratch = mkdtempSync(join3(work, "validate-"));
+  const scratch = mkdtempSync(join2(work, "validate-"));
   try {
-    const tgz = join3(scratch, "package.tgz");
+    const tgz = join2(scratch, "package.tgz");
     writeFileSync(tgz, c.packageBytes);
     let inspected;
     try {
@@ -10991,7 +10939,7 @@ function code(s) {
 import { randomUUID } from "node:crypto";
 import { existsSync as existsSync2, mkdtempSync as mkdtempSync4, renameSync, rmSync as rmSync3, statSync, writeFileSync as writeFileSync4 } from "node:fs";
 import { tmpdir as osTmpdir2 } from "node:os";
-import { basename, dirname, isAbsolute, join as join6 } from "node:path";
+import { basename, dirname, isAbsolute, join as join5 } from "node:path";
 
 // src/candidates.ts
 import { createHash as createHash6 } from "node:crypto";
@@ -11101,13 +11049,13 @@ function addVersion(extensions, v, publishedAt, extras = {}) {
 
 // src/score-baseline.ts
 import { mkdtempSync as mkdtempSync3, writeFileSync as writeFileSync3 } from "node:fs";
-import { join as join5 } from "node:path";
+import { join as join4 } from "node:path";
 
 // src/score-role.ts
 import { spawn } from "node:child_process";
 import { mkdtempSync as mkdtempSync2, rmSync as rmSync2 } from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
-import { join as join4 } from "node:path";
+import { join as join3 } from "node:path";
 var ROLE_TIMEOUT_MS = 12 * 60000;
 var SCORE_RUN_BUDGET_MS = 14 * 60000;
 var SCORE_MIN_RUN_MS = 60000;
@@ -11249,7 +11197,7 @@ function roleArgs(packageDir, extra = []) {
 }
 function makeRoleRunner(extra, defaultTimeoutMs, spawnRole = nodeSpawn, tmp = osTmpdir, rm = removeDir, kill = killProcess) {
   return (gateway, packageDir, timeoutMs = defaultTimeoutMs) => new Promise((resolve) => {
-    const home = mkdtempSync2(join4(tmp(), "nimbus-eval-home-"));
+    const home = mkdtempSync2(join3(tmp(), "nimbus-eval-home-"));
     const finish = (r) => {
       removeQuietly(rm, home);
       resolve(r);
@@ -11319,12 +11267,12 @@ function judgeBaselineRun(r, want, timeoutMs = BASELINE_ROLE_TIMEOUT_MS) {
 }
 async function baselineCandidate(c, at, runBaseline, log = () => {}, rm = removeDir) {
   const { id, version } = c.verdict;
-  const dir = mkdtempSync3(join5(at.work, "baseline-"));
+  const dir = mkdtempSync3(join4(at.work, "baseline-"));
   try {
-    const tgz = join5(dir, "package.tgz");
+    const tgz = join4(dir, "package.tgz");
     writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runBaseline(at.gateway, join5(dir, "x"), at.timeoutMs);
+    const r = await runBaseline(at.gateway, join4(dir, "x"), at.timeoutMs);
     log(r.stderrTail);
     return judgeBaselineRun(r, { id, version }, at.timeoutMs);
   } catch (e) {
@@ -11372,12 +11320,12 @@ function judgeRoleRun(r, want, timeoutMs = ROLE_TIMEOUT_MS) {
 }
 async function scoreCandidate(c, at, runRole, log = () => {}, rm = removeDir) {
   const { id, version, packageSha256 } = c.verdict;
-  const dir = mkdtempSync4(join6(at.work, "score-"));
+  const dir = mkdtempSync4(join5(at.work, "score-"));
   try {
-    const tgz = join6(dir, "package.tgz");
+    const tgz = join5(dir, "package.tgz");
     writeFileSync4(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runRole(at.gateway, join6(dir, "x"), at.timeoutMs);
+    const r = await runRole(at.gateway, join5(dir, "x"), at.timeoutMs);
     logStderr(log, `${id}@${version}`, r.stderrTail);
     return { packageSha256, ...judgeRoleRun(r, { id, version }, at.timeoutMs) };
   } catch (e) {
@@ -11410,7 +11358,7 @@ function assertGateway(gateway) {
   }
 }
 function writeFileAtomic(path, text, fs = { writeFileSync: writeFileSync4, renameSync }) {
-  const temp = join6(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
+  const temp = join5(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   try {
     fs.writeFileSync(temp, text, { flag: "wx" });
     fs.renameSync(temp, path);
@@ -11428,34 +11376,53 @@ var SHARED = {
   runBaseline: baselineRoleRunner(),
   now: Date.now
 };
+var NO_LISTING_NOTICE = {
+  score: "A `no-listing` baseline can also mean that no sandboxed child could start on this runner. Check the job's sandbox setup before trusting it: the result is signed into the version.",
+  "score-package": "A `no-listing` baseline can also mean that no sandboxed child could start on this runner. Check the job's sandbox setup before trusting it: `maintain add` signs the result into the version."
+};
+var NO_BASELINE_TAIL = {
+  score: "it is signed without a baseline",
+  check: "nothing is signed in this mode",
+  "score-package": "scores.json holds no baseline for it"
+};
+var FAILED_BASELINE_TAIL = {
+  score: "the version is still signed",
+  check: "nothing is signed in this mode",
+  "score-package": "the result is recorded in scores.json"
+};
+var MAINTAIN_ADD_REMEDY = "`maintain add` refuses a package with eval suites until its entry in scores.json holds a score.";
 var RETRY_NOTE = "it is scored again on the next sign run (a push to the default branch or a workflow_dispatch)";
 var FAILED_REMEDY = "A version whose eval failed is not signed, so it is scored again on every sign run (a push to the default branch or a workflow_dispatch) until it scores or its directory is removed from the default branch; meanwhile each attempt spends time budget that later versions need.";
-var budgetSpent = (packageSha256) => ({
+var budgetSpent = (packageSha256, mode) => ({
   packageSha256,
-  ...fail("ERR_EVAL_BUDGET", `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}`)
+  ...fail("ERR_EVAL_BUDGET", mode === "score" ? `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}` : "not scored: the run's time budget was spent")
 });
 var budgetLeft = (at, now) => at.deadline === undefined ? Number.POSITIVE_INFINITY : at.deadline - now();
 async function baselineWithinBudget(c, at, deps) {
   const ref = `${c.verdict.id}@${c.verdict.version}`;
+  const mode = at.mode ?? "score";
   const left = budgetLeft(at, deps.now);
   if (left < BASELINE_MIN_RUN_MS) {
-    deps.io.annotate("warning", `baseline check of ${ref} not run: under ${duration(BASELINE_MIN_RUN_MS)} of the score job's time budget left; it is signed without a baseline`);
+    deps.io.annotate("warning", `baseline check of ${ref} not run: under ${duration(BASELINE_MIN_RUN_MS)} of the score job's time budget left; ${NO_BASELINE_TAIL[mode]}`);
+    deps.noBaseline?.("ERR_EVAL_BUDGET");
     return;
   }
   const r = await baselineCandidate(c, { gateway: at.gateway, work: at.work, timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, left) }, deps.runBaseline, (stderrTail) => logStderr(deps.io.log, `${ref} (baseline)`, stderrTail));
   if ("error" in r) {
-    deps.io.annotate("warning", clip(`no baseline check for ${ref} (${r.error.code}): ${r.error.message}; it is signed without a baseline`));
+    deps.io.annotate("warning", clip(`no baseline check for ${ref} (${r.error.code}): ${r.error.message}; ${NO_BASELINE_TAIL[mode]}`));
+    deps.noBaseline?.(r.error.code);
     return;
   }
   if (!r.baseline.passed) {
-    deps.io.annotate("warning", clip(`baseline check of ${ref} failed: ${r.baseline.failure}; the version is still signed`));
+    deps.io.annotate("warning", clip(`baseline check of ${ref} failed: ${r.baseline.failure}; ${FAILED_BASELINE_TAIL[mode]}`));
   }
   return r.baseline;
 }
 function suiteWithinBudget(c, at, deps) {
   const left = budgetLeft(at, deps.now);
-  if (left < SCORE_MIN_RUN_MS)
-    return Promise.resolve(budgetSpent(c.verdict.packageSha256));
+  if (left < SCORE_MIN_RUN_MS) {
+    return Promise.resolve(budgetSpent(c.verdict.packageSha256, at.mode ?? "score"));
+  }
   return scoreCandidate(c, {
     gateway: at.gateway,
     work: at.work,
@@ -11473,6 +11440,24 @@ async function scoreVersion(c, at, deps) {
   const suite = await suiteWithinBudget(c, at, deps);
   return baseline === undefined ? suite : { ...suite, baseline };
 }
+async function recordVersion(run, c, at, deps) {
+  const ref = `${c.verdict.id}@${c.verdict.version}`;
+  if (c.verdict.starterPack)
+    run.starterPacks.push(ref);
+  const entry = await scoreVersion(c, at, {
+    ...deps,
+    noBaseline: (why) => run.noBaseline.set(ref, why)
+  });
+  if (entry !== undefined)
+    run.scores[ref] = entry;
+  return entry;
+}
+var emptyRun = () => ({
+  scores: Object.create(null),
+  skipped: [],
+  noBaseline: new Map,
+  starterPacks: []
+});
 async function scoreAll(opts, deps, work, deadline) {
   const { git } = deps;
   const cwd = opts.workspace;
@@ -11485,11 +11470,10 @@ async function scoreAll(opts, deps, work, deadline) {
   }
   const { dirs, paths } = extensionDirs(git, mainRef, cwd);
   const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "score");
-  const skipped = [];
-  const admission = admitStatements(git, index, mainRef, cwd, skipped);
+  const run = emptyRun();
+  const admission = admitStatements(git, index, mainRef, cwd, run.skipped);
   const extensions = { ...index.extensions };
   const publishedAt = git.commitTime(mainRef, { cwd });
-  const scores = Object.create(null);
   for await (const o of validateUnsigned({
     git,
     validate: deps.validate,
@@ -11502,18 +11486,16 @@ async function scoreAll(opts, deps, work, deadline) {
     bindings: () => ({ ...admission.index, extensions })
   })) {
     if (o.kind === "skipped") {
-      skipped.push({ dir: o.dir, reason: o.reason });
+      run.skipped.push({ dir: o.dir, reason: o.reason });
       continue;
     }
     const v = o.verdict;
-    const entry = await scoreVersion({ verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
-    if (entry !== undefined)
-      scores[`${v.id}@${v.version}`] = entry;
+    const entry = await recordVersion(run, { verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
     if (entry !== undefined && "error" in entry)
       continue;
     addVersion(extensions, v, publishedAt);
   }
-  return { scores, skipped };
+  return run;
 }
 function suiteText(e) {
   if ("quality" in e) {
@@ -11524,28 +11506,50 @@ function suiteText(e) {
     return `not scored, ${code(e.error.code)} ${code(e.error.message)}`;
   return;
 }
-function reportScores(io, r) {
+function baselineText(e, why) {
+  if (e.baseline !== undefined)
+    return `baseline: ${baselineFact(e.baseline)}`;
+  return why === undefined ? undefined : `no baseline check (${code(why)})`;
+}
+function noEntryLines(r) {
+  const lines = [];
+  for (const ref of r.starterPacks) {
+    lines.push(`- ${code(ref)}: a starter pack never runs, so nothing is recorded`);
+  }
+  for (const [ref, why] of r.noBaseline) {
+    if (r.scores[ref] === undefined)
+      lines.push(`- ${code(ref)}: no baseline check (${code(why)})`);
+  }
+  return lines;
+}
+function reportScores(io, r, mode = "score") {
   const lines = ["## Registry score", ""];
   const entries = Object.entries(r.scores);
-  if (entries.length === 0)
+  const noEntry = noEntryLines(r);
+  if (entries.length === 0 && noEntry.length === 0 && r.skipped.length === 0) {
     lines.push("No unsigned version to score.");
+  }
+  const remedy = mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
+  const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
   const failed = [];
   for (const [ref, e] of entries) {
     if ("error" in e) {
-      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; sign will not sign it. ${FAILED_REMEDY}`);
+      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedy}`);
       failed.push(ref);
     }
-    const parts = [
-      suiteText(e),
-      e.baseline === undefined ? undefined : `baseline: ${baselineFact(e.baseline)}`
-    ];
+    const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
     lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
   }
+  if (noEntry.length > 0)
+    lines.push("", "**No entry recorded:**", "", ...noEntry);
   if (failed.length > 0) {
-    lines.push("", "**Not signed** (no score):", "");
+    lines.push("", mode === "score" ? "**Not signed** (no score):" : "**No score:**", "");
     for (const ref of failed)
       lines.push(`- ${code(ref)}`);
-    lines.push("", FAILED_REMEDY);
+    lines.push("", remedy);
+  }
+  if (entries.some(([, e]) => e.baseline?.passed === false && e.baseline.failure === "no-listing")) {
+    lines.push("", NO_LISTING_NOTICE[mode]);
   }
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
@@ -11560,7 +11564,7 @@ async function runScore(opts, deps = SHARED) {
   const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  const work = mkdtempSync4(join6(deps.tmpdir(), "nimbus-registry-score-"));
+  const work = mkdtempSync4(join5(deps.tmpdir(), "nimbus-registry-score-"));
   let r;
   try {
     r = await scoreAll({ ...opts, defaultBranch }, deps, work, deadline);
@@ -11679,34 +11683,31 @@ function qualityLine(e) {
   const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
   return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
 }
-function baselineLine(e) {
-  if (e.baseline === undefined)
-    return;
-  return `- **Baseline:** ${baselineFact(e.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+function baselineLine(s) {
+  if (s.entry?.baseline !== undefined) {
+    return `- **Baseline:** ${baselineFact(s.entry.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+  }
+  return s.noBaseline === undefined ? undefined : `- **Baseline:** none (${code(s.noBaseline)})`;
 }
-function runtimeSentence(e, baselineAttempted) {
-  const suites = e !== undefined && (("quality" in e) || ("error" in e));
-  if (!suites && !baselineAttempted) {
+function runtimeSentence(s) {
+  if (!s.asked) {
     return "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.";
   }
-  let ran = "The package's server was started once to list its tools";
-  if (suites) {
-    ran = baselineAttempted ? "The package's eval suites were run, and its server was started once to list its tools," : "The package's eval suites were run";
-  }
+  const suites = s.entry !== undefined && (("quality" in s.entry) || ("error" in s.entry));
+  const ran = suites ? "The gateway was asked to run the package's eval suites and to start its server, up to twice, to list its tools," : "The package's server was asked to start, up to twice, to list its tools";
   return `${ran} in the platform sandbox, offline and without credentials; nothing else about what the code does was checked.`;
 }
-function scoreLines(score) {
-  if (score === undefined)
-    return [];
-  return [qualityLine(score), baselineLine(score)].filter((l) => l !== undefined);
+function scoreLines(s) {
+  const quality = s.entry === undefined ? undefined : qualityLine(s.entry);
+  return [quality, baselineLine(s)].filter((l) => l !== undefined);
 }
-function checkSummary(v, admitted = [], provenance, score, baselineAttempted = false) {
+function checkSummary(v, admitted = [], provenance, score = { asked: false }) {
   const ref = `${v.id}@${v.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
   if (v.newId) {
     lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), ...scoreLines(score), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", runtimeSentence(score, baselineAttempted));
+  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), ...scoreLines(score), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", runtimeSentence(score));
   return lines.join(`
 `);
 }
@@ -11752,24 +11753,30 @@ async function checkProvenance(v, packageBytes, work, opts, deps) {
   if (opts.gateway !== undefined)
     return "deferred";
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
-    pkgPath: join7(work, "provenance-check.tgz"),
+    pkgPath: join6(work, "provenance-check.tgz"),
     packageBytes,
     repository: v.repository,
     verifiedAt: new Date().toISOString()
   });
 }
 async function checkScore(v, packageBytes, work, opts, deps) {
-  if (opts.gateway === undefined)
-    return;
-  return scoreVersion({ verdict: v, packageBytes }, { gateway: opts.gateway, work }, {
+  if (opts.gateway === undefined || v.starterPack)
+    return { asked: false };
+  let noBaseline;
+  const entry = await scoreVersion({ verdict: v, packageBytes }, { gateway: opts.gateway, work, mode: "check" }, {
     runRole: deps.runRole ?? roleRunner(),
     runBaseline: deps.runBaseline ?? baselineRoleRunner(),
     now: Date.now,
-    io: deps.io
+    io: deps.io,
+    noBaseline: (why) => {
+      noBaseline = why;
+    }
   });
-}
-function attemptsBaseline(v, opts) {
-  return opts.gateway !== undefined && !v.starterPack;
+  return {
+    asked: true,
+    ...entry !== undefined && { entry },
+    ...noBaseline !== undefined && { noBaseline }
+  };
 }
 async function runCheck(opts, deps = SHARED2) {
   const { git } = deps;
@@ -11803,12 +11810,12 @@ async function runCheck(opts, deps = SHARED2) {
   }
   const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
   const config = effectiveConfig(git, opts.baseRef, cwd);
-  const work = mkdtempSync5(join7(deps.tmpdir(), "nimbus-registry-check-"));
+  const work = mkdtempSync5(join6(deps.tmpdir(), "nimbus-registry-check-"));
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
     const provenance = await checkProvenance(verdict, candidate.packageBytes, work, opts, deps);
     const score = await checkScore(verdict, candidate.packageBytes, work, opts, deps);
-    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score, attemptsBaseline(verdict, opts)));
+    deps.io.summary(checkSummary(verdict, admitted.admitted, provenance, score));
     deps.io.log(`check passed: ${verdict.id}@${verdict.version} (${verdict.channel})${verdict.newId ? " — NEW ID" : ""}`);
   } finally {
     rmSync4(work, { recursive: true, force: true });
@@ -11817,9 +11824,9 @@ async function runCheck(opts, deps = SHARED2) {
 
 // src/score-package.ts
 import { createHash as createHash7 } from "node:crypto";
-import { mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync6, readFileSync as readFileSync2, rmSync as rmSync5, statSync as statSync2, writeFileSync as writeFileSync5 } from "node:fs";
+import { mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync6, readFileSync as readFileSync2, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as osTmpdir4 } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join7 } from "node:path";
 var SHARED3 = {
   io: GHA_IO,
   tmpdir: osTmpdir4,
@@ -11828,29 +11835,33 @@ var SHARED3 = {
   now: Date.now
 };
 var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
-async function readPackageBytes(path, work) {
-  let isDir;
+function notATgz(path, why) {
+  return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
+}
+function readPackageBytes(path) {
+  if (!path.endsWith(".tgz"))
+    throw notATgz(path, "does not end in .tgz");
+  let bytes;
   try {
-    isDir = statSync2(path).isDirectory();
-  } catch {
-    throw new Error(`input "package" names a path that does not exist: ${JSON.stringify(path)}`);
+    bytes = new Uint8Array(readFileSync2(path));
+  } catch (e) {
+    const why = e.code ?? "an error";
+    throw notATgz(path, `cannot be read as a file (${why})`);
   }
-  if (!isDir)
-    return new Uint8Array(readFileSync2(path));
-  const packed = join8(work, "packed.tgz");
-  await packExtensionDir(path, packed);
-  return new Uint8Array(readFileSync2(packed));
+  if (bytes[0] !== 31 || bytes[1] !== 139)
+    throw notATgz(path, "is not gzip data");
+  return bytes;
 }
 async function runScorePackage(opts, deps = SHARED3) {
   const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
-  const work = mkdtempSync6(join8(deps.tmpdir(), "nimbus-registry-score-package-"));
-  const scores = Object.create(null);
+  const packageBytes = readPackageBytes(opts.package);
+  const work = mkdtempSync6(join7(deps.tmpdir(), "nimbus-registry-score-package-"));
+  const run = emptyRun();
   try {
-    const packageBytes = await readPackageBytes(opts.package, work);
-    const inspectDir = join8(work, "inspect");
+    const inspectDir = join7(work, "inspect");
     mkdirSync2(inspectDir);
-    const tgz = join8(inspectDir, "package.tgz");
+    const tgz = join7(inspectDir, "package.tgz");
     writeFileSync5(tgz, packageBytes, { flag: "wx" });
     const inspected = await inspectPackage(tgz, inspectDir);
     const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
@@ -11861,31 +11872,26 @@ async function runScorePackage(opts, deps = SHARED3) {
       hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
       starterPack: isStarterPack(manifest)
     };
-    const entry = await scoreVersion({ verdict, packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
-    if (entry !== undefined)
-      scores[`${verdict.id}@${verdict.version}`] = entry;
-    if (verdict.starterPack) {
-      deps.io.log(`${verdict.id}@${verdict.version} is a starter pack: it never runs, so nothing is scored`);
-    }
+    await recordVersion(run, { verdict, packageBytes }, { gateway: opts.gateway, work, deadline, mode: "score-package" }, deps);
   } finally {
     rmSync5(work, { recursive: true, force: true });
   }
-  writeFileAtomic(opts.out, `${JSON.stringify(scores, null, 2)}
+  writeFileAtomic(opts.out, `${JSON.stringify(run.scores, null, 2)}
 `);
-  reportScores(deps.io, { scores, skipped: [] });
-  return scores;
+  reportScores(deps.io, run, "score-package");
+  return run.scores;
 }
 
 // src/sign.ts
 import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
 import { tmpdir as osTmpdir5 } from "node:os";
-import { join as join10 } from "node:path";
+import { join as join9 } from "node:path";
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import { mkdtempSync as mkdtempSync7, rmSync as rmSync6 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join9 } from "node:path";
+import { join as join8 } from "node:path";
 var BOT_NAME = "github-actions[bot]";
 var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
 var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
@@ -11906,9 +11912,9 @@ function run(args, opts) {
   }).toString("utf8").trim();
 }
 function commitSite(parent, files, message, cwd) {
-  const scratch = mkdtempSync7(join9(tmpdir(), "nimbus-registry-site-"));
+  const scratch = mkdtempSync7(join8(tmpdir(), "nimbus-registry-site-"));
   try {
-    const env = { ...process.env, GIT_INDEX_FILE: join9(scratch, "index") };
+    const env = { ...process.env, GIT_INDEX_FILE: join8(scratch, "index") };
     run(["read-tree", parent], { cwd, env });
     for (const f of files) {
       assertSafeTreePath(f.path);
@@ -11966,7 +11972,7 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
     r = await verifyNeverThrowing(deps.verify, {
-      pkgPath: join10(at.work, `provenance-${v.packageSha256}.tgz`),
+      pkgPath: join9(at.work, `provenance-${v.packageSha256}.tgz`),
       packageBytes,
       repository: v.repository,
       verifiedAt: at.verifiedAt
@@ -12030,7 +12036,7 @@ async function attemptSign(opts, run, deps) {
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
-  const work = mkdtempSync8(join10(deps.tmpdir(), "nimbus-registry-sign-"));
+  const work = mkdtempSync8(join9(deps.tmpdir(), "nimbus-registry-sign-"));
   const batch = { extensions, files, added, skipped, publishedAt, work };
   try {
     for await (const o of validateUnsigned({
@@ -12490,10 +12496,10 @@ function checkInputs() {
 }
 function scoresPath(ws, input) {
   const rel = input === "" ? "scores.json" : input;
-  return isAbsolute2(rel) ? rel : join11(ws, rel);
+  return isAbsolute2(rel) ? rel : join10(ws, rel);
 }
 function resolveInWorkspace(ws, input) {
-  return isAbsolute2(input) ? input : join11(ws, input);
+  return isAbsolute2(input) ? input : join10(ws, input);
 }
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();

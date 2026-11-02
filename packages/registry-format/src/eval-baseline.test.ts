@@ -129,6 +129,24 @@ describe("judgeToolDefinitions", () => {
     expect(judgeToolDefinitions({ a: tool({ name: "n".repeat(128) }) }).passed).toBe(true);
   });
 
+  test("a record whose prototype a listed tool replaced is invalid-tool, and that tool counts", () => {
+    // What `definitions[tool.name] = value` does for a tool named `__proto__`: no key shows it.
+    const record: Record<string, unknown> = { a: tool() };
+    Object.setPrototypeOf(record, { name: "__proto__", inputSchema: { type: "object" } });
+    expect(Object.keys(record)).toEqual(["a"]);
+    expect(judgeToolDefinitions(record)).toEqual({
+      scorer: 1,
+      passed: false,
+      tools: 2,
+      failure: "invalid-tool",
+    });
+  });
+
+  test("a record with a null prototype is judged by its values", () => {
+    const record = Object.assign(Object.create(null) as Record<string, unknown>, { a: tool() });
+    expect(judgeToolDefinitions(record)).toEqual({ scorer: 1, passed: true, tools: 1 });
+  });
+
   test.each([
     ["null", null],
     ["a string", "x"],
