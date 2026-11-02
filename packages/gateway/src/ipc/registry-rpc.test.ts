@@ -743,6 +743,48 @@ describe("registry.search and registry.info", () => {
       ).toBe(0);
     });
 
+    test("liveness: false (a score-only caller) never reads the file and still returns the score", async () => {
+      runIndexedSchemaMigrations(db, 80);
+      pin("main", tmp);
+      makeRegistry(
+        tmp,
+        { "acme.tool": { publisherId: "acme", versions: [{ ...v, version: "1.0.0" }] } },
+        3,
+        { livenessKey: LKEY },
+      );
+      const doc = await signLivenessFile(
+        {
+          format: 1,
+          livenessKey: LKEY,
+          sequence: 2,
+          generatedAt: "2026-10-18T12:00:00Z",
+          nimbusVersion: "10.15.0",
+          extensions: {
+            "acme.tool@1.0.0": {
+              checkedAt: "2026-10-17T00:00:00Z",
+              hosts: { declared: 2, answered: 2 },
+            },
+          },
+        },
+        LSEED,
+      );
+      writeFileSync(join(tmp, LIVENESS_FILE), JSON.stringify(doc));
+      const floorRows = () =>
+        (db.query("SELECT COUNT(*) AS n FROM registry_liveness_state").get() as { n: number }).n;
+      const r = (await call("registry.info", {
+        id: "acme.tool",
+        registry: "main",
+        liveness: false,
+      })) as { value: { versions: unknown[]; evidence: { checked: { text: string } } } };
+      expect(r.value.versions).toHaveLength(1);
+      expect(r.value.evidence.checked.text).toBe("no checks available");
+      // A folder registry is not ledgered, so the floor row is the proof the file was never read.
+      expect(floorRows()).toBe(0);
+      // Control: the same call without the flag reads the file and records its floor.
+      expect((await checkedOf()).text).toStartWith("2 of 2 declared hosts answered");
+      expect(floorRows()).toBe(1);
+    });
+
     test("an index naming no key reads no checks published, and the file beside it is not read", async () => {
       runIndexedSchemaMigrations(db, 80);
       pin("main", tmp);
