@@ -20,6 +20,9 @@ interface FakeMbConfig {
   collections?: unknown[];
   dashboardsStatus?: number;
   collectionsStatus?: number;
+  /** Raw `/api/card` body. Omit for a server with no cards route (404). */
+  cards?: unknown;
+  cardsStatus?: number;
 }
 
 interface FakeMb {
@@ -51,6 +54,12 @@ function startFakeMb(config: FakeMbConfig): FakeMb {
           return new Response("error", { status: config.dashboardsStatus });
         }
         return Response.json(config.dashboards);
+      }
+      if (u.pathname === "/api/card" && config.cards !== undefined) {
+        if (config.cardsStatus !== undefined && config.cardsStatus !== 200) {
+          return new Response("error", { status: config.cardsStatus });
+        }
+        return Response.json(config.cards);
       }
       return new Response("not found", { status: 404 });
     },
@@ -105,6 +114,52 @@ function dashboard(
     updated_at: "2022-06-01T08:00:00Z",
     dashcards: [{ id: 1 }],
   };
+}
+
+function card(id: number, over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id,
+    name: `card-${String(id)}`,
+    description: "Which months brought in the most revenue?",
+    type: "question",
+    collection_id: 7,
+    dashboard_id: null,
+    creator_id: 3,
+    archived: false,
+    query_type: "native",
+    database_id: 1,
+    table_id: null,
+    created_at: "2021-02-10T20:03:11Z",
+    updated_at: "2022-06-01T08:00:00Z",
+    dataset_query: {
+      "lib/type": "mbql/query",
+      database: 1,
+      stages: [
+        {
+          "lib/type": "mbql.stage/native",
+          native: "SELECT month, SUM(total) FROM orders GROUP BY month",
+          "template-tags": [{ name: "min", default: "TAG-SENTINEL" }],
+        },
+      ],
+    },
+    result_metadata: [{ name: "TOTAL", fingerprint: { type: { avg: "RESULT-SENTINEL" } } }],
+    ...over,
+  };
+}
+
+interface ItemRow {
+  id: string;
+  type: string;
+  external_id: string;
+  metadata: string;
+}
+
+function metabaseItems(db: Database): ItemRow[] {
+  return db
+    .query<ItemRow, []>(
+      "SELECT id, type, external_id, metadata FROM item WHERE service = 'metabase' ORDER BY id",
+    )
+    .all();
 }
 
 describe("metabase-sync against Bun.serve fake API", () => {
@@ -201,5 +256,112 @@ describe("metabase-sync against Bun.serve fake API", () => {
     const m = JSON.parse(row?.metadata ?? "{}") as Record<string, unknown>;
     expect(m["collection_id"]).toBe("7");
     expect(m["collection_name"]).toBeNull();
+  });
+
+  describe("cards", () => {
+    async function runSync(config: FakeMbConfig) {
+      h = startHarness(config);
+      await h.vault.set("metabase.url", h.fake.baseUrl);
+      await h.vault.set("metabase.api_key", "k");
+      const syncable = createMetabaseSyncable({ ensureMetabaseMcpRunning: async () => {} });
+      return { harness: h, result: await syncable.sync(h.ctx, null) };
+    }
+
+    test("cards are requested with x-api-key and indexed as metabase:card, with collection_name", async () => {
+      const { harness, result } = await runSync({
+        collections: [{ id: 7, name: "Finance" }],
+        dashboards: [],
+        cards: [card(42, { name: "Revenue by month" })],
+      });
+      expect(result.itemsUpserted).toBe(1);
+      const cardReq = harness.fake.requests.find((r) => r.path === "/api/card");
+      expect(cardReq?.apiKey).toBe("k");
+
+      const [item] = metabaseItems(harness.db);
+      expect(item?.id).toBe("metabase:card/42");
+      expect(item?.type).toBe("card");
+      const m = JSON.parse(item?.metadata ?? "{}") as Record<string, unknown>;
+      expect(m["collection_name"]).toBe("Finance");
+      expect(m["native_query"]).toBe("SELECT month, SUM(total) FROM orders GROUP BY month");
+    });
+
+    test("collections are fetched once and reused for cards", async () => {
+      const { harness } = await runSync({
+        collections: [{ id: 7, name: "Finance" }],
+        dashboards: [dashboard(1)],
+        cards: [card(2)],
+      });
+      expect(harness.fake.requests.map((r) => r.path)).toEqual([
+        "/api/collection",
+        "/api/dashboard",
+        "/api/card",
+      ]);
+    });
+
+    test("a { data: [...] } response is read the same as a bare array", async () => {
+      const { harness, result } = await runSync({ dashboards: [], cards: { data: [card(42)] } });
+      expect(result.itemsUpserted).toBe(1);
+      expect(metabaseItems(harness.db).map((i) => i.id)).toEqual(["metabase:card/42"]);
+    });
+
+    test("dashboard 7 and card 7 both survive as separate items", async () => {
+      const { harness, result } = await runSync({
+        dashboards: [dashboard(7)],
+        cards: [card(7)],
+      });
+      expect(result.itemsUpserted).toBe(2);
+      expect(metabaseItems(harness.db).map((i) => [i.id, i.type, i.external_id])).toEqual([
+        ["metabase:7", "dashboard", "7"],
+        ["metabase:card/7", "card", "card/7"],
+      ]);
+    });
+
+    test("rows with a missing or empty id are skipped", async () => {
+      const noId = card(1);
+      delete noId["id"];
+      const { harness, result } = await runSync({
+        dashboards: [],
+        cards: [noId, card(2, { id: "" }), card(3)],
+      });
+      expect(result.itemsUpserted).toBe(1);
+      expect(metabaseItems(harness.db).map((i) => i.id)).toEqual(["metabase:card/3"]);
+    });
+
+    test("a 500 on /api/card leaves dashboards indexed and the sync successful", async () => {
+      const { harness, result } = await runSync({
+        dashboards: [dashboard(7)],
+        cards: [card(7)],
+        cardsStatus: 500,
+      });
+      expect(result.itemsUpserted).toBe(1);
+      expect(result.cursor?.startsWith("nimbus-metabase1:")).toBe(true);
+      expect(metabaseItems(harness.db).map((i) => i.id)).toEqual(["metabase:7"]);
+    });
+
+    test("a failed /api/dashboard skips cards in that sync", async () => {
+      const { harness, result } = await runSync({
+        dashboards: [],
+        dashboardsStatus: 503,
+        cards: [card(7)],
+      });
+      expect(result.itemsUpserted).toBe(0);
+      expect(harness.fake.requests.map((r) => r.path)).not.toContain("/api/card");
+    });
+
+    test("no results endpoint is called and no result data is stored", async () => {
+      const { harness } = await runSync({
+        dashboards: [dashboard(7)],
+        cards: [card(7), card(8)],
+      });
+      expect(harness.fake.requests.every((r) => r.method === "GET")).toBe(true);
+      expect([...new Set(harness.fake.requests.map((r) => r.path))].sort()).toEqual([
+        "/api/card",
+        "/api/collection",
+        "/api/dashboard",
+      ]);
+      const stored = JSON.stringify(metabaseItems(harness.db));
+      expect(stored).not.toContain("RESULT-SENTINEL");
+      expect(stored).not.toContain("TAG-SENTINEL");
+    });
   });
 });
