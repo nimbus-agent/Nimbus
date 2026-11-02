@@ -5,11 +5,13 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  LIVENESS_FILE,
   parseRegistryIndex,
   publisherKeyFingerprint,
   type RegistryIndex,
   registryIndexDigest,
   registryIndexSigningBytes,
+  signLivenessFile,
   signTrustStatement,
 } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
@@ -637,6 +639,84 @@ describe("registry.search and registry.info", () => {
     ).toBe("not evaluated (a starter pack runs nothing)");
   });
 
+  describe("the Checked line", () => {
+    const LSEED = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+    const LKEY = encodeBase64(nacl.sign.keyPair.fromSeed(LSEED).publicKey);
+    const v = { channel: "stable" as const, name: "Tool" };
+    const livenessRows = () =>
+      (
+        db
+          .query("SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.liveness'")
+          .get() as {
+          n: number;
+        }
+      ).n;
+    const checkedOf = async (): Promise<{ state: string; text: string }> => {
+      const r = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+        value: { evidence: { checked: { state: string; text: string } } };
+      };
+      return r.value.evidence.checked;
+    };
+
+    test("a verified file states the newest version's entry only", async () => {
+      runIndexedSchemaMigrations(db, 80);
+      pin("main", tmp);
+      makeRegistry(
+        tmp,
+        {
+          "acme.tool": {
+            publisherId: "acme",
+            versions: [
+              { ...v, version: "1.0.0" },
+              { ...v, version: "1.1.0" },
+            ],
+          },
+        },
+        3,
+        { livenessKey: LKEY },
+      );
+      const doc = await signLivenessFile(
+        {
+          format: 1,
+          livenessKey: LKEY,
+          sequence: 2,
+          generatedAt: "2026-10-18T12:00:00Z",
+          nimbusVersion: "10.15.0",
+          extensions: {
+            "acme.tool@1.0.0": {
+              checkedAt: "2026-10-10T00:00:00Z",
+              hosts: { declared: 1, answered: 0 },
+            },
+            "acme.tool@1.1.0": {
+              checkedAt: "2026-10-17T00:00:00Z",
+              hosts: { declared: 2, answered: 2 },
+            },
+          },
+        },
+        LSEED,
+      );
+      writeFileSync(join(tmp, LIVENESS_FILE), JSON.stringify(doc));
+      const checked = await checkedOf();
+      expect(checked.state).toBe("checked");
+      expect(checked.text).toStartWith(
+        "2 of 2 declared hosts answered (checked 2026-10-17, 1 day ago",
+      );
+      expect(checked.text).toContain("with Nimbus 10.15.0, by main");
+      expect(livenessRows()).toBe(0); // a folder registry is read from disk, not ledgered
+    });
+
+    test("an index naming no key reads no checks published, with no liveness request", async () => {
+      runIndexedSchemaMigrations(db, 80);
+      pin("main", tmp);
+      makeRegistry(tmp, {
+        "acme.tool": { publisherId: "acme", versions: [{ ...v, version: "1.0.0" }] },
+      });
+      writeFileSync(join(tmp, LIVENESS_FILE), "not read");
+      expect((await checkedOf()).text).toBe("no checks published");
+      expect(livenessRows()).toBe(0);
+    });
+  });
+
   test("the evidence names the version and channel it describes: a newer beta, not the stable", async () => {
     const quality = {
       scorer: 1,
@@ -857,7 +937,7 @@ describe("registry.search and registry.info", () => {
           recordedBy: "main",
           text: expect.stringContaining("first published 2026-10-01"),
         },
-        checked: { state: "none", text: "no checks published" },
+        checked: { state: "none", why: "unpublished", text: "no checks published" },
       },
       evidenceFor: { version: "1.1.0", channel: "beta" },
       versions: [

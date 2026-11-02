@@ -86,6 +86,7 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "./registry-fetch.ts";
+import { readRegistryLiveness } from "./registry-liveness.ts";
 import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import {
   assertEmptyStagingDir,
@@ -95,6 +96,7 @@ import {
 import { resolveRegistryEntry } from "./registry-resolve.ts";
 import { getExtensionSource, type RegistryRow, setExtensionSource } from "./registry-store.ts";
 import {
+  checkedEvidence,
   evidenceApprovalFields,
   type VersionEvidence,
   versionEvidence,
@@ -110,6 +112,8 @@ export interface InstallFromRegistryDeps {
   approve: ExtensionInstallApprover;
   /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
   planStagingRoot?: string;
+  /** Test seam: the hard deadline of the signed liveness read (default 10 s). */
+  livenessTimeoutMs?: number;
   /** Where the per-install download directory is created (default `os.tmpdir()`); a test seam. */
   tempRoot?: string;
   /** The continuity table the approval's connector requirements bind through (default the baked one). */
@@ -500,6 +504,47 @@ function promotableRegistryDependency(
   return row;
 }
 
+/**
+ * The package with its Checked line filled from the registry's signed liveness file (I51). Called
+ * by the install door only, never by `fetchVerifiedRegistryPackage` (the migration engine calls
+ * that and never shows evidence). The read never throws and has its own deadline; the result only
+ * replaces the text of `evidence.checked`, so the install outcome is the same whatever it says.
+ */
+async function withLivenessEvidence(
+  deps: InstallFromRegistryDeps,
+  pkg: VerifiedRegistryPackage,
+): Promise<VerifiedRegistryPackage> {
+  if (pkg.evidence === undefined) return pkg;
+  const liveness =
+    pkg.index === undefined
+      ? undefined
+      : await readRegistryLiveness(
+          {
+            ...deps.fetch,
+            db: deps.db,
+            ...(deps.livenessTimeoutMs === undefined
+              ? {}
+              : { livenessTimeoutMs: deps.livenessTimeoutMs }),
+          },
+          pkg.reg,
+          pkg.index,
+          pkg.id,
+          pkg.version,
+        );
+  return {
+    ...pkg,
+    evidence: {
+      ...pkg.evidence,
+      checked: checkedEvidence({
+        registry: pkg.reg.name,
+        starterPack: isStarterPack(pkg.manifest),
+        liveness,
+        now: deps.fetch.now(),
+      }),
+    },
+  };
+}
+
 export async function installFromRegistry(
   deps: InstallFromRegistryDeps,
   req: InstallFromRegistryRequest,
@@ -510,7 +555,8 @@ export async function installFromRegistry(
   const tmp = mkdtempSync(join(deps.tempRoot ?? tmpdir(), "nimbus-reg-"));
   try {
     const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);
-    return await installVerifiedRegistryPackage(deps, pkg, req.channel ?? "stable");
+    const shown = await withLivenessEvidence(deps, pkg);
+    return await installVerifiedRegistryPackage(deps, shown, req.channel ?? "stable");
   } finally {
     try {
       rmSync(tmp, { recursive: true, force: true });

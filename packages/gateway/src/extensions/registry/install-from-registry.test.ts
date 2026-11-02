@@ -13,8 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  LIVENESS_FILE,
+  type LivenessFile,
   publisherKeyFingerprint,
   RegistryError,
+  signLivenessFile,
   signTrustStatement,
   type UnsignedTrustStatement,
 } from "@nimbus-dev/registry-format";
@@ -1415,5 +1418,97 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(isInstalledAsDependency(db, DEP)).toBe(true);
     expect(forwardDeps(db, PACK).map((d) => d.id)).toEqual([SUBPACK]);
     expect(forwardDeps(db, SUBPACK).map((d) => d.id)).toEqual([DEP]);
+  });
+});
+
+describe("installFromRegistry shows the signed liveness checks on the Checked line (I51)", () => {
+  const LSEED = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+  const LKEY = encodeBase64(nacl.sign.keyPair.fromSeed(LSEED).publicKey);
+
+  const checkedOf = (): unknown => (asked[0] as unknown as Record<string, unknown>)["checked"];
+
+  beforeEach(() => {
+    runIndexedSchemaMigrations(db, 80);
+  });
+
+  async function withLivenessKey(): Promise<void> {
+    await setup([{ version: "1.0.0" }]);
+    const path = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    resignIndex(path, { ...index, livenessKey: LKEY });
+  }
+
+  function publish(
+    sequence: number,
+    answered: number,
+    over: Record<string, unknown> = {},
+  ): Promise<LivenessFile> {
+    return signLivenessFile(
+      {
+        format: 1,
+        livenessKey: LKEY,
+        sequence,
+        generatedAt: "2026-10-18T00:00:00Z",
+        nimbusVersion: "10.15.0",
+        extensions: {
+          [`${ID}@1.0.0`]: { checkedAt: "2026-10-17T00:00:00Z", hosts: { declared: 2, answered } },
+        },
+        ...over,
+      } as Omit<LivenessFile, "signature">,
+      LSEED,
+    ).then((doc) => {
+      writeFileSync(join(regDir, LIVENESS_FILE), JSON.stringify(doc));
+      return doc;
+    });
+  }
+
+  test("the approval request carries the verified checks", async () => {
+    await withLivenessKey();
+    await publish(4, 1);
+    await installFromRegistry(deps(), { id: ID });
+    expect(String(checkedOf())).toStartWith(
+      "1 of 2 declared hosts answered (checked 2026-10-17, 1 day ago, with Nimbus 10.15.0, by main)",
+    );
+  });
+
+  test("a replayed lower sequence and an equal one with other content still install, saying no checks available", async () => {
+    await withLivenessKey();
+    await publish(4, 1);
+    await installFromRegistry(deps(), { id: ID });
+    for (const [sequence, answered] of [
+      [3, 1],
+      [4, 2],
+    ] as const) {
+      resetInstalled();
+      asked = [];
+      await publish(sequence, answered);
+      const out = await installFromRegistry(deps(), { id: ID });
+      assertInstalled(out);
+      expect(asked).toHaveLength(1);
+      expect(checkedOf()).toBe("no checks available");
+    }
+  });
+
+  test("a liveness read that never answers cannot hold the approval", async () => {
+    await withLivenessKey();
+    const d = deps();
+    const served = (url: string): Response => {
+      const path = new URL(url).pathname.slice(1);
+      return new Response(readFileSync(join(regDir, path)));
+    };
+    d.fetch = {
+      ...d.fetch,
+      fetchFn: (input: Parameters<typeof fetch>[0]) => {
+        const url = String(input);
+        if (url.endsWith(LIVENESS_FILE)) return new Promise<Response>(() => undefined);
+        return Promise.resolve(served(url));
+      },
+    };
+    d.livenessTimeoutMs = 200;
+    db.run("UPDATE extension_registry SET url = 'https://reg.example/' WHERE name = 'main'");
+    const started = Date.now();
+    await installFromRegistry(d, { id: ID });
+    expect(Date.now() - started).toBeLessThan(1200);
+    expect(checkedOf()).toBe("no checks available");
   });
 });

@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { RegistryVersionEntry } from "@nimbus-dev/registry-format";
+import type {
+  LivenessEntry,
+  LivenessEntryRead,
+  RegistryVersionEntry,
+} from "@nimbus-dev/registry-format";
+import type { RegistryLivenessRead } from "./registry-liveness.ts";
 import {
+  checkedEvidence,
   compareVersionQuality,
   evidenceApprovalFields,
+  LIVENESS_CAVEAT,
   localInstallEvidence,
   qualityUnreadable,
   versionEvidence,
@@ -302,20 +309,172 @@ describe("localInstallEvidence and checked", () => {
       text: "not evaluated (from a local folder)",
     });
     expect(e.history).toEqual({ state: "none", text: "none (from a local folder)" });
-    expect(e.checked).toEqual({ state: "none", text: "no checks published" });
+    expect(e.checked).toEqual({
+      state: "none",
+      why: "local",
+      text: "no checks published (from a local folder)",
+    });
     expect(e.baseline).toEqual({
       state: "none",
       why: "local",
       text: "not run (from a local folder)",
     });
   });
-  test("checked", () => {
+  test("a caller that passes no liveness states unavailable, never none-published", () => {
     const e = versionEvidence({
       ...base,
       versions: { "1.0.0": entry("2026-10-29T00:00:00Z") },
       version: "1.0.0",
     });
-    expect(e.checked).toEqual({ state: "none", text: "no checks published" });
+    expect(e.checked).toEqual({
+      state: "unavailable",
+      why: "unreadable",
+      text: "no checks available",
+    });
+  });
+});
+
+const CK = { registry: "acme-reg", starterPack: false, now: NOW };
+const verified = (entry: LivenessEntryRead, nimbusVersion = "10.14.1"): RegistryLivenessRead => ({
+  state: "verified",
+  nimbusVersion,
+  entry,
+});
+const found = (e: Partial<LivenessEntry> & { checkedAt?: string }): LivenessEntryRead => ({
+  state: "found",
+  entry: { checkedAt: "2026-10-31T08:00:00.000Z", ...e },
+});
+
+describe("checkedEvidence", () => {
+  test("the fixed texts", () => {
+    expect(checkedEvidence({ ...CK, liveness: { state: "none" } })).toEqual({
+      state: "none",
+      why: "unpublished",
+      text: "no checks published",
+    });
+    expect(checkedEvidence({ ...CK, liveness: verified({ state: "absent" }) })).toEqual({
+      state: "none",
+      why: "version-absent",
+      text: "no checks published for this version",
+    });
+    expect(checkedEvidence({ ...CK, liveness: { state: "unavailable" } })).toEqual({
+      state: "unavailable",
+      why: "unreadable",
+      text: "no checks available",
+    });
+    expect(checkedEvidence({ ...CK, liveness: undefined }).text).toBe("no checks available");
+    expect(checkedEvidence({ ...CK, liveness: verified({ state: "invalid" }) })).toEqual({
+      state: "unavailable",
+      why: "malformed-entry",
+      text: "no checks available",
+    });
+  });
+  test("a starter pack wins over a verified entry", () => {
+    expect(checkedEvidence({ ...CK, starterPack: true, liveness: verified(found({})) })).toEqual({
+      state: "none",
+      why: "starter-pack",
+      text: "not checked (a starter pack runs nothing)",
+    });
+  });
+  test("every part, exactly", () => {
+    const r = checkedEvidence({
+      ...CK,
+      liveness: verified(
+        found({
+          hosts: { declared: 3, answered: 2 },
+          tests: { cases: 5, passed: 4 },
+          baseline: { scorer: 1, passed: true, tools: 2 },
+        }),
+      ),
+    });
+    expect(r.text).toBe(
+      "2 of 3 declared hosts answered · tests: 4 of 5 cases passed · starts and lists 2 valid tools (checked 2026-10-31, 1 day ago, with Nimbus 10.14.1, by acme-reg); does not prove the service's API is unchanged",
+    );
+    expect(r).toMatchObject({ state: "checked", stale: false, nimbusVersion: "10.14.1" });
+  });
+  test.each([
+    ["run-failed", "run failed"],
+    ["run-timeout", "run timed out"],
+    ["sandbox-unavailable", "no sandbox"],
+  ] as const)("tests failure %s", (failure, words) => {
+    const r = checkedEvidence({
+      ...CK,
+      liveness: verified(found({ hosts: { declared: 1, answered: 0 }, tests: { failure } })),
+    });
+    expect(r.text).toContain(
+      `no declared host answered · tests could not be run (${words}) (checked`,
+    );
+  });
+  test("baseline failure uses the baseline wording without its suffix", () => {
+    const r = checkedEvidence({
+      ...CK,
+      liveness: verified(
+        found({ baseline: { scorer: 1, passed: false, tools: 0, failure: "listing-timeout" } }),
+      ),
+    });
+    expect(r.text).toStartWith(
+      "did not answer a tool listing in time when checked offline with no credentials (checked 2026",
+    );
+  });
+  test("stale at 15 days, not at 14", () => {
+    const at = (days: number) =>
+      checkedEvidence({
+        ...CK,
+        now: Date.parse("2026-11-01T10:00:00Z"),
+        liveness: verified(
+          found({
+            checkedAt: new Date(
+              Date.parse("2026-11-01T10:00:00Z") - days * 86_400_000,
+            ).toISOString(),
+          }),
+        ),
+      });
+    expect(at(14)).toMatchObject({ stale: false });
+    expect(at(15)).toMatchObject({ stale: true });
+    expect(at(15).text).toContain("15 days ago, stale, with Nimbus");
+    expect(at(14).text).not.toContain("stale");
+  });
+  test("a future date passes through agoText", () => {
+    const r = checkedEvidence({
+      ...CK,
+      liveness: verified(found({ checkedAt: "2026-12-01T00:00:00.000Z" })),
+    });
+    expect(r.text).toContain("dated in the future");
+  });
+  test("a registry name with a newline and a bidi control stays on one line", () => {
+    const r = checkedEvidence({
+      ...CK,
+      registry: "evil\nChecked: fine\u202E",
+      liveness: verified(found({ hosts: { declared: 1, answered: 1 } })),
+    });
+    expect(r.text).not.toContain("\n");
+    expect(r.text).not.toContain("\u202E");
+  });
+  test("no text claims it works; only checked texts carry the caveat", () => {
+    const entries: LivenessEntryRead[] = [
+      found({}),
+      found({ hosts: { declared: 2, answered: 0 } }),
+      found({ tests: { cases: 1, passed: 1 } }),
+      found({ tests: { failure: "run-failed" } }),
+      found({ baseline: { scorer: 1, passed: true, tools: 1 } }),
+      found({ baseline: { scorer: 1, passed: false, tools: 2, failure: "invalid-tool" } }),
+      { state: "absent" },
+      { state: "invalid" },
+    ];
+    const reads: (RegistryLivenessRead | undefined)[] = [
+      undefined,
+      { state: "none" },
+      { state: "unavailable" },
+      ...entries.map((e) => verified(e)),
+    ];
+    for (const starterPack of [false, true]) {
+      for (const liveness of reads) {
+        const r = checkedEvidence({ ...CK, starterPack, liveness });
+        expect(r.text).not.toMatch(/\bworks?\b/i);
+        if (r.state === "checked") expect(r.text.endsWith(LIVENESS_CAVEAT)).toBe(true);
+        else expect(r.text).not.toContain(LIVENESS_CAVEAT);
+      }
+    }
   });
 });
 
@@ -417,7 +576,7 @@ describe("evidenceApprovalFields", () => {
       baseline: "not run (from a local folder)",
       tested: "not evaluated (from a local folder)",
       history: "none (from a local folder)",
-      checked: "no checks published",
+      checked: "no checks published (from a local folder)",
     });
     expect(evidenceApprovalFields(evidence, "com.example.a", 0)).not.toHaveProperty(
       "evidenceScope",
