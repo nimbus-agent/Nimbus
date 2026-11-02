@@ -9,17 +9,26 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { signIndex, validatePublish } from "../../../registry-format/src/index.ts";
+import {
+  publicKeyFromSeed,
+  signIndex,
+  validatePublish,
+} from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import { runLivenessCheck } from "./liveness-check.ts";
 import { baselineRoleRunner } from "./score-baseline.ts";
 import { roleRunner } from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
+  b64,
   makeExtension,
   makeRegistryRepo,
+  originIndex,
   pushMaintainer,
   ROOT_KEY_INPUT,
+  ROOT_SEED,
+  syncMaintainer,
+  write,
   writePublish,
 } from "./testing/registry-repo.ts";
 
@@ -83,6 +92,20 @@ describe.skipIf(!canRun)("registry liveness-check over the real __nimbus-eval ro
       { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT },
       { validate: validatePublish, sign: signIndex, git: gitTree, io, tmpdir: () => scratch },
     );
+    // Opt in, as `nimbus registry maintain set-liveness-key` does: with no liveness key in the index,
+    // liveness-check runs no extension code at all.
+    syncMaintainer(repo, "gh-pages");
+    const { signature: _s, ...rest } = originIndex(repo) as unknown as Record<string, unknown>;
+    const opted = await signIndex(
+      {
+        ...rest,
+        sequence: (rest["sequence"] as number) + 1,
+        livenessKey: b64(publicKeyFromSeed(new Uint8Array(32).fill(9))),
+      } as never,
+      ROOT_SEED,
+    );
+    write(repo.maintainer, "index.json", `${JSON.stringify(opted, null, 2)}\n`);
+    pushMaintainer(repo, "gh-pages", "set liveness key");
 
     const r = await runLivenessCheck(
       { workspace: repo.workspace, gateway, nimbusVersion: "10.14.1", out },

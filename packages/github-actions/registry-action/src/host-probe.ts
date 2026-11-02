@@ -8,7 +8,7 @@
  * Bundled for the runner's Node: only `node:dns`, `node:net` and `node:tls`, no Bun API and no
  * ES2024+ runtime API (no `Promise.try`).
  */
-import { lookup as dnsLookup } from "node:dns";
+import { promises as dnsPromises } from "node:dns";
 import { BlockList, isIP, connect as netConnect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 
@@ -129,17 +129,36 @@ export type HostProbeDeps = {
   }): Promise<boolean>;
 };
 
-/** Resolves every answer, unordered by us (`verbatim`), so a blocked one cannot hide behind a public one. */
-function realLookup(host: string): Promise<ReadonlyArray<{ address: string; family: 4 | 6 }>> {
-  return new Promise((resolve, reject) => {
-    dnsLookup(host, { all: true, verbatim: true }, (err, addresses) => {
-      if (err !== null) {
-        reject(err);
-        return;
-      }
-      resolve(addresses.map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 })));
-    });
-  });
+/**
+ * Every A and AAAA answer, so a blocked one cannot hide behind a public one. Resolved with c-ares
+ * (`dns.promises.Resolver`), not `dns.lookup`: `lookup` runs `getaddrinfo` on the 4-thread libuv
+ * pool, and a lookup abandoned at its deadline keeps its thread, so a package declaring hosts whose
+ * name servers never answer could make later packages' hosts read as not answering. A Resolver has
+ * its own per-query timeout, one try, and is cancelled at the deadline. It reads no `/etc/hosts`,
+ * which changes nothing here: a name `/etc/hosts` maps (localhost) is private anyway. An IP literal is
+ * returned as is, to be judged by `isPublicAddress`.
+ */
+async function realLookup(
+  host: string,
+): Promise<ReadonlyArray<{ address: string; family: 4 | 6 }>> {
+  const literal = isIP(host);
+  if (literal !== 0) return [{ address: host, family: literal === 6 ? 6 : 4 }];
+  const resolver = new dnsPromises.Resolver({ timeout: HOST_LOOKUP_TIMEOUT_MS, tries: 1 });
+  const timer = setTimeout(() => resolver.cancel(), HOST_LOOKUP_TIMEOUT_MS);
+  try {
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+    if (v4.status === "rejected" && v6.status === "rejected") throw v4.reason;
+    return [
+      ...(v4.status === "fulfilled"
+        ? v4.value.map((a) => ({ address: a, family: 4 as const }))
+        : []),
+      ...(v6.status === "fulfilled"
+        ? v6.value.map((a) => ({ address: a, family: 6 as const }))
+        : []),
+    ];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

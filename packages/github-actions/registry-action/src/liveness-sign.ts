@@ -18,7 +18,7 @@
  * environment are the defence); refusals name fingerprints of PUBLIC keys. `main.ts` masks the
  * input and drops it from the environment first.
  */
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
 import {
   canonicalKeyBytes,
   LIVENESS_FILE,
@@ -101,18 +101,35 @@ function entryProblem(key: string, raw: unknown, now: number): LivenessEntry | s
   return entry;
 }
 
+/**
+ * The file's bytes through ONE open descriptor: the size checked is the size of the file read, so a
+ * file swapped between a check and a read cannot slip past the cap. The bytes read are checked too.
+ */
+function readCappedFile(path: string, max: number): Buffer {
+  const fd = openSync(path, "r");
+  try {
+    const size = fstatSync(fd).size;
+    if (size > max) {
+      throw new Error(
+        `refusing the results file: ${String(size)} bytes exceeds the ${String(max)} byte limit`,
+      );
+    }
+    const bytes = readFileSync(fd);
+    if (bytes.byteLength > max) {
+      throw new Error(`refusing the results file: it grew past the ${String(max)} byte limit`);
+    }
+    return bytes;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** The results file's envelope, strictly; the entries are still raw. */
 function readEnvelope(
   path: string,
   expectedVersion: string,
 ): { nimbusVersion: string; raw: Record<string, unknown> } {
-  const size = statSync(path).size;
-  if (size > MAX_LIVENESS_RESULTS_BYTES) {
-    throw new Error(
-      `refusing the results file: ${String(size)} bytes exceeds the ${String(MAX_LIVENESS_RESULTS_BYTES)} byte limit`,
-    );
-  }
-  const bytes = readFileSync(path);
+  const bytes = readCappedFile(path, MAX_LIVENESS_RESULTS_BYTES);
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

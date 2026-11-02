@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:db40f3c7a4c0123ce9f05950ebf67debceccd95ac0b93020b307297bc9eee648
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:be72b852393e808397f15deedb36947e16e32af5ff91136c8d63dc8d14ff7615
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -12059,7 +12059,7 @@ import { tmpdir as osTmpdir5 } from "node:os";
 import { join as join8 } from "node:path";
 
 // src/host-probe.ts
-import { lookup as dnsLookup } from "node:dns";
+import { promises as dnsPromises } from "node:dns";
 import { BlockList, isIP, connect as netConnect } from "node:net";
 import { connect as tlsConnect } from "node:tls";
 var TLS_PORTS = new Set([443, 465, 636, 853, 993, 995, 8443]);
@@ -12156,16 +12156,23 @@ function isPublicAddress(address) {
     return !address.includes("%") && !BLOCKED.check(bare, "ipv4");
   return family === 6 && isPublicV6(bare);
 }
-function realLookup(host) {
-  return new Promise((resolve, reject) => {
-    dnsLookup(host, { all: true, verbatim: true }, (err, addresses) => {
-      if (err !== null) {
-        reject(err);
-        return;
-      }
-      resolve(addresses.map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 })));
-    });
-  });
+async function realLookup(host) {
+  const literal = isIP(host);
+  if (literal !== 0)
+    return [{ address: host, family: literal === 6 ? 6 : 4 }];
+  const resolver = new dnsPromises.Resolver({ timeout: HOST_LOOKUP_TIMEOUT_MS, tries: 1 });
+  const timer = setTimeout(() => resolver.cancel(), HOST_LOOKUP_TIMEOUT_MS);
+  try {
+    const [v4, v6] = await Promise.allSettled([resolver.resolve4(host), resolver.resolve6(host)]);
+    if (v4.status === "rejected" && v6.status === "rejected")
+      throw v4.reason;
+    return [
+      ...v4.status === "fulfilled" ? v4.value.map((a) => ({ address: a, family: 4 })) : [],
+      ...v6.status === "fulfilled" ? v6.value.map((a) => ({ address: a, family: 6 })) : []
+    ];
+  } finally {
+    clearTimeout(timer);
+  }
 }
 function realConnect(o) {
   return new Promise((resolve) => {
@@ -12555,7 +12562,7 @@ function writeResults(opts, deps, extensions) {
 }
 
 // src/liveness-sign.ts
-import { readFileSync as readFileSync2, statSync as statSync2 } from "node:fs";
+import { closeSync as closeSync5, fstatSync as fstatSync3, openSync as openSync5, readFileSync as readFileSync2 } from "node:fs";
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
@@ -12654,12 +12661,24 @@ function entryProblem(key, raw, now) {
     return "its checkedAt is more than 24 hours old";
   return entry;
 }
-function readEnvelope2(path, expectedVersion) {
-  const size = statSync2(path).size;
-  if (size > MAX_LIVENESS_RESULTS_BYTES) {
-    throw new Error(`refusing the results file: ${String(size)} bytes exceeds the ${String(MAX_LIVENESS_RESULTS_BYTES)} byte limit`);
+function readCappedFile(path, max) {
+  const fd = openSync5(path, "r");
+  try {
+    const size = fstatSync3(fd).size;
+    if (size > max) {
+      throw new Error(`refusing the results file: ${String(size)} bytes exceeds the ${String(max)} byte limit`);
+    }
+    const bytes = readFileSync2(fd);
+    if (bytes.byteLength > max) {
+      throw new Error(`refusing the results file: it grew past the ${String(max)} byte limit`);
+    }
+    return bytes;
+  } finally {
+    closeSync5(fd);
   }
-  const bytes = readFileSync2(path);
+}
+function readEnvelope2(path, expectedVersion) {
+  const bytes = readCappedFile(path, MAX_LIVENESS_RESULTS_BYTES);
   let text;
   try {
     text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
