@@ -137,11 +137,11 @@ describe("versionEvidence baseline", () => {
     [pass(0), "starts and lists no tools (checked by acme-reg)"],
     [
       fail("no-listing"),
-      "did not start or answer a valid tool listing when checked (checked by acme-reg)",
+      "did not start or answer a valid tool listing when checked offline with no credentials (checked by acme-reg)",
     ],
     [
       fail("listing-timeout"),
-      "did not answer a tool listing in time when checked (checked by acme-reg)",
+      "did not answer a tool listing in time when checked offline with no credentials (checked by acme-reg)",
     ],
     [
       fail("invalid-tool", 4),

@@ -471,6 +471,7 @@ describe("StructuredPreview — auto-update action types (T2 PR 3)", () => {
       expect(screen.queryByText(key)).toBeNull();
     }
     expect(screen.getAllByText("no checks published", { exact: false })).toHaveLength(1);
+    expect(screen.getAllByText("starts and lists 3 valid tools", { exact: false })).toHaveLength(1);
   });
 
   it("an install from a gateway that sends no evidence shows no evidence section", () => {

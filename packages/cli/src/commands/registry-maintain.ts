@@ -351,6 +351,27 @@ function scoreSummary(decision: Extract<ScoreDecision, { ok: true }>): string {
   return `${quality}, baseline ${decision.baseline.passed ? "passed" : "failed"}`;
 }
 
+/**
+ * What the `--scores` file says about this version, decided before the first write so a refusal
+ * leaves the folder untouched. A refusal throws; an ignored baseline is a one-line notice.
+ */
+function decideScore(
+  scores: Scores | undefined,
+  v: PublishVerdict,
+  io: MaintainIo,
+): Extract<ScoreDecision, { ok: true }> {
+  const decision = judgeScoreEntry(scores, v);
+  if (!decision.ok) {
+    throw new MaintainError(
+      `refusing to add ${v.id}@${v.version}: ${oneSafeLine(decision.reason)}`,
+    );
+  }
+  if (decision.baselineIgnored !== undefined) {
+    io.stdout(`${v.id}@${v.version}: ${oneSafeLine(decision.baselineIgnored)}\n`);
+  }
+  return decision;
+}
+
 async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
   const p = parseArgs(args, ["--key", "--channel", "--scores"], [], ["--statement"]);
   const [dir, source] = p.positional;
@@ -386,16 +407,7 @@ async function maintainAdd(args: string[], io: MaintainIo): Promise<void> {
     const v = await validatePublish(candidate, admission.index, config, work);
     const existing = index.extensions[v.id];
 
-    // The score decision comes BEFORE the first write: a refusal leaves the folder untouched.
-    const decision = judgeScoreEntry(scores, v);
-    if (!decision.ok) {
-      throw new MaintainError(
-        `refusing to add ${v.id}@${v.version}: ${oneSafeLine(decision.reason)}`,
-      );
-    }
-    if (decision.baselineIgnored !== undefined) {
-      io.stdout(`${v.id}@${v.version}: ${oneSafeLine(decision.baselineIgnored)}\n`);
-    }
+    const decision = decideScore(scores, v, io);
 
     const rel = `extensions/${v.id}/${v.version}`;
     const destDir = join(dir, "extensions", ...v.id.split("/"), v.version);

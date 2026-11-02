@@ -140,14 +140,14 @@ function baselineText(
     return `starts and lists ${b.tools} valid ${noun} (checked by ${by})`;
   }
   if (b.failure === "listing-timeout") {
-    return `did not answer a tool listing in time when checked (checked by ${by})`;
+    return `did not answer a tool listing in time when checked offline with no credentials (checked by ${by})`;
   }
   if (b.failure === "invalid-tool") {
     return b.tools === 1
       ? `lists 1 tool, without a valid name or input schema (checked by ${by})`
       : `lists ${toolCount(b.tools)}, at least one without a valid name or input schema (checked by ${by})`;
   }
-  return `did not start or answer a valid tool listing when checked (checked by ${by})`;
+  return `did not start or answer a valid tool listing when checked offline with no credentials (checked by ${by})`;
 }
 
 function baselineEvidence(o: {
