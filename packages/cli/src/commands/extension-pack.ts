@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PACKAGE_MANIFEST_FILE, packExtensionDir } from "@nimbus-dev/registry-format";
 import { MaintainError, parseArgs } from "../lib/maintain-shared.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 
 const USAGE = "usage: nimbus extension pack <dir> --out <file>\n";
 
@@ -89,12 +90,12 @@ export async function runExtensionPack(
     assertPackageDir(dir);
     const bytes = await packToBytes(dir);
     writeNew(out, bytes);
-    deps.log(`wrote ${out}\n`);
+    deps.log(`wrote ${stripControlChars(out)}\n`);
     deps.log(`sha256 ${createHash("sha256").update(bytes).digest("hex")}\n`);
     return 0;
   } catch (e) {
     if (e instanceof MaintainError) {
-      deps.err(`${e.message}\n`);
+      deps.err(`${stripControlChars(e.message)}\n`);
       return 2;
     }
     throw e;

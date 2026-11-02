@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:d7c34723eeba641dd34b7135e89d2cd93905ea0349f7126e09c3cd4b0cc17475
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:6bc1da098999c3ed2d8704c4cf391b78a9da17871e54fdb337e9527fd2394e8d
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -11824,7 +11824,15 @@ async function runCheck(opts, deps = SHARED2) {
 
 // src/score-package.ts
 import { createHash as createHash7 } from "node:crypto";
-import { mkdirSync as mkdirSync2, mkdtempSync as mkdtempSync6, readFileSync as readFileSync2, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
+import {
+  closeSync as closeSync4,
+  mkdirSync as mkdirSync2,
+  mkdtempSync as mkdtempSync6,
+  openSync as openSync4,
+  readSync as readSync3,
+  rmSync as rmSync5,
+  writeFileSync as writeFileSync5
+} from "node:fs";
 import { tmpdir as osTmpdir4 } from "node:os";
 import { join as join7 } from "node:path";
 var SHARED3 = {
@@ -11838,15 +11846,36 @@ var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
 function notATgz(path, why) {
   return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
 }
+function readAtMost2(path, max) {
+  const fd = openSync4(path, "r");
+  try {
+    const chunks = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, max - total));
+      const got = readSync3(fd, chunk, 0, chunk.length, null);
+      if (got === 0)
+        break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
+    }
+    return new Uint8Array(Buffer.concat(chunks, total));
+  } finally {
+    closeSync4(fd);
+  }
+}
 function readPackageBytes(path) {
   if (!path.endsWith(".tgz"))
     throw notATgz(path, "does not end in .tgz");
   let bytes;
   try {
-    bytes = new Uint8Array(readFileSync2(path));
+    bytes = readAtMost2(path, MAX_PACKAGE_BYTES + 1);
   } catch (e) {
     const why = e.code ?? "an error";
     throw notATgz(path, `cannot be read as a file (${why})`);
+  }
+  if (bytes.byteLength > MAX_PACKAGE_BYTES) {
+    throw notATgz(path, `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
   if (bytes[0] !== 31 || bytes[1] !== 139)
     throw notATgz(path, "is not gzip data");

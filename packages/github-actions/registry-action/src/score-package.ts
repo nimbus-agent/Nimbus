@@ -15,13 +15,22 @@
  * `scores.json` is `{}` when nothing was recorded, written through a temp sibling and a rename.
  */
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir as osTmpdir } from "node:os";
 import { join } from "node:path";
 import {
   inspectPackage,
   isEvalSuiteFile,
   isStarterPack,
+  MAX_PACKAGE_BYTES,
   parseExtensionManifestForRegistry,
 } from "../../../registry-format/src/index.ts";
 import { type ActionIo, GHA_IO } from "./report.ts";
@@ -72,15 +81,37 @@ function notATgz(path: string, why: string): Error {
   );
 }
 
+/** At most `max` bytes of `path`, read through one descriptor in chunks. */
+function readAtMost(path: string, max: number): Uint8Array {
+  const fd = openSync(path, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let total = 0;
+    while (total < max) {
+      const chunk = Buffer.alloc(Math.min(64 * 1024, max - total));
+      const got = readSync(fd, chunk, 0, chunk.length, null);
+      if (got === 0) break;
+      chunks.push(chunk.subarray(0, got));
+      total += got;
+    }
+    return new Uint8Array(Buffer.concat(chunks, total));
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** The package's bytes, read once: the read itself says why a path is not a file. */
 function readPackageBytes(path: string): Uint8Array {
   if (!path.endsWith(".tgz")) throw notATgz(path, "does not end in .tgz");
   let bytes: Uint8Array;
   try {
-    bytes = new Uint8Array(readFileSync(path));
+    bytes = readAtMost(path, MAX_PACKAGE_BYTES + 1);
   } catch (e) {
     const why = (e as NodeJS.ErrnoException).code ?? "an error";
     throw notATgz(path, `cannot be read as a file (${why})`);
+  }
+  if (bytes.byteLength > MAX_PACKAGE_BYTES) {
+    throw notATgz(path, `is larger than ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
   if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) throw notATgz(path, "is not gzip data");
   return bytes;
