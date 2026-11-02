@@ -881,7 +881,7 @@ describe("extension.info", () => {
     expect(local.evidence.baseline.text).toBe("not run (from a local folder)");
     expect(local.evidence.tested.text).toBe("not evaluated (from a local folder)");
     expect(local.evidence.history.text).toBe("none (from a local folder)");
-    expect(local.evidence.checked.text).toBe("no checks published");
+    expect(local.evidence.checked.text).toBe("no checks published (from a local folder)");
     expect(local).not.toHaveProperty("evidenceIn");
     const reg = await info("com.example.reg");
     expect(String(reg["evidenceIn"])).toStartWith("main");
@@ -1631,7 +1631,7 @@ describe("extension.install", () => {
       }) as Record<string, unknown>;
       expect(shown["tested"]).toBe("not evaluated (from a local folder)");
       expect(shown["history"]).toBe("none (from a local folder)");
-      expect(shown["checked"]).toBe("no checks published");
+      expect(shown["checked"]).toBe("no checks published (from a local folder)");
       expect("evidenceScope" in shown).toBe(false);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });

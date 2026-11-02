@@ -68,6 +68,8 @@ export interface RegistryIndex {
   readonly statements?: unknown;
   /** Where users report an extension from this registry, carried RAW; read with `readRegistryReportUrl`. */
   readonly reportUrl?: unknown;
+  /** The key that signs this registry's `liveness.json`, carried RAW; read with `readRegistryLivenessKey`. */
+  readonly livenessKey?: unknown;
   signature: string;
 }
 
@@ -342,6 +344,13 @@ export function readRegistryReportUrl(index: RegistryIndex): string | undefined 
   } catch {
     return undefined;
   }
+}
+
+/** The index's liveness key: `undefined` when absent, `"invalid"` when present but malformed. */
+export function readRegistryLivenessKey(index: RegistryIndex): string | undefined | "invalid" {
+  const v = index.livenessKey;
+  if (v === undefined) return undefined;
+  return typeof v === "string" && KEY_RE.test(v) ? v : "invalid";
 }
 
 /** SHA-256 (hex) of the index's signing bytes: what a client stores to refuse equivocation. */

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:7e42b749795c273eb917545e350269b85fc1bc7c8aa5f3fa057de3a226a401d6
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:9518441f06cebbf5decb4209fc8e56eb271aa5e67518f7af4e3616e1389f3a3b
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9329,6 +9329,9 @@ async function inspectPackage(tgz, work) {
     files: files.toSorted(codeUnitCompare)
   };
 }
+// ../../registry-format/src/liveness-file.ts
+var import_tweetnacl4 = __toESM(require_nacl_fast(), 1);
+var MAX_LIVENESS_BYTES = 4 * 1024 * 1024;
 // ../../registry-format/src/provenance.ts
 var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

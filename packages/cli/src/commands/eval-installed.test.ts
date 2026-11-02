@@ -303,8 +303,12 @@ describe("runEvalInstalled", () => {
         method: "extension.eval",
         params: { ids: ["a/same", "a/worse", "a/local", "a/nosuite"] },
       },
-      { method: "registry.info", params: { id: "a/same", registry: "official" } },
-      { method: "registry.info", params: { id: "a/worse", registry: "community" } },
+      // `liveness: false`: a score-only lookup makes no liveness request.
+      { method: "registry.info", params: { id: "a/same", registry: "official", liveness: false } },
+      {
+        method: "registry.info",
+        params: { id: "a/worse", registry: "community", liveness: false },
+      },
     ]);
     expect(h.logs[0]?.split(/\s+/)).toEqual([
       "id",

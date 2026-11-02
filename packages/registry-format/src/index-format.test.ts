@@ -7,6 +7,7 @@ import {
   MAX_INDEX_BYTES,
   parseRegistryIndex,
   type RegistryIndex,
+  readRegistryLivenessKey,
   readRegistryPacks,
   readRegistryReportUrl,
   readRegistryStatements,
@@ -568,4 +569,24 @@ describe("index version entry quality (carried raw)", () => {
       await verifyRegistryIndexPinned(parsed, ROOT_KEY);
     });
   }
+});
+
+describe("readRegistryLivenessKey", () => {
+  const parsed = parseRegistryIndex(enc(sign(unsigned)));
+  const key = Buffer.from(
+    nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9)).publicKey,
+  ).toString("base64");
+
+  test("undefined when absent", () => {
+    expect(readRegistryLivenessKey(parsed)).toBeUndefined();
+  });
+
+  test("the key when it is well formed", () => {
+    expect(readRegistryLivenessKey({ ...parsed, livenessKey: key })).toBe(key);
+  });
+
+  test("invalid for anything else", () => {
+    expect(readRegistryLivenessKey({ ...parsed, livenessKey: 42 })).toBe("invalid");
+    expect(readRegistryLivenessKey({ ...parsed, livenessKey: "short" })).toBe("invalid");
+  });
 });

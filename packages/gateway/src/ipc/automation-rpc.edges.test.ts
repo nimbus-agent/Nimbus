@@ -376,7 +376,7 @@ describe("extension.install through the RPC", () => {
       baseline: "not run (from a local folder)",
       tested: "not evaluated (from a local folder)",
       history: "none (from a local folder)",
-      checked: "no checks published",
+      checked: "no checks published (from a local folder)",
     });
   });
 });

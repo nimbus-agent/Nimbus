@@ -98,6 +98,31 @@ The generated check and score jobs set up the sandbox with `sudo`: install `bubb
 
 Take the exact steps and pins from a scratch `init --github` run. A registry that does not adopt this keeps working as before: without the `scores` input, sign records no quality.
 
+## Liveness checks
+
+A registry can publish a second signed file, `liveness.json`, beside `index.json`. It records what the registry's own scheduled checks observed about each published version. The client reads it only to show a dated `Checked:` line. **Nothing produces this file yet.** The registry action's liveness modes and the `maintain init --github` workflow come in the next PR, and recording a package's test fixtures comes after that. Until then no registry publishes one.
+
+The index names the key. An optional signed index field `livenessKey` (the same base64 form as other keys) holds the public key that signs `liveness.json`. It is a separate, low-privilege key from the root key, so the scheduled job that signs checks never holds the key that signs the index. An index without `livenessKey` publishes no checks.
+
+The file is JSON, at most 4 MiB:
+
+- `format`: `1`.
+- `livenessKey`: the key that signed it; it must equal the index's `livenessKey`.
+- `sequence`: a whole number that never goes down.
+- `generatedAt`, `nimbusVersion`: when it was made and the Nimbus release the checks ran with.
+- `extensions`: an object keyed `"<id>@<version>"`. Each entry has `checkedAt` and any of `hosts` (`{ declared, answered }`), `tests` (`{ cases, passed }`, or `{ failure }` with `run-failed`, `run-timeout` or `sandbox-unavailable`) and `baseline` (the same record the score job signs).
+- `signature`: Ed25519 over the canonical JSON of the document without `signature`.
+
+What a client does with it:
+
+- It fetches the file only after the pinned index verifies, and only for `nimbus extension info --registry/--remote` and a registry install approval. It does not fetch it on a plain `info`, on search, on update checks or at startup.
+- The fetch is an egress-ledger row (method `registry.liveness`), is refused under an air gap, and has its own 10 second deadline.
+- A floor in the V80 table `registry_liveness_state` refuses a lower sequence, and different content at the sequence already accepted. The floor is per machine: with no floor row (a first read, one after `nimbus registry remove` and a re-add, or a new machine) any validly signed older file is accepted, shown with its own date, and reads `stale` after 14 days. A new `livenessKey` in a verified index replaces the floor. `nimbus registry remove` deletes it.
+- Any failure shows `no checks available` and blocks nothing: no install, update or spawn depends on this file (invariant I51 in [SECURITY-INVARIANTS.md](./SECURITY-INVARIANTS.md#i51--a-registrys-liveness-and-baseline-evidence-is-shown-never-acted-on)).
+- A check dated more than 14 days before it is read shows `stale`.
+
+Each line names the registry that measured it. A host answering, or a test passing, on the registry's runner does not prove the service's API is unchanged. The exact texts are under `extension info` in [cli-reference.md](./cli-reference.md).
+
 ## Bounds, stated plainly
 
 - **A force-push to `gh-pages` breaks the registry for clients that already saw it.** After a force-push rolls `gh-pages` back, the next sign publishes a different index at a sequence number that was already used. Since the trust layer (2026-10-26), a client that accepted the original index at that sequence refuses the new one with `ERR_REGISTRY_EQUIVOCATION` (it stores a hash of the index it accepted at each sequence). The fix is another sign: the index after that has a sequence no client has seen. A client that never saw the original cannot tell the difference. Protecting `gh-pages` (step 7) is still the way to avoid this, and it is yours to keep; the sign workflow does not check it.

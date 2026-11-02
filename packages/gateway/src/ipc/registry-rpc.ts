@@ -41,6 +41,7 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
+import { readRegistryLiveness } from "../extensions/registry/registry-liveness.ts";
 import {
   type ResolvedEntry,
   readIndexes,
@@ -88,6 +89,8 @@ export interface RegistryRpcOptions {
   /** Absent only on a bespoke harness: every method that fetches then refuses. */
   fetch?: RegistryFetchBag;
   ownerGate?: RegistryOwnerGate;
+  /** Test seam: the hard deadline of the signed liveness read (default 10 s). */
+  livenessTimeoutMs?: number;
   /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
   extensionsDir?: string;
   vault?: NimbusVault;
@@ -612,6 +615,29 @@ async function handleInfo(
   }
   const text = new TextDecoder().decode(bytes);
   const { manifest } = parseExtensionManifestForRegistry(text);
+  // The newest version's signed liveness entry: a missing or unreadable file only changes the
+  // Checked line (I51), and the read never throws.
+  // A starter pack runs nothing and reads "not checked", so it makes no liveness request. A caller
+  // that reads only the signed score (`nimbus eval --installed`) passes `liveness: false`, so a
+  // run over many extensions makes no liveness request and never waits on one; its Checked line
+  // then reads "no checks available", which that caller never shows.
+  const starterPack = isStarterPack(manifest);
+  const liveness =
+    starterPack || rec?.["liveness"] === false
+      ? undefined
+      : await readRegistryLiveness(
+          {
+            ...fetch,
+            db: o.db,
+            ...(o.livenessTimeoutMs === undefined
+              ? {}
+              : { livenessTimeoutMs: o.livenessTimeoutMs }),
+          },
+          found.reg,
+          found.index,
+          id,
+          newest[0],
+        );
   // Provenance (trust layer PR 4c): the newest version only — the one whose manifest was just
   // fetched and hash-checked — and only when that publisher-signed manifest names the same
   // repository the registry verified the build from.
@@ -631,7 +657,8 @@ async function handleInfo(
         versions: entry.versions,
         version: newest[0],
         declaresNetwork: manifest.permissions.network.length > 0,
-        starterPack: isStarterPack(manifest),
+        starterPack,
+        ...(liveness === undefined ? {} : { liveness }),
         now: fetch.now(),
       }),
       // The evidence describes the newest LISTED version, which can be a beta a plain install

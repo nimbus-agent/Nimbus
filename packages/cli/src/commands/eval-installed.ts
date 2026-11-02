@@ -162,7 +162,8 @@ async function registryLookup(
 ): Promise<{ score: number } | { note: string }> {
   let raw: unknown;
   try {
-    raw = await call<unknown>("registry.info", { id, registry });
+    // `liveness: false`: only the signed score is read here, so no liveness request is made.
+    raw = await call<unknown>("registry.info", { id, registry, liveness: false });
   } catch (e) {
     return { note: `registry unreadable: ${e instanceof Error ? e.message : String(e)}` };
   }

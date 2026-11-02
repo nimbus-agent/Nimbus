@@ -80,6 +80,7 @@ import { PR_CHANGED_FILE_V55_SQL } from "../pr-changed-file-v55-sql.ts";
 import { PR_COMMIT_RELATION_V27_SEED_SQL } from "../pr-commit-relation-v27-sql.ts";
 import { PREMORTEM_V53_SQL } from "../premortem-v53-sql.ts";
 import { QUERY_LATENCY_V14_SQL } from "../query-latency-v14-sql.ts";
+import { REGISTRY_LIVENESS_V80_SQL } from "../registry-liveness-v80-sql.ts";
 import { RESOLVE_KEY_V52_SQL } from "../resolve-key-v52-sql.ts";
 import { SCHEDULER_V2_MIGRATION_SQL } from "../scheduler-schema-sql.ts";
 import { INITIAL_SCHEMA_SQL } from "../schema-sql.ts";
@@ -716,6 +717,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "extension.kind (starter packs: a package of dependencies with no code)",
     EXTENSION_KIND_V79_SQL,
   ),
+  simpleStep(79, 80, "registry liveness floor", REGISTRY_LIVENESS_V80_SQL),
 ];
 
 /**

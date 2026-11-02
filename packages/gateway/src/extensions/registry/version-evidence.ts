@@ -8,11 +8,14 @@
  */
 import {
   type EvalBaselineFailure,
+  type LivenessEntry,
+  type LivenessTestFailure,
   type RegistryVersionEntry,
   readVersionBaseline,
   readVersionQuality,
 } from "@nimbus-dev/registry-format";
 import { oneLine } from "../install-plan-text.ts";
+import type { RegistryLivenessRead } from "./registry-liveness.ts";
 
 export type TestedEvidence =
   | {
@@ -51,7 +54,34 @@ export type HistoryEvidence =
       readonly text: string;
     }
   | { readonly state: "none"; readonly text: string };
-export type CheckedEvidence = { readonly state: "none"; readonly text: string };
+export type CheckedEvidence =
+  | {
+      readonly state: "none";
+      readonly why: "unpublished" | "local" | "starter-pack" | "version-absent";
+      readonly text: string;
+    }
+  | {
+      readonly state: "unavailable";
+      readonly why: "unreadable" | "malformed-entry";
+      readonly text: string;
+    }
+  | {
+      readonly state: "checked";
+      readonly checkedAt: string;
+      readonly stale: boolean;
+      readonly nimbusVersion: string;
+      readonly checkedBy: string;
+      readonly hosts?: { readonly declared: number; readonly answered: number };
+      readonly tests?:
+        | { readonly cases: number; readonly passed: number }
+        | { readonly failure: LivenessTestFailure };
+      readonly baseline?: {
+        readonly passed: boolean;
+        readonly tools: number;
+        readonly failure?: EvalBaselineFailure;
+      };
+      readonly text: string;
+    };
 export type VersionEvidence = {
   readonly baseline: BaselineEvidence;
   readonly tested: TestedEvidence;
@@ -85,7 +115,8 @@ export type QualityChange =
     };
 
 const DAY_MS = 86_400_000;
-const NO_CHECKS: CheckedEvidence = { state: "none", text: "no checks published" };
+export const LIVENESS_STALE_DAYS = 14;
+export const LIVENESS_CAVEAT = "does not prove the service's API is unchanged";
 
 function testedEvidence(o: {
   readonly registry: string;
@@ -130,24 +161,32 @@ function toolCount(n: number): string {
   return n === 1 ? "1 tool" : `${n} tools`;
 }
 
-function baselineText(
-  b: { readonly passed: boolean; readonly tools: number; readonly failure?: EvalBaselineFailure },
-  by: string,
-): string {
+type BaselineFacts = {
+  readonly passed: boolean;
+  readonly tools: number;
+  readonly failure?: EvalBaselineFailure;
+};
+
+/** The one wording of a baseline result, shared by the baseline line and the Checked line. */
+function baselineWording(b: BaselineFacts): string {
   if (b.passed) {
-    if (b.tools === 0) return `starts and lists no tools (checked by ${by})`;
+    if (b.tools === 0) return "starts and lists no tools";
     const noun = b.tools === 1 ? "tool" : "tools";
-    return `starts and lists ${b.tools} valid ${noun} (checked by ${by})`;
+    return `starts and lists ${b.tools} valid ${noun}`;
   }
   if (b.failure === "listing-timeout") {
-    return `did not answer a tool listing in time when checked offline with no credentials (checked by ${by})`;
+    return "did not answer a tool listing in time when checked offline with no credentials";
   }
   if (b.failure === "invalid-tool") {
     return b.tools === 1
-      ? `lists 1 tool, without a valid name or input schema (checked by ${by})`
-      : `lists ${toolCount(b.tools)}, at least one without a valid name or input schema (checked by ${by})`;
+      ? "lists 1 tool, without a valid name or input schema"
+      : `lists ${toolCount(b.tools)}, at least one without a valid name or input schema`;
   }
-  return `did not start or answer a valid tool listing when checked offline with no credentials (checked by ${by})`;
+  return "did not start or answer a valid tool listing when checked offline with no credentials";
+}
+
+function baselineText(b: BaselineFacts, by: string): string {
+  return `${baselineWording(b)} (checked by ${by})`;
 }
 
 function baselineEvidence(o: {
@@ -218,19 +257,135 @@ function historyEvidence(
   };
 }
 
+const TEST_FAILURE_TEXT: Readonly<Record<LivenessTestFailure, string>> = {
+  "run-failed": "run failed",
+  "run-timeout": "run timed out",
+  "sandbox-unavailable": "no sandbox",
+};
+
+const UNAVAILABLE_CHECKED: CheckedEvidence = {
+  state: "unavailable",
+  why: "unreadable",
+  text: "no checks available",
+};
+
+/**
+ * The Checked line: what the registry's signed liveness file says about this version, dated, and
+ * never a verdict. Only the `checked` state carries the caveat; a missing or unreadable file states
+ * only that no checks are available or published.
+ */
+export function checkedEvidence(o: {
+  readonly registry: string;
+  readonly starterPack: boolean;
+  readonly liveness: RegistryLivenessRead | undefined;
+  readonly now: number;
+}): CheckedEvidence {
+  if (o.starterPack) {
+    return {
+      state: "none",
+      why: "starter-pack",
+      text: "not checked (a starter pack runs nothing)",
+    };
+  }
+  const read = o.liveness;
+  if (read === undefined || read.state === "unavailable") return UNAVAILABLE_CHECKED;
+  if (read.state === "none") {
+    return { state: "none", why: "unpublished", text: "no checks published" };
+  }
+  if (read.entry.state === "absent") {
+    return {
+      state: "none",
+      why: "version-absent",
+      text: "no checks published for this version",
+    };
+  }
+  if (read.entry.state === "invalid") {
+    return { state: "unavailable", why: "malformed-entry", text: "no checks available" };
+  }
+  return checkedFound(o, read.entry.entry, read.nimbusVersion);
+}
+
+function checkedParts(e: LivenessEntry): string[] {
+  const parts: string[] = [];
+  if (e.hosts !== undefined) {
+    parts.push(
+      e.hosts.answered === 0
+        ? "no declared host answered"
+        : `${e.hosts.answered} of ${e.hosts.declared} declared hosts answered`,
+    );
+  }
+  if (e.tests !== undefined) {
+    parts.push(
+      "failure" in e.tests
+        ? `tests could not be run (${TEST_FAILURE_TEXT[e.tests.failure]})`
+        : `tests: ${e.tests.passed} of ${e.tests.cases} cases passed`,
+    );
+  }
+  if (e.baseline !== undefined) parts.push(baselineWording(e.baseline));
+  return parts;
+}
+
+type CheckedBaseline = NonNullable<Extract<CheckedEvidence, { state: "checked" }>["baseline"]>;
+
+function checkedBaseline(b: NonNullable<LivenessEntry["baseline"]>): CheckedBaseline {
+  return {
+    passed: b.passed,
+    tools: b.tools,
+    ...(b.passed ? {} : { failure: b.failure }),
+  };
+}
+
+function checkedFound(
+  o: { readonly registry: string; readonly now: number },
+  e: LivenessEntry,
+  nimbusVersionRaw: string,
+): CheckedEvidence {
+  const when = Date.parse(e.checkedAt);
+  const known = Number.isFinite(when);
+  // The structured date is re-rendered, never the signed string.
+  const checkedAt = known ? new Date(when).toISOString() : "";
+  const day = known ? checkedAt.slice(0, 10) : "an unknown day";
+  const days = known ? Math.floor(o.now / DAY_MS) - Math.floor(when / DAY_MS) : 0;
+  const stale = days > LIVENESS_STALE_DAYS;
+  const checkedBy = oneLine(o.registry);
+  const nimbusVersion = oneLine(nimbusVersionRaw);
+  const parts = checkedParts(e);
+  const body = parts.length === 0 ? "no checks recorded" : parts.join(" · ");
+  const staleText = stale ? ", stale" : "";
+  const text = `${body} (checked ${day}, ${agoText(days)}${staleText}, with Nimbus ${nimbusVersion}, by ${checkedBy}); ${LIVENESS_CAVEAT}`;
+  return {
+    state: "checked",
+    checkedAt,
+    stale,
+    nimbusVersion,
+    checkedBy,
+    ...(e.hosts === undefined ? {} : { hosts: e.hosts }),
+    ...(e.tests === undefined ? {} : { tests: e.tests }),
+    ...(e.baseline === undefined ? {} : { baseline: checkedBaseline(e.baseline) }),
+    text,
+  };
+}
+
 export function versionEvidence(o: {
   readonly registry: string;
   readonly versions: Readonly<Record<string, RegistryVersionEntry>>;
   readonly version: string;
   readonly declaresNetwork: boolean;
   readonly starterPack: boolean;
+  /** Absent reads as unavailable ("no checks available"), never as "none published". */
+  readonly liveness?: RegistryLivenessRead;
   readonly now: number;
 }): VersionEvidence {
   return {
     baseline: baselineEvidence(o),
     tested: testedEvidence(o),
     history: historyEvidence(o.registry, o.versions, o.now),
-    checked: NO_CHECKS,
+    checked: checkedEvidence({
+      registry: o.registry,
+      starterPack: o.starterPack,
+      liveness: o.liveness,
+      now: o.now,
+    }),
   };
 }
 
@@ -243,7 +398,11 @@ export function localInstallEvidence(): VersionEvidence {
       text: "not evaluated (from a local folder)",
     },
     history: { state: "none", text: "none (from a local folder)" },
-    checked: NO_CHECKS,
+    checked: {
+      state: "none",
+      why: "local",
+      text: "no checks published (from a local folder)",
+    },
   };
 }
 

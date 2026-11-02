@@ -108,6 +108,18 @@ describe("resolveRegistryResource", () => {
     });
   });
 
+  test("resolves liveness.json at the root only", () => {
+    expect(resolveRegistryResource(remote, "liveness.json")).toEqual({
+      kind: "remote",
+      url: "https://reg.example/sub/liveness.json",
+    });
+    for (const loc of [remote, local]) {
+      for (const bad of ["extensions/x/liveness.json", "liveness.json.bak"]) {
+        expect(() => resolveRegistryResource(loc, bad)).toThrow("ERR_REGISTRY_TRANSPORT_REFUSED");
+      }
+    }
+  });
+
   test("rejects a ../ relPath and other shapes", () => {
     for (const loc of [remote, local]) {
       for (const bad of [

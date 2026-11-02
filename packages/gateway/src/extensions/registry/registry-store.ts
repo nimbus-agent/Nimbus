@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { type RegistryChannel, RegistryError } from "@nimbus-dev/registry-format";
 import { dbRun } from "../../db/write.ts";
 import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
+import { deleteLivenessFloor } from "./registry-liveness-store.ts";
 
 export interface RegistryRow {
   name: string;
@@ -172,8 +173,11 @@ export function recordRegistryFetch(
 
 /** Deletes the registry row only; installed extensions keep their source columns (provenance). */
 export function deleteRegistry(db: Database, name: string): boolean {
-  const r = dbRun(db, "DELETE FROM extension_registry WHERE name = ?", [name]);
-  return r.changes > 0;
+  return db.transaction(() => {
+    const r = dbRun(db, "DELETE FROM extension_registry WHERE name = ?", [name]);
+    deleteLivenessFloor(db, name);
+    return r.changes > 0;
+  })();
 }
 
 export function setExtensionSource(db: Database, id: string, src: ExtensionSource): void {
