@@ -4,7 +4,12 @@
  * Bun, no gateway imports. A reply-originated object key starting with `$` is always written with
  * one more `$`, so a bare `$type` key in a generated pattern is a marker the recorder put there.
  */
-import { MAX_EVAL_CASES, MAX_EVAL_REPLY_BYTES, MAX_EVAL_SUITE_FILE_BYTES } from "./caps.ts";
+import {
+  MAX_EVAL_CASES,
+  MAX_EVAL_JSON_DEPTH,
+  MAX_EVAL_REPLY_BYTES,
+  MAX_EVAL_SUITE_FILE_BYTES,
+} from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import { type EvalReply, jsonDeepEqual, judgeCase } from "./eval-score.ts";
 import {
@@ -14,6 +19,7 @@ import {
   type EvalCase,
   type EvalExpect,
   isPlainObject,
+  jsonDepth,
   NAME_MAX,
   parseEvalSuite,
   parseInput,
@@ -53,7 +59,9 @@ export function parseEvalRecordInputs(file: string, bytes: Uint8Array): EvalReco
   if (bytes.length > MAX_EVAL_RECORD_INPUTS_BYTES) {
     refuse(file, `inputs file is too large (over ${MAX_EVAL_RECORD_INPUTS_BYTES} bytes)`);
   }
-  const raw = decodeSuite(file, bytes);
+  // Windows PowerShell 5.1 writes a BOM by default; one is stripped here (suites still refuse it).
+  const hasBom = bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf;
+  const raw = decodeSuite(file, hasBom ? bytes.subarray(3) : bytes, "inputs file");
   if (!isPlainObject(raw)) refuse(file, "inputs file must be a JSON object");
   assertKeys(file, "inputs", raw, ["format", "name", "cases"]);
   if (raw.format !== EVAL_RECORD_INPUTS_FORMAT) {
@@ -74,6 +82,7 @@ export const EVAL_RECORD_SKIP_REASONS = [
   "call-failed",
   "error-flag-differs",
   "reply-too-large",
+  "reply-too-deep",
   "changes-type",
   "changes-shape",
   "changes-not-json",
@@ -137,6 +146,11 @@ function isBareMarker(v: unknown): boolean {
   return isPlainObject(v) && Object.keys(v).length === 1 && Object.hasOwn(v, "$type");
 }
 
+function isEmptyContainer(v: unknown): boolean {
+  if (Array.isArray(v)) return v.length === 0;
+  return isPlainObject(v) && Object.keys(v).length === 0;
+}
+
 function tryParse(text: string): { ok: true; value: unknown } | { ok: false } {
   try {
     return { ok: true, value: JSON.parse(text) };
@@ -159,10 +173,19 @@ function expectFor(
   const a = tryParse(first.text);
   const b = tryParse(second.text);
   if (!a.ok || !b.ok) return { ok: false, why: "changes-not-json" };
+  // The merge below recurses, so it only ever sees replies within the depth cap (measured
+  // iteratively), and the pattern it builds is measured again: a leaf wrapped in a `$type` marker
+  // sits one level deeper than the reply.
+  if (jsonDepth(a.value) > MAX_EVAL_JSON_DEPTH || jsonDepth(b.value) > MAX_EVAL_JSON_DEPTH) {
+    return { ok: false, why: "reply-too-deep" };
+  }
   const m = merge(a.value, b.value);
   if (!m.ok) return m;
-  // A root that is only a type marker would accept almost any reply.
-  if (isBareMarker(m.value)) return { ok: false, why: "changes-shape" };
+  if (jsonDepth(m.value) > MAX_EVAL_JSON_DEPTH) return { ok: false, why: "reply-too-deep" };
+  // A root that is only a type marker, or an empty object or array, would accept almost any reply.
+  if (isBareMarker(m.value) || isEmptyContainer(m.value)) {
+    return { ok: false, why: "changes-shape" };
+  }
   return { ok: true, expect: { rubric: "json-match", value: m.value, error } };
 }
 
@@ -184,11 +207,18 @@ function preflight(
 }
 type EvalReplyOk = Extract<EvalReply, { kind: "reply" }>;
 
-function buildCase(
-  c: EvalRecordInput,
-  first: EvalReply,
-  second: EvalReply,
-): { ok: true; value: EvalCase } | { ok: false; why: EvalRecordSkipReason } {
+type BuiltCase = { ok: true; value: EvalCase } | { ok: false; why: EvalRecordSkipReason };
+
+/** One case, never throwing: anything unexpected is that case's `self-check-failed`. */
+function buildCase(c: EvalRecordInput, first: EvalReply, second: EvalReply): BuiltCase {
+  try {
+    return buildCaseUnguarded(c, first, second);
+  } catch {
+    return { ok: false, why: "self-check-failed" };
+  }
+}
+
+function buildCaseUnguarded(c: EvalRecordInput, first: EvalReply, second: EvalReply): BuiltCase {
   const pre = preflight(first, second);
   if (!pre.ok) return pre;
   const e = expectFor(pre.first, pre.second);
@@ -287,12 +317,12 @@ function parseRecordError(raw: unknown): Extract<EvalRecordDocument, { ok: false
   const e = raw["error"];
   if (!isPlainObject(e) || !hasOnlyKeys(e, ["code", "message", "skipped"])) return null;
   if (typeof e["code"] !== "string" || typeof e["message"] !== "string") return null;
-  if (e["message"].length > DOC_MESSAGE_MAX) return null;
-  if (e["skipped"] === undefined)
-    return { ok: false, error: { code: e["code"], message: e["message"] } };
+  // A long message (paths, library text) is cut, not refused: the code and the skips still matter.
+  const message = e["message"].slice(0, DOC_MESSAGE_MAX);
+  if (e["skipped"] === undefined) return { ok: false, error: { code: e["code"], message } };
   const skipped = parseSkipped(e["skipped"]);
   if (skipped === null) return null;
-  return { ok: false, error: { code: e["code"], message: e["message"], skipped } };
+  return { ok: false, error: { code: e["code"], message, skipped } };
 }
 
 function parseRecordSuccess(raw: Record<string, unknown>): EvalRecordDocument | null {

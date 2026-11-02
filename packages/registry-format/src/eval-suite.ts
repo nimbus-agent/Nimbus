@@ -229,24 +229,24 @@ function parseCase(file: string, index: number, raw: unknown, seen: Set<string>)
   return { name, tool, input, expect: parseExpect(file, `${where}.expect`, raw.expect) };
 }
 
-export function decodeSuite(file: string, bytes: Uint8Array): unknown {
+export function decodeSuite(file: string, bytes: Uint8Array, noun = "suite file"): unknown {
   if (bytes.length > MAX_EVAL_SUITE_FILE_BYTES) {
-    refuse(file, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+    refuse(file, `${noun} is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
   }
   // TextDecoder strips a leading BOM from its output, so the bytes are checked directly.
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    refuse(file, "suite file must not start with a BOM");
+    refuse(file, `${noun} must not start with a BOM`);
   }
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
-    return refuse(file, "suite file is not valid UTF-8");
+    return refuse(file, `${noun} is not valid UTF-8`);
   }
   try {
     return JSON.parse(text);
   } catch {
-    return refuse(file, "suite file is not valid JSON");
+    return refuse(file, `${noun} is not valid JSON`);
   }
 }
 

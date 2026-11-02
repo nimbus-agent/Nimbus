@@ -66,10 +66,35 @@ describe("parseEvalRecordInputs", () => {
     refuses(withCase({ name: "a", tool: "t", input: { s: "x".repeat(65 * 1024) } }));
     refuses(withCase({ name: "a", tool: "t", input: nested(65) }));
   });
-  test("refuses an oversize file, a BOM and invalid UTF-8", () => {
+  test("refuses an oversize file, a second BOM and invalid UTF-8", () => {
     refuses(new Uint8Array(1024 * 1024 + 1));
-    refuses(new Uint8Array([0xef, 0xbb, 0xbf, ...enc(okInputs)]));
+    refuses(new Uint8Array([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf, ...enc(okInputs)]));
     refuses(new Uint8Array([0x7b, 0xff, 0x7d]));
+  });
+  test("a single leading BOM is stripped from the inputs file", () => {
+    const r = parseEvalRecordInputs(
+      "inputs.json",
+      new Uint8Array([0xef, 0xbb, 0xbf, ...enc(okInputs)]),
+    );
+    expect(r.name).toBe("golden");
+  });
+  test("refusals call it the inputs file, not a suite file", () => {
+    const message = (bytes: Uint8Array): string => {
+      try {
+        parseEvalRecordInputs("inputs.json", bytes);
+      } catch (e) {
+        return (e as Error).message;
+      }
+      return "";
+    };
+    expect(message(new Uint8Array([0x7b, 0xff, 0x7d]))).toContain("inputs file is not valid UTF-8");
+    expect(message(new TextEncoder().encode("{"))).toContain("inputs file is not valid JSON");
+    expect(message(new Uint8Array([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf]))).toContain(
+      "inputs file must not start with a BOM",
+    );
+    expect(message(new Uint8Array([0xef, 0xbb, 0xbf, 0xef, 0xbb, 0xbf]))).not.toContain(
+      "suite file",
+    );
   });
 });
 
@@ -97,7 +122,43 @@ function roundTrip(r: ReturnType<typeof one>): EvalCase {
   return parseEvalSuite("x", serialiseEvalSuite(r.suite)).cases[0] as EvalCase;
 }
 
+/** `{"a":{"a":…leaf…}}` nested `depth` deep, built as text (JSON.stringify would recurse). */
+const deepText = (depth: number, leaf: number): string =>
+  `${'{"a":'.repeat(depth)}${leaf}${"}".repeat(depth)}`;
+
 describe("buildRecordedSuite", () => {
+  test("a reply at the depth cap that differs at a leaf is skipped reply-too-deep, never thrown", () => {
+    const r = buildRecordedSuite(
+      inputsFor(2),
+      [reply(deepText(64, 1)), j({ ok: 1 })],
+      [reply(deepText(64, 2)), j({ ok: 2 })],
+    );
+    expect(r.skipped).toEqual([{ case: "c0", why: "reply-too-deep" }]);
+    expect(r.suite.cases).toHaveLength(1);
+  });
+  test("a reply deeper than the cap is skipped reply-too-deep (5 000 and 50 000 deep)", () => {
+    for (const depth of [65, 5000, 50_000]) {
+      const r = buildRecordedSuite(
+        inputsFor(2),
+        [reply(deepText(depth, 1)), j({ ok: 1 })],
+        [reply(deepText(depth, 2)), j({ ok: 2 })],
+      );
+      expect(r.skipped).toEqual([{ case: "c0", why: "reply-too-deep" }]);
+      expect(r.suite.cases).toHaveLength(1);
+    }
+  });
+  test("a deep reply that differs in text only (equal JSON) is bounded too", () => {
+    const r = one(reply(deepText(50_000, 1)), reply(` ${deepText(50_000, 1)}`));
+    expect(r.skipped).toEqual([{ case: "c0", why: "reply-too-deep" }]);
+  });
+  test("a root that is an empty object or array is skipped changes-shape", () => {
+    expect(one(reply("{}"), reply("{ }")).skipped).toEqual([{ case: "c0", why: "changes-shape" }]);
+    expect(one(reply("[]"), reply("[ ]")).skipped).toEqual([{ case: "c0", why: "changes-shape" }]);
+  });
+  test("JSON-equal replies with different text give a json-match with the literal", () => {
+    const r = one(reply('{"a":1}'), reply('{ "a": 1 }'));
+    expect(expectOf(r)).toEqual({ rubric: "json-match", value: { a: 1 }, error: false });
+  });
   test("identical text is exact, with the error flag copied", () => {
     const r = one(reply("hello", true), reply("hello", true));
     expect(r.suite.cases).toEqual([
@@ -348,6 +409,9 @@ describe("parseEvalRecordDocument", () => {
     expect(parseEvalRecordDocument(doc({ ...ok, skipped: longCase }))).toBeNull();
     const err = (message: string) => doc({ ok: false, error: { code: "C", message } });
     expect(parseEvalRecordDocument(err("m".repeat(1000)))).not.toBeNull();
-    expect(parseEvalRecordDocument(err("m".repeat(1001)))).toBeNull();
+    // A long message is cut to the cap, not refused.
+    const cut = parseEvalRecordDocument(err("m".repeat(5000)));
+    expect(cut).not.toBeNull();
+    expect(cut?.ok === false && cut.error.message.length).toBe(1000);
   });
 });
