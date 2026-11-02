@@ -190,6 +190,20 @@ describe("readRegistryLiveness", () => {
     ).toBe(0);
   });
 
+  test("a valid file that arrives after the deadline is not accepted and records no floor", async () => {
+    const doc = await file();
+    const late = () =>
+      new Promise<Response>((resolve) => {
+        setTimeout(() => resolve(new Response(JSON.stringify(doc))), 300);
+      });
+    const r = await read(deps(() => json(null), { fetchFn: late, livenessTimeoutMs: 100 }));
+    expect(r).toEqual({ state: "unavailable" });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(
+      (db.query("SELECT COUNT(*) AS n FROM registry_liveness_state").get() as { n: number }).n,
+    ).toBe(0);
+  });
+
   test("air gap is unavailable with no egress row", async () => {
     const doc = await file();
     expect(await read(deps(() => json(doc), { enforceAirGap: () => true }))).toEqual({

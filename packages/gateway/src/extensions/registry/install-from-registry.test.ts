@@ -1369,6 +1369,63 @@ describe("installFromRegistry installs a dependency plan", () => {
     return listExtensions(db).find((r) => r.id === id)?.kind;
   }
 
+  test("a starter pack install makes no liveness request, where a plain extension does", async () => {
+    runIndexedSchemaMigrations(db, 80);
+    const SOLO = "com.example.solo";
+    const dir = await addRemote("main", {
+      [PACK]: [{ version: "1.0.0", starterPack: true, dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+      [SOLO]: [{ version: "1.0.0" }],
+    });
+    const lseed = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+    const lkey = encodeBase64(nacl.sign.keyPair.fromSeed(lseed).publicKey);
+    const path = join(dir, "index.json");
+    resignIndex(path, {
+      ...(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>),
+      livenessKey: lkey,
+    });
+    const doc = await signLivenessFile(
+      {
+        format: 1,
+        livenessKey: lkey,
+        sequence: 1,
+        generatedAt: "2026-10-18T00:00:00Z",
+        nimbusVersion: "10.15.0",
+        extensions: {
+          [`${SOLO}@1.0.0`]: {
+            checkedAt: "2026-10-17T00:00:00Z",
+            hosts: { declared: 1, answered: 1 },
+          },
+          [`${PACK}@1.0.0`]: {
+            checkedAt: "2026-10-17T00:00:00Z",
+            hosts: { declared: 1, answered: 1 },
+          },
+        },
+      },
+      lseed,
+    );
+    writeFileSync(join(dir, LIVENESS_FILE), JSON.stringify(doc));
+    const rows = (): number =>
+      (
+        db
+          .query("SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.liveness'")
+          .get() as { n: number }
+      ).n;
+
+    await installFromRegistry(planDeps(), { id: SOLO, registry: "main" });
+    expect(urls.some((u) => u.endsWith(LIVENESS_FILE))).toBe(true);
+    expect(rows()).toBe(1);
+
+    urls.length = 0;
+    await installFromRegistry(planDeps(), { id: PACK, registry: "main" });
+    expect(kindOf(PACK)).toBe("starter-pack");
+    expect(urls.some((u) => u.endsWith(LIVENESS_FILE))).toBe(false);
+    expect(rows()).toBe(1);
+    expect(String((asked.at(-1) as unknown as Record<string, unknown>)["checked"])).toBe(
+      "not checked (a starter pack runs nothing)",
+    );
+  });
+
   test("a registry starter pack installs with its members in one approval", async () => {
     const dir = await addRemote("main", {
       [PACK]: [

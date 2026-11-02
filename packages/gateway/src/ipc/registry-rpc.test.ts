@@ -705,7 +705,45 @@ describe("registry.search and registry.info", () => {
       expect(livenessRows()).toBe(0); // a folder registry is read from disk, not ledgered
     });
 
-    test("an index naming no key reads no checks published, with no liveness request", async () => {
+    test("a starter pack reads not checked and its liveness file is never read", async () => {
+      runIndexedSchemaMigrations(db, 80);
+      pin("main", tmp);
+      makeRegistry(
+        tmp,
+        {
+          "acme.tool": {
+            publisherId: "acme",
+            versions: [{ ...v, version: "1.0.0", kind: "starter-pack" }],
+          },
+        },
+        3,
+        { livenessKey: LKEY },
+      );
+      const doc = await signLivenessFile(
+        {
+          format: 1,
+          livenessKey: LKEY,
+          sequence: 2,
+          generatedAt: "2026-10-18T12:00:00Z",
+          nimbusVersion: "10.15.0",
+          extensions: {
+            "acme.tool@1.0.0": {
+              checkedAt: "2026-10-17T00:00:00Z",
+              hosts: { declared: 2, answered: 2 },
+            },
+          },
+        },
+        LSEED,
+      );
+      writeFileSync(join(tmp, LIVENESS_FILE), JSON.stringify(doc));
+      expect((await checkedOf()).text).toBe("not checked (a starter pack runs nothing)");
+      // A folder registry is not ledgered, so the floor row is the proof the file was never read.
+      expect(
+        (db.query("SELECT COUNT(*) AS n FROM registry_liveness_state").get() as { n: number }).n,
+      ).toBe(0);
+    });
+
+    test("an index naming no key reads no checks published, and the file beside it is not read", async () => {
       runIndexedSchemaMigrations(db, 80);
       pin("main", tmp);
       makeRegistry(tmp, {

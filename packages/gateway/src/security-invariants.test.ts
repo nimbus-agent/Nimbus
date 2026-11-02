@@ -10079,7 +10079,7 @@ describe("I51 — liveness and baseline evidence is inert", () => {
     const stage = join(tmp, "stage");
     mkdirSync(stage);
     await fetchVerifiedRegistryPackage(deps, { id: ID }, stage);
-    await collectRegistryUpdates(
+    const detected = await collectRegistryUpdates(
       {
         db,
         fetch: { ...fetchDeps, db },
@@ -10110,8 +10110,11 @@ describe("I51 — liveness and baseline evidence is inert", () => {
       new AbortController().signal,
     );
     const extra = rows("registry.liveness") - before;
+    // Not vacuous: detection really ran (it found the 2.0.0 candidate and recorded no error).
+    expect(detected.errors).toEqual([]);
+    expect(detected.updates.map((u) => u.id)).toEqual([ID]);
     const out = await installFromRegistry(deps, { id: ID });
-    const installedLivenessRows = rows("registry.liveness") - extra;
+    const installedLivenessRows = rows("registry.liveness") - before - extra;
 
     // Whole rows, not a projection. Two things differ between runs for reasons that have nothing
     // to do with the evidence, and only these are normalised: the run's own temp root (each run
