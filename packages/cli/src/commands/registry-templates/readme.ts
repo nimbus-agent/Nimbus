@@ -112,8 +112,8 @@ export function ownerNextSteps(opts: {
   dir: string;
   site: string;
   keyPath: string;
-  /** The liveness key file `init` wrote; when absent, the liveness steps are left out. */
-  livenessKeyPath?: string;
+  /** The liveness key file `init --github` wrote (it always writes one). */
+  livenessKeyPath: string;
   defaultBranch: string;
 }): string {
   const secret = `${ROOT_KEY_SECRET} --env ${SIGNING_ENVIRONMENT} --repo ${REPO_PLACEHOLDER}`;
@@ -129,17 +129,13 @@ export function ownerNextSteps(opts: {
      secret is not gated by the environment's required reviewers):
        bash/zsh:    gh secret set ${secret} < ${bashQuote(opts.keyPath)}
        PowerShell:  Get-Content -Raw ${pwshQuote(opts.keyPath)} | gh secret set ${secret}`,
-  ];
-  if (opts.livenessKeyPath !== undefined) {
-    steps.push(
-      `Create the environment "${LIVENESS_ENVIRONMENT}" with no required reviewers, and set its
+    `Create the environment "${LIVENESS_ENVIRONMENT}" with no required reviewers, and set its
      deployment branches to ${opts.defaultBranch} only. It needs no approval because a leaked
      liveness key can only publish false dated check lines: it cannot sign the index.`,
-      `Store the liveness key as a secret of THAT environment:
+    `Store the liveness key as a secret of THAT environment:
        bash/zsh:    gh secret set ${livenessSecret} < ${bashQuote(opts.livenessKeyPath)}
        PowerShell:  Get-Content -Raw ${pwshQuote(opts.livenessKeyPath)} | gh secret set ${livenessSecret}`,
-    );
-  }
+  ];
   steps.push(
     `Set GitHub Pages to serve the gh-pages branch.`,
     `Protect gh-pages against force-push and deletion, without requiring pull requests,
