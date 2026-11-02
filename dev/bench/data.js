@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793610201217,
+  "lastUpdate": 1793629955257,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fd32e7939aa3077d523f4db9963a64d5d60b6a76",
-          "message": "ci(coverage): enforce the per-area coverage floors that CLAUDE.md advertises (#1191)\n\nCLAUDE.md advertises \"Coverage gates in CI: Engine ≥85%, Vault ≥90%,\nEmbedding\n≥80%, plus scheduler/rate-limiter/people\". **All 24 of those gates\npassed\nunconditionally.** ~30 CI jobs ran full test suites and asserted\nnothing.\n\n## Two independent causes, both verified on Bun 1.3.14\n\n**1. The flag does not exist.** `bun test --help` lists only\n`--coverage`,\n`--coverage-reporter` and `--coverage-dir`. There is no\n`--coverage-threshold-lines`, and Bun ignores unknown flags silently:\n\n```\n$ bun test lib.test.js --totally-bogus-flag=7      → exit 0\n$ bun test lib.test.js --coverage --coverage-threshold-lines=99   → exit 0\n```\n\n…at **28%** line coverage. Worse than silent: `--coverage` *does* work,\nso the\ncoverage table prints and the run looks like it is being measured.\n\n**2. Collection is off anyway.** `bunfig.toml` sets `[test] coverage =\nfalse`.\nUnder it, even an explicit `--coverage --coverage-reporter=lcov\n--coverage-dir=X` writes **no lcov at all** — so there was nothing for a\nthreshold to read even in principle. Verified: the directory is never\ncreated.\n\nProved positively too — moving the same threshold to where Bun actually\nreads\nit (`[test.coverageThreshold]` with `coverage = true`) exits **1** on\nthe same\nfixture. The mechanism works; the spelling never reached it.\n\n## The fix\n\n`audit:coverage-scopes` asserts the same 24 floors against the merged\n`coverage/lcov.info` that `audit:coverage-floor` already consumes, wired\ninto\nthe Linux job immediately after it. **No extra test run and no extra CI\nminutes.**\n\nMeasured against CI's real merged lcov (main @ `de196f8c`) — every scope\npasses\ntoday, so this is not a ratchet reset:\n\n```\nok  Engine      97.1% >= 85%      ok  Vault      100.0% >= 90%\nok  Embedding   97.1% >= 80%      ok  Sandbox    100.0% >= 80%\nok  MCP conn.   95.8% >= 70%      ok  Deployment  87.1% >= 80%   … 24/24\n```\n\nTwo deliberate semantics, both chosen to match the existing floor gate:\n\n- **Exempt files are out of the denominator.** With them in, `vault`\nreads\n89.9% and `sandbox` 65.5% — numbers that describe how much untestable\nper-OS\nglue a scope contains, not how well its testable code is covered. Both\nare\n  100% over non-exempt files.\n- **A scope matching zero files FAILS.** These predicates name\ndirectories, and\ndirectories get renamed; a silently-empty scope is exactly the shape of\ngate\n  that cannot fail.\n\n## What I deliberately did *not* do\n\nThe audit that surfaced this recommended deleting the ~30 now-pointless\njobs.\n**That would have been a real regression.** Those jobs do work the main\nsuite\ndoes not:\n\n- the **Sandbox** job builds the sandbox helper and runs\n`cppcheck --enable=all --error-exitcode=1` over its C source — a genuine\n  static gate — then `setcap`s the binary;\n- the **Vault** job installs libsecret + D-Bus and runs under\n  `run-with-optional-dbus.sh`.\n\nDelete them and that static analysis disappears while those tests\nquietly start\nskipping. They stay. Their `--coverage-threshold-lines` arguments are\nleft in\nplace too — inert either way, and stripping 25 script bodies would churn\nthe\n`coverage-gates-pal` matrix, `audit:coverage-gate-pal` and the docs in a\nchange\nwhose point is enforcement. Called out below instead.\n\n## Honesty about scope\n\nThis reads the **Linux** merged lcov, so the floors are enforced on\nLinux only.\nThat is not a regression — the per-OS jobs never enforced anything — but\n`vault/win32.ts` (which carries I12) and `vault/darwin.ts` still have no\nfloor\non their own platforms. That hole is real and is not closed here.\n\n## Verification\n\n- `bun run audit:coverage-scopes` against CI's downloaded lcov artifact:\n24/24 ok.\n- 8 new tests, including the two red-proves that matter: a scope one\npoint below\nits floor **fails**, and an lcov where every scope matches nothing\n**fails**\n  with `matched 0 non-exempt files` rather than reporting 24 passes.\n- Exempt-file exclusion is pinned by a test that reads a real entry out\nof\n  `EXCLUSIONS` rather than hardcoding a path.\n- `bun test scripts/coverage-floor/` — 102 pass, 0 fail.\n- `bun run preflight:fast` — all 29 gates pass, including\n`audit:coverage-gate-pal`\n  (untouched by design) and `audit:doc-refs`.\n- Docs corrected in CLAUDE.md, GEMINI.md and the `nimbus-commands`\nskill: they\nnow name the mechanism that enforces the floors and state plainly that\nthe\n  `test:coverage:*` flag does not.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added automated coverage enforcement across 24 defined project areas.\n* Coverage checks now report each area’s results and fail when required\nfloors are not met.\n* Added coverage-scope validation to full preflight checks and Linux CI\nworkflows.\n\n* **Bug Fixes**\n* Improved handling of excluded files, missing coverage data, and scopes\nwithout matching files.\n\n* **Documentation**\n* Clarified how aggregate coverage thresholds are enforced and which\ncommands perform validation.\n\n* **Tests**\n* Added comprehensive tests for passing, failing, boundary, exclusion,\nand configuration scenarios.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-15T06:48:46+03:00",
-          "tree_id": "dbb3c9e10049739b456ed47d80d3c4548dc17274",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fd32e7939aa3077d523f4db9963a64d5d60b6a76"
-        },
-        "date": 1786766397980,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.1049841000029,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.98480430000564,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.16663435000373,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "932c79df4d0fd1b5bd20f830b68ddff05e58fd17",
+          "message": "feat(registry): show a registry's signed liveness checks on the Checked line\n\nPhase 9.5 project 6, PR 5a-1 of the quality layer. An owner now sees a registry's signed, dated liveness checks for exactly the version shown. When there are none, the line says plainly that none are published or available. Nothing about them can change an outcome.\n\nThe spec's PR 5a is split in three. This PR adds the file format and the client. 5a-2 adds the action's liveness modes and the `maintain init --github` workflow and key. 5a-3 adds golden recording. **No registry publishes `liveness.json` yet**, so every real install still reads `no checks published` until 5a-2 ships and a registry opts in.\n\n## The file\n\n`liveness.json` sits beside `index.json`:\n\n```text\n{ format: 1, livenessKey, sequence, generatedAt, nimbusVersion,\n  extensions: { \"<id>@<version>\": { checkedAt, hosts?, tests?, baseline? } }, signature }\n```\n\n- It is signed by a separate low-privilege liveness key, and the signed index names that key in a new optional `livenessKey` field. The pinned root therefore vouches for the key, and rotating it is an ordinary index change.\n- Entries carry only counts, fixed codes, strict UTC timestamps and a version string checked by regex. They are rebuilt with exact keys. No string from the file is ever displayed.\n- Older clients ignore the new index field.\n\n## The client\n\n- `liveness.json` is fetched only by `extension info --registry/--remote` and the registry install door, and only after the pinned index has verified. Search, update detection, `extension.autoUpdate`, migration and spawn never fetch it, and a starter pack skips it.\n- Each request goes through `fetchRegistryBytes`. It is ledgered as egress method `registry.liveness` and refused under the air gap.\n- The read has its own hard 10 s deadline: a timer race, plus a guard so a late verify never writes the floor.\n- Schema V80 adds `registry_liveness_state`, one floor per registry. A lower sequence, or different content at an equal one, is refused. A new liveness key replaces the floor, and `registry remove` deletes it.\n- Every failure reads `no checks available` and never fails the command.\n\n## The Checked line\n\nThe line on `extension info` and the install approval now reads, for example:\n\n```text\nChecked: 2 of 2 declared hosts answered · tests: 7 of 7 cases passed · starts and lists 7 valid tools\n         (checked 2026-11-01, 1 day ago, with Nimbus 10.16.0, by nimbus-official); does not prove the service's API is unchanged\n```\n\nIt never says \"works\". It reads stale after 14 days, and an entry for another version is never shown. The CLI and desktop already rendered `checked`, so neither changed.\n\n## Invariant I51\n\n**Liveness and baseline evidence is inert.** A liveness statement is displayed only after verification against the key the pinned, verified index names, and it never affects install, update, spawn or an approval's outcome.\n\n- **Test:** the same install runs four ways: no file, failing checks, a forged signature, and another version's entry. The approval requests differ only in `checked`. The install result, the `extension` rows and the run-grant rows are equal in full.\n- **What is proven how:** update detection and `fetchVerifiedRegistryPackage` are proven to make no liveness request by running them. Migration accept and spawn are covered by source pins only.\n- **Stated bound:** the floor is per machine. On a machine with no floor row, a validly signed older file is shown with its own date and the 14-day stale reading.\n- **Restatements:** `I1–I51` and `schema V80` are restated on every surface `check-status-drift` checks.\n\n## Verification\n\n- Tests over `registry-format`, the registry client, `registry-rpc` and `security-invariants`: 1510 pass, 0 fail.\n- The wider gateway and CLI suite with `--parallel` has only known load flakes, each green in isolation, plus the known Yoga error under Bun 1.3.14.\n- `typecheck`, `check-status-drift`, `audit:doc-refs` and `preflight:fast` pass.\n- The action dist matches a Bun 1.4.3 build byte for byte.\n- Biome's cognitive-complexity rule flags no new function. The five it reports were already over the limit before this branch, and this branch does not change them.\n- Red-proofs, each by reverting the code under test:\n  - the inherited-key lookup;\n  - a bound;\n  - the late-verify guard;\n  - the starter-pack skip;\n  - an I51 change to a field other than `checked`.\n\nNot proven here: a real registry publishing the file. That arrives with 5a-2 and the official registry's workflow in 5b.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9",
+          "timestamp": "2026-11-02T16:24:12+02:00",
+          "tree_id": "c64b9c83971f010b338abcea52fbec85aaa98084",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/932c79df4d0fd1b5bd20f830b68ddff05e58fd17"
+        },
+        "date": 1793629951110,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 230.21489340000372,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 229.5119607000015,
             "unit": "ms"
           }
         ]
