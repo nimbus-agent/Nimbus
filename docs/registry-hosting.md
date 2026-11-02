@@ -117,7 +117,7 @@ What a client does with it:
 
 - It fetches the file only after the pinned index verifies, and only for `nimbus extension info --registry/--remote` and a registry install approval. It does not fetch it on a plain `info`, on search, on update checks or at startup.
 - The fetch is an egress-ledger row (method `registry.liveness`), is refused under an air gap, and has its own 10 second deadline.
-- A floor in the V80 table `registry_liveness_state` refuses a lower sequence, and different content at the sequence already accepted. A new `livenessKey` in a verified index replaces the floor. `nimbus registry remove` deletes it.
+- A floor in the V80 table `registry_liveness_state` refuses a lower sequence, and different content at the sequence already accepted. The floor is per machine: with no floor row (a first read, one after `nimbus registry remove` and a re-add, or a new machine) any validly signed older file is accepted, shown with its own date, and reads `stale` after 14 days. A new `livenessKey` in a verified index replaces the floor. `nimbus registry remove` deletes it.
 - Any failure shows `no checks available` and blocks nothing: no install, update or spawn depends on this file (invariant I51 in [SECURITY-INVARIANTS.md](./SECURITY-INVARIANTS.md#i51--a-registrys-liveness-and-baseline-evidence-is-shown-never-acted-on)).
 - A check dated more than 14 days before it is read shows `stale`.
 
