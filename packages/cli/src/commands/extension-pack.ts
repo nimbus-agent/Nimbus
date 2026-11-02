@@ -22,6 +22,8 @@ const USAGE = "usage: nimbus extension pack <dir> --out <file>\n";
 export interface PackCmdDeps {
   log: (s: string) => void;
   err: (s: string) => void;
+  /** The one write of the output; a parameter so a test can fail it part-way. */
+  writeFile?: (path: string, data: Uint8Array, opts: { flag: "wx" }) => void;
 }
 
 const DEFAULT_DEPS: PackCmdDeps = {
@@ -47,16 +49,23 @@ function assertPackageDir(dir: string): void {
   if (!hasManifest) throw new MaintainError(`${dir} has no ${PACKAGE_MANIFEST_FILE}`);
 }
 
-/** Writes `bytes` to a path that must not exist yet; a failed write leaves nothing behind. */
-function writeNew(out: string, bytes: Uint8Array): void {
+/**
+ * Writes `bytes` to a path that must not exist yet; a failed write leaves nothing behind. `wx` fails
+ * with `EEXIST` whenever something is at the path, so after any other error the path holds either
+ * nothing or the partial file this call created, and removing it is safe.
+ */
+function writeNew(
+  out: string,
+  bytes: Uint8Array,
+  write: NonNullable<PackCmdDeps["writeFile"]>,
+): void {
   try {
-    writeFileSync(out, bytes, { flag: "wx" });
+    write(out, bytes, { flag: "wx" });
   } catch (e) {
     const code = (e as NodeJS.ErrnoException).code;
     if (code === "EEXIST") throw new MaintainError(`${out} exists; refusing to overwrite it`);
-    // A file this call created and could not finish. Any other failure created nothing here.
-    if (code === "ENOSPC" || code === "EIO") rmSync(out, { force: true });
-    throw new MaintainError(`could not write ${out}: ${code ?? String(e)}`);
+    rmSync(out, { force: true });
+    throw new MaintainError(`could not write ${out}: ${code ?? "an error"}`);
   }
 }
 
@@ -89,7 +98,7 @@ export async function runExtensionPack(
     }
     assertPackageDir(dir);
     const bytes = await packToBytes(dir);
-    writeNew(out, bytes);
+    writeNew(out, bytes, deps.writeFile ?? writeFileSync);
     deps.log(`wrote ${stripControlChars(out)}\n`);
     deps.log(`sha256 ${createHash("sha256").update(bytes).digest("hex")}\n`);
     return 0;

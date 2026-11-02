@@ -137,6 +137,35 @@ describe("nimbus extension pack", () => {
     expect(errors).toContain("unknown option --force");
   });
 
+  test("a write that fails part-way leaves no file behind, whatever its code", async () => {
+    const dir = await signedExtension();
+    for (const code of ["EDQUOT", "EFBIG", undefined]) {
+      const out = join(tmp, `partial-${String(code)}.tgz`);
+      const failing = (path: string, data: Uint8Array): void => {
+        writeFileSync(path, data.subarray(0, 10));
+        throw Object.assign(new Error("disk said no"), code === undefined ? {} : { code });
+      };
+      errors = "";
+      expect(await runExtensionPack([dir, "--out", out], { ...deps, writeFile: failing })).toBe(2);
+      expect(existsSync(out)).toBe(false);
+      expect(errors).toContain(`could not write ${out}: ${code ?? "an error"}`);
+    }
+  });
+
+  test("an error that is not a refusal is rethrown, not swallowed", async () => {
+    const dir = await signedExtension();
+    const boom = new TypeError("log broke");
+    const throwingLog = {
+      ...deps,
+      log: () => {
+        throw boom;
+      },
+    };
+    await expect(runExtensionPack([dir, "--out", join(tmp, "x.tgz")], throwingLog)).rejects.toBe(
+      boom,
+    );
+  });
+
   test("a symlink-free tree the packer refuses is a refusal, not a crash", async () => {
     const dir = await signedExtension();
     // `dist` must be a directory: the packer refuses it as a file.
