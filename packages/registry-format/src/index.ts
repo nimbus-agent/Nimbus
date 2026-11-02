@@ -36,6 +36,20 @@ export {
   type VersionQuality,
 } from "./eval-quality.ts";
 export {
+  buildRecordedSuite,
+  EVAL_RECORD_INPUTS_FORMAT,
+  EVAL_RECORD_SKIP_REASONS,
+  type EvalRecordDocument,
+  type EvalRecordInput,
+  type EvalRecordInputs,
+  type EvalRecordSkip,
+  MAX_EVAL_RECORD_INPUTS_BYTES,
+  parseEvalRecordDocument,
+  parseEvalRecordInputs,
+  type RecordedSuite,
+  serialiseEvalSuite,
+} from "./eval-record.ts";
+export {
   type EvalRoleDocument,
   parseEvalReport,
   parseEvalRoleDocument,
