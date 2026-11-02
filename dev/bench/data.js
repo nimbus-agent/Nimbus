@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793596147584,
+  "lastUpdate": 1793609066185,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1743437229cc4b9fec8387fede74ced92f8d0453",
-          "message": "fix(egress): count the whole prove window, not the first page of it (#1189)\n\n`nimbus prove` is the product's honesty primitive — the number it prints\nis a\nclaim about how much left this machine. On any window holding more than\n1000\nrows that number was **wrong, and wrong in the worst direction**.\n\n## The defect\n\n`proveWindow` derived `outboundEgressEvents` by filtering the rows\n`listEgress`\nreturned. `listEgress` caps at **1000 rows by default** and orders `id\nASC`, so:\n\n- a window with 3,000 authorized rows reported **999**;\n- the rows it dropped were the **most recent** ones;\n- and it reported `indeterminate: false` with `verify.ok: true`, so the\nCLI\n  printed the wrong number **with full confidence and exit 0**.\n\nAn under-claim delivered confidently is the exact failure this subsystem\nis\nbuilt to prevent — its own rule is \"indeterminate, never a false zero\".\n\nThis is also a **second instance of a hazard the file had already\nescaped\nonce**: `lastMarkerAtOrBefore` carries a note explaining that\n`listEgress`'s\n1000-row page would make a boot marker past row 1000 invisible, and was\nmoved\ninto SQL for that reason (\"fix 1\"). The count immediately below it was\nleft on\nthe same page.\n\nThe signed receipt inherited the same flaw:\n`digestEgressWindow(window.rows)`\nsigned only the truncated page while the printed count claimed the whole\nwindow — the signature covered different evidence than the claim beside\nit.\n\n## The fix\n\n- `countOutboundEgress()` counts in **SQL over the whole window**. The\nmarker\nset comes from `MARKER_SOURCE_TYPES` rather than being re-spelled, and\nNULL\n`source_type` is counted explicitly — `NOT IN` alone would drop it, and\nfor a\nproof an unrecognised row inflating the number is safe while one\nvanishing\nfrom it is not. This matches `isMarkerSourceType`'s documented \"unknown\n  values are NOT markers — an unknown row counts\".\n- `proveWindow` now returns `rowsTotal` + `rowsTruncated`. `rows` stays\npaginated on purpose (it crosses IPC; an unbounded window would ship the\nwhole ledger) — what changed is that the page no longer *pretends* to be\nthe\nwindow. The CLI now prints `… showing the oldest N of M rows in this\nwindow\n  (the count above covers all of them)`.\n- The receipt digest binds `outboundEgressEvents` and `rowsTotal`,\ntagged\n`nimbus-egress-window-v2` so it cannot collide with a digest made under\nthe\n  old rule. Receipts are local and nothing verifies a stored digest (the\nportable EAF artifact is deferred), so there is no compatibility\nsurface.\n\n## Verification\n\n**Red-proved.** Reverting `proveWindow` to the old page-filter fails 3\nof the\nnew tests. The sharpest is `blocked rows are never counted as outbound,\nat any\nsize`: with 1,010 blocked rows followed by one authorized row, the old\ncode\nreports **0** — the page fills with blocked rows and the single real\negress\nevent falls outside it. A window that genuinely emitted something\nreported\nnothing.\n\nNew tests cover: counting past the page limit unbounded and within an\nexplicit\n`since`/`until`; `rowsTruncated` false when the window fits; blocked\nrows never\ncounted at any size; and a parity suite asserting the SQL predicate and\n`isMarkerSourceType` agree for **every** member of the frozen\nsource-type\nunion, so the two encodings cannot drift — plus that an unrecognised\n`source_type` counts rather than vanishing.\n\n- `bun test packages/gateway/src/egress/` — 97 pass, 0 fail\n- egress-rpc + CLI prove + egress — 133 pass, 0 fail\n- `packages/gateway/src/security-invariants.test.ts` — 115 pass, 0 fail\n- `bun run preflight:fast` — all 29 gates pass\n\n## Note on what this does not change\n\n`verifyEgressChain` still walks the entire ledger, so `proveWindow` was\nalready\nO(whole ledger) before this change — the page limit was never buying the\ncost\nsaving it looked like it was. Its 124 MB / 1.67 s cost at 200k rows is a\nreal,\nseparate problem and is deliberately left for its own PR.",
-          "timestamp": "2026-08-15T05:10:04+03:00",
-          "tree_id": "bf40372d13594f1257f1bf5fdccfbf3efb1be061",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1743437229cc4b9fec8387fede74ced92f8d0453"
-        },
-        "date": 1786760488781,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.37119150000217,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.9421349999986,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 287.2806957000037,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "81202a56afa77bd0ebe2325241fb4c69d084db18",
+          "message": "feat(registry): sign a Nimbus-owned baseline for every package, and let maintain add sign scores (#1857)\n\nProject 6 of Phase 9.5, PR 3 of the quality layer. Every newly signed\npackage gets one result its author did not write: a Nimbus-owned\nbaseline, signed beside the eval score and never inside it. A registry\nthat publishes through `nimbus registry maintain add` can now sign\nscores.\n\n## What changes\n\n- **The baseline.** The gateway's `__nimbus-eval` role takes\n`--baseline`. It starts the package under the same I49 eval sandbox,\nwith no network, no write, no credential and a staged copy. It then\njudges the tool listing: each tool has a name and a structurally valid\ninput schema. The result is `{ scorer, passed, tools, failure? }`, where\n`failure` is one of `no-listing`, `listing-timeout` or `invalid-tool`,\nnever text from the package. It tries twice, 45 s each. A runner-side\nfault, a sandbox refusal or a staging failure records no baseline at\nall, so it can never be signed as a package failure.\n- **The action.** `score` and `check` run the baseline for every version\nthat is not a starter pack, before its suites. `sign` signs `baseline`\nfrom `scores.json` under the same hash binding as `quality`. A missing\nor malformed baseline never refuses a publish: the version is signed\nwithout one, with a warning. The new mode `score-package` scores one\npacked `.tgz` for a registry that publishes through `maintain add`.\n- **One judge.** `scores.json` is read by one function in\n`registry-format`, shared by `sign` and the CLI.\n- **The CLI.** `nimbus registry maintain add --scores <file>` signs\n`quality` and `baseline` under the action's rules. A package with suites\nand no valid score is refused before anything is written. `nimbus\nextension pack <dir> --out <file>` packs a directory once.\n- **What owners see.** `extension info --remote`, local `extension\ninfo`, the install approval and the desktop approval gain a `Baseline`\nline before `Tested`. For example: `starts and lists 4 valid tools\n(checked by <registry>)`, or `did not start or answer a valid tool\nlisting when checked offline with no credentials (checked by\n<registry>)`. With no record it reads `no baseline check published`, and\n`not run` for a starter pack or a local folder.\n- **I49** names `runEvalBaselineSession` beside `runEvalSession`, with\nthe same spec builder. The caller pin and the behavioural test were\nextended in the same commit.\n\n## Owners see nothing new yet\n\nNo live registry publishes a baseline. It appears from the next version\na registry signs with this release. The official registry adopts it in\nPR 4, in `nimbus-mcp-servers`.\n\n## Found during review: one packed file, used twice\n\nNode and Bun gzip the same directory into different bytes. The action\nruns under the runner's Node and `maintain add` runs under Bun, so a\ndirectory scored on one side never matched the other. Unit tests could\nnot see this, because they ran both sides under Bun. `score-package`\ntherefore takes a `.tgz` only. A job that runs no extension code signs,\npacks once with `nimbus extension pack`, and both the score job and the\nkeyed job use that file. A job that ran extension code never hands bytes\nto the job holding keys. `registry-action-score-package.test.ts` runs\nthe built bundle under a real Node and the CLI under Bun over one file.\n\nFor PR 4, the official publish script signs the manifest in its keyed\njob, so that job must split into sign and pack first, then a keyless\nscore job, then `maintain add <the .tgz> --scores`. That plan has to\nsettle how the two keyed steps share one approval.\n\n## Stated limits\n\n- \"Valid\" is structural only: a name of 1 to 128 characters with no\nwhitespace or control character, and an `inputSchema` object with `type:\n\"object\"` and well-formed `properties` and `required`. The schema is not\ncompiled.\n- `@mastra/mcp` drops a tool with an empty name before the check sees\nit, and a duplicate name cannot be seen through its record. Its own\nresult parsing turns a missing `inputSchema`, a non-array `required` or\na non-object `type` into a listing failure, `no-listing`. A tool named\n`__proto__` reads `invalid-tool`.\n- The baseline runs offline with no credentials, so it says nothing\nabout the service an extension talks to.\n- **Remaining risk:** a score job whose sandbox can start no child signs\n`no-listing` onto a good package, and a signed version cannot change.\nThe generated workflows probe the sandbox first. A `score-package` job\nmust run the same setup, and its summary says so whenever a `no-listing`\nappears.\n- One merged package with a hanging suite can spend the run's budget,\nand a later version signed in that run then has no baseline.\n\n## Rulings\n\n- The baseline is a separate role run, not folded into the suite run, so\na suite error cannot lose it.\n- Zero tools reads `starts and lists no tools`, as a true statement.\n- `scores-file.ts` is exported from the `registry-format` entry, which\nalready exports file readers.\n- `check` now starts the server of any non-starter publish when a\ngateway is set. The generated registry README and workflow comments say\nso, and the score job is renamed `Score new versions`.\n\n## Verification\n\n- `bun run preflight:fast` and `bun run typecheck` pass.\n`audit:action-dist` passes, with the dist rebuilt with Bun 1.4.3.\n- Focused registry action, integration and `extension pack` tests: 316\npass, 14 skip, 0 fail.\n- Wider suite over extensions, ipc, integration, CLI commands and\nregistry-format: one known local failure, the `tui.test.tsx` Yoga error\nunder `--parallel` on Bun 1.3.14, which reproduces on main.\n- UI vitest: green.\n- On Windows, the real eval role with `--baseline` ran over the real\nfixture package under the real sandbox and `MCPClient`, through\n`eval-role.e2e`.\n- `score.real.test.ts` and the node-run bundle tests skip on Windows, so\nCI is their first run. Both now fail by name in CI if their precondition\nis missing, instead of skipping.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus extension pack` to create registry-ready packages\noffline without overwriting existing files.\n* Registry checks and scoring can report signed baseline results for\nextension tool definitions, including versions without evaluation\nsuites. Baseline failures do not block signing.\n* Added a `score-package` action mode for scoring a pre-packed package.\n* Baseline evidence now appears in extension information and\ninstallation previews, with local installs identified as unchecked.\n* **Documentation**\n* Updated CLI, registry, and action guides with baseline checks, package\nscoring, publishing details, and package reproducibility notes.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T10:36:06+02:00",
+          "tree_id": "cb93ba5ba91dc0238fe381eba6eacee2dd9de2d7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/81202a56afa77bd0ebe2325241fb4c69d084db18"
+        },
+        "date": 1793609061893,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 224.60613979999798,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 227.3093427000007,
             "unit": "ms"
           }
         ]
