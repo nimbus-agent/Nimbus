@@ -19,7 +19,12 @@ export function recordRegistryEgress(
   db: Database,
   args: {
     readonly registryName: string;
-    readonly method: "registry.index" | "registry.manifest" | "registry.package" | "trust.feed";
+    readonly method:
+      | "registry.index"
+      | "registry.manifest"
+      | "registry.package"
+      | "registry.liveness"
+      | "trust.feed";
     readonly extensionId?: string | undefined;
     readonly version?: string | undefined;
     /** Host of THIS request (a redirect hop may name a different host than the registry). */

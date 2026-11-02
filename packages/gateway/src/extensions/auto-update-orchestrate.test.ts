@@ -629,6 +629,7 @@ describe("createPerformUpgrade: the approved plan's dependency step", () => {
         fetchManifest: () => Promise.reject(new Error("unused")),
       },
       rootSource: sourceKey("main", "c".repeat(32)),
+      readRootIndex: () => Promise.reject(new Error("unused")),
       verified: () => undefined,
       registryUrl: () => null,
       stage: () => Promise.reject(new Error("unused")),

@@ -13,8 +13,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  LIVENESS_FILE,
+  type LivenessFile,
   publisherKeyFingerprint,
   RegistryError,
+  signLivenessFile,
   signTrustStatement,
   type UnsignedTrustStatement,
 } from "@nimbus-dev/registry-format";
@@ -180,6 +183,62 @@ describe("installFromRegistry", () => {
     await installFromRegistry(deps(), { id: ID });
     expect(asked[0]?.provenance).toBeUndefined();
     expect(asked[0]?.provenanceNote).toBeUndefined();
+  });
+
+  test("the approval states the evidence for the package, and it survives the consent redaction", async () => {
+    await setup([{ version: "1.0.0" }]);
+    await installFromRegistry(deps(), { id: ID });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["baseline"]).toBe("no baseline check published");
+    expect(req["tested"]).toBe("not evaluated");
+    expect(String(req["history"])).toStartWith("first published ");
+    expect(String(req["history"])).toContain("(recorded by main)");
+    expect(req["checked"]).toBe("no checks published");
+    expect(req["evidenceScope"]).toBeUndefined();
+    const shown = consentDisplayPayload({
+      type: "extension.install",
+      payload: { ...req },
+    }) as Record<string, unknown>;
+    expect(shown["baseline"]).toBe(req["baseline"]);
+    expect(shown["tested"]).toBe(req["tested"]);
+    expect(shown["history"]).toBe(req["history"]);
+    expect(shown["checked"]).toBe(req["checked"]);
+  });
+
+  test("an explicit older version states ITS score, with the no-network suffix for a declared network", async () => {
+    const quality = {
+      scorer: 1,
+      score: 66,
+      cases: 3,
+      passed: 2,
+      rubrics: {
+        exact: { cases: 1, passed: 1 },
+        "json-match": { cases: 1, passed: 1 },
+        "one-of": { cases: 1, passed: 0 },
+      },
+    };
+    await setup([{ version: "1.0.0", quality }, { version: "2.0.0" }], {
+      manifestExtra: {
+        permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
+      },
+    });
+    await installFromRegistry(deps(), { id: ID, version: "1.0.0" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["tested"]).toBe(
+      "2 of 3 cases passed (66/100), tests by the publisher, measured by main; tests ran with no network",
+    );
+  });
+
+  test("a package without evidence adds no evidence fields (migration-engine.ts installStaged builds such a package)", async () => {
+    await setup([{ version: "1.0.0" }]);
+    const d = deps();
+    const pkg = await fetchVerifiedRegistryPackage(d, { id: ID }, join(tmp, "stage-no-evidence"));
+    const { evidence: _evidence, ...bare } = pkg;
+    await installVerifiedRegistryPackage(d, bare, "stable");
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    for (const k of ["baseline", "tested", "history", "checked", "evidenceScope"]) {
+      expect(k in req).toBe(false);
+    }
   });
 
   test("prompt payload carries sourceRegistry and rootFingerprint, never a *Key field", async () => {
@@ -785,6 +844,29 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(existsSync(join(extensionsDir, DEP, "dist", "index.js"))).toBe(true);
   });
 
+  test("a plan of two packages scopes the evidence to the root, singular", async () => {
+    await mainWithDep();
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["evidenceScope"]).toBe(
+      `for ${ID} only; the other package in this plan is not summarised here`,
+    );
+    expect(req["checked"]).toBe("no checks published");
+  });
+
+  test("a plan of three packages scopes the evidence to the root, plural", async () => {
+    await addRemote("main", {
+      [ID]: [{ version: "1.0.0", dependsOn: { [DEP]: "^1.0.0", [DEP2]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+      [DEP2]: [{ version: "1.0.0" }],
+    });
+    await installFromRegistry(planDeps(), { id: ID, registry: "main" });
+    const req = asked[0] as ExtensionInstallApprovalRequest & Record<string, unknown>;
+    expect(req["evidenceScope"]).toBe(
+      `for ${ID} only; the 2 other packages in this plan are not summarised here`,
+    );
+  });
+
   test("the approval lists the plan's connector requirements before anything is staged", async () => {
     await addRemote("main", {
       [ID]: [
@@ -1287,6 +1369,63 @@ describe("installFromRegistry installs a dependency plan", () => {
     return listExtensions(db).find((r) => r.id === id)?.kind;
   }
 
+  test("a starter pack install makes no liveness request, where a plain extension does", async () => {
+    runIndexedSchemaMigrations(db, 80);
+    const SOLO = "com.example.solo";
+    const dir = await addRemote("main", {
+      [PACK]: [{ version: "1.0.0", starterPack: true, dependsOn: { [DEP]: "^1.0.0" } }],
+      [DEP]: [{ version: "1.0.0" }],
+      [SOLO]: [{ version: "1.0.0" }],
+    });
+    const lseed = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+    const lkey = encodeBase64(nacl.sign.keyPair.fromSeed(lseed).publicKey);
+    const path = join(dir, "index.json");
+    resignIndex(path, {
+      ...(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>),
+      livenessKey: lkey,
+    });
+    const doc = await signLivenessFile(
+      {
+        format: 1,
+        livenessKey: lkey,
+        sequence: 1,
+        generatedAt: "2026-10-18T00:00:00Z",
+        nimbusVersion: "10.15.0",
+        extensions: {
+          [`${SOLO}@1.0.0`]: {
+            checkedAt: "2026-10-17T00:00:00Z",
+            hosts: { declared: 1, answered: 1 },
+          },
+          [`${PACK}@1.0.0`]: {
+            checkedAt: "2026-10-17T00:00:00Z",
+            hosts: { declared: 1, answered: 1 },
+          },
+        },
+      },
+      lseed,
+    );
+    writeFileSync(join(dir, LIVENESS_FILE), JSON.stringify(doc));
+    const rows = (): number =>
+      (
+        db
+          .query("SELECT COUNT(*) AS n FROM egress_ledger WHERE method = 'registry.liveness'")
+          .get() as { n: number }
+      ).n;
+
+    await installFromRegistry(planDeps(), { id: SOLO, registry: "main" });
+    expect(urls.some((u) => u.endsWith(LIVENESS_FILE))).toBe(true);
+    expect(rows()).toBe(1);
+
+    urls.length = 0;
+    await installFromRegistry(planDeps(), { id: PACK, registry: "main" });
+    expect(kindOf(PACK)).toBe("starter-pack");
+    expect(urls.some((u) => u.endsWith(LIVENESS_FILE))).toBe(false);
+    expect(rows()).toBe(1);
+    expect(String((asked.at(-1) as unknown as Record<string, unknown>)["checked"])).toBe(
+      "not checked (a starter pack runs nothing)",
+    );
+  });
+
   test("a registry starter pack installs with its members in one approval", async () => {
     const dir = await addRemote("main", {
       [PACK]: [
@@ -1336,5 +1475,97 @@ describe("installFromRegistry installs a dependency plan", () => {
     expect(isInstalledAsDependency(db, DEP)).toBe(true);
     expect(forwardDeps(db, PACK).map((d) => d.id)).toEqual([SUBPACK]);
     expect(forwardDeps(db, SUBPACK).map((d) => d.id)).toEqual([DEP]);
+  });
+});
+
+describe("installFromRegistry shows the signed liveness checks on the Checked line (I51)", () => {
+  const LSEED = Uint8Array.from({ length: 32 }, (_, i) => 150 + i);
+  const LKEY = encodeBase64(nacl.sign.keyPair.fromSeed(LSEED).publicKey);
+
+  const checkedOf = (): unknown => (asked[0] as unknown as Record<string, unknown>)["checked"];
+
+  beforeEach(() => {
+    runIndexedSchemaMigrations(db, 80);
+  });
+
+  async function withLivenessKey(): Promise<void> {
+    await setup([{ version: "1.0.0" }]);
+    const path = join(regDir, "index.json");
+    const index = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+    resignIndex(path, { ...index, livenessKey: LKEY });
+  }
+
+  function publish(
+    sequence: number,
+    answered: number,
+    over: Record<string, unknown> = {},
+  ): Promise<LivenessFile> {
+    return signLivenessFile(
+      {
+        format: 1,
+        livenessKey: LKEY,
+        sequence,
+        generatedAt: "2026-10-18T00:00:00Z",
+        nimbusVersion: "10.15.0",
+        extensions: {
+          [`${ID}@1.0.0`]: { checkedAt: "2026-10-17T00:00:00Z", hosts: { declared: 2, answered } },
+        },
+        ...over,
+      } as Omit<LivenessFile, "signature">,
+      LSEED,
+    ).then((doc) => {
+      writeFileSync(join(regDir, LIVENESS_FILE), JSON.stringify(doc));
+      return doc;
+    });
+  }
+
+  test("the approval request carries the verified checks", async () => {
+    await withLivenessKey();
+    await publish(4, 1);
+    await installFromRegistry(deps(), { id: ID });
+    expect(String(checkedOf())).toStartWith(
+      "1 of 2 declared hosts answered (checked 2026-10-17, 1 day ago, with Nimbus 10.15.0, by main)",
+    );
+  });
+
+  test("a replayed lower sequence and an equal one with other content still install, saying no checks available", async () => {
+    await withLivenessKey();
+    await publish(4, 1);
+    await installFromRegistry(deps(), { id: ID });
+    for (const [sequence, answered] of [
+      [3, 1],
+      [4, 2],
+    ] as const) {
+      resetInstalled();
+      asked = [];
+      await publish(sequence, answered);
+      const out = await installFromRegistry(deps(), { id: ID });
+      assertInstalled(out);
+      expect(asked).toHaveLength(1);
+      expect(checkedOf()).toBe("no checks available");
+    }
+  });
+
+  test("a liveness read that never answers cannot hold the approval", async () => {
+    await withLivenessKey();
+    const d = deps();
+    const served = (url: string): Response => {
+      const path = new URL(url).pathname.slice(1);
+      return new Response(readFileSync(join(regDir, path)));
+    };
+    d.fetch = {
+      ...d.fetch,
+      fetchFn: (input: Parameters<typeof fetch>[0]) => {
+        const url = String(input);
+        if (url.endsWith(LIVENESS_FILE)) return new Promise<Response>(() => undefined);
+        return Promise.resolve(served(url));
+      },
+    };
+    d.livenessTimeoutMs = 200;
+    db.run("UPDATE extension_registry SET url = 'https://reg.example/' WHERE name = 'main'");
+    const started = Date.now();
+    await installFromRegistry(d, { id: ID });
+    expect(Date.now() - started).toBeLessThan(1200);
+    expect(checkedOf()).toBe("no checks available");
   });
 });

@@ -101,6 +101,8 @@ export interface ExtensionOpts {
   evals?: Record<string, string>;
   /** The package's `dist/index.js` (default: a one-line module). */
   dist?: string;
+  /** A starter pack: kind `starter-pack`, no entry, no permissions, no dist (it never runs). */
+  starterPack?: boolean;
 }
 
 /** The three files a publish adds for one extension version. */
@@ -140,8 +142,15 @@ async function buildExtension(scratch: string, o: ExtensionOpts): Promise<Publis
     id,
     version,
     name: o.name ?? "Echo",
-    entry: "dist/index.js",
-    permissions: { network: o.network ?? ["api.example.com"], filesystem: { read: [], write: [] } },
+    ...(o.starterPack === true
+      ? { kind: "starter-pack", dependsOn: { "acme/other": "^1.0.0" } }
+      : {
+          entry: "dist/index.js",
+          permissions: {
+            network: o.network ?? ["api.example.com"],
+            filesystem: { read: [], write: [] },
+          },
+        }),
     publisher: { id: o.publisherId ?? "acme", key },
     ...(o.repository !== undefined && { repository: o.repository }),
   };
@@ -155,7 +164,7 @@ async function buildExtension(scratch: string, o: ExtensionOpts): Promise<Publis
 
   const dir = mkdtempSync(join(scratch, "ext-"));
   write(dir, "nimbus.extension.json", manifest);
-  write(dir, "dist/index.js", o.dist ?? "export default 1;\n");
+  if (o.starterPack !== true) write(dir, "dist/index.js", o.dist ?? "export default 1;\n");
   for (const [name, text] of Object.entries(o.evals ?? {})) write(dir, `evals/${name}`, text);
   write(dir, "README.md", "echo\n");
   const tgz = join(dir, "..", `${dir.split(/[\\/]/).at(-1) ?? "ext"}.tgz`);

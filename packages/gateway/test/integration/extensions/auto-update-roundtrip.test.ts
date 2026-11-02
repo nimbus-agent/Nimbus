@@ -164,7 +164,8 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       if (row !== undefined) expect(verifyOneExtensionStrict(row)).toBe(true);
 
       // Every request after the install is one ledgered `registry`-class row, named after the
-      // registry: detection (index + manifest), then apply (index + manifest re-verify + package).
+      // registry: detection (index + manifest), the approval's re-read of the score (index), then
+      // apply (index + manifest re-verify + package).
       const methods = (
         db.query("SELECT method, destination FROM egress_ledger ORDER BY id").all() as Array<{
           method: string;
@@ -174,6 +175,7 @@ describe("Extension auto-update — integration roundtrip (T2 PR 3 Task 22)", ()
       expect(methods).toEqual([
         { method: "registry.index", destination: "main" },
         { method: "registry.manifest", destination: "main" },
+        { method: "registry.index", destination: "main" },
         { method: "registry.index", destination: "main" },
         { method: "registry.manifest", destination: "main" },
         { method: "registry.package", destination: "main" },

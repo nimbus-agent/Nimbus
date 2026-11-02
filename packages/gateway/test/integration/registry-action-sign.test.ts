@@ -61,6 +61,19 @@ function realNode(): string | null {
 }
 const NODE = realNode();
 
+const IS_CI = process.env["CI"] === "true";
+
+// The runner's node24 is what runs dist/index.js, so a CI run without a real node would skip the
+// only proof that the bundle and the CLI bind. Fail by name instead of skipping silently.
+describe.skipIf(NODE !== null || !IS_CI || process.platform === "win32")(
+  "CI precondition: a real node is on PATH",
+  () => {
+    test("fails loudly instead of silently skipping the node-run bundle tests", () => {
+      expect("no real node on PATH in CI: the node-run registry action tests would skip").toBe("");
+    });
+  },
+);
+
 let tmp: string;
 let repo: RegistryRepo;
 

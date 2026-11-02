@@ -25,6 +25,7 @@ import {
   readSecretValue,
   type SecretInputIo,
 } from "../lib/secret-input.ts";
+import { stripControlChars } from "../lib/strip-control-chars.ts";
 import {
   signatureLabel,
   type VerifiedPublisherCli,
@@ -36,10 +37,12 @@ import { NIMBUS_VERSION } from "../version.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { runExtensionKey } from "./extension-key.ts";
+import { runExtensionPack } from "./extension-pack.ts";
 import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
 import {
   accessLines,
+  evidenceLines,
   runExtensionInfoRemote,
   runExtensionSearch,
 } from "./extension-registry-cmds.ts";
@@ -103,6 +106,10 @@ type ExtensionListEntry = {
   kind?: "extension" | "starter-pack";
   /** Reach on this machine and the predicted file outcome; absent from an older gateway. */
   access?: unknown;
+  /** A local install's own tested / history / checked lines; absent from an older gateway. */
+  evidence?: unknown;
+  /** The registry a registry-sourced install came from, whose index holds its evidence. */
+  evidenceIn?: unknown;
   enabled?: number;
   needs_reinstall?: boolean;
   signature_disabled?: boolean;
@@ -390,6 +397,19 @@ function printExtensionInfoDeps(e: ExtensionListEntry): void {
   }
 }
 
+/**
+ * An installed extension has no index on hand and `info` starts no registry read, so a
+ * registry-sourced one names where to look; a local one prints the gateway's own lines.
+ */
+function installedEvidenceLines(e: ExtensionListEntry): string[] {
+  if (typeof e.evidenceIn === "string") {
+    return [
+      `Baseline, tested, history, checks: read from ${stripControlChars(e.evidenceIn)}: nimbus extension info ${stripControlChars(e.id)} --registry ${stripControlChars(e.evidenceIn)}`,
+    ];
+  }
+  return evidenceLines(e.evidence);
+}
+
 export async function runExtensionInfo(
   client: IPCClient,
   rest: string[],
@@ -433,6 +453,7 @@ export async function runExtensionInfo(
   for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
   for (const line of accessLines(e.access)) console.log(line);
+  for (const line of installedEvidenceLines(e)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
   console.log("  See: docs/sandbox.md#platform-asymmetry");
   // Any reason the gateway attached — pre-T2 or signature (I16) — is printed verbatim. The
@@ -1160,11 +1181,12 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
- * Subcommands that need no gateway. `publish` and `key` get the RAW args: `stripFlags` drops
- * `--channel` and its value, which would silently publish a beta as stable, and a `--reason` text.
+ * Subcommands that need no gateway. `publish`, `key` and `pack` get the RAW args: `stripFlags` drops
+ * `--channel` and its value, which would silently publish a beta as stable, a `--reason` text, and
+ * `--out`.
  */
 async function runExtensionOffline(sub: string, args: string[]): Promise<boolean> {
   if (sub === "publish") {
@@ -1174,6 +1196,11 @@ async function runExtensionOffline(sub: string, args: string[]): Promise<boolean
   }
   if (sub === "key") {
     const code = await runExtensionKey(args.slice(1));
+    if (code !== 0) process.exit(code);
+    return true;
+  }
+  if (sub === "pack") {
+    const code = await runExtensionPack(args.slice(1));
     if (code !== 0) process.exit(code);
     return true;
   }
@@ -1350,6 +1377,12 @@ export interface AvailableUpdateCli {
   readonly addedPackages?: readonly { readonly id: string }[];
   /** Why the update does not fit, one line each. Absent from an older gateway. */
   readonly conflicts?: readonly { readonly reason?: string }[];
+  /**
+   * How the new version's registry-signed score compares with the installed one's, as the gateway
+   * worded it. The CLI prints `text` and computes nothing; `--json` carries the whole object.
+   * Absent from an older gateway.
+   */
+  readonly qualityChange?: { readonly text?: unknown };
 }
 
 export interface UpdateApplyResultCli {
@@ -1409,7 +1442,9 @@ function formatUpdateRow(u: AvailableUpdateCli): string {
   const conflicts = (u.conflicts ?? [])
     .map((c) => `\tconflict: ${stripControl(c.reason ?? "conflict")}`)
     .join("");
-  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${conflicts}`;
+  const quality =
+    typeof u.qualityChange?.text === "string" ? `\t${stripControl(u.qualityChange.text)}` : "";
+  return `${u.id}\t${u.fromVersion} → ${u.toVersion}\t[${u.channel}]\tfrom ${u.sourceRegistry}\t${status}${verified}${adds}${quality}${conflicts}`;
 }
 
 async function listExtensionUpdates(

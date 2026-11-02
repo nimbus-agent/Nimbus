@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EvalCase, EvalSuite } from "@nimbus-dev/registry-format";
 
+import { extensionServerKey } from "../../connectors/lazy-mesh/server-key.ts";
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts";
 import { SANDBOX_CWD_ENV, SANDBOX_POLICY_ENV } from "../../platform/sandbox/sandbox-policy.ts";
@@ -19,8 +20,11 @@ import {
   EVAL_CASE_TIMEOUT_MS,
   EVAL_DISCONNECT_TIMEOUT_MS,
   EVAL_RUN_TIMEOUT_MS,
+  type EvalBaselineDeps,
+  type EvalListingClient,
   type EvalMcpClient,
   type EvalRuntimeDeps,
+  runEvalBaselineSession,
   runEvalSession,
 } from "./eval-runtime.ts";
 import {
@@ -561,5 +565,214 @@ describe("runEvalSession", () => {
     expect(code).toBe("ERR_EVAL_NO_SUITES");
     expect(created).toHaveLength(0); // nothing staged or spawned for nothing
     expect(existsSync(join(sandboxDir, EXTENSION_STAGE_DIR_NAME))).toBe(false);
+  });
+});
+
+// ── The baseline door ──────────────────────────────────────────────────────────────────────────
+
+const GOOD_DEF = { name: "echo", inputSchema: { type: "object", properties: {} } };
+
+interface ListScript {
+  definitions?: Record<string, Record<string, unknown>> | "keyed";
+  errors?: Record<string, unknown>;
+  throws?: string;
+  hangs?: boolean;
+  disconnect?: () => Promise<void>;
+}
+
+function listingFactory(scripts: ListScript[]): {
+  createClient: EvalBaselineDeps["createClient"];
+  created: Created[];
+} {
+  const created: Created[] = [];
+  const createClient = (id: string, servers: Record<string, ServerSpec>): EvalListingClient => {
+    const script = scripts[created.length] ?? scripts.at(-1) ?? {};
+    const rec: Created = { id, servers, disconnects: 0 };
+    created.push(rec);
+    const [serverKey] = Object.keys(servers);
+    return {
+      listToolDefinitionsWithErrors: async () => {
+        if (script.throws !== undefined) throw new Error(script.throws);
+        if (script.hangs === true) await new Promise(() => {});
+        const definitions =
+          script.definitions === undefined || script.definitions === "keyed"
+            ? { [String(serverKey)]: { echo: GOOD_DEF } }
+            : script.definitions;
+        return { definitions, errors: script.errors ?? {} };
+      },
+      disconnect: async () => {
+        rec.disconnects += 1;
+        await script.disconnect?.();
+      },
+    };
+  };
+  return { createClient, created };
+}
+
+function baselineDeps(
+  createClient: EvalBaselineDeps["createClient"],
+  extra: Partial<EvalBaselineDeps> = {},
+): EvalBaselineDeps {
+  return {
+    sandboxDir,
+    runtimeReadPaths: [join(root, "runtime")],
+    canConfine: () => null,
+    createClient,
+    ...extra,
+  };
+}
+
+describe("runEvalBaselineSession", () => {
+  test("a package with no suites is baselined: listed and valid", async () => {
+    const { createClient, created } = listingFactory([{}]);
+    const src = { ...source([]), suites: [] };
+    const baseline = await runEvalBaselineSession(src, baselineDeps(createClient));
+    expect(baseline).toEqual({ scorer: 1, passed: true, tools: 1 });
+    expect(created).toHaveLength(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a sandbox that cannot confine refuses before anything is staged or built", async () => {
+    const { createClient, created } = listingFactory([{}]);
+    const code = await codeOf(
+      runEvalBaselineSession(source([]), baselineDeps(createClient, { canConfine: () => "nope" })),
+    );
+    expect(code).toBe("ERR_EVAL_SANDBOX_UNAVAILABLE");
+    expect(created).toHaveLength(0);
+    expect(existsSync(join(sandboxDir, EXTENSION_STAGE_DIR_NAME))).toBe(false);
+  });
+
+  test("an errors entry on both attempts is no-listing, from two different stages", async () => {
+    const { createClient, created } = listingFactory([{ errors: { k: "boom" } }]);
+    const baseline = await runEvalBaselineSession(source([]), baselineDeps(createClient));
+    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "no-listing" });
+    expect(created).toHaveLength(2);
+    const cwds = created.map((c) => Object.values(c.servers)[0]?.env[SANDBOX_CWD_ENV]);
+    expect(cwds[0]).not.toBe(cwds[1]);
+    expect(created.map((c) => c.disconnects)).toEqual([1, 1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  /** The thrown error of a baseline session that must not resolve. */
+  async function faultOf(p: Promise<unknown>): Promise<EvalRunError> {
+    const err = await p.then(
+      (b) => {
+        throw new Error(`expected a throw, got ${JSON.stringify(b)}`);
+      },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    return err as EvalRunError;
+  }
+
+  test("a listing call that rejects is a thrown fault at once, carrying none of its text", async () => {
+    const { createClient, created } = listingFactory([{ throws: "forged" }]);
+    const err = await faultOf(runEvalBaselineSession(source([]), baselineDeps(createClient)));
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(err.message).not.toContain("forged");
+    expect(created).toHaveLength(1);
+    expect(created.map((c) => c.disconnects)).toEqual([1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a failed listing then a good one is passed", async () => {
+    const { createClient, created } = listingFactory([{ errors: { k: "first" } }, {}]);
+    const baseline = await runEvalBaselineSession(source([]), baselineDeps(createClient));
+    expect(baseline).toEqual({ scorer: 1, passed: true, tools: 1 });
+    expect(created).toHaveLength(2);
+  });
+
+  test("a listing that never settles is listing-timeout after two attempts", async () => {
+    const { createClient, created } = listingFactory([{ hangs: true }]);
+    const baseline = await runEvalBaselineSession(
+      source([]),
+      baselineDeps(createClient, { attemptTimeoutMs: 5, disconnectTimeoutMs: 20 }),
+    );
+    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 0, failure: "listing-timeout" });
+    expect(created).toHaveLength(2);
+    expect(created.map((c) => c.disconnects)).toEqual([1, 1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("invalid-tool is not retried", async () => {
+    const src = source([]);
+    const key = extensionServerKey(src.serviceId);
+    const bad = { [key]: { x: { name: "x", inputSchema: { type: "array" } } } };
+    const { createClient, created } = listingFactory([{ definitions: bad }]);
+    const baseline = await runEvalBaselineSession(src, baselineDeps(createClient));
+    expect(baseline).toEqual({ scorer: 1, passed: false, tools: 1, failure: "invalid-tool" });
+    expect(created).toHaveLength(1);
+  });
+
+  test("a listing with no error and no entry for the server is a thrown fault at once", async () => {
+    const { createClient, created } = listingFactory([
+      { definitions: { other: { echo: GOOD_DEF } } },
+    ]);
+    const err = await faultOf(runEvalBaselineSession(source([]), baselineDeps(createClient)));
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(created).toHaveLength(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("attempt 1 is disconnected and its stage removed before attempt 2's client is built", async () => {
+    const events: string[] = [];
+    let n = 0;
+    const createClient: EvalBaselineDeps["createClient"] = () => {
+      const attempt = ++n;
+      events.push(`create${attempt} stages=${stageEntries().length}`);
+      return {
+        listToolDefinitionsWithErrors: async () => ({
+          definitions: {},
+          errors: { server: "no" },
+        }),
+        disconnect: async () => {
+          events.push(`disconnect${attempt}`);
+        },
+      };
+    };
+    await runEvalBaselineSession(source([]), baselineDeps(createClient));
+    expect(events).toEqual(["create1 stages=1", "disconnect1", "create2 stages=1", "disconnect2"]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a createClient that throws is a thrown fault at once, without its text", async () => {
+    let calls = 0;
+    const err = await faultOf(
+      runEvalBaselineSession(
+        source([]),
+        baselineDeps(() => {
+          calls += 1;
+          throw new Error("forged client text");
+        }),
+      ),
+    );
+    expect(err.code).toBe("ERR_EVAL_START_FAILED");
+    expect(err.message).not.toContain("forged");
+    expect(calls).toBe(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a staging failure is a thrown EvalRunError, never a failed baseline", async () => {
+    const src = source([]);
+    rmSync(join(pkg, "dist", "index.js")); // gone after load: the stage copy fails for real
+    const { createClient, created } = listingFactory([{}]);
+    const err = await runEvalBaselineSession(src, baselineDeps(createClient)).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    expect((err as EvalRunError).code).toBe("ERR_EVAL_PACKAGE_INVALID");
+    expect(created).toHaveLength(0);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a disconnect that never settles does not hang the run, and no stage is left", async () => {
+    const { createClient } = listingFactory([{ disconnect: () => new Promise(() => {}) }]);
+    const baseline = await runEvalBaselineSession(
+      source([]),
+      baselineDeps(createClient, { disconnectTimeoutMs: 10 }),
+    );
+    expect(baseline.passed).toBe(true);
+    expect(stageEntries()).toEqual([]);
   });
 });

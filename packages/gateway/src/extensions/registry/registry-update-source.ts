@@ -28,6 +28,7 @@ import { builtinRegistryOf, resolveRegistry } from "./builtin-registry.ts";
 import { fetchVerifiedIndex, type RegistryFetchDeps } from "./registry-fetch.ts";
 import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import type { RegistryRow } from "./registry-store.ts";
+import { compareVersionQuality } from "./version-evidence.ts";
 
 export interface InstalledRegistryRow {
   id: string;
@@ -200,6 +201,7 @@ async function detectOne(
           },
         }),
     ...(isStarterPack(m) ? { toStarterPack: true as const } : {}),
+    qualityChange: compareVersionQuality(entry.versions, row.version, toVersion),
     detectedAt: deps.now(),
   });
   if (m.dependsOn !== undefined) out.dependsOn.set(row.id, m.dependsOn);

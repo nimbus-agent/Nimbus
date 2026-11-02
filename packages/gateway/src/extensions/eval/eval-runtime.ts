@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
+  type EvalBaseline,
   type EvalCase,
   type EvalCaseOutcome,
   type EvalReply,
   type EvalReport,
   type EvalSuite,
   judgeCase,
+  judgeToolDefinitions,
   scoreEval,
 } from "@nimbus-dev/registry-format";
 
@@ -120,7 +122,10 @@ function startFailed(message: string): EvalRunError {
 
 // ── Phase 1: refuse before anything is staged ──────────────────────────────────────────────────
 
-function assertSandboxAvailable(src: EvalPackageSource, deps: EvalRuntimeDeps): void {
+function assertSandboxAvailable(
+  src: EvalPackageSource,
+  deps: Pick<EvalRuntimeDeps, "canConfine" | "runtimeReadPaths">,
+): void {
   const reason = deps.canConfine(evalSandboxPolicy(src.serviceId, deps.runtimeReadPaths));
   if (reason !== null) {
     throw new EvalRunError("ERR_EVAL_SANDBOX_UNAVAILABLE", `cannot sandbox the eval: ${reason}`);
@@ -307,4 +312,125 @@ export async function runEvalSession(
   } finally {
     await closeRun(run);
   }
+}
+
+// ── The baseline door: list the tools once (twice at most) and judge their definitions ─────────
+
+/** Per attempt; under Mastra's own 60 s listing limit, so ours is the one that binds. */
+export const EVAL_BASELINE_TIMEOUT_MS = 45_000;
+const EVAL_BASELINE_ATTEMPTS = 2;
+
+/** The slice of `@mastra/mcp`'s `MCPClient` a baseline drives (a fake in tests). */
+export interface EvalListingClient {
+  listToolDefinitionsWithErrors(): Promise<{
+    definitions: Record<string, unknown>;
+    errors: Record<string, unknown>;
+  }>;
+  disconnect(): Promise<void>;
+}
+
+export interface EvalBaselineDeps
+  extends Omit<EvalRuntimeDeps, "createClient" | "caseTimeoutMs" | "runTimeoutMs"> {
+  readonly createClient: (id: string, servers: Record<string, ServerSpec>) => EvalListingClient;
+  readonly attemptTimeoutMs?: number;
+}
+
+const NO_LISTING: EvalBaseline = { scorer: 1, passed: false, tools: 0, failure: "no-listing" };
+const LISTING_TIMEOUT: EvalBaseline = {
+  scorer: 1,
+  passed: false,
+  tools: 0,
+  failure: "listing-timeout",
+};
+
+/**
+ * The client itself failed, on the runner's side. No child can be at fault: Mastra reports a
+ * server's own failure in `errors`, so a failed baseline must not be signed for this. The text is
+ * fixed, so nothing the client or a child said reaches a document.
+ */
+function listingClientFault(): EvalRunError {
+  return new EvalRunError(
+    "ERR_EVAL_START_FAILED",
+    "the MCP client failed on the runner before it could report a tool listing",
+  );
+}
+
+/**
+ * What one attempt's listing says. Only an `errors` entry can be the package's doing, so only that
+ * is `no-listing`; a rejection or a listing with neither an error nor our server is a client fault.
+ * Child-supplied text is never copied into the result.
+ */
+function judgeListing(settled: Settled, serverKey: string): EvalBaseline {
+  if (settled.kind === "timeout") return LISTING_TIMEOUT;
+  if (settled.kind === "threw") throw listingClientFault();
+  const listing = settled.value as Awaited<
+    ReturnType<EvalListingClient["listToolDefinitionsWithErrors"]>
+  >;
+  if (Object.keys(listing.errors).length > 0) return NO_LISTING;
+  const defs = listing.definitions;
+  if (typeof defs !== "object" || defs === null || !Object.hasOwn(defs, serverKey)) {
+    throw listingClientFault();
+  }
+  return judgeToolDefinitions(defs[serverKey]);
+}
+
+/** One attempt from its own stage; the client is disconnected and the stage removed after it. */
+async function baselineAttempt(
+  src: EvalPackageSource,
+  deps: EvalBaselineDeps,
+  serverKey: string,
+): Promise<EvalBaseline> {
+  const stage = stageEvalPackage(src, deps.sandboxDir);
+  let client: EvalListingClient | undefined;
+  try {
+    const spec = buildExtensionEvalSpawnSpec(stage, { runtimeReadPaths: deps.runtimeReadPaths });
+    try {
+      client = deps.createClient(`nimbus-eval-${src.serviceId}-${randomUUID()}`, {
+        [serverKey]: spec,
+      });
+    } catch {
+      // No child exists yet, and the constructor sees only the config this gateway built.
+      throw listingClientFault();
+    }
+    const live = client;
+    const settled = await settleWithin(
+      Promise.resolve().then(() => live.listToolDefinitionsWithErrors()),
+      deps.attemptTimeoutMs ?? EVAL_BASELINE_TIMEOUT_MS,
+    );
+    return judgeListing(settled, serverKey);
+  } finally {
+    if (client !== undefined) {
+      const live = client;
+      await settleWithin(
+        Promise.resolve().then(() => live.disconnect()),
+        deps.disconnectTimeoutMs ?? EVAL_DISCONNECT_TIMEOUT_MS,
+      );
+    }
+    discardEvalStage(stage);
+  }
+}
+
+/**
+ * The baseline check: refuse when the sandbox cannot confine the package, then (after the same
+ * stale-stage sweep) spawn the package's server under the SAME eval spec as `runEvalSession`, list
+ * its tool definitions and judge them structurally. One more attempt, from a fresh stage, after a
+ * `no-listing` or `listing-timeout`; an `invalid-tool` is a fact about the definitions and is not
+ * retried. A stage or sandbox failure, or a fault in the client itself, throws `EvalRunError` at
+ * once: none of them is the package's, and a failed baseline is signed into an immutable version.
+ * Every client is disconnected and every stage removed whatever happens. This is a displayed fact,
+ * not a score.
+ */
+export async function runEvalBaselineSession(
+  src: EvalPackageSource,
+  deps: EvalBaselineDeps,
+): Promise<EvalBaseline> {
+  assertSandboxAvailable(src, deps);
+  sweepStaleEvalStages(deps.sandboxDir);
+  const serverKey = extensionServerKey(src.serviceId);
+  let last: EvalBaseline = NO_LISTING;
+  for (let attempt = 0; attempt < EVAL_BASELINE_ATTEMPTS; attempt++) {
+    last = await baselineAttempt(src, deps, serverKey);
+    if (last.passed || last.failure === "invalid-tool") return last;
+  }
+  return last;
 }

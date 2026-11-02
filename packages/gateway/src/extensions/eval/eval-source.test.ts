@@ -121,6 +121,31 @@ describe("loadEvalPackage", () => {
     expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_PACKAGE_INVALID");
   });
 
+  test("baselineOnly loads a package with no evals/ as suites: []", async () => {
+    layout(baseManifest(), false);
+    const src = await loadEvalPackage(pkg, { baselineOnly: true });
+    expect(src.suites).toEqual([]);
+    expect(src.extensionId).toBe("acme.thing");
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_NO_SUITES");
+  });
+
+  test("baselineOnly never parses a suite: a broken suite file is still suites: []", async () => {
+    layout(baseManifest());
+    write("evals/broken.eval.json", "{ not json");
+    expect(await codeOf(loadEvalPackage(pkg))).toBe("ERR_EVAL_SUITE_INVALID");
+    expect((await loadEvalPackage(pkg, { baselineOnly: true })).suites).toEqual([]);
+  });
+
+  test("baselineOnly still refuses a starter pack", async () => {
+    write(
+      "nimbus.extension.json",
+      JSON.stringify({ id: "acme.pack", version: "1.0.0", kind: "starter-pack", permissions: {} }),
+    );
+    expect(await codeOf(loadEvalPackage(pkg, { baselineOnly: true }))).toBe(
+      "ERR_EVAL_PACKAGE_INVALID",
+    );
+  });
+
   test("a starter pack is refused", async () => {
     write(
       "nimbus.extension.json",

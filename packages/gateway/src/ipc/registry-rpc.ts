@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
+  isStarterPack,
   provenanceMatching,
   publisherKeyFingerprint,
   RegistryError,
@@ -40,6 +41,7 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "../extensions/registry/registry-fetch.ts";
+import { readRegistryLiveness } from "../extensions/registry/registry-liveness.ts";
 import {
   type ResolvedEntry,
   readIndexes,
@@ -55,6 +57,7 @@ import {
   type RegistryRow,
   recordRegistryFetch,
 } from "../extensions/registry/registry-store.ts";
+import { versionEvidence } from "../extensions/registry/version-evidence.ts";
 import { blocksFor, TrustBlockError } from "../extensions/trust/trust-blocks.ts";
 import {
   type FreshenHandle,
@@ -86,6 +89,8 @@ export interface RegistryRpcOptions {
   /** Absent only on a bespoke harness: every method that fetches then refuses. */
   fetch?: RegistryFetchBag;
   ownerGate?: RegistryOwnerGate;
+  /** Test seam: the hard deadline of the signed liveness read (default 10 s). */
+  livenessTimeoutMs?: number;
   /** `registry.install` only: where extensions install, and the Vault holding publisher keys. */
   extensionsDir?: string;
   vault?: NimbusVault;
@@ -579,11 +584,8 @@ async function handleInfo(
 ): Promise<Hit> {
   const id = stringParam(rec, "id");
   const registryName = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
-  const found = await resolveRegistryEntry(
-    { ...requireFetch(o.fetch), db: o.db },
-    id,
-    registryName,
-  );
+  const fetch = requireFetch(o.fetch);
+  const found = await resolveRegistryEntry({ ...fetch, db: o.db }, id, registryName);
   // `reportOnly`: the report destination comes from the signed index alone, so an extension whose
   // newest manifest is missing or fails its hash (the case most worth reporting) still has one.
   if (rec?.["reportOnly"] === true) {
@@ -598,17 +600,12 @@ async function handleInfo(
   if (newest === undefined) {
     throw new RegistryError("ERR_REGISTRY_INDEX_INVALID", `"${id}" has no versions`);
   }
-  const bytes = await fetchRegistryBytes(
-    { ...requireFetch(o.fetch), db: o.db },
-    found.reg,
-    newest[1].manifest,
-    {
-      method: "registry.manifest",
-      extensionId: id,
-      version: newest[0],
-      maxBytes: MAX_MANIFEST_BYTES,
-    },
-  );
+  const bytes = await fetchRegistryBytes({ ...fetch, db: o.db }, found.reg, newest[1].manifest, {
+    method: "registry.manifest",
+    extensionId: id,
+    version: newest[0],
+    maxBytes: MAX_MANIFEST_BYTES,
+  });
   const digest = createHash("sha256").update(bytes).digest("hex");
   if (!sha256HexEqualConstantTime(digest, newest[1].manifestSha256)) {
     throw new RegistryError(
@@ -618,6 +615,29 @@ async function handleInfo(
   }
   const text = new TextDecoder().decode(bytes);
   const { manifest } = parseExtensionManifestForRegistry(text);
+  // The newest version's signed liveness entry: a missing or unreadable file only changes the
+  // Checked line (I51), and the read never throws.
+  // A starter pack runs nothing and reads "not checked", so it makes no liveness request. A caller
+  // that reads only the signed score (`nimbus eval --installed`) passes `liveness: false`, so a
+  // run over many extensions makes no liveness request and never waits on one; its Checked line
+  // then reads "no checks available", which that caller never shows.
+  const starterPack = isStarterPack(manifest);
+  const liveness =
+    starterPack || rec?.["liveness"] === false
+      ? undefined
+      : await readRegistryLiveness(
+          {
+            ...fetch,
+            db: o.db,
+            ...(o.livenessTimeoutMs === undefined
+              ? {}
+              : { livenessTimeoutMs: o.livenessTimeoutMs }),
+          },
+          found.reg,
+          found.index,
+          id,
+          newest[0],
+        );
   // Provenance (trust layer PR 4c): the newest version only — the one whose manifest was just
   // fetched and hash-checked — and only when that publisher-signed manifest names the same
   // repository the registry verified the build from.
@@ -632,6 +652,18 @@ async function handleInfo(
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
       reportUrl: reportUrlOf(found, o),
       provenance,
+      evidence: versionEvidence({
+        registry: found.reg.name,
+        versions: entry.versions,
+        version: newest[0],
+        declaresNetwork: manifest.permissions.network.length > 0,
+        starterPack,
+        ...(liveness === undefined ? {} : { liveness }),
+        now: fetch.now(),
+      }),
+      // The evidence describes the newest LISTED version, which can be a beta a plain install
+      // would not take, so the reply says which one.
+      evidenceFor: { version: newest[0], channel: newest[1].channel },
       verifiedPublisher: verifiedPublisherFor(o.db, {
         publisherId: entry.publisher.id,
         keyFingerprint: publisherKeyFingerprint(entry.publisher.key),

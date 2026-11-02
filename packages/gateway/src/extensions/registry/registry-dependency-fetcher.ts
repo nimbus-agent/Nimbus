@@ -81,6 +81,11 @@ export interface StagedDependency extends VerifiedDependency {
 export interface RegistryDependencyResolver {
   readonly fetcher: RegistryFetcher;
   readonly rootSource: SourceKey;
+  /**
+   * The root registry's verified index: the resolver's own memoised read, so a plan that already
+   * read it for a dependency causes no second fetch, and a caller that reads it first shares it.
+   */
+  readRootIndex(): Promise<RegistryIndex>;
   /** Phase-1 results, by `${id}@${version}`: exactly the manifests the solve used. */
   verified(id: string, version: string): VerifiedDependency | undefined;
   /** The URL of a registry this resolution met (the root's, or one a dependency named); else null. */
@@ -290,6 +295,7 @@ export function createRegistryDependencyResolver(
   return {
     fetcher,
     rootSource,
+    readRootIndex: () => indexOf(rootSource),
     verified: (id, version) => verifiedById.get(`${id}@${version}`),
     registryUrl: (source) => registries.get(source)?.url ?? null,
     async stage(nodes, intoDir) {

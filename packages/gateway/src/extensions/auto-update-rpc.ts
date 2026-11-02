@@ -23,6 +23,7 @@ import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import { type AccessEvidence, UNREADABLE_MANIFEST_TEXT } from "./extension-evidence.ts";
 import { reportIncompleteRollback, rollbackIncompleteDetail } from "./install-from-local.ts";
 import { planPermissionsUnion, renderUpdatePlan, withNeedsBlock } from "./install-plan-text.ts";
+import { type QualityChange, qualityUnreadable } from "./registry/version-evidence.ts";
 import { keyChangeNote } from "./trust/publisher-key-decision.ts";
 import { publisherBadgeText, type VerifiedPublisher } from "./trust/verified-publisher.ts";
 
@@ -78,6 +79,12 @@ export interface AutoUpdateRpcDeps {
     addedUnion: SandboxPermissions | undefined,
     direction: "upgrade" | "downgrade",
   ) => AccessEvidence | undefined;
+  /**
+   * The score comparison for a forward update, read again just before the owner is asked (the
+   * cached one may be hours old) from the plan's verified root index. It never rejects, and the
+   * approval states it and never refuses on it. Absent ⇒ the approval carries no such field.
+   */
+  qualityChangeNow?: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<QualityChange>;
   /**
    * Whether the update's source registry still exists with the root fingerprint it was detected
    * under. Absent ⇒ not checked here (apply still re-checks it).
@@ -258,6 +265,26 @@ function accessFields(
     return { networkReach: UNREADABLE_MANIFEST_TEXT, fileAccess: UNREADABLE_MANIFEST_TEXT };
   }
   return { networkReach: evidence.networkReach, fileAccess: evidence.fileAccess };
+}
+
+/**
+ * The approval's score-comparison field of a forward update. The dep is an injection point, so a
+ * rejection (or a throw) is stated as unreadable and the approval proceeds. A downgrade carries
+ * none: a rollback target's score says nothing about a decision to go back.
+ */
+async function qualityFields(
+  cached: AvailableUpdate,
+  approved: ApprovedUpdatePlan | undefined,
+  deps: AutoUpdateRpcDeps,
+): Promise<Record<string, unknown>> {
+  if (deps.qualityChangeNow === undefined || approved === undefined) return {};
+  let change: QualityChange;
+  try {
+    change = await deps.qualityChangeNow(cached, approved.plan);
+  } catch {
+    change = qualityUnreadable();
+  }
+  return { qualityChange: change.text };
 }
 
 function buildUpdateAction(
@@ -570,14 +597,10 @@ async function handleExtensionUpdate(
 
   const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
   const gateResult = await deps.gate(
-    buildUpdateAction(
-      cached,
-      isDowngrade,
-      hasRunGrant,
-      updateBadge(cached, deps),
-      approved,
-      accessFields(cached, approved, deps, isDowngrade),
-    ),
+    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps), approved, {
+      ...accessFields(cached, approved, deps, isDowngrade),
+      ...(await qualityFields(cached, approved, deps)),
+    }),
   );
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };

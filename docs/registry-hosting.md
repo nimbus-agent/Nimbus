@@ -6,8 +6,8 @@ A Nimbus extension registry is a folder of signed static files (see [architectur
 
 - `main` holds sources: `extensions/<id>/<version>/{manifest.json,package.tgz,publish-request.json}`, publishers' signed key statements under `statements/<statement id>.json` (a `key.rotate` or `key.revoke` sent with `nimbus extension publish --statement`; the sign run admits them into the index, and one never leaves it once signed), maintainers' block requests under `trust-requests/<name>.json` (an unsigned `key.revoke` or `extension.takedown` written by `nimbus registry maintain revoke-key|takedown --github <clone>`; the sign run signs it with the root key, once), the rules in `nimbus-registry.json`, and two workflows. It never holds a signed `index.json`. The first sign run also sets the index's `reportUrl` to this repository's issue form, where `nimbus extension report` sends users.
 - `gh-pages` holds the published site: the signed `index.json` and the files it references. Only the sign workflow writes it.
-- **Registry check** runs on every pull request to `main` with a read-only token and no secrets, and scores the new version's eval suites (see [Eval scores](#eval-scores)). It is a reviewer aid.
-- **Registry sign** runs after a merge (or by hand): a `score` job with no secrets runs the unsigned versions' eval suites, then the `sign` job runs behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.
+- **Registry check** runs on every pull request to `main` with a read-only token and no secrets. It starts the server of any new version that is not a starter pack, to list its tools, and runs the version's eval suites when it has `evals/` (see [Eval scores](#eval-scores)). It is a reviewer aid.
+- **Registry sign** runs after a merge (or by hand): a `score` job with no secrets does the same two runs for the unsigned versions, then the `sign` job runs behind the `registry-signing` environment's required reviewers, with the root key. It is the security boundary.
 
 ## Owner steps
 
@@ -48,9 +48,9 @@ Then they approve. The run re-validates every unsigned version, skips and names 
 
 A version whose package holds `evals/` gets a quality score, measured by the registry and signed into the index; clients show `quality N/100 (measured by <registry>)`. Extension code runs only in jobs that hold no secret:
 
-- the sign workflow's **`score` job** runs every unsigned version's eval suites in the platform sandbox (bubblewrap, no network; on a release that carries no sandbox helper the job log shows `sandbox: degraded mode (no per-host network gating)`, which is harmless: evals run with no network, so per-host gating never applies) with the `nimbus-gateway-linux-x64` of the pinned Nimbus release, checked against that release's `SHA256SUMS`. It has a read-only token, no environment and no persisted credentials, and uploads `scores.json` as the `registry-scores` artifact;
-- the **`sign` job** needs `score`, downloads that artifact into the runner's temp directory (`${{ runner.temp }}/registry-scores`, never the checkout: the score job controls the artifact, and extracted into the workspace it could write into `.git/` of the job that holds the root key) and reads `scores.json` from there as untrusted input: each entry must match its version's id, version and package digest. A version with `evals/` and no valid score is not signed (the next sign run scores it again; see below); a version without `evals/` is signed with no score;
-- the **check job** runs the pull request's version the same way and shows its score (or the error) in the summary.
+- the sign workflow's **`score` job** starts the server of every unsigned version that is not a starter pack and runs the eval suites of those with `evals/`, in the platform sandbox (bubblewrap, no network; on a release that carries no sandbox helper the job log shows `sandbox: degraded mode (no per-host network gating)`, which is harmless: evals run with no network, so per-host gating never applies) with the `nimbus-gateway-linux-x64` of the pinned Nimbus release, checked against that release's `SHA256SUMS`. It has a read-only token, no environment and no persisted credentials, and uploads `scores.json` as the `registry-scores` artifact;
+- the **`sign` job** needs `score`, downloads that artifact into the runner's temp directory (`${{ runner.temp }}/registry-scores`, never the checkout: the score job controls the artifact, and extracted into the workspace it could write into `.git/` of the job that holds the root key) and reads `scores.json` from there as untrusted input: each entry must match its version's id, version and package digest. A version with `evals/` and no valid score is not signed (the next sign run scores it again; see below); a version without `evals/` is signed with no score, though it may carry a baseline (below);
+- the **check job** runs the pull request's version the same way and shows its score (or the error) and its baseline in the summary. Nothing is signed there.
 
 **The score job's time budget.** One score run has 14 minutes for all its role runs, inside the job's 20-minute timeout. Each run gets the role's own 12-minute deadline or what is left of the budget, whichever is shorter; when the budget set the shorter deadline, a timeout says so (`ERR_EVAL_TIMEOUT`, "did not finish within N minutes (the score job's remaining time budget; the cap is 12 minutes)"), so a slow but legitimate suite is not blamed for time earlier versions used. Once under a minute is left, every further version with `evals/` gets an `ERR_EVAL_BUDGET` entry without running and is not signed by that run. So suites that hang, even on purpose, cannot turn the score job red.
 
@@ -58,7 +58,38 @@ A version whose package holds `evals/` gets a quality score, measured by the reg
 
 **A red score job skips the whole sign run, trust requests included.** `sign` needs `score`, so when the score job fails for an infrastructure reason (the apt install, the sandbox probe, the release download), the sign job does not run at all: no version is signed, and no takedown or key revocation in `trust-requests/` or `statements/` is published either. The fix is to re-run the workflow (Actions, the failed run, **Re-run all jobs**) once the cause has cleared.
 
-Both jobs set up the sandbox with `sudo`: install `bubblewrap` and set `kernel.apparmor_restrict_unprivileged_userns=0`, then probe bubblewrap as the runner user. On GitHub-hosted runners each job gets a fresh VM, so the change ends with the job. **On a self-hosted runner, do not lift the user-namespace restriction**: the sysctl changes the whole machine, for every later job and user on it. Run these jobs on GitHub-hosted runners, or on a dedicated, ephemeral self-hosted runner that already allows unprivileged user namespaces, and remove the `sysctl` lines.
+**The baseline.** Beside the score, the score job starts each version's server, up to twice, under the same sandbox (no network, no write, no credential) with `__nimbus-eval --baseline`, lists its tool definitions and checks each one structurally. The result is signed into the version entry's `baseline`, and clients show it as its own `Baseline:` line naming your registry (see [the CLI reference](./cli-reference.md)). It is a stated fact about what happened when your job checked, never a score and never a reason to refuse a publish.
+
+- **What it checks.** A tool name of 1 to 128 characters with no whitespace or control character, and an `inputSchema` that is an object with `type: "object"`, `properties` absent or an object whose values are objects or booleans, and `required` absent or an array of strings. The schema is not compiled. A pass means the server started and every tool the listing kept had a well-formed definition. It says nothing about what the tools do, and because it runs with no network it says nothing about the service the extension talks to.
+- **Which versions.** Every version that is not a starter pack, with or without `evals/`. A starter pack never runs and has no baseline.
+- **Two attempts.** A listing that fails or times out is tried once more from a fresh stage before it is recorded, and the role has its own 3-minute deadline inside the run's budget. A version that gets no baseline (the budget was spent, the sandbox refused, or the MCP client failed on the runner) is signed without one, with a warning, and reads `no baseline check published` for good. One merged package with a hanging suite can spend the budget, and a later version signed in that run then has no baseline.
+- **A failed baseline is displayed and signed into that version.** Versions are immutable, so a failure is not retried on the next sign run. A run where no child could start at all (a runner whose sandbox cannot start children) would record `no-listing` on a good version too. The job summary prints a line saying to check the sandbox setup whenever a baseline reads `no-listing`, so read it before you trust one.
+- **Stated limits.** Mastra drops a tool with an empty name before the check sees it. A tool with no `inputSchema` makes the whole listing fail, and so does the client's own parsing of a non-array `required` or a `type` other than `"object"`, so each of those reads as `no-listing`. A duplicate name is invisible: the client keeps only the last tool of that name, so the check sees only the tools the listing kept.
+- **A gateway older than the release that added `--baseline`.** The role exits 2 on the flag. The score job records a warning naming the version and writes only the suite result (nothing for a version without a suite), and the run stays green. Clients of an older Nimbus show no `Baseline:` line at all, and a baseline reaches owners only from the next version your registry signs with a release that has it; versions already signed stay as they are.
+
+`scores.json` is `{ "<id>@<version>": entry }`. An entry is one of these shapes and no other:
+
+```json
+{ "packageSha256": "<hex>", "quality": { "scorer": 1, "score": 71, "cases": 7, "passed": 5, "rubrics": { } } }
+{ "packageSha256": "<hex>", "error": { "code": "ERR_EVAL_TIMEOUT", "message": "..." } }
+{ "packageSha256": "<hex>", "baseline": { "scorer": 1, "passed": true, "tools": 5 } }
+{ "packageSha256": "<hex>", "baseline": { "scorer": 1, "passed": false, "tools": 0, "failure": "no-listing" } }
+```
+
+A version with `evals/` takes `quality` or `error`, and may add `baseline` beside either. A version without `evals/` takes the `baseline` entry alone. `failure` is one of `no-listing`, `listing-timeout` and `invalid-tool`, never text from the extension. A malformed `baseline`, or a baseline-only entry that is not exactly `packageSha256` and `baseline`, is ignored with a warning and the version is signed without it, even beside a valid `quality`.
+
+**A registry that publishes with `maintain add`.** Pull requests are not the only way in: `nimbus registry maintain add <dir> <package> --scores <scores.json>` signs the same fields from a file (see `registry maintain add` in [the CLI reference](./cli-reference.md)). The action's `score-package` mode makes that file for one package. Work in this order:
+
+1. If your flow signs the package, sign the stage first (`nimbus extension sign <dir>`). The publisher signature is part of the hashed bytes.
+2. In a job that runs no extension code, pack it once: `nimbus extension pack <dir> --out package.tgz`. It prints the path and the SHA-256. Hand that file on as an artifact.
+3. In a job with no secrets, run the action with `mode: score-package`, `package` set to that `.tgz` and `nimbus-gateway` set to the absolute path of a gateway executable. It refuses `root-key` and `github-token`. Hand `scores.json` on as an artifact.
+4. In the keyed job, run `nimbus registry maintain add <registry> package.tgz --scores scores.json` over the same file.
+
+**A directory cannot be scored.** `score-package` runs under the runner's Node and `maintain add` under Bun, and the two gzip the same tree into different bytes, so a directory packed on each side never hashes alike. The action refuses a directory and names `nimbus extension pack`. The keyed job never signs a file made by the job that ran extension code: the package comes from the job that packed it. An entry whose hash differs from the file is not used: `maintain add` refuses it for a package with `evals/`, and ignores a baseline-only one with a notice. `score-package` does not validate the package against your index; `maintain add` does that afterwards. A starter pack gets an empty `scores.json`.
+
+**A `score-package` job needs the sandbox setup.** This mode has no generated workflow, so copy the two steps the generated `score` job runs before the action, `Set up the sandbox` and `Download the Nimbus gateway` (`gatewaySetupSteps` in `packages/cli/src/commands/registry-templates/workflows.ts`; a scratch `init --github` run writes them with your pins). The first ends in a bubblewrap probe that fails the job. On stock Ubuntu 24.04 no sandboxed child starts without the `sysctl` line, so without it a package with no suite would be signed `no-listing` for good on a green job. The job summary says to check this whenever a baseline reads `no-listing`.
+
+The generated check and score jobs set up the sandbox with `sudo`: install `bubblewrap` and set `kernel.apparmor_restrict_unprivileged_userns=0`, then probe bubblewrap as the runner user. On GitHub-hosted runners each job gets a fresh VM, so the change ends with the job. **On a self-hosted runner, do not lift the user-namespace restriction**: the sysctl changes the whole machine, for every later job and user on it. Run these jobs on GitHub-hosted runners, or on a dedicated, ephemeral self-hosted runner that already allows unprivileged user namespaces, and remove the `sysctl` lines.
 
 **Adopting it in an existing registry.** Do not re-run `init --github` in your registry folder: it refuses there without `--force` because its files exist, and with `--force` it overwrites the root key file (by default `~/.nimbus/registry-key`, the key your registry is signed with) along with the workflows. Either run it into a scratch folder with a throwaway key (`nimbus registry maintain init ./scratch --github --key ./scratch-key --site ./scratch-site --default-branch <yours>`) and copy only its two workflow files, `registry-check.yml` and `registry-sign.yml` (under `.github/workflows/`), over yours, then delete the scratch folders and key; or apply the change by hand:
 
@@ -66,6 +97,31 @@ Both jobs set up the sandbox with `sudo`: install `bubblewrap` and set `kernel.a
 - `registry-check.yml`: add the two setup steps before the action, replace `github-token: ${{ github.token }}` with `nimbus-gateway: ${{ github.workspace }}/nimbus-gateway-linux-x64` (the action refuses both together), and raise `timeout-minutes` to 20.
 
 Take the exact steps and pins from a scratch `init --github` run. A registry that does not adopt this keeps working as before: without the `scores` input, sign records no quality.
+
+## Liveness checks
+
+A registry can publish a second signed file, `liveness.json`, beside `index.json`. It records what the registry's own scheduled checks observed about each published version. The client reads it only to show a dated `Checked:` line. **Nothing produces this file yet.** The registry action's liveness modes and the `maintain init --github` workflow come in the next PR, and recording a package's test fixtures comes after that. Until then no registry publishes one.
+
+The index names the key. An optional signed index field `livenessKey` (the same base64 form as other keys) holds the public key that signs `liveness.json`. It is a separate, low-privilege key from the root key, so the scheduled job that signs checks never holds the key that signs the index. An index without `livenessKey` publishes no checks.
+
+The file is JSON, at most 4 MiB:
+
+- `format`: `1`.
+- `livenessKey`: the key that signed it; it must equal the index's `livenessKey`.
+- `sequence`: a whole number that never goes down.
+- `generatedAt`, `nimbusVersion`: when it was made and the Nimbus release the checks ran with.
+- `extensions`: an object keyed `"<id>@<version>"`. Each entry has `checkedAt` and any of `hosts` (`{ declared, answered }`), `tests` (`{ cases, passed }`, or `{ failure }` with `run-failed`, `run-timeout` or `sandbox-unavailable`) and `baseline` (the same record the score job signs).
+- `signature`: Ed25519 over the canonical JSON of the document without `signature`.
+
+What a client does with it:
+
+- It fetches the file only after the pinned index verifies, and only for `nimbus extension info --registry/--remote` and a registry install approval. It does not fetch it on a plain `info`, on search, on update checks or at startup.
+- The fetch is an egress-ledger row (method `registry.liveness`), is refused under an air gap, and has its own 10 second deadline.
+- A floor in the V80 table `registry_liveness_state` refuses a lower sequence, and different content at the sequence already accepted. The floor is per machine: with no floor row (a first read, one after `nimbus registry remove` and a re-add, or a new machine) any validly signed older file is accepted, shown with its own date, and reads `stale` after 14 days. A new `livenessKey` in a verified index replaces the floor. `nimbus registry remove` deletes it.
+- Any failure shows `no checks available` and blocks nothing: no install, update or spawn depends on this file (invariant I51 in [SECURITY-INVARIANTS.md](./SECURITY-INVARIANTS.md#i51--a-registrys-liveness-and-baseline-evidence-is-shown-never-acted-on)).
+- A check dated more than 14 days before it is read shows `stale`.
+
+Each line names the registry that measured it. A host answering, or a test passing, on the registry's runner does not prove the service's API is unchanged. The exact texts are under `extension info` in [cli-reference.md](./cli-reference.md).
 
 ## Bounds, stated plainly
 

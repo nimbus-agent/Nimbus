@@ -372,6 +372,11 @@ describe("extension.install through the RPC", () => {
       // No sandbox or path environment is wired here, and the prompt says so rather than staying silent.
       networkReach: "not known here (the sandbox is not available to ask)",
       fileAccess: "reads none · writes none (not checked here)",
+      // A local install states the evidence it does not have.
+      baseline: "not run (from a local folder)",
+      tested: "not evaluated (from a local folder)",
+      history: "none (from a local folder)",
+      checked: "no checks published (from a local folder)",
     });
   });
 });

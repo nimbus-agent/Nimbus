@@ -18,6 +18,32 @@ Phase-level history before `v0.1.0` (Phases 1–4) lives in [`docs/roadmap.md` �
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-02: A registry can sign a `liveness.json`, and an owner sees its dated `Checked:` line (Phase 9.5 project 6, PR 5a-1; schema V80; new invariant I51).**
+  The index gains an optional signed `livenessKey`, and a new `liveness.json` carries what the registry's own checks recorded per version: whether declared hosts answered, whether tests ran and passed, and the baseline. It is signed by that separate key. `nimbus extension info --registry/--remote` and the registry install approval fetch it, only after the pinned index verifies; the fetch is ledgered (`registry.liveness`), refused under an air gap and bounded to 10 seconds. The V80 table `registry_liveness_state` is a floor (a lower sequence, or different content at an accepted one, is refused; `registry remove` deletes it). The `Checked:` line names the registry, the date and the Nimbus release, reads `stale` after 14 days, and says it does not prove the service's API is unchanged. Any failure reads `no checks available` and blocks nothing (I51).
+  **What it does not do:** nothing produces `liveness.json` yet. The registry action's liveness modes and the `maintain init --github` workflow come in PR 5a-2, golden recording in PR 5a-3, so every owner sees `no checks published` for now. See [registry-hosting.md](./registry-hosting.md#liveness-checks).
+
+- **2026-11-02: A registry can sign a baseline check beside a score, and an owner sees it as its own line (Phase 9.5 project 6, PR 3; no migration; the I49 row now names `runEvalBaselineSession` too).**
+  The `__nimbus-eval` role takes `--baseline`: it starts the package's server, up to twice, under the eval sandbox (no network, no write, no credential), lists its tool definitions and checks each one structurally. The registry action's `score` mode runs it for every version that is not a starter pack, a new `score-package` mode scores one `.tgz` for a registry that publishes with `maintain add`, a new `nimbus extension pack <dir> --out <file>` packs that file once (Node and Bun gzip a directory differently, so a directory cannot be scored), and `nimbus registry maintain add --scores <scores.json>` signs a score and a baseline from the file. `extension info --remote`, the `extension.install` approval and the desktop approval show `Baseline:` before `Tested:`, naming the registry that checked (`evidence.baseline` in `--json`).
+  **What it does not do:** "valid" means the structural checks and nothing more, so a pass does not say what any tool does, and with no network it says nothing about the service the extension talks to. It never changes the score and never blocks a publish or an install. No live registry publishes a baseline yet, and one reaches owners only from the next version a registry signs with this release, so every owner sees `no baseline check published` for now. A run where no child could start would record a failure on a good version, so the job summary says to check the sandbox setup whenever a baseline reads `no-listing`. Stated limits: Mastra drops a tool with an empty name before the check sees it. A tool with no `inputSchema` makes the whole listing fail, and so does the client's own parsing of a non-array `required` or a `type` other than `"object"`, so each of those reads as `no-listing`. A duplicate name is invisible: the client keeps only the last tool of that name, so the check sees only the tools the listing kept. The official registry adopts it in a later PR, and it must sign a package before scoring it.
+
+- **2026-11-01 — An extension's package states who tested it, how long it has been listed and what was checked, and an update shows a score drop (Phase 9.5 project 6, PR 2; no migration, no new invariant).**
+  `nimbus extension info --registry/--remote` prints `Tested:`, `History:` and `Checked:` for the newest listed version (a line above them names that version and its channel, `evidenceFor` in `--json`), from the
+  registry's signed index, each line naming the registry that signed it (`evidence` in `--json`). The same three lines
+  are in the `extension.install` approval (`tested`, `history`, `checked`, plus `evidenceScope` when the plan installs more
+  than one package, because the lines are for the root only), in the terminal and the desktop app; plain `info` of a local
+  install prints them as not evaluated, and of a registry install points at `info --registry <the registry it came from>`. `nimbus extension update`
+  rows, the desktop's pending-updates list and the `extension.autoUpdate` approval carry a comparison of the installed and offered versions' signed scores
+  (`qualityChange`): `quality 100 → 75 (-25)`, a case-count note when the two were measured on different suites, or why
+  nothing was compared. A downgrade has none. Until a registry publishes scores, which no live registry does yet, every owner sees
+  `not evaluated` and `quality not compared: neither version is scored`. **What it does not do:** `Tested` counts the publisher's own tests as the registry
+  signed them (the official scoring action runs them with no network), so it does not say the extension is correct or safe; `History` is what that registry
+  records; `Checked` reads `no checks published` until a registry publishes checks; the comparison reads the signed index
+  only, and at approval an offline gateway waits at most 5 seconds on its own read of the index and then says it could not read it;
+  there is no combined score or risk label, no threshold and no setting, a drop never blocks anything, and the update
+  daemon never applied updates in the first place. It replaces the roadmap's quality-regression watcher, which would have
+  held back an automatic apply. No registry page shows any of this. Proved against a real gateway in
+  `registry-acceptance.e2e.test.ts` (`registry.info` evidence, the update list and the approval text from a real signed index).
+
 - **2026-11-01 — Every permission surface states what the sandbox will actually do here (Phase 9.5 project 6, PR 1; no migration, no new invariant).**
   Network reach is now worded from the live sandbox posture instead of from the OS name: the named hosts only where the
   sandbox limits the extension to them; on macOS "any host on port N, including this machine and the local network";

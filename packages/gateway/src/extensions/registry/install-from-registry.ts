@@ -9,6 +9,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  isStarterPack,
   provenanceMatching,
   provenanceNote,
   publisherKeyFingerprint,
@@ -85,6 +86,7 @@ import {
   fetchVerifiedIndex,
   type RegistryFetchDeps,
 } from "./registry-fetch.ts";
+import { readRegistryLiveness } from "./registry-liveness.ts";
 import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
 import {
   assertEmptyStagingDir,
@@ -93,6 +95,12 @@ import {
 } from "./registry-package-stage.ts";
 import { resolveRegistryEntry } from "./registry-resolve.ts";
 import { getExtensionSource, type RegistryRow, setExtensionSource } from "./registry-store.ts";
+import {
+  checkedEvidence,
+  evidenceApprovalFields,
+  type VersionEvidence,
+  versionEvidence,
+} from "./version-evidence.ts";
 
 export { MAX_REGISTRY_MANIFEST_BYTES } from "./registry-manifest.ts";
 
@@ -104,6 +112,8 @@ export interface InstallFromRegistryDeps {
   approve: ExtensionInstallApprover;
   /** Where the plan installer stages a plan's dependencies (default `os.tmpdir()`); a test seam. */
   planStagingRoot?: string;
+  /** Test seam: the hard deadline of the signed liveness read (default 10 s). */
+  livenessTimeoutMs?: number;
   /** Where the per-install download directory is created (default `os.tmpdir()`); a test seam. */
   tempRoot?: string;
   /** The continuity table the approval's connector requirements bind through (default the baked one). */
@@ -192,6 +202,12 @@ export interface VerifiedRegistryPackage {
    * hash-checked, signature-verified manifest names the same repository; else null.
    */
   readonly provenance: VersionProvenance | null;
+  /**
+   * What the registry's signed entry says about this version (tested, history, checks), shown in
+   * the install approval. Optional as `index` is: a package built elsewhere (a test fake, a
+   * migration) states none, and its approval then carries none of these lines.
+   */
+  readonly evidence?: VersionEvidence;
   /**
    * The verified index the fetch resolved the package from, so a dependency resolver over the same
    * registry need not read it again. Optional: a package built elsewhere (a test fake) has none.
@@ -285,6 +301,14 @@ export async function fetchVerifiedRegistryPackage(
     provenance:
       provenanceMatching(vEntry, readManifestRepository(JSON.parse(fetched.text) as unknown)) ??
       null,
+    evidence: versionEvidence({
+      registry: reg.name,
+      versions: entry.versions,
+      version,
+      declaresNetwork: manifest.permissions.network.length > 0,
+      starterPack: isStarterPack(manifest),
+      now: deps.fetch.now(),
+    }),
     index,
   };
 }
@@ -331,6 +355,22 @@ function withProvenance(
   if (provenance === null) return approve;
   return (request) =>
     approve({ ...request, provenance, provenanceNote: provenanceNote(provenance, registry) });
+}
+
+/**
+ * The approver, stating the package's evidence (tested, history, checks) when it has some, and
+ * scoping it to the root when the plan installs more than one package.
+ */
+function withEvidence(
+  approve: ExtensionInstallApprover,
+  evidence: VersionEvidence | undefined,
+): ExtensionInstallApprover {
+  if (evidence === undefined) return approve;
+  return (request) =>
+    approve({
+      ...request,
+      ...evidenceApprovalFields(evidence, request.id, request.plan?.length ?? 1),
+    });
 }
 
 /** How `installVerifiedRegistryPackage` treats the package's dependencies. */
@@ -391,10 +431,13 @@ export async function installVerifiedRegistryPackage(
       publisherKey: decodeBase64(pkg.publisherKey),
       sourceRegistry: reg.name,
       rootFingerprint,
-      approve: withProvenance(
-        withKeyChange(deps.approve, pkg.publisherChange),
-        pkg.provenance,
-        pkg.reg.name,
+      approve: withEvidence(
+        withProvenance(
+          withKeyChange(deps.approve, pkg.publisherChange),
+          pkg.provenance,
+          pkg.reg.name,
+        ),
+        pkg.evidence,
       ),
       ...(resolver === undefined ? {} : { registryPlan: { resolver, channel } }),
       ...(deps.planStagingRoot === undefined ? {} : { planStagingRoot: deps.planStagingRoot }),
@@ -461,6 +504,48 @@ function promotableRegistryDependency(
   return row;
 }
 
+/**
+ * The package with its Checked line filled from the registry's signed liveness file (I51). Called
+ * by the install door only, never by `fetchVerifiedRegistryPackage` (the migration engine calls
+ * that and never shows evidence). The read never throws and has its own deadline; the result only
+ * replaces the text of `evidence.checked`, so the install outcome is the same whatever it says.
+ */
+async function withLivenessEvidence(
+  deps: InstallFromRegistryDeps,
+  pkg: VerifiedRegistryPackage,
+): Promise<VerifiedRegistryPackage> {
+  if (pkg.evidence === undefined) return pkg;
+  const liveness =
+    // A starter pack runs nothing, so its line reads "not checked" whatever the file says: no request.
+    pkg.index === undefined || isStarterPack(pkg.manifest)
+      ? undefined
+      : await readRegistryLiveness(
+          {
+            ...deps.fetch,
+            db: deps.db,
+            ...(deps.livenessTimeoutMs === undefined
+              ? {}
+              : { livenessTimeoutMs: deps.livenessTimeoutMs }),
+          },
+          pkg.reg,
+          pkg.index,
+          pkg.id,
+          pkg.version,
+        );
+  return {
+    ...pkg,
+    evidence: {
+      ...pkg.evidence,
+      checked: checkedEvidence({
+        registry: pkg.reg.name,
+        starterPack: isStarterPack(pkg.manifest),
+        liveness,
+        now: deps.fetch.now(),
+      }),
+    },
+  };
+}
+
 export async function installFromRegistry(
   deps: InstallFromRegistryDeps,
   req: InstallFromRegistryRequest,
@@ -471,7 +556,8 @@ export async function installFromRegistry(
   const tmp = mkdtempSync(join(deps.tempRoot ?? tmpdir(), "nimbus-reg-"));
   try {
     const pkg = await fetchVerifiedRegistryPackage(deps, req, tmp);
-    return await installVerifiedRegistryPackage(deps, pkg, req.channel ?? "stable");
+    const shown = await withLivenessEvidence(deps, pkg);
+    return await installVerifiedRegistryPackage(deps, shown, req.channel ?? "stable");
   } finally {
     try {
       rmSync(tmp, { recursive: true, force: true });

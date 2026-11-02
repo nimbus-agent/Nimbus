@@ -321,6 +321,7 @@ describe("validatePublish", () => {
       packageSizeBytes: c.packageBytes.byteLength,
       newId: true,
       hasEvals: false,
+      starterPack: false,
       permissions: { network: ["api.example.com"], filesystem: { read: [], write: [] } },
     });
     // Its scratch space is inside `work` and is cleaned up.
@@ -819,6 +820,7 @@ describe("validatePublish", () => {
     const pkg = await rawTgz(manifest, ["README.md", "nimbus.extension.json"]);
     const v = await validatePublish(await candidate({ manifest, pkg }), await indexOf(), NS, work);
     expect(v.entryHash).toBe(sha256(manifest));
+    expect(v.starterPack).toBe(true);
     expect(v.permissions).toEqual({ network: [], filesystem: { read: [], write: [] } });
   });
 

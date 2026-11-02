@@ -5,10 +5,13 @@ import { listPackageFiles } from "./package-set.ts";
 
 /**
  * Pack the package file set of `srcDir` into `outFile`. Files only, sorted by UTF-16 code unit with
- * `/` separators. Normalised so the same tree yields the same bytes on every platform: mtime fixed at
- * epoch 0 and uid/gid/uname/gname dropped (`portable`), every file mode forced to 0o644 (via the
+ * `/` separators. Normalised so the same tree yields the same bytes within one runtime: mtime fixed
+ * at epoch 0 and uid/gid/uname/gname dropped (`portable`), every file mode forced to 0o644 (via the
  * `onWriteEntry` hook, which runs before the header is built, so umask and Windows-vs-POSIX modes
  * cannot leak; the executable bit is not preserved), and the gzip level pinned.
+ *
+ * Two runtimes can differ: Node and Bun gzip the same tar into different deflate streams. So pack
+ * once and hand the file on (`nimbus extension pack`); never compare a hash across runtimes.
  */
 export async function packExtensionDir(srcDir: string, outFile: string): Promise<void> {
   const files = listPackageFiles(srcDir);

@@ -18,6 +18,19 @@ export {
 export { codeUnitCompare } from "./code-unit-compare.ts";
 export { RegistryError, type RegistryErrorCode } from "./errors.ts";
 export {
+  EVAL_BASELINE_FAILURES,
+  EVAL_BASELINE_SCORER_VERSION,
+  type EvalBaseline,
+  type EvalBaselineDocument,
+  type EvalBaselineFailure,
+  judgeToolDefinitions,
+  MAX_EVAL_BASELINE_TOOLS,
+  parseEvalBaseline,
+  parseEvalBaselineDocument,
+  readVersionBaseline,
+  type VersionBaseline,
+} from "./eval-baseline.ts";
+export {
   parseEvalQuality,
   readVersionQuality,
   type VersionQuality,
@@ -78,6 +91,7 @@ export {
   type RegistryPacksRead,
   type RegistryPackVersionEntry,
   type RegistryVersionEntry,
+  readRegistryLivenessKey,
   readRegistryPacks,
   readRegistryReportUrl,
   readRegistryStatements,
@@ -87,6 +101,21 @@ export {
   verifyRegistryIndexSelf,
 } from "./index-format.ts";
 export { type InspectedPackage, inspectPackage } from "./inspect.ts";
+export {
+  LIVENESS_FILE,
+  LIVENESS_TEST_FAILURES,
+  type LivenessEntry,
+  type LivenessEntryRead,
+  type LivenessFile,
+  type LivenessTestFailure,
+  livenessDigest,
+  livenessSigningBytes,
+  MAX_LIVENESS_BYTES,
+  parseLivenessFile,
+  readLivenessEntry,
+  signLivenessFile,
+  verifyLivenessFile,
+} from "./liveness-file.ts";
 export {
   CONNECTOR_ID_RE,
   DEFAULT_EXTENSION_ENTRY,
@@ -161,6 +190,13 @@ export {
   rolePackDigest,
 } from "./role-pack.ts";
 export { ancestorsOf, type RotationEdge, successorsOf } from "./rotation-graph.ts";
+export {
+  judgeScoreEntry,
+  MAX_SCORES_BYTES,
+  readScores,
+  type ScoreDecision,
+  type Scores,
+} from "./scores-file.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

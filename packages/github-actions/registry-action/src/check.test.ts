@@ -19,7 +19,7 @@ import { signIndex, validatePublish } from "../../../registry-format/src/index.t
 import { type CheckDeps, runCheck } from "./check.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
-import type { RoleRun, RunRole } from "./score.ts";
+import type { RoleRun, RunRole } from "./score-role.ts";
 import { runSign } from "./sign.ts";
 import {
   copyRegistryRepo,
@@ -60,6 +60,7 @@ let scratch: string;
 let repo: RegistryRepo;
 let summaries: string[];
 let logs: string[];
+let warnings: string[];
 let validated: number;
 
 beforeEach(() => {
@@ -69,6 +70,7 @@ beforeEach(() => {
   repo = copyRegistryRepo(template, join(tmp, "reg"));
   summaries = [];
   logs = [];
+  warnings = [];
   validated = 0;
 });
 
@@ -77,7 +79,9 @@ afterEach(() => {
 });
 
 const io: ActionIo = {
-  annotate: () => {},
+  annotate: (level, msg) => {
+    if (level === "warning") warnings.push(msg);
+  },
   summary: (md) => void summaries.push(md),
   log: (l) => void logs.push(l),
 };
@@ -462,6 +466,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
 
   beforeEach(() => {
     roleCalls = [];
+    baselineCalls = [];
     gateway = join(tmp, "nimbus-gateway");
     writeFileSync(gateway, "not run: the role is faked");
   });
@@ -473,6 +478,26 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
       return answer(dir);
     };
 
+  let baselineCalls: string[];
+  const NL = String.fromCharCode(10);
+
+  /** A fake baseline role: a passing baseline of 3 tools, or what `answer` says. */
+  const baselineRole =
+    (answer?: () => RoleRun): RunRole =>
+    async (_gw, dir) => {
+      baselineCalls.push(dir);
+      return (
+        answer?.() ?? {
+          code: 0,
+          stdout: `${JSON.stringify({ ok: true, extensionId: "acme/echo", version: "1.0.0", baseline: { scorer: 1, passed: true, tools: 3 } })}${NL}`,
+          stderrTail: "",
+          timedOut: false,
+          overflow: false,
+        }
+      );
+    };
+  const okBaseline = baselineRole();
+
   const ok = (id: string): RoleRun => ({
     code: 0,
     stdout: `${JSON.stringify({ ok: true, extensionId: id, version: "1.0.0", report: REPORT })}\n`,
@@ -482,10 +507,14 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
   });
 
   /** `check` with `runRole`; `gw` is the `nimbus-gateway` input (`null`: not set). */
-  const scored = (runRole: RunRole, gw: string | null = gateway): Promise<void> =>
+  const scored = (
+    runRole: RunRole,
+    gw: string | null = gateway,
+    runBaseline: RunRole = okBaseline,
+  ): Promise<void> =>
     runCheck(
       { workspace: repo.workspace, baseRef: "main", ...(gw !== null && { gateway: gw }) },
-      { ...deps(), runRole },
+      { ...deps(), runRole, runBaseline },
     );
 
   test("an evals publish is scored and the summary reports the quality", async () => {
@@ -504,7 +533,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     const md = summaries[0] ?? "";
     expect(md).toContain("- **Quality:** quality 50/100 (1 of 2 cases passed)");
     expect(md).not.toContain("No runtime check of the package is performed");
-    expect(md).toContain("eval suites were run");
+    expect(md).toContain("asked to run the package's eval suites");
   });
 
   test("a failed eval is reported with its code, escaped, and the check still passes", async () => {
@@ -527,14 +556,78 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     expect(logs.join("\n")).toContain("check passed: acme/echo@1.0.0");
   });
 
-  test("a publish without evals/ is not scored and keeps today's summary", async () => {
+  test("a publish without evals/ is not scored, but gets a Baseline line and no Quality line", async () => {
     const ext = await makeExtension(scratch);
     openPr((ws) => writePublish(ws, ext));
     await scored(role(() => ok("acme/echo")));
     expect(roleCalls).toEqual([]);
+    expect(baselineCalls).toHaveLength(1);
     const md = summaries[0] ?? "";
     expect(md).not.toContain("**Quality:**");
-    expect(md).toContain("No runtime check of the package is performed");
+    expect(md).toContain("- **Baseline:** starts and lists 3 valid tools");
+    // The sentence does not mention suites: only the server was asked to start, to list its tools.
+    expect(md).not.toContain("eval suites");
+    expect(md).toContain("was asked to start, up to twice");
+    expect(md).not.toContain("started once");
+    expect(md).not.toContain("No runtime check of the package is performed");
+    expect(md).not.toMatch(/\b(works|passed all|safe)\b/i);
+  });
+
+  test("an evals publish gets both lines, the baseline first run", async () => {
+    const ext = await makeExtension(scratch, { evals: { "basic.eval.json": SUITE } });
+    openPr((ws) => writePublish(ws, ext));
+    await scored(role(() => ok("acme/echo")));
+    const md = summaries[0] ?? "";
+    expect(md).toContain("- **Quality:** quality 50/100 (1 of 2 cases passed)");
+    expect(md).toContain("- **Baseline:** starts and lists 3 valid tools");
+    expect(baselineCalls).toHaveLength(1);
+    expect(roleCalls).toHaveLength(1);
+  });
+
+  test("a failed baseline is stated by its code and the check still passes", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role(() => ok("acme/echo")),
+      gateway,
+      baselineRole(() => ({
+        code: 0,
+        stdout: `${JSON.stringify({ ok: true, extensionId: "acme/echo", version: "1.0.0", baseline: { scorer: 1, passed: false, tools: 0, failure: "no-listing" } })}${NL}`,
+        stderrTail: "",
+        timedOut: false,
+        overflow: false,
+      })),
+    );
+    expect(summaries[0] ?? "").toContain("- **Baseline:** failed with `no-listing`");
+    expect(warnings.join("\n")).toContain("nothing is signed in this mode");
+    expect(warnings.join("\n")).not.toContain("still signed");
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.0.0");
+  });
+
+  test("a gateway older than --baseline: the line says none, and why; the check passes", async () => {
+    const ext = await makeExtension(scratch);
+    openPr((ws) => writePublish(ws, ext));
+    await scored(
+      role(() => ok("acme/echo")),
+      gateway,
+      baselineRole(() => ({
+        code: 2,
+        stdout: "",
+        stderrTail: "usage: __nimbus-eval",
+        timedOut: false,
+        overflow: false,
+      })),
+    );
+    const md = summaries[0] ?? "";
+    expect(md).toContain("- **Baseline:** none (`ERR_EVAL_ROLE_FAILED`)");
+    expect(md).not.toContain("**Quality:**");
+    // Nothing may have started, so the sentence says only what was asked for.
+    expect(md).not.toContain("No runtime check of the package is performed");
+    expect(md).toContain("was asked to start, up to twice");
+    expect(md).not.toContain("started once");
+    expect(warnings.join("\n")).toContain("nothing is signed in this mode");
+    expect(warnings.join("\n")).not.toContain("signed without a baseline");
+    expect(logs.join("\n")).toContain("check passed: acme/echo@1.0.0");
   });
 
   test("without the input an evals publish is not scored", async () => {
@@ -593,7 +686,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
     await expect(
       runCheck(
         { workspace: repo.workspace, baseRef: "main", gateway, githubToken: "tok" },
-        { ...deps(), runRole: role(() => ok("acme/echo")) },
+        { ...deps(), runRole: role(() => ok("acme/echo")), runBaseline: okBaseline },
       ),
     ).rejects.toThrow('input "github-token" must not be set with "nimbus-gateway" in check mode');
     expect(validated).toBe(0);
@@ -612,6 +705,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
       {
         ...deps(),
         runRole: role(() => ok("acme/echo")),
+        runBaseline: okBaseline,
         provenance: async () => {
           verified++;
           return { ok: false, reason: "should not be asked" };
@@ -637,6 +731,7 @@ describe("scoring a publish (the nimbus-gateway input)", () => {
       {
         ...deps(),
         runRole: role(() => ok("acme/echo")),
+        runBaseline: okBaseline,
         provenance: async () => {
           verified++;
           return { ok: false, reason: "no attestation" };

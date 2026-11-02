@@ -7,13 +7,14 @@ describe("parseMode", () => {
     expect(parseMode("check")).toBe("check");
     expect(parseMode("sign")).toBe("sign");
     expect(parseMode("score")).toBe("score");
+    expect(parseMode("score-package")).toBe("score-package");
     expect(parseMode("trust-check")).toBe("trust-check");
     expect(parseMode("trust-sign")).toBe("trust-sign");
   });
 
   test.each(["", "Check", "sign ", "publish"])("refuses %p with a clear message", (raw) => {
     expect(() => parseMode(raw)).toThrow(
-      `input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+      `input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
     );
   });
 });
@@ -214,12 +215,47 @@ describe("main", () => {
     expect(out.join("")).toContain('::error::input "nimbus-gateway" must be an absolute path');
   });
 
+  test.each(["root-key", "github-token"])(
+    "score-package refuses a %s input before anything is read (the job runs extension code)",
+    async (name) => {
+      const value = "definitely-secret-value";
+      process.env["INPUT_MODE"] = "score-package";
+      process.env["INPUT_PACKAGE"] = join(process.cwd(), "absent-package");
+      process.env[`INPUT_${name.toUpperCase()}`] = value;
+      await main();
+      expect(process.exitCode).toBe(1);
+      const all = out.join("");
+      expect(all).toContain(`::add-mask::${value}`);
+      expect(all).toContain(`::error::input "${name}" must not be set in score-package mode`);
+      expect(all.replace(`::add-mask::${value}`, "")).not.toContain(value);
+      expect(process.env[`INPUT_${name.toUpperCase()}`]).toBeUndefined();
+    },
+  );
+
+  test.each([
+    { what: "without a package input", env: {}, error: 'input "package" is required' },
+    {
+      what: "with a relative nimbus-gateway",
+      env: { INPUT_PACKAGE: "absent-package", "INPUT_NIMBUS-GATEWAY": "nimbus-gateway" },
+      error: 'input "nimbus-gateway" must be an absolute path',
+    },
+  ])("score-package $what fails the step", async ({ env, error }) => {
+    process.env["INPUT_MODE"] = "score-package";
+    delete process.env["INPUT_PACKAGE"];
+    for (const [k, v] of Object.entries(env)) {
+      process.env[k] = k === "INPUT_PACKAGE" ? join(process.cwd(), v) : v;
+    }
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain(`::error::${error}`);
+  });
+
   test("an unknown mode fails the step", async () => {
     process.env["INPUT_MODE"] = "publish";
     await main();
     expect(process.exitCode).toBe(1);
     expect(out.join("")).toContain(
-      '::error::input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"',
+      '::error::input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"',
     );
   });
 });

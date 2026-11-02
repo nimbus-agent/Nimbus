@@ -4,8 +4,9 @@
  * comment, because the `nimbus-agent` org enforces `sha_pinning_required` and a tag pin fails at
  * startup.
  *
- * Extension code (a version's eval suites) runs only in jobs that hold no secret and no token
- * beyond a read-only `contents` permission: the sign workflow's `score` job and the check job.
+ * Extension code runs only in jobs that hold no secret and no token beyond a read-only `contents`
+ * permission: the sign workflow's `score` job and the check job. Both start the server of any
+ * version that is not a starter pack, to list its tools, and run the suites of one that has `evals/`.
  * The `sign` job, which holds the root key, reads the score job's `scores.json` as untrusted input.
  */
 
@@ -40,7 +41,7 @@ export const ROOT_KEY_SECRET = "NIMBUS_REGISTRY_ROOT_KEY";
 /** The environment whose required reviewers approve every signing run. */
 export const SIGNING_ENVIRONMENT = "registry-signing";
 
-/** The Linux gateway release asset the score and check jobs run eval suites with. */
+/** The Linux gateway release asset the score and check jobs run a version's code with. */
 const GATEWAY_ASSET = "nimbus-gateway-linux-x64";
 
 /** The action's `nimbus-gateway` input: an absolute path, as the action requires. */
@@ -59,7 +60,7 @@ export function actionUses(pin: ActionPin): string {
 }
 
 /**
- * The steps that let a job run eval suites: bubblewrap with unprivileged user namespaces, and the
+ * The steps that let a job run a version's code (the baseline and the eval suites): bubblewrap with unprivileged user namespaces, and the
  * gateway of the pinned Nimbus version. Inlined, because a registry repository has none of this
  * repository's scripts. System changes run under `sudo`; the smoke probe runs as the runner user,
  * because root bypasses the userns restriction and a probe under `sudo` would pass whether or not
@@ -99,16 +100,17 @@ function gatewaySetupSteps(pin: ActionPin): string {
  * `registry-check.yml`: a reviewer aid on every pull request, with no secrets and a read-only token.
  * Full history (`fetch-depth: 0`) so the action can find the pull request's merge base; no
  * persisted credentials, since nothing in this job pushes (so the repository must be public for its
- * fetches to work). The job runs the pull request's eval suites and reports the score, so it passes
- * no `github-token` (the action refuses one beside `nimbus-gateway`); build provenance is verified
+ * fetches to work). The job starts the pull request's server to list its tools, runs its eval suites
+ * when it has any and reports both, so it passes no `github-token` (the action refuses one beside `nimbus-gateway`); build provenance is verified
  * by the sign job. `defaultBranch` is a name `init` already validated as YAML- and ref-safe; it is
  * still emitted JSON-quoted so a numeric-looking name stays a string.
  */
 export function registryCheckWorkflow(pin: ActionPin, defaultBranch: string): string {
-  return `# Validates a publish pull request against the signed index on gh-pages, runs the new
-# version's eval suites in the sandbox and summarises both for the reviewer. A green check is a
-# reviewer aid, not the boundary: a pull request can edit this file. The boundary is the sign
-# workflow and its required approval.
+  return `# Validates a publish pull request against the signed index on gh-pages. In the sandbox, it
+# starts the new version's server to list its tools (any version that is not a starter pack) and
+# runs its eval suites (when it has evals/), then summarises the results for the reviewer. A green
+# check is a reviewer aid, not the boundary: a pull request can edit this file. The boundary is
+# the sign workflow and its required approval.
 name: Registry check
 
 on:
@@ -135,23 +137,25 @@ ${gatewaySetupSteps(pin)}
         uses: ${actionUses(pin)}
         with:
           mode: check
-          # Runs the version's eval suites, so this job holds no token; the sign job checks
-          # build provenance.
+          # Runs the version's code, so this job holds no token; the sign job checks build
+          # provenance.
           nimbus-gateway: ${GATEWAY_INPUT}
 `;
 }
 
 /**
- * `registry-sign.yml`: the content boundary. The `score` job runs every unsigned version's eval
- * suites with no environment, no secret and a read-only token, and uploads `scores.json`; the
+ * `registry-sign.yml`: the content boundary. The `score` job starts the server of every unsigned
+ * version that is not a starter pack, to list its tools, and runs the suites of those with `evals/`,
+ * with no environment, no secret and a read-only token, and uploads `scores.json`; the
  * `sign` job then runs behind the `registry-signing` environment's required reviewers, one run at a
  * time, reads that file as untrusted input, and pushes the signed site to `gh-pages` with the job's
  * token, which is why its checkout keeps the persisted credentials.
  */
 export function registrySignWorkflow(pin: ActionPin, defaultBranch: string): string {
-  return `# Validates every unsigned extension version on ${defaultBranch}, runs their eval suites in a
-# job that holds no secret, signs the index with the registry root key and pushes the site to
-# gh-pages. Before approving a run, check that run's workflow diff:
+  return `# Validates every unsigned extension version on ${defaultBranch}. In a job that holds no secret,
+# it starts each server to list its tools (any version that is not a starter pack) and runs the
+# eval suites (when it has evals/). It then signs the index with the registry root key and pushes
+# the site to gh-pages. Before approving a run, check that run's workflow diff:
 # the required approval is what stops a changed copy of this file from using the key.
 name: Registry sign
 
@@ -169,7 +173,7 @@ concurrency:
 
 jobs:
   score:
-    name: Score the eval suites
+    name: Score new versions
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Runs extension code: no environment, no secret, no token beyond read-only contents.
