@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:9518441f06cebbf5decb4209fc8e56eb271aa5e67518f7af4e3616e1389f3a3b
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:8b8d7b349da65c30e1eead40da01bac08780a07a7b00e657db64dd5a07848022
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -5449,6 +5449,7 @@ function parseExtensionManifestForRegistry(text) {
 }
 
 // ../../registry-format/src/semver.ts
+var import_semver2 = __toESM(require_semver2(), 1);
 var NUMERIC_ID_RE = /^(?:0|[1-9]\d*)$/;
 var ID_CHARS_RE = /^[0-9A-Za-z-]+$/;
 var ALL_DIGITS_RE = /^\d+$/;
@@ -10251,7 +10252,7 @@ async function buildTrustFeed(prev, source, seed, at) {
 import { createHash as createHash5 } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join as join2 } from "node:path";
-var import_semver5 = __toESM(require_semver2(), 1);
+var import_semver6 = __toESM(require_semver2(), 1);
 var MAX_SMALL_JSON_BYTES = 4096;
 var PUBLISH_REQUEST_KEYS = ["id", "version", "channel", "publisherFingerprint"];
 var CONFIG_KEYS = ["format", "requirePublisherNamespace"];
@@ -10422,7 +10423,7 @@ function assertRegistryState(m, publisher, serviceId, signed) {
   }
   assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver5.default.compare(v, m.version) === 0);
+    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver6.default.compare(v, m.version) === 0);
     if (taken !== undefined) {
       throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
     }

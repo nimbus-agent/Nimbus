@@ -111,6 +111,7 @@ export {
   livenessDigest,
   livenessSigningBytes,
   MAX_LIVENESS_BYTES,
+  parseLivenessEntry,
   parseLivenessFile,
   readLivenessEntry,
   signLivenessFile,
@@ -197,6 +198,7 @@ export {
   type ScoreDecision,
   type Scores,
 } from "./scores-file.ts";
+export { compareVersionsDesc } from "./semver.ts";
 export { emptyIndex, publicKeyFromSeed, signIndex, verifyIndexSignature } from "./sign.ts";
 export {
   MAX_STATEMENTS_PER_DOCUMENT,

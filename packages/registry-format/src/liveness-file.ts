@@ -242,7 +242,19 @@ function readTests(
   return { cases, passed };
 }
 
-function parseEntry(raw: unknown): LivenessEntry {
+function readBaseline(raw: unknown): EvalBaseline {
+  try {
+    return parseEvalBaseline(raw);
+  } catch (e) {
+    if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_QUALITY_INVALID") {
+      throw invalid("baseline");
+    }
+    throw e;
+  }
+}
+
+/** One entry, strictly. Throws `ERR_LIVENESS_INVALID`; a baseline refusal is rethrown as that code. */
+export function parseLivenessEntry(raw: unknown): LivenessEntry {
   if (!isObject(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
     throw invalid("entry");
   }
@@ -250,7 +262,7 @@ function parseEntry(raw: unknown): LivenessEntry {
   if (!isIsoUtc(checkedAt)) throw invalid("checkedAt");
   const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
   const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
-  const baseline = Object.hasOwn(raw, "baseline") ? parseEvalBaseline(raw["baseline"]) : undefined;
+  const baseline = Object.hasOwn(raw, "baseline") ? readBaseline(raw["baseline"]) : undefined;
   if (hosts === undefined && tests === undefined && baseline === undefined) {
     throw invalid("entry carries no result");
   }
@@ -274,7 +286,7 @@ export function readLivenessEntry(
   const key = `${id}@${version}`;
   if (!Object.hasOwn(map, key)) return { state: "absent" };
   try {
-    return { state: "found", entry: parseEntry(map[key]) };
+    return { state: "found", entry: parseLivenessEntry(map[key]) };
   } catch {
     return { state: "invalid" };
   }

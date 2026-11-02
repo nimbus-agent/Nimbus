@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isValidSemver } from "./semver.ts";
+import { compareVersionsDesc, isValidSemver } from "./semver.ts";
 
 describe("isValidSemver (strict SemVer 2.0.0)", () => {
   test.each([
@@ -50,5 +50,13 @@ describe("isValidSemver (strict SemVer 2.0.0)", () => {
     "1.2.x",
   ])("refuses %p", (v) => {
     expect(isValidSemver(v)).toBe(false);
+  });
+});
+
+describe("compareVersionsDesc", () => {
+  test("sorts the newest first", () => {
+    const sorted = ["1.0.0", "1.10.0", "1.2.0", "1.10.0-rc.1"].sort(compareVersionsDesc);
+    expect(sorted).toEqual(["1.10.0", "1.10.0-rc.1", "1.2.0", "1.0.0"]);
+    expect(compareVersionsDesc("2.0.0", "2.0.0")).toBe(0);
   });
 });
