@@ -4,9 +4,10 @@ import {
   syncPassCursorSuccess,
 } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
-import { connectorFetch } from "./_lib/fetch-outcome.ts";
+import { connectorFetch, type FetchOutcome } from "./_lib/fetch-outcome.ts";
 import { trimTrailingSlash } from "./_lib/field-helpers.ts";
 import { upsertMapped } from "./_lib/paginated-sync.ts";
+import { mapMetabaseCardToItem } from "./metabase-card-mapping.ts";
 import { mapMetabaseDashboardToItem } from "./metabase-dashboard-mapping.ts";
 import { encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -70,6 +71,16 @@ function extractCollectionNames(parsed: unknown): Record<string, string> {
   return map;
 }
 
+/** Cards are optional: any failure here, a thrown network error included, leaves dashboards alone. */
+async function fetchCards(ctx: SyncContext, creds: MetabaseCreds): Promise<FetchOutcome | null> {
+  try {
+    return await mbGet(ctx, creds, "/api/card");
+  } catch (err) {
+    ctx.logger.warn({ serviceId: SERVICE_ID, err }, "metabase cards request failed");
+    return null;
+  }
+}
+
 export function createMetabaseSyncable(options: MetabaseSyncableOptions): Syncable {
   return {
     serviceId: SERVICE_ID,
@@ -101,7 +112,16 @@ export function createMetabaseSyncable(options: MetabaseSyncableOptions): Syncab
         mapMetabaseDashboardToItem(raw, { baseUrl: creds.url, collectionNames, syncedAt: now }),
       );
 
-      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted);
+      const cardsOutcome = await fetchCards(ctx, creds);
+      totalBytes += cardsOutcome?.bytes ?? 0;
+      const cardsUpserted =
+        cardsOutcome?.kind === "ok"
+          ? upsertMapped(ctx, extractArray(cardsOutcome.parsed), (raw) =>
+              mapMetabaseCardToItem(raw, { baseUrl: creds.url, collectionNames, syncedAt: now }),
+            )
+          : 0;
+
+      return syncPassCursorSuccess(t0, totalBytes, pass1Cursor(), upserted + cardsUpserted);
     },
   };
 }

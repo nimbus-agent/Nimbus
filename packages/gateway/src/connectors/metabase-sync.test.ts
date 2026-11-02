@@ -535,4 +535,30 @@ describeWithFetchRestore("metabase-sync", () => {
       .get() as { modified_at: number } | undefined;
     expect(row?.modified_at).toBeGreaterThan(Date.now() - 5000);
   });
+
+  test("a network error on /api/card leaves dashboards indexed and the sync successful", async () => {
+    const db = createMemoryIndexDb();
+    const vault = createStubVault({
+      "metabase.url": "https://mb.example.com",
+      "metabase.api_key": "k",
+    });
+    const stub = makeFetchStub({
+      "/api/collection": { status: 200, body: "[]" },
+      "/api/dashboard": { status: 200, body: makeDashboardsResponse([FULL_DASHBOARD]) },
+    });
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).includes("/api/card")) {
+        throw new Error("connection refused");
+      }
+      return stub(input, init);
+    }) as typeof fetch;
+
+    const result = await createMetabaseSyncable(NO_OP_OPTIONS).sync(
+      syncTestContext(db, vault, "metabase"),
+      null,
+    );
+
+    expect(result.itemsUpserted).toBe(1);
+    expectServiceItemCount(db, "metabase", 1);
+  });
 });
