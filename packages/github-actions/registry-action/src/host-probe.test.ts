@@ -189,7 +189,10 @@ describe("REAL_HOST_PROBE.connect", () => {
       closed = r;
     });
     const srv = await listen((s) => {
+      // Read (and discard) so the paused socket notices the client's close; a reset is expected.
+      s.on("error", () => {});
       s.on("close", () => closed());
+      s.resume();
     });
     try {
       const t0 = Date.now();
@@ -202,10 +205,11 @@ describe("REAL_HOST_PROBE.connect", () => {
         timeoutMs: 300,
       });
       expect(ok).toBe(false);
-      expect(Date.now() - t0).toBeLessThan(1000);
+      // Generous for slow CI runners; a missing deadline would hang far longer (the test timeout).
+      expect(Date.now() - t0).toBeLessThan(3000);
       let timer: ReturnType<typeof setTimeout> | undefined;
       const guard = new Promise<never>((_, rej) => {
-        timer = setTimeout(() => rej(new Error("server never saw the close")), 1000);
+        timer = setTimeout(() => rej(new Error("server never saw the close")), 5000);
       });
       try {
         await Promise.race([sawClose, guard]);
