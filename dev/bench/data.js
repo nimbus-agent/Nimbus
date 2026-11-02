@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793561475824,
+  "lastUpdate": 1793596147584,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "de196f8caad9fcfb3f030fca74515329f2a5da59",
-          "message": "test(install): derive the fixture asset name from the release-assets SSoT (#1187)\n\n`main`'s macOS CI leg has been red since #1172 landed — six consecutive\nruns of\n**Unit + Coverage — macos-15**, both retry attempts each time. Five\ntests in\n`scripts/install/install-remote.test.ts` fail there while the ubuntu and\nwindows\nlegs stay green.\n\n## Root cause\n\nThe test hardcoded the **Linux** tarball name in all six of its\nfixtures:\n\n```ts\nconst tarballName = \"nimbus-headless-linux-amd64-v2.2.0.tar.gz\";\n```\n\n`install.sh` does not use a fixed name — `detect_asset()` derives it\nfrom\n`uname`. And the Linux tarball is the one asset that carries its version\nin the\nfilename; the macOS tarballs are unversioned by design\n(`release-assets.ts`\ndocuments this and says not to harmonise them). Both shapes are real,\nand both\nship on every release:\n\n```\nnimbus-headless-linux-amd64-v2.4.1.tar.gz\nnimbus-headless-macos-arm64.tar.gz\n```\n\nSo on a macos-15 runner install.sh requested\n`nimbus-headless-macos-arm64.tar.gz`,\nthe fixture server only served the Linux name, and it answered **404**:\n\n```\nDownloading nimbus-headless-macos-arm64.tar.gz (v2.2.0)…\ncurl: (22) The requested URL returned error: 404\nError: download failed\n```\n\nThe one test that passed on macOS — \"aborts on a tampered archive\" —\npasses only\nbecause its server returns bytes for *any* path with no 404 fallback.\n\n**`install.sh` itself was correct and is unchanged** — this was only\never a test\ndefect.\n\n## Fix\n\n**1. Derive the fixture name from the SSoT.** `assetNameFor()` in\n`release-assets.ts` is the same source `release-assets-drift.test.ts`\nalready\npins install.sh's `detect_asset()` against. Each OS now exercises its\nown real\nasset name rather than Linux's. A host with no published build (Linux\narm64)\nskips instead of failing on a name that could never have been served,\nand\n`--from-release` takes the same `FIXTURE_VERSION` constant the name is\nbuilt\nfrom, so the two cannot drift.\n\n**2. Close the gap that let this reach `main` at all.** install.sh's\nmacOS\nnaming had *no executable cover at PR time*: the PR-time cross-platform\njob\nruns gateway/CLI unit tests only (\"just `bun test` on source\"), so\n`scripts/`\ntests never run there, and a macOS-only naming break could be caught\nonly by\nthe post-merge matrix. The new drift test runs install.sh for real in\n`--dry-run` mode (which touches neither disk nor network) with `uname`\nstubbed\nto each supported platform, and compares the name it would request\nagainst the\nSSoT by **exact equality** — so macOS naming is now covered from a Linux\nrunner,\nbefore merge. That is strictly stronger than the existing `toContain`\nstem\nchecks, which prove a stem is *present* but not that it is *reached*.\n\n## Verification\n\n- All 6 tests pass on Linux x64 (`oven/bun:1.3` + curl/gpg), so the\npreviously\n  green leg is unregressed: `29 pass, 14 skip, 0 fail` across all of\n  `scripts/install/`.\n- The derivation is exact for the failing platform:\n`assetNameFor({darwin, arm64}, \"2.2.0\")` →\n`nimbus-headless-macos-arm64.tar.gz`,\ncharacter-for-character the name the failing CI log shows install.sh\nrequesting.\n- The new drift test is **red-proved**: renaming install.sh's\ndarwin/arm64 asset\n  to `macos-aarch64` fails it with the exact mismatch, on Linux.\n- `bun run preflight:fast` — all 29 gates pass.\n\n### Scope of that verification, stated plainly\n\nThis PR's own checks do **not** execute `install-remote.test.ts` on\nmacOS —\nno PR-time job runs `scripts/` tests off Linux. The macOS evidence\nbefore merge\nis the exact-equality dry-run test above plus the string match against\nthe\nfailing log; `install-remote.test.ts` itself is re-exercised on macOS by\nthe\npost-merge matrix, which is the leg that has been failing.",
-          "timestamp": "2026-08-14T19:10:37Z",
-          "tree_id": "776566dec6b529f34e37ad21bfd1d875e080c524",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/de196f8caad9fcfb3f030fca74515329f2a5da59"
-        },
-        "date": 1786735324880,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.2561073999994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.3700099499976,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 212.03726794999892,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ec4ebf6a20966e1683b74bf2daef800706bd9d52",
+          "message": "feat(extensions): state who tested a package, and show a score drop on update (#1854)\n\nSecond PR of Phase 9.5 project 6, the quality layer. Someone deciding on\nan install now sees separate, attributed evidence lines, led by test\ncounts, and an owner deciding on an update sees whether the signed score\nmoved.\n\n**What an owner sees today:** no live registry publishes scores yet, so\nthese lines read `not evaluated` and `quality not compared: neither\nversion is scored` until a registry does. Real scores in the official\nregistry are a later PR of this project.\n\n## What changes\n\n- **`extension info --remote`** now prints, in order: which version the\nevidence describes, `Reach on this machine:`, `Files:`, the publisher\nblock, `Tested:`, `History:`, `Checked:`, then the version list.\n- **`Tested`** leads with counts and names who signed them: `9 of 10\ncases passed (90/100), tests by the publisher, measured by <registry>`,\nplus `tests ran with no network` when the package declares a network.\n- **`History`** gives the first date the registry records and a version\ncount, attributed to that registry. A date is displayed from the parsed\nvalue, never the signed string.\n- **`Checked`** reads `no checks published` until a registry publishes\nthem.\n- **Installed `extension info`** reads no registry. A registry-sourced\nextension prints the command that does; a local one states all three\nlines.\n- **The `extension.install` approval** carries `tested`, `history` and\n`checked`, and `evidenceScope` when the plan lists other packages. The\ndesktop renders them.\n- **Score comparison.** The pending list, in the CLI and the desktop,\nand the `extension.autoUpdate` approval show `quality 92 → 71 (-21)`.\nWhen the case counts differ both are shown, `quality 92/100 on 40 cases\n→ 95/100 on 5 cases`, because a higher score from a much smaller suite\nis the trick to catch. Either side unscored or malformed is said, and\nnever reported as a change.\n\n## What it does not do\n\n- It never blocks: no threshold, no setting, no new warning. The daemon\nnever applied updates; every update already needs an owner approval.\n- A downgrade carries no comparison.\n- It does not say a package works, and it adds no combined score or\nlabel.\n- A registry signs the score and dates. The client cannot check how they\nwere produced, so each line is attributed rather than stated as fact.\n- The per-rubric breakdown and the registry page are not part of this\nPR.\n\n## A new read before a prompt\n\nAn update with no dependencies made no index read before its prompt. It\nnow makes one, because the comparison must be re-read at approval. It\ngoes through `fetchVerifiedIndex` on the recorded source registry, so\nair gap, the egress row and the rollback checks apply, and an update\nwith dependencies shares the plan's read instead of making a second. The\nread has its own 5 second deadline: an informational line must not use\nthe desktop's 30 second call budget. Past the deadline, or on any\nfailure, the line says the registry could not be read or verified, and\nthe prompt appears anyway.\n\n**Known and not changed:** the desktop's `extension.update` call has a\n30 second limit while it waits on the owner, so an approval slower than\nthat reports a timeout in the UI though the gateway still waits. This\npredates the PR.\n\n## Verification\n\n- `bun run preflight:fast` passes.\n- `registry-acceptance` e2e runs a real gateway over a real signed\nindex, at the IPC level: `registry.info` evidence, the update list's\ncomparison, the approval text, and the drop being approved and applied.\nCLI printing is covered by unit tests whose fixtures copy the literals\nthe gateway tests prove.\n- `packages/ui` vitest passes.\n- `verify-in-docker --changed`: 714 pass, 35 fail, all in\n`StructuredPreview.test.tsx`, a vitest file which that script runs under\n`bun test`.\n\nNo schema change, no new IPC method, no new index field, no new\ninvariant, and nothing for a user to do.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension information now shows testing results, publication history,\nand published checks for a specific version and channel, including clear\nstates when evidence is unavailable.\n* Install approvals display relevant evidence and clarify when it covers\nonly the root package.\n* Update listings and approval prompts show signed quality-score\ncomparisons when available, including score drops and unavailable\ncomparisons. Comparisons do not block updates.\n* Local and registry-installed extensions provide distinct evidence\ndetails.\n\n* **Documentation**\n* Updated the CLI reference, changelog, roadmap, and registry status\ndocumentation to describe the evidence and comparison details.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-02T06:58:28+02:00",
+          "tree_id": "caf97362c0697b5f303b5cbda14b7049994fa818",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/ec4ebf6a20966e1683b74bf2daef800706bd9d52"
+        },
+        "date": 1793596143258,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 286.84295300000065,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 287.2806957000037,
             "unit": "ms"
           }
         ]
