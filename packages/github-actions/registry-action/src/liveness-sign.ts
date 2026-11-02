@@ -14,11 +14,13 @@
  * index names no liveness key, the `liveness-key` input is not that key, or it is the root key. A
  * push that loses a race starts over, at most `MAX_ATTEMPTS` times. The key is parsed in memory only
  * and zeroed afterwards (best-effort: the decoded Buffer may be pooled and the input string is
- * immutable, so copies can outlive the zeroing - the mask and the scoped environment are the defence); refusals name fingerprints of PUBLIC keys. `main.ts` masks the input and
- * drops it from the environment first.
+ * immutable, so copies can outlive the zeroing - the mask and the scoped
+ * environment are the defence); refusals name fingerprints of PUBLIC keys. `main.ts` masks the
+ * input and drops it from the environment first.
  */
 import { readFileSync, statSync } from "node:fs";
 import {
+  canonicalKeyBytes,
   LIVENESS_FILE,
   type LivenessEntry,
   type LivenessFile,
@@ -84,7 +86,7 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-/** One entry's problem for the warning, or undefined when it may be signed. */
+/** The entry when it may be signed, or its problem as text for the warning. */
 function entryProblem(key: string, raw: unknown, now: number): LivenessEntry | string {
   if (!ENTRY_KEY_RE.test(key)) return "its key is not <id>@<version>";
   let entry: LivenessEntry;
@@ -99,17 +101,11 @@ function entryProblem(key: string, raw: unknown, now: number): LivenessEntry | s
   return entry;
 }
 
-/**
- * The results file, strictly. Throws on a bad envelope (size, UTF-8, JSON, exact keys, format, a
- * `nimbusVersion` that is malformed or not `expectedVersion`); drops each bad entry with a warning.
- * The returned map has a null prototype and only own keys.
- */
-export function readLivenessResults(
+/** The results file's envelope, strictly; the entries are still raw. */
+function readEnvelope(
   path: string,
-  now: number,
   expectedVersion: string,
-  io: ActionIo = GHA_IO,
-): LivenessResults {
+): { nimbusVersion: string; raw: Record<string, unknown> } {
   const size = statSync(path).size;
   if (size > MAX_LIVENESS_RESULTS_BYTES) {
     throw new Error(
@@ -148,6 +144,21 @@ export function readLivenessResults(
   if (!isPlainObject(raw)) {
     throw new Error("refusing the results file: extensions is not an object");
   }
+  return { nimbusVersion: version, raw };
+}
+
+/**
+ * The results file, strictly. Throws on a bad envelope (size, UTF-8, JSON, exact keys, format, a
+ * `nimbusVersion` that is malformed or not `expectedVersion`); drops each bad entry with a warning.
+ * The returned map has a null prototype and only own keys.
+ */
+export function readLivenessResults(
+  path: string,
+  now: number,
+  expectedVersion: string,
+  io: ActionIo = GHA_IO,
+): LivenessResults {
+  const { nimbusVersion, raw } = readEnvelope(path, expectedVersion);
   const extensions: Record<string, LivenessEntry> = Object.create(null) as Record<
     string,
     LivenessEntry
@@ -161,7 +172,7 @@ export function readLivenessResults(
       extensions[key] = r;
     }
   }
-  return { format: 1, nimbusVersion: version, extensions };
+  return { format: 1, nimbusVersion, extensions };
 }
 
 interface Attempt {
@@ -201,6 +212,14 @@ async function previousSequence(
   return prev.sequence;
 }
 
+/**
+ * Re-reads exactly the bytes about to be committed with the client's own parser (size cap included)
+ * and verifies them: a file the client would refuse must never reach `gh-pages`.
+ */
+export async function verifyCommittedBytes(bytes: Uint8Array, indexKey: string): Promise<void> {
+  await verifyLivenessFile(parseLivenessFile(bytes), indexKey);
+}
+
 async function attemptSign(
   opts: LivenessSignOptions & { defaultBranch: string },
   seed: Uint8Array,
@@ -224,6 +243,9 @@ async function attemptSign(
     throw new Error(
       `refusing to sign: the liveness-key input (public key fingerprint ${publisherKeyFingerprint(ownKey)}) is not this registry's liveness key (fingerprint ${publisherKeyFingerprint(indexKey)})`,
     );
+  }
+  if (canonicalKeyBytes(index.rootKey) === undefined) {
+    throw new Error("refusing to sign: this registry's index names a malformed root key");
   }
   if (sameKeyBytes(indexKey, index.rootKey)) {
     throw new Error(
@@ -260,8 +282,8 @@ async function attemptSign(
     },
     seed,
   );
-  await verifyLivenessFile(signed, indexKey);
   const bytes = new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}\n`);
+  await verifyCommittedBytes(bytes, indexKey);
   const commit = commitSite(
     git.commitOf(PAGES_REF, { cwd }),
     [{ path: LIVENESS_FILE, bytes }],

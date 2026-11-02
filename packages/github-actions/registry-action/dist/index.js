@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:1cc6303a502d97305a4f7edb35789db958319f3b554e884154dbf42c75d781de
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:db40f3c7a4c0123ce9f05950ebf67debceccd95ac0b93020b307297bc9eee648
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -12127,29 +12127,34 @@ function ipv6Groups(address) {
   const out = groups.map((g) => /^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN);
   return out.some(Number.isNaN) ? undefined : out;
 }
-function isPublicAddress(address) {
-  const family = isIP(address.split("%")[0] ?? "");
-  const bare = family === 6 ? address.split("%")[0] ?? "" : address;
-  if (family === 4 && !address.includes("%"))
-    return !BLOCKED.check(bare, "ipv4");
-  if (family !== 6 || bare.length === 0)
+function dottedV4(g) {
+  const hi = g[6] ?? 0;
+  const lo = g[7] ?? 0;
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+}
+function judgeEmbeddedV4(g, bare) {
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 65535 && g[5] === 0) {
+    return !BLOCKED.check(dottedV4(g), "ipv4");
+  }
+  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 65535 || g[5] === 0)) {
+    return !BLOCKED.check(dottedV4(g), "ipv4") && (g[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
+  }
+  return;
+}
+function isPublicV6(bare) {
+  if (bare.length === 0)
     return false;
   const g = ipv6Groups(bare);
   if (g === undefined)
     return false;
-  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 65535 && g[5] === 0) {
-    const hi = g[6] ?? 0;
-    const lo = g[7] ?? 0;
-    return !BLOCKED.check(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`, "ipv4");
-  }
-  const zeroPrefix = g.slice(0, 5).every((x) => x === 0);
-  if (zeroPrefix && (g[5] === 65535 || g[5] === 0)) {
-    const hi = g[6] ?? 0;
-    const lo = g[7] ?? 0;
-    const v4 = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-    return !BLOCKED.check(v4, "ipv4") && (g[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
-  }
-  return !BLOCKED.check(bare, "ipv6");
+  return judgeEmbeddedV4(g, bare) ?? !BLOCKED.check(bare, "ipv6");
+}
+function isPublicAddress(address) {
+  const bare = address.split("%")[0] ?? "";
+  const family = isIP(bare);
+  if (family === 4)
+    return !address.includes("%") && !BLOCKED.check(bare, "ipv4");
+  return family === 6 && isPublicV6(bare);
 }
 function realLookup(host) {
   return new Promise((resolve, reject) => {
@@ -12212,16 +12217,31 @@ async function probeHost(entry, deps = REAL_HOST_PROBE, opts = {}) {
     return false;
   }
 }
-var MAX_DECLARED = 1000;
-async function probeHosts(entries, deps = REAL_HOST_PROBE) {
+function dedupeHosts(entries) {
   const seen = new Map;
   for (const e of entries) {
     const key = `${e.host.toLowerCase()}:${String(e.port)}`;
     if (!seen.has(key))
       seen.set(key, e);
   }
-  const distinct = [...seen.values()];
-  const work = distinct.slice(0, MAX_HOSTS_PER_RUN);
+  return [...seen.values()];
+}
+function createHostAllowance(max = MAX_HOSTS_PER_RUN) {
+  return { left: max };
+}
+function reserveHosts(entries, allowance, max = MAX_HOSTS_PER_RUN) {
+  const hosts = dedupeHosts(entries);
+  if (hosts.length === 0)
+    return { kind: "none" };
+  if (hosts.length > max)
+    return { kind: "too-many" };
+  if (hosts.length > allowance.left)
+    return { kind: "spent" };
+  allowance.left -= hosts.length;
+  return { kind: "ok", hosts };
+}
+async function probeHosts(entries, deps = REAL_HOST_PROBE) {
+  const work = dedupeHosts(entries);
   let answered = 0;
   let next = 0;
   const worker = async () => {
@@ -12233,7 +12253,7 @@ async function probeHosts(entries, deps = REAL_HOST_PROBE) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
-  return { declared: Math.min(distinct.length, MAX_DECLARED), answered };
+  return { declared: work.length, answered };
 }
 
 // src/score-package.ts
@@ -12375,6 +12395,49 @@ function declaredHosts(network) {
   }
   return hosts;
 }
+function readCheckedPackage(c, ref, packagePath, expectedSha256) {
+  const { deps, opts } = c;
+  const packageBytes = deps.git.readBlob(PAGES_REF, packagePath, { cwd: opts.workspace });
+  const problem = packageBytesProblem(packageBytes);
+  if (problem !== undefined) {
+    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+    return;
+  }
+  if (sha256Hex4(packageBytes) !== expectedSha256) {
+    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
+    return;
+  }
+  return packageBytes;
+}
+async function checkHosts(c, ref, network) {
+  const r = reserveHosts(declaredHosts(network), c.hostAllowance);
+  if (r.kind === "none")
+    return;
+  if (r.kind === "too-many") {
+    c.deps.io.log(`liveness: ${ref}: host check skipped: it declares more than ${String(MAX_HOSTS_PER_RUN)} distinct hosts`);
+    return;
+  }
+  if (r.kind === "spent") {
+    c.deps.io.log(`liveness: ${ref}: host check skipped: run host allowance spent`);
+    return;
+  }
+  return probeHosts(r.hosts, c.deps.probe);
+}
+function assembleEntry(c, ref, observed) {
+  const { checkedAt, hosts, tests, baseline } = observed;
+  const raw = {
+    checkedAt,
+    ...hosts !== undefined && hosts.declared > 0 && { hosts },
+    ...tests !== undefined && { tests },
+    ...baseline !== undefined && { baseline }
+  };
+  try {
+    return parseLivenessEntry(raw);
+  } catch (e) {
+    c.deps.io.log(`liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`);
+    return;
+  }
+}
 async function checkPackage(c, id, version) {
   const { deps, opts } = c;
   const ref = `${id}@${version}`;
@@ -12386,16 +12449,9 @@ async function checkPackage(c, id, version) {
     deps.io.log(`liveness: ${ref} not checked: the run's time budget is spent`);
     return;
   }
-  const packageBytes = deps.git.readBlob(PAGES_REF, v.package, { cwd: opts.workspace });
-  const problem = packageBytesProblem(packageBytes);
-  if (problem !== undefined) {
-    deps.io.log(`liveness: ${ref} not checked: its package ${problem}`);
+  const packageBytes = readCheckedPackage(c, ref, v.package, v.packageSha256);
+  if (packageBytes === undefined)
     return;
-  }
-  if (sha256Hex4(packageBytes) !== v.packageSha256) {
-    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
-    return;
-  }
   const checkedAt = new Date(deps.now()).toISOString();
   const dir = mkdtempSync7(join8(c.work, "pkg-"));
   try {
@@ -12406,9 +12462,11 @@ async function checkPackage(c, id, version) {
     if (isStarterPack(manifest))
       return;
     const hasEvals = inspected.files.some((f) => isEvalSuiteFile(f));
-    const hostList = declaredHosts(manifest.permissions.network);
-    const hosts = hostList.length === 0 ? undefined : await probeHosts(hostList, deps.probe);
-    const cand = { verdict: { id, version, packageSha256: v.packageSha256 }, packageBytes };
+    const hosts = await checkHosts(c, ref, manifest.permissions.network);
+    const cand = {
+      verdict: { id, version, packageSha256: v.packageSha256 },
+      packageBytes
+    };
     let baseline;
     let tests;
     if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
@@ -12418,18 +12476,7 @@ async function checkPackage(c, id, version) {
       if (hasEvals)
         tests = await runSuites(c, cand, at);
     }
-    const raw = {
-      checkedAt,
-      ...hosts !== undefined && hosts.declared > 0 && { hosts },
-      ...tests !== undefined && { tests },
-      ...baseline !== undefined && { baseline }
-    };
-    try {
-      return parseLivenessEntry(raw);
-    } catch (e) {
-      deps.io.log(`liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`);
-      return;
-    }
+    return assembleEntry(c, ref, { checkedAt, hosts, tests, baseline });
   } finally {
     removeQuietly((p) => rmSync6(p, { recursive: true, force: true }), dir);
   }
@@ -12473,10 +12520,14 @@ async function runLivenessCheck(opts, deps = SHARED4) {
   assertGateway(opts.gateway);
   deps.git.fetchRefs([PAGES_BRANCH], { cwd: opts.workspace });
   const index = await readVerifiedIndex(deps.git, opts.workspace);
+  if (readRegistryLivenessKey(index) === undefined) {
+    deps.io.log("::notice::this registry's index names no liveness key, so no checks were run; run `nimbus registry maintain set-liveness-key`");
+    return writeResults(opts, deps, Object.create(null));
+  }
   const work = mkdtempSync7(join8(deps.tmpdir(), "nimbus-registry-liveness-"));
   const extensions = Object.create(null);
   try {
-    const ctx = { opts, deps, work, deadline, index };
+    const ctx = { opts, deps, work, deadline, index, hostAllowance: createHostAllowance() };
     for (const { id, version } of newestStableVersions(index)) {
       try {
         const entry = await checkPackage(ctx, id, version);
@@ -12489,6 +12540,9 @@ async function runLivenessCheck(opts, deps = SHARED4) {
   } finally {
     rmSync6(work, { recursive: true, force: true });
   }
+  return writeResults(opts, deps, extensions);
+}
+function writeResults(opts, deps, extensions) {
   const results = {
     format: LIVENESS_RESULTS_FORMAT,
     nimbusVersion: opts.nimbusVersion,
@@ -12600,7 +12654,7 @@ function entryProblem(key, raw, now) {
     return "its checkedAt is more than 24 hours old";
   return entry;
 }
-function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
+function readEnvelope2(path, expectedVersion) {
   const size = statSync2(path).size;
   if (size > MAX_LIVENESS_RESULTS_BYTES) {
     throw new Error(`refusing the results file: ${String(size)} bytes exceeds the ${String(MAX_LIVENESS_RESULTS_BYTES)} byte limit`);
@@ -12634,6 +12688,10 @@ function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
   if (!isPlainObject3(raw)) {
     throw new Error("refusing the results file: extensions is not an object");
   }
+  return { nimbusVersion: version, raw };
+}
+function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
+  const { nimbusVersion, raw } = readEnvelope2(path, expectedVersion);
   const extensions = Object.create(null);
   for (const key of Object.keys(raw)) {
     if (!Object.hasOwn(raw, key))
@@ -12645,7 +12703,7 @@ function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
       extensions[key] = r;
     }
   }
-  return { format: 1, nimbusVersion: version, extensions };
+  return { format: 1, nimbusVersion, extensions };
 }
 async function previousSequence(git, cwd, indexKey, io) {
   if (!git.listTreeEntries(PAGES_REF, LIVENESS_FILE, { cwd }).some((e) => e.path === LIVENESS_FILE)) {
@@ -12665,6 +12723,9 @@ async function previousSequence(git, cwd, indexKey, io) {
   }
   return prev.sequence;
 }
+async function verifyCommittedBytes(bytes, indexKey) {
+  await verifyLivenessFile(parseLivenessFile(bytes), indexKey);
+}
 async function attemptSign(opts, seed, ownKey, deps) {
   const cwd = opts.workspace;
   const { git, io } = deps;
@@ -12679,6 +12740,9 @@ async function attemptSign(opts, seed, ownKey, deps) {
   }
   if (!sameKeyBytes(indexKey, ownKey)) {
     throw new Error(`refusing to sign: the liveness-key input (public key fingerprint ${publisherKeyFingerprint(ownKey)}) is not this registry's liveness key (fingerprint ${publisherKeyFingerprint(indexKey)})`);
+  }
+  if (canonicalKeyBytes(index.rootKey) === undefined) {
+    throw new Error("refusing to sign: this registry's index names a malformed root key");
   }
   if (sameKeyBytes(indexKey, index.rootKey)) {
     throw new Error(`refusing to sign: the liveness key (fingerprint ${publisherKeyFingerprint(indexKey)}) is this registry's root key; the two must be different keys`);
@@ -12709,9 +12773,9 @@ async function attemptSign(opts, seed, ownKey, deps) {
     nimbusVersion: read.nimbusVersion,
     extensions
   }, seed);
-  await verifyLivenessFile(signed, indexKey);
   const bytes = new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}
 `);
+  await verifyCommittedBytes(bytes, indexKey);
   const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: LIVENESS_FILE, bytes }], `Publish liveness.json sequence ${String(sequence)}`, cwd);
   return { commit, sequence, kept, checked };
 }
@@ -13332,70 +13396,85 @@ function resolveInWorkspace(ws, input) {
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
+function livenessResultsPath() {
+  const results = getInput("results");
+  return resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results);
+}
+async function runScorePackageMode() {
+  refuseSecretsInScore("score-package");
+  await runScorePackage({
+    package: resolveInWorkspace(workspace(), requireInput("package")),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores"))
+  });
+}
+async function runScoreMode() {
+  refuseSecretsInScore("score");
+  const defaultBranch = getInput("default-branch");
+  await runScore({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores")),
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runLivenessCheckMode() {
+  refuseSecretsInLivenessCheck();
+  await runLivenessCheck({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    nimbusVersion: getInput("nimbus-version"),
+    out: livenessResultsPath()
+  });
+}
+async function runLivenessSignMode() {
+  const livenessKey = takeLivenessSignKeys();
+  const defaultBranch = getInput("default-branch");
+  await runLivenessSign({
+    workspace: workspace(),
+    livenessKey,
+    results: livenessResultsPath(),
+    nimbusVersion: getInput("nimbus-version"),
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runTrustSignMode() {
+  const rootKey = takeRootKey();
+  const defaultBranch = getInput("default-branch");
+  await runTrustSign({
+    workspace: workspace(),
+    rootKey,
+    ...defaultBranch !== "" && { defaultBranch }
+  });
+}
+async function runSignMode() {
+  const rootKey = takeRootKey();
+  const githubToken = takeGithubToken();
+  const scores = getInput("scores");
+  await runSign({
+    ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
+    githubToken,
+    ...scores !== "" && { scores: scoresPath(workspace(), scores) }
+  });
+}
+var HANDLERS = {
+  check: (baseRef) => runCheck({ workspace: workspace(), baseRef, ...checkInputs() }),
+  "score-package": runScorePackageMode,
+  score: runScoreMode,
+  "liveness-check": runLivenessCheckMode,
+  "liveness-sign": runLivenessSignMode,
+  "trust-check": (baseRef) => runTrustCheck({ workspace: workspace(), baseRef }),
+  "trust-sign": runTrustSignMode,
+  sign: runSignMode
+};
 async function main() {
   try {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
-    if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
-    } else if (mode === "score-package") {
-      refuseSecretsInScore("score-package");
-      await runScorePackage({
-        package: resolveInWorkspace(workspace(), requireInput("package")),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores"))
-      });
-    } else if (mode === "score") {
-      refuseSecretsInScore("score");
-      const defaultBranch = getInput("default-branch");
-      await runScore({
-        workspace: workspace(),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores")),
-        ...defaultBranch !== "" && { defaultBranch }
-      });
-    } else if (mode === "liveness-check") {
-      refuseSecretsInLivenessCheck();
-      const results = getInput("results");
-      await runLivenessCheck({
-        workspace: workspace(),
-        gateway: getInput("nimbus-gateway"),
-        nimbusVersion: getInput("nimbus-version"),
-        out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results)
-      });
-    } else if (mode === "liveness-sign") {
-      const livenessKey = takeLivenessSignKeys();
-      const defaultBranch = getInput("default-branch");
-      const results = getInput("results");
-      await runLivenessSign({
-        workspace: workspace(),
-        livenessKey,
-        results: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results),
-        nimbusVersion: getInput("nimbus-version"),
-        ...defaultBranch !== "" && { defaultBranch }
-      });
-    } else if (mode === "trust-check") {
-      await runTrustCheck({ workspace: workspace(), baseRef });
-    } else if (mode === "trust-sign") {
-      const rootKey = takeRootKey();
-      const defaultBranch = getInput("default-branch");
-      await runTrustSign({
-        workspace: workspace(),
-        rootKey,
-        ...defaultBranch !== "" && { defaultBranch }
-      });
-    } else if (mode === "sign") {
-      const rootKey = takeRootKey();
-      const githubToken = takeGithubToken();
-      const scores = getInput("scores");
-      await runSign({
-        ...signOptions(workspace(), rootKey, getInput("default-branch"), process.env["GITHUB_REPOSITORY"]),
-        githubToken,
-        ...scores !== "" && { scores: scoresPath(workspace(), scores) }
-      });
-    } else {
+    const handler = HANDLERS[mode];
+    if (handler === undefined)
       throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
-    }
+    await handler(baseRef);
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
     process.exitCode = 1;

@@ -194,79 +194,102 @@ function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
 
+type ModeHandler = (baseRef: string) => Promise<void>;
+
+/** The `results` input (a path), defaulting to `liveness-results.json` in the workspace. */
+function livenessResultsPath(): string {
+  const results = getInput("results");
+  return resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results);
+}
+
+async function runScorePackageMode(): Promise<void> {
+  refuseSecretsInScore("score-package");
+  await runScorePackage({
+    package: resolveInWorkspace(workspace(), requireInput("package")),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores")),
+  });
+}
+
+async function runScoreMode(): Promise<void> {
+  refuseSecretsInScore("score");
+  const defaultBranch = getInput("default-branch");
+  await runScore({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    out: scoresPath(workspace(), getInput("scores")),
+    ...(defaultBranch !== "" && { defaultBranch }),
+  });
+}
+
+async function runLivenessCheckMode(): Promise<void> {
+  refuseSecretsInLivenessCheck();
+  await runLivenessCheck({
+    workspace: workspace(),
+    gateway: getInput("nimbus-gateway"),
+    nimbusVersion: getInput("nimbus-version"),
+    out: livenessResultsPath(),
+  });
+}
+
+async function runLivenessSignMode(): Promise<void> {
+  const livenessKey = takeLivenessSignKeys();
+  const defaultBranch = getInput("default-branch");
+  await runLivenessSign({
+    workspace: workspace(),
+    livenessKey,
+    results: livenessResultsPath(),
+    nimbusVersion: getInput("nimbus-version"),
+    ...(defaultBranch !== "" && { defaultBranch }),
+  });
+}
+
+async function runTrustSignMode(): Promise<void> {
+  const rootKey = takeRootKey();
+  const defaultBranch = getInput("default-branch");
+  await runTrustSign({
+    workspace: workspace(),
+    rootKey,
+    ...(defaultBranch !== "" && { defaultBranch }),
+  });
+}
+
+async function runSignMode(): Promise<void> {
+  const rootKey = takeRootKey();
+  const githubToken = takeGithubToken();
+  // Unlike score, sign has no default: no input means no quality is signed.
+  const scores = getInput("scores");
+  await runSign({
+    ...signOptions(
+      workspace(),
+      rootKey,
+      getInput("default-branch"),
+      process.env["GITHUB_REPOSITORY"],
+    ),
+    githubToken,
+    ...(scores !== "" && { scores: scoresPath(workspace(), scores) }),
+  });
+}
+
+/** The mode to handler table; each handler takes its own secrets and refuses the ones it must not hold. */
+const HANDLERS: Readonly<Record<string, ModeHandler>> = {
+  check: (baseRef) => runCheck({ workspace: workspace(), baseRef, ...checkInputs() }),
+  "score-package": runScorePackageMode,
+  score: runScoreMode,
+  "liveness-check": runLivenessCheckMode,
+  "liveness-sign": runLivenessSignMode,
+  "trust-check": (baseRef) => runTrustCheck({ workspace: workspace(), baseRef }),
+  "trust-sign": runTrustSignMode,
+  sign: runSignMode,
+};
+
 export async function main(): Promise<void> {
   try {
     const mode = parseMode(getInput("mode"));
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
-    if (mode === "check") {
-      await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
-    } else if (mode === "score-package") {
-      refuseSecretsInScore("score-package");
-      await runScorePackage({
-        package: resolveInWorkspace(workspace(), requireInput("package")),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores")),
-      });
-    } else if (mode === "score") {
-      refuseSecretsInScore("score");
-      const defaultBranch = getInput("default-branch");
-      await runScore({
-        workspace: workspace(),
-        gateway: getInput("nimbus-gateway"),
-        out: scoresPath(workspace(), getInput("scores")),
-        ...(defaultBranch !== "" && { defaultBranch }),
-      });
-    } else if (mode === "liveness-check") {
-      refuseSecretsInLivenessCheck();
-      const results = getInput("results");
-      await runLivenessCheck({
-        workspace: workspace(),
-        gateway: getInput("nimbus-gateway"),
-        nimbusVersion: getInput("nimbus-version"),
-        out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results),
-      });
-    } else if (mode === "liveness-sign") {
-      const livenessKey = takeLivenessSignKeys();
-      const defaultBranch = getInput("default-branch");
-      const results = getInput("results");
-      await runLivenessSign({
-        workspace: workspace(),
-        livenessKey,
-        results: resolveInWorkspace(
-          workspace(),
-          results === "" ? "liveness-results.json" : results,
-        ),
-        nimbusVersion: getInput("nimbus-version"),
-        ...(defaultBranch !== "" && { defaultBranch }),
-      });
-    } else if (mode === "trust-check") {
-      await runTrustCheck({ workspace: workspace(), baseRef });
-    } else if (mode === "trust-sign") {
-      const rootKey = takeRootKey();
-      const defaultBranch = getInput("default-branch");
-      await runTrustSign({
-        workspace: workspace(),
-        rootKey,
-        ...(defaultBranch !== "" && { defaultBranch }),
-      });
-    } else if (mode === "sign") {
-      const rootKey = takeRootKey();
-      const githubToken = takeGithubToken();
-      // Unlike score, sign has no default: no input means no quality is signed.
-      const scores = getInput("scores");
-      await runSign({
-        ...signOptions(
-          workspace(),
-          rootKey,
-          getInput("default-branch"),
-          process.env["GITHUB_REPOSITORY"],
-        ),
-        githubToken,
-        ...(scores !== "" && { scores: scoresPath(workspace(), scores) }),
-      });
-    } else {
-      throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
-    }
+    const handler = HANDLERS[mode];
+    if (handler === undefined) throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
+    await handler(baseRef);
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
     process.exitCode = 1;

@@ -17,6 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type LivenessFile,
+  MAX_LIVENESS_BYTES,
   parseLivenessFile,
   publicKeyFromSeed,
   publisherKeyFingerprint,
@@ -30,6 +31,7 @@ import {
   MAX_LIVENESS_RESULTS_BYTES,
   readLivenessResults,
   runLivenessSign,
+  verifyCommittedBytes,
 } from "./liveness-sign.ts";
 import type { ActionIo } from "./report.ts";
 import { runSign } from "./sign.ts";
@@ -169,6 +171,13 @@ const originLiveness = (): LivenessFile =>
 
 const entryKeys = (doc: LivenessFile): string[] => Object.keys(doc.extensions as object);
 
+describe("verifyCommittedBytes", () => {
+  test("refuses a document over the client's size cap before anything is committed", async () => {
+    const big = new Uint8Array(MAX_LIVENESS_BYTES + 1).fill(0x20);
+    await expect(verifyCommittedBytes(big, LIVENESS_KEY)).rejects.toThrow();
+  });
+});
+
 describe("runLivenessSign", () => {
   test("round trip: the committed file verifies and holds exactly the allowed entries; index untouched", async () => {
     const indexBefore = originFile(repo, "gh-pages", "index.json");
@@ -275,6 +284,23 @@ describe("runLivenessSign", () => {
 
     test("a malformed key", async () => {
       await refuse("not-a-key", /liveness-key/);
+    });
+
+    test("a non-canonical root key in the index is refused, not skipped", async () => {
+      const root = b64(publicKeyFromSeed(ROOT_SEED));
+      const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+      const alias = `${root.slice(0, 42)}${chars[chars.indexOf(root[42] as string) + 1]}=`;
+      syncMaintainer(repo, "gh-pages");
+      const { signature: _s, ...rest } = originIndex(repo) as unknown as Record<string, unknown>;
+      const next = await signIndex({ ...rest, rootKey: alias } as never, ROOT_SEED);
+      write(
+        repo.maintainer,
+        "index.json",
+        `${JSON.stringify(next, null, 2)}
+`,
+      );
+      pushMaintainer(repo, "gh-pages", "alias root key");
+      await refuse(LIVENESS_INPUT, /malformed root key/);
     });
   });
 
