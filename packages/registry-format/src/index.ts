@@ -111,6 +111,7 @@ export {
   livenessDigest,
   livenessSigningBytes,
   MAX_LIVENESS_BYTES,
+  NIMBUS_VERSION_RE,
   parseLivenessEntry,
   parseLivenessFile,
   readLivenessEntry,

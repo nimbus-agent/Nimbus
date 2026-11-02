@@ -52,7 +52,7 @@ export type LivenessEntryRead =
 
 const KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 const SIGNATURE_RE = /^[A-Za-z0-9+/]{86}==$/;
-const NIMBUS_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,64})?$/;
+export const NIMBUS_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,64})?$/;
 const MAX_HOSTS = 1000;
 
 function invalid(detail: string): RegistryError {

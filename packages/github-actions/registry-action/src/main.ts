@@ -1,19 +1,28 @@
 import { isAbsolute, join } from "node:path";
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
+import { runLivenessCheck } from "./liveness-check.ts";
 import { runScore } from "./score.ts";
 import { runScorePackage } from "./score-package.ts";
 import { runSign, type SignOptions } from "./sign.ts";
 import { runTrustCheck } from "./trust-check.ts";
 import { runTrustSign } from "./trust-sign.ts";
 
-export type Mode = "check" | "sign" | "score" | "score-package" | "trust-check" | "trust-sign";
+export type Mode =
+  | "check"
+  | "sign"
+  | "score"
+  | "score-package"
+  | "liveness-check"
+  | "trust-check"
+  | "trust-sign";
 
 const MODES: readonly Mode[] = [
   "check",
   "sign",
   "score",
   "score-package",
+  "liveness-check",
   "trust-check",
   "trust-sign",
 ];
@@ -23,7 +32,7 @@ export function parseMode(raw: string): Mode {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined) return mode;
   throw new Error(
-    `input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+    `input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -112,9 +121,18 @@ function refuseSecrets(names: readonly string[], refusal: (name: string) => stri
 /** `score` and `score-package` run extension code: a `root-key` or `github-token` handed to them is refused. */
 function refuseSecretsInScore(mode: "score" | "score-package"): void {
   refuseSecrets(
-    ["root-key", "github-token"],
+    ["root-key", "github-token", "liveness-key"],
     (name) =>
       `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`,
+  );
+}
+
+/** `liveness-check` runs extension code: a root, GitHub or liveness key handed to it is refused. */
+function refuseSecretsInLivenessCheck(): void {
+  refuseSecrets(
+    ["root-key", "github-token", "liveness-key"],
+    (name) =>
+      `input "${name}" must not be set in liveness-check mode: liveness-check runs extension code and holds no secrets`,
   );
 }
 
@@ -126,7 +144,7 @@ function checkInputs(): { githubToken?: string; gateway?: string } {
   const gateway = getInput("nimbus-gateway");
   if (gateway === "") return { githubToken: takeGithubToken() };
   refuseSecrets(
-    ["github-token"],
+    ["github-token", "root-key", "liveness-key"],
     (name) =>
       `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`,
   );
@@ -170,6 +188,15 @@ export async function main(): Promise<void> {
         out: scoresPath(workspace(), getInput("scores")),
         ...(defaultBranch !== "" && { defaultBranch }),
       });
+    } else if (mode === "liveness-check") {
+      refuseSecretsInLivenessCheck();
+      const results = getInput("results");
+      await runLivenessCheck({
+        workspace: workspace(),
+        gateway: getInput("nimbus-gateway"),
+        nimbusVersion: getInput("nimbus-version"),
+        out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results),
+      });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {
@@ -180,7 +207,7 @@ export async function main(): Promise<void> {
         rootKey,
         ...(defaultBranch !== "" && { defaultBranch }),
       });
-    } else {
+    } else if (mode === "sign") {
       const rootKey = takeRootKey();
       const githubToken = takeGithubToken();
       // Unlike score, sign has no default: no input means no quality is signed.
@@ -195,6 +222,8 @@ export async function main(): Promise<void> {
         githubToken,
         ...(scores !== "" && { scores: scoresPath(workspace(), scores) }),
       });
+    } else {
+      throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));

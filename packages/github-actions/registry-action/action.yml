@@ -11,7 +11,7 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign | score (a registry) | score-package (a registry that publishes with `nimbus registry maintain add`) | trust-check | trust-sign (the Nimbus trust feed)."
+    description: "Which job this is — one of: check | sign | score (a registry) | score-package (a registry that publishes with `nimbus registry maintain add`) | liveness-check (observe each package's newest stable version, keyless) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
     description: "The branch pull requests merge into (sign, score and trust-sign). Empty means origin's HEAD."
@@ -39,6 +39,21 @@ inputs:
 
   scores:
     description: "score and score-package: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
+    required: false
+    default: ""
+
+  liveness-key:
+    description: "The registry liveness signing key. liveness-check, score, score-package and check with nimbus-gateway refuse it: those jobs run extension code and hold no secret."
+    required: false
+    default: ""
+
+  results:
+    description: "liveness-check: where the results file is written (relative to the workspace, or absolute); empty means liveness-results.json."
+    required: false
+    default: ""
+
+  nimbus-version:
+    description: "liveness-check: the Nimbus release number (for example 10.14.1) whose gateway nimbus-gateway points at. It is recorded in the results and checked again by the sign job."
     required: false
     default: ""
 

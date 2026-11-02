@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:8b8d7b349da65c30e1eead40da01bac08780a07a7b00e657db64dd5a07848022
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:194c316c39add8aa0272e2743f1e974d34242c891326f87a7420fc6e12c5cf2c
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4207,7 +4207,7 @@ __export(exports_git_tree, {
 });
 
 // src/main.ts
-import { isAbsolute as isAbsolute2, join as join10 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join11 } from "node:path";
 
 // ../shared/gha-io.ts
 import { appendFileSync } from "node:fs";
@@ -5036,6 +5036,14 @@ var import_semver = __toESM(require_semver2(), 1);
 
 // ../../registry-format/src/permissions-validator.ts
 var HOSTNAME_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$/;
+var DEFAULT_NETWORK_PORT = 443;
+function parseNetworkEntry(entry) {
+  const idx = entry.lastIndexOf(":");
+  if (idx === -1) {
+    return { host: entry, port: DEFAULT_NETWORK_PORT };
+  }
+  return { host: entry.slice(0, idx), port: Number(entry.slice(idx + 1)) };
+}
 function validateAndNormalizePermissions(input) {
   if (Array.isArray(input)) {
     return { network: [], filesystem: { read: [], write: [] } };
@@ -5472,6 +5480,9 @@ function isValidSemver(v) {
     return false;
   const parts = core.split(".");
   return parts.length === 3 && parts.every((p) => NUMERIC_ID_RE.test(p));
+}
+function compareVersionsDesc(a, b) {
+  return import_semver2.default.rcompare(a, b);
 }
 
 // ../../registry-format/src/role-pack.ts
@@ -9333,14 +9344,101 @@ async function inspectPackage(tgz, work) {
 // ../../registry-format/src/liveness-file.ts
 var import_tweetnacl4 = __toESM(require_nacl_fast(), 1);
 var MAX_LIVENESS_BYTES = 4 * 1024 * 1024;
+var LIVENESS_TEST_FAILURES = ["run-failed", "run-timeout", "sandbox-unavailable"];
+var NIMBUS_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,64})?$/;
+var MAX_HOSTS = 1000;
+function invalid4(detail) {
+  return new RegistryError("ERR_LIVENESS_INVALID", detail);
+}
+var ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
+function isIsoUtc(v) {
+  if (typeof v !== "string" || !ISO_UTC_RE.test(v))
+    return false;
+  const ms = Date.parse(v);
+  if (!Number.isFinite(ms))
+    return false;
+  return new Date(ms).toISOString().slice(0, 10) === v.slice(0, 10);
+}
+function isObject3(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+function onlyKeys(o, allowed) {
+  return Object.keys(o).every((k) => allowed.includes(k));
+}
+function isCount(v, min, max) {
+  return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+}
+function readHosts(raw) {
+  if (!isObject3(raw) || !onlyKeys(raw, ["declared", "answered"]))
+    throw invalid4("hosts");
+  const declared = raw["declared"];
+  if (!isCount(declared, 1, MAX_HOSTS))
+    throw invalid4("hosts.declared");
+  const answered = raw["answered"];
+  if (!isCount(answered, 0, declared))
+    throw invalid4("hosts.answered");
+  return { declared, answered };
+}
+function readTests(raw) {
+  if (!isObject3(raw))
+    throw invalid4("tests");
+  if (Object.hasOwn(raw, "failure")) {
+    const failure = raw["failure"];
+    if (!onlyKeys(raw, ["failure"]))
+      throw invalid4("tests");
+    if (!LIVENESS_TEST_FAILURES.includes(failure)) {
+      throw invalid4("tests.failure");
+    }
+    return { failure };
+  }
+  if (!onlyKeys(raw, ["cases", "passed"]))
+    throw invalid4("tests");
+  const cases = raw["cases"];
+  if (!isCount(cases, 1, MAX_EVAL_CASES))
+    throw invalid4("tests.cases");
+  const passed = raw["passed"];
+  if (!isCount(passed, 0, cases))
+    throw invalid4("tests.passed");
+  return { cases, passed };
+}
+function readBaseline(raw) {
+  try {
+    return parseEvalBaseline(raw);
+  } catch (e) {
+    if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_QUALITY_INVALID") {
+      throw invalid4("baseline");
+    }
+    throw e;
+  }
+}
+function parseLivenessEntry(raw) {
+  if (!isObject3(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
+    throw invalid4("entry");
+  }
+  const checkedAt = raw["checkedAt"];
+  if (!isIsoUtc(checkedAt))
+    throw invalid4("checkedAt");
+  const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
+  const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
+  const baseline = Object.hasOwn(raw, "baseline") ? readBaseline(raw["baseline"]) : undefined;
+  if (hosts === undefined && tests === undefined && baseline === undefined) {
+    throw invalid4("entry carries no result");
+  }
+  return {
+    checkedAt,
+    ...hosts === undefined ? {} : { hosts },
+    ...tests === undefined ? {} : { tests },
+    ...baseline === undefined ? {} : { baseline }
+  };
+}
 // ../../registry-format/src/provenance.ts
 var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject3 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function readManifestRepository(rawManifest) {
-  if (!isObject3(rawManifest))
+  if (!isObject4(rawManifest))
     return;
   const v = rawManifest["repository"];
   return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
@@ -9368,16 +9466,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject3(entry))
+  if (!isObject4(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject3(result) ? result["statement"] : undefined;
-  if (!isObject3(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject4(result) ? result["statement"] : undefined;
+  if (!isObject4(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject3(result) ? result["signature"] : undefined;
-  const cert = isObject3(signature) ? signature["certificate"] : undefined;
-  if (!isObject3(cert))
+  const signature = isObject4(result) ? result["signature"] : undefined;
+  const cert = isObject4(signature) ? signature["certificate"] : undefined;
+  if (!isObject4(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -9777,22 +9875,22 @@ var TAKEDOWN_REQUIRED = ["kind", "extensionId", "versions", "reason"];
 var PLACEHOLDER_KEY = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE = `${"A".repeat(86)}==`;
 var PLACEHOLDER_PUBLISHER = "placeholder";
-function invalid4(detail) {
+function invalid5(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
 function exactKeys2(o, allowed, required) {
   for (const k of Object.keys(o)) {
     if (!allowed.includes(k))
-      throw invalid4(`a request has an unknown key: ${k}`);
+      throw invalid5(`a request has an unknown key: ${k}`);
   }
   for (const k of required) {
     if (!Object.hasOwn(o, k))
-      throw invalid4(`a request is missing key: ${k}`);
+      throw invalid5(`a request is missing key: ${k}`);
   }
 }
 function parseRegistryRequest(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid4("a request must be an object");
+    throw invalid5("a request must be an object");
   }
   const o = raw;
   const signer = {
@@ -9826,18 +9924,18 @@ function parseRegistryRequest(raw) {
       reason: s.reason
     };
   }
-  throw invalid4("a request's kind must be key.revoke or extension.takedown");
+  throw invalid5("a request's kind must be key.revoke or extension.takedown");
 }
 function takedownPublisher(req, index) {
   const entry = Object.hasOwn(index.extensions, req.extensionId) ? index.extensions[req.extensionId] : undefined;
   if (entry !== undefined) {
     if (req.publisherId !== undefined && req.publisherId !== entry.publisher.id) {
-      throw invalid4(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
+      throw invalid5(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
     }
     return entry.publisher.id;
   }
   if (req.publisherId === undefined) {
-    throw invalid4(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
+    throw invalid5(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
   }
   return req.publisherId;
 }
@@ -9847,13 +9945,13 @@ function assertRequestSignable(req, index) {
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
-    throw invalid4("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+    throw invalid5("a registry cannot revoke its own root key this way; re-initialise the registry instead");
   }
 }
 async function signRegistryRequest(req, index, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== index.rootKey) {
-    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
+    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
   }
   assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
@@ -9890,7 +9988,7 @@ function alreadyCarried(index, req, role = "registry") {
 async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== feedRootKey) {
-    throw invalid4(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
+    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
   }
   assertFeedRequestSignable(req, feedRootKey);
   return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
@@ -9898,12 +9996,12 @@ async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
 function assertFeedRequestSignable(req, feedRootKey) {
   if (req.kind === "extension.takedown") {
     if (req.publisherId === undefined) {
-      throw invalid4(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
+      throw invalid5(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
     }
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(feedRootKey)) {
-    throw invalid4("the trust feed cannot revoke its own root key");
+    throw invalid5("the trust feed cannot revoke its own root key");
   }
 }
 // ../../registry-format/src/scores-file.ts
@@ -10037,10 +10135,10 @@ var FEED_STATEMENTS_DIR = "statements/";
 var PLACEHOLDER_KEY2 = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE2 = `${"A".repeat(86)}==`;
 var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
-function invalid5(detail) {
+function invalid6(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject5 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -10048,17 +10146,17 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject4(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject5(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject4(raw))
-    throw invalid5("a publisher file must be an object");
+  if (!isObject5(raw))
+    throw invalid6("a publisher file must be an object");
   for (const k of Object.keys(raw)) {
     if (!PUBLISHER_FILE_KEYS.includes(k)) {
-      throw invalid5(`a publisher file has an unknown key: ${k}`);
+      throw invalid6(`a publisher file has an unknown key: ${k}`);
     }
   }
   const s = parseTrustStatement({
@@ -10070,14 +10168,14 @@ function parsePublisherFile(path, raw) {
     signature: PLACEHOLDER_SIGNATURE2
   });
   if (baseName(path, FEED_PUBLISHERS_DIR) !== s.publisherId) {
-    throw invalid5(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
+    throw invalid6(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
   }
   return { publisherId: s.publisherId, keys: [...s.keys].sort(codeUnitCompare), github: s.github };
 }
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject4(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject5(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
@@ -11835,27 +11933,361 @@ async function runCheck(opts, deps = SHARED2) {
   }
 }
 
-// src/score-package.ts
+// src/liveness-check.ts
 import { createHash as createHash7 } from "node:crypto";
-import {
-  closeSync as closeSync4,
-  mkdirSync as mkdirSync2,
-  mkdtempSync as mkdtempSync6,
-  openSync as openSync4,
-  readSync as readSync3,
-  rmSync as rmSync5,
-  writeFileSync as writeFileSync5
-} from "node:fs";
+import { mkdtempSync as mkdtempSync6, rmSync as rmSync5, writeFileSync as writeFileSync5 } from "node:fs";
 import { tmpdir as osTmpdir4 } from "node:os";
 import { join as join7 } from "node:path";
+
+// src/host-probe.ts
+import { lookup as dnsLookup } from "node:dns";
+import { BlockList, isIP, connect as netConnect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+var TLS_PORTS = new Set([443, 465, 636, 853, 993, 995, 8443]);
+var HOST_LOOKUP_TIMEOUT_MS = 5000;
+var HOST_CONNECT_TIMEOUT_MS = 5000;
+var MAX_HOSTS_PER_RUN = 500;
+var HOST_CONCURRENCY = 8;
+var V4_BLOCKED = [
+  ["0.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["100.64.0.0", 10],
+  ["127.0.0.0", 8],
+  ["169.254.0.0", 16],
+  ["172.16.0.0", 12],
+  ["192.0.0.0", 24],
+  ["192.0.2.0", 24],
+  ["192.168.0.0", 16],
+  ["198.18.0.0", 15],
+  ["198.51.100.0", 24],
+  ["203.0.113.0", 24],
+  ["224.0.0.0", 4],
+  ["240.0.0.0", 4]
+];
+var V6_BLOCKED = [
+  ["::", 128],
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+  ["fec0::", 10],
+  ["ff00::", 8],
+  ["100::", 64],
+  ["2001::", 23],
+  ["2001:db8::", 32],
+  ["2002::", 16],
+  ["64:ff9b::", 96],
+  ["64:ff9b:1::", 48]
+];
+var BLOCKED = new BlockList;
+for (const [net, prefix] of V4_BLOCKED)
+  BLOCKED.addSubnet(net, prefix, "ipv4");
+for (const [net, prefix] of V6_BLOCKED)
+  BLOCKED.addSubnet(net, prefix, "ipv6");
+function ipv6Groups(address) {
+  let host;
+  try {
+    host = new URL(`http://[${address}]/`).hostname.slice(1, -1);
+  } catch {
+    return;
+  }
+  const halves = host.split("::");
+  if (halves.length > 2)
+    return;
+  const head = halves[0] === "" ? [] : (halves[0] ?? "").split(":");
+  const tail = halves.length === 2 && halves[1] !== "" ? (halves[1] ?? "").split(":") : [];
+  const missing = 8 - head.length - tail.length;
+  if (halves.length === 1 ? missing !== 0 : missing < 0)
+    return;
+  const groups = [
+    ...head,
+    ...new Array(halves.length === 2 ? missing : 0).fill("0"),
+    ...tail
+  ];
+  if (groups.length !== 8)
+    return;
+  const out = groups.map((g) => /^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN);
+  return out.some(Number.isNaN) ? undefined : out;
+}
+function isPublicAddress(address) {
+  const family = isIP(address.split("%")[0] ?? "");
+  const bare = family === 6 ? address.split("%")[0] ?? "" : address;
+  if (family === 4 && !address.includes("%"))
+    return !BLOCKED.check(bare, "ipv4");
+  if (family !== 6 || bare.length === 0)
+    return false;
+  const g = ipv6Groups(bare);
+  if (g === undefined)
+    return false;
+  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 65535 && g[5] === 0) {
+    const hi = g[6] ?? 0;
+    const lo = g[7] ?? 0;
+    return !BLOCKED.check(`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`, "ipv4");
+  }
+  const zeroPrefix = g.slice(0, 5).every((x) => x === 0);
+  if (zeroPrefix && (g[5] === 65535 || g[5] === 0)) {
+    const hi = g[6] ?? 0;
+    const lo = g[7] ?? 0;
+    const v4 = `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    return !BLOCKED.check(v4, "ipv4") && (g[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
+  }
+  return !BLOCKED.check(bare, "ipv6");
+}
+function realLookup(host) {
+  return new Promise((resolve, reject) => {
+    dnsLookup(host, { all: true, verbatim: true }, (err, addresses) => {
+      if (err !== null) {
+        reject(err);
+        return;
+      }
+      resolve(addresses.map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 })));
+    });
+  });
+}
+function realConnect(o) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer;
+    const socket = o.tls ? tlsConnect({ host: o.address, port: o.port, servername: o.servername }) : netConnect({ host: o.address, port: o.port, family: o.family });
+    const done = (ok) => {
+      if (settled)
+        return;
+      settled = true;
+      clearTimeout(timer);
+      socket.destroy();
+      resolve(ok);
+    };
+    timer = setTimeout(() => done(false), o.timeoutMs);
+    socket.setTimeout(o.timeoutMs, () => done(false));
+    socket.on("error", () => done(false));
+    socket.on("close", () => done(false));
+    socket.on(o.tls ? "secureConnect" : "connect", () => done(true));
+  });
+}
+var REAL_HOST_PROBE = { lookup: realLookup, connect: realConnect };
+function withTimeout(p, ms) {
+  let timer;
+  const limit = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  });
+  return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+}
+async function probeHost(entry, deps = REAL_HOST_PROBE, opts = {}) {
+  const lookupMs = opts.lookupTimeoutMs ?? HOST_LOOKUP_TIMEOUT_MS;
+  const connectMs = opts.connectTimeoutMs ?? HOST_CONNECT_TIMEOUT_MS;
+  try {
+    const answers = await withTimeout(deps.lookup(entry.host), lookupMs);
+    const first = answers[0];
+    if (first === undefined)
+      return false;
+    if (!answers.every((a) => isPublicAddress(a.address)))
+      return false;
+    return await withTimeout(deps.connect({
+      address: first.address,
+      family: first.family,
+      port: entry.port,
+      servername: entry.host,
+      tls: TLS_PORTS.has(entry.port),
+      timeoutMs: connectMs
+    }), connectMs + 500);
+  } catch {
+    return false;
+  }
+}
+var MAX_DECLARED = 1000;
+async function probeHosts(entries, deps = REAL_HOST_PROBE) {
+  const seen = new Map;
+  for (const e of entries) {
+    const key = `${e.host.toLowerCase()}:${String(e.port)}`;
+    if (!seen.has(key))
+      seen.set(key, e);
+  }
+  const distinct = [...seen.values()];
+  const work = distinct.slice(0, MAX_HOSTS_PER_RUN);
+  let answered = 0;
+  let next = 0;
+  const worker = async () => {
+    while (next < work.length) {
+      const entry = work[next];
+      next += 1;
+      if (await probeHost(entry, deps))
+        answered += 1;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(HOST_CONCURRENCY, work.length) }, worker));
+  return { declared: Math.min(distinct.length, MAX_DECLARED), answered };
+}
+
+// src/liveness-check.ts
+var LIVENESS_RUN_BUDGET_MS = 45 * 60000;
+var LIVENESS_RESULTS_FORMAT = 1;
 var SHARED3 = {
+  git: exports_git_tree,
   io: GHA_IO,
   tmpdir: osTmpdir4,
   runRole: roleRunner(),
   runBaseline: baselineRoleRunner(),
+  probe: REAL_HOST_PROBE,
   now: Date.now
 };
 var sha256Hex3 = (b) => createHash7("sha256").update(b).digest("hex");
+function assertNimbusVersion(v) {
+  if (!NIMBUS_VERSION_RE.test(v)) {
+    throw new Error(`input "nimbus-version" must be a Nimbus release number such as 10.14.1; got ${JSON.stringify(clip(v))}`);
+  }
+}
+function newestStableVersions(index) {
+  const out = [];
+  for (const id of Object.keys(index.extensions).sort()) {
+    const versions = index.extensions[id]?.versions ?? {};
+    const stable = Object.keys(versions).filter((v) => versions[v]?.channel === "stable" && isValidSemver(v)).sort(compareVersionsDesc);
+    const [newest] = stable;
+    if (newest !== undefined)
+      out.push({ id, version: newest });
+  }
+  return out;
+}
+function testFailure(code) {
+  if (code === "ERR_EVAL_SANDBOX_UNAVAILABLE")
+    return "sandbox-unavailable";
+  if (code === "ERR_EVAL_TIMEOUT")
+    return "run-timeout";
+  return "run-failed";
+}
+function declaredHosts(network) {
+  const hosts = [];
+  for (const raw of network) {
+    const e = parseNetworkEntry(raw);
+    if (e.host !== "" && Number.isInteger(e.port) && e.port >= 1 && e.port <= 65535)
+      hosts.push(e);
+  }
+  return hosts;
+}
+async function checkPackage(c, id, version) {
+  const { deps, opts } = c;
+  const ref = `${id}@${version}`;
+  const v = c.index.extensions[id]?.versions[version];
+  if (v === undefined)
+    return;
+  const at = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
+  if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+    deps.io.log(`liveness: ${ref} not checked: the run's time budget is spent`);
+    return;
+  }
+  const packageBytes = deps.git.readBlob(PAGES_REF, v.package, { cwd: opts.workspace });
+  if (sha256Hex3(packageBytes) !== v.packageSha256) {
+    deps.io.log(`liveness: ${ref} not checked: its package differs from the index's packageSha256`);
+    return;
+  }
+  const checkedAt = new Date(deps.now()).toISOString();
+  const dir = mkdtempSync6(join7(c.work, "pkg-"));
+  try {
+    const tgz = join7(dir, "package.tgz");
+    writeFileSync5(tgz, packageBytes, { flag: "wx" });
+    const inspected = await inspectPackage(tgz, dir);
+    const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
+    if (isStarterPack(manifest))
+      return;
+    const hasEvals = inspected.files.some((f) => isEvalSuiteFile(f));
+    const hostList = declaredHosts(manifest.permissions.network);
+    const hosts = hostList.length === 0 ? undefined : await probeHosts(hostList, deps.probe);
+    const cand = { verdict: { id, version, packageSha256: v.packageSha256 }, packageBytes };
+    const baselineRun = await baselineCandidate(cand, {
+      gateway: opts.gateway,
+      work: c.work,
+      timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now))
+    }, deps.runBaseline);
+    const baseline = "baseline" in baselineRun ? baselineRun.baseline : undefined;
+    if (baseline === undefined && "error" in baselineRun) {
+      deps.io.log(`liveness: no baseline for ${ref} (${baselineRun.error.code})`);
+    }
+    let tests;
+    if (hasEvals)
+      tests = await runSuites(c, cand, at);
+    const raw = {
+      checkedAt,
+      ...hosts !== undefined && hosts.declared > 0 && { hosts },
+      ...tests !== undefined && { tests },
+      ...baseline !== undefined && { baseline }
+    };
+    try {
+      return parseLivenessEntry(raw);
+    } catch (e) {
+      deps.io.log(`liveness: ${ref} has no publishable result: ${clip(e instanceof Error ? e.message : String(e))}`);
+      return;
+    }
+  } finally {
+    removeQuietly((p) => rmSync5(p, { recursive: true, force: true }), dir);
+  }
+}
+async function runSuites(c, cand, at) {
+  const { deps } = c;
+  const left = budgetLeft(at, deps.now);
+  const ref = `${cand.verdict.id}@${cand.verdict.version}`;
+  if (left < SCORE_MIN_RUN_MS) {
+    deps.io.log(`liveness: suites of ${ref} not run: under ${duration(SCORE_MIN_RUN_MS)} of the time budget left`);
+    return;
+  }
+  const r = await scoreCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) }, deps.runRole, deps.io.log);
+  if ("error" in r)
+    return { failure: testFailure(r.error.code) };
+  if (r.quality.cases < 1)
+    return;
+  return { cases: r.quality.cases, passed: r.quality.passed };
+}
+async function runLivenessCheck(opts, deps = SHARED3) {
+  assertNimbusVersion(opts.nimbusVersion);
+  const deadline = deps.now() + LIVENESS_RUN_BUDGET_MS;
+  assertGateway(opts.gateway);
+  deps.git.fetchRefs([PAGES_BRANCH], { cwd: opts.workspace });
+  const index = await readVerifiedIndex(deps.git, opts.workspace);
+  const work = mkdtempSync6(join7(deps.tmpdir(), "nimbus-registry-liveness-"));
+  const extensions = Object.create(null);
+  try {
+    const ctx = { opts, deps, work, deadline, index };
+    for (const { id, version } of newestStableVersions(index)) {
+      try {
+        const entry = await checkPackage(ctx, id, version);
+        if (entry !== undefined)
+          extensions[`${id}@${version}`] = entry;
+      } catch (e) {
+        deps.io.log(`liveness: ${id}@${version} not checked: ${clip(e instanceof Error ? e.message : String(e))}`);
+      }
+    }
+  } finally {
+    rmSync5(work, { recursive: true, force: true });
+  }
+  const results = {
+    format: LIVENESS_RESULTS_FORMAT,
+    nimbusVersion: opts.nimbusVersion,
+    extensions
+  };
+  writeFileAtomic(opts.out, `${JSON.stringify(results, null, 2)}
+`);
+  deps.io.log(`liveness: wrote ${String(Object.keys(extensions).length)} entr(ies)`);
+  return results;
+}
+
+// src/score-package.ts
+import { createHash as createHash8 } from "node:crypto";
+import {
+  closeSync as closeSync4,
+  mkdirSync as mkdirSync2,
+  mkdtempSync as mkdtempSync7,
+  openSync as openSync4,
+  readSync as readSync3,
+  rmSync as rmSync6,
+  writeFileSync as writeFileSync6
+} from "node:fs";
+import { tmpdir as osTmpdir5 } from "node:os";
+import { join as join8 } from "node:path";
+var SHARED4 = {
+  io: GHA_IO,
+  tmpdir: osTmpdir5,
+  runRole: roleRunner(),
+  runBaseline: baselineRoleRunner(),
+  now: Date.now
+};
+var sha256Hex4 = (b) => createHash8("sha256").update(b).digest("hex");
 function notATgz(path, why) {
   return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
 }
@@ -11894,29 +12326,29 @@ function readPackageBytes(path) {
     throw notATgz(path, "is not gzip data");
   return bytes;
 }
-async function runScorePackage(opts, deps = SHARED3) {
+async function runScorePackage(opts, deps = SHARED4) {
   const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
   assertGateway(opts.gateway);
   const packageBytes = readPackageBytes(opts.package);
-  const work = mkdtempSync6(join7(deps.tmpdir(), "nimbus-registry-score-package-"));
+  const work = mkdtempSync7(join8(deps.tmpdir(), "nimbus-registry-score-package-"));
   const run = emptyRun();
   try {
-    const inspectDir = join7(work, "inspect");
+    const inspectDir = join8(work, "inspect");
     mkdirSync2(inspectDir);
-    const tgz = join7(inspectDir, "package.tgz");
-    writeFileSync5(tgz, packageBytes, { flag: "wx" });
+    const tgz = join8(inspectDir, "package.tgz");
+    writeFileSync6(tgz, packageBytes, { flag: "wx" });
     const inspected = await inspectPackage(tgz, inspectDir);
     const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
     const verdict = {
       id: manifest.id,
       version: manifest.version,
-      packageSha256: sha256Hex3(packageBytes),
+      packageSha256: sha256Hex4(packageBytes),
       hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
       starterPack: isStarterPack(manifest)
     };
     await recordVersion(run, { verdict, packageBytes }, { gateway: opts.gateway, work, deadline, mode: "score-package" }, deps);
   } finally {
-    rmSync5(work, { recursive: true, force: true });
+    rmSync6(work, { recursive: true, force: true });
   }
   writeFileAtomic(opts.out, `${JSON.stringify(run.scores, null, 2)}
 `);
@@ -11925,15 +12357,15 @@ async function runScorePackage(opts, deps = SHARED3) {
 }
 
 // src/sign.ts
-import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
-import { tmpdir as osTmpdir5 } from "node:os";
-import { join as join9 } from "node:path";
+import { mkdtempSync as mkdtempSync9, rmSync as rmSync8 } from "node:fs";
+import { tmpdir as osTmpdir6 } from "node:os";
+import { join as join10 } from "node:path";
 
 // src/site-commit.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import { mkdtempSync as mkdtempSync7, rmSync as rmSync6 } from "node:fs";
+import { mkdtempSync as mkdtempSync8, rmSync as rmSync7 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join as join8 } from "node:path";
+import { join as join9 } from "node:path";
 var BOT_NAME = "github-actions[bot]";
 var BOT_EMAIL = "41898282+github-actions[bot]@users.noreply.github.com";
 var BOT_IDENTITY = ["-c", `user.name=${BOT_NAME}`, "-c", `user.email=${BOT_EMAIL}`];
@@ -11954,9 +12386,9 @@ function run(args, opts) {
   }).toString("utf8").trim();
 }
 function commitSite(parent, files, message, cwd) {
-  const scratch = mkdtempSync7(join8(tmpdir(), "nimbus-registry-site-"));
+  const scratch = mkdtempSync8(join9(tmpdir(), "nimbus-registry-site-"));
   try {
-    const env = { ...process.env, GIT_INDEX_FILE: join8(scratch, "index") };
+    const env = { ...process.env, GIT_INDEX_FILE: join9(scratch, "index") };
     run(["read-tree", parent], { cwd, env });
     for (const f of files) {
       assertSafeTreePath(f.path);
@@ -11971,7 +12403,7 @@ function commitSite(parent, files, message, cwd) {
       env: { ...process.env, ...BOT_ENV }
     });
   } finally {
-    rmSync6(scratch, { recursive: true, force: true });
+    rmSync7(scratch, { recursive: true, force: true });
   }
 }
 var NON_FAST_FORWARD = /non-fast-forward|fetch first|\[rejected\]/;
@@ -11992,12 +12424,12 @@ function pushCommit(commit, branch, cwd) {
 }
 
 // src/sign.ts
-var SHARED4 = {
+var SHARED5 = {
   validate: validatePublish,
   sign: signIndex,
   git: exports_git_tree,
   io: GHA_IO,
-  tmpdir: osTmpdir5
+  tmpdir: osTmpdir6
 };
 var MAX_ATTEMPTS = 3;
 var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
@@ -12014,7 +12446,7 @@ async function provenanceFor(v, packageBytes, at, deps, memo) {
   let r = memo.get(v.packageSha256);
   if (r === undefined) {
     r = await verifyNeverThrowing(deps.verify, {
-      pkgPath: join9(at.work, `provenance-${v.packageSha256}.tgz`),
+      pkgPath: join10(at.work, `provenance-${v.packageSha256}.tgz`),
       packageBytes,
       repository: v.repository,
       verifiedAt: at.verifiedAt
@@ -12078,7 +12510,7 @@ async function attemptSign(opts, run, deps) {
   const publishedAt = git.commitTime(mainRef, { cwd });
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
-  const work = mkdtempSync8(join9(deps.tmpdir(), "nimbus-registry-sign-"));
+  const work = mkdtempSync9(join10(deps.tmpdir(), "nimbus-registry-sign-"));
   const batch = { extensions, files, added, skipped, publishedAt, work };
   try {
     for await (const o of validateUnsigned({
@@ -12099,7 +12531,7 @@ async function attemptSign(opts, run, deps) {
       await takeCandidate(o, batch, run, opts, deps);
     }
   } finally {
-    rmSync7(work, { recursive: true, force: true });
+    rmSync8(work, { recursive: true, force: true });
   }
   const requested = await signRequests(git, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
   const reportUrl = reportUrlFor(index, opts.repository);
@@ -12239,7 +12671,7 @@ async function signLoop(opts, seed, scores, deps) {
   warnSkipped(deps.io, last);
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
 }
-async function runSign(opts, deps = SHARED4) {
+async function runSign(opts, deps = SHARED5) {
   const seed = parseRootKey(opts.rootKey);
   try {
     const scores = opts.scores === undefined ? undefined : readScores(opts.scores);
@@ -12350,7 +12782,7 @@ function planLines(plan, skipped) {
 }
 
 // src/trust-check.ts
-var SHARED5 = { git: exports_git_tree, io: GHA_IO };
+var SHARED6 = { git: exports_git_tree, io: GHA_IO };
 function assertSourceOnly(changes) {
   if (changes.length === 0)
     throw new Error("the pull request changes no files");
@@ -12359,7 +12791,7 @@ function assertSourceOnly(changes) {
     throw new Error(`a trust feed pull request may only change ${FEED_SOURCE_DIRS.join(", ")}; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")} (workflows and nimbus-trust.json are maintainer edits made by hand)`);
   }
 }
-async function runTrustCheck(opts, deps = SHARED5) {
+async function runTrustCheck(opts, deps = SHARED6) {
   const { git } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
@@ -12394,7 +12826,7 @@ async function runTrustCheck(opts, deps = SHARED5) {
 }
 
 // src/trust-sign.ts
-var SHARED6 = { git: exports_git_tree, io: GHA_IO };
+var SHARED7 = { git: exports_git_tree, io: GHA_IO };
 var MAX_ATTEMPTS2 = 3;
 var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey2(raw) {
@@ -12451,7 +12883,7 @@ async function signLoop2(opts, seed, deps) {
   }
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS2)} times`);
 }
-async function runTrustSign(opts, deps = SHARED6) {
+async function runTrustSign(opts, deps = SHARED7) {
   const seed = parseRootKey2(opts.rootKey);
   try {
     await signLoop2(opts, seed, deps);
@@ -12466,6 +12898,7 @@ var MODES = [
   "sign",
   "score",
   "score-package",
+  "liveness-check",
   "trust-check",
   "trust-sign"
 ];
@@ -12473,7 +12906,7 @@ function parseMode(raw) {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined)
     return mode;
-  throw new Error(`input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
+  throw new Error(`input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
 }
 function takeRootKey() {
   const rootKey = requireInput("root-key");
@@ -12527,21 +12960,24 @@ function refuseSecrets(names, refusal) {
     throw new Error(refusal(first));
 }
 function refuseSecretsInScore(mode) {
-  refuseSecrets(["root-key", "github-token"], (name) => `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`);
+  refuseSecrets(["root-key", "github-token", "liveness-key"], (name) => `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`);
+}
+function refuseSecretsInLivenessCheck() {
+  refuseSecrets(["root-key", "github-token", "liveness-key"], (name) => `input "${name}" must not be set in liveness-check mode: liveness-check runs extension code and holds no secrets`);
 }
 function checkInputs() {
   const gateway = getInput("nimbus-gateway");
   if (gateway === "")
     return { githubToken: takeGithubToken() };
-  refuseSecrets(["github-token"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
+  refuseSecrets(["github-token", "root-key", "liveness-key"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
   return { gateway };
 }
 function scoresPath(ws, input) {
   const rel = input === "" ? "scores.json" : input;
-  return isAbsolute2(rel) ? rel : join10(ws, rel);
+  return isAbsolute2(rel) ? rel : join11(ws, rel);
 }
 function resolveInWorkspace(ws, input) {
-  return isAbsolute2(input) ? input : join10(ws, input);
+  return isAbsolute2(input) ? input : join11(ws, input);
 }
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
@@ -12568,6 +13004,15 @@ async function main() {
         out: scoresPath(workspace(), getInput("scores")),
         ...defaultBranch !== "" && { defaultBranch }
       });
+    } else if (mode === "liveness-check") {
+      refuseSecretsInLivenessCheck();
+      const results = getInput("results");
+      await runLivenessCheck({
+        workspace: workspace(),
+        gateway: getInput("nimbus-gateway"),
+        nimbusVersion: getInput("nimbus-version"),
+        out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results)
+      });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });
     } else if (mode === "trust-sign") {
@@ -12578,7 +13023,7 @@ async function main() {
         rootKey,
         ...defaultBranch !== "" && { defaultBranch }
       });
-    } else {
+    } else if (mode === "sign") {
       const rootKey = takeRootKey();
       const githubToken = takeGithubToken();
       const scores = getInput("scores");
@@ -12587,6 +13032,8 @@ async function main() {
         githubToken,
         ...scores !== "" && { scores: scoresPath(workspace(), scores) }
       });
+    } else {
+      throw new Error(`mode ${JSON.stringify(mode)} has no handler`);
     }
   } catch (err) {
     emitAnnotation("error", err instanceof Error ? err.message : String(err));
