@@ -651,4 +651,19 @@ describe("maintainer requests and the report URL (trust layer PR 4a)", () => {
     );
     expect(originIndex(repo).reportUrl).toBe("https://github.com/acme/registry/issues/new");
   });
+
+  test("keeps the index's livenessKey across a sign run", async () => {
+    syncMaintainer(repo, "gh-pages");
+    const { signature: _omit, ...unsigned } = originIndex(repo);
+    const livenessKey = b64(publicKeyFromSeed(OTHER_SEED));
+    const withKey = await signIndex({ ...unsigned, livenessKey }, ROOT_SEED);
+    write(repo.maintainer, "index.json", `${JSON.stringify(withKey, null, 2)}\n`);
+    pushMaintainer(repo, "gh-pages", "name a liveness key");
+    await mergePublish();
+    await sign();
+    const index = originIndex(repo);
+    expect(index.livenessKey).toBe(livenessKey);
+    expect(Object.keys(index.extensions)).toEqual(["acme/echo"]);
+    await expect(verifyRegistryIndexPinned(index, ROOT_PUBLIC_KEY)).resolves.toBeUndefined();
+  });
 });

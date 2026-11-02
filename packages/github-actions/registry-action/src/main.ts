@@ -2,6 +2,7 @@ import { isAbsolute, join } from "node:path";
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
 import { runLivenessCheck } from "./liveness-check.ts";
+import { runLivenessSign } from "./liveness-sign.ts";
 import { runScore } from "./score.ts";
 import { runScorePackage } from "./score-package.ts";
 import { runSign, type SignOptions } from "./sign.ts";
@@ -14,6 +15,7 @@ export type Mode =
   | "score"
   | "score-package"
   | "liveness-check"
+  | "liveness-sign"
   | "trust-check"
   | "trust-sign";
 
@@ -23,6 +25,7 @@ const MODES: readonly Mode[] = [
   "score",
   "score-package",
   "liveness-check",
+  "liveness-sign",
   "trust-check",
   "trust-sign",
 ];
@@ -32,7 +35,7 @@ export function parseMode(raw: string): Mode {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined) return mode;
   throw new Error(
-    `input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+    `input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "liveness-sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -43,6 +46,15 @@ function takeRootKey(): string {
   // Every git child inherits this process's environment: the key must not ride along.
   delete process.env[inputEnvName("root-key")];
   return rootKey;
+}
+
+/** The `liveness-key` input, masked and dropped from the environment before anything else runs. */
+function takeLivenessKey(): string {
+  const key = requireInput("liveness-key");
+  maskSecret(key);
+  // Every git child inherits this process's environment: the key must not ride along.
+  delete process.env[inputEnvName("liveness-key")];
+  return key;
 }
 
 function requireInput(name: string): string {
@@ -136,6 +148,15 @@ function refuseSecretsInLivenessCheck(): void {
   );
 }
 
+/** `liveness-sign` holds the liveness key only: a `root-key` handed to it is refused. */
+function refuseSecretsInLivenessSign(): void {
+  refuseSecrets(
+    ["root-key"],
+    (name) =>
+      `input "${name}" must not be set in liveness-sign mode: liveness-sign signs with the liveness key alone`,
+  );
+}
+
 /**
  * The `check` mode's inputs. With `nimbus-gateway` set, check runs extension code, so a
  * `github-token` is refused (and provenance is left to the sign job); without it, as before.
@@ -196,6 +217,21 @@ export async function main(): Promise<void> {
         gateway: getInput("nimbus-gateway"),
         nimbusVersion: getInput("nimbus-version"),
         out: resolveInWorkspace(workspace(), results === "" ? "liveness-results.json" : results),
+      });
+    } else if (mode === "liveness-sign") {
+      const livenessKey = takeLivenessKey();
+      refuseSecretsInLivenessSign();
+      const defaultBranch = getInput("default-branch");
+      const results = getInput("results");
+      await runLivenessSign({
+        workspace: workspace(),
+        livenessKey,
+        results: resolveInWorkspace(
+          workspace(),
+          results === "" ? "liveness-results.json" : results,
+        ),
+        nimbusVersion: getInput("nimbus-version"),
+        ...(defaultBranch !== "" && { defaultBranch }),
       });
     } else if (mode === "trust-check") {
       await runTrustCheck({ workspace: workspace(), baseRef });

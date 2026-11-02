@@ -9,13 +9,14 @@ describe("parseMode", () => {
     expect(parseMode("score")).toBe("score");
     expect(parseMode("score-package")).toBe("score-package");
     expect(parseMode("liveness-check")).toBe("liveness-check");
+    expect(parseMode("liveness-sign")).toBe("liveness-sign");
     expect(parseMode("trust-check")).toBe("trust-check");
     expect(parseMode("trust-sign")).toBe("trust-sign");
   });
 
   test.each(["", "Check", "sign ", "publish"])("refuses %p with a clear message", (raw) => {
     expect(() => parseMode(raw)).toThrow(
-      `input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+      `input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "liveness-sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
     );
   });
 });
@@ -319,7 +320,40 @@ describe("main", () => {
     await main();
     expect(process.exitCode).toBe(1);
     expect(out.join("")).toContain(
-      '::error::input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "trust-check" or "trust-sign"',
+      '::error::input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "liveness-sign", "trust-check" or "trust-sign"',
     );
+  });
+
+  test("liveness-sign refuses a root-key input: masked, dropped, never printed", async () => {
+    const value = "definitely-secret-value";
+    process.env["INPUT_MODE"] = "liveness-sign";
+    process.env["INPUT_ROOT-KEY"] = value;
+    process.env["INPUT_LIVENESS-KEY"] = "another-secret-value";
+    await main();
+    expect(process.exitCode).toBe(1);
+    const all = out.join("");
+    expect(all).toContain(`::add-mask::${value}`);
+    expect(all).toContain('::error::input "root-key" must not be set in liveness-sign mode');
+    expect(all.replace(`::add-mask::${value}`, "")).not.toContain(value);
+    expect(process.env["INPUT_ROOT-KEY"]).toBeUndefined();
+    expect(process.env["INPUT_LIVENESS-KEY"]).toBeUndefined();
+  });
+
+  test("liveness-sign masks the liveness-key and drops it from the environment once read", async () => {
+    const value = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
+    process.env["INPUT_MODE"] = "liveness-sign";
+    process.env["INPUT_LIVENESS-KEY"] = value;
+    process.env["GITHUB_WORKSPACE"] = join(process.cwd(), "absent-workspace");
+    await main();
+    expect(out.join("")).toContain(`::add-mask::${value}`);
+    expect(process.env["INPUT_LIVENESS-KEY"]).toBeUndefined();
+  });
+
+  test("liveness-sign without a liveness-key fails the step", async () => {
+    process.env["INPUT_MODE"] = "liveness-sign";
+    delete process.env["INPUT_LIVENESS-KEY"];
+    await main();
+    expect(process.exitCode).toBe(1);
+    expect(out.join("")).toContain('input "liveness-key" is required');
   });
 });
