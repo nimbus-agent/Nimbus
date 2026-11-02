@@ -92,7 +92,7 @@ export function parseLivenessFile(bytes: Uint8Array): LivenessFile {
     "extensions",
     "signature",
   ]) {
-    if (!(k in o)) throw invalid(`liveness.json is missing key: ${k}`);
+    if (!Object.hasOwn(o, k)) throw invalid(`liveness.json is missing key: ${k}`);
   }
   if (o["format"] !== 1) throw invalid("unsupported liveness format");
   const sequence = o["sequence"];
@@ -205,7 +205,7 @@ function readTests(
   raw: unknown,
 ): { cases: number; passed: number } | { failure: LivenessTestFailure } {
   if (!isObject(raw)) throw invalid("tests");
-  if ("failure" in raw) {
+  if (Object.hasOwn(raw, "failure")) {
     const failure = raw["failure"];
     if (!onlyKeys(raw, ["failure"])) throw invalid("tests");
     if (!(LIVENESS_TEST_FAILURES as readonly unknown[]).includes(failure)) {
@@ -229,9 +229,9 @@ function parseEntry(raw: unknown): LivenessEntry {
   if (typeof checkedAt !== "string" || Number.isNaN(Date.parse(checkedAt))) {
     throw invalid("checkedAt");
   }
-  const hosts = "hosts" in raw ? readHosts(raw["hosts"]) : undefined;
-  const tests = "tests" in raw ? readTests(raw["tests"]) : undefined;
-  const baseline = "baseline" in raw ? parseEvalBaseline(raw["baseline"]) : undefined;
+  const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
+  const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
+  const baseline = Object.hasOwn(raw, "baseline") ? parseEvalBaseline(raw["baseline"]) : undefined;
   if (hosts === undefined && tests === undefined && baseline === undefined) {
     throw invalid("entry carries no result");
   }

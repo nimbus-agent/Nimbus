@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import nacl from "tweetnacl";
 
+import { MAX_EVAL_CASES } from "./caps.ts";
 import { RegistryError } from "./errors.ts";
 import {
   type LivenessFile,
@@ -176,7 +177,14 @@ describe("readLivenessEntry", () => {
       { checkedAt: at, tests: { cases: 2, passed: 1, failure: "run-failed" } },
       { checkedAt: at, tests: { failure: "boom" } },
       { checkedAt: "nope", hosts: { declared: 1, answered: 1 } },
-      { checkedAt: at, baseline: { scorer: 9 } },
+      { checkedAt: at, baseline: { scorer: 9, passed: true, tools: 3 } },
+      { checkedAt: at, hosts: { declared: 1001, answered: 0 } },
+      { checkedAt: at, hosts: { declared: 1.5, answered: 1 } },
+      { checkedAt: at, hosts: { declared: 3, answered: -1 } },
+      { checkedAt: at, tests: { cases: 0, passed: 0 } },
+      { checkedAt: at, tests: { cases: MAX_EVAL_CASES + 1, passed: 0 } },
+      { checkedAt: at, tests: { cases: 2, passed: 1.5 } },
+      { checkedAt: at, tests: {} },
     ];
     for (const c of cases) {
       expect(readLivenessEntry(docWith({ "pkg@1.0.0": c }), "pkg", "1.0.0")).toEqual({
