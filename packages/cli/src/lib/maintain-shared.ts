@@ -152,6 +152,11 @@ export function resolveDefaultBranch(p: ParsedArgs): string {
 }
 
 export function writeRootKey(keyPath: string, privkey: Uint8Array, force: boolean): void {
+  writeKeyFile(keyPath, privkey, force);
+}
+
+/** Writes a base64 Ed25519 seed file (mode 0600): the root key, or a registry's liveness key. */
+export function writeKeyFile(keyPath: string, privkey: Uint8Array, force: boolean): void {
   mkdirSync(dirname(keyPath), { recursive: true });
   try {
     writeFileSync(keyPath, `${encodeBase64(privkey)}\n`, { flag: force ? "w" : "wx", mode: 0o600 });

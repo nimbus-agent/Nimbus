@@ -53,6 +53,7 @@ import {
   resolveDefaultBranch,
   SITE_FILES,
   splitIdVersion,
+  writeKeyFile,
   writeRequestJson,
   writeRootKey,
 } from "../lib/maintain-shared.ts";
@@ -67,15 +68,23 @@ import { ownerNextSteps, registryReadme } from "./registry-templates/readme.ts";
 import {
   type ActionPin,
   registryCheckWorkflow,
+  registryLivenessWorkflow,
   registrySignWorkflow,
 } from "./registry-templates/workflows.ts";
 
 const USAGE =
-  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--github [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--scores <scores.json>] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>]\n";
+  "Usage: nimbus registry maintain init <dir> [--key <path>] [--force] [--report-url <https url>] [--github [--liveness-key <path>] [--action-ref <40-hex>] [--site <path>] [--default-branch <name>] [--no-publisher-namespace]] | add <dir> <package.tgz|extension-dir> [--channel stable|beta] [--statement <file>]... [--scores <scores.json>] [--key <path>] | remove <dir> <id>[@<version>] [--key <path>] | revoke-key (<dir> | --github <clone>) <fingerprint> --publisher <id> --reason <text> [--key <path>] | takedown (<dir> | --github <clone>) <id>[@<version>] --reason <text> [--publisher <id>] [--key <path>] | set-report-url <dir> <https url> [--key <path>] | set-liveness-key <dir> (<public key> | --generate [--liveness-key <path>] [--force]) [--key <path>]\n";
 
 function keyPathOf(p: ParsedArgs): string {
   return p.options.get("--key") ?? join(homedir(), ".nimbus", "registry-key");
 }
+
+function livenessKeyPathOf(p: ParsedArgs): string {
+  return p.options.get("--liveness-key") ?? join(homedir(), ".nimbus", "registry-liveness-key");
+}
+
+/** A raw Ed25519 public key as base64: 32 bytes, so 43 characters and one `=`. */
+const PUBLIC_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 
 /** Read the folder's index and require it to be signed by THIS key before anything is changed. */
 function loadOwnedIndex(dir: string, seed: Uint8Array): RegistryIndex {
@@ -96,7 +105,7 @@ async function resign(
   seed: Uint8Array,
   prev: RegistryIndex,
   extensions: RegistryIndex["extensions"],
-  fields: { statements?: unknown[]; reportUrl?: string } = {},
+  fields: { statements?: unknown[]; reportUrl?: string; livenessKey?: string } = {},
 ): Promise<RegistryIndex> {
   // Carry every field this command does not manage (e.g. `packs`) through: rebuilding the index
   // from a fixed field list would drop them under a signature that still verifies.
@@ -118,6 +127,7 @@ async function resign(
 
 /** Options that only mean something with `--github`. */
 const GITHUB_ONLY = [
+  "--liveness-key",
   "--action-ref",
   "--site",
   "--default-branch",
@@ -129,6 +139,8 @@ interface GithubPlan {
   pin: ActionPin;
   site: string;
   defaultBranch: string;
+  /** Where the liveness private key goes: outside both folders, and not the root key's file. */
+  livenessKeyPath: string;
   /** Main-branch files, relative to `<dir>` (`/`-separated), with their contents. */
   mainFiles: ReadonlyArray<readonly [string, string]>;
   configText: string;
@@ -156,6 +168,22 @@ function planGithubInit(
       );
     }
   }
+  const livenessKeyPath = livenessKeyPathOf(p);
+  for (const folder of [dir, site]) {
+    if (isSameOrInside(livenessKeyPath, folder)) {
+      throw new MaintainError(
+        `the liveness key ${livenessKeyPath} would be inside ${folder}, which is pushed to GitHub; keep it outside the registry folders (the default is ~/.nimbus/registry-liveness-key)`,
+      );
+    }
+  }
+  if (resolve(livenessKeyPath) === resolve(keyPath)) {
+    throw new MaintainError(
+      `--liveness-key ${livenessKeyPath} is the root key's file; the liveness key must be a different key in a different file`,
+    );
+  }
+  if (!force && existsSync(livenessKeyPath)) {
+    throw new MaintainError(`refusing to overwrite ${livenessKeyPath} without --force`);
+  }
   if (existsSync(join(dir, "index.json"))) {
     throw new MaintainError(
       `${join(dir, "index.json")} exists; a --github registry's main branch never holds a signed index (it lives on gh-pages): remove it first`,
@@ -165,6 +193,7 @@ function planGithubInit(
   const configText = `${JSON.stringify({ format: 1, requirePublisherNamespace }, null, 2)}\n`;
   const mainFiles: Array<readonly [string, string]> = [
     [".github/workflows/registry-check.yml", registryCheckWorkflow(pin, defaultBranch)],
+    [".github/workflows/registry-liveness.yml", registryLivenessWorkflow(pin, defaultBranch)],
     [".github/workflows/registry-sign.yml", registrySignWorkflow(pin, defaultBranch)],
     ["nimbus-registry.json", configText],
     ["README.md", registryReadme({ requirePublisherNamespace, defaultBranch })],
@@ -184,7 +213,7 @@ function planGithubInit(
       throw new MaintainError(`${taken} exists; refusing to overwrite without --force`);
     }
   }
-  return { pin, site, defaultBranch, mainFiles, configText };
+  return { pin, site, defaultBranch, livenessKeyPath, mainFiles, configText };
 }
 
 function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex): void {
@@ -202,7 +231,7 @@ function writeGithubRegistry(dir: string, plan: GithubPlan, index: RegistryIndex
 async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild): Promise<void> {
   const p = parseArgs(
     args,
-    ["--key", "--action-ref", "--site", "--default-branch", "--report-url"],
+    ["--key", "--liveness-key", "--action-ref", "--site", "--default-branch", "--report-url"],
     ["--force", "--github", "--no-publisher-namespace"],
   );
   const reportUrlOpt = p.options.get("--report-url");
@@ -226,10 +255,16 @@ async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild
   }
   const { privkey, pubkey } = generateEd25519Keypair();
   writeRootKey(keyPath, privkey, force);
+  // Only a --github registry has a scheduled job that signs with a liveness key.
+  const liveness = plan === undefined ? undefined : generateEd25519Keypair();
+  if (plan !== undefined && liveness !== undefined) {
+    writeKeyFile(plan.livenessKeyPath, liveness.privkey, force);
+  }
   const index = await signIndex(
     {
       ...emptyIndex(encodeBase64(pubkey)),
       ...(reportUrl === undefined ? {} : { reportUrl }),
+      ...(liveness === undefined ? {} : { livenessKey: encodeBase64(liveness.pubkey) }),
     },
     privkey,
   );
@@ -245,10 +280,22 @@ async function maintainInit(args: string[], io: MaintainIo, build: MaintainBuild
   io.stdout(`root key:    ${index.rootKey}\n`);
   io.stdout(`fingerprint: ${publisherKeyFingerprint(encodeBase64(pubkey))}\n`);
   io.stdout(`key file:    ${keyPath} (keep it secret and backed up)\n`);
-  if (plan !== undefined) {
+  if (plan !== undefined && liveness !== undefined) {
+    io.stdout(
+      `liveness fingerprint: ${publisherKeyFingerprint(encodeBase64(liveness.pubkey))}\n` +
+        `liveness key file:    ${plan.livenessKeyPath} (keep it secret and backed up)\n`,
+    );
     io.stdout(`action pin:  ${plan.pin.commit} (Nimbus v${plan.pin.version})\n`);
     io.stdout("\n");
-    io.stdout(ownerNextSteps({ dir, site: plan.site, keyPath, defaultBranch: plan.defaultBranch }));
+    io.stdout(
+      ownerNextSteps({
+        dir,
+        site: plan.site,
+        keyPath,
+        livenessKeyPath: plan.livenessKeyPath,
+        defaultBranch: plan.defaultBranch,
+      }),
+    );
   }
 }
 
@@ -526,6 +573,63 @@ async function maintainSetReportUrl(args: string[], io: MaintainIo): Promise<voi
   io.stdout(`report URL set; sequence ${String(next.sequence)}\n`);
 }
 
+/** The public key to name, or a fresh pair's (written to `--liveness-key` before anything is signed). */
+function livenessKeyArg(p: ParsedArgs, dir: string, rootKeyPath: string, rootKey: string) {
+  const given = p.positional[1];
+  const generate = p.flags.has("--generate");
+  if (p.positional.length !== (generate ? 1 : 2) || generate === (given !== undefined)) {
+    throw new MaintainError(
+      "set-liveness-key needs <dir> and exactly one of <public key> or --generate",
+    );
+  }
+  if (!generate) {
+    if (p.options.has("--liveness-key") || p.flags.has("--force")) {
+      throw new MaintainError("--liveness-key and --force go with --generate");
+    }
+    if (!PUBLIC_KEY_RE.test(given as string)) {
+      throw new MaintainError(
+        "the liveness key must be an Ed25519 public key (base64 of 32 bytes)",
+      );
+    }
+    if (given === rootKey) {
+      throw new MaintainError("the liveness key must differ from the registry's root key");
+    }
+    return { publicKey: given as string };
+  }
+  const path = livenessKeyPathOf(p);
+  if (isSameOrInside(path, dir)) {
+    throw new MaintainError(
+      `the liveness key ${path} would be inside ${dir}, which is pushed to GitHub; keep it outside the registry folders`,
+    );
+  }
+  if (resolve(path) === resolve(rootKeyPath)) {
+    throw new MaintainError(
+      `--liveness-key ${path} is the root key's file; the liveness key must be a different key in a different file`,
+    );
+  }
+  const { privkey, pubkey } = generateEd25519Keypair();
+  return { publicKey: encodeBase64(pubkey), written: { path, privkey } };
+}
+
+async function maintainSetLivenessKey(args: string[], io: MaintainIo): Promise<void> {
+  const p = parseArgs(args, ["--key", "--liveness-key"], ["--generate", "--force"]);
+  const dir = p.positional[0];
+  if (dir === undefined) throw new MaintainError("set-liveness-key needs <dir>");
+  const keyPath = keyPathOf(p);
+  const seed = loadSeed(keyPath);
+  const index = loadOwnedIndex(dir, seed);
+  const { publicKey, written } = livenessKeyArg(p, dir, keyPath, index.rootKey);
+  // The private key is on disk before the index names its public half: a failure after this
+  // leaves an unused key file, never an index naming a key nobody holds.
+  if (written !== undefined) writeKeyFile(written.path, written.privkey, p.flags.has("--force"));
+  const next = await resign(dir, seed, index, index.extensions, { livenessKey: publicKey });
+  io.stdout(`liveness key set; sequence ${String(next.sequence)}\n`);
+  io.stdout(`liveness fingerprint: ${publisherKeyFingerprint(publicKey)}\n`);
+  if (written !== undefined) {
+    io.stdout(`liveness key file:    ${written.path} (keep it secret and backed up)\n`);
+  }
+}
+
 export async function runRegistryMaintain(
   args: string[],
   io: MaintainIo = DEFAULT_IO,
@@ -542,6 +646,7 @@ export async function runRegistryMaintain(
     "revoke-key": (a, i) => maintainBlock("key.revoke", a, i),
     takedown: (a, i) => maintainBlock("extension.takedown", a, i),
     "set-report-url": maintainSetReportUrl,
+    "set-liveness-key": maintainSetLivenessKey,
   };
   const handler = sub === undefined ? undefined : handlers[sub];
   if (handler === undefined) {
