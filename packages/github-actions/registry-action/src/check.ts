@@ -47,13 +47,8 @@ import {
   statementPath,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
-import {
-  assertGateway,
-  type RunRole,
-  roleRunner,
-  type ScoreEntry,
-  scoreCandidate,
-} from "./score.ts";
+import { assertGateway, type RunRole, roleRunner, type ScoreEntry, scoreVersion } from "./score.ts";
+import { baselineFact, baselineRoleRunner } from "./score-baseline.ts";
 
 /** Inputs `check` needs. */
 export interface CheckOptions {
@@ -64,8 +59,9 @@ export interface CheckOptions {
   /** The `github-token` input: what `gh attestation verify` fetches attestations with. */
   githubToken?: string;
   /**
-   * The `nimbus-gateway` input: an absolute path to a gateway executable. When set, a publish
-   * whose package holds eval suites is scored as the score job will score it; absent, nothing is.
+   * The `nimbus-gateway` input: an absolute path to a gateway executable. When set, a publish is
+   * checked as the score job will check it (its baseline, and its eval suites when it holds any);
+   * absent, nothing is.
    * It runs extension code, so it excludes `githubToken` (R8) and provenance is not verified here.
    */
   gateway?: string;
@@ -82,6 +78,8 @@ export interface CheckDeps {
   provenance?: VerifyPackage;
   /** Runs the gateway's `__nimbus-eval` role; the default is score mode's `roleRunner()`. */
   runRole?: RunRole;
+  /** Runs the gateway's `__nimbus-eval --baseline` role; the default is `baselineRoleRunner()`. */
+  runBaseline?: RunRole;
 }
 
 const SHARED: CheckDeps = { validate: validatePublish, git: gitTree, io: GHA_IO, tmpdir: osTmpdir };
@@ -236,28 +234,51 @@ function provenanceLine(v: PublishVerdict, r: CheckedProvenance): string {
 /** The longest eval error message the summary repeats. */
 const MAX_SUMMARY_MESSAGE_CHARS = 300;
 
-/** The summary line for the eval score this check measured. */
-function qualityLine(e: ScoreEntry): string {
+/** The summary line for the eval score this check measured; `undefined` for a baseline alone. */
+function qualityLine(e: ScoreEntry): string | undefined {
   if ("quality" in e) {
     const q = e.quality;
     return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
   }
+  if (!("error" in e)) return undefined;
   const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
   return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
 }
 
+/**
+ * The summary line for the baseline this check measured: what it saw, as a fact. A pass is only
+ * that the server started and listed tools with valid definitions.
+ */
+function baselineLine(e: ScoreEntry): string | undefined {
+  if (e.baseline === undefined) return undefined;
+  return `- **Baseline:** ${baselineFact(e.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+}
+
 /** The closing sentence: what this check did and did not run. */
-function runtimeSentence(scored: boolean): string {
-  if (scored) {
+function runtimeSentence(e: ScoreEntry | undefined): string {
+  if (e === undefined) {
+    return (
+      "No runtime check of the package is performed: this check validated the signature, the " +
+      "registry rules and the package's file set, not what the code does."
+    );
+  }
+  const suites = "quality" in e || "error" in e;
+  if (suites && e.baseline === undefined) {
     return (
       "The package's eval suites were run in the platform sandbox, offline and without " +
       "credentials; nothing else about what the code does was checked."
     );
   }
-  return (
-    "No runtime check of the package is performed: this check validated the signature, the " +
-    "registry rules and the package's file set, not what the code does."
-  );
+  const ran = suites
+    ? "The package's eval suites were run, and its server was started once to list its tools,"
+    : "The package's server was started once to list its tools";
+  return `${ran} in the platform sandbox, offline and without credentials; nothing else about what the code does was checked.`;
+}
+
+/** The reviewer's lines for what this check measured, in order: quality, then baseline. */
+function scoreLines(score: ScoreEntry | undefined): string[] {
+  if (score === undefined) return [];
+  return [qualityLine(score), baselineLine(score)].filter((l) => l !== undefined);
 }
 
 /** The reviewer's job summary for an accepted publish. */
@@ -284,7 +305,7 @@ function checkSummary(
     `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`,
     `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`,
     provenanceLine(v, provenance),
-    ...(score === undefined ? [] : [qualityLine(score)]),
+    ...scoreLines(score),
     "",
     ...statementLines(admitted),
     "**Declared permissions**",
@@ -293,7 +314,7 @@ function checkSummary(
     `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`,
     `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`,
     "",
-    runtimeSentence(score !== undefined),
+    runtimeSentence(score),
   );
   return lines.join("\n");
 }
@@ -373,8 +394,9 @@ async function checkProvenance(
 }
 
 /**
- * The version's eval score, measured as the score job will measure it, when the `nimbus-gateway`
- * input is set and the package holds an eval suite; `undefined` otherwise. Never throws.
+ * What the score job would record for this version (its baseline, and its eval score when the
+ * package holds a suite), measured the same way, when the `nimbus-gateway` input is set;
+ * `undefined` otherwise, or when there is nothing to record (a starter pack). Never throws.
  */
 async function checkScore(
   v: PublishVerdict,
@@ -383,12 +405,16 @@ async function checkScore(
   opts: CheckOptions,
   deps: CheckDeps,
 ): Promise<ScoreEntry | undefined> {
-  if (opts.gateway === undefined || !v.hasEvals) return undefined;
-  return scoreCandidate(
+  if (opts.gateway === undefined) return undefined;
+  return scoreVersion(
     { verdict: v, packageBytes },
     { gateway: opts.gateway, work },
-    deps.runRole ?? roleRunner(),
-    deps.io.log,
+    {
+      runRole: deps.runRole ?? roleRunner(),
+      runBaseline: deps.runBaseline ?? baselineRoleRunner(),
+      now: Date.now,
+      io: deps.io,
+    },
   );
 }
 

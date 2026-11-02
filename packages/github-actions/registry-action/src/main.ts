@@ -2,20 +2,28 @@ import { isAbsolute, join } from "node:path";
 import { emitAnnotation, getInput, inputEnvName } from "../../shared/gha-io.ts";
 import { runCheck } from "./check.ts";
 import { runScore } from "./score.ts";
+import { runScorePackage } from "./score-package.ts";
 import { runSign, type SignOptions } from "./sign.ts";
 import { runTrustCheck } from "./trust-check.ts";
 import { runTrustSign } from "./trust-sign.ts";
 
-export type Mode = "check" | "sign" | "score" | "trust-check" | "trust-sign";
+export type Mode = "check" | "sign" | "score" | "score-package" | "trust-check" | "trust-sign";
 
-const MODES: readonly Mode[] = ["check", "sign", "score", "trust-check", "trust-sign"];
+const MODES: readonly Mode[] = [
+  "check",
+  "sign",
+  "score",
+  "score-package",
+  "trust-check",
+  "trust-sign",
+];
 
 /** The `mode` input, refused unless it is exactly one of `MODES`. */
 export function parseMode(raw: string): Mode {
   const mode = MODES.find((m) => m === raw);
   if (mode !== undefined) return mode;
   throw new Error(
-    `input "mode" must be "check", "sign", "score", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
+    `input "mode" must be "check", "sign", "score", "score-package", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -101,12 +109,12 @@ function refuseSecrets(names: readonly string[], refusal: (name: string) => stri
   if (first !== undefined) throw new Error(refusal(first));
 }
 
-/** `score` runs extension code: a `root-key` or `github-token` handed to it is refused. */
-function refuseSecretsInScore(): void {
+/** `score` and `score-package` run extension code: a `root-key` or `github-token` handed to them is refused. */
+function refuseSecretsInScore(mode: "score" | "score-package"): void {
   refuseSecrets(
     ["root-key", "github-token"],
     (name) =>
-      `input "${name}" must not be set in score mode: score runs extension code and holds no secrets`,
+      `input "${name}" must not be set in ${mode} mode: ${mode} runs extension code and holds no secrets`,
   );
 }
 
@@ -131,6 +139,11 @@ export function scoresPath(ws: string, input: string): string {
   return isAbsolute(rel) ? rel : join(ws, rel);
 }
 
+/** A path input: absolute as given, otherwise relative to the workspace. */
+function resolveInWorkspace(ws: string, input: string): string {
+  return isAbsolute(input) ? input : join(ws, input);
+}
+
 function workspace(): string {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
 }
@@ -141,8 +154,15 @@ export async function main(): Promise<void> {
     const baseRef = process.env["GITHUB_BASE_REF"] ?? "";
     if (mode === "check") {
       await runCheck({ workspace: workspace(), baseRef, ...checkInputs() });
+    } else if (mode === "score-package") {
+      refuseSecretsInScore("score-package");
+      await runScorePackage({
+        package: resolveInWorkspace(workspace(), requireInput("package")),
+        gateway: getInput("nimbus-gateway"),
+        out: scoresPath(workspace(), getInput("scores")),
+      });
     } else if (mode === "score") {
-      refuseSecretsInScore();
+      refuseSecretsInScore("score");
       const defaultBranch = getInput("default-branch");
       await runScore({
         workspace: workspace(),

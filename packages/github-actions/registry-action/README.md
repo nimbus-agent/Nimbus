@@ -2,15 +2,16 @@
 
 First-party GitHub Action run by a Nimbus extension registry repository (the repository
 `nimbus registry maintain init <dir> --github` creates), and by the Nimbus trust feed's repository
-(`nimbus trust maintain init <dir> --github`). One action, five modes:
+(`nimbus trust maintain init <dir> --github`). One action, six modes:
 
 - **`check`** — on a publish pull request: the reviewer aid. Admits the pull request's
   `statements/<statement id>.json` files (publisher-signed `key.rotate` / `key.revoke`) exactly as
   `sign` will, failing on any it would skip, then validates the new `extensions/<id>/<version>/`
   (if any: a statement-only pull request is valid) against the signed index on `gh-pages` with
   those statements admitted, and writes a job summary for the reviewer. With the `nimbus-gateway`
-  input, a version whose package holds an eval suite is scored as the `score` mode scores it, and
-  the summary reports `quality N/100` or `could not score: <code>`. Scoring runs extension code, so
+  input, a version is checked as the `score` mode checks it: the summary reports `quality N/100` or
+  `could not score: <code>` for a package with an eval suite, and a `Baseline` line (what the
+  server did when started, never a verdict) for any package that is not a starter pack. Scoring runs extension code, so
   `nimbus-gateway` and `github-token` are mutually exclusive in `check` (both set fails the check),
   and with the gateway set the summary leaves provenance to the sign job. A green check is not the
   security boundary.
@@ -46,8 +47,10 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   killing the role alone could leave the run waiting on a pipe the extension holds open. Every
   kill resolves that run within 5 seconds whether or not an exit follows, and once the role exits,
   whatever is left in its group is killed too. Writes `scores.json`,
-  `{ "<id>@<version>": { "packageSha256", "quality" } | { "packageSha256", "error" } }`, always
-  (`{}` when there is nothing to score) and atomically. A timeout, an overflow, a non-zero exit,
+  `{ "<id>@<version>": { "packageSha256", "quality"?, "error"?, "baseline"? } }`: a version with an eval
+  suite has a `quality` or an `error`, and any version that is not a starter pack may carry a
+  `baseline` (a version with no suite has the `baseline` alone), always (`{}` when there is
+  nothing to record) and atomically. A timeout, an overflow, a non-zero exit,
   output that is not one valid eval document, or a document naming another `<id>@<version>` is an
   `error` entry, never a partial score. The whole run has a 14-minute budget: each role run's
   deadline is 12 minutes or what is left of the budget, whichever is shorter, and once under a
@@ -63,6 +66,32 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   install or the release download) skips the whole sign run, trust requests (takedowns, key
   revocations) included, until the workflow is re-run. Refuses a `root-key` or `github-token`
   input.
+
+  **The baseline.** For every version that is not a starter pack (a starter pack never runs), `score`
+  first runs `<nimbus-gateway> __nimbus-eval --package <dir> --baseline --json`: the gateway starts the
+  package's server in the same sandbox, lists its tool definitions and checks each one structurally
+  (a name of 1 to 128 characters with no whitespace; an `inputSchema` that is an object with
+  `type: "object"`, `properties` absent or an object of objects or booleans, and `required` absent
+  or an array of strings). The entry's `baseline` is `{ "scorer": 1, "passed": true, "tools": N }`
+  or `{ "scorer": 1, "passed": false, "tools": N, "failure": "no-listing" | "listing-timeout" |
+  "invalid-tool" }`: a stated fact about what happened when it was checked, never a score, never
+  inside `quality`, and never a reason to refuse or skip a publish. A pass means only that the server
+  started and every tool it listed had a well-formed definition; it says nothing about what the
+  tools do. `failure` is always a code from that fixed set, never text from the extension. The run
+  budget is shared: no baseline starts with under 2 minutes left (its two attempts need up to 94
+  seconds), a version that gets none is signed without one, with a warning from the score job.
+  **A registry whose gateway is older than the release that added `--baseline` gets no baseline:**
+  the role exits 2 on the flag, `score` annotates a warning naming the version and records only the
+  suite result (nothing for a version without a suite), and the run stays green.
+- **`score-package`** — for a registry that publishes with `nimbus registry maintain add` instead of
+  pull requests: scores ONE package, given by the `package` input as a directory or a `.tgz`. Like
+  `score` it runs extension code, so it runs in a job with NO secrets and refuses a `root-key` or
+  `github-token` input. A directory is packed with `packExtensionDir`, the packer `maintain add`
+  uses, so `packageSha256` is the hash `maintain add` computes; a `.tgz` is hashed as given. It
+  does not run `validatePublish` (`maintain add` validates against the real index afterwards, and
+  the hash binds the two). A package that cannot be inspected, or a missing path, fails the job:
+  there is nothing to publish. Writes the same `scores.json` as `score`, with one entry (`{}` for a
+  starter pack, which never runs).
 - **`trust-check`** — on a pull request to the trust feed: the reviewer aid. Refuses a pull
   request that changes anything outside `publishers/`, `requests/` and `statements/`, or adds a
   source file the feed would not sign, and summarises what the merged result would sign under a
@@ -89,10 +118,11 @@ signs the result into the index entry's `quality` (above).
 
 | Input | Required | Description |
 | --- | --- | --- |
-| `mode` | yes | `check`, `sign`, `score`, `trust-check` or `trust-sign`. Anything else fails. |
+| `mode` | yes | `check`, `sign`, `score`, `score-package`, `trust-check` or `trust-sign`. Anything else fails. |
 | `default-branch` | no (`sign`, `score`, `trust-sign`) | The branch pull requests merge into. `init --github` writes it into the sign workflow. When empty, `sign` asks for `origin`'s `HEAD`, which is `gh-pages` if that branch was pushed first to an empty repository. |
 | `github-token` | no (`check`, `sign`) | The token `gh attestation verify` fetches a version's build provenance with — pass `${{ github.token }}`. Empty means provenance is not verified; nothing is refused either way. In `check`, mutually exclusive with `nimbus-gateway` (both set fails the check). |
-| `nimbus-gateway` | `score`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored; mutually exclusive with `github-token` (both set fails the check, and provenance is left to the sign job). Never pass it to a job that holds secrets. |
+| `package` | `score-package` | The package to score: a directory or a `.tgz`, relative to the workspace or absolute. |
+| `nimbus-gateway` | `score`, `score-package`; no (`check`) | The ABSOLUTE path to a Nimbus gateway executable (its `__nimbus-eval` role). Anything else fails the mode. In `check`, empty means the pull request's version is not scored; mutually exclusive with `github-token` (both set fails the check, and provenance is left to the sign job). Never pass it to a job that holds secrets. |
 | `scores` | no (`score`, `sign`) | A path, relative to the workspace or absolute. `score`: where it writes `scores.json`; empty means `scores.json`. `sign`: the `scores.json` to sign qualities from; empty means no `quality` is signed. Download the score job's artifact outside the checkout (`init --github` uses `path: ${{ runner.temp }}/registry-scores` and `scores: ${{ runner.temp }}/registry-scores/scores.json`): the score job controls that artifact, and extracted into the workspace it could write into `.git/` of the job holding the root key. |
 | `root-key` | `sign`, `trust-sign` | The registry root signing key (`sign`) or the Nimbus trust root key (`trust-sign`). Pass it from an environment secret, never inline. |
 

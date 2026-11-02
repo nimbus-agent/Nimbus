@@ -11,7 +11,7 @@ branding:
 
 inputs:
   mode:
-    description: "Which job this is — one of: check | sign | score (a registry) | trust-check | trust-sign (the Nimbus trust feed)."
+    description: "Which job this is — one of: check | sign | score (a registry) | score-package (a registry that publishes with `nimbus registry maintain add`) | trust-check | trust-sign (the Nimbus trust feed)."
     required: true
   default-branch:
     description: "The branch pull requests merge into (sign, score and trust-sign). Empty means origin's HEAD."
@@ -28,12 +28,17 @@ inputs:
     default: ""
 
   nimbus-gateway:
-    description: "score and check: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role runs a new version's eval suites in the platform sandbox (score: every unsigned version with evals/; check: the pull request's version, reported in the summary; empty means check scores nothing). It runs extension code, so it is mutually exclusive with github-token in check (set together, the check fails; provenance is then left to the sign job) and score refuses root-key and github-token."
+    description: "score, score-package and check: the ABSOLUTE path to a Nimbus gateway executable whose `__nimbus-eval` role starts a new version's server to list its tools (the baseline) and runs its eval suites, both in the platform sandbox (score: every unsigned version; score-package: the one package; check: the pull request's version, reported in the summary; empty means check runs nothing). A gateway older than the baseline gets no baseline and a warning. It runs extension code, so it is mutually exclusive with github-token in check (set together, the check fails; provenance is then left to the sign job) and score and score-package refuse root-key and github-token."
+    required: false
+    default: ""
+
+  package:
+    description: "score-package: the package to score, a directory or a .tgz (relative to the workspace, or absolute). It runs extension code in the platform sandbox, and the job holds no secret: root-key and github-token are refused. A directory is packed with the deterministic packer `nimbus registry maintain add` uses, so the packageSha256 in scores.json is the one maintain add computes."
     required: false
     default: ""
 
   scores:
-    description: "score: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
+    description: "score and score-package: where scores.json is written (relative to the workspace); empty means scores.json. sign: the score job's scores.json to sign each version's quality from (untrusted, bound to each version's id, version and package digest); a version with evals/ and no valid score is not signed. Empty means sign records no quality."
     required: false
     default: ""
 

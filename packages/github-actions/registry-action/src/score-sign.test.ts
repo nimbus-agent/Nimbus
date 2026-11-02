@@ -10,9 +10,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  readVersionBaseline,
   readVersionQuality,
   signIndex,
   validatePublish,
+  verifyRegistryIndexPinned,
 } from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
@@ -25,6 +27,7 @@ import {
   pushMaintainer,
   type RegistryRepo,
   ROOT_KEY_INPUT,
+  ROOT_PUBLIC_KEY,
   writePublish,
 } from "./testing/registry-repo.ts";
 
@@ -94,6 +97,18 @@ async function fakeRole(_gateway: string, dir: string): Promise<RoleRun> {
   return roleRun({ stdout: `${JSON.stringify(doc)}\n` });
 }
 
+const BASELINE = { scorer: 1 as const, passed: true as const, tools: 3 };
+
+/** The fake baseline role: every package starts and lists three tools. */
+async function fakeBaseline(_gateway: string, dir: string): Promise<RoleRun> {
+  const m = JSON.parse(readFileSync(join(dir, "nimbus.extension.json"), "utf8")) as {
+    id: string;
+    version: string;
+  };
+  const doc = { ok: true, extensionId: m.id, version: m.version, baseline: BASELINE };
+  return roleRun({ stdout: `${JSON.stringify(doc)}\n` });
+}
+
 async function publish(o: Parameters<typeof makeExtension>[1]): Promise<string> {
   const ext = await makeExtension(scratch, o);
   writePublish(repo.maintainer, ext);
@@ -103,7 +118,7 @@ async function publish(o: Parameters<typeof makeExtension>[1]): Promise<string> 
 test("score writes scores.json, and sign signs from that same file", async () => {
   const scoredSha = await publish({ id: "acme/scored", evals: EVALS });
   const brokenSha = await publish({ id: "acme/broken", evals: EVALS });
-  await publish({ id: "acme/plain" });
+  const plainSha = await publish({ id: "acme/plain" });
   pushMaintainer(repo, "main", "publish three");
 
   const gateway = join(tmp, "nimbus-gateway");
@@ -118,16 +133,28 @@ test("score writes scores.json, and sign signs from that same file", async () =>
       io,
       tmpdir: () => scratch,
       runRole: fakeRole,
+      runBaseline: fakeBaseline,
       now: () => 0,
     },
   );
-  // What score wrote: one quality, one error, nothing for the version without evals/.
+  // What score wrote: a quality and a baseline, an error and a baseline, and a baseline alone for
+  // the version without evals/.
   const written = JSON.parse(readFileSync(scoresFile, "utf8")) as Record<string, unknown>;
-  expect(Object.keys(written).sort()).toEqual(["acme/broken@1.0.0", "acme/scored@1.0.0"]);
-  expect(written["acme/scored@1.0.0"]).toEqual({ packageSha256: scoredSha, quality: QUALITY });
+  expect(Object.keys(written).sort()).toEqual([
+    "acme/broken@1.0.0",
+    "acme/plain@1.0.0",
+    "acme/scored@1.0.0",
+  ]);
+  expect(written["acme/scored@1.0.0"]).toEqual({
+    packageSha256: scoredSha,
+    quality: QUALITY,
+    baseline: BASELINE,
+  });
+  expect(written["acme/plain@1.0.0"]).toEqual({ packageSha256: plainSha, baseline: BASELINE });
   expect(written["acme/broken@1.0.0"]).toMatchObject({
     packageSha256: brokenSha,
     error: { code: "ERR_EVAL_ROLE_FAILED" },
+    baseline: BASELINE,
   });
 
   await runSign(
@@ -136,8 +163,15 @@ test("score writes scores.json, and sign signs from that same file", async () =>
   );
 
   const extensions = originIndex(repo).extensions;
-  // Scored: signed with exactly that quality.
+  // The signed index, baselines included, verifies against the root key a client pins.
+  await verifyRegistryIndexPinned(originIndex(repo), ROOT_PUBLIC_KEY);
+  // Scored: signed with exactly that quality, byte for byte, and the baseline beside it.
   const scored = extensions["acme/scored"]?.versions["1.0.0"];
+  expect(JSON.stringify(scored?.quality)).toBe(JSON.stringify(QUALITY));
+  expect(scored === undefined ? undefined : readVersionBaseline(scored)).toEqual({
+    state: "checked",
+    baseline: BASELINE,
+  } as ReturnType<typeof readVersionBaseline>);
   expect(scored === undefined ? undefined : readVersionQuality(scored)).toEqual({
     state: "scored",
     quality: QUALITY,
@@ -145,10 +179,14 @@ test("score writes scores.json, and sign signs from that same file", async () =>
   // Errored: skipped, absent from the index, with a warning naming it.
   expect(extensions["acme/broken"]).toBeUndefined();
   expect(warnings.some((w) => w.includes("extensions/acme/broken/1.0.0"))).toBe(true);
-  // No evals/: signed, with no quality.
+  // No evals/: signed, with a baseline and no quality.
   const plain = extensions["acme/plain"]?.versions["1.0.0"];
   expect(plain).toBeDefined();
   expect(plain?.quality).toBeUndefined();
+  expect(plain === undefined ? undefined : readVersionBaseline(plain)).toEqual({
+    state: "checked",
+    baseline: BASELINE,
+  } as ReturnType<typeof readVersionBaseline>);
   expect(plain === undefined ? undefined : readVersionQuality(plain)).toEqual({
     state: "unscored",
   } as ReturnType<typeof readVersionQuality>);

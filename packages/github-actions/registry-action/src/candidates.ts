@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import {
   admitPublisherStatements,
   codeUnitCompare,
+  type EvalBaseline,
   type EvalQuality,
   type PublishCandidate,
   type PublishVerdict,
@@ -172,16 +173,17 @@ export async function* validateUnsigned(
 
 /**
  * `extensions` with `v` added as a version entry (the entry `sign` writes, so later candidates are
- * validated against it). Fixed fields only; `provenance` and `quality` (a registry-measured eval
- * score, already validated) are added explicitly when there is one.
+ * validated against it). Fixed fields only; `provenance`, `quality` (a registry-measured eval
+ * score) and `baseline` (the Nimbus-owned baseline check), each already validated, are added
+ * explicitly when there is one.
  */
 export function addVersion(
   extensions: Record<string, RegistryExtensionEntry>,
   v: PublishVerdict,
   publishedAt: string,
-  provenance?: VersionProvenance,
-  quality?: EvalQuality,
+  extras: { provenance?: VersionProvenance; quality?: EvalQuality; baseline?: EvalBaseline } = {},
 ): void {
+  const { provenance, quality, baseline } = extras;
   const base = `extensions/${v.id}/${v.version}`;
   const existing = extensions[v.id];
   extensions[v.id] = {
@@ -200,6 +202,7 @@ export function addVersion(
         publishedAt,
         ...(provenance !== undefined && { provenance }),
         ...(quality !== undefined && { quality }),
+        ...(baseline !== undefined && { baseline }),
       },
     },
   };

@@ -30,6 +30,7 @@ import { join } from "node:path";
 import {
   alreadyCarried,
   codeUnitCompare,
+  type EvalBaseline,
   type EvalQuality,
   publicKeyFromSeed,
   publisherKeyFingerprint,
@@ -77,6 +78,7 @@ import {
   readVerifiedIndex,
 } from "./registry-state.ts";
 import { type ActionIo, code, GHA_IO } from "./report.ts";
+import { baselineFact } from "./score-baseline.ts";
 import { commitSite, pushCommit, type SiteFile } from "./site-commit.ts";
 
 /** Inputs `sign` needs. */
@@ -144,6 +146,7 @@ interface Added {
   version: string;
   channel: string;
   quality?: EvalQuality;
+  baseline?: EvalBaseline;
 }
 
 interface Attempt {
@@ -241,7 +244,11 @@ async function takeCandidate(
     { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") },
     run.memo,
   );
-  addVersion(b.extensions, v, b.publishedAt, provenance, q.quality);
+  addVersion(b.extensions, v, b.publishedAt, {
+    ...(provenance !== undefined && { provenance }),
+    ...(q.quality !== undefined && { quality: q.quality }),
+    ...(q.baseline !== undefined && { baseline: q.baseline }),
+  });
   b.files.push(
     { path: `${base}/manifest.json`, bytes: candidate.manifestBytes },
     { path: `${base}/package.tgz`, bytes: candidate.packageBytes },
@@ -251,6 +258,7 @@ async function takeCandidate(
     version: v.version,
     channel: v.channel,
     ...(q.quality !== undefined && { quality: q.quality }),
+    ...(q.baseline !== undefined && { baseline: q.baseline }),
   });
 }
 
@@ -432,6 +440,11 @@ function qualityNote(x: Added): string {
   return `, quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
 }
 
+/** `, baseline: …` for a version signed with a baseline, as a stated fact; empty otherwise. */
+function baselineNote(x: Added): string {
+  return x.baseline === undefined ? "" : `, baseline: ${baselineFact(x.baseline)}`;
+}
+
 function report(io: ActionIo, a: Attempt, pushed: boolean): void {
   warnSkipped(io, a);
   const lines = ["## Registry sign", ""];
@@ -439,7 +452,8 @@ function report(io: ActionIo, a: Attempt, pushed: boolean): void {
     lines.push("Nothing new to sign.");
   } else {
     lines.push(`Signed index sequence ${String(a.sequence)}:`, "");
-    for (const x of a.added) lines.push(`- ${code(versionRef(x))} (${x.channel})${qualityNote(x)}`);
+    for (const x of a.added)
+      lines.push(`- ${code(versionRef(x))} (${x.channel})${qualityNote(x)}${baselineNote(x)}`);
     for (const id of a.statements) lines.push(`- statement ${code(id)}`);
   }
   if (a.skipped.length > 0) {

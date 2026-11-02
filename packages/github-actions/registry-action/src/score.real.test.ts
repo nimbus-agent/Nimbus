@@ -17,14 +17,22 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { validatePublish } from "../../../registry-format/src/index.ts";
+import {
+  readVersionBaseline,
+  signIndex,
+  validatePublish,
+} from "../../../registry-format/src/index.ts";
 import * as gitTree from "./git-tree.ts";
 import type { ActionIo } from "./report.ts";
 import { roleRunner, runScore } from "./score.ts";
+import { baselineRoleRunner } from "./score-baseline.ts";
+import { runSign } from "./sign.ts";
 import {
   makeExtension,
   makeRegistryRepo,
+  originIndex,
   pushMaintainer,
+  ROOT_KEY_INPUT,
   writePublish,
 } from "./testing/registry-repo.ts";
 
@@ -117,6 +125,7 @@ describe.skipIf(!canRun)("registry score over the real __nimbus-eval role", () =
         tmpdir: () => scratch,
         validate: validatePublish,
         runRole: roleRunner(),
+        runBaseline: baselineRoleRunner(),
         now: Date.now,
       },
     );
@@ -127,5 +136,24 @@ describe.skipIf(!canRun)("registry score over the real __nimbus-eval role", () =
     }
     expect(entry.quality as unknown).toEqual({ scorer: 1, ...fx.EVAL_FIXTURE_EXPECTED });
     expect(JSON.parse(readFileSync(out, "utf8"))).toEqual(scores);
+
+    // The baseline ran over the same real role, from a fresh stage: the fixture's server started and
+    // listed at least one tool, every definition well-formed.
+    if (entry.baseline === undefined) {
+      throw new Error(`expected a baseline: ${JSON.stringify(scores)}\n${summaries.join("\n")}`);
+    }
+    expect(entry.baseline.passed).toBe(true);
+    expect(entry.baseline.tools).toBeGreaterThan(0);
+
+    // A sign run over that very file writes the baseline into the signed entry.
+    await runSign(
+      { workspace: repo.workspace, rootKey: ROOT_KEY_INPUT, scores: out },
+      { validate: validatePublish, sign: signIndex, git: gitTree, io, tmpdir: () => scratch },
+    );
+    const signed = originIndex(repo).extensions["acme/evalecho"]?.versions["1.0.0"];
+    expect(signed === undefined ? undefined : readVersionBaseline(signed)).toEqual({
+      state: "checked",
+      baseline: entry.baseline,
+    } as ReturnType<typeof readVersionBaseline>);
   }, 600_000);
 });
