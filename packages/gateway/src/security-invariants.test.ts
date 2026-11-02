@@ -9488,6 +9488,47 @@ describe("I49 — extension code runs for evaluation only offline, without crede
       "extensions/eval/eval-role.ts",
       "extensions/eval/eval-runtime.ts",
     ]);
+    // The record door is a third entry to the same spawn: only the role (`--record`) and the
+    // runtime that defines it name it.
+    const recordCallers = files
+      .filter((f) => /\brunEvalRecordSession\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel)
+      .sort();
+    expect(recordCallers).toEqual([
+      "extensions/eval/eval-role.ts",
+      "extensions/eval/eval-runtime.ts",
+    ]);
+  });
+
+  test("behavioural: the record door refuses a sandbox that cannot confine before anything is staged", async () => {
+    const { EvalRunError, loadEvalPackage } = await import("./extensions/eval/eval-source.ts");
+    const { runEvalRecordSession } = await import("./extensions/eval/eval-runtime.ts");
+    const { pkg, sandboxDir, runtimeReadPaths } = writePackage();
+    const src = await loadEvalPackage(pkg, { baselineOnly: true });
+    const order: string[] = [];
+    const err = await runEvalRecordSession(
+      src,
+      { name: "rec", cases: [{ name: "c", tool: "echo", input: {} }] },
+      {
+        sandboxDir,
+        runtimeReadPaths,
+        canConfine: () => {
+          order.push("canConfine");
+          return "no sandbox here";
+        },
+        createClient: () => {
+          order.push("createClient");
+          throw new Error("must not be reached");
+        },
+      },
+    ).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(EvalRunError);
+    expect((err as InstanceType<typeof EvalRunError>).code).toBe("ERR_EVAL_SANDBOX_UNAVAILABLE");
+    expect(order).toEqual(["canConfine"]);
+    expect(readdirSync(sandboxDir)).toEqual([]);
   });
 
   test("behavioural: the baseline door gets the same zero-reach policy, eval id and baseline-only env", async () => {

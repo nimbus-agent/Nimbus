@@ -3,6 +3,8 @@ import {
   type EvalBaseline,
   type EvalCase,
   type EvalCaseOutcome,
+  type EvalRecordInput,
+  type EvalRecordInputs,
   type EvalReply,
   type EvalReport,
   type EvalSuite,
@@ -309,6 +311,61 @@ export async function runEvalSession(
       }
     }
     return scoreOutcomes(outcomes);
+  } finally {
+    await closeRun(run);
+  }
+}
+
+// ── The record door: every input called twice, in two passes, from fresh stages ────────────────
+
+/** A case only to carry an input through `callCaseTool`; the reply is recorded, never judged. */
+function recordCase(input: EvalRecordInput): EvalCase {
+  return {
+    name: input.name,
+    tool: input.tool,
+    input: input.input,
+    expect: { rubric: "exact", value: "", error: false },
+  };
+}
+
+/** One input: the same respawn rule as `runCase`, with the reply returned instead of judged. */
+async function recordInput(run: EvalRun, input: EvalRecordInput): Promise<EvalReply> {
+  assertTimeLeft(run);
+  const server = run.server ?? (await spawnServer(run));
+  const reply = await callCaseTool(run, server, recordCase(input));
+  if (reply.kind === "failed" && (reply.reason === "timeout" || reply.reason === "crash")) {
+    await killServer(run);
+  }
+  return reply;
+}
+
+/** One pass over every input in order. The server is killed after it: the next pass stages afresh. */
+async function recordPass(run: EvalRun, inputs: EvalRecordInputs): Promise<EvalReply[]> {
+  const replies: EvalReply[] = [];
+  for (const input of inputs.cases) replies.push(await recordInput(run, input));
+  await killServer(run);
+  return replies;
+}
+
+/**
+ * The record door: call each input of a verified package twice, in two passes, each pass from a
+ * fresh stage, so the caller can keep only what both passes agree on. The same order and spec as
+ * `runEvalSession`: refuse when the sandbox cannot confine, sweep stale stages, ONE run (one
+ * deadline for both passes), every client disconnected and every stage removed whatever happens.
+ * Nothing is judged or written here.
+ */
+export async function runEvalRecordSession(
+  src: EvalPackageSource,
+  inputs: EvalRecordInputs,
+  deps: EvalRuntimeDeps,
+): Promise<{ first: EvalReply[]; second: EvalReply[] }> {
+  assertSandboxAvailable(src, deps);
+  sweepStaleEvalStages(deps.sandboxDir);
+  const run = openRun(src, deps);
+  try {
+    const first = await recordPass(run, inputs);
+    const second = await recordPass(run, inputs);
+    return { first, second };
   } finally {
     await closeRun(run);
   }

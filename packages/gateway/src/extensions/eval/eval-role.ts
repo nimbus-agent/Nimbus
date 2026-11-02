@@ -1,6 +1,17 @@
+import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { format } from "node:util";
 
-import type { EvalBaselineDocument, EvalRoleDocument } from "@nimbus-dev/registry-format";
+import {
+  buildRecordedSuite,
+  type EvalBaselineDocument,
+  type EvalRecordDocument,
+  type EvalRecordInputs,
+  type EvalRoleDocument,
+  MAX_EVAL_RECORD_INPUTS_BYTES,
+  parseEvalRecordInputs,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
 
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
@@ -20,44 +31,72 @@ export interface EvalRoleDeps {
   exit: (code: number) => void;
   run: (args: { packageDir: string; suiteFile?: string }) => Promise<EvalRoleDocument>;
   runBaseline: (args: { packageDir: string }) => Promise<EvalBaselineDocument>;
+  runRecord: (args: { packageDir: string; inputsFile: string }) => Promise<EvalRecordDocument>;
 }
 
 const USAGE =
-  "usage: __nimbus-eval --package <absolute dir> [--suite <file> | --baseline] [--json]\n";
+  "usage: __nimbus-eval --package <absolute dir> [--suite <file> | --baseline | --record <absolute file>] [--json]\n";
 
-type RoleArgs = { packageDir: string; baseline: true } | { packageDir: string; suiteFile?: string };
+type RoleArgs =
+  | { packageDir: string; baseline: true }
+  | { packageDir: string; inputsFile: string; record: true }
+  | { packageDir: string; suiteFile?: string };
 
 /** A flag's value: present and not itself a flag (`--package --json` is a usage error). */
 function isFlagValue(value: string | undefined): value is string {
   return value !== undefined && !value.startsWith("--");
 }
 
+interface ParsedFlags {
+  packageDir?: string;
+  suiteFile?: string;
+  inputsFile?: string;
+  baseline: boolean;
+}
+
+const VALUE_FLAGS = {
+  "--package": "packageDir",
+  "--suite": "suiteFile",
+  "--record": "inputsFile",
+} as const;
+
+/** Take the flag at `argv[i]` (a value flag also takes `argv[i + 1]`); the next index, or null. */
+function takeFlag(argv: readonly string[], i: number, f: ParsedFlags): number | null {
+  const a = argv[i];
+  if (a === "--json") return i + 1;
+  if (a === "--baseline") {
+    if (f.baseline) return null;
+    f.baseline = true;
+    return i + 1;
+  }
+  if (a === undefined || !Object.hasOwn(VALUE_FLAGS, a)) return null;
+  const slot = VALUE_FLAGS[a as keyof typeof VALUE_FLAGS];
+  const value = argv[i + 1];
+  if (!isFlagValue(value) || f[slot] !== undefined) return null;
+  f[slot] = value;
+  return i + 2;
+}
+
 /**
  * `--json` is a no-op; anything unknown, repeated or valueless is a usage error (null), and so is
- * `--baseline` beside `--suite` or repeated.
+ * more than one of `--baseline`, `--suite` and `--record`. `--record` takes an absolute path.
  */
 function parseArgs(argv: readonly string[]): RoleArgs | null {
-  let packageDir: string | undefined;
-  let suiteFile: string | undefined;
-  let baseline = false;
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === "--json") continue;
-    if (a === "--baseline") {
-      if (baseline) return null;
-      baseline = true;
-      continue;
-    }
-    const isPkg = a === "--package";
-    if (!isPkg && a !== "--suite") return null;
-    const value = argv[++i];
-    if (!isFlagValue(value)) return null;
-    if (isPkg ? packageDir !== undefined : suiteFile !== undefined) return null;
-    if (isPkg) packageDir = value;
-    else suiteFile = value;
+  const f: ParsedFlags = { baseline: false };
+  for (let i = 0; i < argv.length; ) {
+    const next = takeFlag(argv, i, f);
+    if (next === null) return null;
+    i = next;
   }
+  const { packageDir, suiteFile, inputsFile, baseline } = f;
   if (packageDir === undefined) return null;
-  if (baseline) return suiteFile === undefined ? { packageDir, baseline: true } : null;
+  if ([baseline, suiteFile !== undefined, inputsFile !== undefined].filter(Boolean).length > 1) {
+    return null;
+  }
+  if (baseline) return { packageDir, baseline: true };
+  if (inputsFile !== undefined) {
+    return isAbsolute(inputsFile) ? { packageDir, inputsFile, record: true } : null;
+  }
   return suiteFile === undefined ? { packageDir } : { packageDir, suiteFile };
 }
 
@@ -250,6 +289,72 @@ export async function defaultEvalBaselineRun(
   return { ok: true, extensionId: src.extensionId, version: src.version, baseline };
 }
 
+function inputsTooLarge(): EvalRunError {
+  return new EvalRunError(
+    "ERR_EVAL_SUITE_INVALID",
+    `the inputs file exceeds ${String(MAX_EVAL_RECORD_INPUTS_BYTES)} bytes`,
+  );
+}
+
+/**
+ * The inputs file, read through ONE descriptor: its size is checked on that descriptor and again
+ * on the bytes read, so a file swapped or grown between a stat and a read cannot slip past the cap.
+ */
+function readInputsFile(path: string): Uint8Array {
+  const fd = openSync(path, "r");
+  try {
+    if (fstatSync(fd).size > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsTooLarge();
+    const bytes = readFileSync(fd);
+    if (bytes.byteLength > MAX_EVAL_RECORD_INPUTS_BYTES) throw inputsTooLarge();
+    return bytes;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function parseInputsFile(path: string): EvalRecordInputs {
+  const bytes = readInputsFile(path);
+  try {
+    return parseEvalRecordInputs("inputs", bytes);
+  } catch (e) {
+    if (e instanceof RegistryError) throw new EvalRunError("ERR_EVAL_SUITE_INVALID", e.message);
+    throw e;
+  }
+}
+
+/**
+ * The record run: load and verify the package (no suites read), read the inputs once, call each
+ * input twice in the sandbox, and keep what both passes agree on. Writes nothing.
+ */
+export async function defaultEvalRecordRun(
+  args: { packageDir: string; inputsFile: string },
+  loaders: EvalRunLoaders = REAL_EVAL_LOADERS,
+): Promise<EvalRecordDocument> {
+  const runtime = await import("./eval-runtime.ts");
+  const src = await loadEvalPackage(args.packageDir, { baselineOnly: true });
+  const inputs = parseInputsFile(args.inputsFile);
+  const [createClient, canConfine, sandboxDir, runtimeReadPaths] = await Promise.all([
+    loadEvalClientFactory(loaders),
+    loaders.canConfine(),
+    loaders.sandboxDir(),
+    loaders.runtimeReadPaths(),
+  ]);
+  const { first, second } = await runtime.runEvalRecordSession(src, inputs, {
+    sandboxDir,
+    runtimeReadPaths,
+    canConfine,
+    createClient,
+  });
+  const { suite, skipped } = buildRecordedSuite(inputs, first, second);
+  if (suite.cases.length === 0) {
+    return {
+      ok: false,
+      error: { code: "ERR_EVAL_RECORD_EMPTY", message: "no case could be recorded", skipped },
+    };
+  }
+  return { ok: true, extensionId: src.extensionId, version: src.version, suite, skipped };
+}
+
 function toErrorDocument(e: unknown): { ok: false; error: { code: string; message: string } } {
   if (e instanceof EvalRunError) return { ok: false, error: { code: e.code, message: e.message } };
   return { ok: false, error: { code: "ERR_EVAL_INTERNAL", message: messageOf(e) } };
@@ -279,16 +384,19 @@ export const REAL_ROLE_DEPS: EvalRoleDeps = {
   exit: exitAfterFlush,
   run: defaultEvalRun,
   runBaseline: defaultEvalBaselineRun,
+  runRecord: defaultEvalRecordRun,
 };
 
 async function runToDocument(
   deps: EvalRoleDeps,
   args: RoleArgs,
-): Promise<EvalRoleDocument | EvalBaselineDocument> {
+): Promise<EvalRoleDocument | EvalBaselineDocument | EvalRecordDocument> {
   try {
-    return "baseline" in args
-      ? await deps.runBaseline({ packageDir: args.packageDir })
-      : await deps.run(args);
+    if ("baseline" in args) return await deps.runBaseline({ packageDir: args.packageDir });
+    if ("record" in args) {
+      return await deps.runRecord({ packageDir: args.packageDir, inputsFile: args.inputsFile });
+    }
+    return await deps.run(args);
   } catch (e: unknown) {
     return toErrorDocument(e);
   }

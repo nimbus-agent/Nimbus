@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type EvalBaselineDocument,
+  type EvalRecordDocument,
   type EvalReport,
   type EvalRoleDocument,
+  MAX_EVAL_RECORD_INPUTS_BYTES,
   parseEvalBaselineDocument,
 } from "@nimbus-dev/registry-format";
 
@@ -13,6 +15,7 @@ import { EXTENSION_STAGE_DIR_NAME } from "../../platform/sandbox/sandbox-cwd.ts"
 import {
   adaptEvalClient,
   defaultEvalBaselineRun,
+  defaultEvalRecordRun,
   defaultEvalRun,
   type EvalRoleDeps,
   type EvalRunLoaders,
@@ -34,17 +37,20 @@ interface Harness {
   exits: number[];
   calls: { packageDir: string; suiteFile?: string }[];
   baselineCalls: { packageDir: string }[];
+  recordCalls: { packageDir: string; inputsFile: string }[];
 }
 
 function harness(
   run: EvalRoleDeps["run"],
   runBaseline: EvalRoleDeps["runBaseline"] = async () => BASELINE_OK,
+  runRecord: EvalRoleDeps["runRecord"] = async () => RECORD_OK,
 ): Harness {
   const out: string[] = [];
   const err: string[] = [];
   const exits: number[] = [];
   const calls: { packageDir: string; suiteFile?: string }[] = [];
   const baselineCalls: { packageDir: string }[] = [];
+  const recordCalls: { packageDir: string; inputsFile: string }[] = [];
   const deps: EvalRoleDeps = {
     writeStdout: (s) => out.push(s),
     writeStderr: (s) => err.push(s),
@@ -57,8 +63,12 @@ function harness(
       baselineCalls.push(a);
       return runBaseline(a);
     },
+    runRecord: (a) => {
+      recordCalls.push(a);
+      return runRecord(a);
+    },
   };
-  return { deps, out, err, exits, calls, baselineCalls };
+  return { deps, out, err, exits, calls, baselineCalls, recordCalls };
 }
 
 const BASELINE_OK: EvalBaselineDocument = {
@@ -66,6 +76,14 @@ const BASELINE_OK: EvalBaselineDocument = {
   extensionId: "a.b",
   version: "1.0.0",
   baseline: { scorer: 1, passed: true, tools: 3 },
+};
+
+const RECORD_OK: EvalRecordDocument = {
+  ok: true,
+  extensionId: "a.b",
+  version: "1.0.0",
+  suite: { format: 1, name: "rec", cases: [] },
+  skipped: [],
 };
 
 const OK: EvalRoleDocument = { ok: true, extensionId: "a.b", version: "1.0.0", report: REPORT };
@@ -151,6 +169,55 @@ describe("runEvalRole", () => {
     await runEvalRole(["--package", "/p", "--baseline"], h.deps);
     expect(h.out).toHaveLength(1);
     expect(h.err.join("")).toContain("baseline noise");
+  });
+
+  test("--record prints one record document and never calls run or baseline", async () => {
+    const abs = join(tmpdir(), "inputs.json");
+    const h = harness(async () => OK);
+    await runEvalRole(["--package", "/p", "--record", abs, "--json"], h.deps);
+    expect(h.out).toHaveLength(1);
+    expect(JSON.parse(h.out[0] ?? "")).toEqual(RECORD_OK);
+    expect(h.recordCalls).toEqual([{ packageDir: "/p", inputsFile: abs }]);
+    expect(h.calls).toEqual([]);
+    expect(h.baselineCalls).toEqual([]);
+    expect(h.exits).toEqual([0]);
+  });
+
+  test.each([
+    [["--package", "/p", "--record", "ABS", "--suite", "x"]],
+    [["--package", "/p", "--suite", "x", "--record", "ABS"]],
+    [["--package", "/p", "--record", "ABS", "--baseline"]],
+    [["--package", "/p", "--baseline", "--record", "ABS"]],
+    [["--package", "/p", "--record", "ABS", "--record", "ABS"]],
+    [["--package", "/p", "--record", "relative/inputs.json"]],
+    [["--package", "/p", "--record"]],
+    [["--record", "ABS"]],
+  ])("record usage error %j exits 2 with empty stdout", async (argv) => {
+    const abs = join(tmpdir(), "inputs.json");
+    const h = harness(async () => OK);
+    await runEvalRole(
+      argv.map((a) => (a === "ABS" ? abs : a)),
+      h.deps,
+    );
+    expect(h.out).toEqual([]);
+    expect(h.exits).toEqual([2]);
+    expect(h.recordCalls).toEqual([]);
+  });
+
+  test("a record EvalRunError prints ok:false and exits 0", async () => {
+    const h = harness(
+      async () => OK,
+      async () => BASELINE_OK,
+      async () => {
+        throw new EvalRunError("ERR_EVAL_SANDBOX_UNAVAILABLE", "no sandbox");
+      },
+    );
+    await runEvalRole(["--package", "/p", "--record", join(tmpdir(), "i.json")], h.deps);
+    expect(JSON.parse(h.out[0] ?? "")).toEqual({
+      ok: false,
+      error: { code: "ERR_EVAL_SANDBOX_UNAVAILABLE", message: "no sandbox" },
+    });
+    expect(h.exits).toEqual([0]);
   });
 
   test("without --suite the suiteFile key is absent", async () => {
@@ -437,6 +504,69 @@ describe("defaultEvalRun with injected loaders", () => {
     expect(existsSync(stageRoot) ? readdirSync(stageRoot) : []).toEqual([]);
   });
 
+  function writeInputs(cases: unknown[], extra: string | null = null): string {
+    const file = join(root, "inputs.json");
+    writeFileSync(file, extra ?? JSON.stringify({ format: 1, name: "rec", cases }));
+    return file;
+  }
+
+  test("a record run drives the package twice and builds a suite; the package's evals are not read", async () => {
+    rmSync(join(pkg, "evals"), { recursive: true, force: true });
+    const seen = newSeen();
+    const inputsFile = writeInputs([{ name: "greet", tool: "echo", input: { text: "hi" } }]);
+    const doc = await defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen));
+    if (!doc.ok) throw new Error(JSON.stringify(doc));
+    expect(doc.extensionId).toBe("acme.roletest");
+    expect(doc.version).toBe("2.0.0");
+    expect(doc.suite.name).toBe("rec");
+    expect(doc.suite.cases).toHaveLength(1);
+    expect(doc.skipped).toEqual([]);
+    expect(seen.ids).toHaveLength(2);
+    expect(seen.disconnects).toBe(2);
+    const stageRoot = join(sandboxDir, EXTENSION_STAGE_DIR_NAME);
+    expect(existsSync(stageRoot) ? readdirSync(stageRoot) : []).toEqual([]);
+  });
+
+  test("zero recordable cases is ERR_EVAL_RECORD_EMPTY carrying the skipped list", async () => {
+    const inputsFile = writeInputs([{ name: "ghost", tool: "missing", input: {} }]);
+    const doc = await defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(newSeen()));
+    expect(doc).toEqual({
+      ok: false,
+      error: {
+        code: "ERR_EVAL_RECORD_EMPTY",
+        message: "no case could be recorded",
+        skipped: [{ case: "ghost", why: "call-failed" }],
+      },
+    });
+  });
+
+  test("an invalid inputs file is ERR_EVAL_SUITE_INVALID, before anything is spawned", async () => {
+    const seen = newSeen();
+    const inputsFile = writeInputs([], "{ not json");
+    await expect(
+      defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen)),
+    ).rejects.toMatchObject({ code: "ERR_EVAL_SUITE_INVALID" });
+    expect(seen.ids).toEqual([]);
+  });
+
+  test("an oversize inputs file is refused unread", async () => {
+    const seen = newSeen();
+    const inputsFile = writeInputs([], " ".repeat(MAX_EVAL_RECORD_INPUTS_BYTES + 1));
+    await expect(
+      defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen)),
+    ).rejects.toMatchObject({ code: "ERR_EVAL_SUITE_INVALID" });
+    expect(seen.ids).toEqual([]);
+  });
+
+  test("a record run in a sandbox that cannot confine refuses before any client is made", async () => {
+    const seen = newSeen();
+    const inputsFile = writeInputs([{ name: "a", tool: "echo", input: { text: "x" } }]);
+    await expect(
+      defaultEvalRecordRun({ packageDir: pkg, inputsFile }, loaders(seen, "no sandbox")),
+    ).rejects.toMatchObject({ code: "ERR_EVAL_SANDBOX_UNAVAILABLE" });
+    expect(seen.ids).toEqual([]);
+  });
+
   test("a baseline run in a sandbox that cannot confine refuses before any client is made", async () => {
     const seen = newSeen();
     await expect(
@@ -468,6 +598,7 @@ describe("the real role dependencies", () => {
     expect(() => REAL_ROLE_DEPS.writeStderr("")).not.toThrow();
     expect(REAL_ROLE_DEPS.run).toBe(defaultEvalRun);
     expect(REAL_ROLE_DEPS.runBaseline).toBe(defaultEvalBaselineRun);
+    expect(REAL_ROLE_DEPS.runRecord).toBe(defaultEvalRecordRun);
   });
 
   test("exitAfterFlush exits only once the stdout flush callback runs", () => {
