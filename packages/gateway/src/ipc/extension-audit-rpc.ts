@@ -1,11 +1,10 @@
 import type { Database } from "bun:sqlite";
 
-import { parseNetworkEntry } from "@nimbus-dev/registry-format";
-
-import { listExtensions } from "../automation/extension-store.ts";
-import { parseRunGrants } from "../extensions/extension-run-grants.ts";
+import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
+import { isNetworkNarrowed, networkEntryKey } from "../extensions/network-entry-key.ts";
+import { declaredNetworkFor } from "../extensions/observation/declared-network.ts";
+import { type NarrowingOffer, narrowingOffer } from "../extensions/observation/narrowing-offer.ts";
 import {
-  normaliseHost,
   type ObservationFinding,
   observationFindings,
 } from "../extensions/observation/observation-findings.ts";
@@ -14,7 +13,6 @@ import {
   type ObservationRow,
   readExtensionAudit,
 } from "../extensions/observation/observation-store.ts";
-import { getRunGrant } from "../extensions/run-grant-store.ts";
 
 const DAY_MS = 86_400_000;
 
@@ -30,10 +28,22 @@ export type AuditEntry = {
   firstSeen?: number;
   lastSeen?: number;
   /**
-   * `host:port` from the installed run grant, normalised the way the forwarder plans it
-   * (lowercase host, one trailing dot dropped, the port as a number, 443 when none is given).
+   * `host:port` from the verified installed MANIFEST (what the extension declares, as the approval
+   * re-resolves it), normalised the way the forwarder plans it (lowercase host, one trailing dot
+   * dropped, the port as a number, 443 when none is given). From the run grant only when the
+   * manifest could not be read and verified: `declaredFrom` says which.
    */
   declared: string[];
+  declaredFrom: "manifest" | "grant";
+  /** The stored run grant's network, normalised like `declared`; absent with no grant. */
+  approved?: string[];
+  /** The owner narrowed the grant (I52): `approved` names fewer `host:port` keys than `declared`. */
+  narrowed: boolean;
+  /**
+   * A narrower grant the evidence supports (see `narrowingOffer`), RAW manifest entries so `keep`
+   * is exactly the `--network` list the approval accepts; `null` when none. Never applied here.
+   */
+  offer: NarrowingOffer | null;
   used: AuditDestination[];
   /** Declared and not seen: a lower bound's complement, never "not used". */
   notSeen: string[];
@@ -60,22 +70,53 @@ function daysSpanned(c: CoverageRow): number {
 }
 
 /** The same normalisation `planForwardEntries` applies, so a declared key compares with a used one. */
-function normaliseDeclared(entry: string): string {
-  const { host, port } = parseNetworkEntry(entry);
-  const bare = normaliseHost(host);
-  return `${bare}:${String(port)}`;
+function normalisedSet(network: readonly string[]): string[] {
+  return [...new Set(network.map(networkEntryKey))];
 }
 
-function declaredOf(db: Database, id: string): string[] {
-  const grant = getRunGrant(db, id);
-  if (grant === null) return [];
-  const network = parseRunGrants(grant.permissions_json)?.network ?? [];
-  return [...new Set(network.map(normaliseDeclared))];
+/** Compared by parse key, never as strings of different forms. */
+function isNarrowed(declared: readonly string[], approved: readonly string[] | undefined): boolean {
+  return approved !== undefined && isNetworkNarrowed(declared, approved);
 }
 
-function entryFor(db: Database, id: string, version: string): AuditEntry {
+function offerFor(
+  source: ReturnType<typeof declaredNetworkFor>,
+  coverage: CoverageRow | undefined,
+  rows: readonly ObservationRow[],
+  version: string,
+): NarrowingOffer | null {
+  // Computed against the manifest only: a grant fallback is not what the approval re-resolves.
+  if (coverage === undefined || source.from !== "manifest" || source.approved === undefined) {
+    return null;
+  }
+  return narrowingOffer({
+    os: coverage.os,
+    declaredRaw: source.entries,
+    approved: source.approved,
+    coverage: {
+      networkObserved: coverage.network_observed === 1,
+      runs: coverage.runs,
+      observedDays: daysSpanned(coverage),
+      dropped: coverage.dropped,
+      stopped: coverage.stopped === 1,
+    },
+    used: rows.filter((r) => r.outcome === "used"),
+    unmatched: rows.filter((r) => r.outcome === "unmatched"),
+    installedVersion: version,
+    coverageVersion: coverage.version,
+  });
+}
+
+function entryFor(
+  db: Database,
+  id: string,
+  version: string,
+  installed: readonly ExtensionRow[],
+): AuditEntry {
   const { coverage, rows } = readExtensionAudit(db, id, version);
-  const declared = declaredOf(db, id);
+  const source = declaredNetworkFor(db, id, version, installed);
+  const declared = normalisedSet(source.entries);
+  const approved = source.approved === undefined ? undefined : normalisedSet(source.approved);
   const used = ofOutcome(rows, "used");
   const usedKeys = new Set(used.map((u) => `${u.destination}:${u.port}`.toLowerCase()));
   const networkObserved = coverage !== undefined && coverage.network_observed === 1;
@@ -84,6 +125,10 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
     version,
     networkObserved,
     declared,
+    declaredFrom: source.from,
+    ...(approved === undefined ? {} : { approved }),
+    narrowed: source.from === "manifest" && isNarrowed(declared, approved),
+    offer: offerFor(source, coverage, rows, version),
     used,
     // Only where the network was observed: elsewhere "not seen" would read as a finding.
     notSeen: networkObserved ? declared.filter((d) => !usedKeys.has(d)) : [],
@@ -126,5 +171,5 @@ export function readAuditEntries(db: Database, id?: string): AuditEntry[] | unde
   const installed = listExtensions(db);
   const chosen = id === undefined ? installed : installed.filter((r) => r.id === id);
   if (id !== undefined && chosen.length === 0) return undefined;
-  return chosen.map((r) => entryFor(db, r.id, r.version));
+  return chosen.map((r) => entryFor(db, r.id, r.version, installed));
 }

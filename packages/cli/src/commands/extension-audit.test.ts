@@ -346,3 +346,122 @@ describe("runExtensionAudit", () => {
     expect(out.join("")).toBe("No extensions installed.\n");
   });
 });
+
+describe("a narrowed grant and the narrowing offer", () => {
+  const OFFER = {
+    keep: ["api.example.com"],
+    remove: ["imap.example.com:993", "cdn.example.com:8443"],
+    runs: 5,
+    days: 7,
+  };
+
+  test("a narrowed grant prints the approved line under declared", () => {
+    expect(
+      formatExtensionAudit(
+        entry({
+          declaredFrom: "manifest",
+          approved: ["api.example.com:443"],
+          narrowed: true,
+        }),
+      ),
+    ).toEqual([
+      "acme.tool 1.2.0   observed 3 run(s) over 2 day(s), on this machine only",
+      "Network   declared api.example.com:443, other.example.com:443",
+      "  approved  api.example.com:443 (narrowed from what it declares)",
+      "  used      api.example.com:443 (7 connection(s))",
+      "  not seen  other.example.com:443",
+      ...CLOSING,
+    ]);
+  });
+
+  test("a grant narrowed to nothing reads no network; an unnarrowed grant prints no approved line", () => {
+    const lines = formatExtensionAudit(entry({ approved: [], narrowed: true }));
+    expect(lines).toContain("  approved  no network (narrowed from what it declares)");
+    const plain = formatExtensionAudit(
+      entry({ approved: ["api.example.com:443"], narrowed: false }),
+    );
+    expect(plain.some((l) => l.includes("approved"))).toBe(false);
+  });
+
+  test("the offer: three exact lines, 'not seen', before the closing lines", () => {
+    const lines = formatExtensionAudit(entry({ offer: OFFER }));
+    expect(lines.slice(-5)).toEqual([
+      "Offer: narrow the network grant to api.example.com (imap.example.com:993, cdn.example.com:8443 not seen in 5 run(s) over 7 day(s) on this machine).",
+      "  If the extension does use it rarely, that feature will fail.",
+      "  To apply: nimbus extension approve acme.tool --network api.example.com",
+      ...CLOSING,
+    ]);
+    expect(lines.join(NL)).not.toContain("none used");
+  });
+
+  test("a Windows offer reads no network and applies with --network none", () => {
+    const lines = formatExtensionAudit(
+      entry({
+        os: "win32",
+        offer: { keep: [], remove: ["api.example.com", "other.example.com"], runs: 6, days: 9 },
+      }),
+    );
+    expect(lines).toContain(
+      "Offer: narrow the network grant to no network (api.example.com, other.example.com not seen in 6 run(s) over 9 day(s) on this machine).",
+    );
+    expect(lines).toContain("  To apply: nimbus extension approve acme.tool --network none");
+  });
+
+  test("a manifest that could not be read says declared came from the grant", () => {
+    expect(formatExtensionAudit(entry({ declaredFrom: "grant" }))[2]).toBe(
+      "  declared  read from the run grant: the installed manifest could not be read and verified",
+    );
+    // No coverage yet: the line still shows.
+    expect(formatExtensionAudit(entry({ firstSeen: undefined, declaredFrom: "grant" }))).toContain(
+      "  declared  read from the run grant: the installed manifest could not be read and verified",
+    );
+  });
+
+  test("no offer, null offer and an older gateway's entry print no offer lines", () => {
+    for (const offer of [null, undefined]) {
+      const lines = formatExtensionAudit(entry({ offer }));
+      expect(lines.some((l) => l.startsWith("Offer:"))).toBe(false);
+    }
+  });
+
+  test("hostile names in the offer, the approved list and the id are sanitised in text", () => {
+    const bad = `ev${String.fromCharCode(0x1b)}[31mil.test`;
+    const idBad = `acme${String.fromCharCode(0x202e)}.tool`;
+    const text = formatExtensionAudit(
+      entry({
+        id: idBad,
+        approved: [`${bad}:443`],
+        narrowed: true,
+        offer: { keep: [`${bad}:443`], remove: [`${bad}`], runs: 5, days: 7 },
+      }),
+    ).join(NL);
+    expect(text).not.toContain(String.fromCharCode(0x1b));
+    expect(text).not.toContain(String.fromCharCode(0x202e));
+    expect(text).toContain("  approved  ev??31mil.test:443 (narrowed from what it declares)");
+    expect(text).toContain(
+      "  To apply: nimbus extension approve acme?.tool --network ev??31mil.test:443",
+    );
+  });
+
+  test("--json sanitises approved and the offer's keep and remove", async () => {
+    const bad = `ev${String.fromCharCode(0x1b)}il.test`;
+    const { client } = fakeClient([
+      entry({
+        approved: [`${bad}:443`],
+        narrowed: true,
+        offer: { keep: [`${bad}:443`], remove: [bad], runs: 5, days: 7 },
+      }),
+    ]);
+    let out = "";
+    await runExtensionAudit(["acme.tool", "--json"], { client, out: (s) => (out += s) });
+    expect(out).not.toContain("\u001b");
+    const parsed = JSON.parse(out) as { extensions: ExtensionAuditEntry[] };
+    expect(parsed.extensions[0]?.approved).toEqual(["ev?il.test:443"]);
+    expect(parsed.extensions[0]?.offer).toEqual({
+      keep: ["ev?il.test:443"],
+      remove: ["ev?il.test"],
+      runs: 5,
+      days: 7,
+    });
+  });
+});

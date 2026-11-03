@@ -1,5 +1,7 @@
 import { parseNetworkEntry } from "@nimbus-dev/registry-format";
 
+import { normaliseHost } from "../network-entry-key.ts";
+
 export type FindingRow = { destination: string; port: number; count: number };
 
 export type ObservationFinding = {
@@ -10,12 +12,6 @@ export type ObservationFinding = {
   /** Linux only. Never named off Linux. Raw; the CLI sanitises before display. */
   destinations?: FindingRow[];
 };
-
-/** Lowercase, one trailing dot dropped: the form a declared host and a stored name share. */
-export function normaliseHost(host: string): string {
-  const lower = host.toLowerCase();
-  return lower.endsWith(".") ? lower.slice(0, -1) : lower;
-}
 
 /**
  * What an observation says the owner should look at, or `null`. Linux: a `refused` name that no declared

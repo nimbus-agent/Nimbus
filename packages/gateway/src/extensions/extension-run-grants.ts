@@ -5,6 +5,7 @@ import {
   pathApiFor,
   pathsOverlap,
 } from "../util/path-overlap.ts";
+import { networkEntryKey } from "./network-entry-key.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
 /** What resolving a grant needs from the machine. Injected so tests never touch real Nimbus dirs. */
@@ -145,13 +146,22 @@ export function resolveExtensionRunGrants(
     if (c !== null) write.push(c);
   }
   return {
-    network: dedupe(
-      declared.network.map((h) => h.toLowerCase()),
-      "linux",
-    ),
+    network: declaredNetworkEntries(declared.network),
     read: dedupe(read, env.platform),
     write: dedupe(write, env.platform),
   };
+}
+
+/**
+ * A manifest's declared network as a run grant holds it: each entry lowercased, exact duplicates
+ * dropped, manifest order kept. The one rule {@link resolveExtensionRunGrants} applies, exported so
+ * `extension audit` reads what the manifest declares in the same form without resolving file grants.
+ */
+export function declaredNetworkEntries(network: readonly string[]): string[] {
+  return dedupe(
+    network.map((h) => h.toLowerCase()),
+    "linux",
+  );
 }
 
 /** The canonical stored form; equal grants serialize identically, so a string compare decides. */
@@ -161,6 +171,62 @@ export function serializeRunGrants(grants: ResolvedRunGrants): string {
     read: [...grants.read],
     write: [...grants.write],
   });
+}
+
+/**
+ * THE subset rule (I43 step 8 and I52), one function for the spawn verifier and the approval's
+ * post-prompt re-check so the two cannot drift. `ok` only when the stored file grants equal the
+ * re-resolved ones exactly (in their serialised form, so order and spelling count) AND the stored
+ * network is a subsequence of the re-resolved network: every entry an exact string member, in the
+ * same relative order, none twice. Equal lists are the special case, so every grant written before
+ * narrowing existed still passes. The returned grants are the re-resolved files with the STORED
+ * network: never a stored path, and never a host the manifest does not declare now, so what a spawn
+ * runs under can only be narrower than the manifest, never wider.
+ */
+export function checkStoredAgainstResolved(
+  stored: ResolvedRunGrants,
+  resolved: ResolvedRunGrants,
+): { ok: true; grants: ResolvedRunGrants } | { ok: false } {
+  if (
+    JSON.stringify([...stored.read]) !== JSON.stringify([...resolved.read]) ||
+    JSON.stringify([...stored.write]) !== JSON.stringify([...resolved.write])
+  ) {
+    return { ok: false };
+  }
+  if (new Set(stored.network).size !== stored.network.length) return { ok: false };
+  let next = 0;
+  for (const entry of stored.network) {
+    const at = resolved.network.indexOf(entry, next);
+    if (at === -1) return { ok: false };
+    next = at + 1;
+  }
+  return {
+    ok: true,
+    grants: { network: [...stored.network], read: [...resolved.read], write: [...resolved.write] },
+  };
+}
+
+/**
+ * The network an owner's `--network` asks for, as entries of what the manifest declares: each
+ * requested entry names a declared one by its {@link networkEntryKey} (so `api.x.com`,
+ * `API.x.com.` and `api.x.com:443` all name the declared `api.x.com`). The result is the matched
+ * RAW resolved entries, deduplicated, in manifest order, so it always passes
+ * {@link checkStoredAgainstResolved}; an empty request is no network. An entry that names nothing
+ * declared is an error: narrowing can only remove.
+ */
+export function narrowNetwork(
+  resolved: ResolvedRunGrants,
+  requested: readonly string[],
+): string[] | { error: string } {
+  const wanted = new Set<string>();
+  for (const r of requested) {
+    const key = networkEntryKey(r);
+    if (!resolved.network.some((d) => networkEntryKey(d) === key)) {
+      return { error: `"${r}" is not a network entry this extension declares` };
+    }
+    wanted.add(key);
+  }
+  return resolved.network.filter((d) => wanted.has(networkEntryKey(d)));
 }
 
 function stringArray(v: unknown): string[] | undefined {

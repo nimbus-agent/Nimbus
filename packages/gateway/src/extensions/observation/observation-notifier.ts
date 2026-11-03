@@ -1,8 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { selectExtensionVersion } from "../../automation/extension-store.ts";
-import { parseRunGrants } from "../extension-run-grants.ts";
-import { getRunGrant } from "../run-grant-store.ts";
+import { declaredNetworkFor } from "./declared-network.ts";
 import { type FindingRow, observationFindings } from "./observation-findings.ts";
 import {
   type ObservationRow,
@@ -74,7 +73,9 @@ function rowKey(a: string, b: string | number): string {
 
 /**
  * The production `findingsFor`: the version's stored rows through `observationFindings`, the same
- * rule `extension.audit` reports, with the declared hosts from the installed run grant.
+ * rule `extension.audit` reports, with the declared hosts from the verified installed manifest (the
+ * run grant's only when the manifest cannot be read): a host the owner removed by narrowing (I52)
+ * is still declared, so the child trying it is not an undeclared finding.
  */
 export function observationFindingsFor(
   db: Database,
@@ -83,8 +84,7 @@ export function observationFindingsFor(
 ): NoticeFinding | null {
   const { coverage, rows } = readExtensionAudit(db, extensionId, version);
   if (coverage === undefined) return null;
-  const grant = getRunGrant(db, extensionId);
-  const declared = grant === null ? [] : (parseRunGrants(grant.permissions_json)?.network ?? []);
+  const declared = declaredNetworkFor(db, extensionId, version).entries;
   const refused = rows.filter((r) => r.outcome === "refused");
   const unmatched = rows.filter((r) => r.outcome === "unmatched");
   const finding = observationFindings({

@@ -46,6 +46,8 @@ import {
   resolveExtensionManifestPath,
 } from "./manifest.ts";
 import { rangesOf } from "./manifest-support.ts";
+import { isNetworkNarrowed } from "./network-entry-key.ts";
+import { declaredNetworkFor } from "./observation/declared-network.ts";
 import { orphanedAfterEdgeChange } from "./orphaned-dependencies.ts";
 import { extractPackage } from "./package-extract.ts";
 import { writePublisherKeyFor } from "./publisher-keys.ts";
@@ -124,6 +126,26 @@ export function withUpdateAppliedHook<Rest extends unknown[], Result = void>(
   };
 }
 
+/**
+ * Whether the extension's stored run grant names a narrower network than its verified installed
+ * manifest declares (the owner approved with `--network`, I52), compared by parse key exactly as
+ * `nimbus extension audit`'s `narrowed` is. False with no grant, a grant approved for another
+ * version or whose stored JSON is unreadable, no installed row, or a manifest that cannot be read
+ * and verified (then nothing trustworthy says what was declared). It feeds one
+ * sentence of an update's approval note and decides nothing.
+ */
+export function runGrantNarrowedFor(db: Database, id: string): boolean {
+  const installed = listExtensions(db);
+  const row = installed.find((r) => r.id === id);
+  if (row === undefined) return false;
+  const declared = declaredNetworkFor(db, id, row.version, installed);
+  return (
+    declared.from === "manifest" &&
+    declared.approved !== undefined &&
+    isNetworkNarrowed(declared.entries, declared.approved)
+  );
+}
+
 export interface AutoUpdateRuntimeBag {
   cache: AutoUpdateCache;
   forcePoll: () => Promise<void>;
@@ -148,6 +170,8 @@ export interface AutoUpdateRuntimeBag {
   qualityChangeNow?: (cached: AvailableUpdate, plan: UpdatePlan) => Promise<QualityChange>;
   /** Optional for test bags; the production bag (below) always answers from the run-grant store. */
   hasRunGrant?: (id: string) => Promise<boolean>;
+  /** Whether the run grant's network is narrower than the installed manifest (I52); for the note only. */
+  isRunGrantNarrowed?: (id: string) => Promise<boolean>;
   /** Whether the update's source registry still exists under the detected root fingerprint. */
   isSourceCurrent?: (cached: AvailableUpdate) => Promise<boolean>;
   /** The verified publisher (R6) of an update's key, asked at read time; never cached. */
@@ -746,6 +770,7 @@ export function createAutoUpdateRuntime(opts: AutoUpdateInitOpts): AutoUpdateRun
       }),
     qualityChangeNow: (cached, plan) => currentQualityChange(cached, plan),
     hasRunGrant: (id) => Promise.try(() => getRunGrant(opts.db, id) !== null),
+    isRunGrantNarrowed: (id) => Promise.try(() => runGrantNarrowedFor(opts.db, id)),
     isSourceCurrent: (cached) =>
       Promise.try(() => currentSourceRegistry(fetchDeps, cached) !== undefined),
     // R6, asked at read time with the detector's own subject (the source registry, I44).

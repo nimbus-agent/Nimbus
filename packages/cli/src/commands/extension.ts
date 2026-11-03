@@ -36,7 +36,7 @@ import { getCliPlatformPaths } from "../paths.ts";
 import { NIMBUS_VERSION } from "../version.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
-import { runExtensionAudit } from "./extension-audit.ts";
+import { declaredName, runExtensionAudit } from "./extension-audit.ts";
 import { runExtensionKey } from "./extension-key.ts";
 import {
   listObservationLines,
@@ -84,7 +84,8 @@ export function stripFlags(args: string[]): string[] {
       a === "--json" ||
       a === "--model" ||
       a === "--remote" ||
-      a === "--clean-deps"
+      a === "--clean-deps" ||
+      a?.startsWith("--network=") === true
     ) {
       continue;
     }
@@ -95,7 +96,8 @@ export function stripFlags(args: string[]): string[] {
       a === "--version" ||
       a === "--channel" ||
       a === "--to" ||
-      a === "--accept-publisher-key"
+      a === "--accept-publisher-key" ||
+      a === "--network"
     ) {
       i += 1;
       continue;
@@ -788,8 +790,85 @@ export async function runExtensionRehash(
   );
 }
 
+const APPROVE_USAGE = "Usage: nimbus extension approve <id> [--model] [--network <a,b|none>]";
+
+const NETWORK_EQ = "--network=";
+
 /**
- * `nimbus extension approve <id> [--model]` — approve an installed extension to RUN with the grants the
+ * Text that echoes what the owner typed, made safe for a terminal the way `displayName` makes a
+ * name safe: every control, bidi or invisible character (`stripControl`'s set) shows as `?`. The
+ * gateway's "not a network entry this extension declares" error quotes the requested entry.
+ */
+export function printable(s: string): string {
+  let out = "";
+  for (const ch of s) out += stripControl(ch) === "" ? "?" : ch;
+  return out;
+}
+
+/**
+ * The raw `--network` value, from `--network <v>` or `--network=<v>`; `undefined` when the flag is
+ * absent, `null` when it is given with no value. Given more than once (in either form), it refuses:
+ * which one the owner meant is not something to guess, and silently ignoring one would lose it.
+ */
+function networkFlagValue(args: string[]): string | null | undefined {
+  const at = args.flatMap((a, i) => (a === "--network" || a.startsWith(NETWORK_EQ) ? [i] : []));
+  if (at.length === 0) return undefined;
+  if (at.length > 1) {
+    throw new Error(`--network was given more than once; give it once. ${APPROVE_USAGE}`);
+  }
+  const a = args[at[0] ?? 0] ?? "";
+  if (a.startsWith(NETWORK_EQ)) return a.slice(NETWORK_EQ.length);
+  return takeFlagValue(args, "--network") ?? null;
+}
+
+/**
+ * `--network <a,b|none>` or `--network=<a,b|none>` (I52): the declared network entries to keep, or
+ * `"none"` for no network. Absent when the flag is not given. A missing value, an empty entry, a value
+ * that is another flag or a repeated flag refuses before any call; which entries are declared is the
+ * gateway's check.
+ */
+function approveNetworkFlag(args: string[]): { network?: string[] | "none" } {
+  const raw = networkFlagValue(args);
+  if (raw === undefined) return {};
+  if (raw === null || raw === "" || raw.startsWith("-")) {
+    throw new Error(
+      `--network needs a value: a comma-separated list of declared entries, or none. ${APPROVE_USAGE}`,
+    );
+  }
+  if (raw.trim() === "none") return { network: "none" };
+  const entries = raw.split(",").map((e) => e.trim());
+  if (entries.some((e) => e === "")) {
+    throw new Error(`--network has an empty entry in "${printable(raw)}". ${APPROVE_USAGE}`);
+  }
+  return { network: entries };
+}
+
+type ApproveRunResult = {
+  id: string;
+  serviceId: string;
+  treeDigest: string;
+  changed: boolean;
+  modelAccess?: boolean;
+  syncServiceId?: string;
+  grants?: { network?: string[] };
+};
+
+/** `extension.approveRun`; a refusal's message is made printable before it reaches the terminal. */
+async function callApproveRun(
+  client: IPCClient,
+  params: Record<string, unknown>,
+): Promise<ApproveRunResult> {
+  try {
+    return await client.call<ApproveRunResult>("extension.approveRun", params);
+  } catch (e) {
+    // A refused `--network` entry comes back quoted in the message: never print it raw.
+    if (e instanceof Error) e.message = printable(e.message);
+    throw e;
+  }
+}
+
+/**
+ * `nimbus extension approve <id> [--model] [--network <a,b|none>]` — approve an installed extension to RUN with the grants the
  * gateway resolves from its manifest. The gateway asks under `extension.run`. A terminal is
  * required and there is no `--yes`: this consents to running third-party code unattended, which is
  * not something to approve from a script. The gateway spawns an approved extension on first use,
@@ -802,7 +881,7 @@ export async function runExtensionApprove(
 ): Promise<void> {
   const id = rest[0]?.trim() ?? "";
   if (id === "") {
-    throw new Error("Usage: nimbus extension approve <id> [--model]");
+    throw new Error(APPROVE_USAGE);
   }
   if (hasFlag(args, "--yes") || hasFlag(args, "-y")) {
     throw new Error(
@@ -818,17 +897,17 @@ export async function runExtensionApprove(
   // from `NIMBUS_SCRIPT_CONSENT_SOURCE` when it is set, which would let an environment variable
   // approve running third-party code at a terminal — exactly what having no --yes rules out.
   registerConsentPromptHandler(client);
-  // Every approval states the whole grant: without --model, model access is turned off.
+  // Every approval states the whole grant: without --model, model access is turned off, and without
+  // --network the whole declared network is granted (an earlier narrowing is not kept).
   const modelAccess = hasFlag(args, "--model");
-  const out = await client.call<{
-    id: string;
-    serviceId: string;
-    treeDigest: string;
-    changed: boolean;
-    modelAccess?: boolean;
-    syncServiceId?: string;
-  }>("extension.approveRun", { id, modelAccess });
-  const model = `model access: ${out.modelAccess === true ? "on" : "off"}`;
+  const network = approveNetworkFlag(args);
+  const out = await callApproveRun(client, { id, modelAccess, ...network });
+  const granted = out.grants?.network ?? [];
+  const model =
+    `model access: ${out.modelAccess === true ? "on" : "off"}` +
+    (network.network === undefined
+      ? ""
+      : `; network: ${granted.length === 0 ? "none" : granted.map(declaredName).join(", ")}`);
   console.log(
     out.changed
       ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}; ${model}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
@@ -1360,8 +1439,22 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
   return undefined;
 }
 
+/**
+ * `--network` narrows a run approval and means nothing anywhere else. `stripFlags` drops it (and
+ * its value) for every subcommand, so outside `approve` it would be silently ignored: refuse it.
+ */
+export function refuseNetworkOutsideApprove(sub: string, args: readonly string[]): void {
+  if (sub === "approve") return;
+  if (args.slice(1).some((a) => a === "--network" || a.startsWith(NETWORK_EQ))) {
+    throw new Error(
+      `--network is only for \`nimbus extension approve\`; \`nimbus extension ${printable(sub)}\` does not take it.`,
+    );
+  }
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
+  refuseNetworkOutsideApprove(sub, args);
   if (await runExtensionOffline(sub, args)) {
     return;
   }

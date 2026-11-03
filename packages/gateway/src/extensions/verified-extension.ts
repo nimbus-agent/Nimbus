@@ -12,7 +12,9 @@ import { readVerifiedManifest, resolvedCredentialsFor } from "./approve-run.ts";
 import { CONTINUITY_TABLE, type ContinuityEntry } from "./continuity/continuity-table.ts";
 import { type ResolvedRunCredentials, serializeRunCredentials } from "./extension-credentials.ts";
 import {
+  checkStoredAgainstResolved,
   type ExtensionRunGrantEnv,
+  parseRunGrants,
   type ResolvedRunGrants,
   resolveExtensionRunGrants,
   serializeRunGrants,
@@ -433,14 +435,23 @@ export async function readVerifiedExtensionForSpawn(
   await assertPublisherSignature(deps.db, row, manifest, grant, deps.vault);
   // 7
   const { installPath, entryPath } = resolveEntryInside(row, manifest, deps.env);
-  // 8 — throws its own GRANT_* refusal when a declared path no longer resolves.
-  const grants = resolveExtensionRunGrants(manifest.permissions, installPath, deps.env);
-  if (serializeRunGrants(grants) !== grant.permissions_json) {
+  // 8 — throws its own GRANT_* refusal when a declared path no longer resolves. The stored grant
+  // must be in its canonical form, its files equal to the re-resolved ones and its network a
+  // subset of the re-resolved network (I52); the spawn then runs under the RE-RESOLVED files and
+  // the stored network, never a stored path and never a host the manifest no longer declares.
+  const resolved = resolveExtensionRunGrants(manifest.permissions, installPath, deps.env);
+  const stored = parseRunGrants(grant.permissions_json);
+  const checked =
+    stored !== undefined && serializeRunGrants(stored) === grant.permissions_json
+      ? checkStoredAgainstResolved(stored, resolved)
+      : { ok: false as const };
+  if (!checked.ok) {
     refuse(
       "ERR_EXTENSION_RUN_CHANGED",
       `${row.id}'s permissions no longer resolve to what was approved; approve it again`,
     );
   }
+  const grants = checked.grants;
   // 9 — the credentials, re-resolved from the manifest verified above and the binding the row's
   // source resolves to NOW, must equal what was approved: a credential added (or re-mapped to a
   // different Vault key) after approval was never shown to the owner.
