@@ -45,36 +45,59 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // start bun.exe again (uv_spawn ENOENT, seen locally 2026-11-03), and a piped bun grandchild hung.
 // System32 and /usr/bin are readable inside both sandboxes. Each curl makes one HTTPS request
 // (one TCP connection, held for the TLS handshake and the reply); its PID is the truth.
-const CURL = process.platform === "win32" ? "C:\\Windows\\System32\\curl.exe" : "/usr/bin/curl";
+// On the windows-latest runner, spawning System32\curl.exe from inside the AppContainer threw EPERM
+// synchronously (2026-11-03), while it worked on a Windows 11 dev machine; so each candidate is
+// tried in order, and a refusal is recorded instead of crashing the child.
 const DEVNULL = process.platform === "win32" ? "NUL" : "/dev/null";
+const CURL_ARGS = ["-s", "-o", DEVNULL, "--max-time", "10", `https://${HOST}/`];
+const CANDIDATES: [string, string[]][] =
+  process.platform === "win32"
+    ? [
+        ["C:\\Windows\\System32\\curl.exe", CURL_ARGS],
+        ["C:\\Windows\\System32\\cmd.exe", ["/d", "/c", "C:\\Windows\\System32\\curl.exe", ...CURL_ARGS]],
+        [process.execPath, [process.argv[1] ?? "", "--grand"]],
+      ]
+    : [["/usr/bin/curl", CURL_ARGS]];
 
-function runCurl(): Promise<{ pid?: number; exit?: number | null; error?: string }> {
+type Grand = { cmd: string; pid?: number; exit?: number | null; error?: string };
+
+function runOne(cmd: string, args: string[]): Promise<Grand> {
   return new Promise((resolve) => {
-    const p = spawn(CURL, ["-s", "-o", DEVNULL, "--max-time", "10", `https://${HOST}/`], {
-      stdio: "ignore",
-      env: process.env,
-    });
+    let p: ReturnType<typeof spawn>;
+    try {
+      p = spawn(cmd, args, { stdio: "ignore", env: process.env });
+    } catch (e) {
+      resolve({ cmd, error: `spawn threw: ${e instanceof Error ? e.message : String(e)}` });
+      return;
+    }
     const timer = setTimeout(() => {
       p.kill();
-      resolve({ pid: p.pid, error: "curl did not finish within 15 s" });
+      resolve({ cmd, pid: p.pid, error: "did not finish within 15 s" });
     }, 15_000);
     p.on("exit", (code) => {
       clearTimeout(timer);
-      resolve({ pid: p.pid, exit: code });
+      resolve({ cmd, pid: p.pid, exit: code });
     });
     p.on("error", (e) => {
       clearTimeout(timer);
-      resolve({ pid: p.pid, error: `curl spawn failed: ${e.message}` });
+      resolve({ cmd, pid: p.pid, error: `spawn failed: ${e.message}` });
     });
   });
 }
 
-async function runGrandchildren(): Promise<unknown[]> {
-  process.stderr.write(`[${role}] spawning curl grandchildren\n`);
-  const out: unknown[] = [];
-  for (let i = 0; i < 5; i++) {
-    out.push(await runCurl());
-    await sleep(200);
+/** Five grandchildren from the first candidate that starts; every refusal before it is kept. */
+async function runGrandchildren(): Promise<Grand[]> {
+  process.stderr.write(`[${role}] spawning grandchildren\n`);
+  const out: Grand[] = [];
+  for (const [cmd, args] of CANDIDATES) {
+    const first = await runOne(cmd, args);
+    out.push(first);
+    if (first.exit !== 0) continue;
+    for (let i = 0; i < 4; i++) {
+      await sleep(200);
+      out.push(await runOne(cmd, args));
+    }
+    break;
   }
   return out;
 }
