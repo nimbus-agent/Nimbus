@@ -183,7 +183,7 @@ describe("hostile declared hosts (grant-sourced names)", () => {
 describe("displayName", () => {
   test("keeps the safe alphabet, replaces the rest with ?, cuts at 253", () => {
     expect(displayName("a.b-c_D9")).toBe("a.b-c_D9");
-    expect(displayName("ev\u001b[31mil\nhost\u202e")).toBe("ev?[31mil?host?".replace("[", "?"));
+    expect(displayName("ev\u001b[31mil\nhost\u202e")).toBe("ev??31mil?host?");
     expect(displayName("a".repeat(300))).toHaveLength(253);
   });
 });

@@ -341,17 +341,26 @@ function isDirectoryEntry(path: string): boolean {
   }
 }
 
-/** `O_NOFOLLOW` where the OS has it (POSIX); Windows has none, and the `lstat` below stands in. */
+/**
+ * `O_NOFOLLOW` where the OS has it (POSIX), so a link is refused by the open itself. Windows has
+ * none; there the directory is the guard: it is the user's own, created 0700-equivalent, and
+ * making a symbolic link in it needs a privilege a sandboxed child does not hold.
+ */
 const OPEN_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
 
 /**
- * The file's body, read from ONE descriptor: opened without following a link, checked by `fstat`
- * (a regular file within the cap) and read no further than one byte past the cap, so the file
- * cannot be swapped or grown between the check and the read.
+ * The file's body, read from ONE descriptor: opened without following a link, checked only by
+ * `fstat` on that descriptor (a regular file within the cap; no check by path before the open, so
+ * nothing can change between a check and the use) and read no further than one byte past the cap.
  */
 function readWindowFile(path: string): string {
-  if (lstatSync(path).isSymbolicLink()) bad("a symbolic link");
-  const fd = openSync(path, OPEN_NO_FOLLOW);
+  let fd: number;
+  try {
+    fd = openSync(path, OPEN_NO_FOLLOW);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ELOOP") bad("a symbolic link");
+    throw e;
+  }
   try {
     const st = fstatSync(fd);
     if (!st.isFile()) bad("not a regular file");

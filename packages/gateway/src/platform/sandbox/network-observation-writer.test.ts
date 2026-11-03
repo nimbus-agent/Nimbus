@@ -499,7 +499,10 @@ describe.skipIf(process.platform !== "win32")("SIGTERM on Windows", () => {
       [
         process.execPath,
         "-e",
-        `const fs=require("fs");process.on("SIGTERM",()=>{fs.writeFileSync(${JSON.stringify(marker)},"x");process.exit(0)});fs.writeFileSync(${JSON.stringify(ready)},"");setInterval(()=>{},1000);`,
+        // A fixed script: the two paths arrive as argv, never inside the code.
+        'const fs=require("fs");const [marker,ready]=process.argv.slice(-2);process.on("SIGTERM",()=>{fs.writeFileSync(marker,"x");process.exit(0)});fs.writeFileSync(ready,"");setInterval(()=>{},1000);',
+        marker,
+        ready,
       ],
       { stdio: ["ignore", "ignore", "ignore"] },
     );
