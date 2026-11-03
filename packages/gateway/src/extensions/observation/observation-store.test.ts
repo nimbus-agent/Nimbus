@@ -268,6 +268,93 @@ describe("applyObservationWindow", () => {
     expect(a.coverage?.dropped).toBe(3);
   });
 
+  const fill = (outcome: "unmatched" | "refused" | "used", n: number, port = 443) =>
+    Array.from({ length: n }, (_, i) => ({
+      outcome,
+      destination:
+        outcome === "unmatched" ? `10.0.${Math.floor(i / 256)}.${i % 256}` : `h${i}.test`,
+      port,
+      count: 1,
+    }));
+
+  test("at the bound a new `used` row evicts the oldest `unmatched` row and counts it as dropped", () => {
+    applyObservationWindow(db, win({ fromMs: 1000, toMs: 2000, entries: fill("unmatched", 1) }));
+    applyObservationWindow(
+      db,
+      win({ runStart: false, fromMs: 3000, toMs: 4000, entries: fill("unmatched", 512).slice(1) }),
+    );
+    applyObservationWindow(
+      db,
+      win({
+        runStart: false,
+        fromMs: 5000,
+        toMs: 6000,
+        entries: [{ outcome: "used", destination: "api.example.com", port: 443, count: 2 }],
+      }),
+    );
+    const a = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(a.rows).toHaveLength(512);
+    expect(a.rows.filter((r) => r.outcome === "used").map((r) => r.destination)).toEqual([
+      "api.example.com",
+    ]);
+    // 10.0.0.0 was the one last seen earliest.
+    expect(a.rows.some((r) => r.destination === "10.0.0.0")).toBe(false);
+    expect(a.coverage?.dropped).toBe(1);
+  });
+
+  test("at the bound with no `unmatched` row, a new `used` row evicts the oldest `refused` row", () => {
+    applyObservationWindow(db, win({ fromMs: 1000, toMs: 2000, entries: fill("refused", 1, 0) }));
+    applyObservationWindow(
+      db,
+      win({ runStart: false, fromMs: 3000, toMs: 4000, entries: fill("refused", 512, 0).slice(1) }),
+    );
+    applyObservationWindow(db, win({ runStart: false, fromMs: 5000, toMs: 6000 }));
+    const a = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(a.rows).toHaveLength(512);
+    expect(a.rows.some((r) => r.outcome === "used")).toBe(true);
+    expect(a.rows.some((r) => r.destination === "h0.test")).toBe(false);
+    expect(a.coverage?.dropped).toBe(1);
+  });
+
+  test("at the bound a new `unmatched` or `refused` row is dropped, and a full table of `used` drops a new `used`", () => {
+    applyObservationWindow(db, win({ entries: fill("used", 512) }));
+    applyObservationWindow(
+      db,
+      win({
+        runStart: false,
+        entries: [
+          { outcome: "unmatched", destination: "10.9.9.9", port: 443, count: 1 },
+          { outcome: "refused", destination: "evil.test", port: 0, count: 1 },
+          { outcome: "used", destination: "api.example.com", port: 443, count: 1 },
+        ],
+      }),
+    );
+    const a = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(a.rows).toHaveLength(512);
+    expect(a.rows.every((r) => r.outcome === "used" && r.destination !== "api.example.com")).toBe(
+      true,
+    );
+    expect(a.coverage?.dropped).toBe(3);
+  });
+
+  test("eviction never crosses into another version's rows", () => {
+    applyObservationWindow(
+      db,
+      win({ version: "2.0.0", fromMs: 1, toMs: 1, entries: fill("unmatched", 1) }),
+    );
+    applyObservationWindow(db, win({ entries: fill("used", 512) }));
+    applyObservationWindow(
+      db,
+      win({
+        runStart: false,
+        entries: [{ outcome: "used", destination: "x.test", port: 443, count: 1 }],
+      }),
+    );
+    expect(readExtensionAudit(db, "ext-a", "2.0.0").rows).toHaveLength(1);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").rows).toHaveLength(512);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.dropped).toBe(1);
+  });
+
   test("a CHECK rejects outcome 'other'", () => {
     expect(() =>
       dbRun(

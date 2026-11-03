@@ -194,6 +194,32 @@ describe("extension.audit", () => {
     }
   });
 
+  test("512 unmatched addresses do not push a later used host into notSeen", () => {
+    addExt("u", ["api.example.com:443"]);
+    const unmatched = Array.from({ length: 512 }, (_, i) => ({
+      outcome: "unmatched" as const,
+      destination: `10.0.${Math.floor(i / 256)}.${i % 256}`,
+      port: 443,
+      count: 1,
+    }));
+    applyObservationWindow(db, win("u", { os: "win32", entries: unmatched }));
+    applyObservationWindow(
+      db,
+      win("u", {
+        os: "win32",
+        runStart: false,
+        fromMs: 4 * 86_400_000,
+        toMs: 5 * 86_400_000,
+        entries: [{ outcome: "used", destination: "api.example.com", port: 443, count: 1 }],
+      }),
+    );
+    const e = readAuditEntries(db, "u")?.[0];
+    expect(e?.used).toEqual([{ destination: "api.example.com", port: 443, count: 1 }]);
+    expect(e?.notSeen).toEqual([]);
+    expect(e?.unmatched).toHaveLength(511);
+    expect(e?.dropped).toBe(1);
+  });
+
   test("a run whose observation stopped after one day says so", () => {
     applyObservationWindow(db, win("a", { runStart: false, stopped: true }));
     expect(readAuditEntries(db, "a")?.[0]?.stopped).toBe(true);

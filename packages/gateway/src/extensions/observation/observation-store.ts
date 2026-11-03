@@ -9,7 +9,11 @@ import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
  * rule.
  */
 export const OBSERVATION_SCHEMA_VERSION = 81;
-/** At most this many observation rows per extension and version; further keys add to `dropped`. */
+/**
+ * At most this many observation rows per extension and version. Past it a new `used` key evicts
+ * the oldest `unmatched` (else `refused`) row; any other new key, or a `used` key with nothing to
+ * evict, is not stored. Either way one key adds one to `dropped`.
+ */
 export const MAX_OBSERVATION_ROWS = 512;
 /** Rows and coverage age out this long after `last_seen`. */
 export const OBSERVATION_RETENTION_MS = 90 * 86_400_000;
@@ -128,6 +132,17 @@ export function applyObservationWindow(
        first_seen = MIN(first_seen, excluded.first_seen),
        last_seen = MAX(last_seen, excluded.last_seen)`,
   );
+  /** The oldest `unmatched` row of this extension and version, else the oldest `refused` one. */
+  const evictStmt = db.prepare(
+    `DELETE FROM extension_network_observation WHERE rowid = (
+       SELECT rowid FROM extension_network_observation
+       WHERE extension_id = ? AND version = ? AND outcome IN ('unmatched', 'refused')
+       ORDER BY outcome = 'refused', last_seen, first_seen, destination, port
+       LIMIT 1)`,
+  );
+  /** Whether room was made for a new entry at the bound: only a `used` one, and only by eviction. */
+  const evictedFor = (e: ObservationEntry): boolean =>
+    e.outcome === "used" && dbStmtRun(evictStmt, w.extensionId, w.version).changes > 0;
   try {
     return db
       .transaction((): boolean => {
@@ -140,8 +155,12 @@ export function applyObservationWindow(
           const known =
             existsStmt.get(w.extensionId, w.version, e.destination, e.port, e.outcome) !== null;
           if (!known && rows >= MAX_OBSERVATION_ROWS) {
+            // At the bound: a new `used` row takes the place of the oldest `unmatched` (else
+            // `refused`) row, so addresses that matched nothing cannot crowd out a declared host
+            // and make the report call it "not seen". The evicted row is what is dropped.
             overflow += 1;
-            continue;
+            if (!evictedFor(e)) continue;
+            rows -= 1;
           }
           dbStmtRun(
             upsert,
@@ -167,6 +186,7 @@ export function applyObservationWindow(
     countStmt.finalize();
     existsStmt.finalize();
     upsert.finalize();
+    evictStmt.finalize();
   }
 }
 
