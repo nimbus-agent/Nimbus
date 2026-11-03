@@ -66,6 +66,11 @@ export const MAX_ENTRIES = 256;
 export const MAX_FILE_BYTES = 64 * 1024;
 /** Window files per run: one day of minutes. The next file is the last, and says so. */
 export const MAX_FILES = 1440;
+/** The label's bounds, so it can never crowd the entries out of {@link MAX_FILE_BYTES}. */
+export const MAX_LABEL_EXTENSION_ID_LENGTH = 256;
+export const MAX_LABEL_VERSION_LENGTH = 64;
+/** Bytes, in UTF-8. */
+export const MAX_LABEL_JSON_LENGTH = 1024;
 /** The longest DNS name. */
 export const MAX_NAME_LENGTH = 253;
 
@@ -80,22 +85,38 @@ export function observationTempPath(path: string, pid: number, suffix: string): 
 
 const TEMP_ATTEMPTS = 4;
 
+export type AtomicWriteDeps = {
+  /** The temp name's random part. Tests only. */
+  suffix?: () => string;
+  /** The exclusive create of the temp file. Tests only, to make it fail part-way. */
+  writeTemp?: (temp: string, bytes: Uint8Array) => void;
+};
+
+function writeTempExclusive(temp: string, bytes: Uint8Array): void {
+  writeFileSync(temp, bytes, { flag: "wx", mode: 0o600 });
+}
+
 /**
  * Exclusive create (`wx`, 0600) of a fresh temp name, then a rename over the final path. A temp
  * name that already exists, a stale one from a crashed run say, is skipped for another, so it never
- * blocks a write. `suffix` is injectable for tests only.
+ * blocks a write. Any other failure removes the temp this call may have created before rethrowing,
+ * so a disk that stays full does not leave one stray `.tmp` behind per window.
  */
 export function writeObservationFileAtomic(
   path: string,
   bytes: Uint8Array,
-  suffix: () => string = () => randomBytes(2).toString("hex"),
+  deps: AtomicWriteDeps = {},
 ): void {
+  const suffix = deps.suffix ?? (() => randomBytes(2).toString("hex"));
+  const writeTemp = deps.writeTemp ?? writeTempExclusive;
   for (let attempt = 0; attempt < TEMP_ATTEMPTS; attempt += 1) {
     const temp = observationTempPath(path, process.pid, suffix());
     try {
-      writeFileSync(temp, bytes, { flag: "wx", mode: 0o600 });
+      writeTemp(temp, bytes);
     } catch (e) {
+      // EEXIST: the name was someone else's, so it is left alone and another is tried.
       if ((e as NodeJS.ErrnoException).code === "EEXIST") continue;
+      rmSync(temp, { force: true });
       throw e;
     }
     try {
@@ -235,8 +256,21 @@ export function createNetworkObservationWriter(
     window = { fromMs: toMs, entries: new Map(), dropped: 0 };
   };
 
+  /** The public face of `flush`: observation never throws into the wrapper or the forwarder. */
+  const safeFlush = (final: boolean): void => {
+    try {
+      flush(final);
+    } catch {
+      // Building the body cannot fail on bounded input; this keeps the promise if it ever does.
+    }
+  };
+
+  // File 0 at once, empty: a run killed before its first window (SIGKILL anywhere, TerminateProcess
+  // on Windows, where no handler runs) is still counted as a run.
+  safeFlush(false);
+
   const flushMs = opts.flushMs ?? DEFAULT_OBSERVATION_FLUSH_MS;
-  const timer = flushMs > 0 ? setInterval(() => flush(false), flushMs) : null;
+  const timer = flushMs > 0 ? setInterval(() => safeFlush(false), flushMs) : null;
   timer?.unref();
 
   return {
@@ -257,31 +291,23 @@ export function createNetworkObservationWriter(
     markObserved: () => {
       networkObserved = true;
     },
-    flush: (final) => {
-      try {
-        flush(final);
-      } catch {
-        // Building the body cannot fail on bounded input; this keeps the promise if it ever does.
-      }
-    },
+    flush: safeFlush,
     close: () => {
       if (closed) return;
       if (timer !== null) clearInterval(timer);
-      try {
-        flush(true);
-      } finally {
-        closed = true;
-      }
+      safeFlush(true);
+      closed = true;
     },
   };
 }
 
 /**
  * The label variable's value, or null when it is not exactly `{ extensionId, version }` with two
- * non-empty strings. Set by the gateway at spawn; validated here because it crosses a process.
+ * non-empty strings, `extensionId` at most 256 characters, `version` at most 64 and the whole value
+ * at most 1 KiB. Set by the gateway at spawn; validated here because it crosses a process.
  */
 export function parseObservationLabel(raw: string | undefined): ObservationLabel | null {
-  if (raw === undefined || raw === "") return null;
+  if (raw === undefined || raw === "" || byteLength(raw) > MAX_LABEL_JSON_LENGTH) return null;
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -294,6 +320,9 @@ export function parseObservationLabel(raw: string | undefined): ObservationLabel
   if (keys.length !== 2 || keys[0] !== "extensionId" || keys[1] !== "version") return null;
   const { extensionId, version } = o;
   if (typeof extensionId !== "string" || extensionId === "") return null;
-  if (typeof version !== "string" || version === "") return null;
+  if (extensionId.length > MAX_LABEL_EXTENSION_ID_LENGTH) return null;
+  if (typeof version !== "string" || version === "" || version.length > MAX_LABEL_VERSION_LENGTH) {
+    return null;
+  }
   return { extensionId, version };
 }

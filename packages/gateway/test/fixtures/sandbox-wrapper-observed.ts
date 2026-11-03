@@ -1,7 +1,8 @@
 /**
  * The real `runSandboxWrapper`, with a stand-in runner that spawns its child unconfined, for
  * `network-observation-writer.test.ts`'s signal case. The stand-in reports one used connection
- * through the spawn's observer, as the Linux forwarder would, and its child writes `argv[2]`
+ * through the spawn's observer at process exit, as the Linux forwarder's session close does, and
+ * its child writes `argv[2]`
  * ("absent" when the observation variables did not reach it) once it is running. With `argv[3]`
  * `stay` the child keeps running until the wrapper is stopped; otherwise it exits at once.
  *
@@ -40,9 +41,13 @@ const standIn: SandboxRunner = {
       stdio: "ignore",
       windowsHide: true,
     });
-    process.once("exit", () => child.kill("SIGKILL"));
+    // Reported from an exit listener registered here, inside `spawn`, exactly as the forwarder
+    // session reports a relay still open when it closes: the wrapper's writer must close after it.
+    process.once("exit", () => {
+      opts.observer?.used("api.github.com", 443);
+      child.kill("SIGKILL");
+    });
     if (observed) opts.observer?.markObserved();
-    opts.observer?.used("api.github.com", 443);
     return child;
   },
   isFullyActive: () => true,

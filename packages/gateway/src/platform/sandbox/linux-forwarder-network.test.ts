@@ -1645,9 +1645,15 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
             refused: "ENOTFOUND",
             sawChannel: [],
           });
-          const files = readdirSync(obsDir).filter((f) => f.endsWith(".json"));
-          expect(files).toEqual(["ext_observed.1.deadbeef.0.json"]);
-          const file = JSON.parse(readFileSync(join(obsDir, files[0] ?? ""), "utf8")) as Record<
+          const files = readdirSync(obsDir)
+            .filter((f) => f.endsWith(".json"))
+            .sort((a, b) => (a < b ? -1 : 1));
+          // File 0 is written at start, before the child runs; file 1 is the run's final window.
+          expect(files).toEqual([
+            "ext_observed.1.deadbeef.0.json",
+            "ext_observed.1.deadbeef.1.json",
+          ]);
+          const file = JSON.parse(readFileSync(join(obsDir, files[1] ?? ""), "utf8")) as Record<
             string,
             unknown
           >;

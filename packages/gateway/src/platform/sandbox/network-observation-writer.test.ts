@@ -75,18 +75,36 @@ describe("createNetworkObservationWriter", () => {
     expect(h.last()["dropped"]).toBe(0);
   });
 
+  test("writes file 0 at creation, empty, so a run killed at once is still counted", () => {
+    const h = harness();
+    expect(h.files.map((f) => f.path)).toEqual(["/obs/ext_weather.1000.deadbeef.0.json"]);
+    expect(h.last()).toEqual({
+      v: 1,
+      label: LABEL,
+      seq: 0,
+      runStart: true,
+      os: "linux",
+      networkObserved: false,
+      fromMs: 1_000,
+      toMs: 1_000,
+      final: false,
+      entries: [],
+      dropped: 0,
+    });
+  });
+
   test("writes the exact body shape, and names the file <prefix>.<seq>.json", () => {
     const h = harness();
     h.tick(500);
     h.writer.markObserved();
     h.writer.used("api.github.com", 443);
     h.writer.flush(false);
-    expect(h.files[0]?.path).toBe("/obs/ext_weather.1000.deadbeef.0.json");
+    expect(h.files[1]?.path).toBe("/obs/ext_weather.1000.deadbeef.1.json");
     expect(h.last()).toEqual({
       v: 1,
       label: LABEL,
-      seq: 0,
-      runStart: true,
+      seq: 1,
+      runStart: false,
       os: "linux",
       networkObserved: true,
       fromMs: 1_000,
@@ -103,14 +121,14 @@ describe("createNetworkObservationWriter", () => {
     h.writer.markObserved();
     h.writer.flush(false);
     h.writer.close();
-    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, true, true]);
+    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, false, true, true]);
   });
 
   test("a writer nobody marks says networkObserved false in every file", () => {
     const h = harness({ os: "win32" });
     h.writer.flush(false);
     h.writer.close();
-    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, false]);
+    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, false, false]);
   });
 
   test("stores a hostile name sanitised", () => {
@@ -153,7 +171,7 @@ describe("createNetworkObservationWriter", () => {
       h.writer.refused(`${String(i).padStart(3, "0")}${"x".repeat(260)}`);
     }
     h.writer.flush(false);
-    const file = h.files[0];
+    const file = h.files.at(-1);
     expect(file?.bytes).toBeLessThanOrEqual(MAX_FILE_BYTES);
     const kept = entriesOf(h.last());
     expect(kept.every((e) => e.h.length === 253)).toBe(true);
@@ -169,9 +187,10 @@ describe("createNetworkObservationWriter", () => {
     h.writer.flush(false);
     h.tick(60_000);
     h.writer.flush(false);
-    expect(h.files.map((f) => f.body["seq"])).toEqual([0, 1, 2]);
-    expect(h.files.map((f) => f.body["runStart"])).toEqual([true, false, false]);
+    expect(h.files.map((f) => f.body["seq"])).toEqual([0, 1, 2, 3]);
+    expect(h.files.map((f) => f.body["runStart"])).toEqual([true, false, false, false]);
     expect(h.files.map((f) => [f.body["fromMs"], f.body["toMs"]])).toEqual([
+      [1_000, 1_000],
       [1_000, 1_000],
       [1_000, 61_000],
       [61_000, 121_000],
@@ -185,8 +204,21 @@ describe("createNetworkObservationWriter", () => {
     h.writer.close();
     h.writer.used("api.github.com", 443);
     h.writer.flush(false);
-    expect(h.files).toHaveLength(1);
+    expect(h.files).toHaveLength(2);
     expect(h.last()["final"]).toBe(true);
+  });
+
+  test("close never throws, even when building its file does", () => {
+    let broken = false;
+    const h = harness({
+      now: () => {
+        if (broken) throw new Error("clock gone");
+        return 1_000;
+      },
+    });
+    broken = true;
+    expect(() => h.writer.close()).not.toThrow();
+    expect(() => h.writer.close()).not.toThrow();
   });
 
   test("every file carries the label verbatim", () => {
@@ -194,12 +226,13 @@ describe("createNetworkObservationWriter", () => {
     h.writer.flush(false);
     h.writer.flush(false);
     h.writer.close();
-    expect(h.files.map((f) => f.body["label"])).toEqual([LABEL, LABEL, LABEL]);
+    expect(h.files.map((f) => f.body["label"])).toEqual([LABEL, LABEL, LABEL, LABEL]);
   });
 
   test("file 1441 is the stopped marker, and later events write nothing", () => {
     const h = harness();
-    for (let i = 0; i < MAX_FILES; i += 1) h.writer.flush(false);
+    // File 0 was written at creation.
+    for (let i = 1; i < MAX_FILES; i += 1) h.writer.flush(false);
     expect(h.files).toHaveLength(MAX_FILES);
     expect(h.files.some((f) => "stopped" in f.body)).toBe(false);
     h.writer.used("api.github.com", 443);
@@ -244,6 +277,12 @@ describe("createNetworkObservationWriter", () => {
   });
 });
 
+/** Each field at its cap in a 3-byte character: 990 bytes of UTF-8. */
+const WIDE_LABEL = JSON.stringify({
+  extensionId: "\u20ac".repeat(256),
+  version: "\u20ac".repeat(64),
+});
+
 describe("parseObservationLabel", () => {
   test("accepts exactly { extensionId, version } with non-empty strings", () => {
     expect(parseObservationLabel(JSON.stringify(LABEL))).toEqual(LABEL);
@@ -256,9 +295,17 @@ describe("parseObservationLabel", () => {
       JSON.stringify({ ...LABEL, extra: 1 }),
       JSON.stringify({ extensionId: "", version: "1" }),
       JSON.stringify({ extensionId: "a", version: 1 }),
+      JSON.stringify({ extensionId: "a".repeat(257), version: "1" }),
+      JSON.stringify({ extensionId: "a", version: "1".repeat(65) }),
+      // Each field within its own cap, the whole over 1 KiB of UTF-8.
+      `${WIDE_LABEL}${" ".repeat(100)}`,
     ]) {
       expect(parseObservationLabel(bad)).toBeNull();
     }
+    const longest = { extensionId: "a".repeat(256), version: "1".repeat(64) };
+    // 990 bytes: within every cap, so only the padding above made it too long.
+    expect(parseObservationLabel(WIDE_LABEL)).not.toBeNull();
+    expect(parseObservationLabel(JSON.stringify(longest))).toEqual(longest);
   });
 });
 
@@ -287,9 +334,26 @@ describe("writeObservationFileAtomic", () => {
     const stale = observationTempPath(path, process.pid, "aaaa");
     writeFileSync(stale, "half a file");
     const suffixes = ["aaaa", "bbbb"];
-    writeObservationFileAtomic(path, new TextEncoder().encode("{}"), () => suffixes.shift() ?? "");
+    writeObservationFileAtomic(path, new TextEncoder().encode("{}"), {
+      suffix: () => suffixes.shift() ?? "",
+    });
     expect(readFileSync(path, "utf8")).toBe("{}");
     expect(existsSync(stale)).toBe(true);
+  });
+
+  test("a write that fails after creating its temp file leaves no .tmp behind", () => {
+    const dir = tempRoot();
+    const path = join(dir, "ext_x.1.abcdef01.0.json");
+    const full = Object.assign(new Error("no space left on device"), { code: "ENOSPC" });
+    expect(() =>
+      writeObservationFileAtomic(path, new TextEncoder().encode("{}"), {
+        writeTemp: (temp) => {
+          writeFileSync(temp, "half");
+          throw full;
+        },
+      }),
+    ).toThrow("no space left on device");
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   test("the temp name is <prefix>.<seq>.<pid>.<4 hex>.tmp", () => {
@@ -345,19 +409,27 @@ async function waitForFile(path: string): Promise<void> {
   expect(existsSync(path)).toBe(true);
 }
 
-/** The run's one file: final, labelled, holding what the stand-in reported. */
-function expectOneFinalFile(dir: string, observed = false): void {
-  const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
-  expect(files).toEqual(["ext_weather.1000.deadbeef.0.json"]);
-  const body = JSON.parse(readFileSync(join(dir, files[0] ?? ""), "utf8")) as Record<
-    string,
-    unknown
-  >;
-  expect(body["final"]).toBe(true);
-  expect(body["runStart"]).toBe(true);
-  expect(body["networkObserved"]).toBe(observed);
-  expect(body["label"]).toEqual(LABEL);
-  expect(body["entries"]).toEqual([{ o: "used", h: "api.github.com", p: 443, n: 1 }]);
+/**
+ * The run's two files: file 0, written at start, and the final one. The final file holds the
+ * connection the stand-in reports from its own exit listener, registered inside `spawn` as the real
+ * forwarder session's is, so it lands only if the wrapper's writer closes after it.
+ */
+function expectRunFiles(dir: string, observed = false): void {
+  const files = readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort((a, b) => (a < b ? -1 : 1));
+  expect(files).toEqual(["ext_weather.1000.deadbeef.0.json", "ext_weather.1000.deadbeef.1.json"]);
+  const [first, last] = files.map(
+    (f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>,
+  );
+  expect(first?.["runStart"]).toBe(true);
+  expect(first?.["final"]).toBe(false);
+  expect(first?.["entries"]).toEqual([]);
+  expect(last?.["runStart"]).toBe(false);
+  expect(last?.["final"]).toBe(true);
+  expect(last?.["networkObserved"]).toBe(observed);
+  expect(last?.["label"]).toEqual(LABEL);
+  expect(last?.["entries"]).toEqual([{ o: "used", h: "api.github.com", p: 443, n: 1 }]);
 }
 
 describe("the wrapper's observation", () => {
@@ -367,14 +439,14 @@ describe("the wrapper's observation", () => {
     expect(await waitForExit(wrapper, 30_000)).toBe(0);
     await waitForFile(ready);
     expect(readFileSync(ready, "utf8")).toBe("absent");
-    expectOneFinalFile(dir);
+    expectRunFiles(dir);
   }, 70_000);
 
   test("a runner that marks the spawn observed makes the file say so", async () => {
     const dir = tempRoot();
     const { wrapper } = startWrapper(dir, "exit", true);
     expect(await waitForExit(wrapper, 30_000)).toBe(0);
-    expectOneFinalFile(dir, true);
+    expectRunFiles(dir, true);
   }, 70_000);
 });
 
@@ -386,7 +458,7 @@ describe.skipIf(process.platform === "win32")("the wrapper's signal handlers", (
     wrapper.kill("SIGTERM");
     expect(await waitForExit(wrapper, 30_000)).toBe(143);
     expect(readFileSync(ready, "utf8")).toBe("absent");
-    expectOneFinalFile(dir);
+    expectRunFiles(dir);
   }, 70_000);
 });
 
