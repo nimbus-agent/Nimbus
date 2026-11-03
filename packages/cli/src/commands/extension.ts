@@ -38,6 +38,11 @@ import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { runExtensionAudit } from "./extension-audit.ts";
 import { runExtensionKey } from "./extension-key.ts";
+import {
+  listObservationLines,
+  type ObservationFindingSummary,
+  parseObservationFindings,
+} from "./extension-observation-format.ts";
 import { runExtensionPack } from "./extension-pack.ts";
 import { type PostInstallIo, runConnectFix, runPostInstallWalk } from "./extension-post-install.ts";
 import { runExtensionPublish } from "./extension-publish.ts";
@@ -256,6 +261,18 @@ export function formatRunLine(e: Pick<ExtensionListEntry, "runState" | "runGrant
   return `${runStateLabel(e.runState)} (${e.runGrant.serviceId}, approved ${at}, model: ${model})`;
 }
 
+/**
+ * Findings from `extension.audit` (no id). Observation is advisory: an older gateway (-32601), or
+ * any failure, leaves the list exactly as it was.
+ */
+async function fetchObservationFindings(client: IPCClient): Promise<ObservationFindingSummary[]> {
+  try {
+    return parseObservationFindings(await client.call<unknown>("extension.audit", {}));
+  } catch {
+    return [];
+  }
+}
+
 export async function runExtensionList(client: IPCClient, args: string[]): Promise<void> {
   const filter = takeFlagValue(args, "--filter");
   const json = hasFlag(args, "--json");
@@ -265,7 +282,13 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
   if (json) params["includeRequires"] = true;
   const out = await client.call<{ extensions: ExtensionListEntry[] }>("extension.list", params);
   if (json) {
-    console.log(JSON.stringify(out, undefined, 2));
+    const findings = await fetchObservationFindings(client);
+    const byId = new Map(findings.map((f) => [f.id, f]));
+    const extensions = out.extensions.map((r) => {
+      const f = byId.get(r.id);
+      return { ...r, networkFindings: f === undefined ? null : { kind: f.kind, count: f.count } };
+    });
+    console.log(JSON.stringify({ ...out, extensions }, undefined, 2));
     return;
   }
   const rows = out.extensions;
@@ -293,6 +316,7 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
     return;
   }
 
+  const findings = await fetchObservationFindings(client);
   const noColorEnv = process.env["NO_COLOR"];
   const noColor = noColorEnv !== undefined && noColorEnv !== "";
   const isTty = process.stdout.isTTY === true;
@@ -317,6 +341,8 @@ export async function runExtensionList(client: IPCClient, args: string[]): Promi
       console.log(`  ${r.id}@${r.version} [signature: ${r.disabled_reason ?? "unknown"}]`);
     }
   }
+  const rowIds = new Set(rows.map((r) => r.id));
+  for (const l of listObservationLines(findings.filter((f) => rowIds.has(f.id)))) console.log(l);
 }
 
 type DiagSnapshotResult = {

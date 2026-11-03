@@ -4803,6 +4803,8 @@ The four reasons are `publisher_key_missing`, `publisher_key_mismatch`, `signatu
 
 `--json` items carry `orphaned: true` on a package that was installed only as a dependency and that nothing needs now (for example after an interrupted update); it is never removed for you, and `nimbus doctor` names the `nimbus extension remove <id>` command.
 
+`list` asks `extension.audit` (no id) after `extension.list` and, for an extension whose observed network reached beyond what it declared, prints one more line: `  <id>@<version> [network: <n> undeclared name(s) refused]` on Linux, `  <id>@<version> [network: <n> unmatched address(es)]` on Windows and macOS; `--json` carries `networkFindings` (`{ kind, count }` or `null`) on each item. `nimbus doctor` prints one `[warn] Extensions: <id> <version>: …` line per such extension (exit code 1) with the count only, never a name, and points to `nimbus extension audit <id>`. Both stay quiet on a gateway without `extension.audit`. These are findings only: nothing is blocked, revoked or scored.
+
 `--tree` — print an ASCII dependency forest of installed extensions with their forward-dep edges; cycle-safe; NO_COLOR-aware (T2 PR 4).
 
 ```bash
