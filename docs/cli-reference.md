@@ -4882,6 +4882,43 @@ nimbus extension disable nimbus-notion
 
 ---
 
+### `nimbus extension audit <id> [--json]`
+
+Show what an installed extension was seen to do on the network on this machine, next to what it declared. It reads local observation only, for the installed version; nothing leaves the machine and nothing is fed into any score. An unknown id fails with `Extension not found`.
+
+On Linux, when the extension ran behind the per-host forwarder:
+
+```text
+com.example.notion 1.2.0   observed 3 run(s) over 2 day(s), on this machine only
+Network   declared api.notion.com:443
+  used      api.notion.com:443 (12 connection(s))
+  not seen  files.notion.com:443
+  refused   tracker.example (2 lookup(s))
+  more not shown: 4
+At least these. Short connections can be missed, and "not seen" does not mean not used.
+File access is not observed.
+```
+
+`used` lists declared hosts the child connected to; `not seen` lists declared hosts with no connection seen; `refused` lists lookups the wrapper refused. A refused line prints `name:port`, and the port is omitted when it is 0. It can be a declared host (the wildcard pool was full, or no allowed address) as well as an undeclared name. `more not shown: N` counts entries dropped by the bounds. With no helper found (the whole-network fallback) nothing is observed. Names come from the child and are shown with anything outside letters, digits, `.`, `_`, `-` replaced by `?`.
+
+On Windows and macOS in this release only run coverage is recorded, and the report says so:
+
+```text
+com.example.notion 1.2.0   observed 3 run(s) over 2 day(s), on this machine only
+Network   not observed on this OS yet
+At least these. Short connections can be missed, and "not seen" does not mean not used.
+File access is not observed.
+```
+
+An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
+
+```bash
+nimbus extension audit com.example.notion
+nimbus extension audit com.example.notion --json
+```
+
+---
+
 ### `nimbus extension remove <name> [--yes] [--force] [--clean-deps] [--json]`
 
 Uninstall an extension and remove its process. Its sync stops first, and then everything it synced is purged under the id it synced under (its `ext_` id, or the legacy connector id it is bound to): every index item, the connector's scheduler and status rows, and every credential its approval granted — for an extension bound to a legacy connector that includes the legacy key (for example `readwise.token`), exactly as `nimbus connector remove readwise` would. Revoking (`nimbus extension revoke`) or disabling it stops sync and keeps the items.
