@@ -13,6 +13,8 @@ import {
   deleteObservationsFor,
   type ObservationWindow,
   readExtensionAudit,
+  readNoticeAt,
+  recordNotice,
 } from "./observation-store.ts";
 
 const DAY = 86_400_000;
@@ -56,7 +58,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "obs-store-"));
   db = new Database(join(dir, "i.db"));
   dbRun(db, "PRAGMA foreign_keys = ON");
-  runIndexedSchemaMigrations(db, 81);
+  runIndexedSchemaMigrations(db, 82);
   addExt("ext-a");
 });
 afterEach(() => {
@@ -414,5 +416,52 @@ describe("ageOutObservations / delete", () => {
     expect(db.query("SELECT extension_id FROM extension_observation_applied").all()).toEqual([
       { extension_id: "ext-b" },
     ]);
+  });
+});
+
+describe("extension_observation_notice (V82)", () => {
+  test("recordNotice upserts and readNoticeAt reads per extension and version", () => {
+    expect(readNoticeAt(db, "ext-a", "1.0.0")).toBeUndefined();
+    recordNotice(db, "ext-a", "1.0.0", 5);
+    recordNotice(db, "ext-a", "1.0.0", 9);
+    expect(readNoticeAt(db, "ext-a", "1.0.0")).toBe(9);
+    expect(readNoticeAt(db, "ext-a", "2.0.0")).toBeUndefined();
+  });
+
+  test("deleteExtensionById removes the notice, even with foreign_keys off", () => {
+    dbRun(db, "PRAGMA foreign_keys = OFF");
+    recordNotice(db, "ext-a", "1.0.0", 5);
+    deleteExtensionById(db, "ext-a");
+    expect(db.query("SELECT 1 FROM extension_observation_notice").all()).toHaveLength(0);
+  });
+
+  test("deleteObservationsFor removes one extension's notices only", () => {
+    addExt("ext-b");
+    recordNotice(db, "ext-a", "1.0.0", 5);
+    recordNotice(db, "ext-b", "1.0.0", 5);
+    deleteObservationsFor(db, "ext-a");
+    expect(readNoticeAt(db, "ext-a", "1.0.0")).toBeUndefined();
+    expect(readNoticeAt(db, "ext-b", "1.0.0")).toBe(5);
+  });
+
+  test("a notice ages out 90 days after last_notified_at", () => {
+    recordNotice(db, "ext-a", "1.0.0", 10 * DAY);
+    recordNotice(db, "ext-a", "2.0.0", 150 * DAY);
+    ageOutObservations(db, 100 * DAY);
+    expect(readNoticeAt(db, "ext-a", "1.0.0")).toBe(10 * DAY);
+    ageOutObservations(db, 100 * DAY + 1);
+    expect(readNoticeAt(db, "ext-a", "1.0.0")).toBeUndefined();
+    expect(readNoticeAt(db, "ext-a", "2.0.0")).toBe(150 * DAY);
+  });
+
+  test("at V81, where the notice table does not exist, delete and age-out still work", () => {
+    const old = new Database(":memory:");
+    try {
+      runIndexedSchemaMigrations(old, 81);
+      expect(() => deleteObservationsFor(old, "ext-a")).not.toThrow();
+      expect(ageOutObservations(old, 200 * DAY)).toBe(0);
+    } finally {
+      old.close();
+    }
   });
 });

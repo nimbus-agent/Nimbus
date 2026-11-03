@@ -25,6 +25,7 @@ import {
   listObservationFiles,
   type ObservationIngestDeps,
   observationPrefixFor,
+  runObservationPass,
   STALE_TEMP_MS,
   startObservationIngest,
 } from "./observation-ingest.ts";
@@ -96,7 +97,7 @@ beforeEach(() => {
   mkdirSync(dir);
   db = new Database(join(root, "i.db"));
   dbRun(db, "PRAGMA foreign_keys = ON");
-  runIndexedSchemaMigrations(db, 81);
+  runIndexedSchemaMigrations(db, 82);
   insertExtensionRow(db, {
     id: EXT,
     version: "1.0.0",
@@ -119,7 +120,7 @@ afterEach(() => {
 describe("ingestObservationFiles", () => {
   test("a valid file is applied under its label's extension and version, then deleted", () => {
     const path = put(`${RUN}.0.json`, body());
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 1, rejected: 0 });
     expect(existsSync(path)).toBe(false);
     const a = readExtensionAudit(db, EXT, "1.0.0");
     expect(a.rows.map((r) => `${r.outcome} ${r.destination}:${r.port} ${r.count}`)).toEqual([
@@ -136,7 +137,7 @@ describe("ingestObservationFiles", () => {
       `${RUN}.1.json`,
       body({ seq: 1, runStart: false, final: true, fromMs: 1000, toMs: 5000, dropped: 4 }),
     );
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 2, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 2, rejected: 0 });
     expect(readdirSync(dir)).toEqual([]);
     const a = readExtensionAudit(db, EXT, "1.0.0");
     expect(a.coverage).toMatchObject({ runs: 1, network_observed: 1, dropped: 4 });
@@ -146,7 +147,7 @@ describe("ingestObservationFiles", () => {
   test("a stop marker (no final file) is accepted, and a run with neither end marker still counts", () => {
     put(`${RUN}.0.json`, body({ entries: [] }));
     put(`${RUN}.1440.json`, body({ seq: 1440, runStart: false, stopped: true }));
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 2, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 2, rejected: 0 });
     expect(readExtensionAudit(db, EXT, "1.0.0").coverage).toMatchObject({ runs: 1, stopped: 1 });
   });
 
@@ -161,7 +162,7 @@ describe("ingestObservationFiles", () => {
         ],
       }),
     );
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 1, rejected: 0 });
     const a = readExtensionAudit(db, EXT, "1.0.0");
     expect(a.rows.map((r) => `${r.outcome} ${r.destination}:${r.port} ${r.count}`)).toEqual([
       "unmatched 2001:db8::1:443 1",
@@ -238,7 +239,7 @@ describe("ingestObservationFiles", () => {
   for (const [what, b] of rejections) {
     test(`${what}: rejected, deleted, logged once by name, and no rows`, () => {
       const path = put(`${RUN}.0.json`, b);
-      expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+      expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 1 });
       expect(existsSync(path)).toBe(false);
       expect(rowCount()).toBe(0);
       expect(coverageCount()).toBe(0);
@@ -249,14 +250,14 @@ describe("ingestObservationFiles", () => {
 
   test("a file over 64 KiB is rejected without being parsed", () => {
     const path = put(`${RUN}.0.json`, body({ pad: "x".repeat(70_000) }));
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 1 });
     expect(existsSync(path)).toBe(false);
     expect(logs[0]).toContain("64 KiB");
   });
 
   test("a file named for another service id than its label's extension is rejected", () => {
     const path = put("ext_other.1700000000000.deadbeef.0.json", body());
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 1 });
     expect(existsSync(path)).toBe(false);
     expect(rowCount()).toBe(0);
     expect(logs[0]).toContain("service id");
@@ -267,6 +268,7 @@ describe("ingestObservationFiles", () => {
     expect(ingestObservationFiles(deps({ serviceIdFor: () => undefined }))).toEqual({
       applied: 0,
       rejected: 1,
+      touched: [],
     });
     expect(rowCount()).toBe(0);
   });
@@ -278,10 +280,10 @@ describe("ingestObservationFiles", () => {
         throw new Error("EPERM");
       },
     });
-    expect(ingestObservationFiles(failing)).toEqual({ applied: 1, rejected: 0 });
+    expect(ingestObservationFiles(failing)).toMatchObject({ applied: 1, rejected: 0 });
     const once = readExtensionAudit(db, EXT, "1.0.0");
     for (let i = 0; i < 3; i += 1) {
-      expect(ingestObservationFiles(failing)).toEqual({ applied: 0, rejected: 0 });
+      expect(ingestObservationFiles(failing)).toMatchObject({ applied: 0, rejected: 0 });
     }
     expect(existsSync(path)).toBe(true);
     expect(readExtensionAudit(db, EXT, "1.0.0")).toEqual(once);
@@ -301,7 +303,7 @@ describe("ingestObservationFiles", () => {
     );
     const before = readExtensionAudit(db, EXT, "1.0.0");
     // A new gateway, with a real delete.
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 0 });
     expect(existsSync(path)).toBe(false);
     expect(readExtensionAudit(db, EXT, "1.0.0")).toEqual(before);
     expect(before.coverage?.runs).toBe(1);
@@ -313,7 +315,7 @@ describe("ingestObservationFiles", () => {
       const target = join(root, "elsewhere.json");
       writeFileSync(target, JSON.stringify(body()));
       symlinkSync(target, join(dir, `${RUN}.0.json`));
-      expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+      expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 1 });
       expect(rowCount()).toBe(0);
       expect(existsSync(target)).toBe(true);
       expect(readdirSync(dir)).toEqual([]);
@@ -322,7 +324,7 @@ describe("ingestObservationFiles", () => {
 
   test("a .json whose name is not a window file's is rejected and deleted", () => {
     const path = put("planted.json", body());
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 1 });
     expect(existsSync(path)).toBe(false);
     expect(rowCount()).toBe(0);
   });
@@ -332,7 +334,7 @@ describe("ingestObservationFiles", () => {
     mkdirSync(planted);
     writeFileSync(join(planted, "inner"), "x");
     nowMs = Date.now();
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 0 });
     expect(existsSync(planted)).toBe(true);
     expect(logs).toEqual([]);
     nowMs += STALE_TEMP_MS + 1000;
@@ -367,10 +369,10 @@ describe("ingestObservationFiles", () => {
         throw busy;
       },
     });
-    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(locked)).toMatchObject({ applied: 0, rejected: 0 });
     expect(existsSync(path)).toBe(true);
     expect(rowCount()).toBe(0);
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 1, rejected: 0 });
     expect(existsSync(path)).toBe(false);
     expect(readExtensionAudit(db, EXT, "1.0.0").coverage?.runs).toBe(1);
   });
@@ -383,9 +385,9 @@ describe("ingestObservationFiles", () => {
       },
     });
     nowMs = Date.now();
-    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(locked)).toMatchObject({ applied: 0, rejected: 0 });
     nowMs += STALE_TEMP_MS + 1000;
-    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 1 });
+    expect(ingestObservationFiles(locked)).toMatchObject({ applied: 0, rejected: 1 });
     expect(existsSync(path)).toBe(false);
     expect(logs).toEqual([expect.stringContaining(`rejected ${RUN}.0.json: unreadable`)]);
   });
@@ -394,7 +396,7 @@ describe("ingestObservationFiles", () => {
     put(`${RUN}.0.json`, body());
     put(`${RUN}.1.json`, body({ seq: 1, runStart: false, extra: true }));
     put(`${RUN}.2.json`, body({ seq: 2, runStart: false }));
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 2, rejected: 1 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 2, rejected: 1 });
     expect(readdirSync(dir)).toEqual([]);
   });
 
@@ -404,7 +406,7 @@ describe("ingestObservationFiles", () => {
     nowMs = Date.now();
     const oldSec = (nowMs - STALE_TEMP_MS - 1000) / 1000;
     utimesSync(old, oldSec, oldSec);
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 0 });
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(old)).toBe(false);
     expect(logs).toEqual([]);
@@ -414,7 +416,7 @@ describe("ingestObservationFiles", () => {
     const first = put(`${RUN}.0.json`, body());
     const second = put(`${RUN}.1.json`, body({ seq: 1, runStart: false }));
     dbRun(db, "DROP TABLE extension_observation_coverage");
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 0, rejected: 0 });
     expect(existsSync(first)).toBe(true);
     expect(existsSync(second)).toBe(true);
     // The entry upserts ran in the same transaction and were rolled back with it.
@@ -467,6 +469,7 @@ describe("ingestObservationFiles", () => {
     expect(ingestObservationFiles(deps({ dir: join(root, "nope") }))).toEqual({
       applied: 0,
       rejected: 0,
+      touched: [],
     });
     expect(logs).toHaveLength(1);
   });
@@ -531,7 +534,7 @@ describe("the directory and the prefix", () => {
     expect(p.slice(join(dir, "ext_com_example_a.1234.").length)).toMatch(/^[0-9a-f]{8}$/);
     expect(observationPrefixFor(dir, "ext_x")).not.toBe(observationPrefixFor(dir, "ext_x"));
     writeFileSync(`${p}.0.json`, JSON.stringify(body()));
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    expect(ingestObservationFiles(deps())).toMatchObject({ applied: 1, rejected: 0 });
   });
 });
 
@@ -553,5 +556,71 @@ describe("startObservationIngest", () => {
     const late = put(`${RUN}.2.json`, body({ seq: 2, runStart: false }));
     await new Promise((r) => setTimeout(r, 100));
     expect(existsSync(late)).toBe(true);
+  });
+});
+
+describe("touched and runObservationPass", () => {
+  test("ingest returns the label of every applied window, and none for a duplicate or reject", () => {
+    put(`${RUN}.0.json`, body());
+    put(
+      `${RUN}.1.json`,
+      body({ seq: 1, runStart: false, label: { extensionId: EXT, version: "1.1.0" } }),
+    );
+    put(`${RUN}.2.json`, "not json");
+    expect(ingestObservationFiles(deps())).toEqual({
+      applied: 2,
+      rejected: 1,
+      touched: [
+        { extensionId: EXT, version: "1.0.0" },
+        { extensionId: EXT, version: "1.1.0" },
+      ],
+    });
+  });
+
+  test("a pass hands what it applied to the notifier; nothing applied, no call", async () => {
+    const calls: unknown[] = [];
+    const d = deps({ notifier: { afterIngest: async (t) => void calls.push(t) } });
+    expect(await runObservationPass(d)).toBe(true);
+    expect(calls).toEqual([]);
+    put(`${RUN}.0.json`, body());
+    await runObservationPass(d);
+    expect(calls).toEqual([[{ extensionId: EXT, version: "1.0.0" }]]);
+  });
+
+  test("a pass that finds one running with the same deps is skipped", async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    let calls = 0;
+    const d = deps({
+      notifier: {
+        afterIngest: async () => {
+          calls += 1;
+          await gate;
+        },
+      },
+    });
+    put(`${RUN}.0.json`, body());
+    const first = runObservationPass(d);
+    put(`${RUN}.1.json`, body({ seq: 1, runStart: false }));
+    expect(await runObservationPass(d)).toBe(false);
+    // The skipped pass ingested nothing: the file waits for the next one.
+    expect(readdirSync(dir)).toEqual([`${RUN}.1.json`]);
+    release();
+    expect(await first).toBe(true);
+    expect(await runObservationPass(d)).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  test("a notifier that rejects is logged, and the pass still resolves", async () => {
+    put(`${RUN}.0.json`, body());
+    const d = deps({
+      notifier: { afterIngest: () => Promise.reject(new Error("boom")) },
+    });
+    expect(await runObservationPass(d)).toBe(true);
+    expect(logs.some((l) => l.includes("boom"))).toBe(true);
+    // The next pass runs: the flag was cleared.
+    expect(await runObservationPass(d)).toBe(true);
   });
 });

@@ -296,6 +296,17 @@ export function selectExtensionInstallPath(db: Database, id: string): string | n
   return row?.install_path ?? null;
 }
 
+/** The installed version of `id`, or `null` when it is not installed. */
+export function selectExtensionVersion(db: Database, id: string): string | null {
+  if (readIndexedUserVersion(db) < 10) {
+    return null;
+  }
+  const row = db.query("SELECT version FROM extension WHERE id = ?").get(id) as {
+    version: string;
+  } | null;
+  return row?.version ?? null;
+}
+
 export function deleteExtensionById(db: Database, id: string): string | null {
   if (readIndexedUserVersion(db) < 10) {
     return null;

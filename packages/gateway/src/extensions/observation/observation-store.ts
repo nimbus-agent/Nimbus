@@ -5,10 +5,12 @@ import { readIndexedUserVersion } from "../../index/migrations/runner.ts";
 
 /**
  * The ONLY code that names `extension_network_observation` / `extension_observation_coverage`
- * (V81). Evidence only: nothing here is read to decide a spawn, a grant, an approval or a network
- * rule.
+ * (V81) and `extension_observation_notice` (V82). Evidence only: nothing here is read to decide a
+ * spawn, a grant, an approval or a network rule.
  */
 export const OBSERVATION_SCHEMA_VERSION = 81;
+/** The schema version that adds `extension_observation_notice`, the notification's rate state. */
+export const OBSERVATION_NOTICE_SCHEMA_VERSION = 82;
 /**
  * At most this many observation rows per extension and version. Past it a new `used` key evicts
  * the oldest `unmatched` (else `refused`) row; any other new key, or a `used` key with nothing to
@@ -190,9 +192,13 @@ export function applyObservationWindow(
   }
 }
 
-/** Deletes rows and coverage whose `last_seen` is older than 90 days; returns rows deleted. */
+/**
+ * Deletes rows and coverage whose `last_seen` is older than 90 days, and (from V82) notices 90
+ * days after `last_notified_at`; returns rows deleted.
+ */
 export function ageOutObservations(db: Database, nowMs: number): number {
   const cutoff = nowMs - OBSERVATION_RETENTION_MS;
+  const notices = readIndexedUserVersion(db) >= OBSERVATION_NOTICE_SCHEMA_VERSION;
   let deleted = 0;
   db.transaction(() => {
     deleted = dbRun(db, "DELETE FROM extension_network_observation WHERE last_seen < ?", [
@@ -200,6 +206,9 @@ export function ageOutObservations(db: Database, nowMs: number): number {
     ]).changes;
     dbRun(db, "DELETE FROM extension_observation_coverage WHERE last_seen < ?", [cutoff]);
     dbRun(db, "DELETE FROM extension_observation_applied WHERE applied_at < ?", [cutoff]);
+    if (notices) {
+      dbRun(db, "DELETE FROM extension_observation_notice WHERE last_notified_at < ?", [cutoff]);
+    }
   })();
   return deleted;
 }
@@ -221,10 +230,46 @@ export function readExtensionAudit(
   return { coverage: coverage ?? undefined, rows };
 }
 
-/** Removes every V81 row of an extension. A no-op below V81, where the tables do not exist. */
+/**
+ * Removes every V81 row of an extension, and its V82 notices. A no-op below V81, where the tables
+ * do not exist; the notice delete runs only from V82.
+ */
 export function deleteObservationsFor(db: Database, extensionId: string): void {
-  if (readIndexedUserVersion(db) < OBSERVATION_SCHEMA_VERSION) return;
+  const version = readIndexedUserVersion(db);
+  if (version < OBSERVATION_SCHEMA_VERSION) return;
   dbRun(db, "DELETE FROM extension_network_observation WHERE extension_id = ?", [extensionId]);
   dbRun(db, "DELETE FROM extension_observation_coverage WHERE extension_id = ?", [extensionId]);
   dbRun(db, "DELETE FROM extension_observation_applied WHERE extension_id = ?", [extensionId]);
+  if (version < OBSERVATION_NOTICE_SCHEMA_VERSION) return;
+  dbRun(db, "DELETE FROM extension_observation_notice WHERE extension_id = ?", [extensionId]);
+}
+
+/** When the owner was last notified about this extension version's findings; `undefined` if never. */
+export function readNoticeAt(
+  db: Database,
+  extensionId: string,
+  version: string,
+): number | undefined {
+  const row = db
+    .query(
+      "SELECT last_notified_at FROM extension_observation_notice WHERE extension_id = ? AND version = ?",
+    )
+    .get(extensionId, version) as { last_notified_at: number } | null;
+  return row?.last_notified_at;
+}
+
+/** Records that the owner was notified about this extension version at `atMs`. */
+export function recordNotice(
+  db: Database,
+  extensionId: string,
+  version: string,
+  atMs: number,
+): void {
+  dbRun(
+    db,
+    `INSERT INTO extension_observation_notice (extension_id, version, last_notified_at)
+     VALUES (?, ?, ?)
+     ON CONFLICT(extension_id, version) DO UPDATE SET last_notified_at = excluded.last_notified_at`,
+    [extensionId, version, atMs],
+  );
 }

@@ -26,6 +26,7 @@ import {
 } from "../../platform/sandbox/network-observation-writer.ts";
 import { deriveExtensionServiceId } from "../extension-service-id.ts";
 import { getRunGrant } from "../run-grant-store.ts";
+import type { ObservationNotifier, TouchedVersion } from "./observation-notifier.ts";
 import {
   ageOutObservations,
   applyObservationWindow,
@@ -288,6 +289,8 @@ export type ObservationIngestDeps = {
   remove?: (path: string) => void;
   /** Test seam for reading one window file's body; production passes none. */
   readFile?: (path: string) => string;
+  /** Told which extension versions a pass applied windows for (the once-a-day notification). */
+  notifier?: ObservationNotifier;
 };
 
 /**
@@ -425,16 +428,19 @@ function deferUnreadable(deps: ObservationIngestDeps, name: string, e: unknown):
   return "rejected";
 }
 
-function ingestOne(deps: ObservationIngestDeps, name: string): FileOutcome {
+/** The file's outcome, with the window's label when it was applied. */
+type IngestResult = { outcome: FileOutcome; label?: TouchedVersion };
+
+function ingestOne(deps: ObservationIngestDeps, name: string): IngestResult {
   const path = join(deps.dir, name);
   let window: ObservationWindow;
   try {
     window = readWindow(deps, name);
   } catch (e) {
-    if (!(e instanceof BadFile)) return deferUnreadable(deps, name, e);
+    if (!(e instanceof BadFile)) return { outcome: deferUnreadable(deps, name, e) };
     deps.log(`observation: rejected ${name}: ${e.message}`);
     removeQuietly(path, deps, name);
-    return "rejected";
+    return { outcome: "rejected" };
   }
   let fresh: boolean;
   try {
@@ -442,11 +448,15 @@ function ingestOne(deps: ObservationIngestDeps, name: string): FileOutcome {
   } catch (e) {
     // Nothing was committed: the file stays for the next pass.
     deps.log(`observation: could not store ${name}: ${errorText(e)}`);
-    return "db-failed";
+    return { outcome: "db-failed" };
   }
   // Applied now, or on an earlier pass whose delete failed or never ran: either way it goes.
   removeQuietly(path, deps, name);
-  return fresh ? "applied" : "duplicate";
+  if (!fresh) return { outcome: "duplicate" };
+  return {
+    outcome: "applied",
+    label: { extensionId: window.extensionId, version: window.version },
+  };
 }
 
 function errorText(e: unknown): string {
@@ -456,19 +466,22 @@ function errorText(e: unknown): string {
 /**
  * One ingest pass: every window file in apply order, then the 90-day age-out. A run needs no end
  * marker (`final` or `stopped`): a run that ended without one simply has fewer windows. A store
- * failure stops the pass and leaves that file and every later one in place.
+ * failure stops the pass and leaves that file and every later one in place. `touched` is the label
+ * of every window applied, in apply order (repeats included).
  */
 export function ingestObservationFiles(deps: ObservationIngestDeps): {
   applied: number;
   rejected: number;
+  touched: TouchedVersion[];
 } {
-  const counts = { applied: 0, rejected: 0 };
+  const counts = { applied: 0, rejected: 0, touched: [] as TouchedVersion[] };
   try {
     sweepStale(deps);
     for (const name of listObservationFiles(deps.dir)) {
       if (isDirectoryEntry(join(deps.dir, name))) continue;
-      const outcome = ingestOne(deps, name);
+      const { outcome, label } = ingestOne(deps, name);
       if (outcome === "db-failed") break;
+      if (label !== undefined) counts.touched.push(label);
       if (outcome === "applied") counts.applied += 1;
       else if (outcome === "rejected") counts.rejected += 1;
     }
@@ -484,6 +497,30 @@ export function ingestObservationFiles(deps: ObservationIngestDeps): {
   return counts;
 }
 
+/** The deps whose pass is running now; a pass that finds its deps here is skipped. */
+const runningPasses = new WeakSet<ObservationIngestDeps>();
+
+/**
+ * One pass: the synchronous ingest (done before this first yields), then the notifier over what it
+ * applied. A pass started while another with the same deps is still running (a slow notification)
+ * is skipped, and returns `false`. Never rejects.
+ */
+export async function runObservationPass(deps: ObservationIngestDeps): Promise<boolean> {
+  if (runningPasses.has(deps)) return false;
+  runningPasses.add(deps);
+  try {
+    const { touched } = ingestObservationFiles(deps);
+    if (deps.notifier !== undefined && touched.length > 0) {
+      await deps.notifier.afterIngest(touched);
+    }
+  } catch (e) {
+    deps.log(`observation: notification pass failed: ${errorText(e)}`);
+  } finally {
+    runningPasses.delete(deps);
+  }
+  return true;
+}
+
 /**
  * The boot pass, then one pass every {@link OBSERVATION_INGEST_INTERVAL_MS}. Returns the stop the
  * gateway's shutdown calls. The timer is unref'd, so it never holds the process open.
@@ -492,8 +529,8 @@ export function startObservationIngest(
   deps: ObservationIngestDeps,
   intervalMs: number = OBSERVATION_INGEST_INTERVAL_MS,
 ): () => void {
-  ingestObservationFiles(deps);
-  const timer = setInterval(() => ingestObservationFiles(deps), intervalMs);
+  void runObservationPass(deps);
+  const timer = setInterval(() => void runObservationPass(deps), intervalMs);
   timer.unref();
   return () => clearInterval(timer);
 }
