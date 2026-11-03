@@ -88,6 +88,8 @@ export type SandboxWrapperDeps = {
   pollPeriodMs?: number;
   /** Tests only: loads the platform's opener. Production imports the platform's source module. */
   loadConnectionSourceOpener?: (platform: "win32" | "darwin") => Promise<OpenConnectionSource>;
+  /** Tests only: starts the poller. Production uses {@link startConnectionPoller}. */
+  startPoller?: typeof startConnectionPoller;
 };
 
 /** The platform's own opener, from its source module (loaded only on that platform). */
@@ -138,9 +140,10 @@ async function safeConnectionSourceOpener(
 
 /**
  * Opens the source and starts the poller for a child that has just started. The run is marked
- * observed only once the source opened, and before the caller's `writer.start()` writes file 0; a
- * source that fails to open says so once on stderr and leaves the run unobserved. Never throws:
- * observation never refuses or breaks the child.
+ * observed only once the poller has started, and before the caller's `writer.start()` writes file 0.
+ * A source that fails to open, or anything in here that throws, says so once on stderr and leaves
+ * the run unobserved (a source that opened is closed again). Never throws: it runs in the child's
+ * `spawn` handler, and observation never refuses or breaks the child.
  */
 function observeConnections(
   open: OpenConnectionSource,
@@ -149,24 +152,39 @@ function observeConnections(
   writer: NetworkObservationWriter,
   deps: SandboxWrapperDeps,
 ): ConnectionPoller | null {
-  let source: ConnectionSource | { error: string };
+  let source: ConnectionSource | null = null;
+  let poller: ConnectionPoller | null = null;
   try {
-    source = open(policy, child);
+    const opened = open(policy, child);
+    if ("error" in opened) throw new Error(opened.error);
+    source = opened;
+    poller = (deps.startPoller ?? startConnectionPoller)({
+      source,
+      declared: policy.permissions.network,
+      observer: writer,
+      ...(deps.resolveHost === undefined ? {} : { resolve: deps.resolveHost }),
+      ...(deps.pollPeriodMs === undefined ? {} : { periodMs: deps.pollPeriodMs }),
+    });
+    writer.markObserved();
+    return poller;
   } catch (e) {
-    source = { error: (e as Error).message };
-  }
-  if ("error" in source) {
-    process.stderr.write(`nimbus-sandbox-wrapper: not observing the network: ${source.error}\n`);
+    // A started poller closes its own source when stopped; otherwise the source is closed here.
+    stopQuietly(() => (poller === null ? source?.close() : poller.stop()));
+    const why = e instanceof Error ? e.message : String(e);
+    stopQuietly(() =>
+      process.stderr.write(`nimbus-sandbox-wrapper: not observing the network: ${why}\n`),
+    );
     return null;
   }
-  writer.markObserved();
-  return startConnectionPoller({
-    source,
-    declared: policy.permissions.network,
-    observer: writer,
-    ...(deps.resolveHost === undefined ? {} : { resolve: deps.resolveHost }),
-    ...(deps.pollPeriodMs === undefined ? {} : { periodMs: deps.pollPeriodMs }),
-  });
+}
+
+/** Runs a clean-up step whose failure there is nothing left to act on. */
+function stopQuietly(step: () => unknown): void {
+  try {
+    step();
+  } catch {
+    // Observation is being abandoned; the child runs on.
+  }
 }
 
 /**

@@ -13,7 +13,8 @@
  * has exited, so they reach the final file only if the wrapper stops the poller (its last poll)
  * before `process.exit` closes the writer. The resolver appends each name it is asked for to
  * `<ready>.resolved`. With `poll-fail` the source fails to open; with `poll-load-fail` loading
- * the platform's opener throws, as a failed dynamic import would.
+ * the platform's opener throws, as a failed dynamic import would; with `poll-start-fail` the source
+ * opens but starting the poller throws, and the source's `close` writes `<ready>.closed`.
  *
  * Test-only: it confines nothing and must never be reachable from production code.
  */
@@ -38,7 +39,11 @@ const mode = process.argv[3];
 const stay = mode === "stay";
 /** With `argv[4]` `observed` the stand-in says the child runs behind a forwarder, as Linux would. */
 const observed = process.argv[4] === "observed";
-const polled = mode === "poll" || mode === "poll-fail" || mode === "poll-load-fail";
+const polled =
+  mode === "poll" ||
+  mode === "poll-fail" ||
+  mode === "poll-load-fail" ||
+  mode === "poll-start-fail";
 if (ready === undefined) throw new Error("usage: sandbox-wrapper-observed.ts <ready-file>");
 
 const childScript = [
@@ -92,7 +97,9 @@ const fakeSource: ConnectionSource = {
           { pid: childPid, localPort: 50_003, remoteIp: "127.0.0.1", remotePort: 9000 },
         ]
       : [],
-  close: () => undefined,
+  close: () => {
+    if (mode === "poll-start-fail") appendFileSync(`${ready}.closed`, "closed\n");
+  },
 };
 
 const pollDeps: SandboxWrapperDeps = {
@@ -103,6 +110,13 @@ const pollDeps: SandboxWrapperDeps = {
     return Promise.resolve(host === "api.github.com" ? ["140.82.112.5"] : []);
   },
   pollPeriodMs: 20,
+  ...(mode === "poll-start-fail"
+    ? {
+        startPoller: () => {
+          throw new Error("the poller did not start");
+        },
+      }
+    : {}),
 };
 
 /** No injected opener: the wrapper must load one, and the load throws. */
