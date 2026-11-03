@@ -60,11 +60,11 @@ export function extensionObservationDirFor(dataDir: string): string {
   return join(dataDir, OBSERVATION_DIR_NAME);
 }
 
-/** Creates the directory owner-only (0700; the mode is a no-op on Windows) and returns it. */
+/** Creates the directory owner-only (0700) and returns it. On Windows, chmod keeps the write bit, so it never sets the read-only attribute. */
 export function ensureObservationDir(dataDir: string): string {
   const dir = extensionObservationDirFor(dataDir);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  if (process.platform !== "win32") chmodSync(dir, 0o700);
+  chmodSync(dir, 0o700);
   return dir;
 }
 
