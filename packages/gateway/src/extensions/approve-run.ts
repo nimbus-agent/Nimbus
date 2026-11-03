@@ -396,7 +396,9 @@ function stillWithinReresolved(
 /**
  * The grants an approval asks for: everything resolved, or — with the owner's `--network` — the
  * resolved files and only the declared network entries named (I52). Refuses, before any prompt, an
- * entry the manifest does not declare. `declaredNetwork` is set only when narrowing.
+ * entry the manifest does not declare. `declaredNetwork` is set only when the result is shorter
+ * than what is declared: a `--network` that names every declared entry removes nothing, and the
+ * prompt must not claim a narrowing.
  */
 function grantsToApprove(
   resolved: ResolvedRunGrants,
@@ -410,7 +412,10 @@ function grantsToApprove(
       `${network.error}; --network can only remove declared entries`,
     );
   }
-  return { grants: { ...resolved, network }, declaredNetwork: resolved.network };
+  const grants = { ...resolved, network };
+  return network.length < resolved.network.length
+    ? { grants, declaredNetwork: resolved.network }
+    : { grants };
 }
 
 /**

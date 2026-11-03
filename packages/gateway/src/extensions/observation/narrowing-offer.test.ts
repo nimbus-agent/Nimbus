@@ -7,7 +7,6 @@ import {
   OFFER_MIN_DAYS,
   OFFER_MIN_RUNS,
   type OfferCoverage,
-  offerEntryKey,
 } from "./narrowing-offer.ts";
 
 const ENOUGH: OfferCoverage = {
@@ -161,19 +160,41 @@ describe("narrowingOffer: never equal to or wider than what is approved", () => 
     expect(o).toMatchObject({ keep: ["api.example.com"], remove: ["cdn.example.com:8443"] });
   });
 
-  test("a shorter keep that names an entry the grant no longer has: no offer (it would add it)", () => {
+  test("a host used earlier but narrowed away is not offered back, and blocks nothing", () => {
     // Evidence from before the narrowing, same version: api was used, then narrowed away.
     const declaredRaw = ["api.example.com", "cdn.example.com:8443", "imap.example.com:993"];
     const approved = ["cdn.example.com:8443", "imap.example.com:993"];
-    expect(narrowingOffer(input({ declaredRaw, approved, used: USED_API }))).toBeNull();
+    const used = [...USED_API, { destination: "cdn.example.com", port: 8443 }];
+    expect(narrowingOffer(input({ declaredRaw, approved, used }))).toMatchObject({
+      keep: ["cdn.example.com:8443"],
+      remove: ["imap.example.com:993"],
+    });
+  });
+
+  test("only narrowed-away hosts were used: the offer keeps nothing, never re-adds them", () => {
+    const declaredRaw = ["api.example.com", "cdn.example.com:8443", "imap.example.com:993"];
+    const approved = ["cdn.example.com:8443", "imap.example.com:993"];
+    expect(narrowingOffer(input({ declaredRaw, approved, used: USED_API }))).toMatchObject({
+      keep: [],
+      remove: ["cdn.example.com:8443", "imap.example.com:993"],
+    });
+  });
+
+  test("keep is in manifest order and every entry is one the grant approves (another spelling)", () => {
+    const declaredRaw = ["api.example.com", "cdn.example.com:8443", "imap.example.com:993"];
+    const approved = ["imap.example.com:993", "API.example.com:443", "cdn.example.com:8443"];
+    const used = [
+      { destination: "imap.example.com", port: 993 },
+      { destination: "api.example.com", port: 443 },
+    ];
+    const o = narrowingOffer(input({ declaredRaw, approved, used }));
+    expect(o).toMatchObject({
+      keep: ["api.example.com", "imap.example.com:993"],
+      remove: ["cdn.example.com:8443"],
+    });
   });
 
   test("an empty approved grant: nothing to narrow", () => {
     expect(narrowingOffer(input({ os: "win32", approved: [] }))).toBeNull();
   });
-});
-
-test("offerEntryKey: host lowercased, trailing dot dropped, 443 by default", () => {
-  expect(offerEntryKey("API.example.com.")).toBe("api.example.com:443");
-  expect(offerEntryKey("imap.example.com:993")).toBe("imap.example.com:993");
 });

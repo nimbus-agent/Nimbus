@@ -1,12 +1,10 @@
 import type { Database } from "bun:sqlite";
 
-import { parseNetworkEntry } from "@nimbus-dev/registry-format";
-
 import { listExtensions } from "../automation/extension-store.ts";
+import { isNetworkNarrowed, networkEntryKey } from "../extensions/network-entry-key.ts";
 import { declaredNetworkFor } from "../extensions/observation/declared-network.ts";
 import { type NarrowingOffer, narrowingOffer } from "../extensions/observation/narrowing-offer.ts";
 import {
-  normaliseHost,
   type ObservationFinding,
   observationFindings,
 } from "../extensions/observation/observation-findings.ts";
@@ -72,21 +70,13 @@ function daysSpanned(c: CoverageRow): number {
 }
 
 /** The same normalisation `planForwardEntries` applies, so a declared key compares with a used one. */
-function normaliseDeclared(entry: string): string {
-  const { host, port } = parseNetworkEntry(entry);
-  const bare = normaliseHost(host);
-  return `${bare}:${String(port)}`;
-}
-
 function normalisedSet(network: readonly string[]): string[] {
-  return [...new Set(network.map(normaliseDeclared))];
+  return [...new Set(network.map(networkEntryKey))];
 }
 
 /** Compared by parse key, never as strings of different forms. */
 function isNarrowed(declared: readonly string[], approved: readonly string[] | undefined): boolean {
-  if (approved === undefined) return false;
-  const have = new Set(approved);
-  return declared.some((d) => !have.has(d));
+  return approved !== undefined && isNetworkNarrowed(declared, approved);
 }
 
 function offerFor(

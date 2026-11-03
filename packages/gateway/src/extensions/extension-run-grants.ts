@@ -1,11 +1,11 @@
-import { parseNetworkEntry, type SandboxPermissions } from "@nimbus-dev/registry-format";
+import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import {
   findProtectedOverlap,
   isSameOrInside,
   pathApiFor,
   pathsOverlap,
 } from "../util/path-overlap.ts";
-import { normaliseHost } from "./observation/observation-findings.ts";
+import { networkEntryKey } from "./network-entry-key.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 
 /** What resolving a grant needs from the machine. Injected so tests never touch real Nimbus dirs. */
@@ -204,12 +204,6 @@ export function checkStoredAgainstResolved(
     ok: true,
     grants: { network: [...stored.network], read: [...resolved.read], write: [...resolved.write] },
   };
-}
-
-/** The form two spellings of one declared entry share: lowercase host, no trailing dot, a port. */
-function networkEntryKey(entry: string): string {
-  const { host, port } = parseNetworkEntry(entry);
-  return `${normaliseHost(host)}:${String(port)}`;
 }
 
 /**

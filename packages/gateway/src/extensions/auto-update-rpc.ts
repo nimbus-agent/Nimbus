@@ -69,6 +69,12 @@ export interface AutoUpdateRpcDeps {
    */
   hasRunGrant?: (id: string) => Promise<boolean>;
   /**
+   * Whether the run grant's network is narrower than the installed manifest declares (the owner
+   * approved with `--network`, I52), compared by parse key. Read only when there is a grant, and
+   * only to add one sentence to `runGrantNote`. Absent, or throwing ⇒ not narrowed.
+   */
+  isRunGrantNarrowed?: (id: string) => Promise<boolean>;
+  /**
    * What the update, once applied, reaches on this machine: the installed manifest's permissions
    * after the diff together with the added packages' (`addedUnion`), as network reach and the
    * predicted file outcome. `undefined` means the manifest could not be read (the installed one, or the rollback target's); the
@@ -107,9 +113,25 @@ const autoUpdateRpcLog = pino({
 
 const mutex = new Map<string, Promise<void>>();
 
-/** The consent note an update shows when it will leave the extension's run grant stale. */
-export function runGrantNoteFor(id: string): string {
-  return `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
+/**
+ * The consent note an update shows when it will leave the extension's run grant stale. When the
+ * owner had narrowed that grant's network (I52), the note also says the narrowing does not carry
+ * over: the next approval is asked over everything the new version declares.
+ */
+export function runGrantNoteFor(id: string, isNarrowed: boolean): string {
+  const base = `Running the new version will need a new \`nimbus extension approve ${id}\`.`;
+  return isNarrowed
+    ? `${base} The earlier network narrowing is not carried over: the new approval starts from everything the new version declares.`
+    : base;
+}
+
+/** Whether the run grant was narrowed, for the note only: a reader that throws reads as not narrowed. */
+async function runGrantNarrowed(id: string, deps: AutoUpdateRpcDeps): Promise<boolean> {
+  try {
+    return (await deps.isRunGrantNarrowed?.(id)) === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -291,6 +313,7 @@ function buildUpdateAction(
   cached: AvailableUpdate,
   isDowngrade: boolean,
   hasRunGrant: boolean,
+  isNarrowed: boolean,
   badge: VerifiedPublisher | null,
   approved: ApprovedUpdatePlan | undefined,
   access: Record<string, unknown>,
@@ -328,7 +351,9 @@ function buildUpdateAction(
       rootFingerprint: cached.rootFingerprint,
       ...(hasRunGrant && {
         runGrantNote:
-          cached.toStarterPack === true ? STARTER_PACK_UPDATE_NOTE : runGrantNoteFor(cached.id),
+          cached.toStarterPack === true
+            ? STARTER_PACK_UPDATE_NOTE
+            : runGrantNoteFor(cached.id, isNarrowed),
       }),
       // A publisher key change, stated in the prompt (fingerprints only; never `*Key`-named).
       ...publisherChangeFields(cached),
@@ -596,11 +621,20 @@ async function handleExtensionUpdate(
   }
 
   const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
+  const isNarrowed = hasRunGrant && (await runGrantNarrowed(cached.id, deps));
   const gateResult = await deps.gate(
-    buildUpdateAction(cached, isDowngrade, hasRunGrant, updateBadge(cached, deps), approved, {
-      ...accessFields(cached, approved, deps, isDowngrade),
-      ...(await qualityFields(cached, approved, deps)),
-    }),
+    buildUpdateAction(
+      cached,
+      isDowngrade,
+      hasRunGrant,
+      isNarrowed,
+      updateBadge(cached, deps),
+      approved,
+      {
+        ...accessFields(cached, approved, deps, isDowngrade),
+        ...(await qualityFields(cached, approved, deps)),
+      },
+    ),
   );
   if (gateResult !== "proceed") {
     return { applied: false, reason: "user_rejected" };

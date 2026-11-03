@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, mock } from "bun:test";
 import { codeUnitCompare, RegistryError } from "@nimbus-dev/registry-format";
 import { consentDisplayPayload } from "../engine/executor.ts";
 import { AutoUpdateCache } from "./auto-update-cache.ts";
-import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
+import {
+  _resetAutoUpdateMutexForTests,
+  dispatchAutoUpdateRpc,
+  runGrantNoteFor,
+  STARTER_PACK_UPDATE_NOTE,
+} from "./auto-update-rpc.ts";
 import type { AddedPackage, AvailableUpdate, UpdatePlan } from "./auto-update-types.ts";
 import type { ConnectorRequirementStatus } from "./connector-requirements.ts";
 import { DependencyConflictError } from "./dependency-errors.ts";
@@ -862,6 +867,73 @@ describe("dispatchAutoUpdateRpc extension.update — runGrantNote (extension run
   it("omits the note when there is no run grant, or no way to ask", async () => {
     expect("runGrantNote" in (await askedPayload(async () => false))).toBe(false);
     expect("runGrantNote" in (await askedPayload())).toBe(false);
+  });
+
+  describe("a grant the owner narrowed (I52)", () => {
+    const BASE =
+      "Running the new version will need a new `nimbus extension approve com.example.a`.";
+    const NARROWED =
+      " The earlier network narrowing is not carried over: the new approval starts from everything the new version declares.";
+
+    async function payloadWith(
+      grant: boolean,
+      narrowed: ((id: string) => Promise<boolean>) | undefined,
+      pack = false,
+    ) {
+      const deps = baseDeps();
+      if (pack) {
+        const cached = deps.cache.get("com.example.a");
+        if (cached === undefined) throw new Error("fixture missing");
+        deps.cache.upsert({ ...cached, toStarterPack: true });
+      }
+      const asked: Array<Record<string, unknown>> = [];
+      deps.gate = async (a) => {
+        asked.push(a.payload);
+        return { status: "rejected" };
+      };
+      deps.hasRunGrant = async () => grant;
+      if (narrowed !== undefined) deps.isRunGrantNarrowed = narrowed;
+      await dispatchAutoUpdateRpc(
+        "extension.update",
+        { id: "com.example.a", toVersion: "1.1.0" },
+        deps,
+      );
+      return asked[0] ?? {};
+    }
+
+    it("runGrantNoteFor appends the sentence only when narrowed", () => {
+      expect(runGrantNoteFor("com.example.a", true)).toBe(BASE + NARROWED);
+      expect(runGrantNoteFor("com.example.a", false)).toBe(BASE);
+    });
+
+    it("a narrowed grant: the note says the narrowing is not carried over", async () => {
+      const asked: string[] = [];
+      const p = await payloadWith(true, async (id) => {
+        asked.push(id);
+        return true;
+      });
+      expect(p["runGrantNote"]).toBe(BASE + NARROWED);
+      expect(asked).toEqual(["com.example.a"]);
+    });
+
+    it("a grant that is not narrowed, or no way to ask, or a throwing reader: no sentence", async () => {
+      expect((await payloadWith(true, async () => false))["runGrantNote"]).toBe(BASE);
+      expect((await payloadWith(true, undefined))["runGrantNote"]).toBe(BASE);
+      const throwing = async (): Promise<boolean> => {
+        throw new Error("unreadable");
+      };
+      expect((await payloadWith(true, throwing))["runGrantNote"]).toBe(BASE);
+    });
+
+    it("no grant: no note at all, whatever the narrowing reader says", async () => {
+      expect("runGrantNote" in (await payloadWith(false, async () => true))).toBe(false);
+    });
+
+    it("an update to a starter pack keeps the starter-pack note (the grant goes anyway)", async () => {
+      expect((await payloadWith(true, async () => true, true))["runGrantNote"]).toBe(
+        STARTER_PACK_UPDATE_NOTE,
+      );
+    });
   });
 });
 

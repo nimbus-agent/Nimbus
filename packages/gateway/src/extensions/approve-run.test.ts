@@ -1411,6 +1411,17 @@ describe("a network the owner narrowed (--network, I52)", () => {
     expect("networkNarrowed" in p).toBe(false);
   });
 
+  test("--network naming every declared entry removes nothing: the prompt claims no narrowing", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    const seen: Asked[] = [];
+    const out = await approveNarrowed(s, seen, ["imap.example.com:993", "API.example.com"]);
+    const p = seen[0]?.payload ?? {};
+    expect(p["network"]).toEqual(["api.example.com", "imap.example.com:993"]);
+    expect("declaredNetwork" in p).toBe(false);
+    expect("networkNarrowed" in p).toBe(false);
+    expect(out.grants.network).toEqual(["api.example.com", "imap.example.com:993"]);
+  });
+
   test("an entry the manifest does not declare refuses before any prompt, naming it, and stores nothing", async () => {
     const s = await setup({ id: ID, manifest: twoHosts });
     for (const bad of [

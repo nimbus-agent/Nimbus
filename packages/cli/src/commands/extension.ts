@@ -84,7 +84,8 @@ export function stripFlags(args: string[]): string[] {
       a === "--json" ||
       a === "--model" ||
       a === "--remote" ||
-      a === "--clean-deps"
+      a === "--clean-deps" ||
+      a?.startsWith("--network=") === true
     ) {
       continue;
     }
@@ -791,15 +792,45 @@ export async function runExtensionRehash(
 
 const APPROVE_USAGE = "Usage: nimbus extension approve <id> [--model] [--network <a,b|none>]";
 
+const NETWORK_EQ = "--network=";
+
 /**
- * `--network <a,b|none>` (I52): the declared network entries to keep, or `"none"` for no network.
- * Absent when the flag is not given. A missing value, an empty entry or a value that is another flag
- * refuses before any call; which entries are declared is the gateway's check.
+ * Text that echoes what the owner typed, made safe for a terminal the way `displayName` makes a
+ * name safe: every control, bidi or invisible character (`stripControl`'s set) shows as `?`. The
+ * gateway's "not a network entry this extension declares" error quotes the requested entry.
+ */
+export function printable(s: string): string {
+  let out = "";
+  for (const ch of s) out += stripControl(ch) === "" ? "?" : ch;
+  return out;
+}
+
+/**
+ * The raw `--network` value, from `--network <v>` or `--network=<v>`; `undefined` when the flag is
+ * absent, `null` when it is given with no value. Given more than once (in either form), it refuses:
+ * which one the owner meant is not something to guess, and silently ignoring one would lose it.
+ */
+function networkFlagValue(args: string[]): string | null | undefined {
+  const at = args.flatMap((a, i) => (a === "--network" || a.startsWith(NETWORK_EQ) ? [i] : []));
+  if (at.length === 0) return undefined;
+  if (at.length > 1) {
+    throw new Error(`--network was given more than once; give it once. ${APPROVE_USAGE}`);
+  }
+  const a = args[at[0] ?? 0] ?? "";
+  if (a.startsWith(NETWORK_EQ)) return a.slice(NETWORK_EQ.length);
+  return takeFlagValue(args, "--network") ?? null;
+}
+
+/**
+ * `--network <a,b|none>` or `--network=<a,b|none>` (I52): the declared network entries to keep, or
+ * `"none"` for no network. Absent when the flag is not given. A missing value, an empty entry, a value
+ * that is another flag or a repeated flag refuses before any call; which entries are declared is the
+ * gateway's check.
  */
 function approveNetworkFlag(args: string[]): { network?: string[] | "none" } {
-  if (!args.includes("--network")) return {};
-  const raw = takeFlagValue(args, "--network");
-  if (raw === undefined || raw.startsWith("-")) {
+  const raw = networkFlagValue(args);
+  if (raw === undefined) return {};
+  if (raw === null || raw === "" || raw.startsWith("-")) {
     throw new Error(
       `--network needs a value: a comma-separated list of declared entries, or none. ${APPROVE_USAGE}`,
     );
@@ -807,9 +838,33 @@ function approveNetworkFlag(args: string[]): { network?: string[] | "none" } {
   if (raw.trim() === "none") return { network: "none" };
   const entries = raw.split(",").map((e) => e.trim());
   if (entries.some((e) => e === "")) {
-    throw new Error(`--network has an empty entry in "${raw}". ${APPROVE_USAGE}`);
+    throw new Error(`--network has an empty entry in "${printable(raw)}". ${APPROVE_USAGE}`);
   }
   return { network: entries };
+}
+
+type ApproveRunResult = {
+  id: string;
+  serviceId: string;
+  treeDigest: string;
+  changed: boolean;
+  modelAccess?: boolean;
+  syncServiceId?: string;
+  grants?: { network?: string[] };
+};
+
+/** `extension.approveRun`; a refusal's message is made printable before it reaches the terminal. */
+async function callApproveRun(
+  client: IPCClient,
+  params: Record<string, unknown>,
+): Promise<ApproveRunResult> {
+  try {
+    return await client.call<ApproveRunResult>("extension.approveRun", params);
+  } catch (e) {
+    // A refused `--network` entry comes back quoted in the message: never print it raw.
+    if (e instanceof Error) e.message = printable(e.message);
+    throw e;
+  }
 }
 
 /**
@@ -846,15 +901,7 @@ export async function runExtensionApprove(
   // --network the whole declared network is granted (an earlier narrowing is not kept).
   const modelAccess = hasFlag(args, "--model");
   const network = approveNetworkFlag(args);
-  const out = await client.call<{
-    id: string;
-    serviceId: string;
-    treeDigest: string;
-    changed: boolean;
-    modelAccess?: boolean;
-    syncServiceId?: string;
-    grants?: { network?: string[] };
-  }>("extension.approveRun", { id, modelAccess, ...network });
+  const out = await callApproveRun(client, { id, modelAccess, ...network });
   const granted = out.grants?.network ?? [];
   const model =
     `model access: ${out.modelAccess === true ? "on" : "off"}` +

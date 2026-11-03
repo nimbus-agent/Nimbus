@@ -28,6 +28,7 @@ const {
   formatExtensionInfoHuman,
   formatExtensionListTable,
   hasFlag,
+  printable,
   runExtension,
   runExtensionApprove,
   runExtensionCredential,
@@ -3037,6 +3038,84 @@ describe("runExtensionApprove", () => {
 
   test("stripFlags drops --network and its value, so the id stays the first positional", () => {
     expect(stripFlags(["--network", "a.example.com", "x"])).toEqual(["x"]);
+    expect(stripFlags(["--network=a.example.com", "x"])).toEqual(["x"]);
+  });
+
+  test("--network=<a,b|none> is read, never silently ignored", async () => {
+    setTty(true);
+    for (const [args, network] of [
+      [
+        ["approve", "x", "--network=a.example.com,b.example.com:993"],
+        ["a.example.com", "b.example.com:993"],
+      ],
+      [["approve", "--network=none", "x"], "none"],
+    ] as const) {
+      const { client, calls } = createMockIpcClient([
+        { id: "x", serviceId: "ext_x", treeDigest: "ab".repeat(32), changed: true },
+      ]);
+      const argv = [...args];
+      await runExtensionApprove(client, argv, stripFlags(argv.slice(1)));
+      expect(calls[0]).toEqual({
+        method: "extension.approveRun",
+        params: { id: "x", modelAccess: false, network },
+      });
+    }
+  });
+
+  test("--network= with no value refuses before any call", async () => {
+    setTty(true);
+    const { client, calls } = createMockIpcClient([]);
+    const args = ["approve", "x", "--network="];
+    await expect(runExtensionApprove(client, args, stripFlags(args.slice(1)))).rejects.toThrow(
+      /--network needs a value/,
+    );
+    expect(calls).toHaveLength(0);
+  });
+
+  test("--network given twice (in either form) refuses before any call, saying so", async () => {
+    setTty(true);
+    for (const args of [
+      ["approve", "x", "--network", "a.example.com", "--network", "b.example.com"],
+      ["approve", "x", "--network=a.example.com", "--network", "b.example.com"],
+      ["approve", "x", "--network=a.example.com", "--network=none"],
+    ]) {
+      const { client, calls } = createMockIpcClient([]);
+      await expect(runExtensionApprove(client, args, stripFlags(args.slice(1)))).rejects.toThrow(
+        "--network was given more than once; give it once.",
+      );
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test("a refused --network entry echoed by the gateway is printed with no control or bidi character", async () => {
+    setTty(true);
+    const esc = String.fromCodePoint(0x1b);
+    const rlo = String.fromCodePoint(0x202e);
+    const hostile = `a${esc}[31m${rlo}.example.com`;
+    const { client } = createMockIpcClient([
+      new Error(
+        `ERR_EXTENSION_GRANT_NETWORK_UNDECLARED: "${hostile}" is not a network entry this extension declares; --network can only remove declared entries`,
+      ),
+    ]);
+    const args = ["approve", "x", "--network", hostile];
+    let caught: unknown;
+    try {
+      await runExtensionApprove(client, args, stripFlags(args.slice(1)));
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(Error);
+    const message = (caught as Error).message;
+    expect(message).toContain('"a?[31m?.example.com" is not a network entry');
+    expect(message.includes(esc)).toBe(false);
+    expect(message.includes(rlo)).toBe(false);
+  });
+
+  test("printable keeps ordinary text and marks each control or invisible character", () => {
+    expect(printable("api.example.com:443, b")).toBe("api.example.com:443, b");
+    expect(printable(`x${String.fromCodePoint(0x7)}y${String.fromCodePoint(0x200b)}z`)).toBe(
+      "x?y?z",
+    );
   });
 
   test("a missing id names the --model flag in the usage", async () => {

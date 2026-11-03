@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,6 +20,7 @@ import {
   createAutoUpdateRuntime,
   currentQualityChange,
   QUALITY_READ_DEADLINE_MS,
+  runGrantNarrowedFor,
   withUpdateAppliedHook,
 } from "./auto-update-init.ts";
 import { _resetAutoUpdateMutexForTests, dispatchAutoUpdateRpc } from "./auto-update-rpc.ts";
@@ -364,6 +366,151 @@ describe("auto-update-init: hasRunGrant (extension runtime PR 3)", () => {
     });
     expect(await deps.hasRunGrant?.("com.example.g")).toBe(true);
     db.close();
+  });
+});
+
+describe("auto-update-init: isRunGrantNarrowed (I52, the update note)", () => {
+  const ID = "com.example.narrow";
+  let tmpRoot: string;
+  let db: Database;
+  afterEach(() => {
+    db.close();
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  /** An installed row whose manifest bytes hash to `manifest_hash`, so the verified reader reads it. */
+  function installWith(network: string[], hash?: string): void {
+    const dir = join(tmpRoot, "ext");
+    mkdirSync(dir, { recursive: true });
+    const bytes = JSON.stringify({
+      id: ID,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: { network, filesystem: { read: [], write: [] } },
+    });
+    writeFileSync(join(dir, "nimbus.extension.json"), bytes);
+    insertExtensionRow(db, {
+      id: ID,
+      version: "1.0.0",
+      install_path: dir,
+      manifest_hash: hash ?? createHash("sha256").update(bytes).digest("hex"),
+      entry_hash: "b".repeat(64),
+      enabled: 1,
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+  }
+
+  function grantWith(network: string[]): void {
+    upsertRunGrant(db, {
+      extension_id: ID,
+      service_id: "ext_com_example_narrow",
+      version: "1.0.0",
+      tree_digest: "c".repeat(64),
+      permissions_json: JSON.stringify({ network, read: [], write: [] }),
+      model_access: 0,
+      approved_at: 1,
+      credentials_json: "{}",
+    });
+  }
+
+  function narrowedNow(): Promise<boolean | undefined> {
+    const { deps } = createAutoUpdateRuntime(
+      baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
+    );
+    return deps.isRunGrantNarrowed?.(ID) ?? Promise.resolve(undefined);
+  }
+
+  function setup(): void {
+    tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-au-init-narrow-"));
+    db = freshDb();
+  }
+
+  it("a grant narrower than the installed manifest is narrowed", async () => {
+    setup();
+    installWith(["api.example.com", "imap.example.com:993"]);
+    grantWith(["api.example.com"]);
+    expect(await narrowedNow()).toBe(true);
+    expect(runGrantNarrowedFor(db, ID)).toBe(true);
+  });
+
+  it("a grant equal to the manifest, in another spelling, is not narrowed", async () => {
+    setup();
+    installWith(["API.example.com", "imap.example.com:993"]);
+    grantWith(["api.example.com", "imap.example.com:993"]);
+    expect(await narrowedNow()).toBe(false);
+  });
+
+  it("no grant, or no installed row: not narrowed", async () => {
+    setup();
+    expect(await narrowedNow()).toBe(false);
+    installWith(["api.example.com"]);
+    expect(await narrowedNow()).toBe(false);
+  });
+
+  it("a manifest that fails its hash check is not read as declared: not narrowed", async () => {
+    setup();
+    installWith(["api.example.com", "imap.example.com:993"], "0".repeat(64));
+    grantWith(["api.example.com"]);
+    expect(await narrowedNow()).toBe(false);
+  });
+
+  /** The note a rollback approval shows, through the production bag's grant readers. */
+  async function rollbackNote(): Promise<unknown> {
+    const { deps } = createAutoUpdateRuntime(
+      baseOpts(db, join(tmpRoot, "extensions"), join(tmpRoot, "data")),
+    );
+    deps.cache.upsert({
+      id: ID,
+      displayName: "N",
+      fromVersion: "1.0.0",
+      toVersion: "0.9.0",
+      channel: "stable",
+      changelog: "",
+      publisherStatus: "verified",
+      manifestHash: "d".repeat(64),
+      signatureB64: "AA==",
+      entryHash: "e".repeat(64),
+      packageSha256: "f".repeat(64),
+      packageSizeBytes: 1,
+      sourceRegistry: "main",
+      rootFingerprint: "c".repeat(32),
+      packagePath: "p.tgz",
+      permissionDiff: {
+        network: { added: [], removed: [] },
+        filesystem: { read: { added: [], removed: [] }, write: { added: [], removed: [] } },
+      },
+      verificationStatus: "verified",
+      detectedAt: 1,
+    });
+    const asked: Array<Record<string, unknown>> = [];
+    await dispatchAutoUpdateRpc(
+      "extension.update",
+      { id: ID, toVersion: "0.9.0" },
+      {
+        ...deps,
+        hasPrevVersion: async () => true,
+        gate: async (a) => {
+          asked.push(a.payload);
+          return { status: "rejected" };
+        },
+      },
+    );
+    expect(asked).toHaveLength(1);
+    return asked[0]?.["runGrantNote"];
+  }
+
+  it("end to end: a narrowed grant's update approval carries the sentence, an equal one does not", async () => {
+    setup();
+    installWith(["api.example.com", "imap.example.com:993"]);
+    grantWith([]);
+    expect(await rollbackNote()).toBe(
+      `Running the new version will need a new \`nimbus extension approve ${ID}\`. The earlier network narrowing is not carried over: the new approval starts from everything the new version declares.`,
+    );
+    grantWith(["api.example.com", "imap.example.com:993"]);
+    expect(await rollbackNote()).toBe(
+      `Running the new version will need a new \`nimbus extension approve ${ID}\`.`,
+    );
   });
 });
 
