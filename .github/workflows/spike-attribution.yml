@@ -1,0 +1,79 @@
+# Spike 6a of the quality layer (spec section 10.2), on real runners: can an unelevated process
+# attribute a TCP connection to a sandboxed extension's real child, through the Windows helper
+# (AppContainer) and the macOS sandbox-exec wrapper, grandchildren included? Throwaway: this file
+# and scripts/spikes/attribution/ live only on the draft spike branch and never merge.
+name: Spike — connection attribution
+
+on:
+  pull_request:
+    paths:
+      - "scripts/spikes/attribution/**"
+      - ".github/workflows/spike-attribution.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  attribution:
+    name: Attribution (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Nimbus CI
+        uses: ./.github/actions/setup-nimbus-ci
+        with:
+          verify-lock: "false"
+
+      - name: Build the sandbox helper and the poller (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          bun run build:sandbox-helper:win32
+          $h = "packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe"
+          $out = & $h --check-caps
+          if ($LASTEXITCODE -ne 0 -or $out.Trim() -ne "OK") { throw "check-caps failed: $out" }
+          & scripts/spikes/attribution/build-poll-win32.ps1
+
+      - name: Build the poller (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: clang -O2 -Wall -o scripts/spikes/attribution/poll-darwin scripts/spikes/attribution/poll-darwin.c
+
+      - name: Who am I
+        shell: bash
+        run: |
+          id || true
+          whoami
+          sw_vers 2>/dev/null || true
+
+      - name: Run the spike (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:NIMBUS_SANDBOX_HELPER_PATH = (Resolve-Path packages/gateway/src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe).Path
+          bun scripts/spikes/attribution/spike.ts scripts/spikes/attribution/poll-win32.exe 5,20,100
+
+      - name: Run the spike (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: bun scripts/spikes/attribution/spike.ts scripts/spikes/attribution/poll-darwin 5,20,100
+
+      - name: Upload the result
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: spike-attribution-${{ matrix.os }}
+          path: spike-result.json
+          if-no-files-found: warn
