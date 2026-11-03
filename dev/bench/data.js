@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793718959027,
+  "lastUpdate": 1793728675798,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "fa65d957c46ff46354f8c17d9d37cf4d13957c19",
-          "message": "fix(sonar): resolve the six minor findings and annotate the S8786 false positive (#1206)\n\nResolves **7 of the 16** open SonarCloud issues here. The other 9 are\nall `S3776` and follow separately — see the end.\n\n## The `S8786` is a false positive, and I measured rather than argued\n\nSonar flags `LINK_VALUE_RE` (`/^<([^<>]*)>\\s*(.*)$/s`) in\n`connectors/link-header.ts` for \"super-linear performance due to\nbacktracking\". It isn't. Across five adversarial shapes — unclosed `<`,\nwhitespace+newlines after the URL, a long space run before the params,\nmany separators, nested angle brackets — at 10k/20k/40k/80k characters,\n**every shape stays at or under 0.5 ms, flat**, with no growth as input\ndoubles.\n\nFor contrast, the two *real* `S8786` findings I fixed in the sibling\nrepos this pass measured 90→363 ms and 98→396 ms over 20k→40k — the\n4×-time-for-2×-input signature this one simply does not have.\n\nIt cannot backtrack, structurally:\n\n- `^` gives it exactly one start position.\n- `[^<>]*` is a negated class, so a missing `>` makes it give characters\nback one at a time, once — linear.\n- `\\s*(.*)$` can never **fail** once `>` has matched, because `.*` under\nthe `s` flag always reaches the end. So although `\\s` and `.` overlap,\nthere is no failure for the engine to backtrack into.\n\nMarked as a false positive in SonarCloud with that reasoning and the\nmeasurements, citing the new test by name so the annotation points at\nsomething executable.\n\n### What the new test does and does not prove\n\n`parseLinkHeader > stays linear on adversarial headers` runs all five\nshapes under a wall-clock bound. I verified the assertion is **live** —\ndropping the threshold fails it and names the offending shape.\n\nIt is **not** a proven tripwire against a future backtracking edit, and\nthe comment says so. Two attempts to introduce one failed to trip it:\nmaking the pattern quadratic the obvious way (adding a failure point\nafter the overlapping quantifiers) also changes what it parses, so the\ncorrectness tests fire first; and a lazy-body variant that *does*\npreserve parsing stayed fast. Evidence for the false-positive call, not\na guarantee.\n\n## The six minor findings\n\n- **`S6582` optional chain** — `connectors/github-sync.ts`. Note the fix\nis `row?.metadata ?? null` rather than the `== null` the rule nudges\ntoward: the column is nullable **and** the row may be absent, so the\noptional chain yields `undefined | string | null`. Folding both empty\ncases into one `null` keeps the comparison strict-equality only, which\nthe codebase requires.\n- **`S7780` `String.raw`** — `cli/commands/doctor-fix-keyring.ts`. This\none emits a shell script, so I verified the change is byte-identical\nrather than assuming: both spellings produce `printf \"\\n\" |\ngnome-keyring-daemon …` exactly.\n- **`S7778` repeated `Array#push`** — same file; two consecutive pushes\nbecame one call.\n- **`S5906` length assertions ×3** — `egress/egress-verify.test.ts`,\n`connectors/actor-email.test.ts`. `toHaveLength` for better failure\noutput.\n\n## Verification\n\n- `bun test packages/gateway/src/connectors packages/cli/src/commands` —\n**4732 pass, 0 fail**\n- `bun run preflight:fast` — **29/29 gates PASSED**\n\n## Following separately\n\nThe remaining 9 are all `S3776` cognitive complexity, and all only 1–2\npoints over the 15 threshold: `pagerduty-attribution.ts`,\n`pagerduty-sync.ts`, `sentry-issue-sync.ts`, `github-sync.ts`,\n`graph/graph-populator.ts`, `agents/negotiate.ts` (×2),\n`agents/premortem.ts`, `cli/commands/doctor-core.ts`. Nine extraction\nrefactors across connector and agent code share nothing with the fixes\nabove and carry their own regression risk, so folding them in here would\nmake both harder to review.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved handling of missing or incomplete metadata during\nsynchronization.\n  * Preserved keyring command behavior while streamlining status output.\n\n* **Tests**\n* Added performance coverage for parsing malformed and complex link\nheaders.\n  * Updated collection-size assertions for clearer test validation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T12:13:10Z",
-          "tree_id": "4a568d0f9a0bfbbb33d39bb46a2608a0d3ee6a1f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/fa65d957c46ff46354f8c17d9d37cf4d13957c19"
-        },
-        "date": 1786796674050,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 318.31940770000074,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 317.342919999997,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 162.11964510000035,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "518aae24bdc6020a181ecc67fdfc4b1c018def08",
+          "message": "feat(extensions): an owner-approved network grant may be narrower than the manifest (I52) (#1877)\n\nPhase 9.5 project 6, PR 7, the last PR of the quality layer, spec § 10.7\nand § 11. The owner can now run an installed extension with a NETWORK\ngrant narrower than its manifest declares. `nimbus extension audit`\noffers the narrowing from locally observed evidence. It is applied only\nthrough the existing, never-delegable `extension.run` approval, which\nshows the exact resulting network list. Nothing applies by itself (owner\nruling R2). This also closes project 6, on the owner's ruling of\n2026-11-03.\n\n## The rule, identical at spawn and at approval\n\n`checkStoredAgainstResolved` in `extensions/extension-run-grants.ts` is\nthe one check, used by `verified-extension.ts` step 8 and by\n`approve-run.ts`. A stored grant passes only when:\n- its file grants equal the re-resolved ones exactly;\n- every stored network entry is an exact string in the re-resolved\nmanifest network, in the same order, with no duplicates;\n- the stored JSON re-serialises to itself.\n\nEvery spawn's sandbox policy uses the re-resolved files with the checked\nstored network. A grant equal to the manifest is the special case of a\nsubset, so every existing grant keeps working.\n\nA stored grant can never be wider. Each of these is refused with\n`ERR_EXTENSION_RUN_CHANGED`, and each is tested:\n- a tampered row: an extra, reordered, duplicated or differently spelled\nhost, a changed file, or an extra key;\n- a manifest that later drops a kept entry.\n\n## Applying a narrowing\n\n- **The command:** `nimbus extension approve <id> --network <a,b|none>`,\nalso as `--network=…`. A repeated flag is refused, and `--network` on\nany other subcommand is refused.\n- Each entry is matched to a declared entry by its `parseNetworkEntry`\nkey, so `api.x.com` and `api.x.com:443` name the same entry.\n  - An undeclared entry is refused before the prompt.\n- **The prompt** shows `network` (the narrowed list), `declaredNetwork`\nand `networkNarrowed: true`.\n- **After the prompt** the grant is re-checked with the subset rule.\n- **Who can write it:** only `approve-run.ts`; D33(c) is unchanged.\n- The migration path cannot narrow: its deps type omits `network`, and a\nguard refuses it with `ERR_EXTENSION_RUN_NOT_MIGRATED`.\n  - A delegate is never consulted.\n- `extension.approveRun` is still refused over LAN and absent from the\nTauri allowlist.\n\n## The offer in `nimbus extension audit`\n\nThe offer comes only for what each sandbox actually enforces:\n\n| OS | What can be offered |\n|---|---|\n| Linux | remove declared `host:port` entries not seen used |\n| macOS | remove entries on ports no connection used; removing a host\nwhose port stays is never offered |\n| Windows | `no network`, only when no used and no unmatched connection\nwas ever seen |\n\n- **Evidence window:** network observed, at least 5 runs over at least 7\ndays, nothing dropped, observation not stopped, for the installed\nversion.\n- **Never widens:** the offer keeps what the evidence kept AND what is\napproved, and exists only when that is strictly smaller than the current\ngrant.\n- **Wording:** `Offer: narrow the network grant to … (… not seen in N\nrun(s) over D day(s) on this machine).`, then `If the extension does use\nit rarely, that feature will fail.`, then the exact `nimbus extension\napprove … --network …` command.\n- **Declared now comes from the verified installed manifest,** not the\ngrant. A narrowed grant shows `approved … (narrowed from what it\ndeclares)`. A host removed by narrowing that the child then tries is\n\"declared, not approved\", never an undeclared finding.\n- **Stale or corrupt grants:** a grant from an earlier version, or one\nthat cannot be parsed, is never reported as a narrowing.\n\n## Updates\n\nAn update's approval note adds `The earlier network narrowing is not\ncarried over: the new approval starts from everything the new version\ndeclares.`, only when the stored grant is narrower than the installed\nmanifest.\n\n## Invariants\n\n- **I52, new:** audit evidence only narrows. Observed evidence is local\nand never changes a grant by itself. A stored run grant is equal to or\nnarrower than its manifest: network a subset, files equal. Only the\nowner's `extension.run` approval writes a narrower one.\n  - It has no static rule of its own; it relies on D33(c).\n- Its docs, its tests, and the CLAUDE.md and GEMINI.md mirrors landed in\nthe same commit as the wiring.\n- **I43, amended:** stored file grants equal the re-resolved ones, and\nthe stored network is a subset of the re-resolved network.\n\n## Project 6 closes, owner ruling 2026-11-03\n\n- **Ticked:** the three remaining quality-layer rows. The registry web\npage and desktop marketplace tile move to a new open row, \"Marketplace\npage and desktop tile (later; a static page under option C)\".\n- **Cross-check row:** it is shipped, and the official registry\npublishes its first baseline with the next Readwise publish.\n- **Project 6 is marked ✅ 2026-11-03** in the roadmap, the CHANGELOG,\nCLAUDE.md and GEMINI.md. It took 12 PRs, counting\nnimbus-agent/nimbus-mcp-servers#62 and #63.\n\n## Verification\n\n- **Tests:** the extension, IPC, security-invariant and CLI tests with\n`--parallel` give 9765 pass. The one failure is the known `tui` Yoga\nerror. trust-store and registry-maintain, which time out only under\nparallel load, pass when run alone.\n- **The security block:** the I43 and I52 tests give 27 pass, including\na narrowed spawn checked through `prepareSpawn`'s actual sandbox policy.\n- **Red-proofs:** each guard was reverted once and a test failed. That\ncovers the subsequence, duplicates, files, canonical form, spawn grants,\nthe post-prompt re-check, the migration guard, the IPC shape, the CLI\nflags, the offer intersection, the update-note wiring, and the stale-\nand corrupt-grant cases.\n- **Gates:** `typecheck`, `typecheck:tests` (0 new), biome, complexity\n(nothing new over 15), `audit:invariants`, `audit:doc-refs`,\n`audit:status-drift` and `preflight:fast` all pass. New modules are at\n100% line coverage. No raw bidi characters were added.\n- **Reviews:** Antigravity reviewed the plan and its 10 findings were\napplied. Each of the three tasks had a task review. An adversarial\nsecurity review of the core tried to widen a grant and found no way. The\nfinal whole-branch review led to these fixes: stale and corrupt grants\nmisreported as narrowed, flag parsing, host sanitising in the output,\nand the complexity helper.\n\n## Not covered here\n\n- File grants are never narrowed; there is no evidence for them (R9).\n- The sync host's `canConfine` preflight keeps reading the stored grant.\nIt spawns nothing, and the spawn that follows re-verifies. This is\ndocumented.\n- The marketplace page and desktop tile, the new open row.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Extension owners can approve a narrower network grant—or no network\naccess—during approval. The CLI validates selections before prompting\nand displays approved entries.\n* Extension audits now show declared and approved network access and may\noffer evidence-based narrowing suggestions. Suggestions are\ninformational; owners apply them through approval.\n* Update approvals note when a previous network restriction will need to\nbe selected again.\n\n* **Bug Fixes**\n* Extension launches accept valid narrower network grants while\ncontinuing to verify file permissions and reject grants outside the\ncurrent manifest.\n\n* **Documentation**\n* Updated the security-invariant catalogue and project status to reflect\nI1–I52 and the completed quality layer.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T17:46:41Z",
+          "tree_id": "bbf262c8c10a9cba673ccc3b184d29e74d66b0b8",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/518aae24bdc6020a181ecc67fdfc4b1c018def08"
+        },
+        "date": 1793728671471,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 288.45309235000207,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 289.4352515000028,
             "unit": "ms"
           }
         ]
