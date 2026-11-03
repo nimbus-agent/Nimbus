@@ -7,8 +7,8 @@
  *
  * Matching is by forward resolution of the DECLARED names only: each name the policy's
  * `permissions.network` lists is looked up at start and every {@link RESOLVE_REFRESH_MS}, and every
- * answer is kept for the child's lifetime (at most {@link MAX_ANSWERS_PER_HOST} per host), so a CDN
- * that rotates addresses still matches. Those lookups are the only outbound request observation
+ * answer is kept for the child's lifetime (the {@link MAX_ANSWERS_PER_HOST} most recently answered
+ * per host), so a CDN that rotates addresses still matches. Those lookups are the only outbound request observation
  * makes. They are not in the egress ledger (I29 and I50 bound 6, stated bounds), a remote address is
  * never looked up, and there is no reverse DNS: an address that matches nothing stays an address.
  *
@@ -27,7 +27,7 @@ import type { ConnectionSource, ObservedConnection } from "./types.ts";
 export const DEFAULT_POLL_PERIOD_MS = 250;
 /** How often each declared name is looked up again. */
 export const RESOLVE_REFRESH_MS = 60_000;
-/** Distinct addresses kept per declared host, for the child's lifetime. */
+/** Distinct addresses kept per declared host; past it the least recently answered is forgotten. */
 export const MAX_ANSWERS_PER_HOST = 256;
 /** Consecutive source failures after which the poller stops (the child runs on). */
 export const MAX_CONSECUTIVE_POLL_ERRORS = 10;
@@ -148,16 +148,24 @@ class MatchTable {
     return [...this.portsByHost.keys()];
   }
 
-  /** Adds answers for a host, up to {@link MAX_ANSWERS_PER_HOST}; a non-literal is ignored. */
+  /**
+   * Adds answers for a host; a non-literal is ignored. The host keeps at most
+   * {@link MAX_ANSWERS_PER_HOST}: past that the address answered least recently is forgotten (a set
+   * keeps insertion order, and an address answered again is moved to the end), so a long run on a
+   * rotating CDN keeps matching what the name answers now.
+   */
   learn(host: string, answers: unknown): void {
     const seen = this.answersByHost.get(host);
     const ports = this.portsByHost.get(host);
     if (seen === undefined || ports === undefined || !Array.isArray(answers)) return;
     for (const a of answers) {
-      if (seen.size >= MAX_ANSWERS_PER_HOST) return;
       if (typeof a !== "string" || isIP(a) === 0) continue;
       const ip = canonicalIp(a);
-      if (seen.has(ip)) continue;
+      if (seen.delete(ip)) {
+        seen.add(ip);
+        continue;
+      }
+      if (seen.size >= MAX_ANSWERS_PER_HOST) this.forget(host, seen, ports);
       seen.add(ip);
       for (const port of ports) {
         const key = `${ip}|${String(port)}`;
@@ -165,6 +173,19 @@ class MatchTable {
         hosts.add(host);
         this.hostsByTarget.set(key, hosts);
       }
+    }
+  }
+
+  /** Drops the host's least recently answered address from the table. */
+  private forget(host: string, seen: Set<string>, ports: ReadonlySet<number>): void {
+    const oldest = seen.values().next();
+    if (oldest.done === true) return;
+    seen.delete(oldest.value);
+    for (const port of ports) {
+      const key = `${oldest.value}|${String(port)}`;
+      const hosts = this.hostsByTarget.get(key);
+      hosts?.delete(host);
+      if (hosts?.size === 0) this.hostsByTarget.delete(key);
     }
   }
 
@@ -321,6 +342,8 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
     for (const c of rows) {
       if (isLoopbackIp(canonicalIp(c.remoteIp))) continue;
       const key = connectionKey(c);
+      // One socket held through two fds (a `dup`, an inherited fd in the same process) is one row.
+      if (current.has(key)) continue;
       current.add(key);
       if (!previous.has(key)) pending.push({ conn: c, seenAt: at });
     }

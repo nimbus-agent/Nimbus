@@ -93,6 +93,15 @@ describe("startConnectionPoller", () => {
     expect(h.events).toEqual(["used api.github.com:443"]);
   });
 
+  test("one connection listed twice in one pass (two fds on one socket) is counted once", async () => {
+    const h = harness(["api.github.com:443"], { "api.github.com": ["140.82.112.5"] });
+    await settle();
+    h.set([conn("140.82.112.5"), conn("140.82.112.5"), conn("198.51.100.9"), conn("198.51.100.9")]);
+    h.poller.pollNow();
+    h.poller.pollNow();
+    expect(h.events).toEqual(["used api.github.com:443", "unmatched 198.51.100.9:443"]);
+  });
+
   test("two declared hosts on one address and port are both marked used", async () => {
     const h = harness(["a.example.com:443", "b.example.com:443"], {
       "a.example.com": ["198.51.100.1"],
@@ -186,7 +195,7 @@ describe("startConnectionPoller", () => {
     expect(h.events.slice(1)).toEqual(["used cdn.example.com:443", "used cdn.example.com:443"]);
   });
 
-  test("answers per host are capped", async () => {
+  test("answers per host are capped: past the cap the address seen least recently is forgotten", async () => {
     const many = Array.from(
       { length: MAX_ANSWERS_PER_HOST + 10 },
       (_, i) => `10.1.${String(i >> 8)}.${String(i & 255)}`,
@@ -194,14 +203,60 @@ describe("startConnectionPoller", () => {
     const h = harness(["cdn.example.com"], { "cdn.example.com": many });
     await settle();
     h.set([
-      conn(many[MAX_ANSWERS_PER_HOST - 1] ?? "", 443, 1),
-      conn(many[MAX_ANSWERS_PER_HOST] ?? "", 443, 2),
+      conn(many[9] ?? "", 443, 1),
+      conn(many[10] ?? "", 443, 2),
+      conn(many[MAX_ANSWERS_PER_HOST + 9] ?? "", 443, 3),
+    ]);
+    h.poller.pollNow();
+    // The newest 256 are kept: the first ten were evicted, the learning never stopped.
+    expect(h.events).toEqual([
+      `unmatched ${many[9] ?? ""}:443`,
+      "used cdn.example.com:443",
+      "used cdn.example.com:443",
+    ]);
+  });
+
+  test("an address answered again counts as recent, so a rotating CDN evicts the stale one", async () => {
+    const fresh = Array.from(
+      { length: MAX_ANSWERS_PER_HOST - 1 },
+      (_, i) => `10.2.${String(i >> 8)}.${String(i & 255)}`,
+    );
+    const answers: Answers = { "cdn.example.com": ["198.51.100.1", "198.51.100.2"] };
+    const h = harness(["cdn.example.com"], answers);
+    await settle();
+    // The second refresh answers .1 again with 255 new addresses: 257 distinct, so the one not seen
+    // since the first answer (.2) goes, and .1 stays.
+    answers["cdn.example.com"] = ["198.51.100.1", ...fresh];
+    h.tick(RESOLVE_REFRESH_MS);
+    h.poller.pollNow();
+    await settle();
+    h.set([
+      conn("198.51.100.1", 443, 1),
+      conn("198.51.100.2", 443, 2),
+      conn(fresh[0] ?? "", 443, 3),
     ]);
     h.poller.pollNow();
     expect(h.events).toEqual([
       "used cdn.example.com:443",
-      `unmatched ${many[MAX_ANSWERS_PER_HOST] ?? ""}:443`,
+      "unmatched 198.51.100.2:443",
+      "used cdn.example.com:443",
     ]);
+  });
+
+  test("an evicted address no longer matches on any declared port of its host", async () => {
+    const many = Array.from(
+      { length: MAX_ANSWERS_PER_HOST + 1 },
+      (_, i) => `10.3.${String(i >> 8)}.${String(i & 255)}`,
+    );
+    const h = harness(["cdn.example.com:443", "cdn.example.com:8443", "other.example.com:8443"], {
+      "cdn.example.com": many,
+      "other.example.com": [many[0] ?? ""],
+    });
+    await settle();
+    h.set([conn(many[0] ?? "", 443, 1), conn(many[0] ?? "", 8443, 2)]);
+    h.poller.pollNow();
+    // Evicted from cdn.example.com only: other.example.com still answered it.
+    expect(h.events).toEqual(["unmatched 10.3.0.0:443", "used other.example.com:8443"]);
   });
 
   test("a declared IP literal maps to itself without a lookup", async () => {
