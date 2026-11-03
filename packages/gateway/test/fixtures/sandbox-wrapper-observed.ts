@@ -20,6 +20,8 @@ import { runSandboxWrapper } from "../../src/platform/sandbox/sandbox-wrapper.ts
 
 const ready = process.argv[2];
 const stay = process.argv[3] === "stay";
+/** With `argv[4]` `observed` the stand-in says the child runs behind a forwarder, as Linux would. */
+const observed = process.argv[4] === "observed";
 if (ready === undefined) throw new Error("usage: sandbox-wrapper-observed.ts <ready-file>");
 
 const childScript = [
@@ -39,6 +41,7 @@ const standIn: SandboxRunner = {
       windowsHide: true,
     });
     process.once("exit", () => child.kill("SIGKILL"));
+    if (observed) opts.observer?.markObserved();
     opts.observer?.used("api.github.com", 443);
     return child;
   },

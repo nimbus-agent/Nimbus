@@ -29,7 +29,6 @@ function harness(over: Partial<NetworkObservationWriterOptions> = {}) {
     prefix: "/obs/ext_weather.1000.deadbeef",
     label: LABEL,
     os: "linux",
-    networkObserved: true,
     now: () => clock,
     flushMs: 0,
     writeFileAtomic: (path, bytes) => {
@@ -79,6 +78,7 @@ describe("createNetworkObservationWriter", () => {
   test("writes the exact body shape, and names the file <prefix>.<seq>.json", () => {
     const h = harness();
     h.tick(500);
+    h.writer.markObserved();
     h.writer.used("api.github.com", 443);
     h.writer.flush(false);
     expect(h.files[0]?.path).toBe("/obs/ext_weather.1000.deadbeef.0.json");
@@ -95,6 +95,22 @@ describe("createNetworkObservationWriter", () => {
       entries: [{ o: "used", h: "api.github.com", p: 443, n: 1 }],
       dropped: 0,
     });
+  });
+
+  test("networkObserved is false until the runner marks it, then true in every later file", () => {
+    const h = harness();
+    h.writer.flush(false);
+    h.writer.markObserved();
+    h.writer.flush(false);
+    h.writer.close();
+    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, true, true]);
+  });
+
+  test("a writer nobody marks says networkObserved false in every file", () => {
+    const h = harness({ os: "win32" });
+    h.writer.flush(false);
+    h.writer.close();
+    expect(h.files.map((f) => f.body["networkObserved"])).toEqual([false, false]);
   });
 
   test("stores a hostile name sanitised", () => {
@@ -304,9 +320,10 @@ async function waitForExit(child: Bun.Subprocess, ms: number): Promise<number | 
   }
 }
 
-function startWrapper(dir: string, mode: "stay" | "exit") {
+function startWrapper(dir: string, mode: "stay" | "exit", observed = false) {
   const ready = join(dir, "ready");
-  const wrapper = Bun.spawn([process.execPath, WRAPPER_FIXTURE, ready, mode], {
+  const argv = [process.execPath, WRAPPER_FIXTURE, ready, mode, ...(observed ? ["observed"] : [])];
+  const wrapper = Bun.spawn(argv, {
     env: {
       ...process.env,
       [SANDBOX_POLICY_ENV]: JSON.stringify({
@@ -329,7 +346,7 @@ async function waitForFile(path: string): Promise<void> {
 }
 
 /** The run's one file: final, labelled, holding what the stand-in reported. */
-function expectOneFinalFile(dir: string): void {
+function expectOneFinalFile(dir: string, observed = false): void {
   const files = readdirSync(dir).filter((f) => f.endsWith(".json"));
   expect(files).toEqual(["ext_weather.1000.deadbeef.0.json"]);
   const body = JSON.parse(readFileSync(join(dir, files[0] ?? ""), "utf8")) as Record<
@@ -338,6 +355,7 @@ function expectOneFinalFile(dir: string): void {
   >;
   expect(body["final"]).toBe(true);
   expect(body["runStart"]).toBe(true);
+  expect(body["networkObserved"]).toBe(observed);
   expect(body["label"]).toEqual(LABEL);
   expect(body["entries"]).toEqual([{ o: "used", h: "api.github.com", p: 443, n: 1 }]);
 }
@@ -350,6 +368,13 @@ describe("the wrapper's observation", () => {
     await waitForFile(ready);
     expect(readFileSync(ready, "utf8")).toBe("absent");
     expectOneFinalFile(dir);
+  }, 70_000);
+
+  test("a runner that marks the spawn observed makes the file say so", async () => {
+    const dir = tempRoot();
+    const { wrapper } = startWrapper(dir, "exit", true);
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    expectOneFinalFile(dir, true);
   }, 70_000);
 });
 

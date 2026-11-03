@@ -399,6 +399,10 @@ function spawnBehindForwarder(
     const child = spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, session.argv, opts);
     child.once("exit", session.close);
     child.once("error", session.close);
+    // Observed only once the child has really started behind the open session: the one place a
+    // spawn's network is reported, so the only place that may say it is.
+    const observer = opts.observer;
+    if (observer !== undefined) child.once("spawn", () => observer.markObserved());
     return child;
   } catch (e) {
     session.close();

@@ -8,7 +8,6 @@ import {
   parseObservationLabel,
 } from "./network-observation-writer.ts";
 import {
-  declaresNetwork,
   isSandboxWrapperOnlyEnv,
   parseSandboxPolicy,
   SANDBOX_CWD_ENV,
@@ -39,7 +38,7 @@ function observationOs(): ObservationOs | null {
  * stderr and observes nothing, since a file nobody can attribute would be rejected on ingest.
  * Observation never refuses the spawn.
  */
-function observationWriter(policy: SandboxPolicy): NetworkObservationWriter | null {
+function observationWriter(): NetworkObservationWriter | null {
   const prefix = process.env[SANDBOX_OBSERVATION_FILE_ENV];
   if (prefix === undefined || prefix === "") return null;
   const label = parseObservationLabel(process.env[SANDBOX_OBSERVATION_LABEL_ENV]);
@@ -54,7 +53,6 @@ function observationWriter(policy: SandboxPolicy): NetworkObservationWriter | nu
     prefix,
     label,
     os,
-    networkObserved: os === "linux" && declaresNetwork(policy),
   });
 }
 
@@ -121,7 +119,7 @@ export async function runSandboxWrapper(
   const runner = await (
     deps.createRunner ?? (() => createSandboxRunner({ forwarderStartProbe: false }))
   )();
-  let writer = observationWriter(policy);
+  let writer = observationWriter();
   let child: ChildProcess;
   try {
     child = runner.spawn(originalCmd, originalArgs, {

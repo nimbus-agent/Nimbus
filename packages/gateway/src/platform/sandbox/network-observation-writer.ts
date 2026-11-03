@@ -26,6 +26,13 @@ import { sanitiseName } from "./net-forward-host.ts";
 export interface NetworkObserver {
   used(host: string, port: number): void;
   refused(name: string): void;
+  /**
+   * The runner started the child behind a network path that reports (the Linux forwarder). Called
+   * by the runner for what it DID, never inferred from the policy: until it is called every file
+   * says `networkObserved: false`, which is what a fallback spawn, a no-network spawn, macOS and
+   * Windows all leave it.
+   */
+  markObserved(): void;
 }
 
 export type ObservationLabel = { readonly extensionId: string; readonly version: string };
@@ -45,8 +52,6 @@ export type NetworkObservationWriterOptions = {
   /** Fixed at spawn, echoed in every file so a file is attributed to the version that ran. */
   label: ObservationLabel;
   os: ObservationOs;
-  /** Whether this OS's network path reports anything at all. False means "not observed here". */
-  networkObserved: boolean;
   now?: () => number;
   /** The window length, and the period of the writer's own unref'd timer. 0 starts no timer. */
   flushMs?: number;
@@ -154,6 +159,7 @@ export function createNetworkObservationWriter(
   let carried = 0;
   let stopped = false;
   let closed = false;
+  let networkObserved = false;
   let window: Window = { fromMs: now(), entries: new Map(), dropped: 0 };
 
   /** A full window makes room for a `used` key by dropping a `refused` one: a flood never hides use. */
@@ -195,7 +201,7 @@ export function createNetworkObservationWriter(
       seq,
       runStart: seq === 0,
       os: opts.os,
-      networkObserved: opts.networkObserved,
+      networkObserved,
       fromMs: window.fromMs,
       toMs,
       final,
@@ -247,6 +253,9 @@ export function createNetworkObservationWriter(
       } catch {
         // Never thrown into the forwarder.
       }
+    },
+    markObserved: () => {
+      networkObserved = true;
     },
     flush: (final) => {
       try {

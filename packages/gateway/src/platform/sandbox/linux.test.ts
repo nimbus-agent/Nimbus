@@ -50,6 +50,7 @@ describe("observerHooks", () => {
     const hooks = observerHooks({
       used: (host, port) => seen.push(`used ${host}:${String(port)}`),
       refused: (name) => seen.push(`refused ${name}`),
+      markObserved: () => seen.push("observed"),
     });
     const entry: ForwardEntry = {
       host: "api.github.com",
@@ -146,6 +147,48 @@ describe.skipIf(process.platform !== "linux" || !existsSync("/usr/bin/bwrap"))(
     });
   },
 );
+
+/**
+ * `networkObserved` is what the runner did, never what the policy asked for. Without a helper a
+ * network policy takes the fallback (the whole network, no forwarder), so nothing is observed.
+ * Runs where bwrap is and no helper resolves; the forwarder's true case is in
+ * linux-forwarder-network.test.ts, which needs the built helper.
+ */
+describe.skipIf(
+  process.platform !== "linux" ||
+    !existsSync("/usr/bin/bwrap") ||
+    resolveHelperPath(process.execPath, process.env, existsSync) !== null,
+)("a spawn with no forwarder is never marked observed", () => {
+  function marksOf(policy: SandboxPolicy): Promise<{ code: number | null; marks: number }> {
+    let marks = 0;
+    const runner = createLinuxSandboxRunner();
+    const cwd = join(mkdtempSync(join(TMP_ROOT, "observe-")), "cwd");
+    mkdirSync(cwd);
+    const child = runner.spawn("/usr/bin/true", [], {
+      policy,
+      env: {},
+      cwd,
+      stdio: "ignore",
+      observer: {
+        used: () => undefined,
+        refused: () => undefined,
+        markObserved: () => (marks += 1),
+      },
+    });
+    return new Promise((done) => child.once("exit", (code) => done({ code, marks })));
+  }
+
+  it("the fallback, a network policy with no helper", async () => {
+    const policy = basePolicy({ network: ["api.github.com"] });
+    // The premise, so this cannot pass on a spawn that took some other path.
+    expect(decideNetworkMode(policy, { helperAvailable: false })).toBe("fallback");
+    expect(await marksOf(policy)).toEqual({ code: 0, marks: 0 });
+  });
+
+  it("a policy with no network", async () => {
+    expect(await marksOf(basePolicy())).toEqual({ code: 0, marks: 0 });
+  });
+});
 
 describe("buildBwrapArgv", () => {
   it("uses --unshare-net for no-net mode", () => {
