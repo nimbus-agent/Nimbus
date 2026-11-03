@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:e383f4f78785e6b0afec8fc053b29372eb822d7f2cdd0e76bf2f9e3b1a5bab85
+// nimbus-action-dist bun=1.4.3 inputHash=sha256:7ad24c3c79449275529960efc49717c10d7b38c072eef8fb7b6b3aaf15eca3d5
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4435,6 +4435,9 @@ function parseEvalQuality(raw) {
   }
   return { scorer: 1, score, cases, passed, rubrics };
 }
+// ../../registry-format/src/eval-record.ts
+var MAX_EVAL_RECORD_INPUTS_BYTES = 1024 * 1024;
+var SCALAR_TYPES = new Set(["string", "number", "boolean"]);
 // ../../registry-format/src/eval-role-document.ts
 function isObject2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -5236,13 +5239,13 @@ function parseDependencyObject(depId, o) {
     ...typeof fp === "string" ? { rootKeyFingerprint: fp.toLowerCase() } : {}
   };
 }
-function isPlainObject(value) {
+function isPlainObject2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 function parseDependsOn(value) {
   if (value === undefined)
     return;
-  if (!isPlainObject(value)) {
+  if (!isPlainObject2(value)) {
     throw new Error("extension manifest dependsOn must be an object");
   }
   const out = {};
@@ -5250,7 +5253,7 @@ function parseDependsOn(value) {
     if (depId.trim() === "") {
       throw new Error("extension manifest dependsOn keys must be non-empty strings");
     }
-    out[depId] = isPlainObject(spec) ? parseDependencyObject(depId, spec) : { range: parseDependencyRange(depId, spec, `dependsOn.${depId}`) };
+    out[depId] = isPlainObject2(spec) ? parseDependencyObject(depId, spec) : { range: parseDependencyRange(depId, spec, `dependsOn.${depId}`) };
   }
   return Object.keys(out).length === 0 ? undefined : out;
 }
@@ -5356,7 +5359,7 @@ function parseRequires(value) {
 function grantsAnyPermission(raw) {
   if (raw === undefined)
     return false;
-  if (!isPlainObject(raw))
+  if (!isPlainObject2(raw))
     return true;
   const isEmptyList = (v) => v === undefined || Array.isArray(v) && v.length === 0;
   if (!isEmptyList(raw["network"]))
@@ -5364,7 +5367,7 @@ function grantsAnyPermission(raw) {
   const fs = raw["filesystem"];
   if (fs === undefined)
     return false;
-  return !isPlainObject(fs) || !isEmptyList(fs["read"]) || !isEmptyList(fs["write"]);
+  return !isPlainObject2(fs) || !isEmptyList(fs["read"]) || !isEmptyList(fs["write"]);
 }
 function assertStarterPackShape(o, blocks) {
   if (o["entry"] !== undefined || o["entrypoint"] !== undefined) {
@@ -10149,7 +10152,7 @@ function readAtMost(path, max) {
     closeSync3(fd);
   }
 }
-function isPlainObject2(v) {
+function isPlainObject3(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function readScores(path) {
@@ -10168,7 +10171,7 @@ function readScores(path) {
   } catch {
     throw refuseScores(path, "is not valid JSON");
   }
-  if (!isPlainObject2(parsed))
+  if (!isPlainObject3(parsed))
     throw refuseScores(path, "is not a JSON object");
   return new Map(Object.entries(parsed));
 }
@@ -10177,7 +10180,7 @@ var MALFORMED = "its scores.json entry is malformed (want exactly packageSha256 
 var BASELINE_UNBOUND = "its scores.json entry is not a baseline entry for this package (want exactly packageSha256 and baseline); ignored";
 var BASELINE_INVALID = "its scores.json baseline is invalid; signed without a baseline";
 function failedCode(error) {
-  const c = isPlainObject2(error) ? error["code"] : undefined;
+  const c = isPlainObject3(error) ? error["code"] : undefined;
   return typeof c === "string" && /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
 }
 var sortedKeys = (o) => Object.keys(o).sort(codeUnitCompare).join(",");
@@ -10192,7 +10195,7 @@ function judgeBaselineOnly(scores, v) {
   const raw = scores.get(`${v.id}@${v.version}`);
   if (raw === undefined)
     return { ok: true };
-  if (!isPlainObject2(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
+  if (!isPlainObject3(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
     return { ok: true, baselineIgnored: BASELINE_UNBOUND };
   }
   return { ok: true, ...baselineOf(raw) };
@@ -10205,7 +10208,7 @@ function judgeSuite(scores, v) {
       reason: "it has eval suites and scores.json has no score for it; not signed without a score"
     };
   }
-  if (!isPlainObject2(raw))
+  if (!isPlainObject3(raw))
     return { ok: false, reason: MALFORMED };
   const keys = sortedKeys(raw);
   const withBaseline = keys.startsWith("baseline,");
@@ -12642,7 +12645,7 @@ function parseLivenessKey(raw) {
   }
   return new Uint8Array(Buffer.from(s, "base64"));
 }
-function isPlainObject3(v) {
+function isPlainObject4(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function entryProblem(key, raw, now) {
@@ -12691,7 +12694,7 @@ function readEnvelope2(path, expectedVersion) {
   } catch {
     throw new Error("refusing the results file: it is not valid JSON");
   }
-  if (!isPlainObject3(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
+  if (!isPlainObject4(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
     throw new Error("refusing the results file: it is not an object of exactly format, nimbusVersion and extensions");
   }
   if (doc["format"] !== 1)
@@ -12704,7 +12707,7 @@ function readEnvelope2(path, expectedVersion) {
     throw new Error(`refusing the results file: it was produced for Nimbus ${code(version)}, not the ${code(expectedVersion)} this job was told`);
   }
   const raw = doc["extensions"];
-  if (!isPlainObject3(raw)) {
+  if (!isPlainObject4(raw)) {
     throw new Error("refusing the results file: extensions is not an object");
   }
   return { nimbusVersion: version, raw };

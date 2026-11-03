@@ -66,8 +66,8 @@ const TYPE_MARKER_VALUES: ReadonlySet<string> = new Set([
   "array",
   "object",
 ]);
-const NAME_MAX = 120;
-const TOOL_MAX = 128;
+export const NAME_MAX = 120;
+export const TOOL_MAX = 128;
 
 /** Whether a `/`-separated path relative to the extension root is an eval suite file. */
 export function isEvalSuiteFile(relPath: string): boolean {
@@ -113,17 +113,22 @@ type RawObject = Record<string, unknown> & {
   $type?: unknown;
 };
 
-function isPlainObject(v: unknown): v is RawObject {
+export function isPlainObject(v: unknown): v is RawObject {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function assertKeys(file: string, where: string, obj: RawObject, allowed: readonly string[]): void {
+export function assertKeys(
+  file: string,
+  where: string,
+  obj: RawObject,
+  allowed: readonly string[],
+): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.includes(key)) refuse(file, `${where}: unknown key "${key}"`);
   }
 }
 
-function checkString(file: string, where: string, v: unknown, max: number): string {
+export function checkString(file: string, where: string, v: unknown, max: number): string {
   if (typeof v !== "string" || v.length < 1 || v.length > max) {
     refuse(file, `${where} must be a string of 1 to ${max} characters`);
   }
@@ -203,7 +208,7 @@ function parseExpect(file: string, where: string, raw: unknown): EvalExpect {
   return { rubric: "json-match", value: raw.value, error };
 }
 
-function parseInput(file: string, where: string, raw: unknown): Record<string, unknown> {
+export function parseInput(file: string, where: string, raw: unknown): Record<string, unknown> {
   if (!isPlainObject(raw)) refuse(file, `${where}.input must be an object`);
   checkDepth(file, `${where}.input`, raw);
   if (new TextEncoder().encode(JSON.stringify(raw)).length > MAX_EVAL_INPUT_BYTES) {
@@ -224,24 +229,24 @@ function parseCase(file: string, index: number, raw: unknown, seen: Set<string>)
   return { name, tool, input, expect: parseExpect(file, `${where}.expect`, raw.expect) };
 }
 
-function decodeSuite(file: string, bytes: Uint8Array): unknown {
+export function decodeSuite(file: string, bytes: Uint8Array, noun = "suite file"): unknown {
   if (bytes.length > MAX_EVAL_SUITE_FILE_BYTES) {
-    refuse(file, `suite file is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
+    refuse(file, `${noun} is too large (over ${MAX_EVAL_SUITE_FILE_BYTES} bytes)`);
   }
   // TextDecoder strips a leading BOM from its output, so the bytes are checked directly.
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
-    refuse(file, "suite file must not start with a BOM");
+    refuse(file, `${noun} must not start with a BOM`);
   }
   let text: string;
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(bytes);
   } catch {
-    return refuse(file, "suite file is not valid UTF-8");
+    return refuse(file, `${noun} is not valid UTF-8`);
   }
   try {
     return JSON.parse(text);
   } catch {
-    return refuse(file, "suite file is not valid JSON");
+    return refuse(file, `${noun} is not valid JSON`);
   }
 }
 

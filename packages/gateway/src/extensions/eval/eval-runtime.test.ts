@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { EvalCase, EvalSuite } from "@nimbus-dev/registry-format";
+import type { EvalCase, EvalRecordInputs, EvalSuite } from "@nimbus-dev/registry-format";
 
 import { extensionServerKey } from "../../connectors/lazy-mesh/server-key.ts";
 import type { ServerSpec } from "../../connectors/lazy-mesh/slot.ts";
@@ -25,6 +25,7 @@ import {
   type EvalMcpClient,
   type EvalRuntimeDeps,
   runEvalBaselineSession,
+  runEvalRecordSession,
   runEvalSession,
 } from "./eval-runtime.ts";
 import {
@@ -773,6 +774,130 @@ describe("runEvalBaselineSession", () => {
       baselineDeps(createClient, { disconnectTimeoutMs: 10 }),
     );
     expect(baseline.passed).toBe(true);
+    expect(stageEntries()).toEqual([]);
+  });
+});
+
+describe("runEvalRecordSession", () => {
+  const inputs = (...names: string[]): EvalRecordInputs => ({
+    name: "rec",
+    cases: names.map((n) => ({ name: n, tool: "echo", input: { say: n } })),
+  });
+
+  test("two passes, each from a fresh stage: 2 stages made, both gone, inputs in order", async () => {
+    const order: string[] = [];
+    const rec: ToolImpl = async (input) => {
+      order.push(String((input as { say?: unknown }).say));
+      return text(String((input as { say?: unknown }).say));
+    };
+    const { createClient, created } = fakeFactory([{ tools: { echo: rec } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      inputs("a", "b"),
+      deps(createClient),
+    );
+    expect(order).toEqual(["a", "b", "a", "b"]);
+    expect(out.first).toHaveLength(2);
+    expect(out.second).toHaveLength(2);
+    expect(created).toHaveLength(2);
+    expect(created.map((c) => c.disconnects)).toEqual([1, 1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a timeout in pass 1 respawns from a fresh stage", async () => {
+    const signals: AbortSignal[] = [];
+    let n = 0;
+    const flaky: ToolImpl = (input, ctx) => {
+      n += 1;
+      return n === 1 ? hanging(signals)(input, ctx) : echo(input, ctx);
+    };
+    const { createClient, created } = fakeFactory([{ tools: { echo: flaky } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      inputs("a", "b"),
+      deps(createClient, { caseTimeoutMs: 20 }),
+    );
+    expect(out.first[0]).toEqual({ kind: "failed", reason: "timeout" });
+    expect(out.first[1]?.kind).toBe("reply");
+    expect(created).toHaveLength(3);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("canConfine refusing throws before any stage or spawn", async () => {
+    const { createClient, created } = fakeFactory([{ tools: { echo } }]);
+    const code = await codeOf(
+      runEvalRecordSession(
+        source([exactCase("a", "echo", "x")]),
+        inputs("a"),
+        deps(createClient, { canConfine: () => "no sandbox here" }),
+      ),
+    );
+    expect(code).toBe("ERR_EVAL_SANDBOX_UNAVAILABLE");
+    expect(created).toHaveLength(0);
+    expect(existsSync(join(sandboxDir, EXTENSION_STAGE_DIR_NAME))).toBe(false);
+  });
+
+  test("ONE deadline covers both passes: time spent in pass 1 is gone in pass 2", async () => {
+    let clock = 0;
+    let calls = 0;
+    const slow: ToolImpl = async (input) => {
+      calls += 1;
+      clock += 1_200; // pass 1 alone spends more than the whole budget
+      return echo(input);
+    };
+    const { createClient } = fakeFactory([{ tools: { echo: slow } }]);
+    const code = await codeOf(
+      runEvalRecordSession(
+        source([exactCase("a", "echo", "x")]),
+        inputs("a"),
+        deps(createClient, { runTimeoutMs: 1_000, now: () => clock }),
+      ),
+    );
+    expect(code).toBe("ERR_EVAL_RUN_TIMEOUT");
+    expect(calls).toBe(1);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a crash reply in pass 1 respawns and both passes complete", async () => {
+    let n = 0;
+    const crashy: ToolImpl = async (input) => {
+      n += 1;
+      if (n === 1) throw new Error("boom");
+      return echo(input);
+    };
+    const { createClient, created } = fakeFactory([{ tools: { echo: crashy } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      inputs("a", "b"),
+      deps(createClient),
+    );
+    expect(out.first[0]).toEqual({ kind: "failed", reason: "crash" });
+    expect(out.first[1]?.kind).toBe("reply");
+    expect(out.second.map((r) => r.kind)).toEqual(["reply", "reply"]);
+    expect(created).toHaveLength(3);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a start failure on a pass-2 respawn propagates; no stage is left and every client is disconnected", async () => {
+    const { createClient, created } = fakeFactory([{ tools: { echo } }, { listThrows: true }]);
+    const code = await codeOf(
+      runEvalRecordSession(source([exactCase("a", "echo", "x")]), inputs("a"), deps(createClient)),
+    );
+    expect(code).toBe("ERR_EVAL_START_FAILED");
+    expect(created).toHaveLength(2);
+    expect(created.map((c) => c.disconnects)).toEqual([1, 1]);
+    expect(stageEntries()).toEqual([]);
+  });
+
+  test("a zero-input run calls nothing: two empty passes, no client made", async () => {
+    const { createClient, created } = fakeFactory([{ tools: { echo } }]);
+    const out = await runEvalRecordSession(
+      source([exactCase("a", "echo", "x")]),
+      { name: "rec", cases: [] },
+      deps(createClient),
+    );
+    expect(out).toEqual({ first: [], second: [] });
+    expect(created).toHaveLength(0);
     expect(stageEntries()).toEqual([]);
   });
 });
