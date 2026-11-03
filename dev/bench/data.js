@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793728675798,
+  "lastUpdate": 1793729371765,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "34b3faf800ccd14b8df2742687eb214f6a7558b8",
-          "message": "ci(docs): fix the lychee 504 for real — retries never applied to status codes (#1207)\n\n## #1200 did not fix this, and its stated reason was wrong\n\n#1200 added `retry_wait_time = 2` to `lychee.toml` for the recurring\ngithub.com 504, claiming those settings \"address the cause\". **They do\nnot apply to a 504 at all.**\n\nMeasured against a local server that counts requests:\n\n| response | requests received |\n|---|---|\n| `504 Gateway Timeout` | **1** |\n| `503 Service Unavailable` | **1** |\n| connection dropped mid-response | **4** (1 + 3 retries) |\n\nlychee retries **transport errors only**. A response that arrives and\nfails the `accept` list is final — which is exactly what the error text\nwas telling us all along (*\"Rejected status code\"*, not a timeout). So\n`max_retries`/`retry_wait_time` were inert for the one failure mode they\nwere added to fix.\n\nI've corrected the comment in `lychee.toml` rather than quietly\nreplacing it. The settings stay, because they *are* correct for genuine\ntransport flakes (connection reset, TLS hiccup) which do occur from\nrunner egress — they are just not the 504 mitigation.\n\nThis recurred a third time today, on\n`https://github.com/nimbus-agent/Nimbus/issues/1072`, which answered\n**HTTP 200 on three consecutive checks** seconds later.\n\n## The actual fix\n\n`scripts/check-links.sh`, used by both `bun run audit:links` and the CI\nstep, so a local reproduction and CI cannot drift:\n\n1. `--cache` — successful links are cached.\n2. `--cache-exclude-status '429,500..504'` — transient statuses are\ndeliberately **not** cached.\n3. On failure, run once more.\n\nBecause successes are cached and transients are not, the retry re-checks\n**only what failed**. Verified by request count: across two passes, the\ntwo OK URLs were fetched **once each**, the 504 URL **twice**.\n\nDeliberately **not** `accept = [\"504\"]` — that would hide a genuinely\ndead host, which is the one thing a link checker must not do.\n\n## A dead link still fails the gate\n\nRed-proved with a real 404\n(`.../blob/main/this-file-does-not-exist-xyz123.md`):\n\n- fails **both** passes, exits **2**\n- 404 stays *in* the cache — correct, it's a real break, not a transient\n\nMy first attempt at this used a `.invalid` URL and it was silently\n**excluded** (👻 113→114), proving nothing. Worth stating, because a\nred-prove that quietly no-ops is worse than none.\n\n## Measurements\n\n| | before | after |\n|---|---|---|\n| cold run | 125 s (your run) / 70 s (mine) | 70 s |\n| warm re-run | n/a | **0.2 s** |\n| retry after a failure | full ~2 min sweep | 0.3 s |\n\nThe cold-run difference between 125 s and 70 s is network variance, not\nthe cache — that run started with an empty cache. The cache only earns\nits keep on the retry and on repeat local runs.\n\n`.lycheecache` is gitignored.\n\n## Verification\n\n- `bun run audit:links` — **1207 OK, 0 errors** over 1320 links\n- `bun run preflight:fast` — 29/29 gates PASSED\n- `audit:workflow-lint` — OK (25 workflows, 198 bash bodies parsed)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T13:46:18Z",
-          "tree_id": "e40cf488cd59171ed1905bf433996799c445cee9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/34b3faf800ccd14b8df2742687eb214f6a7558b8"
-        },
-        "date": 1786802268780,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.67898885000216,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.7402156499978,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 289.4352515000028,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0b6f888c6b31631e4af5b67e7645993b9c3c1d7f",
+          "message": "chore: release main (#1867)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.18.0</summary>\n\n##\n[10.18.0](https://github.com/nimbus-agent/Nimbus/compare/v10.17.0...v10.18.0)\n(2026-11-03)\n\n\n### Features\n\n* **eval:** record a golden suite from a package's own replies\n([#1866](https://github.com/nimbus-agent/Nimbus/issues/1866))\n([eb03531](https://github.com/nimbus-agent/Nimbus/commit/eb03531d4cbbe56610710949892451b16e1c0a6b))\n* **extensions:** an owner-approved network grant may be narrower than\nthe manifest (I52)\n([#1877](https://github.com/nimbus-agent/Nimbus/issues/1877))\n([518aae2](https://github.com/nimbus-agent/Nimbus/commit/518aae24bdc6020a181ecc67fdfc4b1c018def08))\n* **extensions:** observe an extension's network on Linux, and nimbus\nextension audit\n([#1872](https://github.com/nimbus-agent/Nimbus/issues/1872))\n([1e26967](https://github.com/nimbus-agent/Nimbus/commit/1e26967b4278ddd4f77ed5ee21e99b8f8d147aea))\n* **extensions:** observe an extension's network on Windows and macOS\n([#1873](https://github.com/nimbus-agent/Nimbus/issues/1873))\n([be0cc28](https://github.com/nimbus-agent/Nimbus/commit/be0cc28072e1aeac504b30fe4b79ce90e590b486))\n* **extensions:** warn when an extension's observed network goes beyond\nwhat it declared\n([#1875](https://github.com/nimbus-agent/Nimbus/issues/1875))\n([cfd928c](https://github.com/nimbus-agent/Nimbus/commit/cfd928c93374a1ad6f8aa3a378229e9ec43918bb))\n\n\n### Bug Fixes\n\n* **deps:** clear the postcss-selector-parser advisory and recheck katex\n([#1871](https://github.com/nimbus-agent/Nimbus/issues/1871))\n([8ed853b](https://github.com/nimbus-agent/Nimbus/commit/8ed853bf6f295d72b7de2cb5ce4fb46200768437))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-03T17:54:07Z",
+          "tree_id": "1d867b01034797473ca50ba6c4823446e9477cde",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0b6f888c6b31631e4af5b67e7645993b9c3c1d7f"
+        },
+        "date": 1793729367213,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.8955022499986,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.8064351499943,
             "unit": "ms"
           }
         ]
