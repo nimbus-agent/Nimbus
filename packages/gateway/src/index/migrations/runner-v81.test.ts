@@ -39,6 +39,7 @@ describe("V81 migration — extension network observation", () => {
         "last_seen",
         "dropped",
         "network_observed",
+        "stopped",
       ]);
       // Which (run, seq) window files have been applied, so a file applied once never counts twice.
       expect(cols(db, "extension_observation_applied")).toEqual([

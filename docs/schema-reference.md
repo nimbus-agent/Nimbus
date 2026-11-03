@@ -1298,6 +1298,8 @@ CREATE TABLE extension_observation_coverage (
   last_seen INTEGER NOT NULL,
   dropped INTEGER NOT NULL,
   network_observed INTEGER NOT NULL CHECK (network_observed IN (0,1)),
+  -- 1 once a run's observation stopped at its one-day bound (1440 window files); sticky.
+  stopped INTEGER NOT NULL DEFAULT 0 CHECK (stopped IN (0,1)),
   PRIMARY KEY (extension_id, version)
 );
 CREATE TABLE extension_observation_applied (

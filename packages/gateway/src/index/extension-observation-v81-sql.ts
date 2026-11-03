@@ -3,7 +3,8 @@
  *
  * `extension_network_observation`: one row per (extension, version, destination, port, outcome)
  * with a count and first/last seen. `extension_observation_coverage`: what was watched, per
- * (extension, version): runs, milliseconds, the OS and whether network was observable.
+ * (extension, version): runs, milliseconds, the OS, whether network was observable, and whether a
+ * run's observation stopped at its one-day bound (1440 window files).
  * `extension_observation_applied`: which window files have been applied, keyed by the run
  * (`<serviceId>.<runStartMs>.<8 hex>`, the file prefix) and the window's seq, so a file applied
  * once never counts again, even when deleting it failed or the gateway crashed before the delete.
@@ -33,6 +34,7 @@ export const EXTENSION_OBSERVATION_V81_SQL = [
   last_seen INTEGER NOT NULL,
   dropped INTEGER NOT NULL,
   network_observed INTEGER NOT NULL CHECK (network_observed IN (0,1)),
+  stopped INTEGER NOT NULL DEFAULT 0 CHECK (stopped IN (0,1)),
   PRIMARY KEY (extension_id, version)
 )`,
   `CREATE TABLE IF NOT EXISTS extension_observation_applied (

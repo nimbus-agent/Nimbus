@@ -100,6 +100,7 @@ describe("extension.audit", () => {
         ],
         unmatched: [{ destination: "x.test", port: 80, count: 4 }],
         dropped: 5,
+        stopped: false,
       },
     ]);
   });
@@ -191,6 +192,12 @@ describe("extension.audit", () => {
       expect((e as AutomationRpcError).rpcCode).toBe(-32602);
       expect((e as AutomationRpcError).message).toBe("Extension not found");
     }
+  });
+
+  test("a run whose observation stopped after one day says so", () => {
+    applyObservationWindow(db, win("a", { runStart: false, stopped: true }));
+    expect(readAuditEntries(db, "a")?.[0]?.stopped).toBe(true);
+    expect(readAuditEntries(db, "b")?.[0]?.stopped).toBe(false);
   });
 
   test("reads only the installed version's rows", () => {

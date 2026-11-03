@@ -147,7 +147,13 @@ describe("ingestObservationFiles", () => {
     put(`${RUN}.0.json`, body({ entries: [] }));
     put(`${RUN}.1440.json`, body({ seq: 1440, runStart: false, stopped: true }));
     expect(ingestObservationFiles(deps())).toEqual({ applied: 2, rejected: 0 });
-    expect(readExtensionAudit(db, EXT, "1.0.0").coverage?.runs).toBe(1);
+    expect(readExtensionAudit(db, EXT, "1.0.0").coverage).toMatchObject({ runs: 1, stopped: 1 });
+  });
+
+  test("a run with no stop marker leaves stopped unset", () => {
+    put(`${RUN}.0.json`, body());
+    ingestObservationFiles(deps());
+    expect(readExtensionAudit(db, EXT, "1.0.0").coverage?.stopped).toBe(0);
   });
 
   const rejections: Array<[string, Record<string, unknown> | string]> = [
@@ -188,6 +194,7 @@ describe("ingestObservationFiles", () => {
     ["toMs before fromMs", body({ fromMs: 5000, toMs: 4000 })],
     ["an os of 'freebsd'", body({ os: "freebsd" })],
     ["stopped: false", body({ stopped: false })],
+    ["stopped on a seq below 1440", body({ stopped: true })],
     ["a body seq that is not the file name's", body({ seq: 3, runStart: false })],
     ["text that is not JSON", "{not json"],
     ["a JSON array", "[]"],
@@ -285,10 +292,67 @@ describe("ingestObservationFiles", () => {
     expect(rowCount()).toBe(0);
   });
 
-  test("a directory named like a window file is rejected", () => {
-    mkdirSync(join(dir, `${RUN}.0.json`));
-    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+  test("a directory named like a window file is left while fresh, then removed whole, logged once", () => {
+    const planted = join(dir, `${RUN}.0.json`);
+    mkdirSync(planted);
+    writeFileSync(join(planted, "inner"), "x");
+    nowMs = Date.now();
+    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(existsSync(planted)).toBe(true);
+    expect(logs).toEqual([]);
+    nowMs += STALE_TEMP_MS + 1000;
+    for (let i = 0; i < 3; i += 1) ingestObservationFiles(deps());
+    expect(existsSync(planted)).toBe(false);
     expect(rowCount()).toBe(0);
+    expect(logs).toEqual([expect.stringContaining(`removed stray ${RUN}.0.json`)]);
+  });
+
+  test("an entry that is neither .json nor .tmp is removed once stale, logged once", () => {
+    const stray = put("notes.txt", "x");
+    const strayDir = join(dir, "subdir");
+    mkdirSync(strayDir);
+    writeFileSync(join(strayDir, "f"), "x");
+    nowMs = Date.now();
+    ingestObservationFiles(deps());
+    expect(existsSync(stray)).toBe(true);
+    expect(existsSync(strayDir)).toBe(true);
+    nowMs += STALE_TEMP_MS + 1000;
+    for (let i = 0; i < 3; i += 1) ingestObservationFiles(deps());
+    expect(readdirSync(dir)).toEqual([]);
+    expect(logs.filter((l) => l.includes("notes.txt"))).toHaveLength(1);
+    expect(logs.filter((l) => l.includes("subdir"))).toHaveLength(1);
+    expect(logs.filter((l) => l.includes("could not delete"))).toEqual([]);
+  });
+
+  test("a read error leaves the file for the next pass, which applies it", () => {
+    const path = put(`${RUN}.0.json`, body());
+    const busy = Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
+    const locked = deps({
+      readFile: () => {
+        throw busy;
+      },
+    });
+    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 0 });
+    expect(existsSync(path)).toBe(true);
+    expect(rowCount()).toBe(0);
+    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    expect(existsSync(path)).toBe(false);
+    expect(readExtensionAudit(db, EXT, "1.0.0").coverage?.runs).toBe(1);
+  });
+
+  test("a file that stays unreadable is rejected once it is stale", () => {
+    const path = put(`${RUN}.0.json`, body());
+    const locked = deps({
+      readFile: () => {
+        throw Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+      },
+    });
+    nowMs = Date.now();
+    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 0 });
+    nowMs += STALE_TEMP_MS + 1000;
+    expect(ingestObservationFiles(locked)).toEqual({ applied: 0, rejected: 1 });
+    expect(existsSync(path)).toBe(false);
+    expect(logs).toEqual([expect.stringContaining(`rejected ${RUN}.0.json: unreadable`)]);
   });
 
   test("a bad file never stops the good ones beside it", () => {

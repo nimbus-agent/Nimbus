@@ -36,6 +36,8 @@ export type ObservationWindow = {
   toMs: number;
   entries: readonly ObservationEntry[];
   dropped: number;
+  /** The run's last file at the one-day bound: the writer stopped writing. Absent means false. */
+  stopped?: boolean;
 };
 
 export type ObservationRow = {
@@ -59,6 +61,8 @@ export type CoverageRow = {
   last_seen: number;
   dropped: number;
   network_observed: number;
+  /** 1 once any run of this version stopped at the one-day bound; sticky like `network_observed`. */
+  stopped: number;
 };
 
 /**
@@ -124,8 +128,8 @@ export function applyObservationWindow(
         dbRun(
           db,
           `INSERT INTO extension_observation_coverage
-           (extension_id, version, os, runs, observed_ms, first_seen, last_seen, dropped, network_observed)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           (extension_id, version, os, runs, observed_ms, first_seen, last_seen, dropped, network_observed, stopped)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(extension_id, version) DO UPDATE SET
            os = excluded.os,
            runs = runs + excluded.runs,
@@ -133,7 +137,8 @@ export function applyObservationWindow(
            first_seen = MIN(first_seen, excluded.first_seen),
            last_seen = MAX(last_seen, excluded.last_seen),
            dropped = dropped + excluded.dropped,
-           network_observed = MAX(network_observed, excluded.network_observed)`,
+           network_observed = MAX(network_observed, excluded.network_observed),
+           stopped = MAX(stopped, excluded.stopped)`,
           [
             w.extensionId,
             w.version,
@@ -144,6 +149,7 @@ export function applyObservationWindow(
             w.toMs,
             w.dropped + overflow,
             w.networkObserved ? 1 : 0,
+            w.stopped === true ? 1 : 0,
           ],
         );
         return true;

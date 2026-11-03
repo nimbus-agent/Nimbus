@@ -30,6 +30,7 @@ function entry(over: Partial<ExtensionAuditEntry> = {}): ExtensionAuditEntry {
     refused: [],
     unmatched: [],
     dropped: 0,
+    stopped: false,
     ...over,
   };
 }
@@ -82,6 +83,18 @@ describe("formatExtensionAudit", () => {
       entry({ refused: [{ destination: "x.test", port: 8080, count: 1 }] }),
     );
     expect(lines).toContain("  refused   x.test:8080 (1 lookup(s))");
+  });
+
+  test("a stopped observation says so under Network, on any OS", () => {
+    const stop = "  observation stopped after one day of this run";
+    const linux = formatExtensionAudit(entry({ stopped: true }));
+    expect(linux.at(-3)).toBe(stop);
+    expect(linux.indexOf(stop)).toBeGreaterThan(linux.indexOf("  not seen  other.example.com:443"));
+    const win = formatExtensionAudit(
+      entry({ os: "win32", networkObserved: false, used: [], notSeen: [], stopped: true }),
+    );
+    expect(win.slice(1, 3)).toEqual(["Network   not observed on this OS yet", stop]);
+    expect(formatExtensionAudit(entry()).join(NL)).not.toContain("stopped");
   });
 
   test("nothing declared reads 'nothing'", () => {

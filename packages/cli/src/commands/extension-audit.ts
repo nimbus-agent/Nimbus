@@ -18,6 +18,8 @@ export type ExtensionAuditEntry = {
   refused: Destination[];
   unmatched: Destination[];
   dropped: number;
+  /** Absent from an older gateway; read as false. */
+  stopped?: boolean | undefined;
 };
 
 const MAX_NAME = 253;
@@ -63,7 +65,15 @@ function unobservedLine(e: ExtensionAuditEntry): string {
   return "Network   not observed: this run had no network filter (no sandbox helper)";
 }
 
+const STOPPED_LINE = "  observation stopped after one day of this run";
+
 function networkLines(e: ExtensionAuditEntry): string[] {
+  const lines = networkBody(e);
+  if (e.stopped === true) lines.push(STOPPED_LINE);
+  return lines;
+}
+
+function networkBody(e: ExtensionAuditEntry): string[] {
   if (!e.networkObserved) return [unobservedLine(e)];
   const declared = e.declared.length === 0 ? "nothing" : e.declared.map(declaredName).join(", ");
   const lines = [`Network   declared ${declared}`];

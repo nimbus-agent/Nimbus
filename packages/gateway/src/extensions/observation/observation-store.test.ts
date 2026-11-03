@@ -152,8 +152,7 @@ describe("applyObservationWindow", () => {
   });
 
   test("network_observed is sticky: a later window saying false never clears an earlier true", () => {
-    // File 0 of every run says false (the runner marks after the writer exists), so a run's
-    // observed flag is the OR of its windows, and so is the version's.
+    // A run's observed flag is the OR of its windows, and so is the version's.
     applyObservationWindow(db, win({ networkObserved: false }));
     expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.network_observed).toBe(0);
     applyObservationWindow(db, win({ runStart: false, networkObserved: true }));
@@ -220,6 +219,55 @@ describe("applyObservationWindow", () => {
     ]);
   });
 
+  test("stopped is recorded from a stopped window and stays set", () => {
+    applyObservationWindow(db, win());
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.stopped).toBe(0);
+    applyObservationWindow(db, win({ runStart: false, stopped: true }));
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.stopped).toBe(1);
+    applyObservationWindow(db, win({ runStart: true }));
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.stopped).toBe(1);
+  });
+
+  test("a key repeated inside one window is one row with the counts added", () => {
+    applyObservationWindow(
+      db,
+      win({
+        entries: [
+          { outcome: "used", destination: "api.example.com", port: 443, count: 2 },
+          { outcome: "used", destination: "api.example.com", port: 443, count: 5 },
+        ],
+      }),
+    );
+    const a = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(a.rows).toHaveLength(1);
+    expect(a.rows[0]?.count).toBe(7);
+    expect(a.coverage?.dropped).toBe(0);
+  });
+
+  test("the 512 bound can be reached inside one window: the rest of it is dropped and counted", () => {
+    const pre = Array.from({ length: 510 }, (_, i) => ({
+      outcome: "used" as const,
+      destination: `h${i}.example.com`,
+      port: 443,
+      count: 1,
+    }));
+    applyObservationWindow(db, win({ entries: pre }));
+    const five = Array.from({ length: 5 }, (_, i) => ({
+      outcome: "refused" as const,
+      destination: `n${i}.example.com`,
+      port: 0,
+      count: 1,
+    }));
+    applyObservationWindow(db, win({ runStart: false, entries: five }));
+    const a = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(a.rows).toHaveLength(512);
+    expect(a.rows.filter((r) => r.outcome === "refused").map((r) => r.destination)).toEqual([
+      "n0.example.com",
+      "n1.example.com",
+    ]);
+    expect(a.coverage?.dropped).toBe(3);
+  });
+
   test("a CHECK rejects outcome 'other'", () => {
     expect(() =>
       dbRun(
@@ -241,6 +289,16 @@ describe("ageOutObservations / delete", () => {
     expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage).toBeUndefined();
     expect(readExtensionAudit(db, "ext-b", "1.0.0").rows).toHaveLength(1);
     expect(readExtensionAudit(db, "ext-b", "1.0.0").coverage).toBeDefined();
+  });
+
+  test("a row last seen exactly 90 days ago is kept; one millisecond older goes", () => {
+    const now = 200 * DAY;
+    applyObservationWindow(db, win({ fromMs: now - 90 * DAY, toMs: now - 90 * DAY }));
+    expect(ageOutObservations(db, now)).toBe(0);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").rows).toHaveLength(1);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage).toBeDefined();
+    expect(ageOutObservations(db, now + 1)).toBe(1);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage).toBeUndefined();
   });
 
   test("applied marks age out on the same 90 days, by when they were applied", () => {

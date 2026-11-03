@@ -49,7 +49,10 @@ import {
 export const OBSERVATION_DIR_NAME = "extension-observations";
 /** How often the running gateway ingests, beside the pass at boot. */
 export const OBSERVATION_INGEST_INTERVAL_MS = 60_000;
-/** A temp file older than this is a crashed writer's leftover, and is removed. */
+/**
+ * A temp file older than this is a crashed writer's leftover, and is removed; so is any other entry
+ * that is not a window file, and a window file that has stayed unreadable this long.
+ */
 export const STALE_TEMP_MS = 10 * 60_000;
 
 /** `<dataDir>/extension-observations`: the one spelling of the directory. */
@@ -235,8 +238,10 @@ export function parseObservationFile(
   const o = record(json, "file");
   exactKeys(o, TOP_KEYS, ["stopped"], "file");
   if (o["v"] !== OBSERVATION_FILE_VERSION) bad("unknown version");
-  if (Object.hasOwn(o, "stopped") && o["stopped"] !== true) bad("stopped is not true");
   const seq = int(o["seq"], 0, MAX_FILES, "seq");
+  const stopped = Object.hasOwn(o, "stopped");
+  // The writer marks only its last file, at the one-day bound, and only with `true`.
+  if (stopped && (o["stopped"] !== true || seq !== MAX_FILES)) bad("stopped is not valid");
   const runStart = bool(o["runStart"], "runStart");
   if (runStart !== (seq === 0)) bad("runStart disagrees with seq");
   bool(o["final"], "final");
@@ -256,6 +261,7 @@ export function parseObservationFile(
     toMs,
     entries: parseEntries(o["entries"]),
     dropped: int(o["dropped"], 0, Number.MAX_SAFE_INTEGER, "dropped"),
+    stopped,
   };
 }
 
@@ -269,6 +275,8 @@ export type ObservationIngestDeps = {
   log: (line: string) => void;
   /** Test seam for the unlink; production passes none. */
   remove?: (path: string) => void;
+  /** Test seam for reading one window file's body; production passes none. */
+  readFile?: (path: string) => string;
 };
 
 /**
@@ -288,7 +296,8 @@ export function extensionServiceIdOf(db: Database, extensionId: string): string 
 
 function removeQuietly(path: string, deps: ObservationIngestDeps, name: string): void {
   try {
-    if (deps.remove === undefined) rmSync(path, { force: true });
+    // Recursive: a planted directory goes whole, rather than failing (and being logged) every pass.
+    if (deps.remove === undefined) rmSync(path, { force: true, recursive: true });
     else deps.remove(path);
   } catch (e) {
     deps.log(
@@ -297,16 +306,38 @@ function removeQuietly(path: string, deps: ObservationIngestDeps, name: string):
   }
 }
 
-/** Removes temp files a crashed writer left behind; a fresh one may still be renamed. */
-function sweepTemps(deps: ObservationIngestDeps): void {
+/** A directory, or a name that is neither a window file's nor a temp file's: never ingested. */
+function isStray(n: string, isDirectory: boolean): boolean {
+  return isDirectory || !(n.endsWith(".json") || n.endsWith(".tmp"));
+}
+
+/**
+ * Removes what no pass will ever ingest, once it is older than {@link STALE_TEMP_MS}: the temp files
+ * a crashed writer left behind (a fresh one may still be renamed), and any stray entry, a directory
+ * included. A stray is logged once, when it goes; only gateway-user processes can write here.
+ */
+function sweepStale(deps: ObservationIngestDeps): void {
   for (const n of readdirSync(deps.dir)) {
-    if (!n.endsWith(".tmp")) continue;
     const path = join(deps.dir, n);
     try {
-      if (deps.now() - lstatSync(path).mtimeMs >= STALE_TEMP_MS) removeQuietly(path, deps, n);
+      const st = lstatSync(path);
+      const stray = isStray(n, st.isDirectory());
+      if (!stray && n.endsWith(".json")) continue;
+      if (deps.now() - st.mtimeMs < STALE_TEMP_MS) continue;
+      if (stray) deps.log(`observation: removed stray ${n}`);
+      removeQuietly(path, deps, n);
     } catch {
       /* renamed or removed meanwhile */
     }
+  }
+}
+
+/** True for a directory entry the sweep owns, so the window pass leaves it alone. */
+function isDirectoryEntry(path: string): boolean {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
   }
 }
 
@@ -343,7 +374,9 @@ function readWindowFile(path: string): string {
 function readWindow(deps: ObservationIngestDeps, name: string): ObservationWindow {
   const parsed = parseFileName(name);
   if (parsed === null) bad("the file name is not a window file's");
-  const window = parseObservationFile(readWindowFile(join(deps.dir, name)), deps.isInstalled);
+  const path = join(deps.dir, name);
+  const text = deps.readFile === undefined ? readWindowFile(path) : deps.readFile(path);
+  const window = parseObservationFile(text, deps.isInstalled);
   if (window.seq !== parsed.seq) bad("the body's seq is not the file name's");
   if (deps.serviceIdFor(window.extensionId) !== parsed.serviceId) {
     bad("the file name's service id is not the label's extension's");
@@ -351,7 +384,26 @@ function readWindow(deps: ObservationIngestDeps, name: string): ObservationWindo
   return { ...window, runKey: parsed.run };
 }
 
-type FileOutcome = "applied" | "duplicate" | "rejected" | "db-failed";
+type FileOutcome = "applied" | "duplicate" | "rejected" | "deferred" | "db-failed";
+
+/**
+ * A read error (EBUSY or EPERM from a scanner, ENOENT racing a removal) says nothing about the file,
+ * so it is left for the next pass. Only a file that has stayed unreadable for {@link STALE_TEMP_MS}
+ * is rejected, so a permanent lock cannot hold the file forever.
+ */
+function deferUnreadable(deps: ObservationIngestDeps, name: string, e: unknown): FileOutcome {
+  const path = join(deps.dir, name);
+  let ageMs: number;
+  try {
+    ageMs = deps.now() - lstatSync(path).mtimeMs;
+  } catch {
+    return "deferred";
+  }
+  if (ageMs < STALE_TEMP_MS) return "deferred";
+  deps.log(`observation: rejected ${name}: unreadable for 10 minutes (${errorText(e)})`);
+  removeQuietly(path, deps, name);
+  return "rejected";
+}
 
 function ingestOne(deps: ObservationIngestDeps, name: string): FileOutcome {
   const path = join(deps.dir, name);
@@ -359,8 +411,8 @@ function ingestOne(deps: ObservationIngestDeps, name: string): FileOutcome {
   try {
     window = readWindow(deps, name);
   } catch (e) {
-    const why = e instanceof BadFile ? e.message : "unreadable";
-    deps.log(`observation: rejected ${name}: ${why}`);
+    if (!(e instanceof BadFile)) return deferUnreadable(deps, name, e);
+    deps.log(`observation: rejected ${name}: ${e.message}`);
     removeQuietly(path, deps, name);
     return "rejected";
   }
@@ -392,8 +444,9 @@ export function ingestObservationFiles(deps: ObservationIngestDeps): {
 } {
   const counts = { applied: 0, rejected: 0 };
   try {
-    sweepTemps(deps);
+    sweepStale(deps);
     for (const name of listObservationFiles(deps.dir)) {
+      if (isDirectoryEntry(join(deps.dir, name))) continue;
       const outcome = ingestOne(deps, name);
       if (outcome === "db-failed") break;
       if (outcome === "applied") counts.applied += 1;

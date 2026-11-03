@@ -35,6 +35,8 @@ export type AuditEntry = {
   refused: AuditDestination[];
   unmatched: AuditDestination[];
   dropped: number;
+  /** A run's observation stopped at its one-day bound (1440 window files). */
+  stopped: boolean;
 };
 
 function ofOutcome(rows: readonly ObservationRow[], outcome: string): AuditDestination[] {
@@ -81,7 +83,7 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
     unmatched: ofOutcome(rows, "unmatched"),
   };
   if (coverage === undefined) {
-    return { ...base, runs: 0, observedDays: 0, dropped: 0 };
+    return { ...base, runs: 0, observedDays: 0, dropped: 0, stopped: false };
   }
   return {
     ...base,
@@ -91,6 +93,7 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
     firstSeen: coverage.first_seen,
     lastSeen: coverage.last_seen,
     dropped: coverage.dropped,
+    stopped: coverage.stopped === 1,
   };
 }
 
