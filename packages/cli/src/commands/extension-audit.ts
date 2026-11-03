@@ -52,8 +52,19 @@ const CLOSING_LINES = [
   "File access is not observed.",
 ];
 
+/**
+ * Why the network was not observed, from the coverage row's OS. Only the Linux forwarder observes
+ * today; a Linux run without one either declared nothing (no forwarder is needed) or ran without
+ * the sandbox helper, which leaves no network filter to observe through.
+ */
+function unobservedLine(e: ExtensionAuditEntry): string {
+  if (e.os !== "linux") return "Network   not observed on this OS yet";
+  if (e.declared.length === 0) return "Network   declared nothing";
+  return "Network   not observed: this run had no network filter (no sandbox helper)";
+}
+
 function networkLines(e: ExtensionAuditEntry): string[] {
-  if (!e.networkObserved) return ["Network   not observed on this OS yet"];
+  if (!e.networkObserved) return [unobservedLine(e)];
   const declared = e.declared.length === 0 ? "nothing" : e.declared.map(declaredName).join(", ");
   const lines = [`Network   declared ${declared}`];
   for (const u of e.used) {

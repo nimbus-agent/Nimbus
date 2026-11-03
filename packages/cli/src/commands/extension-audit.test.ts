@@ -115,6 +115,34 @@ describe("formatExtensionAudit", () => {
   });
 });
 
+describe("an unobserved network on Linux says why, not that the OS is unobserved", () => {
+  const head = "acme.tool 1.2.0   observed 3 run(s) over 2 day(s), on this machine only";
+
+  test("Linux, nothing declared: declared nothing", () => {
+    const lines = formatExtensionAudit(
+      entry({ networkObserved: false, declared: [], used: [], notSeen: [] }),
+    );
+    expect(lines).toEqual([head, "Network   declared nothing", ...CLOSING]);
+  });
+
+  test("Linux, hosts declared but no forwarder: no network filter", () => {
+    const lines = formatExtensionAudit(entry({ networkObserved: false, used: [], notSeen: [] }));
+    expect(lines).toEqual([
+      head,
+      "Network   not observed: this run had no network filter (no sandbox helper)",
+      ...CLOSING,
+    ]);
+    expect(lines.join(NL)).not.toContain("on this OS");
+  });
+
+  test("macOS reads like Windows: not observed on this OS yet", () => {
+    const lines = formatExtensionAudit(
+      entry({ os: "darwin", networkObserved: false, used: [], notSeen: [] }),
+    );
+    expect(lines[1]).toBe("Network   not observed on this OS yet");
+  });
+});
+
 describe("hostile declared hosts (grant-sourced names)", () => {
   const bad = "ev[31mil.test:443";
   const hostileDeclared = entry({ declared: [bad], used: [], notSeen: [bad] });

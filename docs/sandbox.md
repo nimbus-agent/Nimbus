@@ -530,7 +530,7 @@ The `__nimbus-sandbox` wrapper is the observer. For an installed extension it wr
 
 | OS | What this release observes |
 | --- | --- |
-| Linux | Used declared hosts (relayed connections) and refused lookups, only when the child really ran behind the forwarder (`networkObserved`). The no-helper fallback gives the child the whole network, observes nothing, and the report says so. |
+| Linux | Used declared hosts (relayed connections) and refused lookups, only when the child really ran behind the forwarder (`networkObserved`). The no-helper fallback gives the child the whole network and observes nothing; the report says `Network   not observed: this run had no network filter (no sandbox helper)`. An extension that declares no network runs with no forwarder, and the report says `Network   declared nothing`. |
 | Windows, macOS | Run coverage only. The report says `Network   not observed on this OS yet`. Evidence is the next PR (6b-2); warnings follow it (6b-3). |
 
 A `refused` line can be a declared host (the wildcard pool was full, or no allowed address), not only an undeclared name. A direct connection to an undeclared IP uses no name and is neither seen nor logged.
