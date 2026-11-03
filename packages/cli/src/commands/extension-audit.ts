@@ -65,7 +65,7 @@ function unobservedLine(e: ExtensionAuditEntry): string {
   return "Network   not observed: this run had no network filter (no sandbox helper)";
 }
 
-const STOPPED_LINE = "  observation stopped after one day of this run";
+const STOPPED_LINE = "  observation stopped after one day in at least one run";
 
 function networkLines(e: ExtensionAuditEntry): string[] {
   const lines = networkBody(e);

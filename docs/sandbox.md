@@ -535,7 +535,7 @@ The `__nimbus-sandbox` wrapper is the observer. For an installed extension it wr
 
 A `refused` line can be a declared host (the wildcard pool was full, or no allowed address), not only an undeclared name. A direct connection to an undeclared IP uses no name and is neither seen nor logged.
 
-**Bounds.** At most 256 entries per window file and 64 KiB per file; entries that do not fit are counted in `dropped`, and a full window evicts refused before used. At most 1440 files per run; the last one says `stopped`, coverage records it, and the report says `observation stopped after one day of this run`. At most 512 rows per extension and version. Rows age out 90 days after they were last seen. Nothing leaves the machine; `extension.audit` is refused over LAN and is not in the desktop allowlist. There is no off switch. Observation never decides a spawn, a grant or a network rule.
+**Bounds.** At most 256 entries per window file and 64 KiB per file; entries that do not fit are counted in `dropped`, and a full window evicts refused before used. At most 1440 files per run; the last one says `stopped`, coverage records it, and the report says `observation stopped after one day in at least one run`. At most 512 rows per extension and version. Rows age out 90 days after they were last seen. Nothing leaves the machine; `extension.audit` is refused over LAN and is not in the desktop allowlist. There is no off switch. Observation never decides a spawn, a grant or a network rule.
 
 **Proof.** The Linux end-to-end test runs on the Ubuntu CI E2E leg with the sandbox helper built and AppArmor's unprivileged-userns restriction lifted, as CI does; it is not claimed for a stock Ubuntu install.
 

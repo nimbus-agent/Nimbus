@@ -86,7 +86,7 @@ describe("formatExtensionAudit", () => {
   });
 
   test("a stopped observation says so under Network, on any OS", () => {
-    const stop = "  observation stopped after one day of this run";
+    const stop = "  observation stopped after one day in at least one run";
     const linux = formatExtensionAudit(entry({ stopped: true }));
     expect(linux.at(-3)).toBe(stop);
     expect(linux.indexOf(stop)).toBeGreaterThan(linux.indexOf("  not seen  other.example.com:443"));
