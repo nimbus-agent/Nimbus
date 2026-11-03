@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793715063025,
+  "lastUpdate": 1793718959027,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "78cb49b0b8242e8ce56245c4454cc6e49c507244",
-          "message": "fix(tui): render the watcher pane, and stop claiming OS notifications work (#1204)\n\n## What is actually true\n\n`NotificationService.show()` has **exactly one implementation** in the\ntree — an empty async function — and `win32.ts`, `darwin.ts` and\n`linux.ts` all delegate to the same assembler. It is a no-op on\n**every** platform, with no per-platform variant to find. That was a\nknown, sized deferral (`docs/ecosystem-roadmap.md`). Three places\nasserted otherwise, and one real bug sat next to it.\n\n## What is NOT true — stated precisely, because the opposite is easy to\nassume\n\n**No alert is lost.** All three producers write durable state *before*\ncalling `show()`:\n\n- a watcher fire → `insertWatcherEvent` + `updateWatcherLastFired`, one\nstatement ahead of the notify\n- auth loss → `transitionHealth` into `sync_state.health_state`,\n`last_error`, and a `connector_health_history` row\n- repeated sync failure → same `transitionHealth` path\n\nAll of it then surfaces through `nimbus connector\nlist`/`status`/`history`, `nimbus doctor`, the TUI, the Tauri tray, and\nagent `connectorHealthCaveat` strings.\n\nSo this is a **reachability** gap — the unattended push channel — not\ndata loss. Framing it as data loss would itself be the kind of false\nclaim this sweep exists to remove, which is why the changelog entry says\nso explicitly.\n\n## The real bug: the TUI watcher pane never rendered anything\n\n`WatcherPane` declared rows as `{ id, name, active, firing }` and\nunwrapped the response with `Array.isArray(poll.data)`. Neither matched\nthe Gateway:\n\n- `watcher.list` returns **`{ watchers: [...] }`**, not a bare array\n- `listWatchers` selects the table's own columns — **`enabled`** (0/1)\nand **`last_fired_at`** (epoch ms or null). `active`/`firing` have never\nexisted on the wire.\n\nThe guard therefore always rejected, and the pane rendered **\"No\nwatchers configured\" no matter how many watchers were running**.\n\nIts test could not have caught this: it stubbed a bare array carrying\nthe invented `active`/`firing` fields, so the fake agreed with the\ncomponent instead of with the Gateway. The fixture now builds real rows\nin the real envelope. Red-proved: restoring the old unwrap fails **6 of\n8** tests.\n\n`firing` is now an explicit, documented derivation — fired within\n`WATCHER_RECENT_FIRE_WINDOW_MS` (15 min). **This is a judgement call**:\n`last_fired_at` records a *completed* fire, so there is no in-progress\nstate to read, and a window equal to the 30 s poll interval would\nsurface a fire for at most one refresh — often zero, depending on where\nit landed relative to the tick.\n\n## Corrected claims\n\n| Where | Was | Now |\n|---|---|---|\n| `watchers.mdx` step 2 | \"A tray notification pops: …\" | deleted;\nreplaced with a note that a fire is **recorded, not announced**, naming\nthe surfaces that do show it |\n| `watchers.mdx` history | \"The Tauri Watchers panel shows a history\ndrawer\" | drawer **does** exist (`WatcherHistoryDrawer.tsx`, wired in\n`Watchers.tsx`) — but the desktop app ships in no released binary, so\nthe text now says so and points at `watcher.listHistory` |\n| `roadmap.md` 401/403 | `[x] … + notification UX` / \"one-shot CLI\nnotification\" | stays `[x]` (typed error + `transitionHealth` + every\nread surface genuinely shipped); the inert notification half is struck |\n| `roadmap.md` Notification routing | `[x]` | **`[ ]`** — see below |\n| `ecosystem-roadmap.md` | cited `assemble.ts:225` / `:1703` | stale by\n~500 lines; now cites the symbols instead of line numbers |\n\n## The orphan\n\n`makeChatopsWatcherNotify` is exported and unit-tested with **zero\nproduction callers** — every watcher-notify callsite in `assemble.ts`\npasses `notifications.show` alone. Its docblock claimed it *\"composes\nwith the existing IPC-notify callback at the wiring site (both are\ncalled)\"*, describing a wiring site that has never existed. The comment\nnow says so, and the roadmap row is unchecked to match.\n\n**Deliberately not wired here.** Doing so makes a path that emits\nnothing today start posting outbound to a channel — I23 (ChatOps posts\ngo only through `reply-dispatcher.ts` to a server-derived `ReplyTarget`)\nand plausibly I29. That needs the invariant triple-rule, not an\nincidental hookup.\n\n## Observability\n\nThe stub is renamed `createUnimplementedNotifications` and logs\n`notification.dropped` with the **title only**. Never the body: watcher\nbodies interpolate `fired.summary` (`${service}: ${item title}`)\nstraight from the index, so logging them would write indexed item titles\ninto `logDir`, and `gateway-log-redact.ts` scrubs secrets rather than\narbitrary indexed content — it is no backstop here. A test pins that the\nbody never reaches the log.\n\nExporting the factory for that test follows the file's own convention\n(`appendBootMarkerOrWarn` is exported for the same reason). The\n`PlatformServices.notifications` interface field is deliberately\n**kept** — it is the seam a real implementation lands on.\n\n## Verification\n\n- `bun test packages/cli/src` — **2270 pass, 0 fail**\n- `bun test packages/gateway/src/{automation,platform,chatops}` — **484\npass, 0 fail**\n- `bun run preflight:fast` — **29/29 gates PASSED** (incl.\n`audit:status-drift` with the row unchecked)\n- **Red-proved**: restoring the `Array.isArray` unwrap fails 6 of the 8\n`WatcherPane` tests\n\n## Not in scope\n\nImplementing OS notifications. Three platform `show()` implementations\nplus the consent hop means new native dependencies or spawn paths on all\nthree OSes, I1 env-scoping review for any child process, and a 3-OS\nmatrix — a build slot, not a sweep. It is already sized in\n`docs/ecosystem-roadmap.md` (\"Effort: S per platform\").\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T13:25:07+03:00",
-          "tree_id": "ae36b868d014c373e91c80ed7da7b37de906c2cf",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/78cb49b0b8242e8ce56245c4454cc6e49c507244"
-        },
-        "date": 1786790845713,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.44201250000077,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.96783005000145,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 304.0089693000009,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "cfd928c93374a1ad6f8aa3a378229e9ec43918bb",
+          "message": "feat(extensions): warn when an extension's observed network goes beyond what it declared (#1875)\n\nPhase 9.5 project 6, PR 6b-3 of the quality layer, spec § 10.6 and owner\nruling R3. When observation (#1872 and #1873) has seen an installed\nextension go beyond what it declared, the owner is now told in `nimbus\ndoctor`, in `nimbus extension list`, and in at most one OS notification\nper extension and version per day. No config key turns this off (R4).\nNothing here changes enforcement, a grant or a score.\n\n## What counts as a finding\n\n`observationFindings` in\n`extensions/observation/observation-findings.ts` is the one rule, and\nthe RPC, the CLI and the notifier all use it.\n\n| OS | A finding | Named? |\n|---|---|---|\n| Linux | a `refused` row whose name is not a declared host | yes |\n| Windows, macOS | an `unmatched` row: an address not matched to a\ndeclared host | never |\n\n- On Linux, a declared host can also be refused, for example when the\nwildcard pool is full. That is not a finding: declared entries are\nnormalised with `parseNetworkEntry`, so case, a trailing dot and an\nexplicit port are ignored.\n- The count is the number of distinct destinations, so one noisy name is\none finding.\n- `extension.audit` gains `findings` and `findingCount` per entry. It is\nstill read-only, refused over LAN, and not in the desktop allowlist.\n\n## Where it shows\n\n- **`nimbus doctor`** prints one line per extension with findings, and\nexits 1:\n- Linux: `[warn] Extensions: <id> <version>: <n> undeclared name(s)\nlooked up and refused (run nimbus extension audit <id>)`\n- Windows and macOS: `[warn] Extensions: <id> <version>: <n> address(es)\nnot matched to a declared host (run nimbus extension audit <id>)`\n  - It is quiet against an older gateway that has no `extension.audit`.\n- **`nimbus extension list`** adds a tag line, and `--json` adds\n`networkFindings`:\n  - Linux: `  <id>@<version> [network: <n> undeclared name(s) refused]`\n- Windows and macOS: ` <id>@<version> [network: <n> unmatched\naddress(es)]`\n- A failing `extension.audit` never breaks `list`, since the warning is\nadvisory.\n- **The OS notification**, sent through `showIgnoringFailure`:\n\n  | OS | Title |\n  |---|---|\n  | Linux | `Nimbus: <id> was refused an undeclared network lookup` |\n| Windows, macOS | `Nimbus: <id> connected to an address not matched to\na declared host` |\n\n- The body gives the count and the `nimbus extension audit <id>`\ncommand.\n- At most one per extension and version in 24 h, and only for the\ninstalled version.\n- It repeats after 24 h only when a newly ingested window shows the\nfinding still active.\n- The notice row is written before the send, so overlapping passes, a\nrestart or a failing notification service can never cause a second one.\n- The pass that runs it, `runObservationPass`, never rejects and never\nruns twice at once.\n- **Schema V82** adds `extension_observation_notice`, deleted with the\nextension and aged out after 90 days.\n\n## Verification\n\n- **New modules, with their scoped coverage (line / branch):**\n`observation-findings` 100/100, `observation-notifier` 100/87.5,\n`extension-observation-format` 100/100.\n- **Tests that pin the behaviour:**\n- the one-a-day limit, including two overlapping passes, exactly 24 h\nand 24 h minus 1 ms;\n  - superseded and removed versions never notify;\n  - a failing notify or failing findings read is swallowed;\n  - the V82 guards at V81 and with foreign keys off;\n  - hostile ids and names are sanitised in text and in `--json`;\n  - a declared host refused on Linux is not a finding.\n- **Runs:** the observation, migration, audit RPC and CLI tests give 441\npass, 0 fail. The wider `--parallel` run shows only the known `tui` Yoga\nerror. `typecheck`, `typecheck:tests` (0 new), biome on the changed\nfiles, `audit:invariants`, `audit:doc-refs` and `audit:status-drift` all\npass. No new function is over cognitive complexity 15.\n- **Reviews:** Antigravity reviewed the plan and its 9 findings were\napplied. Each task had a task review, and the final whole-branch\nreview's fixes are in.\n\n## Not covered here\n\n- The OS allows at most 5 notifications a minute. If more than five\nextensions are due in one pass, some toasts may not show, though each\nstill counts as notified for 24 h. `doctor` and `list` always show every\nfinding. This is documented.\n- A finding that no new window touches never re-notifies. That still\nhonours the one-a-day limit, and it is documented.\n- Narrower grants and I52 are PR 7. The roadmap has an open row for it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus doctor` and `nimbus extension list` now report\nnetwork-observation findings for installed extensions. Findings are\nplatform-specific, and the extension list includes them in JSON output.\n* The gateway can send operating-system notifications for findings, at\nmost once per extension version every 24 hours. Notification failures\nare ignored.\n* Findings are advisory only: they do not change enforcement, grants,\napprovals, or scores, and warning data stays on the device.\n* **Documentation**\n* Updated CLI, observation, and schema documentation to describe\nfindings and notifications.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T15:09:42Z",
+          "tree_id": "635c7b9970b6efddc1d67194656687d250de1bc3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/cfd928c93374a1ad6f8aa3a378229e9ec43918bb"
+        },
+        "date": 1793718953995,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 161.66096594999362,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 162.11964510000035,
             "unit": "ms"
           }
         ]
