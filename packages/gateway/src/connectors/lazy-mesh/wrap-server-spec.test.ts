@@ -165,7 +165,16 @@ describe("wrapServerSpec", () => {
   });
 
   test("wrapperEnv refuses any key that is not wrapper-only, so it can never carry a child variable", () => {
-    for (const key of ["PATH", "GITHUB_PAT", "NIMBUS_SANDBOX_POLICY_JSON", "NIMBUS_SANDBOX_CWD"]) {
+    // The forwarder's own wrapper-only keys are refused too: they come only from
+    // `sandboxWrapperOnlyEnv()`, so no caller can redirect the helper through this argument.
+    for (const key of [
+      "PATH",
+      "GITHUB_PAT",
+      "NIMBUS_SANDBOX_POLICY_JSON",
+      "NIMBUS_SANDBOX_CWD",
+      "NIMBUS_SANDBOX_HELPER_PATH",
+      "XDG_RUNTIME_DIR",
+    ]) {
       expect(() =>
         wrapServerSpecInCwd(makeSpec(), makeManifest(), "/home/user/exact", { [key]: "x" }),
       ).toThrow(/wrapper-only/);

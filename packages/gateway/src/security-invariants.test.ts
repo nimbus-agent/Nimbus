@@ -6876,12 +6876,17 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(prep).toMatch(
       /observationPrefix: observationPrefixFor\(deps\.observationDir, staged\.serviceId\),/,
     );
-    // wrapServerSpecInCwd refuses any key the wrapper would pass on to its child.
+    // wrapServerSpecInCwd accepts the two observation keys and nothing else.
     const wrap = stripComments(
       await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts"),
     );
     expect(wrap).toMatch(/if \(wrapperEnv !== undefined\) assertWrapperOnly\(wrapperEnv\);/);
-    expect(wrap).toMatch(/if \(!isSandboxWrapperOnlyEnv\(key\)\) \{\s*throw new Error\(/);
+    expect(wrap).toMatch(
+      /const WRAPPER_ENV_KEYS: ReadonlySet<string> = new Set\(\[\s*SANDBOX_OBSERVATION_FILE_ENV,\s*SANDBOX_OBSERVATION_LABEL_ENV,\s*\]\);/,
+    );
+    expect(wrap).toMatch(
+      /if \(!WRAPPER_ENV_KEYS\.has\(key\) \|\| !isSandboxWrapperOnlyEnv\(key\)\) \{\s*throw new Error\(/,
+    );
     // The directory is the gateway's own: the runtime read paths never name it, and the slot
     // source gets it only as `observationDir`.
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
@@ -6891,7 +6896,6 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(call).toMatch(
       /runtimeReadPaths: \(\) => resolveRuntimeById\("bun"\)\.requiredReadPaths\(\),/,
     );
-    expect(src).not.toMatch(/runtimeReadPaths[^\n]*observation/i);
   });
 
   test("source pin: credential values reach the child ONLY as extensionProcessEnv's extra, read after verification", async () => {

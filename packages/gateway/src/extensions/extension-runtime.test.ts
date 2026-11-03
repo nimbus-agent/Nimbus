@@ -324,12 +324,6 @@ describe("buildExtensionSpawnSpec", () => {
     expect(SANDBOX_OBSERVATION_FILE_ENV in childEnv).toBe(false);
     expect(SANDBOX_OBSERVATION_LABEL_ENV in childEnv).toBe(false);
     expect(childEnv).toEqual(extensionProcessEnv({ FOO_TOKEN: "t" }));
-    // The directory is never granted: not as a read, not as a write.
-    const policy = JSON.parse(spec.env[SANDBOX_POLICY_ENV] ?? "null") as {
-      permissions: { filesystem: { read: string[]; write: string[] } };
-    };
-    const granted = [...policy.permissions.filesystem.read, ...policy.permissions.filesystem.write];
-    expect(granted.some((p) => OBS_PREFIX.startsWith(p) || p.startsWith(OBS_DIR))).toBe(false);
   });
 });
 

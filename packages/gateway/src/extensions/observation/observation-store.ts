@@ -24,6 +24,9 @@ export type ObservationEntry = {
 };
 
 export type ObservationWindow = {
+  /** The window file's run, `<serviceId>.<runStartMs>.<8 hex>`; with `seq`, applied at most once. */
+  runKey: string;
+  seq: number;
   extensionId: string;
   version: string;
   os: "linux" | "darwin" | "win32";
@@ -59,11 +62,21 @@ export type CoverageRow = {
 };
 
 /**
- * Applies one window in ONE transaction: entry upserts (bounded per extension and version), then
- * coverage. `network_observed` is sticky (an OR over every window applied): file 0 of a run always
- * says false, since the runner marks it observed only after the writer exists.
+ * Applies one window in ONE transaction: the applied mark, entry upserts (bounded per extension and
+ * version), then coverage. A `(runKey, seq)` already marked is a no-op returning false, so a window
+ * file counts once however often it is read. `network_observed` is sticky (an OR over every window
+ * applied): file 0 of a run always says false, since the runner marks it observed only after the
+ * writer exists. `appliedAtMs` dates the mark for the 90-day age-out.
  */
-export function applyObservationWindow(db: Database, w: ObservationWindow): void {
+export function applyObservationWindow(
+  db: Database,
+  w: ObservationWindow,
+  appliedAtMs: number = w.toMs,
+): boolean {
+  const markStmt = db.prepare(
+    `INSERT INTO extension_observation_applied (run_key, seq, extension_id, applied_at)
+     VALUES (?, ?, ?, ?) ON CONFLICT(run_key, seq) DO NOTHING`,
+  );
   const countStmt = db.query(
     "SELECT COUNT(*) AS n FROM extension_network_observation WHERE extension_id = ? AND version = ?",
   );
@@ -81,32 +94,36 @@ export function applyObservationWindow(db: Database, w: ObservationWindow): void
        last_seen = MAX(last_seen, excluded.last_seen)`,
   );
   try {
-    db.transaction(() => {
-      let rows = (countStmt.get(w.extensionId, w.version) as { n: number }).n;
-      let overflow = 0;
-      for (const e of w.entries) {
-        const known =
-          existsStmt.get(w.extensionId, w.version, e.destination, e.port, e.outcome) !== null;
-        if (!known && rows >= MAX_OBSERVATION_ROWS) {
-          overflow += 1;
-          continue;
+    return db
+      .transaction((): boolean => {
+        if (dbStmtRun(markStmt, w.runKey, w.seq, w.extensionId, appliedAtMs).changes === 0) {
+          return false;
         }
-        dbStmtRun(
-          upsert,
-          w.extensionId,
-          w.version,
-          e.destination,
-          e.port,
-          e.outcome,
-          w.fromMs,
-          w.toMs,
-          e.count,
-        );
-        if (!known) rows += 1;
-      }
-      dbRun(
-        db,
-        `INSERT INTO extension_observation_coverage
+        let rows = (countStmt.get(w.extensionId, w.version) as { n: number }).n;
+        let overflow = 0;
+        for (const e of w.entries) {
+          const known =
+            existsStmt.get(w.extensionId, w.version, e.destination, e.port, e.outcome) !== null;
+          if (!known && rows >= MAX_OBSERVATION_ROWS) {
+            overflow += 1;
+            continue;
+          }
+          dbStmtRun(
+            upsert,
+            w.extensionId,
+            w.version,
+            e.destination,
+            e.port,
+            e.outcome,
+            w.fromMs,
+            w.toMs,
+            e.count,
+          );
+          if (!known) rows += 1;
+        }
+        dbRun(
+          db,
+          `INSERT INTO extension_observation_coverage
            (extension_id, version, os, runs, observed_ms, first_seen, last_seen, dropped, network_observed)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(extension_id, version) DO UPDATE SET
@@ -117,22 +134,25 @@ export function applyObservationWindow(db: Database, w: ObservationWindow): void
            last_seen = MAX(last_seen, excluded.last_seen),
            dropped = dropped + excluded.dropped,
            network_observed = MAX(network_observed, excluded.network_observed)`,
-        [
-          w.extensionId,
-          w.version,
-          w.os,
-          w.runStart ? 1 : 0,
-          Math.max(0, w.toMs - w.fromMs),
-          w.fromMs,
-          w.toMs,
-          w.dropped + overflow,
-          w.networkObserved ? 1 : 0,
-        ],
-      );
-      // IMMEDIATE: the write lock is taken before the row count is read, so the 512 bound and the
-      // writes it decides cannot be interleaved with another writer.
-    }).immediate();
+          [
+            w.extensionId,
+            w.version,
+            w.os,
+            w.runStart ? 1 : 0,
+            Math.max(0, w.toMs - w.fromMs),
+            w.fromMs,
+            w.toMs,
+            w.dropped + overflow,
+            w.networkObserved ? 1 : 0,
+          ],
+        );
+        return true;
+        // IMMEDIATE: the write lock is taken before the row count is read, so the 512 bound and the
+        // writes it decides cannot be interleaved with another writer.
+      })
+      .immediate();
   } finally {
+    markStmt.finalize();
     countStmt.finalize();
     existsStmt.finalize();
     upsert.finalize();
@@ -148,6 +168,7 @@ export function ageOutObservations(db: Database, nowMs: number): number {
       cutoff,
     ]).changes;
     dbRun(db, "DELETE FROM extension_observation_coverage WHERE last_seen < ?", [cutoff]);
+    dbRun(db, "DELETE FROM extension_observation_applied WHERE applied_at < ?", [cutoff]);
   })();
   return deleted;
 }
@@ -174,4 +195,5 @@ export function deleteObservationsFor(db: Database, extensionId: string): void {
   if (readIndexedUserVersion(db) < OBSERVATION_SCHEMA_VERSION) return;
   dbRun(db, "DELETE FROM extension_network_observation WHERE extension_id = ?", [extensionId]);
   dbRun(db, "DELETE FROM extension_observation_coverage WHERE extension_id = ?", [extensionId]);
+  dbRun(db, "DELETE FROM extension_observation_applied WHERE extension_id = ?", [extensionId]);
 }

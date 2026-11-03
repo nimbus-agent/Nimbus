@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -45,6 +46,7 @@ function deps(over: Partial<ObservationIngestDeps> = {}): ObservationIngestDeps 
     dir,
     now: () => nowMs,
     isInstalled: (id) => id === EXT,
+    serviceIdFor: (id) => (id === EXT ? "ext_com_example_a" : undefined),
     log: (l) => logs.push(l),
     ...over,
   };
@@ -186,6 +188,7 @@ describe("ingestObservationFiles", () => {
     ["toMs before fromMs", body({ fromMs: 5000, toMs: 4000 })],
     ["an os of 'freebsd'", body({ os: "freebsd" })],
     ["stopped: false", body({ stopped: false })],
+    ["a body seq that is not the file name's", body({ seq: 3, runStart: false })],
     ["text that is not JSON", "{not json"],
     ["a JSON array", "[]"],
   ];
@@ -208,6 +211,72 @@ describe("ingestObservationFiles", () => {
     expect(existsSync(path)).toBe(false);
     expect(logs[0]).toContain("64 KiB");
   });
+
+  test("a file named for another service id than its label's extension is rejected", () => {
+    const path = put("ext_other.1700000000000.deadbeef.0.json", body());
+    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+    expect(existsSync(path)).toBe(false);
+    expect(rowCount()).toBe(0);
+    expect(logs[0]).toContain("service id");
+  });
+
+  test("a label whose extension has no service id is rejected", () => {
+    put(`${RUN}.0.json`, body());
+    expect(ingestObservationFiles(deps({ serviceIdFor: () => undefined }))).toEqual({
+      applied: 0,
+      rejected: 1,
+    });
+    expect(rowCount()).toBe(0);
+  });
+
+  test("a file whose delete keeps failing is applied once, however many passes read it", () => {
+    const path = put(`${RUN}.0.json`, body({ dropped: 2 }));
+    const failing = deps({
+      remove: () => {
+        throw new Error("EPERM");
+      },
+    });
+    expect(ingestObservationFiles(failing)).toEqual({ applied: 1, rejected: 0 });
+    const once = readExtensionAudit(db, EXT, "1.0.0");
+    for (let i = 0; i < 3; i += 1) {
+      expect(ingestObservationFiles(failing)).toEqual({ applied: 0, rejected: 0 });
+    }
+    expect(existsSync(path)).toBe(true);
+    expect(readExtensionAudit(db, EXT, "1.0.0")).toEqual(once);
+    expect(once.coverage).toMatchObject({ runs: 1, dropped: 2 });
+    expect(once.rows.find((r) => r.outcome === "used")?.count).toBe(2);
+  });
+
+  test("a crash between the commit and the delete: a fresh ingest only deletes the file", () => {
+    const path = put(`${RUN}.0.json`, body());
+    // The first gateway committed the window and died before the unlink.
+    ingestObservationFiles(
+      deps({
+        remove: () => {
+          throw new Error("killed");
+        },
+      }),
+    );
+    const before = readExtensionAudit(db, EXT, "1.0.0");
+    // A new gateway, with a real delete.
+    expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 0 });
+    expect(existsSync(path)).toBe(false);
+    expect(readExtensionAudit(db, EXT, "1.0.0")).toEqual(before);
+    expect(before.coverage?.runs).toBe(1);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a symlink named like a window file is rejected, and its target is never read or touched",
+    () => {
+      const target = join(root, "elsewhere.json");
+      writeFileSync(target, JSON.stringify(body()));
+      symlinkSync(target, join(dir, `${RUN}.0.json`));
+      expect(ingestObservationFiles(deps())).toEqual({ applied: 0, rejected: 1 });
+      expect(rowCount()).toBe(0);
+      expect(existsSync(target)).toBe(true);
+      expect(readdirSync(dir)).toEqual([]);
+    },
+  );
 
   test("a .json whose name is not a window file's is rejected and deleted", () => {
     const path = put("planted.json", body());
@@ -259,6 +328,8 @@ describe("ingestObservationFiles", () => {
 
   test("the pass ages out rows older than 90 days", () => {
     applyObservationWindow(db, {
+      runKey: "ext_com_example_a.1.00000000",
+      seq: 0,
       extensionId: EXT,
       version: "0.9.0",
       os: "linux",
@@ -271,6 +342,25 @@ describe("ingestObservationFiles", () => {
     });
     nowMs = 200 * DAY;
     ingestObservationFiles(deps());
+    expect(readExtensionAudit(db, EXT, "0.9.0").rows).toHaveLength(0);
+  });
+
+  test("the age-out still runs when the directory cannot be read", () => {
+    applyObservationWindow(db, {
+      runKey: "ext_com_example_a.1.00000000",
+      seq: 0,
+      extensionId: EXT,
+      version: "0.9.0",
+      os: "linux",
+      networkObserved: true,
+      runStart: true,
+      fromMs: 1 * DAY,
+      toMs: 1 * DAY,
+      entries: [{ outcome: "used", destination: "old.example.com", port: 443, count: 1 }],
+      dropped: 0,
+    });
+    nowMs = 200 * DAY;
+    ingestObservationFiles(deps({ dir: join(root, "nope") }));
     expect(readExtensionAudit(db, EXT, "0.9.0").rows).toHaveLength(0);
   });
 

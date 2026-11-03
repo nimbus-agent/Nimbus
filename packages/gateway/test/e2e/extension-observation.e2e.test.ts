@@ -14,7 +14,8 @@
 // and the runner can confine a network policy. The skip is self-validating: under
 // NIMBUS_REQUIRE_SANDBOX_HELPER=1 (the Linux `E2E Gateway` CI step builds the helper and sets it) an
 // unmet premise FAILS by name instead of skipping. A host that cannot reach api.github.com even
-// outside the sandbox is an outage, said loudly and not counted as a proof.
+// outside the sandbox FAILS in CI or when required (REQUIRE_REAL_NETWORK); only a local, unrequired
+// run may skip the `used` row, saying so loudly.
 //
 // The fixture is a hand-written MCP stdio server (newline-delimited JSON-RPC, no SDK), so the
 // installed package has no dependencies and no bundle step.
@@ -42,6 +43,13 @@ const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const HELPER = join(import.meta.dir, "../../src-native/sandbox-helper/nimbus-sandbox-helper");
 const IS_LINUX = process.platform === "linux";
 const REQUIRED = process.env["NIMBUS_REQUIRE_SANDBOX_HELPER"] === "1";
+/**
+ * The same rule as linux-forwarder-network.test.ts: in CI, or when asked, an api.github.com the
+ * host cannot reach FAILS this file, since without it the `used` row is unproved. Only a local,
+ * unrequired run may skip that one row, and it says so.
+ */
+const REQUIRE_REAL_NETWORK =
+  REQUIRED || process.env["CI"] === "true" || process.env["NIMBUS_REQUIRE_REAL_NETWORK"] === "1";
 
 const EXTENSION_ID = "e2e.observed";
 const SERVICE_ID = "ext_e2e_observed";
@@ -268,6 +276,38 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
   let client = new IpcClient();
   /** Whether the host reaches the declared URL outside the sandbox; false is an outage, not a proof. */
   let hostReached = false;
+  /**
+   * Every window file name ever seen. The gateway's own 60 s ingest pass may delete files before a
+   * probe looks, so what a run wrote is judged from this, never from what is on disk at one moment.
+   */
+  const seen = new Set<string>();
+  let watcher: ReturnType<typeof setInterval> | undefined;
+
+  function noteFiles(): void {
+    for (const n of windowFiles()) seen.add(n);
+  }
+
+  /** The seqs seen for this extension's run(s), ascending. */
+  function seenSeqs(): number[] {
+    const seqs: number[] = [];
+    for (const n of seen) {
+      const m = /\.(\d+)\.json$/.exec(n);
+      if (n.startsWith(`${SERVICE_ID}.`) && m !== null) seqs.push(Number(m[1]));
+    }
+    return seqs.sort((a, b) => a - b);
+  }
+
+  function requireHostOrSkip(what: string): boolean {
+    if (hostReached) return true;
+    if (REQUIRE_REAL_NETWORK) {
+      throw new Error(
+        `this host cannot reach ${DECLARED_URL} even outside the sandbox, so ${what} is unproved; ` +
+          "in CI (or under NIMBUS_REQUIRE_SANDBOX_HELPER / NIMBUS_REQUIRE_REAL_NETWORK) that is a failure",
+      );
+    }
+    console.error(`SKIPPED, NOT PROVED: this machine cannot reach ${DECLARED_URL}, so ${what}`);
+    return false;
+  }
 
   async function bootGateway(): Promise<void> {
     const proc = Bun.spawn(["bun", RUNNER], {
@@ -320,13 +360,16 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
   }
 
   beforeAll(async () => {
-    hostReached = await fetch(DECLARED_URL, {
-      headers: { "user-agent": "nimbus-extension-observation-e2e" },
-      signal: AbortSignal.timeout(HOST_REACH_TIMEOUT_MS),
-    }).then(
-      () => true,
-      () => false,
-    );
+    // Twice, so one transient runner DNS failure is not an outage.
+    for (let attempt = 0; attempt < 2 && !hostReached; attempt += 1) {
+      hostReached = await fetch(DECLARED_URL, {
+        headers: { "user-agent": "nimbus-extension-observation-e2e" },
+        signal: AbortSignal.timeout(HOST_REACH_TIMEOUT_MS),
+      }).then(
+        () => true,
+        () => false,
+      );
+    }
     mkdirSync(join(pkg, "dist"), { recursive: true });
     writeFileSync(join(pkg, "dist", "index.js"), SERVER_JS, "utf8");
     writeFileSync(
@@ -341,9 +384,11 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
     );
     for (const d of [paths.configDir, paths.dataDir]) mkdirSync(d, { recursive: true });
     await bootGateway();
+    watcher = setInterval(noteFiles, 20);
   }, 180_000);
 
   afterAll(async () => {
+    if (watcher !== undefined) clearInterval(watcher);
     await stopGateway();
     rmSync(tmp, { recursive: true, force: true });
   });
@@ -356,6 +401,7 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
   test(
     "install, approve, call: the child reaches the declared host, is refused the undeclared name, and never sees the channel",
     async () => {
+      requireHostOrSkip("the child's fetch of the declared host");
       await client.call("extension.install", { sourcePath: pkg });
       const approved = await client.call<{ serviceId: string }>("extension.approveRun", {
         id: EXTENSION_ID,
@@ -380,9 +426,11 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
       };
       expect(report.refused).toBe("ENOTFOUND");
       expect(report.sawChannel).toEqual([]);
-      if (hostReached) expect(typeof report.status).toBe("number");
+      // Unconditional when the network is required (requireHostOrSkip threw otherwise above).
+      if (hostReached || REQUIRE_REAL_NETWORK) expect(typeof report.status).toBe("number");
       // File 0 is written when the wrapper starts, before the child runs.
-      expect(windowFiles().some((n) => n.startsWith(`${SERVICE_ID}.`))).toBe(true);
+      noteFiles();
+      expect(seenSeqs()).toContain(0);
     },
     TEST_TIMEOUT_MS,
   );
@@ -393,9 +441,12 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
       expect(await client.call<{ ok: boolean }>("extension.disable", { id: EXTENSION_ID })).toEqual(
         { ok: true },
       );
-      // The stopped wrapper writes the run's final window from its exit.
+      // The stopped wrapper writes the run's final window from its exit: a later seq than 0.
       const finalWritten = await until(
-        () => (windowFiles().length >= 2 ? true : undefined),
+        () => {
+          noteFiles();
+          return seenSeqs().some((q) => q > 0) ? true : undefined;
+        },
         "the final window file",
         30_000,
       ).catch(() => false);
@@ -413,18 +464,14 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
         db.close();
       }
       expect(finalWritten).toBe(true);
+      expect(seenSeqs()[0]).toBe(0);
       expect(audit.coverage).toMatchObject({ runs: 1, os: "linux", network_observed: 1 });
       const refused = audit.rows.find(
         (r) => r.outcome === "refused" && r.destination === "undeclared.invalid",
       );
       expect(refused?.port).toBe(0);
       expect(refused?.count ?? 0).toBeGreaterThanOrEqual(1);
-      if (!hostReached) {
-        console.error(
-          `SKIPPED, NOT PROVED: this machine cannot reach ${DECLARED_URL} even outside the sandbox, so the used row is unproved`,
-        );
-        return;
-      }
+      if (!requireHostOrSkip("the used row")) return;
       const used = audit.rows.find(
         (r) => r.outcome === "used" && r.destination === "api.github.com" && r.port === 443,
       );

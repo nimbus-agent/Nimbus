@@ -199,6 +199,7 @@ import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
 import {
   ensureObservationDir,
   extensionObservationDirFor,
+  extensionServiceIdOf,
   startObservationIngest,
 } from "../extensions/observation/observation-ingest.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
@@ -741,6 +742,7 @@ function startExtensionObservation(
       dir,
       now: Date.now,
       isInstalled: (id) => selectExtensionInstallPath(db, id) !== null,
+      serviceIdFor: (id) => extensionServiceIdOf(db, id),
       log: (m) => logger.warn(m),
     }),
   );

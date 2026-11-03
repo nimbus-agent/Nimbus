@@ -6,6 +6,8 @@ import {
   isSandboxWrapperOnlyEnv,
   policyFromManifest,
   SANDBOX_CWD_ENV,
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
   SANDBOX_POLICY_ENV,
   sandboxWrapperOnlyEnv,
 } from "../../platform/sandbox/sandbox-policy.ts";
@@ -32,11 +34,23 @@ function wrapWithCwd(
   };
 }
 
-/** Refuses a key the wrapper would pass on: only what it strips from its child may ride here. */
+/**
+ * What `wrapperEnv` may carry: the observation channel's two keys and nothing else. Both are
+ * wrapper-only (stripped from the child on every OS); the forwarder's other wrapper-only keys come
+ * only from `sandboxWrapperOnlyEnv()`, so no caller can redirect the helper through this argument.
+ */
+const WRAPPER_ENV_KEYS: ReadonlySet<string> = new Set([
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
+]);
+
+/** Refuses any key but the two observation keys, and re-checks each is one the wrapper strips. */
 function assertWrapperOnly(wrapperEnv: Readonly<Record<string, string>>): void {
   for (const key of Object.keys(wrapperEnv)) {
-    if (!isSandboxWrapperOnlyEnv(key)) {
-      throw new Error(`wrapperEnv may carry only wrapper-only variables, not ${key}`);
+    if (!WRAPPER_ENV_KEYS.has(key) || !isSandboxWrapperOnlyEnv(key)) {
+      throw new Error(
+        `wrapperEnv may carry only the observation wrapper-only variables, not ${key}`,
+      );
     }
   }
 }
@@ -63,8 +77,8 @@ export function wrapServerSpec(
  * an approved extension in its fresh per-spawn stage (I43). Never pass `paths.dataDir` or
  * `paths.configDir` here.
  *
- * `wrapperEnv` is for the WRAPPER, never the child: every key must be one the wrapper strips before
- * its child starts (`isSandboxWrapperOnlyEnv`), and any other key throws. An approved extension's
+ * `wrapperEnv` is for the WRAPPER, never the child: it may carry only the two observation keys,
+ * both of which the wrapper strips before its child starts, and any other key throws. An approved extension's
  * observation prefix and label ride here (I43), so the child never learns where its evidence goes.
  */
 export function wrapServerSpecInCwd(

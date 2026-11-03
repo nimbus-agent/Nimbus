@@ -1,6 +1,17 @@
 import type { Database } from "bun:sqlite";
 import { randomBytes } from "node:crypto";
-import { chmodSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readSync,
+  rmSync,
+} from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -12,6 +23,8 @@ import {
   MAX_NAME_LENGTH,
   OBSERVATION_FILE_VERSION,
 } from "../../platform/sandbox/network-observation-writer.ts";
+import { deriveExtensionServiceId } from "../extension-service-id.ts";
+import { getRunGrant } from "../run-grant-store.ts";
 import {
   ageOutObservations,
   applyObservationWindow,
@@ -26,8 +39,10 @@ import {
  * the child (`wrapServerSpecInCwd`'s `wrapperEnv`).
  *
  * Every file is untrusted until parsed: the exact key set, the version, every integer range, the
- * name alphabet the writer's sanitiser produces, and an installed extension in the label. A bad file
- * is deleted and counted, never applied in part; a good one is deleted only after its rows commit.
+ * name alphabet the writer's sanitiser produces, an installed extension in the label whose service
+ * id names the file, and a file name whose seq is the body's. A bad file is deleted and counted,
+ * never applied in part; a good one is deleted only after its rows commit, and is applied at most
+ * once per (run, seq) whatever happens to the delete (V81 `extension_observation_applied`).
  * Observation is evidence only: nothing here decides a spawn, a grant or a network rule.
  */
 
@@ -65,12 +80,12 @@ const FILE_NAME_RE = /^([A-Za-z0-9_-]{1,128})\.(\d{1,16})\.([0-9a-f]{8})\.(\d{1,
 const NAME_RE = /^[A-Za-z0-9._?-]+$/;
 const MAX_PORT = 65_535;
 
-type ParsedName = { name: string; run: string; seq: number };
+type ParsedName = { name: string; serviceId: string; run: string; seq: number };
 
 function parseFileName(name: string): ParsedName | null {
   const m = FILE_NAME_RE.exec(name);
   if (m === null) return null;
-  return { name, run: `${m[1]}.${m[2]}.${m[3]}`, seq: Number(m[4]) };
+  return { name, serviceId: m[1] ?? "", run: `${m[1]}.${m[2]}.${m[3]}`, seq: Number(m[4]) };
 }
 
 /**
@@ -229,6 +244,9 @@ export function parseObservationFile(
   const toMs = int(o["toMs"], fromMs, Number.MAX_SAFE_INTEGER, "toMs");
   const label = parseLabel(o["label"], isInstalled);
   return {
+    // The run is the file name's; `readWindow` sets it once the name and the body agree.
+    runKey: "",
+    seq,
     extensionId: label.extensionId,
     version: label.version,
     os: parseOs(o["os"]),
@@ -246,12 +264,32 @@ export type ObservationIngestDeps = {
   dir: string;
   now: () => number;
   isInstalled: (extensionId: string) => boolean;
+  /** The service id an installed extension spawns under (see {@link extensionServiceIdOf}). */
+  serviceIdFor: (extensionId: string) => string | undefined;
   log: (line: string) => void;
+  /** Test seam for the unlink; production passes none. */
+  remove?: (path: string) => void;
 };
+
+/**
+ * The service id an extension's spawns name their window files with: the run grant's, else the one
+ * an approval would derive (the rule `extension.remove`'s cleanup uses). `undefined` for an id that
+ * yields none, which could never have spawned.
+ */
+export function extensionServiceIdOf(db: Database, extensionId: string): string | undefined {
+  const granted = getRunGrant(db, extensionId)?.service_id;
+  if (granted !== undefined) return granted;
+  try {
+    return deriveExtensionServiceId(extensionId);
+  } catch {
+    return undefined;
+  }
+}
 
 function removeQuietly(path: string, deps: ObservationIngestDeps, name: string): void {
   try {
-    rmSync(path, { force: true });
+    if (deps.remove === undefined) rmSync(path, { force: true });
+    else deps.remove(path);
   } catch (e) {
     deps.log(
       `observation: could not delete ${name}: ${e instanceof Error ? e.message : String(e)}`,
@@ -272,37 +310,75 @@ function sweepTemps(deps: ObservationIngestDeps): void {
   }
 }
 
-/** The file's body, or a reason it is not a window file at all. */
-function readWindowFile(path: string, name: string): string {
-  if (parseFileName(name) === null) bad("the file name is not a window file's");
-  const st = lstatSync(path);
-  if (!st.isFile()) bad("not a regular file");
-  if (st.size > MAX_FILE_BYTES) bad("larger than 64 KiB");
-  return readFileSync(path, "utf8");
+/** `O_NOFOLLOW` where the OS has it (POSIX); Windows has none, and the `lstat` below stands in. */
+const OPEN_NO_FOLLOW = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+
+/**
+ * The file's body, read from ONE descriptor: opened without following a link, checked by `fstat`
+ * (a regular file within the cap) and read no further than one byte past the cap, so the file
+ * cannot be swapped or grown between the check and the read.
+ */
+function readWindowFile(path: string): string {
+  if (lstatSync(path).isSymbolicLink()) bad("a symbolic link");
+  const fd = openSync(path, OPEN_NO_FOLLOW);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile()) bad("not a regular file");
+    if (st.size > MAX_FILE_BYTES) bad("larger than 64 KiB");
+    const buf = Buffer.alloc(MAX_FILE_BYTES + 1);
+    let length = 0;
+    for (;;) {
+      const n = readSync(fd, buf, length, buf.length - length, null);
+      if (n === 0) break;
+      length += n;
+      if (length > MAX_FILE_BYTES) bad("larger than 64 KiB");
+    }
+    return buf.subarray(0, length).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
 }
 
-type FileOutcome = "applied" | "rejected" | "db-failed";
+/** The window, checked against the name it was found under. */
+function readWindow(deps: ObservationIngestDeps, name: string): ObservationWindow {
+  const parsed = parseFileName(name);
+  if (parsed === null) bad("the file name is not a window file's");
+  const window = parseObservationFile(readWindowFile(join(deps.dir, name)), deps.isInstalled);
+  if (window.seq !== parsed.seq) bad("the body's seq is not the file name's");
+  if (deps.serviceIdFor(window.extensionId) !== parsed.serviceId) {
+    bad("the file name's service id is not the label's extension's");
+  }
+  return { ...window, runKey: parsed.run };
+}
+
+type FileOutcome = "applied" | "duplicate" | "rejected" | "db-failed";
 
 function ingestOne(deps: ObservationIngestDeps, name: string): FileOutcome {
   const path = join(deps.dir, name);
   let window: ObservationWindow;
   try {
-    window = parseObservationFile(readWindowFile(path, name), deps.isInstalled);
+    window = readWindow(deps, name);
   } catch (e) {
     const why = e instanceof BadFile ? e.message : "unreadable";
     deps.log(`observation: rejected ${name}: ${why}`);
     removeQuietly(path, deps, name);
     return "rejected";
   }
+  let fresh: boolean;
   try {
-    applyObservationWindow(deps.db, window);
+    fresh = applyObservationWindow(deps.db, window, deps.now());
   } catch (e) {
     // Nothing was committed: the file stays for the next pass.
-    deps.log(`observation: could not store ${name}: ${e instanceof Error ? e.message : String(e)}`);
+    deps.log(`observation: could not store ${name}: ${errorText(e)}`);
     return "db-failed";
   }
+  // Applied now, or on an earlier pass whose delete failed or never ran: either way it goes.
   removeQuietly(path, deps, name);
-  return "applied";
+  return fresh ? "applied" : "duplicate";
+}
+
+function errorText(e: unknown): string {
+  return e instanceof Error ? e.message : String(e);
 }
 
 /**
@@ -314,21 +390,25 @@ export function ingestObservationFiles(deps: ObservationIngestDeps): {
   applied: number;
   rejected: number;
 } {
-  let applied = 0;
-  let rejected = 0;
+  const counts = { applied: 0, rejected: 0 };
   try {
     sweepTemps(deps);
     for (const name of listObservationFiles(deps.dir)) {
       const outcome = ingestOne(deps, name);
       if (outcome === "db-failed") break;
-      if (outcome === "applied") applied += 1;
-      else rejected += 1;
+      if (outcome === "applied") counts.applied += 1;
+      else if (outcome === "rejected") counts.rejected += 1;
     }
+  } catch (e) {
+    deps.log(`observation: ingest pass failed: ${errorText(e)}`);
+  }
+  // Its own try: an unreadable directory never stops retention.
+  try {
     ageOutObservations(deps.db, deps.now());
   } catch (e) {
-    deps.log(`observation: ingest pass failed: ${e instanceof Error ? e.message : String(e)}`);
+    deps.log(`observation: age-out failed: ${errorText(e)}`);
   }
-  return { applied, rejected };
+  return counts;
 }
 
 /**

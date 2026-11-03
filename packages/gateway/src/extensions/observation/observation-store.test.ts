@@ -31,8 +31,14 @@ function addExt(id: string): void {
   });
 }
 
+/** Each window gets its own (run, seq) unless a test names one, so repeated applies all count. */
+let nextSeq = 0;
+
 function win(over: Partial<ObservationWindow> = {}): ObservationWindow {
+  nextSeq += 1;
   return {
+    runKey: "ext_a.1000.deadbeef",
+    seq: nextSeq,
     extensionId: "ext-a",
     version: "1.0.0",
     os: "linux",
@@ -188,6 +194,32 @@ describe("applyObservationWindow", () => {
     expect(readExtensionAudit(db, "ext-a", "1.0.0").rows).toHaveLength(1);
   });
 
+  test("a (run, seq) already applied is a no-op that returns false and changes nothing", () => {
+    expect(applyObservationWindow(db, win({ seq: 0, dropped: 1 }))).toBe(true);
+    const before = readExtensionAudit(db, "ext-a", "1.0.0");
+    expect(applyObservationWindow(db, win({ seq: 0, dropped: 1 }))).toBe(false);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0")).toEqual(before);
+    expect(before.coverage).toMatchObject({ runs: 1, dropped: 1, observed_ms: 1000 });
+    expect(before.rows[0]?.count).toBe(2);
+    // The same seq of ANOTHER run is its own window.
+    expect(applyObservationWindow(db, win({ runKey: "ext_a.2000.cafef00d", seq: 0 }))).toBe(true);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.runs).toBe(2);
+  });
+
+  test("the applied mark is written in the window's own transaction: a failed apply leaves none", () => {
+    dbRun(db, "DROP TABLE extension_observation_coverage");
+    expect(() => applyObservationWindow(db, win({ seq: 0 }))).toThrow();
+    expect(db.query("SELECT 1 FROM extension_observation_applied").all()).toHaveLength(0);
+    expect(db.query("SELECT 1 FROM extension_network_observation").all()).toHaveLength(0);
+  });
+
+  test("the applied mark records the extension and the time it was applied", () => {
+    applyObservationWindow(db, win({ seq: 7 }), 12_345);
+    expect(db.query("SELECT * FROM extension_observation_applied").all()).toEqual([
+      { run_key: "ext_a.1000.deadbeef", seq: 7, extension_id: "ext-a", applied_at: 12_345 },
+    ]);
+  });
+
   test("a CHECK rejects outcome 'other'", () => {
     expect(() =>
       dbRun(
@@ -211,12 +243,20 @@ describe("ageOutObservations / delete", () => {
     expect(readExtensionAudit(db, "ext-b", "1.0.0").coverage).toBeDefined();
   });
 
+  test("applied marks age out on the same 90 days, by when they were applied", () => {
+    applyObservationWindow(db, win({ seq: 1 }), 1 * DAY);
+    applyObservationWindow(db, win({ seq: 2 }), 150 * DAY);
+    ageOutObservations(db, 200 * DAY);
+    expect(db.query("SELECT seq FROM extension_observation_applied").all()).toEqual([{ seq: 2 }]);
+  });
+
   test("deleteExtensionById leaves no V81 rows, even with foreign_keys off", () => {
     dbRun(db, "PRAGMA foreign_keys = OFF");
     applyObservationWindow(db, win());
     deleteExtensionById(db, "ext-a");
     expect(db.query("SELECT 1 FROM extension_network_observation").all()).toHaveLength(0);
     expect(db.query("SELECT 1 FROM extension_observation_coverage").all()).toHaveLength(0);
+    expect(db.query("SELECT 1 FROM extension_observation_applied").all()).toHaveLength(0);
   });
 
   test("deleteObservationsFor removes one extension only", () => {
@@ -226,5 +266,8 @@ describe("ageOutObservations / delete", () => {
     deleteObservationsFor(db, "ext-a");
     expect(readExtensionAudit(db, "ext-a", "1.0.0").rows).toHaveLength(0);
     expect(readExtensionAudit(db, "ext-b", "1.0.0").rows).toHaveLength(1);
+    expect(db.query("SELECT extension_id FROM extension_observation_applied").all()).toEqual([
+      { extension_id: "ext-b" },
+    ]);
   });
 });

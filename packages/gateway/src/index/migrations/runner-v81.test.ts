@@ -11,7 +11,7 @@ function cols(db: Database, table: string): string[] {
 }
 
 describe("V81 migration — extension network observation", () => {
-  test("a V80 database migrates to 81 and has both tables with the expected columns", () => {
+  test("a V80 database migrates to 81 and has its three tables with the expected columns", () => {
     const db = new Database(":memory:");
     try {
       runIndexedSchemaMigrations(db, 80);
@@ -39,6 +39,13 @@ describe("V81 migration — extension network observation", () => {
         "last_seen",
         "dropped",
         "network_observed",
+      ]);
+      // Which (run, seq) window files have been applied, so a file applied once never counts twice.
+      expect(cols(db, "extension_observation_applied")).toEqual([
+        "run_key",
+        "seq",
+        "extension_id",
+        "applied_at",
       ]);
     } finally {
       db.close();
