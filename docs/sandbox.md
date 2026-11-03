@@ -575,6 +575,27 @@ Every connection held 500 ms (twice the period) was caught in the three runs. Th
 
 **Proof.** The Linux end-to-end test runs on the Ubuntu CI E2E leg with the sandbox helper built and AppArmor's unprivileged-userns restriction lifted, as CI does; it is not claimed for a stock Ubuntu install.
 
+## Narrower network grants {#narrower-grants}
+
+An owner may approve an extension with less network than its manifest declares: `nimbus extension approve <id> --network <a,b|none>` (invariant I52). The stored run grant then holds the named declared entries, in manifest order, and every spawn runs under that list. The file grants are never narrowed: they stay exactly what the manifest re-resolves to. What each OS's sandbox makes of a narrower list is what it makes of any list:
+
+| OS | What the sandbox enforces | What narrowing therefore changes |
+| --- | --- | --- |
+| Linux (helper present) | Each `host:port` entry: the forwarder relays only connections to an entry in the policy | Removing an entry blocks that host and port; the child trying it is refused (and shows as `refused`, not a finding, since the manifest still declares it) |
+| macOS | Ports only: SBPL cannot name a host, so the policy allows every host on each declared port | Removing an entry changes reach only when no remaining entry uses its port; removing one of two hosts on 443 changes nothing |
+| Windows | Network on or off: the AppContainer has `internetClient` or nothing | Only `none` changes reach; any non-empty list is the whole internet, as before |
+| Linux (no helper) | Nothing: the child has the whole network | Nothing, until a helper is installed |
+
+The prompt states each of these through the same `networkAccess` line it uses for an unnarrowed approval, from the sandbox's live posture, so a narrowing that changes nothing here is not presented as one that does.
+
+**The rule every start checks.** A stored grant is accepted only when its file grants equal what the manifest re-resolves to and its network is a subsequence of the re-resolved network: each entry an exact member, in the same order, none twice (`checkStoredAgainstResolved`, used by both the approval and the spawn). A stored row with an added, respelled, reordered or repeated host, or any changed path, refuses with `ERR_EXTENSION_RUN_CHANGED`; so does a manifest that stops declaring an entry the grant kept. The spawn's policy is built from the checked result (the stored network, the re-resolved files), never from a stored path.
+
+**The sync host's preflight.** Before it schedules an extension's sync, the sync host asks `canConfine` of the policy the STORED grant describes (`register-extension-sync.ts`). That read is not verified, and it does not need to be: it only asks whether this machine's sandbox could confine such a policy, spawns nothing, and grants nothing. The spawn that follows re-runs the full verification above and refuses a tampered row whatever the preflight answered; a test pins that a stored row with a re-pointed path still refuses at the spawn.
+
+**Offers from evidence.** `nimbus extension audit` may offer a narrower grant from what [observation](#observation) saw, and only what the OS enforces: on Linux the declared `host:port` entries no connection was seen to; on macOS every entry on a port no seen connection (used or unmatched) used, and only if at least one port goes; on Windows no network at all, and only when no connection of any kind was ever seen. The evidence window is fixed: the network was observed, for the installed version, over at least 5 runs spanning at least 7 days, with nothing dropped and no run stopped at the one-day bound. What the evidence keeps is intersected with what is approved, and an offer exists only when that removes something, so it only ever narrows. An offer changes nothing by itself: the owner applies it with the printed `nimbus extension approve <id> --network …`, behind the same `extension.run` prompt. Evidence stays on this machine.
+
+**Updates.** An update leaves any run grant stale (it names one version and tree digest), and the next approval starts from everything the new version declares. The update's approval says so when the grant had been narrowed: `The earlier network narrowing is not carried over: the new approval starts from everything the new version declares.` A migration never narrows, and a delegate never approves `extension.run`.
+
 ## See also
 
 - `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant; §I42 — user-MCP tool calls need owner approval.
