@@ -663,6 +663,16 @@ describe("publish-linux-repo.yml deploy modes", () => {
     expect(named("Prune old site releases")?.["continue-on-error"]).toBe(true);
   });
 
+  test("pruning never deletes this run's release, and orders by publish time", () => {
+    const prune = String(named("Prune old site releases")?.["run"]);
+    // createdAt is the tagged commit's date, identical for every site-* release.
+    expect(prune).not.toContain("createdAt");
+    expect(prune).toContain("sort_by(.publishedAt)");
+    expect(prune).toContain("select(.tagName != env.SITE_TAG)");
+    // This run's release plus the two newest others: three in all.
+    expect(prune).toContain(".[2:]");
+  });
+
   test("the wait reads this run's marker, not a version an earlier deploy may already serve", () => {
     const handoff = String(named("Hand the tree to linux-repo")?.["run"]);
     expect(handoff.indexOf("> repo/site-id.txt")).toBeGreaterThan(-1);

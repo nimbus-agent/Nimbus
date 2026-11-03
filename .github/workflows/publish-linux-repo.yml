@@ -336,6 +336,10 @@ jobs:
           exit 1
 
       # Three, so an earlier tree stays one dispatch away. Failing to prune costs only storage.
+      # Sorted by publishedAt: createdAt is the date of the commit a release's tag points at, and
+      # every site-* tag points at linux-repo's main, so createdAt ties and the sort kept an
+      # arbitrary three. On 2026-11-02 that deleted the release being served (site-10.17.0).
+      # This run's own release is never a candidate, whatever the clock says.
       - name: Prune old site releases
         if: vars.NIMBUS_LINUX_REPO_DEPLOY == 'actions'
         continue-on-error: true
@@ -343,8 +347,8 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
-          gh release list --repo nimbus-agent/linux-repo --limit 50 --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("site-"))] | sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+          gh release list --repo nimbus-agent/linux-repo --limit 50 --json tagName,publishedAt \
+            --jq '[.[] | select(.tagName | startswith("site-")) | select(.tagName != env.SITE_TAG)] | sort_by(.publishedAt) | reverse | .[2:] | .[].tagName' \
             | while read -r old; do
                 gh release delete "$old" --repo nimbus-agent/linux-repo --cleanup-tag --yes
               done
