@@ -140,6 +140,28 @@ describe("extension.audit", () => {
     expect(readAuditEntries(db, "a")?.[0]?.notSeen).toEqual([]);
   });
 
+  test("a declared host with no port means 443, so a used :443 is not also 'not seen'", () => {
+    dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = 'a'", [
+      JSON.stringify({ network: ["api.example.com"], read: [], write: [] }),
+    ]);
+    const e = readAuditEntries(db, "a")?.[0];
+    expect(e?.declared).toEqual(["api.example.com:443"]);
+    expect(e?.notSeen).toEqual([]);
+  });
+
+  test("an upper-case host, a trailing dot and a zero-padded port normalise like the forwarder", () => {
+    dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = 'a'", [
+      JSON.stringify({
+        network: ["API.example.com.:0443", "api.example.com", "Other.example.com:8443"],
+        read: [],
+        write: [],
+      }),
+    ]);
+    const e = readAuditEntries(db, "a")?.[0];
+    expect(e?.declared).toEqual(["api.example.com:443", "other.example.com:8443"]);
+    expect(e?.notSeen).toEqual(["other.example.com:8443"]);
+  });
+
   test("a hostile declared host is returned as stored (the CLI sanitises)", () => {
     dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = 'a'", [
       JSON.stringify({ network: ["ev[31mil.test:443"], read: [], write: [] }),

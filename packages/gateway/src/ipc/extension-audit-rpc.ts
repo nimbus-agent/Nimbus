@@ -1,5 +1,7 @@
 import type { Database } from "bun:sqlite";
 
+import { parseNetworkEntry } from "@nimbus-dev/registry-format";
+
 import { listExtensions } from "../automation/extension-store.ts";
 import { parseRunGrants } from "../extensions/extension-run-grants.ts";
 import {
@@ -22,7 +24,10 @@ export type AuditEntry = {
   observedDays: number;
   firstSeen?: number;
   lastSeen?: number;
-  /** `host:port` from the installed run grant. */
+  /**
+   * `host:port` from the installed run grant, normalised the way the forwarder plans it
+   * (lowercase host, one trailing dot dropped, the port as a number, 443 when none is given).
+   */
   declared: string[];
   used: AuditDestination[];
   /** Declared and not seen: a lower bound's complement, never "not used". */
@@ -43,10 +48,19 @@ function daysSpanned(c: CoverageRow): number {
   return Math.floor(c.last_seen / DAY_MS) - Math.floor(c.first_seen / DAY_MS) + 1;
 }
 
+/** The same normalisation `planForwardEntries` applies, so a declared key compares with a used one. */
+function normaliseDeclared(entry: string): string {
+  const { host, port } = parseNetworkEntry(entry);
+  const lower = host.toLowerCase();
+  const bare = lower.endsWith(".") ? lower.slice(0, -1) : lower;
+  return `${bare}:${String(port)}`;
+}
+
 function declaredOf(db: Database, id: string): string[] {
   const grant = getRunGrant(db, id);
   if (grant === null) return [];
-  return [...(parseRunGrants(grant.permissions_json)?.network ?? [])];
+  const network = parseRunGrants(grant.permissions_json)?.network ?? [];
+  return [...new Set(network.map(normaliseDeclared))];
 }
 
 function entryFor(db: Database, id: string, version: string): AuditEntry {
@@ -62,7 +76,7 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
     declared,
     used,
     // Only where the network was observed: elsewhere "not seen" would read as a finding.
-    notSeen: networkObserved ? declared.filter((d) => !usedKeys.has(d.toLowerCase())) : [],
+    notSeen: networkObserved ? declared.filter((d) => !usedKeys.has(d)) : [],
     refused: ofOutcome(rows, "refused"),
     unmatched: ofOutcome(rows, "unmatched"),
   };
