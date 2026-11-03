@@ -622,6 +622,8 @@ describe("openWin32ConnectionSource (fake Win32)", () => {
 
 const IS_WIN = process.platform === "win32";
 const IS_CI = process.env["CI"] === "true";
+/** The real run's timings are printed only on request (`NIMBUS_OBSERVE_METRICS=1`). */
+const PRINT_METRICS = process.env["NIMBUS_OBSERVE_METRICS"] === "1";
 const HELPER =
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] ??
   resolve(import.meta.dir, "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe");
@@ -794,41 +796,63 @@ describe.skipIf(!IS_WIN || (!READY && !IS_CI))("openWin32ConnectionSource (real 
 
   // The windows-latest runner cannot start any process inside the AppContainer except the child
   // itself (spike 6a, 2026-11-03: spawning System32\curl.exe or cmd.exe from inside it threw EPERM,
-  // while the same spawn works on a Windows 11 developer machine). So the grandchild half runs only
-  // off CI; on the runner this test proves the child and the control only.
+  // while the same spawn works on a Windows 11 developer machine). So the grandchild test is skipped
+  // on CI (visibly, as a skip), and there the one driver run proves the child and the control only.
   const withGrandchild = !IS_CI;
 
-  test("finds the sandboxed child's connections (and a grandchild's, off CI) and none of the control's", async () => {
-    const childPath = join(work, "child.mjs");
-    writeFileSync(childPath, CHILD_SOURCE);
-    // The only directory the child may write: where the grandchild's stderr lands.
-    mkdirSync(join(work, "out"));
-    const driverDir = mkdtempSync(join(work, "driver-"));
-    const driver = join(driverDir, "driver.ts");
-    writeFileSync(driver, DRIVER_SOURCE(childPath, work, withGrandchild));
-    // The helper path is handed to the driver through ITS env: the runner reads it there, not
-    // from this test process's environment.
-    const proc = Bun.spawn([process.execPath, "--no-env-file", driver], {
-      env: { ...process.env, NIMBUS_SANDBOX_HELPER_PATH: HELPER },
-      stdout: "pipe",
-      stderr: "pipe",
-      windowsHide: true,
-      timeout: 90_000,
-    });
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-      proc.exited,
-    ]);
-    const line = stdout.trim().split(/\r?\n/).at(-1);
-    if (line === undefined || line === "") throw new Error(`driver gave no answer: ${stderr}`);
-    const a = JSON.parse(line) as DriverAnswer;
+  /** One driver run, shared by both tests. */
+  let run: Promise<{ a: DriverAnswer; child: Report; control: Report }> | undefined;
+  function driverRun(): Promise<{ a: DriverAnswer; child: Report; control: Report }> {
+    run ??= (async () => {
+      const childPath = join(work, "child.mjs");
+      writeFileSync(childPath, CHILD_SOURCE);
+      // The only directory the child may write: where the grandchild's stderr lands.
+      mkdirSync(join(work, "out"));
+      const driverDir = mkdtempSync(join(work, "driver-"));
+      const driver = join(driverDir, "driver.ts");
+      writeFileSync(driver, DRIVER_SOURCE(childPath, work, withGrandchild));
+      // The helper path is handed to the driver through ITS env: the runner reads it there, not
+      // from this test process's environment.
+      const proc = Bun.spawn([process.execPath, "--no-env-file", driver], {
+        env: { ...process.env, NIMBUS_SANDBOX_HELPER_PATH: HELPER },
+        stdout: "pipe",
+        stderr: "pipe",
+        windowsHide: true,
+        timeout: 90_000,
+      });
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text(),
+        new Response(proc.stderr).text(),
+        proc.exited,
+      ]);
+      const line = stdout.trim().split(/\r?\n/).at(-1);
+      if (line === undefined || line === "") throw new Error(`driver gave no answer: ${stderr}`);
+      const a = JSON.parse(line) as DriverAnswer;
+      if (PRINT_METRICS) {
+        const sorted = [...a.pollMs].sort((x, y) => x - y);
+        console.log(
+          JSON.stringify({
+            openMs: a.openMs,
+            polls: a.pollMs.length,
+            pollMsMedian: sorted[Math.floor(sorted.length / 2)],
+            pollMsMax: sorted.at(-1),
+            driverCpuMs: a.cpuUs / 1000,
+            rows: a.rows.length,
+            withGrandchild,
+          }),
+        );
+      }
+      return { a, child: report(a.child), control: report(a.control) };
+    })();
+    return run;
+  }
+
+  test("finds the sandboxed child's connections and none of the control's", async () => {
+    const { a, child, control } = await driverRun();
     expect(a.refusal).toBeUndefined();
     expect(a.openError).toBeUndefined();
     expect(a.pollErrors).toBe(0);
 
-    const child = report(a.child);
-    const control = report(a.control);
     const childPorts = child.connections.map((x) => x.localPort);
     const controlPorts = control.connections.map((x) => x.localPort);
     // Premise: both really connected, or "found none of the control's" would pass vacuously.
@@ -841,30 +865,22 @@ describe.skipIf(!IS_WIN || (!READY && !IS_CI))("openWin32ConnectionSource (real 
     }
     expect(a.rows.filter((r) => controlPorts.includes(r.localPort))).toEqual([]);
     expect(a.rows.some((r) => r.pid === control.pid)).toBe(false);
+  }, 120_000);
 
-    if (withGrandchild) {
+  test.skipIf(IS_CI)(
+    "finds a grandchild's connection through the container SID",
+    async () => {
+      const { a, child, control } = await driverRun();
       // The whole record on failure: its stderr says why the grandchild could not connect.
       expect(child.grand).toMatchObject({ exit: 0 });
       // curl.exe (under cmd.exe) owns its connection: found by the local port curl reported, owned
       // by a process that is neither the child nor the control.
       const port = child.grand?.localPort;
       expect(port).toBeGreaterThan(0);
-      const grand = attributed.filter((r) => r.localPort === port);
+      const grand = a.rows.filter((r) => r.remotePort === 443 && r.localPort === port);
       expect(grand.length).toBeGreaterThan(0);
       expect(grand.every((r) => r.pid !== child.pid && r.pid !== control.pid)).toBe(true);
-    }
-    const sorted = [...a.pollMs].sort((x, y) => x - y);
-    console.log(
-      JSON.stringify({
-        openMs: a.openMs,
-        polls: a.pollMs.length,
-        pollMsMedian: sorted[Math.floor(sorted.length / 2)],
-        pollMsMax: sorted.at(-1),
-        driverCpuMs: a.cpuUs / 1000,
-        rows: a.rows.length,
-        withGrandchild,
-        grandchildMs: child.grand?.ms,
-      }),
-    );
-  }, 120_000);
+    },
+    120_000,
+  );
 });

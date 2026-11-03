@@ -16,8 +16,8 @@
  */
 
 import { dlopen, FFIType, ptr } from "bun:ffi";
+import { formatIpv6, portFromDword } from "./address.ts";
 import type { ConnectionSource, ObservedConnection } from "./types.ts";
-import { formatIpv6, portFromDword } from "./win32-connections.ts";
 
 // --- libproc ABI ---------------------------------------------------------------------------------
 //
@@ -74,11 +74,15 @@ const INITIAL_FDS = 256;
 /** 4096 PIDs doubled 10 times is 4M PIDs; 256 fds doubled 10 times is 256K fds. */
 const GROW_ATTEMPTS = 10;
 
-/** libproc's own image first; libSystem re-exports the same symbols. */
-const LIBRARY_PATHS = ["/usr/lib/libproc.dylib", "/usr/lib/libSystem.B.dylib"] as const;
+/**
+ * libSystem first: every process already links it and it re-exports libproc's symbols, so the
+ * image that opens is one the wrapper has loaded anyway. The bare libproc path is the fallback.
+ */
+const LIBRARY_PATHS = ["/usr/lib/libSystem.B.dylib", "/usr/lib/libproc.dylib"] as const;
 
 const SYMBOLS = {
-  // (uint32_t type, uint32_t typeinfo, void *buffer, int buffersize) -> int: bytes written, or -1.
+  // (uint32_t type, uint32_t typeinfo, void *buffer, int buffersize) -> int: bytes written, or 0
+  // on error (the libproc wrappers return 0, not -1).
   proc_listpids: {
     args: [FFIType.u32, FFIType.u32, FFIType.ptr, FFIType.i32],
     returns: FFIType.i32,

@@ -540,16 +540,16 @@ describe("openDarwinConnectionSource (fake libproc)", () => {
     src.close();
   });
 
-  test("opens libproc, falls back to libSystem, and is an error when neither loads", () => {
+  test("opens libSystem, falls back to libproc, and is an error when neither loads", () => {
     const first = newRec();
     openOk(state([]), first).close();
-    expect(first.opened).toEqual(["/usr/lib/libproc.dylib"]);
+    expect(first.opened).toEqual(["/usr/lib/libSystem.B.dylib"]);
 
     const fallback = newRec();
     const s = state([]);
-    s.missing = ["/usr/lib/libproc.dylib"];
+    s.missing = ["/usr/lib/libSystem.B.dylib"];
     openOk(s, fallback).close();
-    expect(fallback.opened).toEqual(["/usr/lib/libSystem.B.dylib"]);
+    expect(fallback.opened).toEqual(["/usr/lib/libproc.dylib"]);
 
     const none = newRec();
     const n = state([]);
@@ -573,7 +573,7 @@ describe("openDarwinConnectionSource (fake libproc)", () => {
     const src = openOk(state([]), rec);
     src.close();
     src.close();
-    expect(rec.closed).toEqual(["/usr/lib/libproc.dylib"]);
+    expect(rec.closed).toEqual(["/usr/lib/libSystem.B.dylib"]);
     expect(() => src.poll()).toThrow(/closed/);
   });
 });
@@ -587,6 +587,8 @@ function state(entries: [number, FakeProc][]): FakeState {
 // ---------------------------------------------------------------------------------------------
 
 const IS_DARWIN = process.platform === "darwin";
+/** The real run's answer and timings are printed only on request (`NIMBUS_OBSERVE_METRICS=1`). */
+const PRINT_METRICS = process.env["NIMBUS_OBSERVE_METRICS"] === "1";
 const POLICY_ID = "nimbus.observe-darwin-test";
 const HOST = "api.github.com";
 
@@ -772,7 +774,6 @@ describe.skipIf(!IS_DARWIN)("openDarwinConnectionSource (real macOS)", () => {
       const line = stdout.trim().split(/\r?\n/).at(-1);
       if (line === undefined || line === "") throw new Error(`driver gave no answer: ${stderr}`);
       const a = JSON.parse(line) as DriverAnswer;
-      console.log(`[observe-darwin] driver answer: ${line.slice(0, 6000)}`);
       // Premise: the runner confines a port-443 policy, and the source opened.
       expect(a.refusal).toBeUndefined();
       expect(a.openError).toBeUndefined();
@@ -807,20 +808,23 @@ describe.skipIf(!IS_DARWIN)("openDarwinConnectionSource (real macOS)", () => {
       expect(a.rows.filter((r) => !tree.has(r.pid))).toEqual([]);
 
       const sorted = [...a.pollMs].sort((x, y) => x - y);
-      console.log(
-        JSON.stringify({
-          rootPid: a.rootPid,
-          childPid: child.pid,
-          grandPid: g?.pid,
-          openMs: a.openMs,
-          polls: a.pollMs.length,
-          pollMsMedian: sorted[Math.floor(sorted.length / 2)],
-          pollMsMax: sorted.at(-1),
-          driverCpuMs: a.cpuUs / 1000,
-          rows: a.rows.length,
-          grandchildMs: g?.ms,
-        }),
-      );
+      if (PRINT_METRICS) {
+        console.log(`[observe-darwin] driver answer: ${line.slice(0, 6000)}`);
+        console.log(
+          JSON.stringify({
+            rootPid: a.rootPid,
+            childPid: child.pid,
+            grandPid: g?.pid,
+            openMs: a.openMs,
+            polls: a.pollMs.length,
+            pollMsMedian: sorted[Math.floor(sorted.length / 2)],
+            pollMsMax: sorted.at(-1),
+            driverCpuMs: a.cpuUs / 1000,
+            rows: a.rows.length,
+            grandchildMs: g?.ms,
+          }),
+        );
+      }
     } finally {
       rmSync(driverDir, { recursive: true, force: true });
     }

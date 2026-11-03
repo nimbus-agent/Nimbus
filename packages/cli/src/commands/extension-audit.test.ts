@@ -9,6 +9,8 @@ import {
 } from "./extension-audit.ts";
 
 const NL = String.fromCharCode(10);
+const NO_TABLE = "Network   not observed: no connection table was read in these runs";
+const UNMATCHED_TAIL = ": an address we could not match to a declared host";
 const CLOSING = [
   'At least these. Short connections can be missed, and "not seen" does not mean not used.',
   "File access is not observed.",
@@ -93,7 +95,7 @@ describe("formatExtensionAudit", () => {
     const win = formatExtensionAudit(
       entry({ os: "win32", networkObserved: false, used: [], notSeen: [], stopped: true }),
     );
-    expect(win.slice(1, 3)).toEqual(["Network   not observed on this OS yet", stop]);
+    expect(win.slice(1, 3)).toEqual([NO_TABLE, stop]);
     expect(formatExtensionAudit(entry()).join(NL)).not.toContain("stopped");
   });
 
@@ -116,15 +118,22 @@ describe("formatExtensionAudit", () => {
     expect(lines).toEqual(["acme.tool 1.2.0   not observed yet", ...CLOSING]);
   });
 
-  test("a Windows entry counts runs but says the network is not observed on this OS yet", () => {
+  test("an unobserved Windows entry counts runs and says no connection table was read", () => {
     const lines = formatExtensionAudit(
       entry({ os: "win32", networkObserved: false, used: [], notSeen: [] }),
     );
     expect(lines).toEqual([
       "acme.tool 1.2.0   observed 3 run(s) over 2 day(s), on this machine only",
-      "Network   not observed on this OS yet",
+      NO_TABLE,
       ...CLOSING,
     ]);
+  });
+
+  test("an OS the gateway does not name reads not observed on this OS yet", () => {
+    const lines = formatExtensionAudit(
+      entry({ os: "freebsd", networkObserved: false, used: [], notSeen: [] }),
+    );
+    expect(lines[1]).toBe("Network   not observed on this OS yet");
   });
 });
 
@@ -148,11 +157,93 @@ describe("an unobserved network on Linux says why, not that the OS is unobserved
     expect(lines.join(NL)).not.toContain("on this OS");
   });
 
-  test("macOS reads like Windows: not observed on this OS yet", () => {
+  test("macOS reads like Windows: no connection table was read", () => {
     const lines = formatExtensionAudit(
       entry({ os: "darwin", networkObserved: false, used: [], notSeen: [] }),
     );
-    expect(lines[1]).toBe("Network   not observed on this OS yet");
+    expect(lines[1]).toBe(NO_TABLE);
+  });
+
+  test("Windows or macOS with nothing declared: declared nothing", () => {
+    for (const os of ["win32", "darwin"]) {
+      const lines = formatExtensionAudit(
+        entry({ os, networkObserved: false, declared: [], used: [], notSeen: [] }),
+      );
+      expect(lines[1]).toBe("Network   declared nothing");
+    }
+  });
+});
+
+describe("Windows and macOS: used, not seen, unmatched", () => {
+  const win = entry({
+    os: "win32",
+    used: [{ destination: "api.example.com", port: 443, count: 5 }],
+    notSeen: ["other.example.com:443"],
+    unmatched: [
+      { destination: "104.20.23.154", port: 443, count: 2 },
+      { destination: "2001:db8::1", port: 443, count: 1 },
+    ],
+  });
+
+  test("a Windows entry, exact text", () => {
+    expect(formatExtensionAudit(win)).toEqual([
+      "acme.tool 1.2.0   observed 3 run(s) over 2 day(s), on this machine only",
+      "Network   declared api.example.com:443, other.example.com:443",
+      "  used      api.example.com:443 (5 connection(s))",
+      "  not seen  other.example.com:443",
+      `  unmatched 104.20.23.154:443 (2 connection(s))${UNMATCHED_TAIL}`,
+      `  unmatched [2001:db8::1]:443 (1 connection(s))${UNMATCHED_TAIL}`,
+      ...CLOSING,
+    ]);
+  });
+
+  test("a macOS entry prints the same lines", () => {
+    const mac = entry({
+      os: "darwin",
+      used: [],
+      notSeen: ["api.example.com:443", "other.example.com:443"],
+      unmatched: [{ destination: "17.253.144.10", port: 443, count: 3 }],
+    });
+    expect(formatExtensionAudit(mac)).toEqual([
+      "acme.tool 1.2.0   observed 3 run(s) over 2 day(s), on this machine only",
+      "Network   declared api.example.com:443, other.example.com:443",
+      "  not seen  api.example.com:443",
+      "  not seen  other.example.com:443",
+      `  unmatched 17.253.144.10:443 (3 connection(s))${UNMATCHED_TAIL}`,
+      ...CLOSING,
+    ]);
+  });
+
+  test("an unmatched line never names a host, and --json keeps the IP as it is", async () => {
+    const text = formatExtensionAudit(win).join(NL);
+    expect(text).not.toContain("undeclared");
+    const out: string[] = [];
+    await runExtensionAudit(["--json"], {
+      client: fakeClient([win]).client,
+      out: (s) => out.push(s),
+    });
+    const parsed = JSON.parse(out.join("")) as { extensions: ExtensionAuditEntry[] };
+    expect(parsed.extensions[0]?.unmatched).toEqual([
+      { destination: "104.20.23.154", port: 443, count: 2 },
+      { destination: "2001:db8::1", port: 443, count: 1 },
+    ]);
+  });
+
+  test("a hostile non-IP string in an unmatched row is sanitised, in text and --json", async () => {
+    const hostile = entry({
+      os: "win32",
+      unmatched: [{ destination: "evil\u001b[31m.test\n", port: 443, count: 1 }],
+    });
+    const lines = formatExtensionAudit(hostile);
+    expect(lines).toContain(`  unmatched evil??31m.test?:443 (1 connection(s))${UNMATCHED_TAIL}`);
+    expect(lines.join(NL)).not.toContain("\u001b");
+    const out: string[] = [];
+    await runExtensionAudit(["--json"], {
+      client: fakeClient([hostile]).client,
+      out: (s) => out.push(s),
+    });
+    const parsed = JSON.parse(out.join("")) as { extensions: ExtensionAuditEntry[] };
+    expect(parsed.extensions[0]?.unmatched[0]?.destination).toBe("evil??31m.test?");
   });
 });
 

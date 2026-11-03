@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { formatIpv6 } from "./address.ts";
 import {
   type ConnectionPollerOptions,
   canonicalIp,
@@ -10,7 +11,6 @@ import {
   startConnectionPoller,
 } from "./connection-poller.ts";
 import type { ConnectionSource, ObservedConnection } from "./types.ts";
-import { formatIpv6 } from "./win32-connections.ts";
 
 type Answers = Record<string, string[] | Error>;
 
@@ -513,7 +513,7 @@ describe("per-host readiness", () => {
 
 describe("the sources' mapped-address form", () => {
   test("formatIpv6 prints an IPv4-mapped address dotted, the only mapped form canonicalIp knows", () => {
-    // Both sources print every IPv6 remote through formatIpv6 (darwin imports it from win32).
+    // Both sources print every IPv6 remote through formatIpv6 (both import it from address.ts).
     const buf = Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 140, 82, 112, 6]);
     const text = formatIpv6(buf, 0);
     expect(text).toBe("::ffff:140.82.112.6");

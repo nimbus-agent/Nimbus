@@ -81,11 +81,13 @@ export function declaredTargets(declared: readonly string[]): DeclaredTarget[] {
   return out;
 }
 
-/** `::ffff:a.b.c.d` is the IPv4 `a.b.c.d`; every other literal is kept as given. */
 /**
+ * `::ffff:a.b.c.d` is the IPv4 `a.b.c.d`; every other literal is kept as given.
+ *
  * Only the dotted mapped form is recognised (`::ffff:7f00:1` is not). That is what both sources
- * emit: `formatIpv6` prints a mapped address dotted, pinned in `win32-connections.test.ts`,
- * `darwin-connections.test.ts` and, as this coupling, `connection-poller.test.ts`.
+ * emit: they share `address.ts`'s `formatIpv6`, which prints a mapped address dotted, pinned in
+ * `address.test.ts`, `win32-connections.test.ts`, `darwin-connections.test.ts` and, as this
+ * coupling, `connection-poller.test.ts`.
  */
 export function canonicalIp(ip: string): string {
   const lower = ip.toLowerCase();
