@@ -2,6 +2,22 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.18.0](https://github.com/nimbus-agent/Nimbus/compare/v10.17.0...v10.18.0) (2026-11-03)
+
+
+### Features
+
+* **eval:** record a golden suite from a package's own replies ([#1866](https://github.com/nimbus-agent/Nimbus/issues/1866)) ([eb03531](https://github.com/nimbus-agent/Nimbus/commit/eb03531d4cbbe56610710949892451b16e1c0a6b))
+* **extensions:** an owner-approved network grant may be narrower than the manifest (I52) ([#1877](https://github.com/nimbus-agent/Nimbus/issues/1877)) ([518aae2](https://github.com/nimbus-agent/Nimbus/commit/518aae24bdc6020a181ecc67fdfc4b1c018def08))
+* **extensions:** observe an extension's network on Linux, and nimbus extension audit ([#1872](https://github.com/nimbus-agent/Nimbus/issues/1872)) ([1e26967](https://github.com/nimbus-agent/Nimbus/commit/1e26967b4278ddd4f77ed5ee21e99b8f8d147aea))
+* **extensions:** observe an extension's network on Windows and macOS ([#1873](https://github.com/nimbus-agent/Nimbus/issues/1873)) ([be0cc28](https://github.com/nimbus-agent/Nimbus/commit/be0cc28072e1aeac504b30fe4b79ce90e590b486))
+* **extensions:** warn when an extension's observed network goes beyond what it declared ([#1875](https://github.com/nimbus-agent/Nimbus/issues/1875)) ([cfd928c](https://github.com/nimbus-agent/Nimbus/commit/cfd928c93374a1ad6f8aa3a378229e9ec43918bb))
+
+
+### Bug Fixes
+
+* **deps:** clear the postcss-selector-parser advisory and recheck katex ([#1871](https://github.com/nimbus-agent/Nimbus/issues/1871)) ([8ed853b](https://github.com/nimbus-agent/Nimbus/commit/8ed853bf6f295d72b7de2cb5ce4fb46200768437))
+
 ## [10.17.0](https://github.com/nimbus-agent/Nimbus/compare/v10.16.0...v10.17.0) (2026-11-02)
 
 
