@@ -51,6 +51,16 @@ jobs:
         shell: bash
         run: clang -O2 -Wall -o scripts/spikes/attribution/poll-darwin scripts/spikes/attribution/poll-darwin.c
 
+      - name: Print libproc offsets (macOS, for 6b-2's FFI reader)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          clang -O2 -Wall -o offsets-darwin scripts/spikes/attribution/offsets-darwin.c
+          ./offsets-darwin | tee libproc-offsets.json
+          uname -m
+          clang -O2 -Wall -arch x86_64 -o offsets-darwin-x64 scripts/spikes/attribution/offsets-darwin.c && arch -x86_64 ./offsets-darwin-x64 > libproc-offsets-x64.json 2>/dev/null || echo 'x64 run not available'
+          diff libproc-offsets.json libproc-offsets-x64.json && echo 'x64 offsets identical' || true
+
       - name: Who am I
         shell: bash
         run: |
@@ -75,5 +85,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: spike-attribution-${{ matrix.os }}
-          path: spike-result.json
+          path: |
+            spike-result.json
+            libproc-offsets*.json
           if-no-files-found: warn
