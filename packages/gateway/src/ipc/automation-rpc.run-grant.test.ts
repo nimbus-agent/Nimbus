@@ -5,13 +5,14 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { signTrustStatement } from "@nimbus-dev/registry-format";
 import nacl from "tweetnacl";
 import {
@@ -477,6 +478,32 @@ describe("the extension runtime over the automation dispatcher (PR 3)", () => {
       .get("ext_rpc_run") as { c: number };
     expect(row.c).toBe(0);
     expect(getConnectorHealth(db, "ext_rpc_run").state).toBe("not_configured");
+  });
+
+  test("extension.remove deletes its pending observation files AFTER the child is stopped, and no one else's", async () => {
+    const { db, env, installPath } = await installed();
+    await approve(db, env);
+    const obs = join(dirname(installPath), "obs");
+    mkdirSync(obs, { recursive: true });
+    const own = ["ext_rpc_run.1.deadbeef.0.json", "ext_rpc_run.1.deadbeef.1.42.abcd.tmp"];
+    const other = "ext_rpc_run_two.1.deadbeef.0.json";
+    for (const n of [...own, other]) writeFileSync(join(obs, n), "{}");
+    let atStop: string[] = [];
+    await dispatchAutomationRpc({
+      method: "extension.remove",
+      params: { id: "rpc.run" },
+      db,
+      observationDir: obs,
+      mesh: {
+        ...idleMesh(),
+        stopExtensionClient: async () => {
+          // A stopping wrapper writes its final window here; it must not outlive the removal.
+          atStop = readdirSync(obs).sort((a, b) => (a < b ? -1 : 1));
+        },
+      },
+    });
+    expect(atStop).toEqual([...own, other].sort((a, b) => (a < b ? -1 : 1)));
+    expect(readdirSync(obs)).toEqual([other]);
   });
 
   test("extension.remove still completes when the stop hook throws", async () => {

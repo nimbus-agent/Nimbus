@@ -58,7 +58,11 @@ export type CoverageRow = {
   network_observed: number;
 };
 
-/** Applies one window in ONE transaction: entry upserts (bounded per extension and version), then coverage. */
+/**
+ * Applies one window in ONE transaction: entry upserts (bounded per extension and version), then
+ * coverage. `network_observed` is sticky (an OR over every window applied): file 0 of a run always
+ * says false, since the runner marks it observed only after the writer exists.
+ */
 export function applyObservationWindow(db: Database, w: ObservationWindow): void {
   const countStmt = db.query(
     "SELECT COUNT(*) AS n FROM extension_network_observation WHERE extension_id = ? AND version = ?",
@@ -112,7 +116,7 @@ export function applyObservationWindow(db: Database, w: ObservationWindow): void
            first_seen = MIN(first_seen, excluded.first_seen),
            last_seen = MAX(last_seen, excluded.last_seen),
            dropped = dropped + excluded.dropped,
-           network_observed = excluded.network_observed`,
+           network_observed = MAX(network_observed, excluded.network_observed)`,
         [
           w.extensionId,
           w.version,
@@ -125,7 +129,9 @@ export function applyObservationWindow(db: Database, w: ObservationWindow): void
           w.networkObserved ? 1 : 0,
         ],
       );
-    })();
+      // IMMEDIATE: the write lock is taken before the row count is read, so the 512 bound and the
+      // writes it decides cannot be interleaved with another writer.
+    }).immediate();
   } finally {
     countStmt.finalize();
     existsStmt.finalize();

@@ -6,7 +6,11 @@ import { join } from "node:path";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { SandboxPolicy } from "../../platform/sandbox/sandbox-policy.ts";
-import { sandboxWrapperOnlyEnv } from "../../platform/sandbox/sandbox-policy.ts";
+import {
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
+  sandboxWrapperOnlyEnv,
+} from "../../platform/sandbox/sandbox-policy.ts";
 import type { ServerSpec } from "./slot.ts";
 import { wrapServerSpec, wrapServerSpecInCwd } from "./wrap-server-spec.ts";
 
@@ -136,6 +140,36 @@ describe("wrapServerSpec", () => {
   test("wrapServerSpecInCwd sets the cwd exactly as given", () => {
     const wrapped = wrapServerSpecInCwd(makeSpec(), makeManifest(), "/home/user/exact");
     expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/exact");
+  });
+
+  test("wrapServerSpecInCwd's wrapperEnv reaches the wrapper's env, beside the policy wire", () => {
+    const wrapped = wrapServerSpecInCwd(makeSpec(), makeManifest(), "/home/user/exact", {
+      [SANDBOX_OBSERVATION_FILE_ENV]: "/obs/ext_a.1.deadbeef",
+      [SANDBOX_OBSERVATION_LABEL_ENV]: '{"extensionId":"a","version":"1"}',
+    });
+    expect(wrapped.env[SANDBOX_OBSERVATION_FILE_ENV]).toBe("/obs/ext_a.1.deadbeef");
+    expect(wrapped.env[SANDBOX_OBSERVATION_LABEL_ENV]).toBe('{"extensionId":"a","version":"1"}');
+    expect(wrapped.env["NIMBUS_SANDBOX_CWD"]).toBe("/home/user/exact");
+    // The child's own env is unchanged.
+    expect(wrapped.env["GITHUB_PAT"]).toBe("ghp_test");
+  });
+
+  test("wrapperEnv overrides a same-named key the child spec tried to set", () => {
+    const wrapped = wrapServerSpecInCwd(
+      makeSpec({ [SANDBOX_OBSERVATION_FILE_ENV]: "/etc/planted" }),
+      makeManifest(),
+      "/home/user/exact",
+      { [SANDBOX_OBSERVATION_FILE_ENV]: "/obs/real" },
+    );
+    expect(wrapped.env[SANDBOX_OBSERVATION_FILE_ENV]).toBe("/obs/real");
+  });
+
+  test("wrapperEnv refuses any key that is not wrapper-only, so it can never carry a child variable", () => {
+    for (const key of ["PATH", "GITHUB_PAT", "NIMBUS_SANDBOX_POLICY_JSON", "NIMBUS_SANDBOX_CWD"]) {
+      expect(() =>
+        wrapServerSpecInCwd(makeSpec(), makeManifest(), "/home/user/exact", { [key]: "x" }),
+      ).toThrow(/wrapper-only/);
+    }
   });
 
   test("does not mutate the input spec", () => {

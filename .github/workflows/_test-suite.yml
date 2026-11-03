@@ -860,6 +860,15 @@ jobs:
         shell: pwsh
         run: bun run build:sandbox-helper:win32
 
+      # The Linux helper, for `extension-observation.e2e.test.ts` alone: the quality layer's Linux
+      # proof (a real extension's network observed through the forwarder). That file hands the path
+      # to ITS gateway only, so no other e2e changes sandbox path, and NIMBUS_REQUIRE_SANDBOX_HELPER
+      # below turns its premise skip into a failure. No other file in the e2e tree reads that flag.
+      - name: Linux — sandbox helper (extension observation e2e)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bun run build:sandbox-helper
+
       - name: macOS — Strip quarantine from native SQLite extensions
         if: runner.os == 'macOS'
         shell: bash
@@ -887,7 +896,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${{ runner.os }}" == "Linux" ]]; then
-            bash scripts/ci/run-with-optional-dbus.sh bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
+            NIMBUS_REQUIRE_SANDBOX_HELPER=1 bash scripts/ci/run-with-optional-dbus.sh bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
           else
             bun test packages/gateway/test/e2e/ --reporter=junit --reporter-outfile=junit-reports/junit-e2e-gateway.xml
           fi

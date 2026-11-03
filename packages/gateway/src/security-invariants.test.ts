@@ -6482,6 +6482,7 @@ describe("I43 — an installed extension's code runs only through the verified s
       vault,
       env,
       sandboxDir: join(root, "sandbox"),
+      observationDir: join(root, "obs"),
       runtimeReadPaths: () => [join(root, "bun-bin")],
       isConnectorAllowed: () => true,
       ...(opts.stage === undefined ? {} : { stage: opts.stage }),
@@ -6699,6 +6700,7 @@ describe("I43 — an installed extension's code runs only through the verified s
         vault: new MockVault(),
         env: fx.env,
         sandboxDir: join(fx.root, "sandbox"),
+        observationDir: join(fx.root, "obs"),
         runtimeReadPaths: () => [],
         isConnectorAllowed: () => true,
       });
@@ -6748,7 +6750,10 @@ describe("I43 — an installed extension's code runs only through the verified s
     // long-lived per-policy leaf `wrapServerSpec` derives — and the manifest id is `ext.<serviceId>`.
     expect(src).toMatch(/return wrapServerSpecInCwd\(/);
     expect(src).not.toMatch(/\bwrapServerSpec\(/);
-    expect(src).toMatch(/v\.stagePath,\s*\);/);
+    // The stage is the cwd; the only fourth argument is the wrapper-only observation pair.
+    expect(src).toMatch(
+      /v\.stagePath,\s*observationWrapperEnv\(deps\.observationPrefix, v\),\s*\);/,
+    );
     expect(prep).toMatch(/extensionStageRootFor\(deps\.sandboxDir, verified\.serviceId\)/);
     expect(src).toMatch(/id: `ext\.\$\{v\.serviceId\}`,/);
     // Production never injects a verifier: the one construction site passes no `verify`.
@@ -6807,9 +6812,13 @@ describe("I43 — an installed extension's code runs only through the verified s
     const { getRunGrant, upsertRunGrant } = await import("./extensions/run-grant-store.ts");
     const { extensionProcessEnv } = await import("./extensions/spawn-env.ts");
     const { sandboxWrapperOnlyEnv } = await import("./platform/sandbox/sandbox-policy.ts");
-    const { SANDBOX_POLICY_ENV, SANDBOX_CWD_ENV } = await import(
-      "./platform/sandbox/sandbox-policy.ts"
-    );
+    const {
+      SANDBOX_POLICY_ENV,
+      SANDBOX_CWD_ENV,
+      SANDBOX_OBSERVATION_FILE_ENV,
+      SANDBOX_OBSERVATION_LABEL_ENV,
+    } = await import("./platform/sandbox/sandbox-policy.ts");
+    const { wrapperChildEnv } = await import("./platform/sandbox/sandbox-wrapper.ts");
     const f = await installAndMaybeApprove({ credential: true });
     const g = getRunGrant(f.db, f.id);
     if (g === null) throw new Error("no grant");
@@ -6827,9 +6836,17 @@ describe("I43 — an installed extension's code runs only through the verified s
       ...Object.keys(sandboxWrapperOnlyEnv()),
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
+      // The observation channel: for the wrapper, which strips both before the child starts.
+      SANDBOX_OBSERVATION_FILE_ENV,
+      SANDBOX_OBSERVATION_LABEL_ENV,
       "I43_TOKEN",
     ]);
     expect(Object.keys(prepared.spec.env).filter((k) => !allowed.has(k))).toEqual([]);
+    // What the wrapper hands its child is exactly the I1 env with the granted credential: neither
+    // the observation prefix nor its label reaches the child.
+    expect(wrapperChildEnv(prepared.spec.env)).toEqual(
+      extensionProcessEnv({ I43_TOKEN: "i43-granted-value" }),
+    );
     expect(Object.values(prepared.spec.env)).not.toContain("i43-ungranted-value");
     expect(JSON.stringify(prepared.spec.args)).not.toContain("i43-granted-value");
     prepared.discard();
@@ -6841,6 +6858,40 @@ describe("I43 — an installed extension's code runs only through the verified s
     expect(await refusalCode(f.source.prepareSpawn(g.service_id))).toBe(
       "ERR_EXTENSION_RUN_CHANGED",
     );
+  });
+
+  test("source pin: the observation keys ride only wrapServerSpecInCwd's wrapper-only fourth argument, from a directory in no grant", async () => {
+    const src = stripComments(await read("packages/gateway/src/extensions/extension-runtime.ts"));
+    // The pair is built in one place, from exactly the two wrapper-only names.
+    const fnAt = src.indexOf("function observationWrapperEnv(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fn = src.slice(fnAt, src.indexOf("\n}\n", fnAt));
+    expect(fn).toMatch(/\[SANDBOX_OBSERVATION_FILE_ENV\]: prefix,/);
+    expect(fn).toMatch(
+      /\[SANDBOX_OBSERVATION_LABEL_ENV\]: JSON\.stringify\(\{\s*extensionId: v\.extensionId,\s*version: v\.version,?\s*\}\)/,
+    );
+    expect(src.match(/observationWrapperEnv\(/g) ?? []).toHaveLength(2);
+    // prepareSpawn derives the prefix from the gateway's observation directory per spawn.
+    const prep = src.slice(src.indexOf("async prepareSpawn("));
+    expect(prep).toMatch(
+      /observationPrefix: observationPrefixFor\(deps\.observationDir, staged\.serviceId\),/,
+    );
+    // wrapServerSpecInCwd refuses any key the wrapper would pass on to its child.
+    const wrap = stripComments(
+      await read("packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts"),
+    );
+    expect(wrap).toMatch(/if \(wrapperEnv !== undefined\) assertWrapperOnly\(wrapperEnv\);/);
+    expect(wrap).toMatch(/if \(!isSandboxWrapperOnlyEnv\(key\)\) \{\s*throw new Error\(/);
+    // The directory is the gateway's own: the runtime read paths never name it, and the slot
+    // source gets it only as `observationDir`.
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    const callAt = assemble.indexOf("createExtensionSlotSource({");
+    const call = assemble.slice(callAt, assemble.indexOf("})", callAt));
+    expect(call).toMatch(/observationDir: extensionObservationDir,/);
+    expect(call).toMatch(
+      /runtimeReadPaths: \(\) => resolveRuntimeById\("bun"\)\.requiredReadPaths\(\),/,
+    );
+    expect(src).not.toMatch(/runtimeReadPaths[^\n]*observation/i);
   });
 
   test("source pin: credential values reach the child ONLY as extensionProcessEnv's extra, read after verification", async () => {

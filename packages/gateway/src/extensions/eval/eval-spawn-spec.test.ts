@@ -33,7 +33,12 @@ function devInlineRole(): string {
       grants: { network: [], read: [], write: [] },
       credentials: {},
     } as unknown as Parameters<typeof buildExtensionSpawnSpec>[0],
-    { runtimeReadPaths, layout: DEV_LAYOUT, credentialEnv: {} },
+    {
+      runtimeReadPaths,
+      layout: DEV_LAYOUT,
+      credentialEnv: {},
+      observationPrefix: join(tmpdir(), "eval-obs", "ext_a_b.1.deadbeef"),
+    },
   );
   return spec.args.at(-2) ?? "";
 }

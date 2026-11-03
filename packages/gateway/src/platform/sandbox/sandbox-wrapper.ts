@@ -57,7 +57,9 @@ function observationWriter(): NetworkObservationWriter | null {
 }
 
 /** The wrapper's environment less what is the wrapper's alone: the policy wire and every wrapper-only key. */
-function wrapperChildEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+export function wrapperChildEnv(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, string> {
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     if (k === SANDBOX_POLICY_ENV || k === SANDBOX_CWD_ENV || isSandboxWrapperOnlyEnv(k)) continue;

@@ -145,6 +145,49 @@ describe("applyObservationWindow", () => {
     ]);
   });
 
+  test("network_observed is sticky: a later window saying false never clears an earlier true", () => {
+    // File 0 of every run says false (the runner marks after the writer exists), so a run's
+    // observed flag is the OR of its windows, and so is the version's.
+    applyObservationWindow(db, win({ networkObserved: false }));
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.network_observed).toBe(0);
+    applyObservationWindow(db, win({ runStart: false, networkObserved: true }));
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.network_observed).toBe(1);
+    applyObservationWindow(db, win({ runStart: true, networkObserved: false }));
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").coverage?.network_observed).toBe(1);
+  });
+
+  test("the window is applied in an IMMEDIATE transaction, so the row count and the writes are atomic", () => {
+    const modes: string[] = [];
+    const original = db.transaction.bind(db);
+    db.transaction = ((fn: (...a: never[]) => unknown) => {
+      const t = original(fn);
+      const wrapped = Object.assign(
+        (...a: never[]) => {
+          modes.push("deferred");
+          return t(...a);
+        },
+        {
+          deferred: (...a: never[]) => {
+            modes.push("deferred");
+            return t.deferred(...a);
+          },
+          immediate: (...a: never[]) => {
+            modes.push("immediate");
+            return t.immediate(...a);
+          },
+          exclusive: (...a: never[]) => {
+            modes.push("exclusive");
+            return t.exclusive(...a);
+          },
+        },
+      );
+      return wrapped;
+    }) as typeof db.transaction;
+    applyObservationWindow(db, win());
+    expect(modes).toEqual(["immediate"]);
+    expect(readExtensionAudit(db, "ext-a", "1.0.0").rows).toHaveLength(1);
+  });
+
   test("a CHECK rejects outcome 'other'", () => {
     expect(() =>
       dbRun(

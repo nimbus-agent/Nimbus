@@ -21,6 +21,7 @@ import {
 } from "../../extensions/extension-evidence.ts";
 import type { ExtensionRunGrantEnv } from "../../extensions/extension-run-grants.ts";
 import { migrationRedactionRoots } from "../../extensions/migration/migration-redact.ts";
+import { extensionObservationDirFor } from "../../extensions/observation/observation-ingest.ts";
 import { buildExtensionRunGrantEnv } from "../../extensions/run-grant-env.ts";
 import { NamespaceStore } from "../../federation/namespace-store.ts";
 import { preflightConsent } from "../../federation/preflight-consent-broker.ts";
@@ -2113,6 +2114,11 @@ function extensionEvalDepsFor(
   };
 }
 
+/** The gateway's observation directory, when this server knows its data directory. */
+function observationDirOf(dataDir: string | undefined): string | undefined {
+  return dataDir === undefined ? undefined : extensionObservationDirFor(dataDir);
+}
+
 async function dispatchExtensionAutomationRpc(
   ctx: ServerCtx,
   clientId: string,
@@ -2154,6 +2160,7 @@ async function dispatchExtensionAutomationRpc(
       ...(ctx.options.continuityTable === undefined
         ? {}
         : { continuityTable: ctx.options.continuityTable }),
+      observationDir: observationDirOf(ctx.options.dataDir),
     });
     if (out.kind === "hit") {
       return out.value;
