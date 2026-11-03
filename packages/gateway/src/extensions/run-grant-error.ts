@@ -5,6 +5,8 @@ export type ExtensionRunGrantErrorCode =
   | "ERR_EXTENSION_GRANT_PATH_MISSING"
   | "ERR_EXTENSION_GRANT_PROTECTED"
   | "ERR_EXTENSION_GRANT_SELF_WRITE"
+  /** I52: `--network` named an entry the manifest does not declare; narrowing can only remove. */
+  | "ERR_EXTENSION_GRANT_NETWORK_UNDECLARED"
   | "ERR_EXTENSION_NOT_FOUND"
   | "ERR_EXTENSION_RUN_DISABLED"
   | "ERR_EXTENSION_RUN_UNVERIFIED"

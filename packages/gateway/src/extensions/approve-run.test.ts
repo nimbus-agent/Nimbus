@@ -51,6 +51,7 @@ import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { deleteRunGrant, getRunGrant, listRunGrants, upsertRunGrant } from "./run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./tree-digest.ts";
 import { recordTrustStatements, type StatementSource } from "./trust/trust-store.ts";
+import { readVerifiedExtensionForSpawn } from "./verified-extension.ts";
 import { encodeBase64, generateEd25519Keypair, signManifest } from "./verify-signature.ts";
 
 const cleanups: Array<() => void> = [];
@@ -1339,5 +1340,187 @@ describe("a starter pack is never approved to run", () => {
     });
     expect(seen).toHaveLength(1);
     expect(listRunGrants(fx.db).map((g) => g.extension_id)).toEqual([PACK_FIXTURE.codeA]);
+  });
+});
+
+describe("a network the owner narrowed (--network, I52)", () => {
+  const ID = "com.example.narrow";
+  const twoHosts = (root: string) => ({
+    permissions: {
+      network: ["api.example.com", "imap.example.com:993"],
+      filesystem: { read: [join(root, "outside")], write: [] },
+    },
+  });
+  const approveNarrowed = (
+    s: { db: Database; env: ExtensionRunGrantEnv },
+    seen: Asked[],
+    network: readonly string[] | undefined,
+    gate?: (a: Asked) => Promise<boolean>,
+  ) =>
+    approveExtensionRun(ID, {
+      db: s.db,
+      env: s.env,
+      gate: gate ?? gateThat(true, seen),
+      runtimeEnabled: true,
+      now: () => 5,
+      ...(network === undefined ? {} : { network }),
+    });
+
+  test("end to end: the prompt shows the narrowed list and what is declared; the grant stores it; the spawn verifier accepts it", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    const seen: Asked[] = [];
+    const out = await approveNarrowed(s, seen, ["IMAP.example.com:993"]);
+    const p = seen[0]?.payload ?? {};
+    expect(seen.map((a) => a.type)).toEqual(["extension.run"]);
+    expect(p["network"]).toEqual(["imap.example.com:993"]);
+    expect(p["declaredNetwork"]).toEqual(["api.example.com", "imap.example.com:993"]);
+    expect(p["networkNarrowed"]).toBe(true);
+    // No field the consent display or the audit row would redact.
+    expect(Object.keys(p).filter((k) => /key|credential/i.test(k))).toEqual([]);
+    const shown = redactPayloadForConsentDisplay(p) as Record<string, unknown>;
+    expect(shown["network"]).toEqual(["imap.example.com:993"]);
+    expect(shown["declaredNetwork"]).toEqual(["api.example.com", "imap.example.com:993"]);
+    const read = [join(s.root, "outside")];
+    expect(out.grants).toEqual({ network: ["imap.example.com:993"], read, write: [] });
+    expect(getRunGrant(s.db, ID)?.permissions_json).toBe(
+      JSON.stringify({ network: ["imap.example.com:993"], read, write: [] }),
+    );
+    const v = await readVerifiedExtensionForSpawn(ID, {
+      db: s.db,
+      vault: new MockVault(),
+      env: s.env,
+    });
+    expect(v.grants).toEqual({ network: ["imap.example.com:993"], read, write: [] });
+  });
+
+  test("an empty list (`none`) stores no network and keeps the files exactly", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    const seen: Asked[] = [];
+    const out = await approveNarrowed(s, seen, []);
+    expect(seen[0]?.payload["network"]).toEqual([]);
+    expect(out.grants).toEqual({ network: [], read: [join(s.root, "outside")], write: [] });
+  });
+
+  test("without --network no narrowing fields are shown and the whole declared network is granted", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    const seen: Asked[] = [];
+    await approveNarrowed(s, seen, undefined);
+    const p = seen[0]?.payload ?? {};
+    expect(p["network"]).toEqual(["api.example.com", "imap.example.com:993"]);
+    expect("declaredNetwork" in p).toBe(false);
+    expect("networkNarrowed" in p).toBe(false);
+  });
+
+  test("an entry the manifest does not declare refuses before any prompt, naming it, and stores nothing", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    for (const bad of [
+      ["evil.example.com"],
+      ["api.example.com", "imap.example.com"],
+      ["api.example.com:8443"],
+    ]) {
+      const seen: Asked[] = [];
+      let caught: unknown;
+      try {
+        await approveNarrowed(s, seen, bad);
+      } catch (e) {
+        caught = e;
+      }
+      expect(caught).toBeInstanceOf(ExtensionRunGrantError);
+      expect((caught as ExtensionRunGrantError).code).toBe(
+        "ERR_EXTENSION_GRANT_NETWORK_UNDECLARED",
+      );
+      expect(seen).toEqual([]);
+      expect(getRunGrant(s.db, ID)).toBeNull();
+    }
+  });
+
+  test("the same narrowing again answers without prompting; dropping --network asks again for the whole list", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    await approveNarrowed(s, [], ["api.example.com"]);
+    const again: Asked[] = [];
+    const out = await approveNarrowed(s, again, ["API.example.com:443"]);
+    expect(out.changed).toBe(false);
+    expect(out.grants.network).toEqual(["api.example.com"]);
+    expect(again).toEqual([]);
+    const full: Asked[] = [];
+    const widened = await approveNarrowed(s, full, undefined);
+    expect(full).toHaveLength(1);
+    expect(widened.grants.network).toEqual(["api.example.com", "imap.example.com:993"]);
+  });
+
+  test("a declared path that resolves differently once the prompt is open still refuses a narrowed approval", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    mkdirSync(join(s.root, "elsewhere"), { recursive: true });
+    let moved = false;
+    const env: ExtensionRunGrantEnv = {
+      ...s.env,
+      realpath: (p) =>
+        realpathSync.native(moved && p === join(s.root, "outside") ? join(s.root, "elsewhere") : p),
+    };
+    await expect(
+      approveNarrowed({ db: s.db, env }, [], ["api.example.com"], async () => {
+        moved = true;
+        return true;
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(getRunGrant(s.db, ID)).toBeNull();
+  });
+
+  test("the installed files changing while a narrowed prompt is open refuses", async () => {
+    const s = await setup({ id: ID, manifest: twoHosts });
+    await expect(
+      approveNarrowed(s, [], ["api.example.com"], async () => {
+        writeFileSync(join(s.installPath, "dist", "index.js"), "evil();\n");
+        return true;
+      }),
+    ).rejects.toThrow(/ERR_EXTENSION_RUN_CHANGED/);
+    expect(getRunGrant(s.db, ID)).toBeNull();
+  });
+
+  test("the migration path never narrows: a network reaching it refuses NOT_MIGRATED and grants nothing", async () => {
+    const s = await setup({
+      id: ID,
+      signed: true,
+      manifest: (root) => ({ ...twoHosts(root), credentials: { token: { env: "FIXTURE_TOKEN" } } }),
+    });
+    s.db.run("UPDATE extension SET source_root_fingerprint = 'root-fp' WHERE id = ?", [ID]);
+    const entry: ContinuityEntry = {
+      legacyServiceId: "fixture_reader",
+      extensionId: ID,
+      publisherKey: s.publisherKey ?? "",
+      sourceRootFingerprint: "root-fp",
+      credentials: { token: "fixture.token" },
+      expectedPermissions: { network: [], read: [], write: [] },
+      itemTypes: [],
+    };
+    const digest = listExtensions(s.db).find((r) => r.id === ID)?.tree_digest ?? "";
+    recordMigrationPrepared(
+      s.db,
+      {
+        id: "mig-n",
+        legacyServiceId: "fixture_reader",
+        extensionId: ID,
+        version: "1.0.0",
+        treeDigest: digest,
+        stagePath: "/stage",
+      },
+      1,
+    );
+    // The type omits `network`; a caller that smuggles one in through a wider object is refused.
+    const base = {
+      db: s.db,
+      env: s.env,
+      runtimeEnabled: true,
+      now: () => 7,
+      continuityTable: [entry],
+    };
+    const deps = { ...base, network: ["api.example.com"] };
+    await expect(approveMigratedExtensionRun(deps, ID)).rejects.toThrow(
+      /ERR_EXTENSION_RUN_NOT_MIGRATED.*never narrows/,
+    );
+    expect(getRunGrant(s.db, ID)).toBeNull();
+    // Precondition: without the smuggled network the same migration grants the whole declared list.
+    const out = await approveMigratedExtensionRun(base, ID);
+    expect(out.grants.network).toEqual(["api.example.com", "imap.example.com:993"]);
   });
 });

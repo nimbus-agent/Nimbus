@@ -1210,6 +1210,24 @@ function continuityTableOf(ctx: AutomationCtx): { continuityTable?: readonly Con
 }
 
 /**
+ * `network` (I52): absent, an array of strings (the declared entries to keep), or the literal
+ * `"none"` (no network, `[]`). Anything else is -32602. Which entries are declared is the approval's
+ * own check (`narrowNetwork`), so this only fixes the shape.
+ */
+function approveRunNetworkParam(rec: Record<string, unknown> | undefined): { network?: string[] } {
+  const raw = rec?.["network"];
+  if (raw === undefined) return {};
+  if (raw === "none") return { network: [] };
+  if (Array.isArray(raw) && raw.every((e): e is string => typeof e === "string")) {
+    return { network: [...raw] };
+  }
+  throw new AutomationRpcError(
+    -32602,
+    `Invalid params: 'network' must be an array of strings or "none"`,
+  );
+}
+
+/**
  * Approve an installed extension to RUN (extension-runtime § 4.4): a second, separate approval from
  * install, asked under `extension.run`. The lazy mesh spawns it on first use, re-verifying first.
  */
@@ -1223,6 +1241,7 @@ async function handleExtensionApproveRun(
   if (rawModelAccess !== undefined && typeof rawModelAccess !== "boolean") {
     throw new AutomationRpcError(-32602, "Invalid params: 'modelAccess' must be a boolean");
   }
+  const network = approveRunNetworkParam(rec);
   const ownerGate = ctx.ownerGate;
   if (ownerGate === undefined) {
     throw new AutomationRpcError(-32603, "extension.approveRun requires the owner's HITL gate");
@@ -1242,6 +1261,7 @@ async function handleExtensionApproveRun(
       runtimeEnabled: ctx.runtimeEnabled ?? true,
       now: Date.now,
       modelAccess: rawModelAccess === true,
+      ...network,
       evidence: {
         ...(ctx.sandboxRunner === undefined ? {} : { sandbox: ctx.sandboxRunner }),
         homeDir: homedir(),

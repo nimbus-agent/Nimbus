@@ -107,7 +107,7 @@ Install and run are **different consents**. Install records what arrived; a run 
 
 **The spawn path (I43), in order — keep it ordered:**
 
-1. `readVerifiedExtensionForSpawn` re-reads row, grant, manifest + entry hash, tree digest (against row AND grant), I16 for a publisher manifest, entry inside the tree (`ERR_EXTENSION_ENTRY_OUTSIDE`), and re-resolved grants equal to the stored ones (`ERR_EXTENSION_RUN_CHANGED`). Each step throws a typed `ExtensionRunGrantError`. It trusts no earlier pass.
+1. `readVerifiedExtensionForSpawn` re-reads row, grant, manifest + entry hash, tree digest (against row AND grant), I16 for a publisher manifest, entry inside the tree (`ERR_EXTENSION_ENTRY_OUTSIDE`), and stored file grants equal to the re-resolved ones with the stored network a subset of the re-resolved network (`checkStoredAgainstResolved`, I52; `ERR_EXTENSION_RUN_CHANGED`); the spawn runs under the re-resolved files and the stored network. An owner-narrowed network comes only from `nimbus extension approve <id> --network <a,b|none>`. Each step throws a typed `ExtensionRunGrantError`. It trusts no earlier pass.
 2. `stageVerifiedExtension` sweeps `extensionStageRootFor(sandboxDir, serviceId)` (= `<sandboxDir>/ext-stage/<serviceId>`), copies regular files to a fresh `<uuid>` dir, re-digests the COPY (`ERR_EXTENSION_RUN_TREE_CHANGED` on mismatch, stage removed).
 3. `buildExtensionRuntimeManifest` (`ext.<serviceId>`: verified grants + runtime read paths, never stored) and `buildExtensionSpawnSpec` — both named only in `extension-runtime.ts`, built once inside `prepareSpawn`.
 4. `wrapServerSpecInCwd` with the stage as cwd → I1 + I15 apply unchanged. The install tree is **not** granted at all.

@@ -2988,11 +2988,62 @@ describe("runExtensionApprove", () => {
     expect(out.stdout).toContain("model access: off");
   });
 
+  test('--network <a,b> sends the listed entries; --network none sends "none"; the output names the network', async () => {
+    setTty(true);
+    for (const [args, network, shown] of [
+      [
+        ["approve", "x", "--network", "a.example.com, b.example.com:993"],
+        ["a.example.com", "b.example.com:993"],
+        "network: a.example.com, b.example.com:993",
+      ],
+      [["approve", "--network", "none", "x"], "none", "network: none"],
+    ] as const) {
+      out.reset();
+      const granted = network === "none" ? [] : [...network];
+      const { client, calls } = createMockIpcClient([
+        {
+          id: "x",
+          serviceId: "ext_x",
+          treeDigest: "ab".repeat(32),
+          changed: true,
+          grants: { network: granted, read: [], write: [] },
+        },
+      ]);
+      const argv = [...args];
+      await runExtensionApprove(client, argv, stripFlags(argv.slice(1)));
+      expect(calls[0]).toEqual({
+        method: "extension.approveRun",
+        params: { id: "x", modelAccess: false, network },
+      });
+      expect(out.stdout).toContain(shown);
+    }
+  });
+
+  test("--network with no value, or with an empty entry, refuses before any call", async () => {
+    setTty(true);
+    for (const args of [
+      ["approve", "x", "--network"],
+      ["approve", "x", "--network", ""],
+      ["approve", "x", "--network", "a.example.com,,b.example.com"],
+      ["approve", "x", "--network", "--model"],
+    ]) {
+      const { client, calls } = createMockIpcClient([]);
+      await expect(runExtensionApprove(client, args, stripFlags(args.slice(1)))).rejects.toThrow(
+        /--network/,
+      );
+      expect(calls).toHaveLength(0);
+    }
+  });
+
+  test("stripFlags drops --network and its value, so the id stays the first positional", () => {
+    expect(stripFlags(["--network", "a.example.com", "x"])).toEqual(["x"]);
+  });
+
   test("a missing id names the --model flag in the usage", async () => {
     setTty(true);
     const { client } = createMockIpcClient([]);
     await expect(runExtensionApprove(client, ["approve"], [])).rejects.toThrow(
-      "Usage: nimbus extension approve <id> [--model]",
+      "Usage: nimbus extension approve <id> [--model] [--network <a,b|none>]",
     );
   });
 

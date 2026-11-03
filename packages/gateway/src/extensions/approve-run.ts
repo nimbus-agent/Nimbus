@@ -20,7 +20,9 @@ import {
 import { previewFileGrants } from "./extension-file-preview.ts";
 import { describeNetworkReach, type ReachRunner } from "./extension-reach.ts";
 import {
+  checkStoredAgainstResolved,
   type ExtensionRunGrantEnv,
+  narrowNetwork,
   type ResolvedRunGrants,
   resolveExtensionRunGrants,
   serializeRunGrants,
@@ -74,6 +76,15 @@ export interface ApproveExtensionRunDeps {
    * access off.
    */
   readonly modelAccess?: boolean;
+  /**
+   * `nimbus extension approve --network <list|none>` (I52): grant only these of the network entries
+   * the manifest declares (`[]` is no network). Each must name a declared entry
+   * (`narrowNetwork`); anything else refuses before the prompt. The prompt shows the narrowed list
+   * beside everything declared, and the grant stores the narrowed list. Absent means everything
+   * declared: every approval states the whole grant, so approving without it undoes a narrowing.
+   * The migration path never narrows (its deps type omits this, and `approveRun` refuses it).
+   */
+  readonly network?: readonly string[];
   /**
    * The continuity table a legacy connector id binds through (`findContinuityBinding`). Absent means
    * the production `CONTINUITY_TABLE`; tests inject a fixture entry.
@@ -199,6 +210,11 @@ export type RunConsentSubject = {
   readonly reusesConnector?: string | undefined;
   /** I48: the current blocks, shown so the approval acknowledges each one by statement id. */
   readonly trustBlocks?: readonly TrustBlock[];
+  /**
+   * I52: set only when the owner narrowed the network; everything the manifest declares, shown
+   * beside the narrowed `grants.network` so the owner sees what is left out.
+   */
+  readonly declaredNetwork?: readonly string[] | undefined;
 };
 
 export function buildRunConsentPayload(
@@ -216,6 +232,7 @@ export function buildRunConsentPayload(
     credentials,
     reusesConnector,
     trustBlocks = [],
+    declaredNetwork,
   } = subject;
   let installPath = row.install_path;
   try {
@@ -237,6 +254,11 @@ export function buildRunConsentPayload(
           },
     treeDigest,
     network: [...grants.network],
+    // I52: a narrowed grant shows what the manifest declares beside it. No field name here contains
+    // "key" or "credential" (both are redacted from the prompt and the audit row).
+    ...(declaredNetwork === undefined
+      ? {}
+      : { declaredNetwork: [...declaredNetwork], networkNarrowed: true }),
     // What the network grant reaches on THIS machine, from the sandbox's live posture: the host list
     // above is not a bound where the sandbox cannot filter by host. Worded by the same function as
     // the migration and install prompts.
@@ -349,16 +371,62 @@ function assertMigrationBinding(
   }
 }
 
-/** Re-resolved grants, serialized; `null` when they no longer resolve at all. */
-function reresolvedGrants(
+/**
+ * Whether the grants the owner was shown still hold against the manifest re-resolved NOW: the same
+ * subset rule the spawn verifier applies (`checkStoredAgainstResolved`, I52), so a narrowed approval
+ * is not mistaken for a change and a widened or re-pointed one never passes. `false` when the
+ * declared paths no longer resolve at all.
+ */
+function stillWithinReresolved(
+  prompted: ResolvedRunGrants,
   manifest: ExtensionManifest,
   installPath: string,
   env: ExtensionRunGrantEnv,
-): string | null {
+): boolean {
   try {
-    return serializeRunGrants(resolveExtensionRunGrants(manifest.permissions, installPath, env));
+    return checkStoredAgainstResolved(
+      prompted,
+      resolveExtensionRunGrants(manifest.permissions, installPath, env),
+    ).ok;
   } catch {
-    return null;
+    return false;
+  }
+}
+
+/**
+ * The grants an approval asks for: everything resolved, or — with the owner's `--network` — the
+ * resolved files and only the declared network entries named (I52). Refuses, before any prompt, an
+ * entry the manifest does not declare. `declaredNetwork` is set only when narrowing.
+ */
+function grantsToApprove(
+  resolved: ResolvedRunGrants,
+  requested: readonly string[] | undefined,
+): { grants: ResolvedRunGrants; declaredNetwork?: readonly string[] } {
+  if (requested === undefined) return { grants: resolved };
+  const network = narrowNetwork(resolved, requested);
+  if (!Array.isArray(network)) {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_GRANT_NETWORK_UNDECLARED",
+      `${network.error}; --network can only remove declared entries`,
+    );
+  }
+  return { grants: { ...resolved, network }, declaredNetwork: resolved.network };
+}
+
+/**
+ * I52: a narrower grant is written only behind the owner's own `extension.run` prompt, which shows
+ * the narrowed list. The migration path raises no prompt, so a network reaching it refuses.
+ */
+function assertNarrowingIsPrompted(
+  network: readonly string[] | undefined,
+  consent: RunConsent,
+  extensionId: string,
+): void {
+  if (network !== undefined && consent === null) {
+    throw new ExtensionRunGrantError(
+      "ERR_EXTENSION_RUN_NOT_MIGRATED",
+      `a migration never narrows ${extensionId}'s network; approve it with \`nimbus extension approve ${extensionId} --network\` instead; nothing was granted`,
+    );
   }
 }
 
@@ -397,7 +465,7 @@ export async function approveExtensionRun(
  * re-entered, and never falls back to the extension's own keyspace.
  */
 export async function approveMigratedExtensionRun(
-  deps: Omit<ApproveExtensionRunDeps, "gate" | "modelAccess">,
+  deps: Omit<ApproveExtensionRunDeps, "gate" | "modelAccess" | "network">,
   id: string,
 ): Promise<ApproveExtensionRunResult> {
   assertRuntimeEnabled(deps);
@@ -473,13 +541,17 @@ async function approveRun(
   },
 ): Promise<ApproveExtensionRunResult> {
   assertRuntimeEnabled(deps);
+  assertNarrowingIsPrompted(deps.network, opts.consent, extensionId);
   const row = requireRow(deps.db, extensionId);
   // Before anything is resolved and before any prompt, for both doors (the owner's `approve` and
   // the migration auto-approver): a starter pack has no code, so it never holds a run grant (I43).
   refuseStarterPack(deps.db, row);
   const treeDigest = assertRunnable(row);
   const manifest = readVerifiedManifest(row);
-  const grants = resolveExtensionRunGrants(manifest.permissions, row.install_path, deps.env);
+  const { grants, declaredNetwork } = grantsToApprove(
+    resolveExtensionRunGrants(manifest.permissions, row.install_path, deps.env),
+    deps.network,
+  );
   const existing = getRunGrant(deps.db, row.id);
   // Never recomputed once stored, so a slug-rule change cannot move an existing extension's tools.
   const serviceId = existing?.service_id ?? deriveExtensionServiceId(row.id);
@@ -531,6 +603,7 @@ async function approveRun(
           credentials,
           reusesConnector: binding?.legacyServiceId,
           trustBlocks,
+          declaredNetwork,
         },
         deps.env,
         deps.evidence ?? { homeDir: homedir() },
@@ -552,8 +625,9 @@ async function approveRun(
     digestOrNull(after.install_path) !== treeDigest ||
     // The digest covers only the install tree. A declared path OUTSIDE it (or a symlink along it)
     // can be retargeted — into the data dir, say — while the prompt is open, so the grants are
-    // resolved again and must still be exactly what the owner saw.
-    reresolvedGrants(manifest, after.install_path, deps.env) !== permissionsJson ||
+    // resolved again: the files must still be exactly what the owner saw and the network shown must
+    // still be within what the manifest declares (I52, the spawn verifier's own rule).
+    !stillWithinReresolved(grants, manifest, after.install_path, deps.env) ||
     // The binding reads the row's source fingerprint, which an update can rewrite while the prompt
     // is open; the stored credentials must still be the ones the owner saw.
     serializeRunCredentials(

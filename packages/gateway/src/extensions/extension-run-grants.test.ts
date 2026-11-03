@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxPermissions } from "@nimbus-dev/registry-format";
 import {
+  checkStoredAgainstResolved,
   type ExtensionRunGrantEnv,
   extensionRunGrantProtectedRoots,
+  narrowNetwork,
   parseRunGrants,
   resolveExtensionRunGrants,
   serializeRunGrants,
@@ -236,5 +238,115 @@ describe("parseRunGrants", () => {
     ]) {
       expect(parseRunGrants(bad), bad).toBeUndefined();
     }
+  });
+});
+
+describe("checkStoredAgainstResolved (I43/I52: the stored grant is equal or narrower)", () => {
+  const resolved = {
+    network: ["a.example.com", "b.example.com:993", "c.example.com"],
+    read: ["/r1", "/r2"],
+    write: ["/w1"],
+  };
+
+  test("equal grants pass and return the resolved grants", () => {
+    const out = checkStoredAgainstResolved(resolved, resolved);
+    expect(out).toEqual({ ok: true, grants: resolved });
+  });
+
+  test("a network subsequence passes, and the returned grants carry the stored network with the resolved files", () => {
+    for (const network of [
+      [],
+      ["a.example.com"],
+      ["b.example.com:993"],
+      ["a.example.com", "c.example.com"],
+    ]) {
+      const out = checkStoredAgainstResolved({ ...resolved, network }, resolved);
+      expect(out).toEqual({ ok: true, grants: { ...resolved, network } });
+    }
+  });
+
+  test("a stored host the resolved network does not hold refuses (added, or dropped by the manifest)", () => {
+    expect(
+      checkStoredAgainstResolved({ ...resolved, network: ["x.example.com"] }, resolved).ok,
+    ).toBe(false);
+    expect(
+      checkStoredAgainstResolved(
+        { ...resolved, network: ["a.example.com"] },
+        { ...resolved, network: ["c.example.com"] },
+      ).ok,
+    ).toBe(false);
+  });
+
+  test("a reordered, duplicated or differently spelled stored network refuses", () => {
+    for (const network of [
+      ["c.example.com", "a.example.com"],
+      ["a.example.com", "a.example.com"],
+      ["A.example.com"],
+      ["a.example.com:443"],
+      ["b.example.com"],
+    ]) {
+      expect(
+        checkStoredAgainstResolved({ ...resolved, network }, resolved).ok,
+        network.join(),
+      ).toBe(false);
+    }
+  });
+
+  test("a stored entry twice refuses even against a resolved list that (by construction never) repeats it", () => {
+    const twice = { ...resolved, network: ["a.example.com", "a.example.com"] };
+    expect(checkStoredAgainstResolved(twice, twice).ok).toBe(false);
+  });
+
+  test("any change to the stored file grants refuses, narrower included", () => {
+    for (const files of [
+      { read: ["/r1"], write: ["/w1"] },
+      { read: ["/r2", "/r1"], write: ["/w1"] },
+      { read: ["/r1", "/r2", "/r3"], write: ["/w1"] },
+      { read: ["/r1", "/r2"], write: [] },
+      { read: ["/r1", "/R2"], write: ["/w1"] },
+    ]) {
+      expect(checkStoredAgainstResolved({ ...resolved, ...files }, resolved).ok).toBe(false);
+    }
+  });
+});
+
+describe("narrowNetwork", () => {
+  const resolved = {
+    network: ["a.example.com", "b.example.com:993", "c.example.com"],
+    read: [],
+    write: [],
+  };
+
+  test("returns the matched RAW resolved entries in manifest order, deduplicated", () => {
+    expect(narrowNetwork(resolved, ["c.example.com", "a.example.com"])).toEqual([
+      "a.example.com",
+      "c.example.com",
+    ]);
+    expect(narrowNetwork(resolved, ["a.example.com", "a.example.com"])).toEqual(["a.example.com"]);
+  });
+
+  test("an empty request is no network", () => {
+    expect(narrowNetwork(resolved, [])).toEqual([]);
+  });
+
+  test("spelling is normalised: case, a trailing dot and the default port name the same entry", () => {
+    expect(narrowNetwork(resolved, ["A.Example.COM"])).toEqual(["a.example.com"]);
+    expect(narrowNetwork(resolved, ["a.example.com."])).toEqual(["a.example.com"]);
+    expect(narrowNetwork(resolved, ["a.example.com:443"])).toEqual(["a.example.com"]);
+    expect(narrowNetwork(resolved, ["B.example.com:993"])).toEqual(["b.example.com:993"]);
+  });
+
+  test("an entry matching nothing declared is an error naming it", () => {
+    for (const bad of ["x.example.com", "b.example.com", "a.example.com:8443", "a.example.com:x"]) {
+      const out = narrowNetwork(resolved, ["a.example.com", bad]);
+      expect(Array.isArray(out), bad).toBe(false);
+      expect((out as { error: string }).error).toContain(bad);
+    }
+  });
+
+  test("the result always passes checkStoredAgainstResolved", () => {
+    const out = narrowNetwork(resolved, ["c.example.com", "B.example.com:993"]);
+    if (!Array.isArray(out)) throw new Error(out.error);
+    expect(checkStoredAgainstResolved({ ...resolved, network: out }, resolved).ok).toBe(true);
   });
 });

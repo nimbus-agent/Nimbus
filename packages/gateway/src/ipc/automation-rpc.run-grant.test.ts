@@ -703,3 +703,79 @@ describe("a starter pack over the automation dispatcher", () => {
     expect(getRunGrant(fx.db, PACK_FIXTURE.topPack)).toBeNull();
   });
 });
+
+describe("extension.approveRun `network` (I52)", () => {
+  const declares = () => ({ network: ["a.example.com", "b.example.com:993"] });
+
+  test("an array narrows: the prompt shows it and the grant stores it", async () => {
+    const { db, env } = await installed(declares);
+    const asked: Record<string, unknown>[] = [];
+    const out = (await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run", network: ["B.example.com:993"] },
+      db,
+      runGrantEnv: env,
+      ownerGate: async (a) => {
+        asked.push(a.payload);
+        return true;
+      },
+    })) as { value: { grants: { network: string[] } } };
+    expect(asked[0]?.["network"]).toEqual(["b.example.com:993"]);
+    expect(asked[0]?.["networkNarrowed"]).toBe(true);
+    expect(out.value.grants.network).toEqual(["b.example.com:993"]);
+    expect(JSON.parse(getRunGrant(db, "rpc.run")?.permissions_json ?? "{}").network).toEqual([
+      "b.example.com:993",
+    ]);
+  });
+
+  test('the literal "none" is no network', async () => {
+    const { db, env } = await installed(declares);
+    await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run", network: "none" },
+      db,
+      runGrantEnv: env,
+      ownerGate: async () => true,
+    });
+    expect(JSON.parse(getRunGrant(db, "rpc.run")?.permissions_json ?? "{}").network).toEqual([]);
+  });
+
+  test('anything but an array of strings or "none" is -32602 before any prompt', async () => {
+    const { db, env } = await installed(declares);
+    for (const network of ["a.example.com", "", 1, true, null, {}, [1], ["a.example.com", 2]]) {
+      let asked = 0;
+      const err = await dispatchAutomationRpc({
+        method: "extension.approveRun",
+        params: { id: "rpc.run", network },
+        db,
+        runGrantEnv: env,
+        ownerGate: async () => {
+          asked += 1;
+          return true;
+        },
+      }).catch((e: unknown) => e);
+      expect((err as { rpcCode?: number }).rpcCode, JSON.stringify(network)).toBe(-32602);
+      expect((err as Error).message).toMatch(/'network'/);
+      expect(asked).toBe(0);
+    }
+    expect(getRunGrant(db, "rpc.run")).toBeNull();
+  });
+
+  test("an undeclared entry is -32602 ERR_EXTENSION_GRANT_NETWORK_UNDECLARED, no prompt", async () => {
+    const { db, env } = await installed(declares);
+    let asked = 0;
+    const err = await dispatchAutomationRpc({
+      method: "extension.approveRun",
+      params: { id: "rpc.run", network: ["evil.example.com"] },
+      db,
+      runGrantEnv: env,
+      ownerGate: async () => {
+        asked += 1;
+        return true;
+      },
+    }).catch((e: unknown) => e);
+    expect((err as { rpcCode?: number }).rpcCode).toBe(-32602);
+    expect((err as Error).message).toMatch(/ERR_EXTENSION_GRANT_NETWORK_UNDECLARED/);
+    expect(asked).toBe(0);
+  });
+});

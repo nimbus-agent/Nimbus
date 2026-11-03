@@ -518,6 +518,54 @@ describe("readVerifiedExtensionForSpawn", () => {
     await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_CHANGED");
   });
 
+  const twoHosts = (root: string) => ({
+    permissions: {
+      network: ["api.example.com", "imap.example.com:993"],
+      filesystem: { read: [join(root, "outside")], write: [] },
+    },
+  });
+
+  test("8c: a stored network narrower than the manifest (I52) passes with the STORED network and re-resolved files", async () => {
+    const f = await setup({ manifest: twoHosts });
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    for (const network of [[], ["api.example.com"], ["imap.example.com:993"]]) {
+      upsertRunGrant(f.db, {
+        ...g,
+        permissions_json: serializeRunGrants({
+          network,
+          read: [join(f.root, "outside")],
+          write: [],
+        }),
+      });
+      const v = await readVerifiedExtensionForSpawn(f.id, deps(f));
+      expect(v.grants).toEqual({ network, read: [join(f.root, "outside")], write: [] });
+    }
+  });
+
+  test("8d: a tampered stored grant (host added, reordered, duplicated, file changed, extra field, unparsable) refuses RUN_CHANGED", async () => {
+    const f = await setup({ manifest: twoHosts });
+    const g = getRunGrant(f.db, f.id);
+    if (g === null) throw new Error("no grant");
+    const read = [join(f.root, "outside")];
+    const tampered = [
+      serializeRunGrants({ network: ["api.example.com", "x.example.com"], read, write: [] }),
+      serializeRunGrants({ network: ["imap.example.com:993", "api.example.com"], read, write: [] }),
+      serializeRunGrants({ network: ["api.example.com", "api.example.com"], read, write: [] }),
+      serializeRunGrants({ network: ["API.example.com"], read, write: [] }),
+      serializeRunGrants({ network: ["api.example.com"], read: [], write: [] }),
+      serializeRunGrants({ network: ["api.example.com"], read, write: [join(f.root, "outside")] }),
+      serializeRunGrants({ network: ["api.example.com"], read: [f.root], write: [] }),
+      JSON.stringify({ network: ["api.example.com"], read, write: [], extra: 1 }),
+      JSON.stringify({ read, write: [], network: ["api.example.com"] }),
+      "not json",
+    ];
+    for (const permissions_json of tampered) {
+      upsertRunGrant(f.db, { ...g, permissions_json });
+      await expectCode(readVerifiedExtensionForSpawn(f.id, deps(f)), "ERR_EXTENSION_RUN_CHANGED");
+    }
+  });
+
   test("re-hashes the tree on every call, never a cache", async () => {
     const f = await setup();
     let calls = 0;
