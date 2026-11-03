@@ -49,7 +49,9 @@ describe("doctorPrintExtensionObservation", () => {
       audit("a\u001b[2Jb", { kind: "refused-undeclared", count: 2 }),
     ]);
     const { lines } = await capture(() => doctorPrintExtensionObservation(ipc.client));
-    expect(lines.join("")).not.toContain("\u001b");
+    expect(lines).toEqual([
+      "[warn] Extensions: a??2Jb 1.0.0: 2 undeclared name(s) looked up and refused (run nimbus extension audit a??2Jb)",
+    ]);
   });
 });
 
@@ -73,6 +75,8 @@ describe("extension list findings", () => {
     const ipc = createMockIpcClient([list, notFound]);
     const { lines } = await capture(() => runExtensionList(ipc.client, []));
     expect(lines.join("\n")).not.toContain("network:");
+    expect(ipc.calls.map((c) => c.method)).toEqual(["extension.list", "extension.audit"]);
+    expect(lines.join("\n")).toContain("acme.tool");
   });
   test("a hostile id is sanitised in the tag line", async () => {
     const ipc = createMockIpcClient([

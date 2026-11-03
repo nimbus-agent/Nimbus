@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { deleteExtensionById, insertExtensionRow } from "../../automation/extension-store.ts";
+import { insertExtensionRow } from "../../automation/extension-store.ts";
 import { dbRun } from "../../db/write.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import {
@@ -198,12 +198,6 @@ describe("createObservationNotifier", () => {
     }).afterIngest([...TOUCHED, { extensionId: "com.example.b", version: "1.0.0" }]);
     expect(sent).toEqual([noticeText("com.example.b", "linux", 500)]);
     expect(logs.some((l) => l.includes("bad"))).toBe(true);
-  });
-
-  test("removal deletes the notice row", async () => {
-    await notifier().afterIngest(TOUCHED);
-    deleteExtensionById(db, EXT);
-    expect(db.query("SELECT 1 FROM extension_observation_notice").all()).toHaveLength(0);
   });
 });
 

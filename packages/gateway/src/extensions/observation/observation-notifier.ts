@@ -12,7 +12,7 @@ import {
 } from "./observation-store.ts";
 
 /**
- * The once-a-day OS notification when observation finds an extension reached beyond what it
+ * The once-a-day OS notification when observation finds an extension went beyond what it
  * declared (project 6, PR 6b-3). At most ONE notification per extension and version per
  * {@link NOTICE_INTERVAL_MS}, whatever the number of findings, and only for the version that is
  * installed now. The rate state is V82 `extension_observation_notice`, written BEFORE the send is
@@ -133,12 +133,8 @@ function recordDueNotices(
   nowMs: number,
   log: (line: string) => void,
 ): Array<{ title: string; body: string }> {
-  const seen = new Set<string>();
   const sends: Array<{ title: string; body: string }> = [];
   for (const t of touched) {
-    const key = rowKey(t.extensionId, t.version);
-    if (seen.has(key)) continue;
-    seen.add(key);
     try {
       const finding = dueNotice(deps, t, nowMs);
       if (finding === undefined) continue;

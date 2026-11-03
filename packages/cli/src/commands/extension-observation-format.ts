@@ -1,6 +1,6 @@
 import { displayName } from "./extension-audit.ts";
 
-/** What an extension reached beyond what it declared, as `extension.audit` reports it. */
+/** What an extension did beyond what it declared, as `extension.audit` reports it. */
 export type ObservationFindingSummary = {
   id: string;
   version: string;

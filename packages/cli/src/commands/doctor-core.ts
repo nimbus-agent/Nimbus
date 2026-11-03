@@ -850,7 +850,7 @@ export async function doctorPrintExtensions(client: Pick<IPCClient, "call">): Pr
 }
 
 /**
- * `[warn]` (exit 1) per extension whose observed network reached beyond what it declared, from the
+ * `[warn]` (exit 1) per extension whose observed network went beyond what it declared, from the
  * findings `extension.audit` returns. Counts only. Quiet on an older gateway (-32601); any other
  * failure is a `[warn]`.
  */

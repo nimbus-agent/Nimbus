@@ -724,7 +724,7 @@ interface SchedulerWithMeshOpts {
 /**
  * Project 6: the observation channel's directory, created owner-only before any extension can
  * spawn; then an ingest pass at boot and one every 60 s, stopped on shutdown, each followed by the
- * once-a-day notification when what it applied shows an extension reached beyond what it
+ * once-a-day notification when what it applied shows an extension went beyond what it
  * declared (`showIgnoringFailure`, so an unavailable service breaks nothing). The directory is the
  * gateway's own and is never added to a grant or to the runtime read paths. A directory that
  * cannot be created is logged, not fatal: the wrapper's writes then fail, which it swallows, and
