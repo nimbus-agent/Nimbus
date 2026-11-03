@@ -22,6 +22,12 @@ export type ExtensionAuditEntry = {
   dropped: number;
   /** Absent from an older gateway; read as false. */
   stopped?: boolean | undefined;
+  /** What to look at; `destinations` (Linux only) holds raw names. Absent from an older gateway. */
+  findings?:
+    | { kind: string; count: number; destinations?: Destination[] | undefined }
+    | null
+    | undefined;
+  findingCount?: number | undefined;
 };
 
 const MAX_NAME = 253;
@@ -148,6 +154,14 @@ export function sanitiseExtensionAudit(e: ExtensionAuditEntry): ExtensionAuditEn
     notSeen: e.notSeen.map(declaredName),
     refused: sanitiseDestinations(e.refused),
     unmatched: e.unmatched.map((d) => ({ ...d, destination: unmatchedAddress(d.destination) })),
+    ...(e.findings?.destinations === undefined
+      ? {}
+      : {
+          findings: {
+            ...e.findings,
+            destinations: sanitiseDestinations(e.findings.destinations),
+          },
+        }),
   };
 }
 

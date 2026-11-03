@@ -5,6 +5,11 @@ import { parseNetworkEntry } from "@nimbus-dev/registry-format";
 import { listExtensions } from "../automation/extension-store.ts";
 import { parseRunGrants } from "../extensions/extension-run-grants.ts";
 import {
+  normaliseHost,
+  type ObservationFinding,
+  observationFindings,
+} from "../extensions/observation/observation-findings.ts";
+import {
   type CoverageRow,
   type ObservationRow,
   readExtensionAudit,
@@ -35,6 +40,10 @@ export type AuditEntry = {
   refused: AuditDestination[];
   unmatched: AuditDestination[];
   dropped: number;
+  /** What the owner should look at (see `observationFindings`), `null` when nothing. */
+  findings: ObservationFinding | null;
+  /** Distinct findings: `findings.count`, 0 when none. */
+  findingCount: number;
   /** A run's observation stopped at its one-day bound (1440 window files). */
   stopped: boolean;
 };
@@ -53,8 +62,7 @@ function daysSpanned(c: CoverageRow): number {
 /** The same normalisation `planForwardEntries` applies, so a declared key compares with a used one. */
 function normaliseDeclared(entry: string): string {
   const { host, port } = parseNetworkEntry(entry);
-  const lower = host.toLowerCase();
-  const bare = lower.endsWith(".") ? lower.slice(0, -1) : lower;
+  const bare = normaliseHost(host);
   return `${bare}:${String(port)}`;
 }
 
@@ -83,10 +91,26 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
     unmatched: ofOutcome(rows, "unmatched"),
   };
   if (coverage === undefined) {
-    return { ...base, runs: 0, observedDays: 0, dropped: 0, stopped: false };
+    return {
+      ...base,
+      runs: 0,
+      observedDays: 0,
+      dropped: 0,
+      stopped: false,
+      findings: null,
+      findingCount: 0,
+    };
   }
+  const findings = observationFindings({
+    os: coverage.os,
+    declared,
+    refused: base.refused,
+    unmatched: base.unmatched,
+  });
   return {
     ...base,
+    findings,
+    findingCount: findings?.count ?? 0,
     os: coverage.os,
     runs: coverage.runs,
     observedDays: daysSpanned(coverage),

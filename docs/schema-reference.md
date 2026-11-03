@@ -1309,6 +1309,15 @@ CREATE TABLE extension_observation_applied (
   applied_at INTEGER NOT NULL,
   PRIMARY KEY (run_key, seq)
 );
+
+-- V82 -- the rate state of the observation warning (2026-11-03; quality layer PR 6b-3).
+-- At most one notification per extension and version per 24 hours. Cascades with `extension`.
+CREATE TABLE extension_observation_notice (
+  extension_id TEXT NOT NULL REFERENCES extension(id) ON DELETE CASCADE,
+  version TEXT NOT NULL,
+  last_notified_at INTEGER NOT NULL,
+  PRIMARY KEY (extension_id, version)
+);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

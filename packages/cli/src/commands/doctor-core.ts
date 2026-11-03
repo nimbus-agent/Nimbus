@@ -19,6 +19,7 @@ import {
   doctorRegistryLines,
   doctorTrustLines,
 } from "./extension-doctor-format.ts";
+import { doctorObservationLines } from "./extension-observation-format.ts";
 import { doctorNotificationsLine, parseNotificationsStatus } from "./notifications-format.ts";
 
 const LINUX_SECRET_TOOL_HINT =
@@ -849,6 +850,29 @@ export async function doctorPrintExtensions(client: Pick<IPCClient, "call">): Pr
 }
 
 /**
+ * `[warn]` (exit 1) per extension whose observed network went beyond what it declared, from the
+ * findings `extension.audit` returns. Counts only. Quiet on an older gateway (-32601); any other
+ * failure is a `[warn]`.
+ */
+export async function doctorPrintExtensionObservation(
+  client: Pick<IPCClient, "call">,
+): Promise<number> {
+  let raw: unknown;
+  try {
+    raw = await client.call<unknown>("extension.audit", {});
+  } catch (e) {
+    if (isMethodNotFound(e)) return 0;
+    console.log(
+      `[warn] Extensions: network observation check failed (${e instanceof Error ? e.message : String(e)}).`,
+    );
+    return 1;
+  }
+  const { lines, exit } = doctorObservationLines(raw);
+  for (const l of lines) console.log(l);
+  return exit;
+}
+
+/**
  * Extension registries: a `[warn]` (exit 1) for installed extensions whose source registry is no
  * longer configured, and for registries whose index is older than 30 days. Silent when no registry
  * is configured and no extension came from one. Quiet on an older gateway (-32601); any other
@@ -1145,6 +1169,7 @@ async function doctorRunGatewayRpcs(
   exit = Math.max(exit, await doctorPrintNotifications(client));
   exit = Math.max(exit, await doctorPrintCaptures(client));
   exit = Math.max(exit, await doctorPrintExtensions(client));
+  exit = Math.max(exit, await doctorPrintExtensionObservation(client));
   exit = Math.max(exit, await doctorPrintRegistries(client));
   exit = Math.max(exit, await doctorPrintTrust(client));
   exit = Math.max(exit, await doctorPrintMigrations(client));

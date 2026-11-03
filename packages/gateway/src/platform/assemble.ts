@@ -202,6 +202,10 @@ import {
   extensionServiceIdOf,
   startObservationIngest,
 } from "../extensions/observation/observation-ingest.ts";
+import {
+  createObservationNotifier,
+  observationFindingsFor,
+} from "../extensions/observation/observation-notifier.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
   buildExtensionRunGrantEnv,
@@ -719,7 +723,9 @@ interface SchedulerWithMeshOpts {
 
 /**
  * Project 6: the observation channel's directory, created owner-only before any extension can
- * spawn; then an ingest pass at boot and one every 60 s, stopped on shutdown. The directory is the
+ * spawn; then an ingest pass at boot and one every 60 s, stopped on shutdown, each followed by the
+ * once-a-day notification when what it applied shows an extension went beyond what it
+ * declared (`showIgnoringFailure`, so an unavailable service breaks nothing). The directory is the
  * gateway's own and is never added to a grant or to the runtime read paths. A directory that
  * cannot be created is logged, not fatal: the wrapper's writes then fail, which it swallows, and
  * nothing is observed.
@@ -729,6 +735,7 @@ function startExtensionObservation(
   dataDir: string,
   logger: Logger,
   sidecarStops: Array<() => void>,
+  notifications: NotificationService,
 ): string {
   let dir = extensionObservationDirFor(dataDir);
   try {
@@ -744,6 +751,13 @@ function startExtensionObservation(
       isInstalled: (id) => selectExtensionInstallPath(db, id) !== null,
       serviceIdFor: (id) => extensionServiceIdOf(db, id),
       log: (m) => logger.warn(m),
+      notifier: createObservationNotifier({
+        db,
+        now: Date.now,
+        notify: (title, body) => showIgnoringFailure(notifications, title, body),
+        findingsFor: (id, version) => observationFindingsFor(db, id, version),
+        log: (m) => logger.warn(m),
+      }),
     }),
   );
   return dir;
@@ -3945,6 +3959,7 @@ export async function assemblePlatformServices(
     paths.dataDir,
     syncLogger,
     sidecarStops,
+    notifications,
   );
 
   const {

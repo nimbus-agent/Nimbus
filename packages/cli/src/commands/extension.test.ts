@@ -208,11 +208,12 @@ describe("runExtensionList", () => {
     expect(calls[0]?.params).toEqual({ filter: "needs-reinstall" });
   });
 
-  test("--json prints the raw envelope", async () => {
+  test("--json prints the envelope with a null networkFindings when audit is unavailable", async () => {
     const envelope = { extensions: [{ id: "x", version: "1", enabled: 1 }] };
-    const { client } = createMockIpcClient([envelope]);
+    const { client } = createMockIpcClient([envelope, new Error("no audit")]);
     await runExtensionList(client, ["list", "--json"]);
-    expect(out.stdout.trimEnd()).toBe(JSON.stringify(envelope, undefined, 2));
+    const expected = { extensions: [{ ...envelope.extensions[0], networkFindings: null }] };
+    expect(out.stdout.trimEnd()).toBe(JSON.stringify(expected, undefined, 2));
   });
 
   test("propagates IPC errors", async () => {

@@ -53,8 +53,8 @@ describe("V81 migration — extension network observation", () => {
     }
   });
 
-  test("the registered maximum and the current schema are 81", () => {
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(81);
-    expect(CURRENT_SCHEMA_VERSION).toBe(81);
+  test("the registered maximum and the current schema are at least 81", () => {
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(81);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(81);
   });
 });
