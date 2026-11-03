@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793692423868,
+  "lastUpdate": 1793694888188,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f62fd8553e1ebc14f67f0a16a784302e80cb55e2",
-          "message": "fix(admin-console): escape policy.version before it reaches innerHTML (#1201)\n\n`renderPolicyBanner` interpolated `policy.version` **unescaped** into a\nstring\nthat `main.ts` assigns to `innerHTML`. It was the only dynamic value in\nthe\nrenderer that `esc()` did not cover.\n\n```ts\n`<div class=\"banner\">policy <b>${esc(p.org ?? \"\")}</b> v${p.version ?? 0} …`\n//                              ^^^ escaped              ^^^ NOT escaped\n```\n\n## This was reported and dismissed\n\nSonarCloud raised it as a **BLOCKER** DOM-XSS (`tssecurity:S5696`),\nnaming the\nsink (`main.ts:136`), the propagation point (`render.ts:32`) and even\nthe field\n(\"a malicious value was previously assigned to field 'version'\").\n\nIt was closed **FALSE-POSITIVE** with:\n\n> every dynamic value reaching innerHTML is HTML-escaped via esc() in\n> render.ts/views.ts (the only interpolation point)\n\nThat is true of `policy.org` — sitting on the same line — and false of\n`policy.version`. A security suppression whose stated reason does not\nhold is\nworse than an open issue, because nobody re-checks it.\n\nI verified the claim rather than taking either side: every `${…}` in\n`render.ts` and `views.ts` that is not `esc()`-wrapped is either routed\nthrough\n`card()` (which escapes — lines 43–48), a locally-built constant\n(`restart`), or\na literal (`\"yes\"`/`\"no\"`). `policy.version` was the only untrusted\nvalue\nreaching the sink raw.\n\n## Why the type does not protect it\n\n`version` is typed `number`, but `client.ts` only shape-checks the\nresponse —\n`typeof body === \"object\" && \"data\" in body` — and then casts. The type\nis an\nassumption about a remote JSON document, not a guarantee, which is\nexactly what\nSonar's taint analysis was pointing at.\n\nExploitability is bounded (it needs control of the gateway's\n`/v1/admin/status` response), so this is hardening rather than an\nincident.\n\n## Red-proved\n\nWith the fix reverted, the new test fails with the rendered output:\n\n```\n<div class=\"banner\">policy <b>acme</b> v<img src=x onerror=\"alert(1)\"> ✓ signed</div>\n```\n\n— an executable payload assigned to `innerHTML`. With the fix it renders\n`&lt;img …` and the test passes.\n\nThree tests added: version escaped, org escaped (the half already\ncovered, so a\nfuture edit cannot silently swap which one is protected), and a plain\nnumeric\nversion still rendering as `v7` — so the fix cannot pass by mangling\nnormal\noutput.\n\n- `bun test packages/admin-console/src/render.test.ts` — 6 pass, 0 fail\n- `bun run preflight:fast` — all 29 gates pass\n\nFollow-up, not done here: the Sonar issue should be re-opened so it\ncloses as\n**fixed** rather than staying resolved as a false positive. I'd rather\nchange\nthat triage state alongside the rest of the Sonar work than as a side\neffect of\nthis PR.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved security for policy status banners by safely escaping policy\nversion and organization values.\n* Prevented potentially malicious content from being rendered as\nexecutable HTML.\n\n* **Tests**\n* Added coverage confirming that normal version values display correctly\nand unsafe values are safely encoded.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-15T08:27:33Z",
-          "tree_id": "223b806cd9af94272385cbc261c3231550492db8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f62fd8553e1ebc14f67f0a16a784302e80cb55e2"
-        },
-        "date": 1786783034196,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 316.77930620000006,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.17983134999776,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 309.4148118999994,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7fafe15031ac37588f73a980dcc1344acbe21d65",
+          "message": "docs(registry): record the official registry's liveness workflow (#1870)\n\nPhase 9.5 project 6, PR 5b follow-up. The official registry gained its\nweekly liveness workflow in nimbus-agent/nimbus-mcp-servers#63. Four\ndocs still said it was not wired.\n\n- `registry-hosting.md` § Liveness checks and the `Checked:` paragraph\nin `cli-reference.md` now say the official registry has the workflow.\nThey also say it publishes nothing until its owner's one-time setup is\ndone, so every owner still sees `no checks published`.\n- `roadmap.md`: the Connector liveness checks row is ticked, with a 5b\nentry and the same limit, and project 6's status row lists 5b.\n- `CHANGELOG.md`: a 2026-11-03 entry.\n- `architecture.md`: the liveness client paragraph now says the same,\nand `registry-hosting.md` names both repository variables that gate the\njobs.\n- `roadmap.md`: three stale Phase 9.5 summaries still said projects 5 to\n7 were not started. They now say project 5 is complete and project 6 is\nin progress through PR 5b.\n\nDocs only. `audit:doc-refs` and `preflight:fast` pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated registry hosting, CLI, and architecture guidance to reflect\nthat the official registry has a workflow for planned weekly liveness\nchecks and generating `liveness.json`.\n* Clarified that the workflow’s check and signing jobs remain skipped,\nand no live registry publishes `liveness.json`, until the registry owner\ncompletes the required one-time setup.\n* Updated the changelog and roadmap to reflect the workflow’s status,\nsetup requirements, and project progress.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T08:23:40Z",
+          "tree_id": "ba0db11172fef14ea0d2e2f2de5246a42e290fb1",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7fafe15031ac37588f73a980dcc1344acbe21d65"
+        },
+        "date": 1793694883846,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 296.2652237999966,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 300.4355241000056,
             "unit": "ms"
           }
         ]
