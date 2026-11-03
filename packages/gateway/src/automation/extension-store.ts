@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../db/write.ts";
+import { deleteObservationsFor } from "../extensions/observation/observation-store.ts";
 import { deleteRunGrant } from "../extensions/run-grant-store.ts";
 import { readIndexedUserVersion } from "../index/migrations/runner.ts";
 
@@ -306,6 +307,7 @@ export function deleteExtensionById(db: Database, id: string): string | null {
   // Deleted explicitly rather than left to the FK cascade: the cascade fires only on a connection
   // with foreign_keys = ON (LocalIndex sets it; a caller holding a different connection may not).
   deleteRunGrant(db, id);
+  deleteObservationsFor(db, id);
   dbRun(db, `DELETE FROM extension WHERE id = ?`, [id]);
   return path;
 }

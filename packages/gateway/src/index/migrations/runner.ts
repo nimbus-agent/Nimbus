@@ -36,6 +36,7 @@ import { ENTITY_METADATA_V54_SQL } from "../entity-metadata-v54-sql.ts";
 import { EXTENSION_DEPENDENCY_REGISTRY_V78_SQL } from "../extension-dependency-registry-v78-sql.ts";
 import { V31_EXTENSION_DEPENDENCY_SQL } from "../extension-dependency-v31-sql.ts";
 import { EXTENSION_KIND_V79_SQL } from "../extension-kind-v79-sql.ts";
+import { EXTENSION_OBSERVATION_V81_SQL } from "../extension-observation-v81-sql.ts";
 import { EXTENSION_REGISTRY_V71_SQL } from "../extension-registry-v71-sql.ts";
 import { EXTENSION_RUN_GRANT_CREDENTIALS_V72_SQL } from "../extension-run-grant-credentials-v72-sql.ts";
 import { EXTENSION_RUN_GRANT_V70_SQL } from "../extension-run-grant-v70-sql.ts";
@@ -718,6 +719,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     EXTENSION_KIND_V79_SQL,
   ),
   simpleStep(79, 80, "registry liveness floor", REGISTRY_LIVENESS_V80_SQL),
+  simpleStep(80, 81, "extension network observation", EXTENSION_OBSERVATION_V81_SQL),
 ];
 
 /**
