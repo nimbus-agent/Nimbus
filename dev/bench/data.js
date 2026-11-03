@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793704222018,
+  "lastUpdate": 1793715063025,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "710493c34f2c36e511439a0aab596a1d5682ab51",
-          "message": "chore: release main (#1205)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.3</summary>\n\n##\n[2.4.3](https://github.com/nimbus-agent/Nimbus/compare/v2.4.2...v2.4.3)\n(2026-08-15)\n\n\n### Bug Fixes\n\n* **admin-console:** escape policy.version before it reaches innerHTML\n([#1201](https://github.com/nimbus-agent/Nimbus/issues/1201))\n([f62fd85](https://github.com/nimbus-agent/Nimbus/commit/f62fd8553e1ebc14f67f0a16a784302e80cb55e2))\n* **cli:** stop blocking gateway RPCs dying on the 30s client timeout\n([#1203](https://github.com/nimbus-agent/Nimbus/issues/1203))\n([3fc2132](https://github.com/nimbus-agent/Nimbus/commit/3fc2132255c86fbf04fce408e8f35cb123cb24ef))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-15T13:24:53+03:00",
-          "tree_id": "39b5ca9021028f9f1788b8157f4542a57a131f3f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/710493c34f2c36e511439a0aab596a1d5682ab51"
-        },
-        "date": 1786790159234,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.8949042,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.58514385000274,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 228.8978244000031,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "be0cc28072e1aeac504b30fe4b79ce90e590b486",
+          "message": "feat(extensions): observe an extension's network on Windows and macOS (#1873)\n\nPhase 9.5 project 6, PR 6b-2 of the quality layer, spec § 10. `nimbus\nextension audit` now has real network evidence on Windows and macOS, not\nonly Linux. While an installed extension's child runs, the\n`__nimbus-sandbox` wrapper polls the OS connection table, attributes\neach connection to that child, and matches its remote address to a\ndeclared host. The results go through the channel PR 6b-1 built (#1872).\nSpike 6a, draft #1869, proved the approach on both OSes.\n\n## How it works\n\n- **Windows** (`platform/sandbox/observe/win32-connections.ts`,\n`bun:ffi`).\n  - It reads `GetExtendedTcpTable` for IPv4 and IPv6, with owner PIDs.\n- A connection counts when its owning process's token carries the\nextension's AppContainer SID, compared with `EqualSid`. That SID is\nderived once from the profile name `nimbus-ext-<policy id>`, passed as\nUTF-16LE, and released with `FreeSid`.\n  - Every descendant is covered with no process-tree walk.\n- Each PID's verdict is cached by `(pid, creation time)` and judged\nagain when the PID is recycled.\n- **macOS** (`observe/darwin-connections.ts`, `bun:ffi` over libproc).\n- It walks the descendant tree of the spawned `sandbox-exec` PID with\n`proc_listpids`, which returns bytes, and `PROC_PIDTBSDINFO`, then reads\neach process's TCP sockets through `PROC_PIDFDSOCKETINFO`.\n- The offsets come from the spike's run on a macOS runner, run\n41614991421; arm64 and x86_64 printed the same offsets.\n- **The poller** (`observe/connection-poller.ts`).\n  - It runs every 250 ms, inside the wrapper only, never the gateway.\n- It counts a connection when it first appears in a poll, and drops\nloopback, including `::1` and `::ffff:127.x`.\n- It resolves the declared names, and only those, at start and every 60\ns, with a 5 s timeout.\n- Matching is keyed by `(address, port)` to the set of declared hosts on\nit. A match records `used host:port`. Anything else records `unmatched\n<ip>:<port>`; a host that was not declared is never named.\n- Resolver errors and source errors never escape. Ten consecutive errors\nstop the poller, never the child.\n- The child's exit handler stops the poller, with one last poll, before\nthe final file is written.\n- **The report** prints, on Windows and macOS:\n- ` unmatched <ip:port> (<n> connection(s)): an address we could not\nmatch to a declared host`. IPv6 is shown as `[addr]:port`.\n- `Network not observed: no connection table was read in these runs`\nwhen nothing was read.\n- **V81 is unchanged.** At the 512-row bound, a new `used` row evicts\nthe oldest `unmatched` row. Churning CDN addresses therefore cannot\ncrowd out a declared host and make it read \"not seen\".\n- **New stated bound, in `docs/SECURITY-INVARIANTS.md`:** forward DNS\nresolution of declared names is a new outbound lookup and is not\nledgered. A test pins that the resolver is only ever called with names\nfrom `policy.permissions.network`.\n\n## Cost and accuracy, measured on Windows 11, unelevated\n\nThe poll period is 250 ms. You chose it on 2026-11-03, after seeing\nthese numbers.\n\n| Each connection held | Caught | Wrapper CPU, observed minus unobserved\n|\n|---|---|---|\n| 500 ms | 289 of 289 | 2.3–2.5% of a core |\n| 100 ms | 47–48% | 3.0–3.2% of a core |\n| closed on connect | 9% | 2.0% of a core |\n\n- **Method:** `QueryProcessCycleTime`, calibrated by a busy spin, plus\n`Bun.nanoseconds()` around each pass. `process.cpuUsage()` counts in\n15.6 ms ticks, so it is not used.\n- **What one pass costs:** 2.2–2.7 ms of CPU per timer-driven pass,\nabout 1% of a core; the rest is timer wakes, DNS refreshes and file\nwrites.\n- **Scaling:** the cost is per running extension and grows with the\nnumber running, because each wrapper reads the whole machine's table.\n- **macOS:** no CPU figure yet. The macOS CI log shows only the time per\nlibproc pass: median 0.9 ms, max 2.3 ms.\n- **Stated bounds in `docs/sandbox.md`:**\n  - short connections can be missed;\n- an undeclared name sharing a declared host's address reads as that\nhost;\n  - a connection whose host has not resolved within 5 s is `unmatched`;\n- a source that fails mid-run leaves the rest of that run unobserved,\nwhich \"At least these\" covers;\n  - a PID reused within one pass could be misattributed;\n  - two concurrent runs of the same extension share one SID on Windows;\n  - a macOS grandchild re-parented to launchd leaves the tree.\n\n## Verification\n\n- **Real CI runners.** On the draft runs of this PR, these tests passed:\n\n  | Runner | Test | What it ran |\n  |---|---|---|\n| macos-15 | real macOS source test | first real run of the libproc\nreader: a sandboxed child, a `curl` grandchild, and none of an\nunsandboxed control's connections |\n| windows-2025 | real Windows source test | the sandboxed child; the\nrunner cannot start a grandchild inside the AppContainer, so that part\nis a visible skip |\n| both | `wrapper-observation-os` | the real wrapper over a real child:\n`used api.github.com:443` and `unmatched <ip>:443` |\n\n- **This Windows 11 machine,** unelevated with the helper built: the\nsame tests pass, grandchild included, 17 pass and 0 skip.\n- **Unit tests with fake `dlopen`** cover every offset, byte order, IPv6\nand mapped form, buffer growth, handle and SID freeing, PID recycling,\nmatching, holding, bounds and exit order. Each was red-proved by\nreverting its fix.\n- **Gates:** sandbox, observation, IPC and CLI tests with `--parallel`\ngive 8092 pass. The one failure is the known `tui` Yoga error. Also\npassing: security-invariants (403), `typecheck`, `typecheck:tests` (0\nnew), biome, complexity, `audit:invariants`, `audit:doc-refs`,\n`audit:status-drift` and `preflight:fast`.\n- **Reviews:** Antigravity reviewed the plan and its 10 findings were\napplied. Its macOS byte-count finding was itself corrected against\nApple's `libproc.c`: `proc_listallpids` returns a count. Each task had a\ntask review, and a final whole-branch review led to these fixes:\n  - re-measuring cost with cycle counters;\n  - the V81 crowd-out;\n  - the answer cap;\n  - double counting;\n  - a structurally safe wrapper hook.\n\n## Not covered here\n\n- Warnings in doctor, the extension list and OS notifications are PR\n6b-3.\n- Narrower grants and I52 are PR 7.\n- No macOS CPU figure.\n- The real-OS tests need network access to api.github.com, plus\nexample.com, wikipedia or 1.1.1.1.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Windows and macOS sandbox runs can now report observed network\nconnections, matching destinations against declared hosts and\nidentifying unmatched IP addresses.\n* Extension audits show connection counts and distinguish runs without\nconnection-table observations from extensions that have not run.\n* **Bug Fixes**\n* Network observations now prioritize used destinations when storage\nlimits are reached, preserving important activity in audit results.\n* **Documentation**\n* Updated platform coverage, observation limits, and audit output\ndetails.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T13:59:19Z",
+          "tree_id": "61aceb353e6bb465298d71bf451126901345112b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/be0cc28072e1aeac504b30fe4b79ce90e590b486"
+        },
+        "date": 1793715058270,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 305.6209821000004,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 304.0089693000009,
             "unit": "ms"
           }
         ]
