@@ -73,6 +73,24 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
+describe("extension.audit findings", () => {
+  test("an unobserved extension has none; a Windows unmatched row counts without names", () => {
+    expect(readAuditEntries(db, "b")?.[0]).toMatchObject({ findings: null, findingCount: 0 });
+    addExt("w", ["api.example.com:443"]);
+    applyObservationWindow(
+      db,
+      win("w", {
+        os: "win32",
+        networkObserved: false,
+        entries: [{ outcome: "unmatched", destination: "1.2.3.4", port: 443, count: 9 }],
+      }),
+    );
+    const w = readAuditEntries(db, "w")?.[0];
+    expect(w?.findings).toEqual({ kind: "unmatched", count: 1 });
+    expect(w?.findingCount).toBe(1);
+  });
+});
+
 describe("extension.audit", () => {
   test("returns the shape from stored rows; notSeen is declared minus used", async () => {
     const r = (await dispatchAutomationRpc({
@@ -101,6 +119,12 @@ describe("extension.audit", () => {
         unmatched: [{ destination: "x.test", port: 80, count: 4 }],
         dropped: 5,
         stopped: false,
+        findings: {
+          kind: "refused-undeclared",
+          count: 1,
+          destinations: [{ destination: "evil.test", port: 0, count: 1 }],
+        },
+        findingCount: 1,
       },
     ]);
   });
