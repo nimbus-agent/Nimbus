@@ -65,6 +65,37 @@ export type CoverageRow = {
   stopped: number;
 };
 
+/** The window's coverage, in the caller's transaction; `overflow` is what the 512 bound turned away. */
+function upsertCoverage(db: Database, w: ObservationWindow, overflow: number): void {
+  dbRun(
+    db,
+    `INSERT INTO extension_observation_coverage
+       (extension_id, version, os, runs, observed_ms, first_seen, last_seen, dropped, network_observed, stopped)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(extension_id, version) DO UPDATE SET
+       os = excluded.os,
+       runs = runs + excluded.runs,
+       observed_ms = observed_ms + excluded.observed_ms,
+       first_seen = MIN(first_seen, excluded.first_seen),
+       last_seen = MAX(last_seen, excluded.last_seen),
+       dropped = dropped + excluded.dropped,
+       network_observed = MAX(network_observed, excluded.network_observed),
+       stopped = MAX(stopped, excluded.stopped)`,
+    [
+      w.extensionId,
+      w.version,
+      w.os,
+      w.runStart ? 1 : 0,
+      Math.max(0, w.toMs - w.fromMs),
+      w.fromMs,
+      w.toMs,
+      w.dropped + overflow,
+      w.networkObserved ? 1 : 0,
+      w.stopped === true ? 1 : 0,
+    ],
+  );
+}
+
 /**
  * Applies one window in ONE transaction: the applied mark, entry upserts (bounded per extension and
  * version), then coverage. A `(runKey, seq)` already marked is a no-op returning false, so a window
@@ -125,33 +156,7 @@ export function applyObservationWindow(
           );
           if (!known) rows += 1;
         }
-        dbRun(
-          db,
-          `INSERT INTO extension_observation_coverage
-           (extension_id, version, os, runs, observed_ms, first_seen, last_seen, dropped, network_observed, stopped)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(extension_id, version) DO UPDATE SET
-           os = excluded.os,
-           runs = runs + excluded.runs,
-           observed_ms = observed_ms + excluded.observed_ms,
-           first_seen = MIN(first_seen, excluded.first_seen),
-           last_seen = MAX(last_seen, excluded.last_seen),
-           dropped = dropped + excluded.dropped,
-           network_observed = MAX(network_observed, excluded.network_observed),
-           stopped = MAX(stopped, excluded.stopped)`,
-          [
-            w.extensionId,
-            w.version,
-            w.os,
-            w.runStart ? 1 : 0,
-            Math.max(0, w.toMs - w.fromMs),
-            w.fromMs,
-            w.toMs,
-            w.dropped + overflow,
-            w.networkObserved ? 1 : 0,
-            w.stopped === true ? 1 : 0,
-          ],
-        );
+        upsertCoverage(db, w, overflow);
         return true;
         // IMMEDIATE: the write lock is taken before the row count is read, so the 512 bound and the
         // writes it decides cannot be interleaved with another writer.
