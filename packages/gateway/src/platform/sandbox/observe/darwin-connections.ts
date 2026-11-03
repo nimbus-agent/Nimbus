@@ -154,8 +154,9 @@ function decodeSocket(buf: Buffer): Omit<ObservedConnection, "pid"> | null {
 function descendants(root: number, children: ReadonlyMap<number, readonly number[]>): number[] {
   const tree = [root];
   const seen = new Set(tree);
-  for (let i = 0; i < tree.length; i++) {
-    for (const kid of children.get(tree[i] ?? 0) ?? []) {
+  // An array's for-of also visits what is pushed while it runs: a breadth-first walk.
+  for (const pid of tree) {
+    for (const kid of children.get(pid) ?? []) {
       if (seen.has(kid)) continue;
       seen.add(kid);
       tree.push(kid);

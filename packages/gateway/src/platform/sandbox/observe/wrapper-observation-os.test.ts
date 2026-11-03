@@ -85,10 +85,12 @@ type Entry = { o: string; h: string; p: number; n: number };
 describe.skipIf(!RUNS)("the wrapper observes a real sandboxed child (Windows, macOS)", () => {
   if (IS_WIN && IS_CI && !HELPER_READY) {
     test("fails loudly instead of silently skipping when the helper is missing on CI", () => {
-      throw new Error(
-        `wrapper-observation-os: CI precondition unmet — helper not found at ${HELPER}. Build it ` +
-          "with `bun run build:sandbox-helper:win32`.",
-      );
+      // The reason is the received value, so the CI log says why the premise failed.
+      const premiseProblem: string | null = HELPER_READY
+        ? null
+        : `wrapper-observation-os: CI precondition unmet — helper not found at ${HELPER}. Build it ` +
+          "with `bun run build:sandbox-helper:win32`.";
+      expect(premiseProblem).toBeNull();
     });
     return;
   }

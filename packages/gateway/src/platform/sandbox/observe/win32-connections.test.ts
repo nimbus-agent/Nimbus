@@ -780,10 +780,12 @@ ${proc.err}`);
 describe.skipIf(!IS_WIN || (!READY && !IS_CI))("openWin32ConnectionSource (real Windows)", () => {
   if (IS_CI && !READY) {
     test("fails loudly instead of silently skipping when the helper is missing on CI", () => {
-      throw new Error(
-        `win32-connections: CI precondition unmet — helper not found at ${HELPER}. A skip and a ` +
-          "pass are indistinguishable in a CI summary; build it with `bun run build:sandbox-helper:win32`.",
-      );
+      // The reason is the received value, so the CI log says why the premise failed.
+      const premiseProblem: string | null = READY
+        ? null
+        : `win32-connections: CI precondition unmet — helper not found at ${HELPER}. A skip and a ` +
+          "pass are indistinguishable in a CI summary; build it with `bun run build:sandbox-helper:win32`.";
+      expect(premiseProblem).toBeNull();
     });
     return;
   }

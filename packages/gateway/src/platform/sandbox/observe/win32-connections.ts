@@ -163,8 +163,12 @@ function isZero(buf: Buffer, offset: number, len: number): boolean {
 /** One row as the table holds it, before attribution. */
 type RawRow = { pid: number; localPort: number; remoteIp: string; remotePort: number };
 
-/** Every connected row of one table: listeners, rows with no remote address and PID 0 left out. */
-function decodeRows(buf: Buffer, af: number): RawRow[] {
+/**
+ * Every connected row of one table whose owning PID `keep` accepts: listeners, rows with no remote
+ * address and PID 0 left out. The PID is judged before anything else is decoded, so the address
+ * strings are built only for the observed container's rows, not for every connection on the machine.
+ */
+function decodeRows(buf: Buffer, af: number, keep: (pid: number) => boolean): RawRow[] {
   const v4 = af === AF_INET;
   const layout = v4 ? V4_ROW : V6_ROW;
   const addrLen = v4 ? 4 : 16;
@@ -179,7 +183,7 @@ function decodeRows(buf: Buffer, af: number): RawRow[] {
     const pid = buf.readUInt32LE(o + layout.pid);
     // PID 0 owns TIME_WAIT rows: a connection already closed, owned by no process.
     if (pid === 0 || buf.readUInt32LE(o + layout.state) === MIB_TCP_STATE_LISTEN) continue;
-    if (isZero(buf, o + layout.remoteAddr, addrLen)) continue;
+    if (isZero(buf, o + layout.remoteAddr, addrLen) || !keep(pid)) continue;
     rows.push({
       pid,
       localPort: portFromDword(buf.readUInt32LE(o + layout.localPort)),
@@ -254,20 +258,22 @@ class Win32ConnectionSource implements ConnectionSource {
 
   poll(): ObservedConnection[] {
     if (this.closed) throw new Error("the Windows connection source is closed");
-    const rows = [
-      ...decodeRows(this.readTable(AF_INET), AF_INET),
-      ...decodeRows(this.readTable(AF_INET6), AF_INET6),
-    ];
+    // Both tables are read before any PID is judged, so a failed read throws before any open.
+    const v4 = this.readTable(AF_INET);
+    const v6 = this.readTable(AF_INET6);
     const thisPass = new Map<number, boolean>();
-    const out: ObservedConnection[] = [];
-    for (const row of rows) {
-      let match = thisPass.get(row.pid);
+    const keep = (pid: number): boolean => {
+      let match = thisPass.get(pid);
       if (match === undefined) {
-        match = this.judge(row.pid);
-        thisPass.set(row.pid, match);
+        match = this.judge(pid);
+        thisPass.set(pid, match);
       }
-      if (match) out.push(row);
-    }
+      return match;
+    };
+    const out: ObservedConnection[] = [
+      ...decodeRows(v4, AF_INET, keep),
+      ...decodeRows(v6, AF_INET6, keep),
+    ];
     // A PID gone from the table may come back as another process: forget it, so it is judged again.
     for (const pid of this.verdicts.keys()) if (!thisPass.has(pid)) this.verdicts.delete(pid);
     return out;
