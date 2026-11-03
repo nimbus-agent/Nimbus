@@ -150,6 +150,25 @@ describe("ingestObservationFiles", () => {
     expect(readExtensionAudit(db, EXT, "1.0.0").coverage).toMatchObject({ runs: 1, stopped: 1 });
   });
 
+  test("an unmatched entry keeps its IPv4 or IPv6 literal verbatim", () => {
+    put(
+      `${RUN}.0.json`,
+      body({
+        os: "win32",
+        entries: [
+          { o: "unmatched", h: "203.0.113.7", p: 443, n: 2 },
+          { o: "unmatched", h: "2001:db8::1", p: 443, n: 1 },
+        ],
+      }),
+    );
+    expect(ingestObservationFiles(deps())).toEqual({ applied: 1, rejected: 0 });
+    const a = readExtensionAudit(db, EXT, "1.0.0");
+    expect(a.rows.map((r) => `${r.outcome} ${r.destination}:${r.port} ${r.count}`)).toEqual([
+      "unmatched 2001:db8::1:443 1",
+      "unmatched 203.0.113.7:443 2",
+    ]);
+  });
+
   test("a run with no stop marker leaves stopped unset", () => {
     put(`${RUN}.0.json`, body());
     ingestObservationFiles(deps());
@@ -186,6 +205,22 @@ describe("ingestObservationFiles", () => {
       body({ entries: [{ o: "used", h: "a b", p: 1, n: 1 }] }),
     ],
     ["an empty name", body({ entries: [{ o: "used", h: "", p: 1, n: 1 }] })],
+    [
+      "an unmatched entry naming a host, not an address",
+      body({ entries: [{ o: "unmatched", h: "evil.example.com", p: 443, n: 1 }] }),
+    ],
+    [
+      "an unmatched entry that is not an address at all",
+      body({ entries: [{ o: "unmatched", h: "1.2.3.4 x", p: 443, n: 1 }] }),
+    ],
+    [
+      "a used entry naming an IPv6 literal (used keeps the name alphabet)",
+      body({ entries: [{ o: "used", h: "2001:db8::1", p: 443, n: 1 }] }),
+    ],
+    [
+      "a refused entry naming an IPv6 literal",
+      body({ entries: [{ o: "refused", h: "2001:db8::1", p: 0, n: 1 }] }),
+    ],
     [
       "a name of 254 characters",
       body({ entries: [{ o: "used", h: "a".repeat(254), p: 1, n: 1 }] }),

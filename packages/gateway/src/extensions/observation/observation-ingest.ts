@@ -12,6 +12,7 @@ import {
   readSync,
   rmSync,
 } from "node:fs";
+import { isIP } from "node:net";
 import { join } from "node:path";
 
 import {
@@ -39,7 +40,7 @@ import {
  * the child (`wrapServerSpecInCwd`'s `wrapperEnv`).
  *
  * Every file is untrusted until parsed: the exact key set, the version, every integer range, the
- * name alphabet the writer's sanitiser produces, an installed extension in the label whose service
+ * name alphabet the writer's sanitiser produces (an IP literal for `unmatched`), an installed extension in the label whose service
  * id names the file, and a file name whose seq is the body's. A bad file is deleted and counted,
  * never applied in part; a good one is deleted only after its rows commit, and is applied at most
  * once per (run, seq) whatever happens to the delete (V81 `extension_observation_applied`).
@@ -202,9 +203,19 @@ function parseEntry(v: unknown): ObservationEntry {
   const o = record(v, "entry");
   exactKeys(o, ENTRY_KEYS, [], "entry");
   const outcome = o["o"];
-  if (outcome !== "used" && outcome !== "refused") bad("entry outcome is not valid");
+  if (outcome !== "used" && outcome !== "refused" && outcome !== "unmatched") {
+    bad("entry outcome is not valid");
+  }
   const destination = boundedString(o["h"], MAX_NAME_LENGTH, "entry name");
-  if (!NAME_RE.test(destination)) bad("entry name is outside the sanitised alphabet");
+  // An `unmatched` destination is the address a connection reached, which matched no declared host
+  // (Windows, macOS): the writer keeps it verbatim only when it is an IP literal, so nothing else is
+  // accepted here, and a host name never arrives under it. `used` and `refused` carry names, which
+  // the writer sanitised.
+  if (outcome === "unmatched") {
+    if (isIP(destination) === 0) bad("an unmatched entry is not an IP address");
+  } else if (!NAME_RE.test(destination)) {
+    bad("entry name is outside the sanitised alphabet");
+  }
   return {
     outcome,
     destination,

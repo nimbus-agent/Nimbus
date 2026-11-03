@@ -50,6 +50,7 @@ describe("observerHooks", () => {
     const hooks = observerHooks({
       used: (host, port) => seen.push(`used ${host}:${String(port)}`),
       refused: (name) => seen.push(`refused ${name}`),
+      unmatched: (ip, port) => seen.push(`unmatched ${ip}:${String(port)}`),
       markObserved: () => seen.push("observed"),
     });
     const entry: ForwardEntry = {
@@ -172,6 +173,7 @@ describe.skipIf(
       observer: {
         used: () => undefined,
         refused: () => undefined,
+        unmatched: () => undefined,
         markObserved: () => (marks += 1),
       },
     });

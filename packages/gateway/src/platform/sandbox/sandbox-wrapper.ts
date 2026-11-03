@@ -7,6 +7,8 @@ import {
   type ObservationOs,
   parseObservationLabel,
 } from "./network-observation-writer.ts";
+import { type ConnectionPoller, startConnectionPoller } from "./observe/connection-poller.ts";
+import type { ConnectionSource } from "./observe/types.ts";
 import {
   isSandboxWrapperOnlyEnv,
   parseSandboxPolicy,
@@ -17,6 +19,7 @@ import {
   type SandboxPolicy,
 } from "./sandbox-policy.ts";
 import { createSandboxRunner, type SandboxRunner } from "./sandbox-runner.ts";
+import { profileNameFor } from "./win32-argv.ts";
 
 function signalNumber(signal: string): number {
   return (osConstants.signals as Record<string, number | undefined>)[signal] ?? 0;
@@ -68,10 +71,80 @@ export function wrapperChildEnv(
   return childEnv;
 }
 
+/** Opens the connection source for one spawned child: Windows by its AppContainer, macOS by its tree. */
+export type OpenConnectionSource = (
+  policy: SandboxPolicy,
+  child: ChildProcess,
+) => ConnectionSource | { error: string };
+
 export type SandboxWrapperDeps = {
   /** Tests only. Production passes nothing and gets the platform's runner. */
   createRunner?: () => Promise<SandboxRunner>;
+  /** Tests only. Production opens the runner platform's own source. */
+  openConnectionSource?: OpenConnectionSource;
+  /** Tests only: the declared-name lookup. Production uses the OS resolver. */
+  resolveHost?: (host: string) => Promise<string[]>;
+  /** Tests only: the poller's period. */
+  pollPeriodMs?: number;
 };
+
+/**
+ * The source opener when this spawn is one the poller observes: Windows or macOS, a writer to
+ * report to, and a policy that declares network (with none there is nothing to match, and the
+ * sandbox lets nothing out). Loaded before the spawn, so opening it in the child's `spawn` event is
+ * synchronous and ahead of file 0. Linux is observed by its forwarder instead.
+ */
+async function connectionSourceOpener(
+  platform: SandboxRunner["platform"],
+  policy: SandboxPolicy,
+  deps: SandboxWrapperDeps,
+): Promise<OpenConnectionSource | null> {
+  if (platform === "linux" || policy.permissions.network.length === 0) return null;
+  if (deps.openConnectionSource !== undefined) return deps.openConnectionSource;
+  if (platform === "win32") {
+    const { openWin32ConnectionSource } = await import("./observe/win32-connections.ts");
+    return (p) => openWin32ConnectionSource({ profileName: profileNameFor(p) });
+  }
+  const { openDarwinConnectionSource } = await import("./observe/darwin-connections.ts");
+  // sandbox-exec execs the command in place, so the child's pid is the tree's root.
+  return (_p, child) =>
+    child.pid === undefined
+      ? { error: "the child has no pid" }
+      : openDarwinConnectionSource({ rootPid: child.pid });
+}
+
+/**
+ * Opens the source and starts the poller for a child that has just started. The run is marked
+ * observed only once the source opened, and before the caller's `writer.start()` writes file 0; a
+ * source that fails to open says so once on stderr and leaves the run unobserved. Never throws:
+ * observation never refuses or breaks the child.
+ */
+function observeConnections(
+  open: OpenConnectionSource,
+  policy: SandboxPolicy,
+  child: ChildProcess,
+  writer: NetworkObservationWriter,
+  deps: SandboxWrapperDeps,
+): ConnectionPoller | null {
+  let source: ConnectionSource | { error: string };
+  try {
+    source = open(policy, child);
+  } catch (e) {
+    source = { error: (e as Error).message };
+  }
+  if ("error" in source) {
+    process.stderr.write(`nimbus-sandbox-wrapper: not observing the network: ${source.error}\n`);
+    return null;
+  }
+  writer.markObserved();
+  return startConnectionPoller({
+    source,
+    declared: policy.permissions.network,
+    observer: writer,
+    ...(deps.resolveHost === undefined ? {} : { resolve: deps.resolveHost }),
+    ...(deps.pollPeriodMs === undefined ? {} : { periodMs: deps.pollPeriodMs }),
+  });
+}
 
 /**
  * The `__nimbus-sandbox` role of the gateway executable: re-exec the requested command inside the
@@ -122,6 +195,8 @@ export async function runSandboxWrapper(
     deps.createRunner ?? (() => createSandboxRunner({ forwarderStartProbe: false }))
   )();
   const writer = observationWriter();
+  const openSource =
+    writer === null ? null : await connectionSourceOpener(runner.platform, policy, deps);
   let child: ChildProcess;
   try {
     child = runner.spawn(originalCmd, originalArgs, {
@@ -139,7 +214,15 @@ export async function runSandboxWrapper(
 
   // File 0 only once the child really started. A child that fails to start emits `error` instead of
   // `spawn`, so the writer stays unstarted, its `close` below writes nothing, and no run is counted.
-  child.once("spawn", () => writer?.start());
+  // On Windows and macOS the connection poller starts here too, and marks the run observed before
+  // file 0 is written, so every file of the run says so.
+  let poller: ConnectionPoller | null = null;
+  child.once("spawn", () => {
+    if (writer !== null && openSource !== null) {
+      poller = observeConnections(openSource, policy, child, writer, deps);
+    }
+    writer?.start();
+  });
 
   // The final window is written from the process's `exit`, which every way out reaches: the child's
   // exit below and the signal handlers. It must run AFTER the forwarder session closes, since
@@ -149,7 +232,10 @@ export async function runSandboxWrapper(
 
   // Explicit, and from the child's own exit: a dial pending on a blackholed address would keep the
   // event loop alive, and with it the MCP client's pipe, long after the child has gone.
+  // The poller stops first: its last, synchronous poll reports into the writer before `process.exit`
+  // runs the writer's `close`, so a connection still open at the end reaches the final file.
   child.on("exit", (code, signal) => {
+    poller?.stop();
     process.exit(signal === null ? (code ?? 1) : 128 + signalNumber(signal));
   });
   // A signal's default action skips `process.exit`, so the forwarder's socket directory would stay
@@ -157,7 +243,10 @@ export async function runSandboxWrapper(
   // `process.exit` runs the `exit` listeners synchronously, the observation writer's among them, so
   // a stopped extension's last window is still written.
   for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
-    process.on(signal, () => process.exit(128 + signalNumber(signal)));
+    process.on(signal, () => {
+      poller?.stop();
+      process.exit(128 + signalNumber(signal));
+    });
   }
   child.on("error", (err) => {
     fatal(`child spawn failed: ${err.message}`);
