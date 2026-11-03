@@ -65,8 +65,8 @@ export type CoverageRow = {
  * Applies one window in ONE transaction: the applied mark, entry upserts (bounded per extension and
  * version), then coverage. A `(runKey, seq)` already marked is a no-op returning false, so a window
  * file counts once however often it is read. `network_observed` is sticky (an OR over every window
- * applied): file 0 of a run always says false, since the runner marks it observed only after the
- * writer exists. `appliedAtMs` dates the mark for the 90-day age-out.
+ * applied), so a run that was observed in any window stays observed whatever its other files say.
+ * `appliedAtMs` dates the mark for the 90-day age-out.
  */
 export function applyObservationWindow(
   db: Database,

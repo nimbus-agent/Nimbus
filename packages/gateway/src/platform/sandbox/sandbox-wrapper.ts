@@ -121,7 +121,7 @@ export async function runSandboxWrapper(
   const runner = await (
     deps.createRunner ?? (() => createSandboxRunner({ forwarderStartProbe: false }))
   )();
-  let writer = observationWriter();
+  const writer = observationWriter();
   let child: ChildProcess;
   try {
     child = runner.spawn(originalCmd, originalArgs, {
@@ -132,10 +132,14 @@ export async function runSandboxWrapper(
       ...(writer === null ? {} : { observer: writer }),
     });
   } catch (e) {
-    // A refused spawn ran nothing, so it leaves no run behind to count.
-    writer = null;
+    // A refused spawn ran nothing. The writer was never started, so no file was written and no run
+    // is counted.
     fatal((e as Error).message);
   }
+
+  // File 0 only once the child really started. A child that fails to start emits `error` instead of
+  // `spawn`, so the writer stays unstarted, its `close` below writes nothing, and no run is counted.
+  child.once("spawn", () => writer?.start());
 
   // The final window is written from the process's `exit`, which every way out reaches: the child's
   // exit below and the signal handlers. It must run AFTER the forwarder session closes, since
@@ -156,8 +160,6 @@ export async function runSandboxWrapper(
     process.on(signal, () => process.exit(128 + signalNumber(signal)));
   }
   child.on("error", (err) => {
-    // A child that never started ran no network, so it leaves no run behind to count.
-    writer = null;
     fatal(`child spawn failed: ${err.message}`);
   });
 

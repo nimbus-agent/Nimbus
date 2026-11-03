@@ -4,7 +4,9 @@
  * through the spawn's observer at process exit, as the Linux forwarder's session close does, and
  * its child writes `argv[2]`
  * ("absent" when the observation variables did not reach it) once it is running. With `argv[3]`
- * `stay` the child keeps running until the wrapper is stopped; otherwise it exits at once.
+ * `stay` the child keeps running until the wrapper is stopped; with `refuse` the stand-in throws
+ * from `spawn`, as a refused policy does; with `error` it spawns a command that does not exist, so
+ * the child emits `error` and never `spawn`; otherwise the child exits at once.
  *
  * Test-only: it confines nothing and must never be reachable from production code.
  */
@@ -20,7 +22,8 @@ import type {
 import { runSandboxWrapper } from "../../src/platform/sandbox/sandbox-wrapper.ts";
 
 const ready = process.argv[2];
-const stay = process.argv[3] === "stay";
+const mode = process.argv[3];
+const stay = mode === "stay";
 /** With `argv[4]` `observed` the stand-in says the child runs behind a forwarder, as Linux would. */
 const observed = process.argv[4] === "observed";
 if (ready === undefined) throw new Error("usage: sandbox-wrapper-observed.ts <ready-file>");
@@ -35,7 +38,9 @@ const childScript = [
 const standIn: SandboxRunner = {
   platform: "linux",
   spawn(cmd: string, args: string[], opts: SandboxSpawnOptions): ChildProcess {
-    const child = spawn(cmd, args, {
+    if (mode === "refuse") throw new Error("the policy was refused");
+    const command = mode === "error" ? `${cmd}-does-not-exist` : cmd;
+    const child = spawn(command, args, {
       env: opts.env,
       cwd: opts.cwd,
       stdio: "ignore",

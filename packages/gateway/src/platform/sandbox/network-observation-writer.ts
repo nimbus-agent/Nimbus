@@ -40,9 +40,17 @@ export type ObservationLabel = { readonly extensionId: string; readonly version:
 export type ObservationOs = "linux" | "darwin" | "win32";
 
 export type NetworkObservationWriter = NetworkObserver & {
-  /** Writes the current window. `final` marks the run's last file. */
+  /**
+   * The child started: writes file 0 (`runStart`) and arms the timer. Until it is called nothing is
+   * written, so a spawn that is refused or never starts leaves no run behind. Idempotent.
+   */
+  start(): void;
+  /** Writes the current window, once started. `final` marks the run's last file. */
   flush(final: boolean): void;
-  /** Writes the final window, stops the timer and ignores every later event. Idempotent. */
+  /**
+   * Writes the final window (only once started), stops the timer and ignores every later event.
+   * Idempotent.
+   */
   close(): void;
 };
 
@@ -178,6 +186,7 @@ export function createNetworkObservationWriter(
   let seq = 0;
   /** What a failed write lost, carried into the next file's `dropped`. */
   let carried = 0;
+  let started = false;
   let stopped = false;
   let closed = false;
   let networkObserved = false;
@@ -237,7 +246,7 @@ export function createNetworkObservationWriter(
   };
 
   const flush = (final: boolean): void => {
-    if (stopped || closed) return;
+    if (!started || stopped || closed) return;
     const toMs = now();
     const bytes = body(final, toMs);
     const lost = window.entries.size + window.dropped + carried;
@@ -265,13 +274,23 @@ export function createNetworkObservationWriter(
     }
   };
 
-  // File 0 at once, empty: a run killed before its first window (SIGKILL anywhere, TerminateProcess
-  // on Windows, where no handler runs) is still counted as a run.
-  safeFlush(false);
-
   const flushMs = opts.flushMs ?? DEFAULT_OBSERVATION_FLUSH_MS;
-  const timer = flushMs > 0 ? setInterval(() => safeFlush(false), flushMs) : null;
-  timer?.unref();
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  /**
+   * File 0 as soon as the child has started: a run killed before its first window (SIGKILL anywhere,
+   * TerminateProcess on Windows, where no handler runs) is still counted as a run, and a spawn that
+   * never started is not.
+   */
+  const start = (): void => {
+    if (started || closed) return;
+    started = true;
+    safeFlush(false);
+    if (flushMs > 0) {
+      timer = setInterval(() => safeFlush(false), flushMs);
+      timer.unref();
+    }
+  };
 
   return {
     used: (host, port) => {
@@ -291,6 +310,7 @@ export function createNetworkObservationWriter(
     markObserved: () => {
       networkObserved = true;
     },
+    start,
     flush: safeFlush,
     close: () => {
       if (closed) return;

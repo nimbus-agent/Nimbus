@@ -22,7 +22,7 @@ type Written = { path: string; body: Record<string, unknown>; bytes: number };
 
 const LABEL = { extensionId: "com.example.weather", version: "1.2.3" };
 
-function harness(over: Partial<NetworkObservationWriterOptions> = {}) {
+function harness(over: Partial<NetworkObservationWriterOptions> = {}, start = true) {
   let clock = 1_000;
   const files: Written[] = [];
   const writer = createNetworkObservationWriter({
@@ -40,6 +40,7 @@ function harness(over: Partial<NetworkObservationWriterOptions> = {}) {
     },
     ...over,
   });
+  if (start) writer.start();
   return {
     writer,
     files,
@@ -75,8 +76,20 @@ describe("createNetworkObservationWriter", () => {
     expect(h.last()["dropped"]).toBe(0);
   });
 
-  test("writes file 0 at creation, empty, so a run killed at once is still counted", () => {
-    const h = harness();
+  test("writes nothing until started: a spawn that never starts leaves no run behind", () => {
+    const h = harness({}, false);
+    h.writer.used("api.github.com", 443);
+    h.writer.flush(false);
+    h.writer.close();
+    h.writer.start();
+    expect(h.files).toEqual([]);
+  });
+
+  test("start writes file 0 once, empty, so a run killed at once is still counted", () => {
+    const h = harness({}, false);
+    expect(h.files).toEqual([]);
+    h.writer.start();
+    h.writer.start();
     expect(h.files.map((f) => f.path)).toEqual(["/obs/ext_weather.1000.deadbeef.0.json"]);
     expect(h.last()).toEqual({
       v: 1,
@@ -231,7 +244,7 @@ describe("createNetworkObservationWriter", () => {
 
   test("file 1441 is the stopped marker, and later events write nothing", () => {
     const h = harness();
-    // File 0 was written at creation.
+    // File 0 was written at start.
     for (let i = 1; i < MAX_FILES; i += 1) h.writer.flush(false);
     expect(h.files).toHaveLength(MAX_FILES);
     expect(h.files.some((f) => "stopped" in f.body)).toBe(false);
@@ -384,7 +397,7 @@ async function waitForExit(child: Bun.Subprocess, ms: number): Promise<number | 
   }
 }
 
-function startWrapper(dir: string, mode: "stay" | "exit", observed = false) {
+function startWrapper(dir: string, mode: "stay" | "exit" | "refuse" | "error", observed = false) {
   const ready = join(dir, "ready");
   const argv = [process.execPath, WRAPPER_FIXTURE, ready, mode, ...(observed ? ["observed"] : [])];
   const wrapper = Bun.spawn(argv, {
@@ -448,6 +461,17 @@ describe("the wrapper's observation", () => {
     expect(await waitForExit(wrapper, 30_000)).toBe(0);
     expectRunFiles(dir, true);
   }, 70_000);
+});
+
+describe("a spawn that fails counts no run", () => {
+  for (const mode of ["refuse", "error"] as const) {
+    test(`a ${mode === "refuse" ? "refused spawn" : "child that emits error"} writes no window file`, async () => {
+      const dir = tempRoot();
+      const { wrapper } = startWrapper(dir, mode);
+      expect(await waitForExit(wrapper, 30_000)).toBe(2);
+      expect(readdirSync(dir).filter((f) => f.endsWith(".json") || f.endsWith(".tmp"))).toEqual([]);
+    }, 70_000);
+  }
 });
 
 describe.skipIf(process.platform === "win32")("the wrapper's signal handlers", () => {
