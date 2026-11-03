@@ -61,17 +61,20 @@ const HOST_REACH_TIMEOUT_MS = 15_000;
 const BOOT_TIMEOUT_MS = 60_000;
 const TEST_TIMEOUT_MS = 120_000;
 
-/** The built helper answers `--check`, as the forwarder suite requires. */
-function helperBuilt(): boolean {
-  if (!IS_LINUX || !existsSync(HELPER)) return false;
+/** Why the built helper is unusable, or null when it answers `--check` as the forwarder suite requires. */
+function helperProblem(): string | null {
+  if (!IS_LINUX) return "not Linux";
+  if (!existsSync(HELPER)) return `no helper at ${HELPER}`;
   // windows-console-ok: Linux only, where the flag is ignored.
   const r = spawnSync(HELPER, ["--check"], { encoding: "utf8" });
-  return r.status === 0 && r.stdout === "OK\n";
+  if (r.status === 0 && r.stdout === "OK\n") return null;
+  return `helper --check exited ${String(r.status)}: ${JSON.stringify(r.stdout)} ${JSON.stringify(r.stderr)}`;
 }
 
-/** Whether this machine's runner, with this helper, confines the extension's network policy. */
-async function canConfineNetwork(): Promise<boolean> {
-  if (!helperBuilt()) return false;
+/** Why this runner, with this helper, cannot confine the extension's network policy; null if it can. */
+async function confineProblem(): Promise<string | null> {
+  const helper = helperProblem();
+  if (helper !== null) return helper;
   const prior = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] = HELPER;
   try {
@@ -82,18 +85,21 @@ async function canConfineNetwork(): Promise<boolean> {
       permissions: { network: [DECLARED], filesystem: { read: [], write: [] } },
     };
     // Per-host is the only mode that observes; the fallback with no helper reports nothing.
-    if (decideNetworkMode(policy, { helperAvailable: true }) !== "per-host") return false;
+    const mode = decideNetworkMode(policy, { helperAvailable: true });
+    if (mode !== "per-host") return `network mode is ${String(mode)}, not per-host`;
     // The production factory, which runs the forwarder's start probe as the gateway's does.
-    return (await createSandboxRunner()).canConfine(policy) === null;
-  } catch {
-    return false;
+    const refusal = (await createSandboxRunner()).canConfine(policy);
+    return refusal === null ? null : `canConfine refused: ${refusal}`;
+  } catch (e) {
+    return `probe threw: ${e instanceof Error ? e.message : String(e)}`;
   } finally {
     if (prior === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
     else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = prior;
   }
 }
 
-const premise = IS_LINUX && (await canConfineNetwork());
+const premiseProblem = IS_LINUX ? await confineProblem() : "not Linux";
+const premise = premiseProblem === null;
 
 describe.skipIf(!IS_LINUX || premise || !REQUIRED)(
   "extension observation e2e — required premise",
@@ -103,7 +109,7 @@ describe.skipIf(!IS_LINUX || premise || !REQUIRED)(
         "extension-observation-e2e: NIMBUS_REQUIRE_SANDBOX_HELPER=1 but the premise is unmet: the " +
           "helper is not built or does not answer --check, or the runner cannot confine a network " +
           "policy in per-host mode. Run `bun run build:sandbox-helper` and " +
-          "scripts/linux/install-sandbox-deps.sh.",
+          `scripts/linux/install-sandbox-deps.sh. Reason: ${String(premiseProblem)}`,
       ).toBeNull();
     });
   },
