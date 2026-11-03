@@ -10135,6 +10135,48 @@ describe("I50 — on Linux a sandboxed child's only network path is the forwarde
     // The name comes from the plan or the table, never from a byte on the socket.
     expect(src).toContain("return entry.host ?? this.names.nameOnSlot(index);");
   });
+
+  test("bound 6 (and I29's stated bound): the Windows/macOS poller looks up declared names only", async () => {
+    const { startConnectionPoller } = await import(
+      `./platform/sandbox/observe/connection-poller.ts`
+    );
+    const asked: string[] = [];
+    let polls = 0;
+    const poller = startConnectionPoller({
+      source: {
+        poll: () => {
+          polls += 1;
+          return [
+            { pid: 1, localPort: polls, remoteIp: "203.0.113.7", remotePort: 443 },
+            { pid: 1, localPort: 1000 + polls, remoteIp: "2001:db8::9", remotePort: 22 },
+          ];
+        },
+        close: () => undefined,
+      },
+      declared: ["api.example.com:443", "*.sharepoint.com:443", "198.51.100.4:443"],
+      observer: { used: () => undefined, unmatched: () => undefined },
+      periodMs: 0,
+      resolve: (host: string) => {
+        asked.push(host);
+        return Promise.resolve([]);
+      },
+    });
+    for (let i = 0; i < 5; i += 1) poller.pollNow();
+    await new Promise((r) => setTimeout(r, 0));
+    poller.stop();
+    // The one declared NAME, never a wildcard, a declared literal or an address the child reached.
+    expect(asked).toEqual(["api.example.com"]);
+
+    // And the wrapper hands the poller the policy's own declared list, nothing it derived elsewhere.
+    const wrapper = stripComments(await read(`${SANDBOX}/sandbox-wrapper.ts`));
+    expect(bodyOf(wrapper, "observeConnections")).toContain(
+      "declared: policy.permissions.network,",
+    );
+    const poll = stripComments(await read(`${SANDBOX}/observe/connection-poller.ts`));
+    expect(poll.match(/\bresolve\(/g)).toHaveLength(1);
+    expect(poll).toContain("table.learn(host, await resolve(host));");
+    expect(poll).not.toMatch(/\breverse\b|lookupService/);
+  });
 });
 
 describe("I51 — liveness and baseline evidence is inert", () => {

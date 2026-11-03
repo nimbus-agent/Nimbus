@@ -178,6 +178,55 @@ describe("createNetworkObservationWriter", () => {
     expect(h.last()["dropped"]).toBe(45);
   });
 
+  test("unmatched keeps an IPv4 or IPv6 literal verbatim, keyed by address and port, with counts", () => {
+    const h = harness({ os: "win32" });
+    h.writer.unmatched("203.0.113.7", 443);
+    h.writer.unmatched("203.0.113.7", 443);
+    h.writer.unmatched("203.0.113.7", 80);
+    h.writer.unmatched("2001:db8::1", 443);
+    h.writer.unmatched("::ffff:203.0.113.9", 443);
+    h.writer.flush(false);
+    expect(entriesOf(h.last())).toEqual([
+      { o: "unmatched", h: "203.0.113.7", p: 443, n: 2 },
+      { o: "unmatched", h: "2001:db8::1", p: 443, n: 1 },
+      { o: "unmatched", h: "203.0.113.7", p: 80, n: 1 },
+      { o: "unmatched", h: "::ffff:203.0.113.9", p: 443, n: 1 },
+    ]);
+    expect(h.last()["dropped"]).toBe(0);
+  });
+
+  test("unmatched drops anything that is not an IP literal into dropped, never sanitising it", () => {
+    const h = harness({ os: "win32" });
+    h.writer.unmatched("evil.example.com", 443);
+    h.writer.unmatched("1.2.3.4\n", 443);
+    h.writer.unmatched("", 443);
+    h.writer.unmatched("203.0.113.7", 70_000);
+    h.writer.flush(false);
+    expect(entriesOf(h.last())).toEqual([]);
+    expect(h.last()["dropped"]).toBe(4);
+  });
+
+  test("unmatched is bounded like the others, and a flood of it never hides a used connection", () => {
+    const h = harness({ os: "win32" });
+    for (let i = 0; i < 300; i += 1)
+      h.writer.unmatched(`10.0.${String(i >> 8)}.${String(i & 255)}`, 443);
+    h.writer.used("api.github.com", 443);
+    h.writer.flush(false);
+    const entries = entriesOf(h.last());
+    expect(entries).toHaveLength(256);
+    expect(entries[0]).toEqual({ o: "used", h: "api.github.com", p: 443, n: 1 });
+    expect(h.last()["dropped"]).toBe(45);
+  });
+
+  test("a trim keeps used, then unmatched, then refused", () => {
+    const h = harness({ os: "win32" });
+    h.writer.refused("r.example.org");
+    h.writer.unmatched("203.0.113.7", 443);
+    h.writer.used("api.github.com", 443);
+    h.writer.flush(false);
+    expect(entriesOf(h.last()).map((e) => e.o)).toEqual(["used", "unmatched", "refused"]);
+  });
+
   test("the body stays within 64 KiB with 256 entries of 253-character names", () => {
     const h = harness();
     for (let i = 0; i < 256; i += 1) {
@@ -397,7 +446,17 @@ async function waitForExit(child: Bun.Subprocess, ms: number): Promise<number | 
   }
 }
 
-function startWrapper(dir: string, mode: "stay" | "exit" | "refuse" | "error", observed = false) {
+type WrapperMode =
+  | "stay"
+  | "exit"
+  | "refuse"
+  | "error"
+  | "poll"
+  | "poll-fail"
+  | "poll-load-fail"
+  | "poll-start-fail";
+
+function startWrapper(dir: string, mode: WrapperMode, observed = false, network: string[] = []) {
   const ready = join(dir, "ready");
   const argv = [process.execPath, WRAPPER_FIXTURE, ready, mode, ...(observed ? ["observed"] : [])];
   const wrapper = Bun.spawn(argv, {
@@ -405,13 +464,13 @@ function startWrapper(dir: string, mode: "stay" | "exit" | "refuse" | "error", o
       ...process.env,
       [SANDBOX_POLICY_ENV]: JSON.stringify({
         id: "obs-test",
-        permissions: { network: [], filesystem: { read: [], write: [] } },
+        permissions: { network, filesystem: { read: [], write: [] } },
       }),
       [SANDBOX_CWD_ENV]: join(dir, "cwd"),
       [SANDBOX_OBSERVATION_FILE_ENV]: join(dir, "ext_weather.1000.deadbeef"),
       [SANDBOX_OBSERVATION_LABEL_ENV]: JSON.stringify(LABEL),
     },
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "ignore", "pipe"],
   });
   return { wrapper, ready };
 }
@@ -460,6 +519,103 @@ describe("the wrapper's observation", () => {
     const { wrapper } = startWrapper(dir, "exit", true);
     expect(await waitForExit(wrapper, 30_000)).toBe(0);
     expectRunFiles(dir, true);
+  }, 70_000);
+});
+
+/** The run's window files, parsed, in seq order. */
+function runFiles(dir: string): Record<string, unknown>[] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .sort((a, b) => (a < b ? -1 : 1))
+    .map((f) => JSON.parse(readFileSync(join(dir, f), "utf8")) as Record<string, unknown>);
+}
+
+/**
+ * The Windows/macOS poller in the real wrapper, with a fake source and resolver (the fixture's
+ * `poll` mode). The source reports nothing until the child has exited, so the final file holds its
+ * connections only because the wrapper's exit handler stops the poller, whose last poll is
+ * synchronous, BEFORE `process.exit` runs the writer's close.
+ */
+describe("the wrapper's connection poller", () => {
+  test("its last poll reaches the final file; the run is observed from file 0; only declared names are resolved", async () => {
+    const dir = tempRoot();
+    const { wrapper, ready } = startWrapper(dir, "poll", false, [
+      "api.github.com:443",
+      "uploads.github.com",
+    ]);
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    const files = runFiles(dir);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f["networkObserved"])).toEqual([true, true]);
+    expect(files[0]?.["entries"]).toEqual([]);
+    expect(files[1]?.["final"]).toBe(true);
+    expect(files[1]?.["entries"]).toEqual([
+      { o: "used", h: "api.github.com", p: 443, n: 1 },
+      { o: "unmatched", h: "203.0.113.7", p: 443, n: 1 },
+    ]);
+    // I29 / I50 bound: the resolver saw the policy's declared names and nothing else.
+    const resolved = readFileSync(`${ready}.resolved`, "utf8")
+      .split("\n")
+      .filter((l) => l !== "");
+    expect([...new Set(resolved)].sort((a, b) => (a < b ? -1 : 1))).toEqual([
+      "api.github.com",
+      "uploads.github.com",
+    ]);
+  }, 70_000);
+
+  test("a source that fails to open leaves the run unobserved and the child unharmed", async () => {
+    const dir = tempRoot();
+    const { wrapper } = startWrapper(dir, "poll-fail", false, ["api.github.com:443"]);
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    const files = runFiles(dir);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
+    expect(files[1]?.["entries"]).toEqual([]);
+  }, 70_000);
+
+  test("an opener that fails to load says so once, observes nothing, and the child still runs", async () => {
+    const dir = tempRoot();
+    const { wrapper, ready } = startWrapper(dir, "poll-load-fail", false, ["api.github.com:443"]);
+    const stderr = new Response(wrapper.stderr).text();
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    await waitForFile(ready);
+    const files = runFiles(dir);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
+    const lines = (await stderr)
+      .split(/\r?\n/)
+      .filter((l) => l.includes("not observing the network"));
+    expect(lines).toEqual([
+      "nimbus-sandbox-wrapper: not observing the network: the source module did not load",
+    ]);
+  }, 70_000);
+
+  test("a poller that throws as it starts says so once, observes nothing, closes the source, and the child still runs", async () => {
+    const dir = tempRoot();
+    const { wrapper, ready } = startWrapper(dir, "poll-start-fail", false, ["api.github.com:443"]);
+    const stderr = new Response(wrapper.stderr).text();
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    await waitForFile(ready);
+    const files = runFiles(dir);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
+    const lines = (await stderr)
+      .split(/\r?\n/)
+      .filter((l) => l.includes("not observing the network"));
+    expect(lines).toEqual([
+      "nimbus-sandbox-wrapper: not observing the network: the poller did not start",
+    ]);
+    expect(existsSync(`${ready}.closed`)).toBe(true);
+  }, 70_000);
+
+  test("a policy that declares no network starts no poller and resolves nothing", async () => {
+    const dir = tempRoot();
+    const { wrapper, ready } = startWrapper(dir, "poll", false, []);
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    const files = runFiles(dir);
+    expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
+    expect(files[1]?.["entries"]).toEqual([]);
+    expect(existsSync(`${ready}.resolved`)).toBe(false);
   }, 70_000);
 });
 

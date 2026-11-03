@@ -16,10 +16,12 @@
  * File body, one JSON object:
  *   { "v": 1, "label": { "extensionId", "version" }, "seq", "runStart", "os", "networkObserved",
  *     "fromMs", "toMs", "final", "entries": [{ "o", "h", "p", "n" }], "dropped", "stopped"? }
+ * where `o` is `used` or `refused` (a sanitised name in `h`) or `unmatched` (an IP literal in `h`).
  */
 
 import { randomBytes } from "node:crypto";
 import { renameSync, rmSync, writeFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { sanitiseName } from "./net-forward-host.ts";
 
 /** What the wrapper's network path reports. A refusal happens before any port is known. */
@@ -27,10 +29,17 @@ export interface NetworkObserver {
   used(host: string, port: number): void;
   refused(name: string): void;
   /**
-   * The runner started the child behind a network path that reports (the Linux forwarder). Called
-   * by the runner for what it DID, never inferred from the policy: until it is called every file
-   * says `networkObserved: false`, which is what a fallback spawn, a no-network spawn, macOS and
-   * Windows all leave it.
+   * A connection to an address that matched no declared host (the Windows and macOS poller). The
+   * address is an IP literal and is kept verbatim, never put through the name sanitiser; anything
+   * else is counted in `dropped`. A report never turns it into a host name.
+   */
+  unmatched(ip: string, port: number): void;
+  /**
+   * The child runs behind a network path that reports: the Linux forwarder, or on Windows and
+   * macOS a connection source the wrapper opened for a policy that declares network. Called for
+   * what was DONE, never inferred from the policy: until it is called every file says
+   * `networkObserved: false`, which is what a fallback spawn, a no-network spawn and a connection
+   * source that failed to open all leave it.
    */
   markObserved(): void;
 }
@@ -82,7 +91,7 @@ export const MAX_LABEL_JSON_LENGTH = 1024;
 /** The longest DNS name. */
 export const MAX_NAME_LENGTH = 253;
 
-type Outcome = "used" | "refused";
+type Outcome = "used" | "unmatched" | "refused";
 type Entry = { o: Outcome; h: string; p: number; n: number };
 
 /** The temp name for a final path: `<prefix>.<seq>.<pid>.<4 hex>.tmp`. */
@@ -143,9 +152,12 @@ function boundedName(name: string): string {
   return sanitiseName(name).slice(0, MAX_NAME_LENGTH);
 }
 
-/** `used` before `refused`, then the most frequent, then by name and port: what a trim keeps. */
+/** What a trim keeps first: what the child used, then what it reached unmatched, then refusals. */
+const OUTCOME_RANK: Readonly<Record<Outcome, number>> = { used: 0, unmatched: 1, refused: 2 };
+
+/** By outcome rank, then the most frequent, then by name and port. */
 function byImportance(a: Entry, b: Entry): number {
-  if (a.o !== b.o) return a.o === "used" ? -1 : 1;
+  if (a.o !== b.o) return OUTCOME_RANK[a.o] - OUTCOME_RANK[b.o];
   if (a.n !== b.n) return b.n - a.n;
   if (a.h !== b.h) return a.h < b.h ? -1 : 1;
   return a.p - b.p;
@@ -192,16 +204,26 @@ export function createNetworkObservationWriter(
   let networkObserved = false;
   let window: Window = { fromMs: now(), entries: new Map(), dropped: 0 };
 
-  /** A full window makes room for a `used` key by dropping a `refused` one: a flood never hides use. */
-  const evictRefused = (): boolean => {
+  /** Drops one key of outcome `o` to make room, counting it. False when there is none. */
+  const evictOne = (o: Outcome): boolean => {
     for (const [key, entry] of window.entries) {
-      if (entry.o === "refused") {
+      if (entry.o === o) {
         window.entries.delete(key);
         window.dropped += 1;
         return true;
       }
     }
     return false;
+  };
+
+  /**
+   * A full window makes room for a more important key by dropping a less important one: a flood of
+   * refusals or of unmatched addresses never hides use, and refusals never hide an unmatched one.
+   */
+  const makeRoom = (o: Outcome): boolean => {
+    if (o === "refused") return false;
+    if (evictOne("refused")) return true;
+    return o === "used" && evictOne("unmatched");
   };
 
   const record = (o: Outcome, h: string, p: number): void => {
@@ -216,7 +238,7 @@ export function createNetworkObservationWriter(
       seen.n += 1;
       return;
     }
-    if (window.entries.size >= MAX_ENTRIES && !(o === "used" && evictRefused())) {
+    if (window.entries.size >= MAX_ENTRIES && !makeRoom(o)) {
       window.dropped += 1;
       return;
     }
@@ -305,6 +327,18 @@ export function createNetworkObservationWriter(
         record("refused", boundedName(name), 0);
       } catch {
         // Never thrown into the forwarder.
+      }
+    },
+    unmatched: (ip, port) => {
+      try {
+        // Verbatim or not at all: an IP literal is never sanitised, and nothing else is kept.
+        if (isIP(ip) === 0) {
+          if (!stopped && !closed) window.dropped += 1;
+          return;
+        }
+        record("unmatched", ip, port);
+      } catch {
+        // Never thrown into the poller.
       }
     },
     markObserved: () => {

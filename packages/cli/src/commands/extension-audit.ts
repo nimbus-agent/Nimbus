@@ -1,3 +1,5 @@
+import { isIP } from "node:net";
+
 import type { IPCClient } from "@nimbus-dev/client";
 
 type Destination = { destination: string; port: number; count: number };
@@ -55,14 +57,38 @@ const CLOSING_LINES = [
 ];
 
 /**
- * Why the network was not observed, from the coverage row's OS. Only the Linux forwarder observes
- * today; a Linux run without one either declared nothing (no forwarder is needed) or ran without
- * the sandbox helper, which leaves no network filter to observe through.
+ * An `unmatched` destination is an IP literal (the gateway's ingest refuses anything else), kept
+ * as it is, never through {@link displayName}, which would turn an IPv6 address's colons into `?`.
+ * Anything that is not an IP literal is still child-supplied text and is sanitised like a name.
+ */
+function unmatchedAddress(ip: string): string {
+  return isIP(ip) === 0 ? displayName(ip) : ip;
+}
+
+/** `ip:port`, an IPv6 address in brackets (`[2001:db8::1]:443`). */
+function unmatchedHostPort(ip: string, port: number): string {
+  const kind = isIP(ip);
+  if (kind === 0) return hostPort(ip, port);
+  return kind === 6 ? `[${ip}]:${port}` : `${ip}:${port}`;
+}
+
+/**
+ * Why the network was not observed, from the coverage row's OS. A run that declared nothing has no
+ * network to observe (Linux starts no forwarder; Windows and macOS start no poller). On Linux a run
+ * that declared hosts but has no observation ran without the sandbox helper, which leaves no
+ * network filter to observe through. On Windows and macOS it is a run whose connection table could
+ * not be opened (the wrapper printed why), or one from a Nimbus that did not observe there yet.
  */
 function unobservedLine(e: ExtensionAuditEntry): string {
-  if (e.os !== "linux") return "Network   not observed on this OS yet";
+  const os = e.os;
+  if (os !== "linux" && os !== "win32" && os !== "darwin") {
+    return "Network   not observed on this OS yet";
+  }
   if (e.declared.length === 0) return "Network   declared nothing";
-  return "Network   not observed: this run had no network filter (no sandbox helper)";
+  if (os === "linux") {
+    return "Network   not observed: this run had no network filter (no sandbox helper)";
+  }
+  return "Network   not observed: no connection table was read in these runs";
 }
 
 const STOPPED_LINE = "  observation stopped after one day in at least one run";
@@ -84,6 +110,11 @@ function networkBody(e: ExtensionAuditEntry): string[] {
   for (const r of e.refused) {
     lines.push(`  refused   ${hostPort(r.destination, r.port)} (${r.count} lookup(s))`);
   }
+  for (const u of e.unmatched) {
+    lines.push(
+      `  unmatched ${unmatchedHostPort(u.destination, u.port)} (${u.count} connection(s)): an address we could not match to a declared host`,
+    );
+  }
   if (e.dropped > 0) lines.push(`  more not shown: ${e.dropped}`);
   return lines;
 }
@@ -103,7 +134,10 @@ function sanitiseDestinations(list: readonly Destination[]): Destination[] {
   return list.map((d) => ({ ...d, destination: displayName(d.destination) }));
 }
 
-/** The `--json` view: every name passes through {@link displayName}, like the text. */
+/**
+ * The `--json` view: every name passes through {@link displayName}, like the text; an `unmatched`
+ * IP literal is kept as it is (no brackets: that is display syntax).
+ */
 export function sanitiseExtensionAudit(e: ExtensionAuditEntry): ExtensionAuditEntry {
   return {
     ...e,
@@ -113,7 +147,7 @@ export function sanitiseExtensionAudit(e: ExtensionAuditEntry): ExtensionAuditEn
     used: sanitiseDestinations(e.used),
     notSeen: e.notSeen.map(declaredName),
     refused: sanitiseDestinations(e.refused),
-    unmatched: sanitiseDestinations(e.unmatched),
+    unmatched: e.unmatched.map((d) => ({ ...d, destination: unmatchedAddress(d.destination) })),
   };
 }
 

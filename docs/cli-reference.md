@@ -4910,16 +4910,36 @@ At least these. Short connections can be missed, and "not seen" does not mean no
 File access is not observed.
 ```
 
-On Windows and macOS in this release only run coverage is recorded, and the report says so:
+On Windows, the wrapper polls the TCP connections of the extension's AppContainer; on macOS, those of its process tree. A connection to an address that one of the declared hosts resolved to is `used` for that host; any other address is printed as an address, never as a name:
 
 ```text
 com.example.notion 1.2.0   observed 3 run(s) over 2 day(s), on this machine only
-Network   not observed on this OS yet
+Network   declared api.notion.com:443, files.notion.com:443
+  used      api.notion.com:443 (12 connection(s))
+  not seen  files.notion.com:443
+  unmatched 104.20.23.154:443 (2 connection(s)): an address we could not match to a declared host
+  unmatched [2001:db8::1]:443 (1 connection(s)): an address we could not match to a declared host
 At least these. Short connections can be missed, and "not seen" does not mean not used.
 File access is not observed.
 ```
 
-An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line, and no `Network` line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
+macOS prints the same lines (there is no `refused` line on either OS: no lookup passes through the wrapper there):
+
+```text
+com.example.notion 1.2.0   observed 1 run(s) over 1 day(s), on this machine only
+Network   declared api.notion.com:443, files.notion.com:443
+  not seen  api.notion.com:443
+  not seen  files.notion.com:443
+  unmatched 17.253.144.10:443 (3 connection(s)): an address we could not match to a declared host
+At least these. Short connections can be missed, and "not seen" does not mean not used.
+File access is not observed.
+```
+
+An IPv6 address is printed in brackets, `[addr]:port`. An `unmatched` line is not a claim that the extension reached an undeclared host: it is an address the wrapper could not match, which includes an address a declared host resolved to only outside the wrapper's own lookups (it resolves each declared name at start and every 60 s). The reverse also holds: an undeclared name that shares an address with a declared host reads as that declared host. Bounds: [`sandbox.md` section Observation](./sandbox.md#observation).
+
+On Windows and macOS, an extension that declared no network is `Network   declared nothing`. One that declared hosts but has no observation says `Network   not observed: no connection table was read in these runs` (the wrapper could not open the connection table and printed why to its stderr, or the runs came from a Nimbus that did not observe on that OS yet).
+
+An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line, and no `Network` line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`, whose `destination` is the IP literal as recorded, without brackets). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
 
 ```bash
 nimbus extension audit
