@@ -127,6 +127,7 @@ import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { readAuditEntries } from "./extension-audit-rpc.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
 import { requireTrimmedStringField } from "./rpc-params.ts";
 
@@ -386,6 +387,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.list": (rec, ctx) => handleExtensionList(rec, ctx),
 
   "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
+
+  "extension.audit": (rec, ctx) => handleExtensionAudit(rec, ctx),
 
   "extension.eval": (rec, ctx) => handleExtensionEval(rec, ctx),
 
@@ -826,6 +829,14 @@ function installedEvidence(
   return row.source_registry == null
     ? { evidence: localInstallEvidence() }
     : { evidenceIn: oneLine(row.source_registry) };
+}
+
+/** What the installed extension did on this machine; local evidence only (never LAN, never Tauri). */
+function handleExtensionAudit(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+  const id = rec !== undefined && typeof rec["id"] === "string" ? rec["id"].trim() : undefined;
+  const extensions = readAuditEntries(ctx.db, id === "" ? undefined : id);
+  if (extensions === undefined) throw new AutomationRpcError(-32602, "Extension not found");
+  return { kind: "hit", value: { extensions } };
 }
 
 async function handleExtensionInfo(

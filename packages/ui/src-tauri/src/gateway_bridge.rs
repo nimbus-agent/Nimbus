@@ -810,6 +810,8 @@ mod tests {
         // which secrets exist, like `vault.*`, which is off the list too.
         assert!(!is_method_allowed("extension.credentialSet"));
         assert!(!is_method_allowed("extension.credentialStatus"));
+        // Observed network evidence (V81) is read from the CLI only; it is not renderer-callable.
+        assert!(!is_method_allowed("extension.audit"));
     }
 
     #[test]

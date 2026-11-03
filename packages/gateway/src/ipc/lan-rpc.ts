@@ -105,6 +105,7 @@ const FORBIDDEN_OVER_LAN = new Set([
   "extension.credentialSet", // writes an extension's credential into the owner's Vault — CLI-only
   "extension.credentialStatus", // which of an extension's credentials are set — CLI-only, like set
   "extension.eval", // runs an installed extension's eval suites in the sandbox — owner-approved, CLI-only
+  "extension.audit", // observed network evidence (V81) never leaves the machine; CLI-only read
   "extension.rehash", // adopts on-disk bytes as trusted — gated like an install, CLI-only
   // Connector migration (connector-unbundling spec § 7.2): `accept` installs signed code, grants it a
   // run and points it at the owner's existing Vault credential in ONE `extension.migrate` approval;

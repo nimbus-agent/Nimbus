@@ -4,8 +4,8 @@
 // wrapper, the real Linux runner, the built `nimbus-sandbox-helper` and nested `bwrap`, and the
 // child, on one tool call, fetches the declared host once and looks up `undeclared.invalid`. The
 // extension is then stopped, which makes its wrapper write the run's final window; the gateway is
-// restarted, and its boot pass ingests the window files into V81. The rows are read back from the
-// gateway's own database once it has exited (`extension.audit`, the read path, is Task 4's).
+// restarted, and its boot pass ingests the window files into V81. The rows are read back through
+// the owner's own read path, `extension.audit`, from the restarted gateway.
 //
 // Also checked here, in the real child: neither observation variable reaches it (Review Focus 2),
 // and the observation directory is the gateway's own, created 0700.
@@ -21,7 +21,6 @@
 // installed package has no dependencies and no bundle step.
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); nothing here needs the index.
-import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
@@ -37,7 +36,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { readExtensionAudit } from "../../src/extensions/observation/observation-store.ts";
+import type { AuditEntry } from "../../src/ipc/extension-audit-rpc.ts";
 
 const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const HELPER = join(import.meta.dir, "../../src-native/sandbox-helper/nimbus-sandbox-helper");
@@ -50,6 +49,8 @@ const REQUIRED = process.env["NIMBUS_REQUIRE_SANDBOX_HELPER"] === "1";
  */
 const REQUIRE_REAL_NETWORK =
   REQUIRED || process.env["CI"] === "true" || process.env["NIMBUS_REQUIRE_REAL_NETWORK"] === "1";
+
+type AuditResult = { extensions: AuditEntry[] };
 
 const EXTENSION_ID = "e2e.observed";
 const SERVICE_ID = "ext_e2e_observed";
@@ -454,28 +455,32 @@ describe.skipIf(!premise)("an approved extension's network, observed on Linux", 
       await bootGateway();
       // The boot pass ran before the socket answered, so nothing is left to ingest.
       expect(windowFiles()).toEqual([]);
-      await stopGateway();
-
-      const db = new Database(join(paths.dataDir, "nimbus.db"), { readonly: true });
-      let audit: ReturnType<typeof readExtensionAudit>;
+      // The read path under test is the owner's own: `extension.audit` over IPC, not the tables.
+      let audit: AuditResult;
       try {
-        audit = readExtensionAudit(db, EXTENSION_ID, VERSION);
+        audit = await client.call<AuditResult>("extension.audit", { id: EXTENSION_ID });
       } finally {
-        db.close();
+        await stopGateway();
       }
+      const entry = audit.extensions[0];
       expect(finalWritten).toBe(true);
       expect(seenSeqs()[0]).toBe(0);
-      expect(audit.coverage).toMatchObject({ runs: 1, os: "linux", network_observed: 1 });
-      const refused = audit.rows.find(
-        (r) => r.outcome === "refused" && r.destination === "undeclared.invalid",
-      );
+      expect(audit.extensions).toHaveLength(1);
+      expect(entry).toMatchObject({
+        id: EXTENSION_ID,
+        version: VERSION,
+        runs: 1,
+        os: "linux",
+        networkObserved: true,
+        declared: ["api.github.com:443"],
+      });
+      const refused = entry?.refused.find((r) => r.destination === "undeclared.invalid");
       expect(refused?.port).toBe(0);
       expect(refused?.count ?? 0).toBeGreaterThanOrEqual(1);
       if (!requireHostOrSkip("the used row")) return;
-      const used = audit.rows.find(
-        (r) => r.outcome === "used" && r.destination === "api.github.com" && r.port === 443,
-      );
+      const used = entry?.used.find((r) => r.destination === "api.github.com" && r.port === 443);
       expect(used?.count ?? 0).toBeGreaterThanOrEqual(1);
+      expect(entry?.notSeen).toEqual([]);
     },
     TEST_TIMEOUT_MS * 2,
   );
