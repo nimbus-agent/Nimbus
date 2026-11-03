@@ -12,7 +12,8 @@
  * fake resolver through its test-only deps: the source reports its connections only once the child
  * has exited, so they reach the final file only if the wrapper stops the poller (its last poll)
  * before `process.exit` closes the writer. The resolver appends each name it is asked for to
- * `<ready>.resolved`. With `poll-fail` the source fails to open.
+ * `<ready>.resolved`. With `poll-fail` the source fails to open; with `poll-load-fail` loading
+ * the platform's opener throws, as a failed dynamic import would.
  *
  * Test-only: it confines nothing and must never be reachable from production code.
  */
@@ -37,7 +38,7 @@ const mode = process.argv[3];
 const stay = mode === "stay";
 /** With `argv[4]` `observed` the stand-in says the child runs behind a forwarder, as Linux would. */
 const observed = process.argv[4] === "observed";
-const polled = mode === "poll" || mode === "poll-fail";
+const polled = mode === "poll" || mode === "poll-fail" || mode === "poll-load-fail";
 if (ready === undefined) throw new Error("usage: sandbox-wrapper-observed.ts <ready-file>");
 
 const childScript = [
@@ -104,7 +105,12 @@ const pollDeps: SandboxWrapperDeps = {
   pollPeriodMs: 20,
 };
 
+/** No injected opener: the wrapper must load one, and the load throws. */
+const loadFailDeps: SandboxWrapperDeps = {
+  loadConnectionSourceOpener: () => Promise.reject(new Error("the source module did not load")),
+};
+
 await runSandboxWrapper([process.execPath, "-e", childScript], {
   createRunner: () => Promise.resolve(standIn),
-  ...(polled ? pollDeps : {}),
+  ...(mode === "poll-load-fail" ? loadFailDeps : polled ? pollDeps : {}),
 });

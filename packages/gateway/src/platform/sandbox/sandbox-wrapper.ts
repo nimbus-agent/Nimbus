@@ -86,21 +86,12 @@ export type SandboxWrapperDeps = {
   resolveHost?: (host: string) => Promise<string[]>;
   /** Tests only: the poller's period. */
   pollPeriodMs?: number;
+  /** Tests only: loads the platform's opener. Production imports the platform's source module. */
+  loadConnectionSourceOpener?: (platform: "win32" | "darwin") => Promise<OpenConnectionSource>;
 };
 
-/**
- * The source opener when this spawn is one the poller observes: Windows or macOS, a writer to
- * report to, and a policy that declares network (with none there is nothing to match, and the
- * sandbox lets nothing out). Loaded before the spawn, so opening it in the child's `spawn` event is
- * synchronous and ahead of file 0. Linux is observed by its forwarder instead.
- */
-async function connectionSourceOpener(
-  platform: SandboxRunner["platform"],
-  policy: SandboxPolicy,
-  deps: SandboxWrapperDeps,
-): Promise<OpenConnectionSource | null> {
-  if (platform === "linux" || policy.permissions.network.length === 0) return null;
-  if (deps.openConnectionSource !== undefined) return deps.openConnectionSource;
+/** The platform's own opener, from its source module (loaded only on that platform). */
+async function platformOpener(platform: "win32" | "darwin"): Promise<OpenConnectionSource> {
   if (platform === "win32") {
     const { openWin32ConnectionSource } = await import("./observe/win32-connections.ts");
     return (p) => openWin32ConnectionSource({ profileName: profileNameFor(p) });
@@ -111,6 +102,38 @@ async function connectionSourceOpener(
     child.pid === undefined
       ? { error: "the child has no pid" }
       : openDarwinConnectionSource({ rootPid: child.pid });
+}
+
+/**
+ * The source opener when this spawn is one the poller observes: Windows or macOS, a writer to
+ * report to, and a policy that declares network (with none there is nothing to match, and the
+ * sandbox lets nothing out). Loaded before the spawn, so opening it in the child's `spawn` event is
+ * synchronous and ahead of file 0. Linux is observed by its forwarder instead. Called only through
+ * {@link safeConnectionSourceOpener}, so a load that fails never stops the child from starting.
+ */
+async function connectionSourceOpener(
+  platform: SandboxRunner["platform"],
+  policy: SandboxPolicy,
+  deps: SandboxWrapperDeps,
+): Promise<OpenConnectionSource | null> {
+  if (platform === "linux" || policy.permissions.network.length === 0) return null;
+  if (deps.openConnectionSource !== undefined) return deps.openConnectionSource;
+  return (deps.loadConnectionSourceOpener ?? platformOpener)(platform);
+}
+
+/** {@link connectionSourceOpener}, where any failure means "not observing", never a refused spawn. */
+async function safeConnectionSourceOpener(
+  platform: SandboxRunner["platform"],
+  policy: SandboxPolicy,
+  deps: SandboxWrapperDeps,
+): Promise<OpenConnectionSource | null> {
+  try {
+    return await connectionSourceOpener(platform, policy, deps);
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    process.stderr.write(`nimbus-sandbox-wrapper: not observing the network: ${why}\n`);
+    return null;
+  }
 }
 
 /**
@@ -196,7 +219,7 @@ export async function runSandboxWrapper(
   )();
   const writer = observationWriter();
   const openSource =
-    writer === null ? null : await connectionSourceOpener(runner.platform, policy, deps);
+    writer === null ? null : await safeConnectionSourceOpener(runner.platform, policy, deps);
   let child: ChildProcess;
   try {
     child = runner.spawn(originalCmd, originalArgs, {

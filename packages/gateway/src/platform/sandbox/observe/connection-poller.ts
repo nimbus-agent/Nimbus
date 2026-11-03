@@ -31,8 +31,13 @@ export const RESOLVE_REFRESH_MS = 60_000;
 export const MAX_ANSWERS_PER_HOST = 256;
 /** Consecutive source failures after which the poller stops (the child runs on). */
 export const MAX_CONSECUTIVE_POLL_ERRORS = 10;
-/** New connections held while the first resolution is pending; past this they are matched at once. */
+/** New connections held while a first resolution is pending; past this they are judged at once. */
 const MAX_PENDING = 4096;
+/**
+ * How long a new connection waits for its candidate hosts' first resolution, and the default
+ * resolver's timeout: a slow or hanging lookup delays a verdict by at most this much.
+ */
+export const FIRST_RESOLVE_WAIT_MS = 5_000;
 
 export type ConnectionPollerOptions = {
   source: ConnectionSource;
@@ -77,6 +82,11 @@ export function declaredTargets(declared: readonly string[]): DeclaredTarget[] {
 }
 
 /** `::ffff:a.b.c.d` is the IPv4 `a.b.c.d`; every other literal is kept as given. */
+/**
+ * Only the dotted mapped form is recognised (`::ffff:7f00:1` is not). That is what both sources
+ * emit: `formatIpv6` prints a mapped address dotted, pinned in `win32-connections.test.ts`,
+ * `darwin-connections.test.ts` and, as this coupling, `connection-poller.test.ts`.
+ */
 export function canonicalIp(ip: string): string {
   const lower = ip.toLowerCase();
   if (lower.startsWith("::ffff:")) {
@@ -91,8 +101,19 @@ export function isLoopbackIp(canonical: string): boolean {
   return (isIP(canonical) === 4 && canonical.startsWith("127.")) || canonical === "::1";
 }
 
-const defaultResolve = (host: string): Promise<string[]> =>
-  lookup(host, { all: true }).then((rs) => rs.map((r) => r.address));
+/** The OS resolver, bounded: `dns.lookup` has no timeout of its own. */
+const defaultResolve = (host: string): Promise<string[]> => {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`no answer in ${String(FIRST_RESOLVE_WAIT_MS)} ms`)),
+      FIRST_RESOLVE_WAIT_MS,
+    );
+    timeout.unref();
+  });
+  const answer = lookup(host, { all: true }).then((rs) => rs.map((r) => r.address));
+  return Promise.race([answer, timedOut]).finally(() => clearTimeout(timeout));
+};
 
 const defaultLog = (line: string): void => {
   process.stderr.write(`${line}\n`);
@@ -148,7 +169,16 @@ class MatchTable {
   match(ip: string, port: number): ReadonlySet<string> | undefined {
     return this.hostsByTarget.get(`${ip}|${String(port)}`);
   }
+
+  /** The declared hosts a connection to `port` could be: those that declare that port. */
+  candidates(port: number): string[] {
+    const out: string[] = [];
+    for (const [host, ports] of this.portsByHost) if (ports.has(port)) out.push(host);
+    return out;
+  }
 }
+
+type Held = { conn: ObservedConnection; seenAt: number };
 
 const connectionKey = (c: ObservedConnection): string =>
   `${String(c.pid)}|${String(c.localPort)}|${c.remoteIp}|${String(c.remotePort)}`;
@@ -156,7 +186,15 @@ const connectionKey = (c: ObservedConnection): string =>
 export function startConnectionPoller(opts: ConnectionPollerOptions): ConnectionPoller {
   const resolve = opts.resolve ?? defaultResolve;
   const now = opts.now ?? Date.now;
-  const log = opts.log ?? defaultLog;
+  const rawLog = opts.log ?? defaultLog;
+  /** A log line never throws into the poller: a failed write is lost, the observation goes on. */
+  const log = (line: string): void => {
+    try {
+      rawLog(line);
+    } catch {
+      // Nowhere left to say it.
+    }
+  };
   const targets = declaredTargets(opts.declared);
   const table = new MatchTable(targets);
   const literals = table.hosts().filter((h) => isIP(h) !== 0);
@@ -164,11 +202,12 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
   for (const ip of literals) table.learn(ip, [ip]);
 
   const loggedHosts = new Set<string>();
+  /** Hosts whose first lookup has settled (answer or failure); a literal needs none. */
+  const settled = new Set<string>(literals);
+  /** Hosts with a lookup in flight: one host's slow lookup never blocks another's refresh. */
+  const inFlight = new Set<string>();
   let previous = new Set<string>();
-  let pending: ObservedConnection[] = [];
-  /** The first resolution has settled, so a connection can be judged. */
-  let ready = names.length === 0;
-  let refreshing = false;
+  let pending: Held[] = [];
   let lastRefreshAt = now();
   let errors = 0;
   let running = false;
@@ -185,10 +224,29 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
     for (const host of hosts) opts.observer.used(host, c.remotePort);
   };
 
-  const drain = (): void => {
+  /** A held connection is judged once ITS candidate hosts have settled, or it has waited long enough. */
+  const judgeable = (h: Held, at: number): boolean =>
+    at - h.seenAt >= FIRST_RESOLVE_WAIT_MS ||
+    table.candidates(h.conn.remotePort).every((host) => settled.has(host));
+
+  /** Reports every judgeable held connection (every one, when forced), keeps the rest in order. */
+  const drain = (force: boolean): void => {
+    const at = now();
     const batch = pending;
     pending = [];
-    for (const c of batch) report(c);
+    for (const h of batch) {
+      if (force || judgeable(h, at)) report(h.conn);
+      else pending.push(h);
+    }
+  };
+
+  const safeDrain = (): void => {
+    if (finished) return;
+    try {
+      drain(false);
+    } catch {
+      // Observation never throws into a timer or a promise.
+    }
   };
 
   /** One lookup of a declared name. Never rejects: a failure keeps the earlier answers. */
@@ -203,21 +261,20 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
     }
   };
 
-  /** Looks every declared name up again, unless a refresh is still running (no overlap). */
+  /** Looks every declared name up again, skipping a name whose last lookup is still running. */
   const refresh = (): void => {
-    if (refreshing || names.length === 0) return;
-    refreshing = true;
     lastRefreshAt = now();
-    void Promise.all(names.map(resolveOne)).then(() => {
-      refreshing = false;
-      if (ready || finished) return;
-      ready = true;
-      try {
-        drain();
-      } catch {
-        // Observation never throws into a timer.
-      }
-    });
+    for (const host of names) {
+      if (inFlight.has(host)) continue;
+      inFlight.add(host);
+      void resolveOne(host)
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight.delete(host);
+          settled.add(host);
+          safeDrain();
+        });
+    }
   };
 
   const halt = (): void => {
@@ -239,24 +296,31 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
     } catch (e) {
       errors += 1;
       if (errors >= MAX_CONSECUTIVE_POLL_ERRORS) {
-        log(
-          `nimbus-sandbox-wrapper: not observing the network any more: ${String(errors)} connection-table reads failed (${errorText(e)})`,
-        );
-        drain();
-        halt();
+        try {
+          log(
+            `nimbus-sandbox-wrapper: not observing the network any more: ${String(errors)} connection-table reads failed (${errorText(e)})`,
+          );
+        } finally {
+          try {
+            drain(true);
+          } finally {
+            halt();
+          }
+        }
       }
       return null;
     }
   };
 
-  /** Queues every connection that was not in the previous poll, loopback left out. */
+  /** Holds every connection that was not in the previous poll, loopback left out. */
   const collect = (rows: readonly ObservedConnection[]): void => {
     const current = new Set<string>();
+    const at = now();
     for (const c of rows) {
       if (isLoopbackIp(canonicalIp(c.remoteIp))) continue;
       const key = connectionKey(c);
       current.add(key);
-      if (!previous.has(key)) pending.push(c);
+      if (!previous.has(key)) pending.push({ conn: c, seenAt: at });
     }
     previous = current;
   };
@@ -268,7 +332,7 @@ export function startConnectionPoller(opts: ConnectionPollerOptions): Connection
       if (!final && now() - lastRefreshAt >= RESOLVE_REFRESH_MS) refresh();
       const rows = read();
       if (rows !== null) collect(rows);
-      if (ready || final || pending.length > MAX_PENDING) drain();
+      if (!finished) drain(final || pending.length > MAX_PENDING);
     } catch {
       // Observation never throws into a timer or the child's exit handler.
     } finally {

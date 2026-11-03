@@ -446,7 +446,7 @@ async function waitForExit(child: Bun.Subprocess, ms: number): Promise<number | 
   }
 }
 
-type WrapperMode = "stay" | "exit" | "refuse" | "error" | "poll" | "poll-fail";
+type WrapperMode = "stay" | "exit" | "refuse" | "error" | "poll" | "poll-fail" | "poll-load-fail";
 
 function startWrapper(dir: string, mode: WrapperMode, observed = false, network: string[] = []) {
   const ready = join(dir, "ready");
@@ -462,7 +462,7 @@ function startWrapper(dir: string, mode: WrapperMode, observed = false, network:
       [SANDBOX_OBSERVATION_FILE_ENV]: join(dir, "ext_weather.1000.deadbeef"),
       [SANDBOX_OBSERVATION_LABEL_ENV]: JSON.stringify(LABEL),
     },
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", "ignore", "pipe"],
   });
   return { wrapper, ready };
 }
@@ -563,6 +563,23 @@ describe("the wrapper's connection poller", () => {
     expect(files).toHaveLength(2);
     expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
     expect(files[1]?.["entries"]).toEqual([]);
+  }, 70_000);
+
+  test("an opener that fails to load says so once, observes nothing, and the child still runs", async () => {
+    const dir = tempRoot();
+    const { wrapper, ready } = startWrapper(dir, "poll-load-fail", false, ["api.github.com:443"]);
+    const stderr = new Response(wrapper.stderr).text();
+    expect(await waitForExit(wrapper, 30_000)).toBe(0);
+    await waitForFile(ready);
+    const files = runFiles(dir);
+    expect(files).toHaveLength(2);
+    expect(files.map((f) => f["networkObserved"])).toEqual([false, false]);
+    const lines = (await stderr)
+      .split(/\r?\n/)
+      .filter((l) => l.includes("not observing the network"));
+    expect(lines).toEqual([
+      "nimbus-sandbox-wrapper: not observing the network: the source module did not load",
+    ]);
   }, 70_000);
 
   test("a policy that declares no network starts no poller and resolves nothing", async () => {

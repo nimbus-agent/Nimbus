@@ -1,13 +1,16 @@
 import { describe, expect, test } from "bun:test";
 import {
   type ConnectionPollerOptions,
+  canonicalIp,
   declaredTargets,
+  FIRST_RESOLVE_WAIT_MS,
   MAX_ANSWERS_PER_HOST,
   MAX_CONSECUTIVE_POLL_ERRORS,
   RESOLVE_REFRESH_MS,
   startConnectionPoller,
 } from "./connection-poller.ts";
 import type { ConnectionSource, ObservedConnection } from "./types.ts";
+import { formatIpv6 } from "./win32-connections.ts";
 
 type Answers = Record<string, string[] | Error>;
 
@@ -377,7 +380,7 @@ describe("startConnectionPoller", () => {
     expect(h.events).toEqual(["unmatched 140.82.112.5:443"]);
   });
 
-  test("its own timer polls every periodMs, unref'd", async () => {
+  test("its own timer polls every periodMs", async () => {
     let polls = 0;
     const p = startConnectionPoller({
       source: {
@@ -395,6 +398,131 @@ describe("startConnectionPoller", () => {
     await Bun.sleep(80);
     p.stop();
     expect(polls).toBeGreaterThanOrEqual(3);
+  });
+});
+
+/** Collects unhandled rejections while `body` runs, then lets a few turns pass. */
+async function unhandledDuring(body: () => Promise<void>): Promise<unknown[]> {
+  const seen: unknown[] = [];
+  const onRejection = (reason: unknown): void => {
+    seen.push(reason);
+  };
+  process.on("unhandledRejection", onRejection);
+  try {
+    await body();
+    for (let i = 0; i < 3; i += 1) await settle();
+  } finally {
+    process.off("unhandledRejection", onRejection);
+  }
+  return seen;
+}
+
+const throwingLog = (): void => {
+  throw new Error("stderr is gone");
+};
+
+describe("a log that throws", () => {
+  test("a failed lookup's log line escapes nothing, and later refreshes and matches still happen", async () => {
+    const answers: Answers = { "api.github.com": new Error("ENOTFOUND") };
+    const h = harness(["api.github.com"], answers, { log: throwingLog });
+    const rejections = await unhandledDuring(async () => {
+      await settle();
+      answers["api.github.com"] = ["140.82.112.5"];
+      h.tick(RESOLVE_REFRESH_MS);
+      h.poller.pollNow();
+      await settle();
+      h.set([conn("140.82.112.5")]);
+      h.poller.pollNow();
+    });
+    expect(rejections).toEqual([]);
+    expect(h.resolved).toEqual(["api.github.com", "api.github.com"]);
+    expect(h.events).toEqual(["used api.github.com:443"]);
+  });
+
+  test("the error-budget halt still reports what it held and closes the source", async () => {
+    let polls = 0;
+    let closes = 0;
+    const events: string[] = [];
+    let hang: Promise<string[]> | null = null;
+    const p = startConnectionPoller({
+      source: {
+        poll: () => {
+          polls += 1;
+          if (polls === 1) return [conn("203.0.113.7")];
+          throw new Error("table unreadable");
+        },
+        close: () => {
+          closes += 1;
+        },
+      },
+      declared: ["api.github.com"],
+      observer: {
+        used: () => undefined,
+        unmatched: (ip, port) => events.push(`unmatched ${ip}:${String(port)}`),
+      },
+      periodMs: 0,
+      log: throwingLog,
+      resolve: () => {
+        hang = new Promise<string[]>(() => undefined);
+        return hang;
+      },
+    });
+    for (let i = 0; i <= MAX_CONSECUTIVE_POLL_ERRORS + 2; i += 1) p.pollNow();
+    expect(hang).not.toBeNull();
+    expect(polls).toBe(MAX_CONSECUTIVE_POLL_ERRORS + 1);
+    expect(closes).toBe(1);
+    expect(events).toEqual(["unmatched 203.0.113.7:443"]);
+    p.stop();
+    expect(closes).toBe(1);
+  });
+});
+
+describe("per-host readiness", () => {
+  test("a slow name holds only connections it could be; those are judged after the wait", async () => {
+    let clock = 1_000;
+    const events: string[] = [];
+    const rows: ObservedConnection[] = [];
+    const p = startConnectionPoller({
+      source: { poll: () => rows, close: () => undefined },
+      declared: ["fast.example.com:443", "slow.example.com:8443"],
+      observer: {
+        used: (host, port) => events.push(`used ${host}:${String(port)}`),
+        unmatched: (ip, port) => events.push(`unmatched ${ip}:${String(port)}`),
+      },
+      periodMs: 0,
+      now: () => clock,
+      resolve: (host) =>
+        host === "fast.example.com"
+          ? Promise.resolve(["198.51.100.1"])
+          : new Promise<string[]>(() => undefined),
+    });
+    await settle();
+    rows.push(conn("198.51.100.1", 443, 1), conn("203.0.113.7", 8443, 2));
+    p.pollNow();
+    // The fast host's connection at once; the one on slow's port waits for slow.
+    expect(events).toEqual(["used fast.example.com:443"]);
+    clock += FIRST_RESOLVE_WAIT_MS - 1;
+    p.pollNow();
+    expect(events).toHaveLength(1);
+    clock += 1;
+    p.pollNow();
+    expect(events).toEqual(["used fast.example.com:443", "unmatched 203.0.113.7:8443"]);
+    p.stop();
+  });
+});
+
+describe("the sources' mapped-address form", () => {
+  test("formatIpv6 prints an IPv4-mapped address dotted, the only mapped form canonicalIp knows", () => {
+    // Both sources print every IPv6 remote through formatIpv6 (darwin imports it from win32).
+    const buf = Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 140, 82, 112, 6]);
+    const text = formatIpv6(buf, 0);
+    expect(text).toBe("::ffff:140.82.112.6");
+    expect(canonicalIp(text)).toBe("140.82.112.6");
+    const loop = formatIpv6(
+      Buffer.from([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1]),
+      0,
+    );
+    expect(canonicalIp(loop)).toBe("127.0.0.1");
   });
 });
 
