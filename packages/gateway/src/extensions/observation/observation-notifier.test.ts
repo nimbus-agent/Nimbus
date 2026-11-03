@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -254,6 +255,48 @@ describe("observationFindingsFor", () => {
         entries: [{ outcome: "refused", destination: "API.github.com.", port: 443, count: 1 }],
       }),
     );
+    expect(observationFindingsFor(db, EXT, "1.0.0")).toEqual({
+      os: "linux",
+      count: 1,
+      newestLastSeen: 2000,
+    });
+  });
+
+  test("Linux, a narrowed grant: a host the manifest declares but the owner removed is not undeclared", () => {
+    // Re-install EXT with a real manifest whose hash is the row's.
+    dbRun(db, "DELETE FROM extension WHERE id = ?", [EXT]);
+    const installPath = join(dir, "installed");
+    mkdirSync(installPath, { recursive: true });
+    const bytes = JSON.stringify({
+      id: EXT,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: {
+        network: ["api.github.com", "imap.example.com:993"],
+        filesystem: { read: [], write: [] },
+      },
+    });
+    writeFileSync(join(installPath, "nimbus.extension.json"), bytes);
+    insertExtensionRow(db, {
+      id: EXT,
+      version: "1.0.0",
+      install_path: installPath,
+      manifest_hash: createHash("sha256").update(bytes).digest("hex"),
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    grant(["api.github.com"]);
+    applyObservationWindow(
+      db,
+      win({
+        entries: [
+          { outcome: "refused", destination: "imap.example.com", port: 993, count: 2 },
+          { outcome: "refused", destination: "evil.example", port: 443, count: 1 },
+        ],
+      }),
+    );
+    // Only evil.example counts: imap.example.com is declared, just not approved.
     expect(observationFindingsFor(db, EXT, "1.0.0")).toEqual({
       os: "linux",
       count: 1,

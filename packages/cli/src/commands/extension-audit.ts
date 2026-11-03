@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import type { IPCClient } from "@nimbus-dev/client";
 
 type Destination = { destination: string; port: number; count: number };
+type Offer = { keep: string[]; remove: string[]; runs: number; days: number };
 
 /** The `extension.audit` result entry, as the gateway sends it (IPC only; no gateway imports). */
 export type ExtensionAuditEntry = {
@@ -15,6 +16,14 @@ export type ExtensionAuditEntry = {
   firstSeen?: number | undefined;
   lastSeen?: number | undefined;
   declared: string[];
+  /** Where `declared` came from: the verified installed manifest, or the grant when it could not be read. Absent from an older gateway. */
+  declaredFrom?: "manifest" | "grant" | undefined;
+  /** The stored grant's network; absent with no grant or from an older gateway. */
+  approved?: string[] | undefined;
+  /** The owner narrowed the grant below what the manifest declares. Absent from an older gateway. */
+  narrowed?: boolean | undefined;
+  /** A narrower grant the evidence supports; raw manifest entries. Absent from an older gateway. */
+  offer?: Offer | null | undefined;
   used: Destination[];
   notSeen: string[];
   refused: Destination[];
@@ -98,9 +107,39 @@ function unobservedLine(e: ExtensionAuditEntry): string {
 }
 
 const STOPPED_LINE = "  observation stopped after one day in at least one run";
+const FALLBACK_LINE =
+  "  declared  read from the run grant: the installed manifest could not be read and verified";
+
+function hostList(list: readonly string[], empty: string, sep: string): string {
+  return list.length === 0 ? empty : list.map(declaredName).join(sep);
+}
+
+/** What is approved when it differs from what is declared, and where `declared` came from. */
+function grantLines(e: ExtensionAuditEntry): string[] {
+  const lines: string[] = [];
+  if (e.declaredFrom === "grant") lines.push(FALLBACK_LINE);
+  if (e.narrowed === true && e.approved !== undefined) {
+    lines.push(
+      `  approved  ${hostList(e.approved, "no network", ", ")} (narrowed from what it declares)`,
+    );
+  }
+  return lines;
+}
+
+/** The offer, worded "not seen", never "not used": an offer, never a change. */
+function offerLines(e: ExtensionAuditEntry): string[] {
+  const o = e.offer;
+  if (o === null || o === undefined) return [];
+  return [
+    `Offer: narrow the network grant to ${hostList(o.keep, "no network", ", ")} (${hostList(o.remove, "nothing", ", ")} not seen in ${String(o.runs)} run(s) over ${String(o.days)} day(s) on this machine).`,
+    "  If the extension does use it rarely, that feature will fail.",
+    `  To apply: nimbus extension approve ${displayName(e.id)} --network ${hostList(o.keep, "none", ",")}`,
+  ];
+}
 
 function networkLines(e: ExtensionAuditEntry): string[] {
-  const lines = networkBody(e);
+  const [first = "", ...rest] = networkBody(e);
+  const lines = [first, ...grantLines(e), ...rest];
   if (e.stopped === true) lines.push(STOPPED_LINE);
   return lines;
 }
@@ -132,8 +171,8 @@ export function formatExtensionAudit(e: ExtensionAuditEntry): string[] {
       ? `${head}   observed ${e.runs} run(s) over ${e.observedDays} day(s), on this machine only`
       : `${head}   not observed yet`;
   // No coverage row: the extension has not run, so there is no network line to qualify.
-  if (e.firstSeen === undefined) return [observed, ...CLOSING_LINES];
-  return [observed, ...networkLines(e), ...CLOSING_LINES];
+  if (e.firstSeen === undefined) return [observed, ...grantLines(e), ...CLOSING_LINES];
+  return [observed, ...networkLines(e), ...offerLines(e), ...CLOSING_LINES];
 }
 
 function sanitiseDestinations(list: readonly Destination[]): Destination[] {
@@ -150,6 +189,16 @@ export function sanitiseExtensionAudit(e: ExtensionAuditEntry): ExtensionAuditEn
     id: displayName(e.id),
     version: displayName(e.version),
     declared: e.declared.map(declaredName),
+    ...(e.approved === undefined ? {} : { approved: e.approved.map(declaredName) }),
+    ...(e.offer === undefined || e.offer === null
+      ? {}
+      : {
+          offer: {
+            ...e.offer,
+            keep: e.offer.keep.map(declaredName),
+            remove: e.offer.remove.map(declaredName),
+          },
+        }),
     used: sanitiseDestinations(e.used),
     notSeen: e.notSeen.map(declaredName),
     refused: sanitiseDestinations(e.refused),

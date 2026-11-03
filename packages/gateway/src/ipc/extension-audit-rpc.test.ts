@@ -1,5 +1,9 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { dbRun } from "../db/write.ts";
@@ -110,6 +114,11 @@ describe("extension.audit", () => {
         firstSeen: 86_400_000,
         lastSeen: 3 * 86_400_000,
         declared: ["api.example.com:443", "other.example.com:443"],
+        // This row's install path holds no manifest, so declared falls back to the grant.
+        declaredFrom: "grant",
+        approved: ["api.example.com:443", "other.example.com:443"],
+        narrowed: false,
+        offer: null,
         used: [{ destination: "api.example.com", port: 443, count: 3 }],
         notSeen: ["other.example.com:443"],
         refused: [
@@ -261,5 +270,169 @@ describe("extension.audit", () => {
         LanError,
       );
     }
+  });
+});
+
+describe("extension.audit reads declared from the verified installed manifest", () => {
+  const M = "m";
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "ext-audit-manifest-"));
+  });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+
+  /** A row whose install path holds a manifest that hashes to `manifest_hash`, plus a grant. */
+  function installWithManifest(manifestNetwork: string[], approved: string[]): void {
+    const installPath = join(root, M);
+    mkdirSync(installPath, { recursive: true });
+    const bytes = JSON.stringify({
+      id: M,
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: { network: manifestNetwork, filesystem: { read: [], write: [] } },
+    });
+    writeFileSync(join(installPath, "nimbus.extension.json"), bytes);
+    insertExtensionRow(db, {
+      id: M,
+      version: "1.0.0",
+      install_path: installPath,
+      manifest_hash: createHash("sha256").update(bytes).digest("hex"),
+      entry_hash: "e",
+      installed_at: 1,
+      last_verified_at: 1,
+    });
+    dbRun(
+      db,
+      `INSERT INTO extension_run_grant (extension_id, service_id, version, tree_digest, permissions_json, approved_at)
+       VALUES (?, 'ext_m', '1.0.0', 'd', ?, 1)`,
+      [M, JSON.stringify({ network: approved, read: [], write: [] })],
+    );
+  }
+
+  /** `runs` runs spread over day 1 .. day `days`, each with these entries in its first window. */
+  function observe(
+    runs: number,
+    days: number,
+    entries: ObservationWindow["entries"],
+    over: Partial<ObservationWindow> = {},
+  ): void {
+    for (let i = 0; i < runs; i += 1) {
+      const day = runs === 1 ? 1 : 1 + Math.round(((days - 1) * i) / (runs - 1));
+      applyObservationWindow(
+        db,
+        win(M, {
+          runKey: `ext_m.${String(i)}.aaaaaaaa`,
+          fromMs: day * 86_400_000,
+          toMs: day * 86_400_000 + 60_000,
+          entries,
+          ...over,
+        }),
+      );
+    }
+  }
+
+  const DECLARED = ["api.example.com", "imap.example.com:993", "cdn.example.com:8443"];
+  const USED = [{ outcome: "used" as const, destination: "api.example.com", port: 443, count: 2 }];
+
+  test("a narrowed grant: declared is the manifest's, approved the grant's, narrowed true", () => {
+    installWithManifest(DECLARED, ["api.example.com"]);
+    observe(1, 1, USED);
+    expect(readAuditEntries(db, M)?.[0]).toMatchObject({
+      declaredFrom: "manifest",
+      declared: ["api.example.com:443", "imap.example.com:993", "cdn.example.com:8443"],
+      approved: ["api.example.com:443"],
+      narrowed: true,
+    });
+  });
+
+  test("an equal grant in another spelling is not narrowed (compared by parse key)", () => {
+    installWithManifest(
+      ["api.example.com", "imap.example.com:993"],
+      ["api.example.com", "imap.example.com:993"],
+    );
+    dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = ?", [
+      JSON.stringify({
+        network: ["api.example.com:443", "IMAP.example.com.:993"],
+        read: [],
+        write: [],
+      }),
+      M,
+    ]);
+    expect(readAuditEntries(db, M)?.[0]?.narrowed).toBe(false);
+  });
+
+  test("findings: a manifest-declared host removed by narrowing and refused is not a finding", () => {
+    installWithManifest(DECLARED, ["api.example.com"]);
+    observe(1, 1, [
+      ...USED,
+      { outcome: "refused", destination: "imap.example.com", port: 0, count: 1 },
+    ]);
+    const e = readAuditEntries(db, M)?.[0];
+    expect(e?.findings).toBeNull();
+    expect(e?.refused).toEqual([{ destination: "imap.example.com", port: 0, count: 1 }]);
+  });
+
+  test("Linux, 5 runs over 7 days, nothing dropped: the offer names raw manifest entries", () => {
+    installWithManifest(DECLARED, DECLARED);
+    observe(5, 7, USED);
+    expect(readAuditEntries(db, M)?.[0]?.offer).toEqual({
+      keep: ["api.example.com"],
+      remove: ["imap.example.com:993", "cdn.example.com:8443"],
+      runs: 5,
+      days: 7,
+    });
+  });
+
+  test("an already narrowed grant: the next offer goes only further, computed against the manifest", () => {
+    installWithManifest(DECLARED, ["api.example.com", "cdn.example.com:8443"]);
+    observe(5, 7, USED);
+    expect(readAuditEntries(db, M)?.[0]?.offer).toMatchObject({
+      keep: ["api.example.com"],
+      remove: ["cdn.example.com:8443"],
+    });
+  });
+
+  test("a grant narrowed to exactly what was used: no offer", () => {
+    installWithManifest(DECLARED, ["api.example.com"]);
+    observe(5, 7, USED);
+    expect(readAuditEntries(db, M)?.[0]?.offer).toBeNull();
+  });
+
+  test("4 runs, 6 days, a dropped key or a stopped run: no offer", () => {
+    const cases: Array<[number, number, Partial<ObservationWindow>]> = [
+      [4, 7, {}],
+      [5, 6, {}],
+      [5, 7, { dropped: 1 }],
+      [5, 7, { stopped: true }],
+      [5, 7, { networkObserved: false }],
+    ];
+    for (const [runs, days, over] of cases) {
+      dbRun(db, "DELETE FROM extension_run_grant WHERE extension_id = ?", [M]);
+      dbRun(db, "DELETE FROM extension WHERE id = ?", [M]);
+      dbRun(db, "DELETE FROM extension_network_observation WHERE extension_id = ?", [M]);
+      dbRun(db, "DELETE FROM extension_observation_coverage WHERE extension_id = ?", [M]);
+      dbRun(db, "DELETE FROM extension_observation_applied WHERE extension_id = ?", [M]);
+      installWithManifest(DECLARED, DECLARED);
+      observe(runs, days, USED, over);
+      expect(readAuditEntries(db, M)?.[0]?.offer).toBeNull();
+    }
+  });
+
+  test("evidence for an older version: no offer for the installed one", () => {
+    installWithManifest(DECLARED, DECLARED);
+    observe(5, 7, USED, { version: "0.9.0" });
+    expect(readAuditEntries(db, M)?.[0]).toMatchObject({ runs: 0, offer: null });
+  });
+
+  test("a manifest that cannot be verified falls back to the grant, says so, and offers nothing", () => {
+    installWithManifest(DECLARED, DECLARED);
+    observe(5, 7, USED);
+    dbRun(db, "UPDATE extension SET manifest_hash = ? WHERE id = ?", ["0".repeat(64), M]);
+    expect(readAuditEntries(db, M)?.[0]).toMatchObject({
+      declaredFrom: "grant",
+      declared: ["api.example.com:443", "imap.example.com:993", "cdn.example.com:8443"],
+      narrowed: false,
+      offer: null,
+    });
   });
 });

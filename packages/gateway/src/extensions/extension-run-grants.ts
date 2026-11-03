@@ -146,13 +146,22 @@ export function resolveExtensionRunGrants(
     if (c !== null) write.push(c);
   }
   return {
-    network: dedupe(
-      declared.network.map((h) => h.toLowerCase()),
-      "linux",
-    ),
+    network: declaredNetworkEntries(declared.network),
     read: dedupe(read, env.platform),
     write: dedupe(write, env.platform),
   };
+}
+
+/**
+ * A manifest's declared network as a run grant holds it: each entry lowercased, exact duplicates
+ * dropped, manifest order kept. The one rule {@link resolveExtensionRunGrants} applies, exported so
+ * `extension audit` reads what the manifest declares in the same form without resolving file grants.
+ */
+export function declaredNetworkEntries(network: readonly string[]): string[] {
+  return dedupe(
+    network.map((h) => h.toLowerCase()),
+    "linux",
+  );
 }
 
 /** The canonical stored form; equal grants serialize identically, so a string compare decides. */
