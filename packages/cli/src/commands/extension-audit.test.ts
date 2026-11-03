@@ -100,8 +100,7 @@ describe("formatExtensionAudit", () => {
         networkObserved: false,
       }),
     );
-    expect(lines[0]).toBe("acme.tool 1.2.0   not observed yet");
-    expect(lines.slice(-2)).toEqual(CLOSING);
+    expect(lines).toEqual(["acme.tool 1.2.0   not observed yet", ...CLOSING]);
   });
 
   test("a Windows entry counts runs but says the network is not observed on this OS yet", () => {
@@ -113,6 +112,30 @@ describe("formatExtensionAudit", () => {
       "Network   not observed on this OS yet",
       ...CLOSING,
     ]);
+  });
+});
+
+describe("hostile declared hosts (grant-sourced names)", () => {
+  const bad = "ev[31mil.test:443";
+  const hostileDeclared = entry({ declared: [bad], used: [], notSeen: [bad] });
+  const clean = "ev??31mil.test:443";
+
+  test("declared and not seen are sanitised in text", () => {
+    const lines = formatExtensionAudit(hostileDeclared);
+    expect(lines).toContain(`Network   declared ${clean}`);
+    expect(lines).toContain(`  not seen  ${clean}`);
+    expect(lines.join(NL)).not.toContain("");
+  });
+
+  test("declared and not seen are sanitised in --json", async () => {
+    const out: string[] = [];
+    await runExtensionAudit(["--json"], {
+      client: fakeClient([hostileDeclared]).client,
+      out: (s) => out.push(s),
+    });
+    const parsed = JSON.parse(out.join("")) as { extensions: ExtensionAuditEntry[] };
+    expect(parsed.extensions[0]?.declared).toEqual([clean]);
+    expect(parsed.extensions[0]?.notSeen).toEqual([clean]);
   });
 });
 

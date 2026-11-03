@@ -73,6 +73,8 @@ export function formatExtensionAudit(e: ExtensionAuditEntry): string[] {
     e.firstSeen !== undefined
       ? `${head}   observed ${e.runs} run(s) over ${e.observedDays} day(s), on this machine only`
       : `${head}   not observed yet`;
+  // No coverage row: the extension has not run, so there is no network line to qualify.
+  if (e.firstSeen === undefined) return [observed, ...CLOSING_LINES];
   return [observed, ...networkLines(e), ...CLOSING_LINES];
 }
 

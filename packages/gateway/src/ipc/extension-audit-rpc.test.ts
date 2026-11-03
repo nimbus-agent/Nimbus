@@ -112,6 +112,54 @@ describe("extension.audit", () => {
     expect(b?.os).toBeUndefined();
   });
 
+  test("a Windows coverage row: runs counted, network not observed, notSeen empty", async () => {
+    addExt("w", ["api.example.com:443"]);
+    applyObservationWindow(
+      db,
+      win("w", { os: "win32", networkObserved: false, entries: [], runStart: true }),
+    );
+    const r = (await dispatchAutomationRpc({
+      method: "extension.audit",
+      params: { id: "w" },
+      db,
+    })) as { value: { extensions: Array<Record<string, unknown>> } };
+    expect(r.value.extensions[0]).toMatchObject({
+      os: "win32",
+      networkObserved: false,
+      runs: 1,
+      declared: ["api.example.com:443"],
+      notSeen: [],
+      used: [],
+    });
+  });
+
+  test("a declared host with different case is still matched against what was used", () => {
+    dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = 'a'", [
+      JSON.stringify({ network: ["API.Example.com:443"], read: [], write: [] }),
+    ]);
+    expect(readAuditEntries(db, "a")?.[0]?.notSeen).toEqual([]);
+  });
+
+  test("a hostile declared host is returned as stored (the CLI sanitises)", () => {
+    dbRun(db, "UPDATE extension_run_grant SET permissions_json = ? WHERE extension_id = 'a'", [
+      JSON.stringify({ network: ["ev[31mil.test:443"], read: [], write: [] }),
+    ]);
+    expect(readAuditEntries(db, "a")?.[0]?.declared).toEqual(["ev[31mil.test:443"]);
+  });
+
+  test("a non-string or blank id is invalid params, not a list-all", async () => {
+    for (const id of [5, "", "  ", null, {}]) {
+      const e = await dispatchAutomationRpc({
+        method: "extension.audit",
+        params: { id },
+        db,
+      }).catch((x: unknown) => x);
+      expect(e).toBeInstanceOf(AutomationRpcError);
+      expect((e as AutomationRpcError).rpcCode).toBe(-32602);
+      expect((e as AutomationRpcError).message).toBe("Missing or invalid id");
+    }
+  });
+
   test("an unknown id is the same error extension.info gives", async () => {
     for (const method of ["extension.audit", "extension.info"]) {
       const e = await dispatchAutomationRpc({ method, params: { id: "nope" }, db }).catch(

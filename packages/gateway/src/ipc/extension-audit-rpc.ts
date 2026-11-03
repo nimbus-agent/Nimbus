@@ -54,13 +54,15 @@ function entryFor(db: Database, id: string, version: string): AuditEntry {
   const declared = declaredOf(db, id);
   const used = ofOutcome(rows, "used");
   const usedKeys = new Set(used.map((u) => `${u.destination}:${u.port}`.toLowerCase()));
+  const networkObserved = coverage !== undefined && coverage.network_observed === 1;
   const base = {
     id,
     version,
-    networkObserved: coverage !== undefined && coverage.network_observed === 1,
+    networkObserved,
     declared,
     used,
-    notSeen: declared.filter((d) => !usedKeys.has(d.toLowerCase())),
+    // Only where the network was observed: elsewhere "not seen" would read as a finding.
+    notSeen: networkObserved ? declared.filter((d) => !usedKeys.has(d.toLowerCase())) : [],
     refused: ofOutcome(rows, "refused"),
     unmatched: ofOutcome(rows, "unmatched"),
   };

@@ -4910,7 +4910,7 @@ At least these. Short connections can be missed, and "not seen" does not mean no
 File access is not observed.
 ```
 
-An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
+An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line, and no `Network` line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
 
 ```bash
 nimbus extension audit com.example.notion

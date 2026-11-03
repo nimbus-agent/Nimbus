@@ -833,8 +833,9 @@ function installedEvidence(
 
 /** What the installed extension did on this machine; local evidence only (never LAN, never Tauri). */
 function handleExtensionAudit(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
-  const id = rec !== undefined && typeof rec["id"] === "string" ? rec["id"].trim() : undefined;
-  const extensions = readAuditEntries(ctx.db, id === "" ? undefined : id);
+  // An absent id lists every extension; one that is present must be a real id.
+  const id = rec?.["id"] === undefined ? undefined : requireString(rec, "id");
+  const extensions = readAuditEntries(ctx.db, id);
   if (extensions === undefined) throw new AutomationRpcError(-32602, "Extension not found");
   return { kind: "hit", value: { extensions } };
 }
