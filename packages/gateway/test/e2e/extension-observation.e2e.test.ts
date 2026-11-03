@@ -40,6 +40,7 @@ import type { AuditEntry } from "../../src/ipc/extension-audit-rpc.ts";
 
 const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const HELPER = join(import.meta.dir, "../../src-native/sandbox-helper/nimbus-sandbox-helper");
+const PREMISE_PROBE = join(import.meta.dir, "_fixtures", "observation-premise-probe.ts");
 const IS_LINUX = process.platform === "linux";
 const REQUIRED = process.env["NIMBUS_REQUIRE_SANDBOX_HELPER"] === "1";
 /**
@@ -75,27 +76,18 @@ function helperProblem(): string | null {
 async function confineProblem(): Promise<string | null> {
   const helper = helperProblem();
   if (helper !== null) return helper;
-  const prior = process.env["NIMBUS_SANDBOX_HELPER_PATH"];
-  process.env["NIMBUS_SANDBOX_HELPER_PATH"] = HELPER;
-  try {
-    const { decideNetworkMode } = await import("../../src/platform/sandbox/linux.ts");
-    const { createSandboxRunner } = await import("../../src/platform/sandbox/sandbox-runner.ts");
-    const policy = {
-      id: "extension-observation-e2e-probe",
-      permissions: { network: [DECLARED], filesystem: { read: [], write: [] } },
-    };
-    // Per-host is the only mode that observes; the fallback with no helper reports nothing.
-    const mode = decideNetworkMode(policy, { helperAvailable: true });
-    if (mode !== "per-host") return `network mode is ${String(mode)}, not per-host`;
-    // The production factory, which runs the forwarder's start probe as the gateway's does.
-    const refusal = (await createSandboxRunner()).canConfine(policy);
-    return refusal === null ? null : `canConfine refused: ${refusal}`;
-  } catch (e) {
-    return `probe threw: ${e instanceof Error ? e.message : String(e)}`;
-  } finally {
-    if (prior === undefined) delete process.env["NIMBUS_SANDBOX_HELPER_PATH"];
-    else process.env["NIMBUS_SANDBOX_HELPER_PATH"] = prior;
-  }
+  // A child process with its own env, exactly as this file's gateway gets it: linux.ts resolves the
+  // helper path once at module load, and the e2e tree shares one test process, so an in-process
+  // probe would see whatever an earlier file loaded (CI run on PR #1872 showed exactly that).
+  // windows-console-ok: Linux only.
+  const r = spawnSync(process.execPath, [PREMISE_PROBE, DECLARED], {
+    encoding: "utf8",
+    env: { ...process.env, NIMBUS_SANDBOX_HELPER_PATH: HELPER },
+    timeout: 60_000,
+  });
+  const out = (r.stdout ?? "").trim();
+  if (r.status === 0 && out === "OK") return null;
+  return `premise probe: exit ${String(r.status)}: ${out} ${(r.stderr ?? "").trim().slice(0, 400)}`;
 }
 
 const premiseProblem = IS_LINUX ? await confineProblem() : "not Linux";
