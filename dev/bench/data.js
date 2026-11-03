@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793646726396,
+  "lastUpdate": 1793682260377,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d4d38f026667a472800f871b4d354658ebd9752c",
-          "message": "docs: delete 83 delivered plans and specs, per the #1048 precedent (#1199)\n\nFollows the convention set by **#1048** (\"archive 44 delivered\nplans/specs\"),\nwhich deleted delivered docs outright and rewrote references to the\n`git show <sha>:<path>` form rather than moving anything to an archive\ndirectory.\n\n**83 deleted, 14 kept.** 45,383 lines removed.\n\n## What went, and why it is safe\n\nEvery deleted document describes work that has shipped. The groups, each\nwith a\nmerged PR behind it:\n\npre-mortem (15) · incident attribution, PagerDuty + Sentry (9) ·\nownership graph\n(8) · HTTP agents route + token scopes (7) · negotiate agent (6) ·\nticket depth,\nJira + Linear (6) · agents-as-MCP-tools (6) · installer download\ncapability (6) ·\ntargeted-fetch miss reasons + credential validation (4) · Sentry issue\nindexing\n(4) · ship-what-we-claim PR 1 + PR 2 plans (4) · contribution-depth PR 1\nplans\n(3) · I29/D22 egress completeness (2) · workflow stream tagging + cancel\n(2) ·\nresolve-by-URL + fetch-on-miss (1)\n\n## Order mattered, and it was checked first\n\nFour documents had inbound references. Deleting first would have left\ndangling\npointers — two of them in **source comments**, which `audit:doc-refs`\ndoes not\nscan and so would never have caught:\n\n| reference | from |\n|---|---|\n| installer-download-capability plan |\n`packages/cli/src/commands/doctor-fix-keyring.ts` |\n| ticket-depth design | `packages/gateway/src/connectors/jira-sync.ts` |\n| the two i29 specs | `docs/CHANGELOG.md` (live markdown links) |\n\nAll four were rewritten to `git show e4828bcd:<path>` **before** the\ndeletion.\nThe CHANGELOG pair were real markdown links — the lychee gate would have\ngone\nred on those; the two source comments would have failed silently, which\nis\nworse.\n\n**Recoverability verified, not assumed:** `git show e4828bcd:<path>` was\nexecuted for a sample and returns the full documents (315 / 1,415 / 300\nlines),\nand `e4828bcd` is an ancestor of `origin/main`, so the references are\npermanent.\n\n## What was kept, and why\n\n- **Launch execution + design (5)** — a live runbook. The code shipped,\nbut\n  Gates 1–3 are human gates and still unchecked.\n- **Directory listings design + feedback (2)** — an in-flight tracker\nwith 7\n  not-started rows.\n- **Quality-floor design (1)** — entirely unbuilt; no such gate exists.\n- **ship-what-we-claim design (3)** and **contribution-depth design\n(3)** —\npartially delivered. Both are the only written spec for their remaining\nPR, so\nthey stay, now carrying an explicit **PARTIALLY DELIVERED** header\nsaying what\nshipped, what has not, and how to recover the deleted implementation\nplans.\n  Without that header they read as though none of the work is done.\n\n## Verification\n\n- Reference sweep over every deleted filename: no markdown link to a\ndeleted doc\n  remains anywhere in the tree; the only surviving mentions are the four\n  `git show` prose forms.\n- `bun run audit:doc-refs` — 1174 refs across 41 docs, all resolve.\n- `bun run preflight:fast` — all 29 gates pass, including\n`lint:markdown`.\n\nDeletion groups were cross-checked against the merged PR numbers\nindependently\nof the docs' own self-description — which is not trustworthy here: two\nof the\ndeleted documents state \"not yet implemented\" while being fully shipped.",
-          "timestamp": "2026-08-15T09:30:15+03:00",
-          "tree_id": "515be0d94d84c7f1e4bfa16407dd9b3a2222690e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d4d38f026667a472800f871b4d354658ebd9752c"
-        },
-        "date": 1786776596650,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.7698643499989,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.96723760000316,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 291.1856792499915,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eb03531d4cbbe56610710949892451b16e1c0a6b",
+          "message": "feat(eval): record a golden suite from a package's own replies (#1866)\n\nPhase 9.5 project 6, PR 5a-3 of the quality layer. An extension author\ncan now turn a list of tool calls into an ordinary `evals/*.eval.json`\nsuite, whose expectations are the package's own replies. The replies are\nrecorded through the same sandboxed, gateway-free eval path that scores\nthe package. Spec § 9.1.\n\n```text\nnimbus eval --package <dir> --record <inputs.json> [--out evals/<name>.eval.json] [--force] [--json]\n```\n\nThe inputs file is a suite without `expect`: `{ \"format\": 1, \"name\",\n\"cases\": [{ \"name\", \"tool\", \"input\" }] }`, with the same name, tool,\ninput and count limits as a suite. A leading BOM is accepted, because\nWindows PowerShell 5.1 writes one by default.\n\n## How expectations are made\n\nEvery input runs twice, each pass from a fresh sandboxed stage, both\nunder one deadline. The eval role, not the CLI, turns the two replies\ninto one case:\n- **Identical replies:** become `exact`.\n- **JSON that differs:** becomes `json-match`.\n  - Values that are equal stay literal.\n- Objects keep only the keys both runs share, which is safe because\nobject patterns are subset matches.\n  - Scalar leaves that differ become `{\"$type\": ...}` markers.\n- Every key that starts with `$` and comes from a reply is escaped with\n`$$`, so it is never read as a marker.\n- **Skipped:**\n  - a failed call;\n  - an `isError` that differs between runs;\n  - a type change;\n- a change in shape, such as an array whose length differs, or a root\nthat would accept almost anything;\n  - non-JSON text that differs;\n  - a reply too large or nested too deeply to record;\n  - a case that fails its own check.\n\n  Each skip is listed with its reason.\n- **Self-check:** every case must pass `judgeCase` against both of its\nreplies. A case that would push the file over 1 MiB is skipped rather\nthan failing the whole recording.\n\n## What the CLI does\n\n- **Path checks before the role is spawned:** `--out` must be a\npackage-relative `evals/<name>.eval.json`. Absolute paths, a path\nleaving the package, a `:`, control characters, a Windows device name,\nand an `evals/` that is a symlink or not a directory are refused. The\ntotal stays within 20 suites and 200 cases, and a broken existing suite\nonly warns.\n- **Writing is atomic:**\n- The CLI writes a temp file, then links it into place, which refuses an\nexisting target, or renames it into place with `--force`.\n- A failure removes only the temp file, so a failed `--force` never\ndeletes the author's previous suite.\n- A run deletes temp files left by an earlier run that was killed, so\nnothing stray gets packed.\n- **Output:** it prints `wrote <out>: N cases recorded, M skipped`, one\nline per skip, and the fixed note: *these expectations are what the\npackage answered offline, with no credentials and no network: review\nthem before committing*.\n\nIt exits 0 when it writes a file, and 2 otherwise. Nothing is written\nwhen every case is skipped (`ERR_EVAL_RECORD_EMPTY`).\n\n## I49\n\n`runEvalRecordSession` lives in `eval-runtime.ts`. It uses the same\nspawn spec, which means:\n- no network and no write;\n- baseline env only, under sandbox id `eval.<serviceId>`;\n- it is refused before anything is staged when the sandbox cannot\nconfine.\n\nThe role reads only the package and the inputs file, and writes no file\noutside its own disposable stage copies. The I49 row, a caller pin, a\nspec pin like the one on the baseline door, and a \"cannot confine\"\nbehavioural test landed in the same commit. D38 is unchanged and passes.\n\n## Verification\n\n- **Tests:** registry-format, gateway eval, the CLI eval and record\nfiles, the shared writer, and extension-pack: 1622 pass, 0 fail.\n- **End to end, on Windows:** the real CLI and role record 4 tools from\nthe eval fixture package, and `nimbus eval --package --suite <written\nfile>` scores the result 100.\n- **Other runs:** CLI commands with `--parallel` show only the known\nYoga error. `typecheck`, `typecheck:tests`, biome, `audit:doc-refs`, the\naction dist drift check and `preflight:fast` all pass. No changed\nfunction is over cognitive complexity 15, and no `sort()` is missing its\ncomparator.\n- **Red-proofs:** each guard below made its test fail when it was\nreverted.\n  - the single deadline across both passes;\n  - the caller pin;\n  - key escaping;\n  - the shared-keys rule;\n  - the size skip;\n  - the deep-reply skip;\n  - the atomic replace;\n  - link-based exclusivity;\n  - the cap check;\n  - the symlinked `evals/` refusal.\n\n## Not covered here\n\n- **json-match end to end:** that path is covered by unit tests only,\nbecause the fixture package's replies are deterministic.\n- **Upstream behaviour:** the recording reflects what the package\nanswers offline. It says nothing about the upstream service, and the\ndocs say so.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `nimbus eval --package` can now record a golden evaluation suite from\nan inputs file by running package replies twice in the sandbox. Matching\nreplies become expectations; cases that cannot be recorded are skipped\nwith explanations.\n* Choose an output file with `--out`, and use `--force` to replace an\nexisting file. Recording requires sandbox support and validates input\nand output paths.\n* Recorded replies reflect the package’s offline behavior at recording\ntime; they do not capture or verify current responses from upstream\nservices.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T06:57:48+02:00",
+          "tree_id": "4c5edeb8502c5223c375fc74b0a74f8553343132",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/eb03531d4cbbe56610710949892451b16e1c0a6b"
+        },
+        "date": 1793682257077,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 203.2983560500028,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 201.04282219999732,
             "unit": "ms"
           }
         ]
