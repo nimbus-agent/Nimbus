@@ -4882,9 +4882,9 @@ nimbus extension disable nimbus-notion
 
 ---
 
-### `nimbus extension audit <id> [--json]`
+### `nimbus extension audit [<id>] [--json]`
 
-Show what an installed extension was seen to do on the network on this machine, next to what it declared. It reads local observation only, for the installed version; nothing leaves the machine and nothing is fed into any score. An unknown id fails with `Extension not found`.
+Show what an installed extension was seen to do on the network on this machine, next to what it declared. It reads local observation only, for the installed version; nothing leaves the machine and nothing is fed into any score. With an id it reports that extension, and an unknown id fails with `Extension not found`. With no id it reports every installed extension, one block each, separated by a blank line; with none installed it prints `No extensions installed.`
 
 On Linux, when the extension ran behind the per-host forwarder:
 
@@ -4899,7 +4899,7 @@ At least these. Short connections can be missed, and "not seen" does not mean no
 File access is not observed.
 ```
 
-`used` lists declared hosts the child connected to; `not seen` lists declared hosts with no connection seen; `refused` lists lookups the wrapper refused. A refused line prints `name:port`, and the port is omitted when it is 0. It can be a declared host (the wildcard pool was full, or no allowed address) as well as an undeclared name. `more not shown: N` counts entries dropped by the bounds. A declared host with no port is shown as `host:443`, normalised as the forwarder plans it (lowercase, no trailing dot). Names come from the child and are shown with anything outside letters, digits, `.`, `_`, `-` replaced by `?`.
+`used` lists declared hosts the child connected to; `not seen` lists declared hosts with no connection seen; `refused` lists lookups the wrapper refused. A refused line prints `name:port`, and the port is omitted when it is 0. It can be a declared host (the wildcard pool was full, or no allowed address) as well as an undeclared name. `more not shown: N` counts entries dropped by the bounds. A run observed for a whole day stops writing at 1440 window files, and the report then adds `  observation stopped after one day of this run` under the `Network` line(s). A declared host with no port is shown as `host:443`, normalised as the forwarder plans it (lowercase, no trailing dot). Names come from the child and are shown with anything outside letters, digits, `.`, `_`, `-` replaced by `?`.
 
 On Linux, when the network was not observed, the line says why. An extension that declared no network needs no forwarder, and its line is `Network   declared nothing`. One that declared hosts but ran with no sandbox helper found (the whole-network fallback) has no network filter to observe through:
 
@@ -4922,6 +4922,7 @@ File access is not observed.
 An extension that has not run yet prints `<id> <version>   not observed yet` instead of the first line, and no `Network` line. `--json` prints the `extension.audit` result (the same sanitised names, plus `unmatched`). Bounds and the channel: [`sandbox.md` section Observation](./sandbox.md#observation). The method is refused over LAN and is not on the desktop allowlist.
 
 ```bash
+nimbus extension audit
 nimbus extension audit com.example.notion
 nimbus extension audit com.example.notion --json
 ```
