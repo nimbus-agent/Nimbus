@@ -7,6 +7,7 @@ import {
   createLinuxSandboxRunner,
   decideNetworkMode,
   forwarderInnerArgv,
+  observerHooks,
   ownExecutableBind,
   resolverFileToBind,
 } from "./linux.ts";
@@ -35,6 +36,32 @@ const CWD = join(TMP_ROOT, "cwd");
 const basePolicy = (perms: Partial<SandboxPolicy["permissions"]> = {}): SandboxPolicy => ({
   id: "test.ext",
   permissions: { network: [], filesystem: { read: [], write: [] }, ...perms },
+});
+
+describe("observerHooks", () => {
+  const STATS = { startedAtMs: 0, durationMs: 1, bytesToHost: 1, bytesFromHost: 1 };
+
+  it("gives the forwarder no hooks when the spawn has no observer", () => {
+    expect(observerHooks(undefined)).toEqual({});
+  });
+
+  it("reports a closed relay as used, a refusal as refused, and skips a nameless entry", () => {
+    const seen: string[] = [];
+    const hooks = observerHooks({
+      used: (host, port) => seen.push(`used ${host}:${String(port)}`),
+      refused: (name) => seen.push(`refused ${name}`),
+    });
+    const entry: ForwardEntry = {
+      host: "api.github.com",
+      port: 443,
+      trust: "package",
+      loopbackIp: "127.0.0.2",
+    };
+    hooks.onConnectionClosed?.(entry, STATS);
+    hooks.onConnectionClosed?.({ ...entry, host: null }, STATS);
+    hooks.onRefusedName?.("undeclared.invalid");
+    expect(seen).toEqual(["used api.github.com:443", "refused undeclared.invalid"]);
+  });
 });
 
 describe("decideNetworkMode", () => {

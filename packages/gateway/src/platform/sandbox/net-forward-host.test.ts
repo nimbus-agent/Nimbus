@@ -1,7 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { openForwarderSession } from "./linux-forwarder.ts";
 import {
   connectTcp,
   createRefusalLog,
@@ -13,6 +22,7 @@ import {
   type NetSocketLike,
   planForwardEntries,
   resolveOnHost,
+  sanitiseName,
   startForwardHost,
 } from "./net-forward-host.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
@@ -1749,4 +1759,85 @@ describe.skipIf(process.platform !== "linux")("startForwardHost", () => {
       SLOW,
     );
   });
+});
+
+describe("sanitiseName", () => {
+  test("keeps the DNS alphabet, replaces the rest and caps the length", () => {
+    expect(sanitiseName("a\nb\u0000c")).toBe("a?b?c");
+    expect(sanitiseName("Api.Example-1_x.org")).toBe("Api.Example-1_x.org");
+    expect(sanitiseName("x".repeat(300))).toHaveLength(255);
+  });
+});
+
+// The session is the production path's only door to the host: what it is given must reach it.
+describe.skipIf(process.platform !== "linux")("openForwarderSession's observation hooks", () => {
+  let runtime: string;
+  const savedRuntime = process.env["XDG_RUNTIME_DIR"];
+  const clients: TestClient[] = [];
+
+  beforeEach(() => {
+    runtime = mkdtempSync(join(tmpdir(), "nfh-session-"));
+  });
+
+  afterEach(() => {
+    for (const c of clients.splice(0)) c.socket.terminate();
+    if (savedRuntime === undefined) delete process.env["XDG_RUNTIME_DIR"];
+    else process.env["XDG_RUNTIME_DIR"] = savedRuntime;
+    rmSync(runtime, { recursive: true, force: true });
+  });
+
+  test(
+    "reach the host: an undeclared lookup is refused, a relayed declared connection is used",
+    async () => {
+      process.env["XDG_RUNTIME_DIR"] = runtime;
+      const cwd = mkdtempSync(join(runtime, "cwd-"));
+      const sessionPolicy = policy(["api.example.com:8443"]);
+      const refused: string[] = [];
+      const closed: ForwardEntry[] = [];
+      const remotes: FakeRemote[] = [];
+      const before = new Set(readdirSync(runtime));
+      const session = openForwarderSession({
+        policy: sessionPolicy,
+        cwd,
+        helperPath: "/opt/helper",
+        entries: planForwardEntries(sessionPolicy),
+        innerArgv: ["/usr/bin/bwrap", "--seccomp", "3", "/opt/app"],
+        resolvConfTarget: "/etc/resolv.conf",
+        log: () => undefined,
+        resolve: () => Promise.resolve(["93.184.216.34"]),
+        connect: () => {
+          const remote = new FakeRemote();
+          remotes.push(remote);
+          return Promise.resolve(remote);
+        },
+        onRefusedName: (name) => refused.push(name),
+        onConnectionClosed: (entry) => closed.push(entry),
+      });
+      try {
+        const dir = readdirSync(runtime).find((d) => !before.has(d)) ?? "";
+        const socketPath = join(runtime, dir, "s");
+        const open = async (): Promise<TestClient> => {
+          const c = await openClient(socketPath);
+          clients.push(c);
+          return c;
+        };
+
+        const lookup = await open();
+        lookup.socket.write(dnsFrame(dnsQuery("undeclared.invalid", TYPE_A)));
+        await waitFor("the DNS reply and close", lookup.isClosed);
+        expect(refused).toEqual(["undeclared.invalid"]);
+
+        const relayed = await open();
+        relayed.socket.write(tcpHeader(0));
+        await waitFor("the relay", () => remotes[0]?.handlers != null);
+        relayed.socket.end();
+        remotes[0]?.handlers?.end();
+        await waitFor("the relay's close", () => closed.length > 0);
+        expect(closed.map((e) => [e.host, e.port])).toEqual([["api.example.com", 8443]]);
+      } finally {
+        session.close();
+      }
+    },
+    SLOW,
+  );
 });

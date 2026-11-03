@@ -1,5 +1,6 @@
 import type { ChildProcess, SpawnOptions } from "node:child_process";
 import { platform } from "node:os";
+import type { NetworkObserver } from "./network-observation-writer.ts";
 import type { SandboxPolicy } from "./sandbox-policy.ts";
 
 export interface SandboxSpawnOptions {
@@ -18,6 +19,13 @@ export interface SandboxSpawnOptions {
    * runtime it is executing from.
    */
   releaseGrantsOnExit?: boolean;
+  /**
+   * Told what the child's network did. Only the Linux runner reads it, from the per-host forwarder:
+   * a relayed connection when it closes, a refused name when the stub refuses it. Windows and macOS
+   * ignore it (their network path reports nothing yet), as does a Linux spawn with no forwarder.
+   * Observation only: nothing here decides what the child may reach.
+   */
+  observer?: NetworkObserver;
 }
 
 export interface SandboxRunner {
