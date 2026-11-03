@@ -418,10 +418,31 @@ describe("extension.audit reads declared from the verified installed manifest", 
     }
   });
 
-  test("evidence for an older version: no offer for the installed one", () => {
+  test("older-version evidence is not read for the installed version (so it offers nothing)", () => {
     installWithManifest(DECLARED, DECLARED);
     observe(5, 7, USED, { version: "0.9.0" });
     expect(readAuditEntries(db, M)?.[0]).toMatchObject({ runs: 0, offer: null });
+  });
+
+  test("a grant left from an earlier version is not a narrowing: no approved, narrowed false", () => {
+    installWithManifest(DECLARED, ["api.example.com"]);
+    dbRun(db, "UPDATE extension_run_grant SET version = '0.9.0' WHERE extension_id = ?", [M]);
+    const e = readAuditEntries(db, M)?.[0];
+    expect(e).toMatchObject({ declaredFrom: "manifest", narrowed: false, offer: null });
+    expect(e?.approved).toBeUndefined();
+  });
+
+  test("a stored grant that cannot be parsed is not a narrowing: no approved, narrowed false", () => {
+    installWithManifest(DECLARED, DECLARED);
+    observe(5, 7, USED);
+    dbRun(
+      db,
+      "UPDATE extension_run_grant SET permissions_json = 'not json' WHERE extension_id = ?",
+      [M],
+    );
+    const e = readAuditEntries(db, M)?.[0];
+    expect(e).toMatchObject({ declaredFrom: "manifest", narrowed: false, offer: null });
+    expect(e?.approved).toBeUndefined();
   });
 
   test("a manifest that cannot be verified falls back to the grant, says so, and offers nothing", () => {

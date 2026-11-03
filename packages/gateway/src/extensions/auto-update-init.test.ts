@@ -401,13 +401,14 @@ describe("auto-update-init: isRunGrantNarrowed (I52, the update note)", () => {
     });
   }
 
-  function grantWith(network: string[]): void {
+  function grantWith(network: string[] | string, version = "1.0.0"): void {
     upsertRunGrant(db, {
       extension_id: ID,
       service_id: "ext_com_example_narrow",
-      version: "1.0.0",
+      version,
       tree_digest: "c".repeat(64),
-      permissions_json: JSON.stringify({ network, read: [], write: [] }),
+      permissions_json:
+        typeof network === "string" ? network : JSON.stringify({ network, read: [], write: [] }),
       model_access: 0,
       approved_at: 1,
       credentials_json: "{}",
@@ -446,6 +447,22 @@ describe("auto-update-init: isRunGrantNarrowed (I52, the update note)", () => {
     expect(await narrowedNow()).toBe(false);
     installWith(["api.example.com"]);
     expect(await narrowedNow()).toBe(false);
+  });
+
+  it("a grant left from an earlier version is not a narrowing the owner made", async () => {
+    setup();
+    installWith(["api.example.com", "imap.example.com:993"]);
+    grantWith(["api.example.com"], "0.9.0");
+    expect(await narrowedNow()).toBe(false);
+    expect(runGrantNarrowedFor(db, ID)).toBe(false);
+  });
+
+  it("a stored grant that cannot be parsed is not a narrowing", async () => {
+    setup();
+    installWith(["api.example.com", "imap.example.com:993"]);
+    grantWith("not json");
+    expect(await narrowedNow()).toBe(false);
+    expect(runGrantNarrowedFor(db, ID)).toBe(false);
   });
 
   it("a manifest that fails its hash check is not read as declared: not narrowed", async () => {

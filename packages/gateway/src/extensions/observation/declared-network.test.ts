@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { insertExtensionRow } from "../../automation/extension-store.ts";
+import { insertExtensionRow, listExtensions } from "../../automation/extension-store.ts";
 import { dbRun } from "../../db/write.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import { declaredNetworkFor } from "./declared-network.ts";
@@ -37,12 +37,14 @@ function install(network: string[], opts: { hash?: string; file?: boolean } = {}
   return installPath;
 }
 
-function grant(network: string[]): void {
+function grant(network: string[] | string, version = "1.0.0"): void {
+  const json =
+    typeof network === "string" ? network : JSON.stringify({ network, read: [], write: [] });
   dbRun(
     db,
     `INSERT INTO extension_run_grant (extension_id, service_id, version, tree_digest, permissions_json, approved_at)
-     VALUES (?, 'ext_com_example_decl', '1.0.0', 'd', ?, 1)`,
-    [ID, JSON.stringify({ network, read: [], write: [] })],
+     VALUES (?, 'ext_com_example_decl', ?, 'd', ?, 1)`,
+    [ID, version, json],
   );
 }
 
@@ -109,9 +111,38 @@ describe("declaredNetworkFor", () => {
   test("a version that is not the installed one never reads the installed manifest", () => {
     install(["api.example.com", "imap.example.com:993"]);
     grant(["api.example.com"]);
-    expect(declaredNetworkFor(db, ID, "0.9.0")).toMatchObject({
+    expect(declaredNetworkFor(db, ID, "0.9.0")).toEqual({
       entries: ["api.example.com"],
       from: "grant",
+      approved: undefined,
     });
+  });
+
+  test("a grant for an earlier version is not what is approved for the installed one", () => {
+    install(["api.example.com", "new.example.com"]);
+    grant(["api.example.com"], "0.9.0");
+    expect(declaredNetworkFor(db, ID, "1.0.0")).toEqual({
+      entries: ["api.example.com", "new.example.com"],
+      from: "manifest",
+      approved: undefined,
+    });
+  });
+
+  test("a stored grant that cannot be parsed approves nothing readable: approved is undefined", () => {
+    install(["api.example.com"]);
+    grant("not json");
+    expect(declaredNetworkFor(db, ID, "1.0.0")).toEqual({
+      entries: ["api.example.com"],
+      from: "manifest",
+      approved: undefined,
+    });
+  });
+
+  test("the installed row can be passed in, so a caller reads the extension table once", () => {
+    install(["api.example.com", "imap.example.com:993"]);
+    grant(["api.example.com"]);
+    const rows = listExtensions(db);
+    expect(declaredNetworkFor(db, ID, "1.0.0", rows)).toEqual(declaredNetworkFor(db, ID, "1.0.0"));
+    expect(declaredNetworkFor(db, ID, "1.0.0", [])).toMatchObject({ from: "grant" });
   });
 });

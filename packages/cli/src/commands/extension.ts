@@ -36,7 +36,7 @@ import { getCliPlatformPaths } from "../paths.ts";
 import { NIMBUS_VERSION } from "../version.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
-import { runExtensionAudit } from "./extension-audit.ts";
+import { declaredName, runExtensionAudit } from "./extension-audit.ts";
 import { runExtensionKey } from "./extension-key.ts";
 import {
   listObservationLines,
@@ -907,7 +907,7 @@ export async function runExtensionApprove(
     `model access: ${out.modelAccess === true ? "on" : "off"}` +
     (network.network === undefined
       ? ""
-      : `; network: ${granted.length === 0 ? "none" : granted.join(", ")}`);
+      : `; network: ${granted.length === 0 ? "none" : granted.map(declaredName).join(", ")}`);
   console.log(
     out.changed
       ? `${out.id}: approved to run as ${out.serviceId} (tree digest ${out.treeDigest}; ${model}). It starts on first use: \`nimbus connector tools ${out.serviceId}\`.`
@@ -1439,8 +1439,22 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
   return undefined;
 }
 
+/**
+ * `--network` narrows a run approval and means nothing anywhere else. `stripFlags` drops it (and
+ * its value) for every subcommand, so outside `approve` it would be silently ignored: refuse it.
+ */
+export function refuseNetworkOutsideApprove(sub: string, args: readonly string[]): void {
+  if (sub === "approve") return;
+  if (args.slice(1).some((a) => a === "--network" || a.startsWith(NETWORK_EQ))) {
+    throw new Error(
+      `--network is only for \`nimbus extension approve\`; \`nimbus extension ${printable(sub)}\` does not take it.`,
+    );
+  }
+}
+
 export async function runExtension(args: string[]): Promise<void> {
   const sub = args[0]?.trim() ?? "";
+  refuseNetworkOutsideApprove(sub, args);
   if (await runExtensionOffline(sub, args)) {
     return;
   }

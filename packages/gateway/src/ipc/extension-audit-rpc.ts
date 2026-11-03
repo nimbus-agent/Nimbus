@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { listExtensions } from "../automation/extension-store.ts";
+import { type ExtensionRow, listExtensions } from "../automation/extension-store.ts";
 import { isNetworkNarrowed, networkEntryKey } from "../extensions/network-entry-key.ts";
 import { declaredNetworkFor } from "../extensions/observation/declared-network.ts";
 import { type NarrowingOffer, narrowingOffer } from "../extensions/observation/narrowing-offer.ts";
@@ -107,9 +107,14 @@ function offerFor(
   });
 }
 
-function entryFor(db: Database, id: string, version: string): AuditEntry {
+function entryFor(
+  db: Database,
+  id: string,
+  version: string,
+  installed: readonly ExtensionRow[],
+): AuditEntry {
   const { coverage, rows } = readExtensionAudit(db, id, version);
-  const source = declaredNetworkFor(db, id, version);
+  const source = declaredNetworkFor(db, id, version, installed);
   const declared = normalisedSet(source.entries);
   const approved = source.approved === undefined ? undefined : normalisedSet(source.approved);
   const used = ofOutcome(rows, "used");
@@ -166,5 +171,5 @@ export function readAuditEntries(db: Database, id?: string): AuditEntry[] | unde
   const installed = listExtensions(db);
   const chosen = id === undefined ? installed : installed.filter((r) => r.id === id);
   if (id !== undefined && chosen.length === 0) return undefined;
-  return chosen.map((r) => entryFor(db, r.id, r.version));
+  return chosen.map((r) => entryFor(db, r.id, r.version, installed));
 }

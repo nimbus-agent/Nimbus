@@ -1118,6 +1118,20 @@ describe("runExtension top-level dispatcher", () => {
     clearFixture();
   });
 
+  test("--network on a subcommand other than approve refuses, in either form, before the gateway", async () => {
+    setFixture({});
+    for (const args of [
+      ["audit", "--network", "a.example.com"],
+      ["audit", "x", "--network=a.example.com"],
+      ["list", "--network=none"],
+      ["update", "x", "--network", "none"],
+    ]) {
+      await expect(runExtension(args)).rejects.toThrow(
+        /--network is only for `nimbus extension approve`/,
+      );
+    }
+  });
+
   test("throws when gateway state is unreadable", async () => {
     setFixture({});
     await expect(runExtension(["list"])).rejects.toThrow(/Gateway is not running/);
@@ -3060,6 +3074,23 @@ describe("runExtensionApprove", () => {
         params: { id: "x", modelAccess: false, network },
       });
     }
+  });
+
+  test("the granted network is printed through the host sanitiser", async () => {
+    setTty(true);
+    const { client } = createMockIpcClient([
+      {
+        id: "x",
+        serviceId: "ext_x",
+        treeDigest: "ab".repeat(32),
+        changed: true,
+        grants: { network: ["evil\u001b[2J.example.com:993"], read: [], write: [] },
+      },
+    ]);
+    const argv = ["approve", "x", "--network", "evil.example.com:993"];
+    await runExtensionApprove(client, argv, stripFlags(argv.slice(1)));
+    expect(out.stdout).not.toContain("\u001b");
+    expect(out.stdout).toContain("network: evil??2J.example.com:993");
   });
 
   test("--network= with no value refuses before any call", async () => {

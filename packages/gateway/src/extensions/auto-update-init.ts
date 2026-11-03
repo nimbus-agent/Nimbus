@@ -129,14 +129,16 @@ export function withUpdateAppliedHook<Rest extends unknown[], Result = void>(
 /**
  * Whether the extension's stored run grant names a narrower network than its verified installed
  * manifest declares (the owner approved with `--network`, I52), compared by parse key exactly as
- * `nimbus extension audit`'s `narrowed` is. False with no grant, no installed row, or a manifest
- * that cannot be read and verified (then nothing trustworthy says what was declared). It feeds one
+ * `nimbus extension audit`'s `narrowed` is. False with no grant, a grant approved for another
+ * version or whose stored JSON is unreadable, no installed row, or a manifest that cannot be read
+ * and verified (then nothing trustworthy says what was declared). It feeds one
  * sentence of an update's approval note and decides nothing.
  */
 export function runGrantNarrowedFor(db: Database, id: string): boolean {
-  const row = listExtensions(db).find((r) => r.id === id);
+  const installed = listExtensions(db);
+  const row = installed.find((r) => r.id === id);
   if (row === undefined) return false;
-  const declared = declaredNetworkFor(db, id, row.version);
+  const declared = declaredNetworkFor(db, id, row.version, installed);
   return (
     declared.from === "manifest" &&
     declared.approved !== undefined &&

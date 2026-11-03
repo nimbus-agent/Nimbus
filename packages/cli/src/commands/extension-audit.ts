@@ -59,7 +59,7 @@ function hostPort(name: string, port: number): string {
 }
 
 /** A declared `host:port` string: the host is sanitised, a numeric port kept. */
-function declaredName(s: string): string {
+export function declaredName(s: string): string {
   const i = s.lastIndexOf(":");
   if (i > 0 && /^\d{1,5}$/.test(s.slice(i + 1)))
     return `${displayName(s.slice(0, i))}${s.slice(i)}`;

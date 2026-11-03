@@ -135,6 +135,18 @@ async function runGrantNarrowed(id: string, deps: AutoUpdateRpcDeps): Promise<bo
 }
 
 /**
+ * What the update's run-grant note needs: whether there is a grant to leave stale, and (only then)
+ * whether its network was narrowed.
+ */
+async function runGrantNoteInputs(
+  id: string,
+  deps: AutoUpdateRpcDeps,
+): Promise<{ hasRunGrant: boolean; isNarrowed: boolean }> {
+  const hasRunGrant = (await deps.hasRunGrant?.(id)) === true;
+  return { hasRunGrant, isNarrowed: hasRunGrant && (await runGrantNarrowed(id, deps)) };
+}
+
+/**
  * The consent note an update shows when it turns an extension holding a run grant into a starter
  * pack: the grant goes, and `approve` refuses a pack, so the re-approve note would mislead.
  */
@@ -620,8 +632,7 @@ async function handleExtensionUpdate(
     approved = planned;
   }
 
-  const hasRunGrant = (await deps.hasRunGrant?.(cached.id)) === true;
-  const isNarrowed = hasRunGrant && (await runGrantNarrowed(cached.id, deps));
+  const { hasRunGrant, isNarrowed } = await runGrantNoteInputs(cached.id, deps);
   const gateResult = await deps.gate(
     buildUpdateAction(
       cached,

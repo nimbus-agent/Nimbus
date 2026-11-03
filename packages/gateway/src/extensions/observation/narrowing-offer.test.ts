@@ -57,7 +57,7 @@ describe("narrowingOffer: Linux removes declared host:port entries not seen used
     });
   });
 
-  test("a refused or unmatched row keeps nothing on Linux", () => {
+  test("an unmatched row keeps nothing on Linux (only used rows keep an entry)", () => {
     const o = narrowingOffer(
       input({ used: USED_API, unmatched: [{ destination: "1.2.3.4", port: 993 }] }),
     );
