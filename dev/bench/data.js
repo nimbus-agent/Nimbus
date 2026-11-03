@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793694888188,
+  "lastUpdate": 1793704222018,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "3fc2132255c86fbf04fce408e8f35cb123cb24ef",
-          "message": "fix(cli): stop blocking gateway RPCs dying on the 30s client timeout (#1203)\n\n## The bug\n\n`IPCClient` bounds every `call()` with `requestTimeoutMs` (default **30\ns**). The timer is armed at send time and cleared only by the matching\nresponse — no incoming notification resets it. That is the right default\nfor the hundreds of RPCs that answer in milliseconds, and the wrong one\nfor two classes of call. **Both were shipping broken.**\n\n### 1. The handler awaits the whole operation\n\n`connector.sync` (the scheduler's `forceSync` settles only when the run\nfinishes, queue wait included), `connector.reindex`, `index.regraph`,\n`agent.invoke` (`nimbus ask` / `prove` / `repl`), `workflow.run` (both\n`nimbus run <file>` and `nimbus workflow run`), `data.export`,\n`data.import`, `updater.applyUpdate`.\n\nPast 30 s the CLI printed `IPC request timed out after 30000ms:\n<method>` and exited 1 **while the operation ran to completion\nserver-side**. The command reported failure for work that succeeded —\nand a user who re-ran it queued the work twice.\n\nEleven call sites, none passing an options object. `requestTimeoutMs` is\na per-**client** constructor option, not per-call, so the budget is\nopted into per command rather than raised globally; fast RPCs keep the\ntight default. Tests pin both directions (`connector sync` opts in,\n`connector history` does not).\n\n### 2. The call blocks on a HUMAN — the stronger half\n\nThe CLI answers the Gateway's `consent.request` from a `@clack`\n`confirm()` that runs **inside** the still-pending call's window. So the\nbound doubled as the user's think time: answer the y/n prompt slower\nthan 30 s and the call it belonged to was already dead. This bit\n**regardless of data volume** — a one-item index included.\n`lib/interactive-ipc-handlers.ts` already documented this failure mode.\n\n## Two hard bugs found alongside\n\nTotal failures, not slow ones:\n\n- **`nimbus connector reindex <svc> --depth full`** is HITL-gated in\n`ipc/reindex-rpc.ts` but registered **no `consent.request` handler at\nall**, so the gate never received `consent.respond`. It failed **100% of\nthe time**, independent of index size — same defect and same fix as\n`connector remove` (#1013).\n- **`nimbus workflow run`** registered only the agent-chunk handler, so\na HITL step hung to the timeout **without ever showing the user a\nprompt**. It now uses the same combined helper as its sibling `nimbus\nrun <file>`, which also gives it `NIMBUS_SCRIPT_CONSENT_SOURCE` support.\n\nThe existing `reindex --depth full` test could not have caught this: its\nmock resolves `call` immediately and never raises the notification, so\nit passed while the command was broken. The new tests drive the\nnotification.\n\n## Why long-but-finite, and why no `onClose`\n\nA **dead** Gateway never depended on these timers — `IPCClient.failAll`\nrejects every pending `call()` on socket close or error, so a long\nbudget still fails fast when the socket dies. The timers backstop only a\nGateway that is **alive and silent**.\n\nThat is also why the budgets are finite: `requestTimeoutMs: 0` disables\nthe timer outright and restores the hang-forever behaviour the\ntransport's own docblock records it was added to prevent. The Tauri\nbridge takes the opposite side of that trade for its\n`NO_TIMEOUT_METHODS`; the CLI deliberately does not follow it.\n\n## Tauri\n\n`workflow.run` was in `ALLOWED_METHODS` but not `NO_TIMEOUT_METHODS`, so\nthe desktop UI aborted the identical call at its own 30 s bound. It\njoins the list — now six, with the count-pinned I7 tests updated\n(`no_timeout_methods_contains_expected_six`, `exact_size` 5→6).\n\n## Verification\n\n- `bun test packages/cli/src` — **2281 pass, 0 fail**\n- `cargo test --lib gateway_bridge` — **30 pass, 0 fail**\n- `bun run preflight:fast` — **29/29 gates PASSED**\n- **Red-proved**: reverting each fix fails exactly the intended tests\nand nothing else — 3 fail for reindex (consent handler, consent\nround-trip, batch budget), 2 for workflow run (consent handler,\ninteractive budget). The \"still streams agent chunks\" test passes both\nways by design: it guards that the consent handler was added *alongside*\nthe chunk handler, not instead of it.\n\n## Deliberately NOT in scope\n\nThe structurally correct end state is converting these methods to the\n`LongRunningJobRegistry` `{ jobId }` + notification shape the repo\nalready uses for `index.reembed`/`index.rebody` — and which\n`commands/glossary.ts` cites this exact 30 s bound as the reason for.\nThat is a larger change with real constraints:\n\n- `index.regraph` is a clean candidate (ungated pure batch work).\n- `connector.reindex` is **not**: it is in the I2 HITL frozen set, and\nmoving its gate inside the job would return `{ jobId }` before the owner\nconsents — a contract change on a gated action.\n- Migrating `ask` to the already-correct `engine.askStream` would\nsilently drop the `--agent` selector, which `AskStreamParams` does not\ncarry, and cannot express `prove`'s `stream: false`.\n\nUntil then a timed-out command still leaves **non-gated** server-side\nwork running with no way to cancel it. HITL-gated steps do fail closed\non client disconnect (`ipc/consent.ts` rejects pending consents; the\nexecutor records `hitlStatus='rejected'` and audit-logs it).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n  * Long-running CLI operations now support extended timeout periods.\n* Interactive commands can display and handle consent prompts during\nreindexing, workflow execution, and other approval-gated actions.\n* Workflow runs can wait for completion beyond the previous 30-second\nlimit.\n* **Bug Fixes**\n  * Socket failures continue to be reported immediately.\n* Updated CLI behavior preserves shorter default timeouts for quick\nrequests.\n* **Documentation**\n* Added changelog notes covering timeout behavior, consent handling, and\ncurrent limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T10:04:30Z",
-          "tree_id": "e2c41085dc141824044ee98ea35b44daa41da695",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/3fc2132255c86fbf04fce408e8f35cb123cb24ef"
-        },
-        "date": 1786788952890,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.376120500001,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 320.67717394999346,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 300.4355241000056,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e26967b4278ddd4f77ed5ee21e99b8f8d147aea",
+          "message": "feat(extensions): observe an extension's network on Linux, and nimbus extension audit (#1872)\n\nPhase 9.5 project 6, PR 6b-1 of the quality layer, spec § 10. An\ninstalled extension's sandboxed child is now observed while it runs, and\n`nimbus extension audit [<id>] [--json]` shows what was seen. In this\nPR, Linux records which declared hosts the child connected to and which\nnames it looked up and was refused. Windows and macOS record run\ncoverage only; their evidence is PR 6b-2, and warnings are 6b-3. Spike\n6a, draft #1869, chose the design and passed on both of those OSes.\n\n## How it works\n\n- **The observer is the `__nimbus-sandbox` wrapper.** That process\nalready sits outside the inner sandbox and owns the child, so a call\nthat can hang never runs in the gateway.\n- On Linux it consumes the forwarder's two seams, `onConnectionClosed`\nand `onRefusedName`, which were wired to nothing until now. Enforcement\nand the refusal log are unchanged.\n- It writes one JSON window file per minute into `<data\ndir>/extension-observations`, mode 0700 and in no grant. File 0 is\nwritten once the child has started, so a spawn that fails counts no run.\nEach file is published atomically: a unique temp file, then a rename.\n- `networkObserved` is set only when the child really ran behind the\nforwarder. The Linux no-helper fallback, which gives the child the whole\nnetwork, observes nothing and the report says so.\n- **The channel never reaches the child.** Two wrapper-only env keys\nname the file prefix and the extension and version label. They enter\nonly the outer spec, through a new fourth argument of\n`wrapServerSpecInCwd` that accepts exactly those two keys. The child's\nenv stays exactly `extensionProcessEnv(deps.credentialEnv)`, and the\nwrapper strips both keys on every OS. The I43 source pin and the I43 row\nchanged in the same commit.\n- **The gateway ingests at boot and every 60 s.**\n- Each file is parsed strictly: exact keys and ranges, the label, the\nname's seq and service id against the body, and a read through one\n`O_NOFOLLOW` descriptor.\n- Each `(run, seq)` is applied once, in the same IMMEDIATE transaction\nas the rows, and the file is deleted only after the commit.\n- A bad file is rejected and deleted; a read error leaves the file for\nthe next pass.\n- Removing an extension deletes its rows in all three tables and its\npending files.\n- **Schema V81** adds `extension_network_observation`,\n`extension_observation_coverage` and `extension_observation_applied`.\n\n## Bounds\n\n- 256 entries per window file, and at most 64 KiB. Entries that do not\nfit count in `dropped`, and a full window evicts refused entries before\nused ones.\n- 1440 files per run. The report then says observation stopped after one\nday in at least one run.\n- 512 rows per extension and version.\n- Rows age out 90 days after they were last seen.\n- Names come from the child. They are sanitised before keying and again\nat every display, in text and in `--json`.\n\n## The report\n\n- `extension.audit` is read-only, refused over LAN, and not in the\ndesktop allowlist; the Rust bridge has a negative assert for it.\n- The text gives:\n  - the runs and days observed on this machine;\n  - the declared hosts, normalised the forwarder's way;\n- for each host: `used` with a connection count, `not seen`, or\n`refused` with a lookup count.\n- A `refused` line can be a declared host, for example when the wildcard\npool is full, so it never says \"undeclared\".\n- Every report ends with \"At least these. Short connections can be\nmissed, and \"not seen\" does not mean not used.\" and \"File access is not\nobserved.\"\n- When nothing was observed, the line depends on the OS:\n\n| OS and situation | Line |\n|---|---|\n| Windows or macOS | `Network   not observed on this OS yet` |\n| Linux, nothing declared | `Network   declared nothing` |\n| Linux, hosts declared but the run had no forwarder | `Network not\nobserved: this run had no network filter (no sandbox helper)` |\n\n## Verification\n\n- **Linux e2e,\n`packages/gateway/test/e2e/extension-observation.e2e.test.ts`:**\n- It runs a real gateway, the built helper and bwrap. A fixture\nextension declares `api.github.com:443`, fetches it once and looks up\n`undeclared.invalid`.\n  - Through `extension.audit` it asserts:\n    - `used api.github.com:443`;\n    - `refused undeclared.invalid`;\n    - one observed Linux run;\n    - a 0700 directory;\n    - that the real child saw neither observation key.\n- In CI, an unreachable host fails the test instead of skipping it. The\nCI E2E leg now builds the helper and sets\n`NIMBUS_REQUIRE_SANDBOX_HELPER=1`. That leg lifts AppArmor's\nunprivileged-userns restriction, as the existing sandbox jobs do.\n- **Unit tests for every new module.** Red-proofs, each made by\nreverting its fix:\n  - the exit order: open relays are reported before the final file;\n  - `markObserved`;\n  - the 256-entry cap;\n  - `(run, seq)` idempotency;\n  - the label and seq checks;\n  - the hostile-name paths;\n  - the child-env strip;\n  - the I43 pins.\n- **Runs, on Windows and in Docker `oven/bun:1.4` with the helper\nbuilt:**\n- Docker: 12323 pass. The one failure is the `linux-forwarder-network`\nunix-socket test, which has failed before and passes on a rerun.\n- Windows: the extension, IPC, platform, index, security-invariant and\nCLI tests give 11403 pass. Two failed: the known `tui` Yoga error, and a\ntrust-store test that timed out under load. It passes alone, and this\nbranch does not touch it.\n- `typecheck`, `typecheck:tests` (0 new), biome, `audit:invariants`,\n`audit:doc-refs`, `audit:status-drift` and `preflight:fast` all pass.\n  - No changed function is newly over cognitive complexity 15.\n- **Reviews:** Antigravity reviewed the plan and all 9 findings were\napplied. Each of the five tasks had a task review, and a final\nwhole-branch review found three honesty defects in the report, all fixed\nhere: a port-less declared host read as not seen, a Linux run with\nnothing observed said \"not observed on this OS yet\", and a failed spawn\ncounted as a run.\n\n## Not covered here\n\n- Windows and macOS network evidence, PR 6b-2.\n- Warnings in doctor, the extension list and OS notifications, PR 6b-3.\n- Narrower grants and I52, PR 7.\n- The report's declared list comes from the current run grant. During an\nupdate that is still waiting for approval, that can be the previous\nversion's grant.\n- Nothing here feeds the Quality Score or changes enforcement.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus extension audit [<id>] [--json]` to compare installed\nextensions’ declared network destinations with locally observed activity\nand report run coverage.\n* Linux can report used and refused destinations when network forwarding\nwas active. Windows and macOS report run coverage without network\ndetails.\n* Audit data is local, retained for a limited time, and does not affect\nextension permissions or network rules. Audit access is unavailable over\nLAN.\n* **Documentation**\n* Added guidance on audit reports, platform coverage, output options,\nand observation limits.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T11:02:14Z",
+          "tree_id": "9486380996b6575fa7068b40b36aef31fb49da10",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e26967b4278ddd4f77ed5ee21e99b8f8d147aea"
+        },
+        "date": 1793704217605,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 227.85716330000014,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 228.8978244000031,
             "unit": "ms"
           }
         ]
