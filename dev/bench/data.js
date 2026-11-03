@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793682260377,
+  "lastUpdate": 1793692423868,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "1b62476768388d062133250a7ad07b4f78bd1d1d",
-          "message": "ci(docs): stop transient github.com 504s failing the link check (#1200)\n\nThe link check has failed **twice in one day** on transient `504 Gateway\nTimeout`s from github.com — never on a broken link:\n\n```\n[docs/CHANGELOG.md]:   [504] .../nimbus-client/pull/5 (at 1763:23)\n[docs/ci-secrets.md]:  [504] .../nimbus-client/pull/5 (at 361:17)\n🔍 1313 Total  ✅ 1199 OK  🚫 2 Errors\n```\n\nBoth were the **same URL**, and it is fine: three consecutive `HEAD`\nrequests\nreturn **HTTP 200**, and the PR exists (merged). The earlier failure was\na\ndifferent URL with the same signature — a github.com permalink, live at\n200 on\ndemand.\n\nA gate that cries wolf gets ignored, which is the real cost here.\n\n## Why `max_retries` did not already handle it\n\n`max_retries = 3` was **already set**. Without a wait between attempts\nall three\nretries land inside the same few-second hiccup, so they fail together.\n\n## The fix\n\n- **`retry_wait_time = 2`** — spread the retries across the hiccup\ninstead of\n  stacking them inside it.\n- **`host_concurrency = 8`** — per-*host*, not global. Almost every link\nin this\nrepo is github.com, so the run was opening far more simultaneous\nconnections\nto a single host than it needs; that is what earns a 504. Other hosts\nare\n  unthrottled.\n\nDeliberately **not** done: adding `5xx` to `accept`. A 504 does mean the\nserver\ntimed out rather than the link being broken, but accepting it wholesale\nwould\nalso make a genuinely dead host look healthy, which defeats the gate.\n\n## Verified locally, with lychee 0.24.2 — the exact CI version\n\n- Both TOML keys are accepted (an unknown key is a hard error, so this\nis a real\n  check, and it was run against the pinned version rather than assumed).\n- Full run over the real inputs after the change: **1,313 links, 845\nunique,\n  1201 OK, 0 errors**.\n\n**It is not free, and the file says so.** One run each: **111s before,\n127s\nafter** — roughly +15%, some of which is network variance. That is\nrecorded in\nthe config rather than glossed, along with a note to raise the number if\nrun\ntime ever matters more than the flake.\n\nThe two PRs currently red on this (#1197, #1199) have had their link\njobs\nre-run; this change is about the next occurrence, not those two.",
-          "timestamp": "2026-08-15T09:48:14+03:00",
-          "tree_id": "85456736a28184db1283c2ae71230f726bcd303f",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/1b62476768388d062133250a7ad07b4f78bd1d1d"
-        },
-        "date": 1786777271866,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 325.8078653000033,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.8110201500007,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 201.04282219999732,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "8ed853bf6f295d72b7de2cb5ce4fb46200768437",
+          "message": "fix(deps): clear the postcss-selector-parser advisory and recheck katex (#1871)\n\nTwo accepted advisories in\n`scripts/structure-audit/accepted-advisories.ts` reached their\n`recheckBy` date of 2026-11-02. Since then `audit:advisories` has failed\nDependency audit on every PR, nimbus-agent/Nimbus#1870 among them. Both\nwere re-judged against the npm registry today.\n\n**`postcss-selector-parser` GHSA-rj75-hqrm-r3gf, moderate: fixed.**\n- `@expressive-code/core` 0.44.3 moved to `postcss-nested` ^7.0.2, which\ntakes `postcss-selector-parser` ^7.\n- This PR adds a root override `\"@expressive-code/core\": \"0.44.3\"`. That\nversion is inside every dependent's declared ^0.44.2 range, so\n`audit:override-drift` passes.\n- The lockfile changes only those three packages, and\n`postcss-selector-parser` 7.1.7 is now installed.\n- The row is deleted, and a comment records why.\n- The docs site, its only consumer, still builds: `astro check && astro\nbuild` gives 55 pages.\n\n**`katex` GHSA-238p-pmpm-9mq7, low: still blocked; `recheckBy` moves to\n2026-12-01.**\n- `micromark-extension-math` 3.1.0 is still the latest release and still\nrequires `katex` ^0.16.0.\n- The newer `markdownlint` 0.42.0 and `markdownlint-cli2` 0.24.0 still\npin `micromark-extension-math` 3.1.0 exactly.\n- Reachability is unchanged: dev tooling only, linting the repository's\nown Markdown.\n- The row's reason now records today's check. The new date is within\n`MAX_ACCEPTANCE_DAYS` of `acceptedOn`.\n\nPassing locally: `audit:advisories` (4 live advisories, 4 rows), `bun\naudit --audit-level high`, `audit:override-drift`, `audit:js-licenses`\nand `preflight:fast`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-03T07:42:51Z",
+          "tree_id": "4562fa820a3ed465aba624acd18178a770a09b86",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/8ed853bf6f295d72b7de2cb5ce4fb46200768437"
+        },
+        "date": 1793692419893,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 308.63745190000225,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 309.4148118999994,
             "unit": "ms"
           }
         ]
