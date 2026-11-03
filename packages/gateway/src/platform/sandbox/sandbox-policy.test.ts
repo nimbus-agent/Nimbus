@@ -2,10 +2,14 @@ import { describe, expect, it } from "bun:test";
 
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import {
+  isSandboxWrapperOnlyEnv,
   parseSandboxPolicy,
   policyFromManifest,
   SANDBOX_CWD_ENV,
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
   SANDBOX_POLICY_ENV,
+  sandboxWrapperOnlyEnv,
 } from "./sandbox-policy.ts";
 
 function manifest(over: Partial<ExtensionManifest> = {}): ExtensionManifest {
@@ -49,6 +53,38 @@ describe("the wrapper wire", () => {
     // rename that only reached one side would abort every connector spawn with "not set".
     expect(SANDBOX_POLICY_ENV).toBe("NIMBUS_SANDBOX_POLICY_JSON");
     expect(SANDBOX_CWD_ENV).toBe("NIMBUS_SANDBOX_CWD");
+  });
+});
+
+describe("the observation channel's variables", () => {
+  it("are named exactly as the gateway sets them", () => {
+    // The contract with the spawn side (the extension runtime sets them, this wrapper reads them).
+    expect(SANDBOX_OBSERVATION_FILE_ENV).toBe("NIMBUS_SANDBOX_OBSERVATION_PREFIX");
+    expect(SANDBOX_OBSERVATION_LABEL_ENV).toBe("NIMBUS_SANDBOX_OBSERVATION_LABEL");
+  });
+
+  it("are wrapper-only, so the wrapper strips them from the child", () => {
+    // `isSandboxWrapperOnlyEnv` takes no platform: one answer for every OS, by construction. The
+    // child-side proof is the spawned wrapper in network-observation-writer.test.ts, on every OS.
+    expect(isSandboxWrapperOnlyEnv(SANDBOX_OBSERVATION_FILE_ENV)).toBe(true);
+    expect(isSandboxWrapperOnlyEnv(SANDBOX_OBSERVATION_LABEL_ENV)).toBe(true);
+    expect(isSandboxWrapperOnlyEnv("NIMBUS_SANDBOX_HELPER_PATH")).toBe(true);
+    expect(isSandboxWrapperOnlyEnv("PATH")).toBe(false);
+  });
+
+  it("are never forwarded by sandboxWrapperOnlyEnv, on any OS, which keeps its two Linux keys", () => {
+    const env = {
+      [SANDBOX_OBSERVATION_FILE_ENV]: "/obs/p",
+      [SANDBOX_OBSERVATION_LABEL_ENV]: "{}",
+      NIMBUS_SANDBOX_HELPER_PATH: "/opt/helper",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    };
+    expect(sandboxWrapperOnlyEnv(env, "linux")).toEqual({
+      NIMBUS_SANDBOX_HELPER_PATH: "/opt/helper",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    expect(sandboxWrapperOnlyEnv(env, "darwin")).toEqual({});
+    expect(sandboxWrapperOnlyEnv(env, "win32")).toEqual({});
   });
 });
 

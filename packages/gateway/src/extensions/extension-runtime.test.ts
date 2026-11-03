@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { insertExtensionRow } from "../automation/extension-store.ts";
 import { userMcpManifestFromRow } from "../connectors/lazy-mesh/user-mcp.ts";
 import { LocalIndex } from "../index/local-index.ts";
@@ -20,9 +20,12 @@ import {
   declaresNetwork,
   policyFromManifest,
   SANDBOX_CWD_ENV,
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
   SANDBOX_POLICY_ENV,
   sandboxWrapperOnlyEnv,
 } from "../platform/sandbox/sandbox-policy.ts";
+import { wrapperChildEnv } from "../platform/sandbox/sandbox-wrapper.ts";
 import { MockVault } from "../vault/mock.ts";
 import { approveExtensionRun } from "./approve-run.ts";
 import type { ContinuityEntry } from "./continuity/continuity-table.ts";
@@ -93,6 +96,9 @@ const stages = (stageRoot: string): string[] =>
   existsSync(stageRoot) ? readdirSync(stageRoot) : [];
 
 const runtimeReadPaths = [join(process.cwd(), "bun-runtime")];
+/** Where a spawn's observation files go: the gateway's directory, in no grant. */
+const OBS_DIR = join(tmpdir(), "nimbus-ext-runtime-obs");
+const OBS_PREFIX = join(OBS_DIR, "ext_foo.1700000000000.deadbeef");
 
 const DEV_LAYOUT: RuntimeLayout = {
   execPath: join(process.cwd(), "bun.exe"),
@@ -242,6 +248,9 @@ describe("buildExtensionSpawnSpec", () => {
       ...Object.keys(extensionProcessEnv({})),
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
+      // The observation channel, for the wrapper alone (it strips both before the child).
+      SANDBOX_OBSERVATION_FILE_ENV,
+      SANDBOX_OBSERVATION_LABEL_ENV,
       // The wrapper strips this pair before the child, and only a network policy on Linux gets it.
       ...Object.keys(declaresNetwork(policyFromManifest(manifest)) ? sandboxWrapperOnlyEnv() : {}),
     ]);
@@ -256,6 +265,7 @@ describe("buildExtensionSpawnSpec", () => {
       runtimeReadPaths,
       layout: COMPILED_LAYOUT,
       credentialEnv: {},
+      observationPrefix: OBS_PREFIX,
     });
     // The sandbox wrapper prefix comes from the live layout; the confined command is the layout's
     // own executable re-entered in the extension role.
@@ -273,6 +283,7 @@ describe("buildExtensionSpawnSpec", () => {
       runtimeReadPaths,
       layout: DEV_LAYOUT,
       credentialEnv: {},
+      observationPrefix: OBS_PREFIX,
     });
     const tail = spec.args.slice(-6);
     expect(tail[0]).toBe(DEV_LAYOUT.execPath);
@@ -292,6 +303,28 @@ describe("buildExtensionSpawnSpec", () => {
     }
     assertWrapped(spec, s);
   });
+
+  test("the observation prefix and label reach the WRAPPER only; the child's env is exactly extensionProcessEnv", () => {
+    const { s } = staged();
+    const spec = buildExtensionSpawnSpec(s, {
+      runtimeReadPaths,
+      layout: COMPILED_LAYOUT,
+      credentialEnv: { FOO_TOKEN: "t" },
+      observationPrefix: OBS_PREFIX,
+    });
+    expect(spec.env[SANDBOX_OBSERVATION_FILE_ENV]).toBe(OBS_PREFIX);
+    expect(spec.env[SANDBOX_OBSERVATION_FILE_ENV]?.startsWith(OBS_DIR)).toBe(true);
+    expect(JSON.parse(spec.env[SANDBOX_OBSERVATION_LABEL_ENV] ?? "null")).toEqual({
+      extensionId: s.extensionId,
+      version: s.version,
+    });
+    // What the wrapper hands its child: the policy wire and every wrapper-only key stripped, which
+    // leaves exactly the child env the spec was built from (I1, I43).
+    const childEnv = wrapperChildEnv(spec.env);
+    expect(SANDBOX_OBSERVATION_FILE_ENV in childEnv).toBe(false);
+    expect(SANDBOX_OBSERVATION_LABEL_ENV in childEnv).toBe(false);
+    expect(childEnv).toEqual(extensionProcessEnv({ FOO_TOKEN: "t" }));
+  });
 });
 
 /** The inline role exactly as the dev-tree spec carries it (it is not exported). */
@@ -301,6 +334,7 @@ function devInlineRole(): string {
     runtimeReadPaths,
     layout: DEV_LAYOUT,
     credentialEnv: {},
+    observationPrefix: OBS_PREFIX,
   });
   return spec.args.at(-2) ?? "";
 }
@@ -464,6 +498,7 @@ describe("createExtensionSlotSource", () => {
       runtimeReadPaths: () => [],
       isConnectorAllowed: () => allowed,
       verify,
+      observationDir: OBS_DIR,
     });
 
   test("isAllowed reads the policy predicate; disabledExtensionIdFor names only an approved-but-disabled extension", () => {
@@ -620,6 +655,7 @@ describe("prepareSpawn: credentials reach the child only through extensionProces
       runtimeReadPaths: () => [join(root, "bun-bin")],
       isConnectorAllowed: () => true,
       continuityTable: table,
+      observationDir: join(root, "obs"),
     });
     return { source, serviceId };
   }
@@ -629,6 +665,8 @@ describe("prepareSpawn: credentials reach the child only through extensionProces
       ...Object.keys(extensionProcessEnv({})),
       SANDBOX_POLICY_ENV,
       SANDBOX_CWD_ENV,
+      SANDBOX_OBSERVATION_FILE_ENV,
+      SANDBOX_OBSERVATION_LABEL_ENV,
       ...extra,
     ]);
 
@@ -637,6 +675,11 @@ describe("prepareSpawn: credentials reach the child only through extensionProces
     expect(serviceId).toBe("ext_com_example_readwise");
     const p = await source.prepareSpawn(serviceId);
     expect(p.spec.env["READWISE_TOKEN"]).toBe(TOKEN);
+    // A fresh per-spawn prefix in the gateway's observation directory, named by the service id.
+    const prefix = p.spec.env[SANDBOX_OBSERVATION_FILE_ENV] ?? "";
+    expect(basename(dirname(prefix))).toBe("obs");
+    expect(basename(prefix).startsWith(`${serviceId}.`)).toBe(true);
+    expect(basename(prefix).slice(serviceId.length)).toMatch(/^\.\d+\.[0-9a-f]{8}$/);
     const allowed = allowedKeys(["READWISE_TOKEN"]);
     for (const k of Object.keys(p.spec.env)) expect(allowed.has(k)).toBe(true);
     // No ungranted secret reaches the child under any name, and no value travels in argv.
@@ -668,6 +711,7 @@ describe("prepareSpawn: credentials reach the child only through extensionProces
       vault,
       env: {} as ExtensionRunGrantEnv,
       sandboxDir: "x",
+      observationDir: "x-obs",
       runtimeReadPaths: () => [],
       isConnectorAllowed: () => true,
       verify: (async () => {

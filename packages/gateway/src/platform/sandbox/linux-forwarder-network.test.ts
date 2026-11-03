@@ -21,7 +21,11 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { buildBwrapArgv } from "./linux.ts";
 import { buildForwarderArgv, HELPER_IN_SANDBOX, resolvConfTarget } from "./linux-forwarder.ts";
 import { planForwardEntries } from "./net-forward-host.ts";
-import type { SandboxPolicy } from "./sandbox-policy.ts";
+import {
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
+  type SandboxPolicy,
+} from "./sandbox-policy.ts";
 
 /**
  * The whole per-host path with nothing faked: the real `__nimbus-sandbox` wrapper and runner, the
@@ -1596,6 +1600,71 @@ describe.skipIf(!IS_LINUX || (!helperBuilt() && !REQUIRED))(
           expect(typeof report["twoLabels"]).not.toBe("number");
           expect(ran.stderr).toContain("evil.googleapis.com");
           expect(ran.stderr).toContain("a.b-run.googleapis.com");
+        },
+        TEST_TIMEOUT_MS,
+      );
+    });
+
+    describe("the observation channel", () => {
+      test(
+        "a child behind the forwarder is observed: what it reached and what it was refused",
+        async () => {
+          const box = newSandbox(root, "observe");
+          const obsDir = join(dirname(box.cwd), "obs");
+          mkdirSync(obsDir, { mode: 0o700 });
+          const label = { extensionId: "com.example.observed", version: "1.0.0" };
+          const spawned = wrapped(
+            ownerPolicy([declared()]),
+            box,
+            `report({
+               body: await fetch("http://127.0.0.1:${String(port)}/").then((r) => r.text()),
+               refused: await lookup("undeclared.invalid"),
+               sawChannel: Object.keys(process.env).filter((k) => k.includes("OBSERVATION")),
+             });`,
+          );
+          // windows-console-ok: this suite runs only on Linux, where the flag is ignored.
+          const proc = Bun.spawn(spawned.argv, {
+            env: {
+              ...spawned.env,
+              [SANDBOX_OBSERVATION_FILE_ENV]: join(obsDir, "ext_observed.1.deadbeef"),
+              [SANDBOX_OBSERVATION_LABEL_ENV]: JSON.stringify(label),
+            },
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            timeout: RUN_TIMEOUT_MS,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([
+            new Response(proc.stdout).text(),
+            new Response(proc.stderr).text(),
+            proc.exited,
+          ]);
+          expectExit({ exitCode, stdout, stderr, elapsedMs: 0 }, 0);
+          expect(parseLast(stdout.trim())).toEqual({
+            body: "from-the-host",
+            refused: "ENOTFOUND",
+            sawChannel: [],
+          });
+          const files = readdirSync(obsDir)
+            .filter((f) => f.endsWith(".json"))
+            .sort((a, b) => (a < b ? -1 : 1));
+          // File 0 is written at start, before the child runs; file 1 is the run's final window.
+          expect(files).toEqual([
+            "ext_observed.1.deadbeef.0.json",
+            "ext_observed.1.deadbeef.1.json",
+          ]);
+          const file = JSON.parse(readFileSync(join(obsDir, files[1] ?? ""), "utf8")) as Record<
+            string,
+            unknown
+          >;
+          expect(file["networkObserved"]).toBe(true);
+          expect(file["final"]).toBe(true);
+          expect(file["label"]).toEqual(label);
+          // One lookup is an A and an AAAA query, so a refusal's count is at least one.
+          const entries = file["entries"] as { o: string; h: string; p: number; n: number }[];
+          const keys = entries.map((e) => `${e.o} ${e.h}:${String(e.p)}`);
+          expect(keys).toEqual([`used 127.0.0.1:${String(port)}`, "refused undeclared.invalid:0"]);
+          expect(entries.every((e) => e.n >= 1)).toBe(true);
         },
         TEST_TIMEOUT_MS,
       );

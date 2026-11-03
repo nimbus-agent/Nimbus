@@ -13,6 +13,7 @@ import { join } from "node:path";
 import pino from "pino";
 
 import {
+  type ForwarderSessionOpts,
   forwarderPathRefusal,
   helperOverrideRefusal,
   innerResolvBind,
@@ -25,6 +26,7 @@ import {
   runForwarderStartProbe,
 } from "./linux-forwarder.ts";
 import { planForwardEntries } from "./net-forward-host.ts";
+import type { NetworkObserver } from "./network-observation-writer.ts";
 import { declaresNetwork, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 import { buildDefaultSeccompFilter } from "./seccomp-filter.ts";
@@ -360,6 +362,22 @@ export function forwarderInnerArgv(
   ];
 }
 
+/**
+ * The forwarder's two observation seams, fed to the spawn's observer. A closed relay's entry always
+ * carries the name it resolved (a pool slot's too); a null is skipped rather than guessed.
+ */
+export function observerHooks(
+  observer: NetworkObserver | undefined,
+): Pick<ForwarderSessionOpts, "onConnectionClosed" | "onRefusedName"> {
+  if (observer === undefined) return {};
+  return {
+    onConnectionClosed: (e) => {
+      if (e.host !== null) observer.used(e.host, e.port);
+    },
+    onRefusedName: (name) => observer.refused(name),
+  };
+}
+
 /** The per-host path. Any step that throws refuses the spawn, and leaves nothing behind. */
 function spawnBehindForwarder(
   paths: ForwarderSpawn,
@@ -375,11 +393,16 @@ function spawnBehindForwarder(
     entries: planForwardEntries(opts.policy),
     resolvConfTarget: target,
     innerArgv: forwarderInnerArgv(paths, opts.policy, opts.cwd, cmd, args, target),
+    ...observerHooks(opts.observer),
   });
   try {
     const child = spawnWithSeccomp(paths.seccompPath, paths.bwrapPath, session.argv, opts);
     child.once("exit", session.close);
     child.once("error", session.close);
+    // Observed only once the child has really started behind the open session: the one place a
+    // spawn's network is reported, so the only place that may say it is.
+    const observer = opts.observer;
+    if (observer !== undefined) child.once("spawn", () => observer.markObserved());
     return child;
   } catch (e) {
     session.close();

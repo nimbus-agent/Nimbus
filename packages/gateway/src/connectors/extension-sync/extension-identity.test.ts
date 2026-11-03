@@ -202,6 +202,7 @@ describe("org policy names the index id", () => {
       vault: createMockVault(),
       env: {} as never,
       sandboxDir: "x",
+      observationDir: "x-obs",
       runtimeReadPaths: () => [],
       isConnectorAllowed: (id) => allowed.includes(id),
       continuityTable: TABLE,

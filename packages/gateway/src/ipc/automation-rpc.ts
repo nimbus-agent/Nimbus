@@ -98,6 +98,7 @@ import {
   parseExtensionManifestJson,
   resolveExtensionManifestPath,
 } from "../extensions/manifest.ts";
+import { deleteObservationFilesFor } from "../extensions/observation/observation-ingest.ts";
 import { orphanedDependencies, unneededDependencies } from "../extensions/orphaned-dependencies.ts";
 import {
   evidenceApprovalFields,
@@ -126,6 +127,7 @@ import type { SignatureDisableReason } from "../extensions/verify-signature.ts";
 import { newestPrevVersion, removeExtensionVersionStore } from "../extensions/version-store.ts";
 import type { NimbusVault } from "../vault/index.ts";
 import { asRecord } from "./connector-rpc-shared.ts";
+import { readAuditEntries } from "./extension-audit-rpc.ts";
 import { emitGatewayEvent } from "./gateway-events.ts";
 import { requireTrimmedStringField } from "./rpc-params.ts";
 
@@ -232,6 +234,8 @@ interface AutomationCtx {
   requirementStatuses?: ConnectorRequirementStatusesFn;
   /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
   logger?: Pick<Logger, "warn">;
+  /** `<dataDir>/extension-observations`: a removed extension's pending window files go with it. */
+  observationDir?: string | undefined;
 }
 
 const automationRpcLog = pino({
@@ -281,7 +285,9 @@ function refuseRemoveWithDependents(db: Database, id: string): void {
 
 /**
  * `extension.remove`, once the row and grant are gone: stops the live child, then removes its
- * stage root, then the `ext_` health row a refused or failed spawn recorded — in that order.
+ * stage root, then the `ext_` health row a refused or failed spawn recorded, then its pending
+ * observation files — after the stop, so a stopping wrapper's final window goes too. (A file that
+ * still lands later names an extension that is no longer installed, and ingest rejects it.)
  */
 async function stopAndCleanUpRemovedExtension(
   ctx: AutomationCtx,
@@ -292,7 +298,9 @@ async function stopAndCleanUpRemovedExtension(
     await stopExtensionBestEffort(ctx.mesh, id);
     if (serviceId !== undefined) await ctx.mesh.removeExtensionSandbox(serviceId);
   }
-  if (serviceId !== undefined) deleteConnectorHealthRow(ctx.db, serviceId);
+  if (serviceId === undefined) return;
+  deleteConnectorHealthRow(ctx.db, serviceId);
+  if (ctx.observationDir !== undefined) deleteObservationFilesFor(ctx.observationDir, serviceId);
 }
 
 /** `extension.remove`, last: the install dir and version store. Best-effort; the row is gone. */
@@ -379,6 +387,8 @@ const AUTOMATION_HANDLERS: Readonly<Record<string, AutomationHandler>> = {
   "extension.list": (rec, ctx) => handleExtensionList(rec, ctx),
 
   "extension.info": (rec, ctx) => handleExtensionInfo(rec, ctx),
+
+  "extension.audit": (rec, ctx) => handleExtensionAudit(rec, ctx),
 
   "extension.eval": (rec, ctx) => handleExtensionEval(rec, ctx),
 
@@ -819,6 +829,15 @@ function installedEvidence(
   return row.source_registry == null
     ? { evidence: localInstallEvidence() }
     : { evidenceIn: oneLine(row.source_registry) };
+}
+
+/** What the installed extension did on this machine; local evidence only (never LAN, never Tauri). */
+function handleExtensionAudit(rec: Record<string, unknown> | undefined, ctx: AutomationCtx): Hit {
+  // An absent id lists every extension; one that is present must be a real id.
+  const id = rec?.["id"] === undefined ? undefined : requireString(rec, "id");
+  const extensions = readAuditEntries(ctx.db, id);
+  if (extensions === undefined) throw new AutomationRpcError(-32602, "Extension not found");
+  return { kind: "hit", value: { extensions } };
 }
 
 async function handleExtensionInfo(
@@ -1417,6 +1436,7 @@ export async function dispatchAutomationRpc(options: {
   requirementStatuses?: ConnectorRequirementStatusesFn;
   /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
   logger?: Pick<Logger, "warn">;
+  observationDir?: string | undefined;
 }): Promise<Hit | { kind: "miss" }> {
   const handler = AUTOMATION_HANDLERS[options.method];
   if (handler === undefined) {
@@ -1442,6 +1462,7 @@ export async function dispatchAutomationRpc(options: {
       requirementStatuses: options.requirementStatuses,
     }),
     ...(options.logger !== undefined && { logger: options.logger }),
+    observationDir: options.observationDir,
   };
   return await handler(asRecord(options.params), ctx);
 }

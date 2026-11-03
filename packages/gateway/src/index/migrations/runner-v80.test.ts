@@ -29,8 +29,8 @@ describe("V80 migration — registry_liveness_state", () => {
     }
   });
 
-  test("the registered maximum and the current schema are 80", () => {
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(80);
-    expect(CURRENT_SCHEMA_VERSION).toBe(80);
+  test("the registered maximum and the current schema are at least 80", () => {
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(80);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(80);
   });
 });

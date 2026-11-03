@@ -250,7 +250,12 @@ describe("extension management over LAN (I5 — CLI-only)", () => {
   });
 
   test("credentialSet/credentialStatus are forbidden over LAN regardless of grant-write", () => {
-    for (const m of ["extension.credentialSet", "extension.credentialStatus", "extension.eval"]) {
+    for (const m of [
+      "extension.credentialSet",
+      "extension.credentialStatus",
+      "extension.eval",
+      "extension.audit",
+    ]) {
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: true })).toThrow(LanError);
       expect(() => checkLanMethodAllowed(m, { peerId: "p", writeAllowed: false })).toThrow(
         LanError,

@@ -524,6 +524,21 @@ which a filter cannot read, so libc and the runtimes fall back to `clone`). A ca
 architecture is killed. `uretprobe` and `uprobe` pass any seccomp filter by kernel design, so
 the filter does not govern them.
 
+## Observation {#observation}
+
+The `__nimbus-sandbox` wrapper is the observer. For an installed extension it writes one JSON window file per minute (plus file 0 once the child has started; a spawn that is refused or never starts writes nothing and counts no run) into `<data dir>/extension-observations`, a directory the gateway creates with mode 0700 and that is in no grant and no runtime read path. The path and the extension label reach the wrapper only; the wrapper-only env keys are stripped before the child starts, so the child never sees them. The gateway ingests the directory at boot and every 60 seconds: each file is parsed strictly, applied once per (run, seq), and deleted after its rows commit. Evidence is stored in V81 and read by `nimbus extension audit` ([cli-reference](./cli-reference.md#nimbus-extension-audit-id---json)).
+
+| OS | What this release observes |
+| --- | --- |
+| Linux | Used declared hosts (relayed connections) and refused lookups, only when the child really ran behind the forwarder (`networkObserved`). The no-helper fallback gives the child the whole network and observes nothing; the report says `Network   not observed: this run had no network filter (no sandbox helper)`. An extension that declares no network runs with no forwarder, and the report says `Network   declared nothing`. |
+| Windows, macOS | Run coverage only. The report says `Network   not observed on this OS yet`. Evidence is the next PR (6b-2); warnings follow it (6b-3). |
+
+A `refused` line can be a declared host (the wildcard pool was full, or no allowed address), not only an undeclared name. A direct connection to an undeclared IP uses no name and is neither seen nor logged.
+
+**Bounds.** At most 256 entries per window file and 64 KiB per file; entries that do not fit are counted in `dropped`, and a full window evicts refused before used. At most 1440 files per run; the last one says `stopped`, coverage records it, and the report says `observation stopped after one day in at least one run`. At most 512 rows per extension and version. Rows age out 90 days after they were last seen. Nothing leaves the machine; `extension.audit` is refused over LAN and is not in the desktop allowlist. There is no off switch. Observation never decides a spawn, a grant or a network rule.
+
+**Proof.** The Linux end-to-end test runs on the Ubuntu CI E2E leg with the sandbox helper built and AppArmor's unprivileged-userns restriction lifted, as CI does; it is not claimed for a stock Ubuntu install.
+
 ## See also
 
 - `docs/SECURITY-INVARIANTS.md` §I15 — sandbox-runner-intrinsic-to-spawn invariant; §I42 — user-MCP tool calls need owner approval.

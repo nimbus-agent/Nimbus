@@ -14,6 +14,7 @@ import { type AgentHttpInvoker, buildAgentHttpInvoker } from "../agent-runs/agen
 import { AgentRunController } from "../agent-runs/agent-run-store.ts";
 import type { SynthesisRouter } from "../agents/_lib/synthesis-llm.ts";
 import { startAuditShipper } from "../audit/audit-shipper.ts";
+import { selectExtensionInstallPath } from "../automation/extension-store.ts";
 import {
   evaluateWatchersAfterSync,
   evaluateWatchersStartupCatchUp,
@@ -195,6 +196,12 @@ import { resolveRuntimeById } from "../exec/exec-runtimes.ts";
 import { type AutoUpdateRuntime, createAutoUpdateRuntime } from "../extensions/auto-update-init.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { createExtensionSlotSource } from "../extensions/extension-runtime.ts";
+import {
+  ensureObservationDir,
+  extensionObservationDirFor,
+  extensionServiceIdOf,
+  startObservationIngest,
+} from "../extensions/observation/observation-ingest.ts";
 import type { RegistryFetchDeps } from "../extensions/registry/registry-fetch.ts";
 import {
   buildExtensionRunGrantEnv,
@@ -706,6 +713,40 @@ interface SchedulerWithMeshOpts {
    * the migration engine, the sync registrar and the credential resolver get (ruling B1).
    */
   continuityTable: readonly ContinuityEntry[];
+  /** `<dataDir>/extension-observations`, created at boot by `startExtensionObservation`. */
+  extensionObservationDir: string;
+}
+
+/**
+ * Project 6: the observation channel's directory, created owner-only before any extension can
+ * spawn; then an ingest pass at boot and one every 60 s, stopped on shutdown. The directory is the
+ * gateway's own and is never added to a grant or to the runtime read paths. A directory that
+ * cannot be created is logged, not fatal: the wrapper's writes then fail, which it swallows, and
+ * nothing is observed.
+ */
+function startExtensionObservation(
+  db: Database,
+  dataDir: string,
+  logger: Logger,
+  sidecarStops: Array<() => void>,
+): string {
+  let dir = extensionObservationDirFor(dataDir);
+  try {
+    dir = ensureObservationDir(dataDir);
+  } catch (err) {
+    logger.warn({ err }, "extension observation directory could not be created");
+  }
+  sidecarStops.push(
+    startObservationIngest({
+      db,
+      dir,
+      now: Date.now,
+      isInstalled: (id) => selectExtensionInstallPath(db, id) !== null,
+      serviceIdFor: (id) => extensionServiceIdOf(db, id),
+      log: (m) => logger.warn(m),
+    }),
+  );
+  return dir;
 }
 
 async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
@@ -734,6 +775,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     extensionRuntimeEnabled,
     extensionSpawnGate,
     continuityTable,
+    extensionObservationDir,
   } = opts;
   // I41 clause (6), spec § 11.2: a demo gateway's scheduler exists (IPC and the post-sync
   // refreshers are built alongside it) but can never run a job.
@@ -983,6 +1025,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
         vault,
         env: buildExtensionRunGrantEnv(userMcpProtectedRootsFor(paths), paths.extensionsDir),
         sandboxDir: paths.sandboxDir,
+        observationDir: extensionObservationDir,
         runtimeReadPaths: () => resolveRuntimeById("bun").requiredReadPaths(),
         isConnectorAllowed,
         continuityTable,
@@ -3897,6 +3940,12 @@ export async function assemblePlatformServices(
   // it. Resolved in a `finally`, so a throwing pass cannot wedge every extension forever — the
   // per-spawn verifier still refuses anything that fails.
   const extensionSpawnGate = Promise.withResolvers<void>();
+  const extensionObservationDir = startExtensionObservation(
+    db,
+    paths.dataDir,
+    syncLogger,
+    sidecarStops,
+  );
 
   const {
     syncScheduler,
@@ -3922,6 +3971,7 @@ export async function assemblePlatformServices(
     extensionRuntimeEnabled,
     extensionSpawnGate: extensionSpawnGate.promise,
     continuityTable: migration.continuityTable,
+    extensionObservationDir,
   });
   // One `stop` per refresher that actually started. Three of the four are
   // optional (their passes are config-gated), and the repeated

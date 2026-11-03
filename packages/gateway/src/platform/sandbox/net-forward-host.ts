@@ -201,7 +201,8 @@ export function planForwardEntries(policy: SandboxPolicy): ForwardEntry[] {
   return entries;
 }
 
-function sanitiseName(name: string): string {
+/** The one sanitiser for a child-supplied name: the refusal log's, and the observation writer's. */
+export function sanitiseName(name: string): string {
   return name.replaceAll(/[^A-Za-z0-9._-]/g, "?").slice(0, MAX_LOGGED_NAME_LENGTH);
 }
 

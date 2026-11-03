@@ -81,6 +81,23 @@ export const SANDBOX_CWD_ENV = "NIMBUS_SANDBOX_CWD";
  */
 const LINUX_WRAPPER_ONLY_ENV = ["NIMBUS_SANDBOX_HELPER_PATH", "XDG_RUNTIME_DIR"] as const;
 
+/**
+ * The observation channel (`network-observation-writer.ts`): where the wrapper writes what its
+ * child's network did, and the `{ extensionId, version }` each file is attributed to. The gateway
+ * sets both at spawn; the wrapper reads them and strips them from the child on EVERY OS, so a child
+ * never learns where its own evidence goes. `sandboxWrapperOnlyEnv` never emits them: it forwards
+ * the gateway's own environment to the wrapper, and these are set per spawn instead.
+ */
+export const SANDBOX_OBSERVATION_FILE_ENV = "NIMBUS_SANDBOX_OBSERVATION_PREFIX";
+export const SANDBOX_OBSERVATION_LABEL_ENV = "NIMBUS_SANDBOX_OBSERVATION_LABEL";
+
+/** Every key the wrapper strips from its child's environment, on every OS. */
+const WRAPPER_ONLY_ENV: readonly string[] = [
+  ...LINUX_WRAPPER_ONLY_ENV,
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
+];
+
 /** Whether a child under this policy has any network to reach. Wildcards alone count. */
 export function declaresNetwork(policy: SandboxPolicy): boolean {
   return policy.permissions.network.length > 0 || (policy.firstPartyWildcardHosts?.length ?? 0) > 0;
@@ -100,8 +117,9 @@ export function declaredNetworkPorts(network: readonly string[]): number[] {
   return [...ports].sort((a, b) => a - b);
 }
 
+/** True for a key the wrapper keeps from its child. It reads no platform: the same on every OS. */
 export function isSandboxWrapperOnlyEnv(key: string): boolean {
-  return (LINUX_WRAPPER_ONLY_ENV as readonly string[]).includes(key);
+  return WRAPPER_ONLY_ENV.includes(key);
 }
 
 export function sandboxWrapperOnlyEnv(

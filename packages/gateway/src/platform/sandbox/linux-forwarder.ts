@@ -29,6 +29,7 @@ import { isIpv4Literal } from "./net-address-rules.ts";
 import {
   connectTcp,
   type ForwardEntry,
+  type ForwardHostOptions,
   type NetSocketHandlers,
   type NetSocketLike,
   planForwardEntries,
@@ -489,6 +490,9 @@ export type ForwarderSessionOpts = {
   log?: (line: string) => void;
   resolve?: (host: string) => Promise<string[]>;
   connect?: (ip: string, port: number) => Promise<NetSocketLike>;
+  /** Passed to the host unchanged: the observation seam, a second consumer of its events. */
+  onConnectionClosed?: ForwardHostOptions["onConnectionClosed"];
+  onRefusedName?: ForwardHostOptions["onRefusedName"];
 };
 
 function stderrLine(line: string): void {
@@ -537,6 +541,10 @@ export function openForwarderSession(opts: ForwarderSessionOpts): ForwarderSessi
       resolve: opts.resolve ?? resolveOnHost,
       connect: opts.connect ?? connectTcp,
       log: opts.log ?? stderrLine,
+      ...(opts.onConnectionClosed === undefined
+        ? {}
+        : { onConnectionClosed: opts.onConnectionClosed }),
+      ...(opts.onRefusedName === undefined ? {} : { onRefusedName: opts.onRefusedName }),
     });
     // `process.exit` runs this; a signal the wrapper handles reaches it through `process.exit` too.
     process.once("exit", close);

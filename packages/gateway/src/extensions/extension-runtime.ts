@@ -10,7 +10,11 @@ import type { ServerSpec } from "../connectors/lazy-mesh/slot.ts";
 import { wrapServerSpecInCwd } from "../connectors/lazy-mesh/wrap-server-spec.ts";
 import type { RuntimeLayout } from "../platform/runtime-layout.ts";
 import { extensionStageRootFor } from "../platform/sandbox/sandbox-cwd.ts";
-import type { SandboxPolicy } from "../platform/sandbox/sandbox-policy.ts";
+import {
+  SANDBOX_OBSERVATION_FILE_ENV,
+  SANDBOX_OBSERVATION_LABEL_ENV,
+  type SandboxPolicy,
+} from "../platform/sandbox/sandbox-policy.ts";
 import { readCredentialEnv } from "./extension-credentials.ts";
 import { extensionEntryCommand } from "./extension-launch-command.ts";
 import type { ResolvedRunGrants } from "./extension-run-grants.ts";
@@ -21,6 +25,7 @@ import {
   stageVerifiedExtension,
 } from "./extension-stage.ts";
 import type { ExtensionManifest } from "./manifest.ts";
+import { observationPrefixFor } from "./observation/observation-ingest.ts";
 import { ExtensionRunGrantError } from "./run-grant-error.ts";
 import { listRunGrants } from "./run-grant-store.ts";
 import { extensionProcessEnv } from "./spawn-env.ts";
@@ -92,6 +97,11 @@ export function extensionSpawnPolicyForGrants(
  * per-policy leaf `wrapServerSpec` would derive: a leaf persists across spawns, a stage is created
  * for this spawn alone. The sandbox manifest id stays `ext.<serviceId>`, which is what keys the
  * Windows AppContainer profile.
+ *
+ * The observation channel (project 6) is the WRAPPER's, never the child's: the per-spawn prefix
+ * and the `{ extensionId, version }` label go only through `wrapServerSpecInCwd`'s `wrapperEnv`,
+ * which accepts nothing but wrapper-only keys, and the wrapper strips both before the child starts.
+ * The prefix's directory is the gateway's own and is in no grant.
  */
 export function buildExtensionSpawnSpec(
   v: StagedExtensionForSpawn,
@@ -100,6 +110,8 @@ export function buildExtensionSpawnSpec(
     layout?: RuntimeLayout;
     /** env var -> value, from `readCredentialEnv` over the verified credentials. */
     credentialEnv: Readonly<Record<string, string>>;
+    /** `<observationDir>/<serviceId>.<ms>.<8 hex>`, from `observationPrefixFor`. */
+    observationPrefix: string;
   },
 ): ServerSpec {
   const { command, args } = extensionEntryCommand(v.entryPath, deps.layout);
@@ -107,11 +119,28 @@ export function buildExtensionSpawnSpec(
     { command, args, env: extensionProcessEnv(deps.credentialEnv) },
     buildExtensionRuntimeManifest(v, deps.runtimeReadPaths),
     v.stagePath,
+    observationWrapperEnv(deps.observationPrefix, v),
   );
+}
+
+/** The wrapper's observation keys: where to write, and the version that ran, as of this spawn. */
+function observationWrapperEnv(prefix: string, v: StagedExtensionForSpawn): Record<string, string> {
+  return {
+    [SANDBOX_OBSERVATION_FILE_ENV]: prefix,
+    [SANDBOX_OBSERVATION_LABEL_ENV]: JSON.stringify({
+      extensionId: v.extensionId,
+      version: v.version,
+    }),
+  };
 }
 
 export type ExtensionSlotSourceDeps = VerifiedExtensionDeps & {
   readonly sandboxDir: string;
+  /**
+   * `<dataDir>/extension-observations`: where each spawn's wrapper writes what its child's network
+   * did. The gateway's own directory, never granted to an extension.
+   */
+  readonly observationDir: string;
   /** A thunk so it is recomputed per spawn. */
   readonly runtimeReadPaths: () => readonly string[];
   readonly isConnectorAllowed: (serviceId: string) => boolean;
@@ -192,6 +221,7 @@ export function createExtensionSlotSource(deps: ExtensionSlotSourceDeps): Extens
         serviceId: staged.serviceId,
         spec: buildExtensionSpawnSpec(staged, {
           runtimeReadPaths: deps.runtimeReadPaths(),
+          observationPrefix: observationPrefixFor(deps.observationDir, staged.serviceId),
           credentialEnv,
         }),
         discard: () => removeBestEffort(staged.stagePath),

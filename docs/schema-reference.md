@@ -1274,6 +1274,41 @@ CREATE TABLE registry_liveness_state (
     last_generated_at    TEXT NOT NULL,
     last_fetched_at      INTEGER NOT NULL
 );
+
+-- V81 -- locally observed extension network evidence (2026-11-03; quality layer PR 6b-1).
+-- Nothing here is read to make an enforcement decision; nothing leaves the machine. All three cascade with `extension`.
+CREATE TABLE extension_network_observation (
+  extension_id TEXT NOT NULL REFERENCES extension(id) ON DELETE CASCADE,
+  version TEXT NOT NULL,
+  destination TEXT NOT NULL,
+  port INTEGER NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('used','refused','unmatched')),
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  count INTEGER NOT NULL,
+  PRIMARY KEY (extension_id, version, destination, port, outcome)
+);
+CREATE TABLE extension_observation_coverage (
+  extension_id TEXT NOT NULL REFERENCES extension(id) ON DELETE CASCADE,
+  version TEXT NOT NULL,
+  os TEXT NOT NULL CHECK (os IN ('linux','darwin','win32')),
+  runs INTEGER NOT NULL,
+  observed_ms INTEGER NOT NULL,
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  dropped INTEGER NOT NULL,
+  network_observed INTEGER NOT NULL CHECK (network_observed IN (0,1)),
+  -- 1 once a run's observation stopped at its one-day bound (1440 window files); sticky.
+  stopped INTEGER NOT NULL DEFAULT 0 CHECK (stopped IN (0,1)),
+  PRIMARY KEY (extension_id, version)
+);
+CREATE TABLE extension_observation_applied (
+  run_key TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  extension_id TEXT NOT NULL REFERENCES extension(id) ON DELETE CASCADE,
+  applied_at INTEGER NOT NULL,
+  PRIMARY KEY (run_key, seq)
+);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.
