@@ -312,7 +312,7 @@ describe("runExtensionAudit", () => {
       findings: {
         kind: "refused-undeclared",
         count: 1,
-        destinations: [{ destination: "ev‮il.test", port: 0, count: 1 }],
+        destinations: [{ destination: "ev\u202eil.test", port: 0, count: 1 }],
       },
       findingCount: 1,
     });
@@ -322,7 +322,7 @@ describe("runExtensionAudit", () => {
     });
     const parsed = JSON.parse(out.join("")) as { extensions: ExtensionAuditEntry[] };
     expect(parsed.extensions[0]?.findings?.destinations?.[0]?.destination).toBe("ev?il.test");
-    expect(out.join("")).not.toContain("‮");
+    expect(out.join("")).not.toContain("\u202e");
   });
 
   test("an id is passed to the gateway; no id lists every extension, closing lines each time", async () => {
