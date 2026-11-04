@@ -64,6 +64,7 @@ describe("connector write manifest", () => {
     const rowById = new Map(CONNECTOR_WRITE_ROWS.map((r) => [r.toolId, r]));
     const code = new Map(sources.map((s) => [s.rel, stripComments(s.text)]));
     const problems: string[] = [];
+    let compared = 0;
     for (const r of scan.registrations) {
       if (gateConfined(r.id)) continue;
       const row = rowById.get(r.id);
@@ -74,9 +75,13 @@ describe("connector write manifest", () => {
       const call = (code.get(r.file) ?? "").slice(r.span[0], r.span[1] + 1);
       const m = /\bmutates:\s*"([^"]*)"/.exec(call);
       if (m?.[1] === undefined || m[1].includes("${")) continue;
+      compared++;
       if (m[1] !== row.actionType) problems.push(`${r.id}: ${m[1]} != ${row.actionType}`);
     }
     expect(problems).toEqual([]);
+    // 0.3.0 has 70 literal `mutates` on rowed writes; a span or regex that stopped matching would
+    // compare none and pass, so the comparison count is pinned too.
+    expect(compared).toBeGreaterThanOrEqual(60);
   });
 
   test("the manifest's size is plausible", () => {
