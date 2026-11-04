@@ -24,6 +24,7 @@ import { CONNECTOR_CONFIGURED_V56_SQL } from "../connector-configured-v56-sql.ts
 import { CONNECTOR_DEPTH_V21_SQL } from "../connector-depth-v21-sql.ts";
 import { CONNECTOR_HEALTH_V13_SQL } from "../connector-health-v13-sql.ts";
 import { CONNECTOR_MIGRATION_V73_SQL } from "../connector-migration-v73-sql.ts";
+import { CONNECTOR_WRITE_ENABLEMENT_V83_SQL } from "../connector-write-enablement-v83-sql.ts";
 import { DECISIONS_V47_SQL } from "../decisions-v47-sql.ts";
 import { DEPLOYMENT_V28_SCHEMA_SQL } from "../deployment-v28-sql.ts";
 import { DEPTH_DEFAULT_V49_SQL } from "../depth-default-v49-sql.ts";
@@ -727,6 +728,7 @@ const INDEXED_SCHEMA_STEPS: readonly IndexedSchemaStep[] = [
     "extension observation notice (one notification a day)",
     EXTENSION_OBSERVATION_NOTICE_V82_SQL,
   ),
+  simpleStep(82, 83, "connector write opt-in table", CONNECTOR_WRITE_ENABLEMENT_V83_SQL),
 ];
 
 /**
