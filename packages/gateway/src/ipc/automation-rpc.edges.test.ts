@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -18,7 +19,9 @@ import {
   preT2DisabledRegistry,
   preT2DisableMessage,
   recoveredPendingRehashRegistry,
+  signatureDisabledRegistry,
 } from "../extensions/hard-disable.ts";
+import { EXTENSION_MANIFEST_FILENAME } from "../extensions/manifest.ts";
 import { readPublisherKey } from "../extensions/publisher-keys.ts";
 import { computeExtensionTreeDigest } from "../extensions/tree-digest.ts";
 import {
@@ -164,7 +167,7 @@ describe("extension.install through the RPC", () => {
     const src = join(root, "src");
     mkdirSync(join(src, "dist"), { recursive: true });
     writeFileSync(
-      join(src, "nimbus.extension.json"),
+      join(src, EXTENSION_MANIFEST_FILENAME),
       JSON.stringify({ id, version, entry: "dist/index.js" }),
       "utf8",
     );
@@ -182,7 +185,10 @@ describe("extension.install through the RPC", () => {
       publisher: { id: "test-pub", key: encodeBase64(keypair.pubkey) },
     };
     const signature = await signManifest(manifest, keypair.privkey);
-    writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify({ ...manifest, signature }));
+    writeFileSync(
+      join(src, EXTENSION_MANIFEST_FILENAME),
+      JSON.stringify({ ...manifest, signature }),
+    );
     writeFileSync(join(src, "dist", "index.js"), "export default {};");
     return src;
   }
@@ -579,6 +585,76 @@ describe("extension.list / extension.info — pre-T2 and prev decorations", () =
     expect(value.extension["reverseDeps"]).toEqual([]);
   });
 
+  describe("author metadata (funding and license)", () => {
+    const MANIFEST = JSON.stringify({
+      id: "com.example.meta",
+      name: "Meta",
+      version: "1.0.0",
+      entry: "dist/index.js",
+      permissions: { network: [] },
+      funding: [{ url: "https://github.com/sponsors/acme" }],
+      license: "MIT",
+    });
+
+    function seedWithManifest(db: Database): string {
+      const root = tempDir("nimbus-author-meta-");
+      const installPath = join(root, "meta", "active");
+      mkdirSync(installPath, { recursive: true });
+      writeFileSync(join(installPath, EXTENSION_MANIFEST_FILENAME), MANIFEST);
+      insertExtensionRow(db, {
+        id: "com.example.meta",
+        version: "1.0.0",
+        install_path: installPath,
+        manifest_hash: createHash("sha256").update(MANIFEST).digest("hex"),
+        entry_hash: "e".repeat(64),
+        enabled: 1,
+        installed_at: 1,
+        last_verified_at: 1,
+      });
+      return installPath;
+    }
+
+    async function infoOf(db: Database): Promise<Record<string, unknown>> {
+      const out = await dispatchAutomationRpc({
+        method: "extension.info",
+        params: { id: "com.example.meta" },
+        db,
+      });
+      return (out as { value: { extension: Record<string, unknown> } }).value.extension;
+    }
+
+    test("extension.info returns funding and license from the hash-checked manifest", async () => {
+      const db = indexDb();
+      seedWithManifest(db);
+      const ext = await infoOf(db);
+      expect(ext["funding"]).toEqual([{ url: "https://github.com/sponsors/acme" }]);
+      expect(ext["license"]).toBe("MIT");
+    });
+
+    test("a signature-disabled row still carries them", async () => {
+      const db = indexDb();
+      seedWithManifest(db);
+      signatureDisabledRegistry.mark("com.example.meta", "signature_failed");
+      try {
+        const ext = await infoOf(db);
+        expect(ext["disabled_reason"]).toBeDefined();
+        expect(ext["funding"]).toEqual([{ url: "https://github.com/sponsors/acme" }]);
+        expect(ext["license"]).toBe("MIT");
+      } finally {
+        signatureDisabledRegistry.reset();
+      }
+    });
+
+    test("a manifest edited after install reports no metadata", async () => {
+      const db = indexDb();
+      const installPath = seedWithManifest(db);
+      writeFileSync(join(installPath, EXTENSION_MANIFEST_FILENAME), MANIFEST.replace("MIT", "GPL"));
+      const ext = await infoOf(db);
+      expect(ext["funding"]).toBeNull();
+      expect(ext["license"]).toBeNull();
+    });
+  });
+
   /** The flat install is `<extensionsDir>/<id>`; `prevVersionsDir(extensionsDir, id)` holds the rollback copies. */
   function extensionsDirWithPrev(prev: "two" | "semver" | "prerelease" | "empty" | "file"): string {
     const extensionsDir = join(tempDir("nimbus-ext-root-"), "extensions");
@@ -646,7 +722,7 @@ describe("extension.rehash — adopting on-disk bytes is gated like an install",
     const src = join(root, "src");
     mkdirSync(join(src, "dist"), { recursive: true });
     writeFileSync(
-      join(src, "nimbus.extension.json"),
+      join(src, EXTENSION_MANIFEST_FILENAME),
       JSON.stringify({ id: "test.ext.rehash", version: "1.0.0", entry: "dist/index.js" }),
     );
     writeFileSync(join(src, "dist", "index.js"), 'import "./chunk.js";\n');

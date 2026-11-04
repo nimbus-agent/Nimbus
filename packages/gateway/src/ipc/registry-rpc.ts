@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import {
+  authorMetadataView,
   isStarterPack,
   provenanceMatching,
   publisherKeyFingerprint,
@@ -641,8 +642,9 @@ async function handleInfo(
   // Provenance (trust layer PR 4c): the newest version only — the one whose manifest was just
   // fetched and hash-checked — and only when that publisher-signed manifest names the same
   // repository the registry verified the build from.
-  const provenance =
-    provenanceMatching(newest[1], readManifestRepository(JSON.parse(text) as unknown)) ?? null;
+  const parsedManifest = JSON.parse(text) as unknown;
+  const provenance = provenanceMatching(newest[1], readManifestRepository(parsedManifest)) ?? null;
+  const authorMetadata = authorMetadataView(parsedManifest);
   return {
     kind: "hit",
     value: {
@@ -652,6 +654,7 @@ async function handleInfo(
       publisherFingerprint: publisherKeyFingerprint(entry.publisher.key),
       reportUrl: reportUrlOf(found, o),
       provenance,
+      ...authorMetadata,
       evidence: versionEvidence({
         registry: found.reg.name,
         versions: entry.versions,

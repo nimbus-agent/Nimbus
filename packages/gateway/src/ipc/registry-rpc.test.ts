@@ -327,6 +327,9 @@ type FixtureVersion = {
   network?: string[];
   /** The manifest's `kind`. */
   kind?: "starter-pack";
+  /** The manifest's optional `funding` and `license`, written as given. */
+  funding?: unknown;
+  license?: unknown;
 };
 
 /** A local registry directory with a root-signed index and one manifest per version. */
@@ -355,6 +358,8 @@ function makeRegistry(
           },
         }),
         ...(v.repository !== undefined && { repository: v.repository }),
+        ...(v.funding !== undefined && { funding: v.funding }),
+        ...(v.license !== undefined && { license: v.license }),
         ...(v.kind !== undefined && { kind: v.kind, dependsOn: { "other.ext": "^1.0.0" } }),
       });
       mkdirSync(join(dir, base), { recursive: true });
@@ -590,6 +595,56 @@ describe("registry.search and registry.info", () => {
     expect(v110).not.toHaveProperty("qualityInvalid");
     expect(v100?.["quality"]).toBeNull();
     expect(v100).not.toHaveProperty("qualityInvalid");
+  });
+
+  test("info carries the newest manifest's funding and license; reportOnly does not", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [
+          { version: "1.0.0", channel: "stable", name: "Tool" },
+          {
+            version: "1.1.0",
+            channel: "stable",
+            name: "Tool",
+            funding: [{ url: "https://github.com/sponsors/acme", label: "Sponsor" }],
+            license: "MIT",
+          },
+        ],
+      },
+    });
+    pin("main", tmp);
+    const full = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: Record<string, unknown>;
+    };
+    expect(full.value["funding"]).toEqual([
+      { url: "https://github.com/sponsors/acme", label: "Sponsor" },
+    ]);
+    expect(full.value["license"]).toBe("MIT");
+    expect(full.value).not.toHaveProperty("fundingInvalid");
+    const report = (await call("registry.info", {
+      id: "acme.tool",
+      registry: "main",
+      reportOnly: true,
+    })) as { value: Record<string, unknown> };
+    expect(report.value).not.toHaveProperty("funding");
+    expect(report.value).not.toHaveProperty("license");
+  });
+
+  test("info reports a malformed funding as invalid and a missing license as null", async () => {
+    makeRegistry(tmp, {
+      "acme.tool": {
+        publisherId: "acme",
+        versions: [{ version: "1.0.0", channel: "stable", name: "Tool", funding: "nope" }],
+      },
+    });
+    pin("main", tmp);
+    const full = (await call("registry.info", { id: "acme.tool", registry: "main" })) as {
+      value: Record<string, unknown>;
+    };
+    expect(full.value["funding"]).toBeNull();
+    expect(full.value["fundingInvalid"]).toBe(true);
+    expect(full.value["license"]).toBeNull();
   });
 
   test("info states who tested the newest version, its history and its checks", async () => {
@@ -1003,6 +1058,8 @@ describe("registry.search and registry.info", () => {
       verifiedPublisher: null,
       reportUrl: null,
       provenance: null,
+      funding: null,
+      license: null,
       evidence: {
         baseline: { state: "none", why: "unchecked", text: "no baseline check published" },
         tested: {
