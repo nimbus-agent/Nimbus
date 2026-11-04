@@ -58,7 +58,7 @@ function unescapeSegment(segment: string): string {
 
 function decodeSegment(raw: string, ref: string): string {
   try {
-    return decodeURIComponent(unescapeSegment(raw));
+    return unescapeSegment(decodeURIComponent(raw));
   } catch {
     throw new OpenApiModelError(`$ref ${ref} has a malformed percent-escape`);
   }

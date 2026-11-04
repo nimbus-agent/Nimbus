@@ -139,10 +139,15 @@ describe("resolveRefs", () => {
     ).toBe("the document expands to more than 10 schema nodes");
   });
 
-  test("pointer segments are percent-decoded after ~ unescaping", () => {
+  test("pointer segments are percent-decoded, then ~ unescaped (RFC 6901 fragment order)", () => {
     const root = { paths: { "/pets/{id}": { ok: true }, "a b": { sp: true } } };
     expect(resolveRefs({ $ref: "#/paths/~1pets~1%7Bid%7D" }, root)).toEqual({ ok: true });
     expect(resolveRefs({ $ref: "#/paths/a%20b" }, root)).toEqual({ sp: true });
+  });
+
+  test("a percent-encoded tilde decodes to ~1 and then unescapes to /", () => {
+    const root = { paths: { "/pets": { slash: true }, "~1pets": { literal: true } } };
+    expect(resolveRefs({ $ref: "#/paths/%7E1pets" }, root)).toEqual({ slash: true });
   });
 
   test("a percent-encoded forbidden segment is still refused", () => {
