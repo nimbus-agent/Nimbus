@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:38a35269d3a79efeb4a02cb043374ffce6b351133b2d7594b6f9aff5dd048aaa
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:a3d60e3da5e163be8923a5fcf4e776d38212f15bad4de869cb87bfc8c6fccda4
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -4263,14 +4263,26 @@ function hasBidi(s) {
       return true;
   return false;
 }
-function isFundingUrl(url) {
-  if (typeof url !== "string" || url.length === 0 || url.length > MAX_FUNDING_URL_CHARS) {
-    return false;
+var WHITESPACE_RE = /\s/u;
+function fundingUrlProblem(url) {
+  if (typeof url !== "string" || url.length === 0)
+    return "url must be a non-empty string";
+  if (url.length > MAX_FUNDING_URL_CHARS) {
+    return `url must be at most ${MAX_FUNDING_URL_CHARS} characters`;
   }
+  if (CONTROL_RE.test(url))
+    return "url has a control character";
+  if (hasBidi(url))
+    return "url has a bidi control character";
+  if (WHITESPACE_RE.test(url))
+    return "url has whitespace";
   if (!URL.canParse(url))
-    return false;
+    return "url must be an https URL with a host and no credentials";
   const u = new URL(url);
-  return u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === "";
+  if (u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === "") {
+    return;
+  }
+  return "url must be an https URL with a host and no credentials";
 }
 function readEntry(raw, index) {
   const at = `entry ${index}`;
@@ -4281,8 +4293,10 @@ function readEntry(raw, index) {
       return `${at} has an unknown key "${k}"`;
   }
   const url = raw["url"];
-  if (!isFundingUrl(url))
-    return `${at} url must be an https URL with a host and no credentials`;
+  const urlProblem = fundingUrlProblem(url);
+  if (urlProblem !== undefined || typeof url !== "string") {
+    return `${at} ${urlProblem ?? "url must be a string"}`;
+  }
   const label = raw["label"];
   if (label === undefined)
     return { url };
@@ -4291,9 +4305,10 @@ function readEntry(raw, index) {
   if (label.length < 1 || label.length > MAX_FUNDING_LABEL_CHARS) {
     return `${at} label must be 1 to ${MAX_FUNDING_LABEL_CHARS} characters`;
   }
-  if (CONTROL_RE.test(label) || hasBidi(label)) {
-    return `${at} label has a control or bidi character`;
-  }
+  if (CONTROL_RE.test(label))
+    return `${at} label has a control character`;
+  if (hasBidi(label))
+    return `${at} label has a bidi control character`;
   return { url, label };
 }
 function readManifestFunding(raw) {
@@ -4370,6 +4385,10 @@ function readManifestLicense(raw) {
   }
   if (CONTROL_RE.test(l))
     return invalid("license has a control character");
+  if (l !== l.trim())
+    return invalid("license has leading or trailing whitespace");
+  if (/[^\S ]/u.test(l))
+    return invalid("license has a whitespace character other than a space");
   if (!isSpdxExpression(l))
     return invalid("license is not an SPDX license expression");
   return { kind: "ok", value: l };

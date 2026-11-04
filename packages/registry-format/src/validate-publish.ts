@@ -8,7 +8,6 @@
  * parse) first, then the publisher signature, then the rules over the signed registry state, and
  * the package — the only expensive step — last. The first failure throws a `RegistryError`.
  */
-
 import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -18,7 +17,6 @@ import { join } from "node:path";
 import { verifyManifestSignature } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import semver from "semver";
 import { assertAuthorMetadata } from "./author-metadata.ts";
-
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";

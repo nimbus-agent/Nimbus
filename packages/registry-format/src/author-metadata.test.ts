@@ -8,6 +8,8 @@ import {
 import { RegistryError } from "./errors.ts";
 
 const RLO = String.fromCodePoint(0x202e);
+const ESC = String.fromCodePoint(0x1b);
+const NBSP = String.fromCodePoint(0xa0);
 const url = (n: number): string => `https://x.com/${"a".repeat(n - "https://x.com/".length)}`;
 
 describe("readManifestFunding", () => {
@@ -47,12 +49,16 @@ describe("readManifestFunding", () => {
     ["file", [{ url: "file:///etc/passwd" }], "https"],
     ["userinfo", [{ url: "https://user:pw@x.com/" }], "https"],
     ["no host", [{ url: "https://" }], "https"],
-    ["long url", [{ url: url(2049) }], "https"],
+    ["long url", [{ url: url(2049) }], "at most"],
+    ["url newline", [{ url: "https://x.com/\n" }], "url has a control"],
+    ["url escape", [{ url: `https://x.com/${ESC}[31m` }], "url has a control"],
+    ["url bidi", [{ url: `https://x.com/${RLO}` }], "url has a bidi"],
+    ["url space", [{ url: "https://x.com/a b" }], "url has whitespace"],
     ["duplicate", [{ url: "https://x.com" }, { url: "https://x.com" }], "repeats"],
-    ["empty label", [{ url: "https://x.com", label: "" }], "label"],
-    ["long label", [{ url: "https://x.com", label: "a".repeat(65) }], "label"],
-    ["control label", [{ url: "https://x.com", label: "\u001b[31m" }], "control"],
-    ["bidi label", [{ url: "https://x.com", label: `a${RLO}b` }], "bidi"],
+    ["empty label", [{ url: "https://x.com", label: "" }], "1 to 64"],
+    ["long label", [{ url: "https://x.com", label: "a".repeat(65) }], "1 to 64"],
+    ["control label", [{ url: "https://x.com", label: "\u001b[31m" }], "label has a control"],
+    ["bidi label", [{ url: "https://x.com", label: `a${RLO}b` }], "label has a bidi"],
   ];
   for (const [name, funding, frag] of bad) {
     test(`invalid: ${name}`, () => {
@@ -70,7 +76,26 @@ describe("readManifestFunding", () => {
 describe("readManifestLicense", () => {
   test("absent", () => {
     expect(readManifestLicense({})).toEqual({ kind: "absent" });
+    expect(readManifestLicense("not an object")).toEqual({ kind: "absent" });
   });
+  test("single and double spaces are accepted", () => {
+    expect(readManifestLicense({ license: "MIT OR X" }).kind).toBe("ok");
+    expect(readManifestLicense({ license: "MIT  OR  X" }).kind).toBe("ok");
+  });
+  const looseWhitespace: Array<[string, string, string]> = [
+    ["leading space", " MIT", "leading or trailing"],
+    ["trailing space", "MIT ", "leading or trailing"],
+    ["no-break space", `MIT${NBSP}OR X`, "other than a space"],
+    ["tab", "MIT\tOR X", "control"],
+    ["newline", "MIT\n", "control"],
+  ];
+  for (const [name, license, frag] of looseWhitespace) {
+    test(`invalid: ${name}`, () => {
+      const r = readManifestLicense({ license });
+      expect(r.kind).toBe("invalid");
+      if (r.kind === "invalid") expect(r.reason).toContain(frag);
+    });
+  }
   for (const l of [
     "MIT",
     "Apache-2.0",

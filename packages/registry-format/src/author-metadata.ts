@@ -43,14 +43,29 @@ function hasBidi(s: string): boolean {
   return false;
 }
 
-/** An `https:` URL with a host, no userinfo, at most 2048 characters. */
-export function isFundingUrl(url: unknown): url is string {
-  if (typeof url !== "string" || url.length === 0 || url.length > MAX_FUNDING_URL_CHARS) {
-    return false;
+const WHITESPACE_RE = /\s/u;
+
+/** Why `url` is not a funding URL, or `undefined` when it is one. */
+function fundingUrlProblem(url: unknown): string | undefined {
+  if (typeof url !== "string" || url.length === 0) return "url must be a non-empty string";
+  if (url.length > MAX_FUNDING_URL_CHARS) {
+    return `url must be at most ${MAX_FUNDING_URL_CHARS} characters`;
   }
-  if (!URL.canParse(url)) return false;
+  // The raw string is stored and printed, so check it before the URL parser normalises it.
+  if (CONTROL_RE.test(url)) return "url has a control character";
+  if (hasBidi(url)) return "url has a bidi control character";
+  if (WHITESPACE_RE.test(url)) return "url has whitespace";
+  if (!URL.canParse(url)) return "url must be an https URL with a host and no credentials";
   const u = new URL(url);
-  return u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === "";
+  if (u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === "") {
+    return undefined;
+  }
+  return "url must be an https URL with a host and no credentials";
+}
+
+/** An `https:` URL with a host, no userinfo, no control, bidi or whitespace character, at most 2048 characters. */
+export function isFundingUrl(url: unknown): url is string {
+  return fundingUrlProblem(url) === undefined;
 }
 
 function readEntry(raw: unknown, index: number): FundingEntry | string {
@@ -60,16 +75,18 @@ function readEntry(raw: unknown, index: number): FundingEntry | string {
     if (k !== "url" && k !== "label") return `${at} has an unknown key "${k}"`;
   }
   const url = raw["url"];
-  if (!isFundingUrl(url)) return `${at} url must be an https URL with a host and no credentials`;
+  const urlProblem = fundingUrlProblem(url);
+  if (urlProblem !== undefined || typeof url !== "string") {
+    return `${at} ${urlProblem ?? "url must be a string"}`;
+  }
   const label = raw["label"];
   if (label === undefined) return { url };
   if (typeof label !== "string") return `${at} label must be a string`;
   if (label.length < 1 || label.length > MAX_FUNDING_LABEL_CHARS) {
     return `${at} label must be 1 to ${MAX_FUNDING_LABEL_CHARS} characters`;
   }
-  if (CONTROL_RE.test(label) || hasBidi(label)) {
-    return `${at} label has a control or bidi character`;
-  }
+  if (CONTROL_RE.test(label)) return `${at} label has a control character`;
+  if (hasBidi(label)) return `${at} label has a bidi control character`;
   return { url, label };
 }
 
@@ -149,6 +166,8 @@ export function readManifestLicense(raw: unknown): AuthorField<string> {
     return invalid(`license must be 1 to ${MAX_LICENSE_CHARS} characters`);
   }
   if (CONTROL_RE.test(l)) return invalid("license has a control character");
+  if (l !== l.trim()) return invalid("license has leading or trailing whitespace");
+  if (/[^\S ]/u.test(l)) return invalid("license has a whitespace character other than a space");
   if (!isSpdxExpression(l)) return invalid("license is not an SPDX license expression");
   return { kind: "ok", value: l };
 }
