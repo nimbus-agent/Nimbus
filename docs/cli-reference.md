@@ -5039,6 +5039,35 @@ The desktop app shows no funding yet; a Sponsor button there and on the registry
 
 ---
 
+### `nimbus extension clone <id> [--registry <name>] [--version <v>] [--into <dir>] [--publisher <id>] [--json]`
+
+Writes an editable copy of a published extension. The gateway fetches the package through the same verified chain as a registry install (the pinned root key, the sequence floor, the index hashes, the index-named publisher key's signature, and any takedown or revocation block) and stages it; this command checks the staged file, unpacks it and copies the package files into `--into`. Nothing is installed, no approval is asked, and no extension row is written. `<id>` is the published id (`publisher/name`); without `--version`, clone takes the newest stable version that nothing blocks; there is no `--channel`, so a beta needs `--version`. Without `--registry`, the id is looked up across your added registries plus the built-in one (the built-in is skipped under an air gap); an id that two of them carry is refused as `ERR_REGISTRY_AMBIGUOUS`, and so is a bare id while any of them could not be read, since the unreadable one might carry it. Pass `--registry <name>` to look in one registry only.
+
+`--into` defaults to `./<name>` (the part of the id after the last `/`). It must not exist: any existing path (an empty directory, a file, a symbolic link) is refused with exit `2`, and so is a parent that does not exist. Clone creates the directory, and removes it again if writing the copy fails.
+
+The copy holds the package's files and a rewritten `nimbus.extension.json` without `signature` and `publisher`, plus `CLONED_FROM.md`, which records the original id, version, channel, registry, publisher id and key fingerprint, whether the publisher is a verified publisher, the time of the clone and, when the manifest declares a `repository`, a `Repository:` link. `--publisher <id>` rewrites the manifest's `id` to `<id>/<name>` and sets `publisher` to `{ "id": "<id>" }`; without it the copy keeps the original `id` and has no publisher. With `--publisher`, the manifest's `funding` is removed too (the links are the original publisher's), and the output prints `Funding links were removed; add your own before you publish.` after the `Source` line; without `--publisher` the copy keeps `funding` as published. A package carries built `dist/`, not source: the copy is built JavaScript, and when the package names a repository the output prints `Source: https://github.com/<repository>`, otherwise `This copy is built JavaScript (dist/); the package names no source repository.`
+
+Next steps, printed last. With `--publisher`: `Sign it first: nimbus extension keygen (once), then nimbus extension sign <dir>`. Without it: `Install it unsigned with: nimbus extension install <dir>` and `(refused while <id> is installed: remove it first or clone with --publisher)`. Either copy runs only after `nimbus extension approve`.
+
+**Licence.** Clone never refuses on a licence. It prints a `License:` line (`License: not declared`, `License: (invalid, ignored)` or `License: <expression>`) and, when the licence is absent, malformed or names an id that is not OSI-approved, a `Warning:` line ending `make sure the licence lets you modify and redistribute this code.` The OSI list is a curated 43-id subset baked into `registry-format`, so an OSI licence missing from it also only warns.
+
+**Publisher key.** Clone makes no publisher-key decision and stores no key: nothing it produces is installed or run under the original publisher. The signature is still verified against the key the index names; the key's fingerprint and verified-publisher status are printed (`Original publisher: <id> (key <fingerprint>), Verified publisher: @<github>` or `Unverified publisher`).
+
+**Shared writes.** The fetch advances the registry's anti-rollback sequence and appends registry egress ledger rows, as an install does. The gateway stages the archive in `<dataDir>/registry-clone-staging/c-*/package.tgz`; the CLI removes it after reading, and the gateway sweeps staged directories older than one hour on the next clone. `registry.cloneSource` is CLI-only, LAN-refused with the whole `registry` namespace, and not renderer-callable.
+
+`--json` prints one object: `id`, `version`, `registry`, `into`, `publisherId`, `keyFingerprint`, `verifiedPublisher` (`{ github, verifiedAt }` or `null`), `license`, `licenseWarning`, `repository` (each a string or `null`), `newId` (`null` without `--publisher`) and `fundingRemoved` (`true` only when `--publisher` removed a declared `funding`).
+
+**Package layout.** Clone accepts packages laid out as `nimbus extension pack` and `nimbus extension publish` build them, with `nimbus.extension.json` at the archive root. A package laid out any other way (the manifest one directory deep, or under a legacy file name, which `nimbus extension install` also accepts) is refused with exit `1` and the `ERR_REGISTRY_MANIFEST_INVALID` message `package has no nimbus.extension.json at its root`, before `--into` is created.
+
+Exit code `0` for success. Exit code `1` for a refused or failed clone (a registry refusal, `ERR_REGISTRY_*`, a takedown or revocation block (`ERR_EXTENSION_TAKEN_DOWN`, `ERR_EXTENSION_KEY_REVOKED`), a staged package that cannot be read or changed, a package whose manifest names another id). Exit code `2` for a usage error, an unusable `--publisher` or id, or an `--into` that exists or has no parent directory.
+
+```bash
+nimbus extension clone acme/notion-tasks
+nimbus extension clone acme/notion-tasks --version 1.2.0 --into ./my-tasks --publisher me
+```
+
+---
+
 ### `nimbus extension downgrade <id> --to <version> [--json]`
 
 Roll an installed extension back to a cached previous version (T2 PR 3). The `<version>` must already exist on disk under the extension's `extension-versions/<slug>/prev/` directory — typically the version the auto-update flow saved when the user accepted the previous bump.

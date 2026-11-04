@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.3.14 inputHash=sha256:a3d60e3da5e163be8923a5fcf4e776d38212f15bad4de869cb87bfc8c6fccda4
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:f31bf99aa0125134e159bee143ab35d32802ee509c166c2a11b405abe9968c26
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -9785,6 +9785,8 @@ function parseLivenessEntry(raw) {
     ...baseline === undefined ? {} : { baseline }
   };
 }
+// ../../registry-format/src/osi-licenses.ts
+var OSI_LICENSE_IDS = new Set(("0BSD AFL-3.0 AGPL-3.0 AGPL-3.0-only AGPL-3.0-or-later Apache-2.0 Artistic-2.0 BlueOak-1.0.0 " + "BSD-2-Clause BSD-3-Clause BSL-1.0 CDDL-1.0 CECILL-2.1 ECL-2.0 EPL-1.0 EPL-2.0 EUPL-1.2 " + "GPL-2.0 GPL-2.0-only GPL-2.0-or-later GPL-3.0 GPL-3.0-only GPL-3.0-or-later ISC LGPL-2.1 " + "LGPL-2.1-only LGPL-2.1-or-later LGPL-3.0 LGPL-3.0-only LGPL-3.0-or-later MIT MIT-0 MPL-2.0 " + "MS-PL MS-RL NCSA OFL-1.1 OSL-3.0 PostgreSQL Python-2.0 UPL-1.0 Unlicense Zlib").split(" "));
 // ../../registry-format/src/provenance.ts
 var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;

@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -1590,6 +1590,89 @@ describe("registry.install", () => {
     await expect(install({ id: "acme.tool" }, undefined)).rejects.toThrow("HITL gate");
     await expect(
       install({ id: "acme.tool", channel: "nightly" }, gateRecorder(true).gate),
+    ).rejects.toThrow("ERR_INVALID_PARAMS");
+  });
+});
+
+describe("registry.cloneSource", () => {
+  test("routes, returns the verified package's reply and stages the archive under cloneStagingDir", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const cloneStagingDir = join(tmp, "data", "registry-clone-staging");
+    const out = (await dispatchRegistryRpc({
+      method: "registry.cloneSource",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      cloneStagingDir,
+    })) as { kind: string; value: { archivePath: string; packageSha256: string } };
+    expect(out).toMatchObject({
+      kind: "hit",
+      value: { id: "acme.tool", version: "1.0.0", channel: "stable", registry: "main" },
+    });
+    expect(out.value.archivePath.startsWith(cloneStagingDir)).toBe(true);
+    const digest = createHash("sha256").update(readFileSync(out.value.archivePath)).digest("hex");
+    expect(digest).toBe(out.value.packageSha256);
+  });
+
+  test("refreshes the trust feed first: a takedown only the feed carries refuses the clone", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 61);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const takedown = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: "acme.tool",
+        publisherId: "acme",
+        versions: "*",
+        reason: "malware",
+      },
+      seed,
+    );
+    const cloneStagingDir = join(tmp, "staging");
+    let refreshed = 0;
+    const err = await dispatchRegistryRpc({
+      method: "registry.cloneSource",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      cloneStagingDir,
+      trustFeed: {
+        config: { url: "https://trust.example/", rootKey: nimbusKey },
+        // The feed's refresh is the only thing that stores the takedown.
+        refreshNow: () => {
+          refreshed++;
+          recordTrustStatements(db, [takedown], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+          return Promise.resolve({ status: "unchanged", sequence: 1 });
+        },
+      },
+    }).catch((e: unknown) => e);
+    expect(refreshed).toBe(1);
+    expect(err).toMatchObject({ rpcCode: -32000 });
+    expect((err as Error).message).toMatch(/^ERR_EXTENSION_TAKEN_DOWN:/);
+    expect(readdirSync(cloneStagingDir)).toEqual([]);
+  });
+
+  test("refuses without a clone staging directory", async () => {
+    await expect(call("registry.cloneSource", { id: "acme.tool" })).rejects.toThrow(
+      "Gateway has no data directory for clone staging",
+    );
+  });
+
+  test("refuses a missing id as invalid params", async () => {
+    await expect(
+      dispatchRegistryRpc({
+        method: "registry.cloneSource",
+        params: {},
+        db,
+        fetch: fetchBag(),
+        cloneStagingDir: join(tmp, "staging"),
+      }),
     ).rejects.toThrow("ERR_INVALID_PARAMS");
   });
 });

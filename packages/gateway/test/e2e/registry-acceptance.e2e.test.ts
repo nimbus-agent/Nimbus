@@ -5,7 +5,9 @@
 // by the update daemon from the extension's source registry and applied (`extension.autoUpdate`
 // approval), after which the old run approval no longer covers the code; and a v3 whose package
 // differs by one byte from what the signed index lists is detected but refused at apply, leaving
-// v2 in place. Invariant I44 is the property; the unit and integration layers prove each refusal,
+// v2 in place. Last, an author's clone (`registry.cloneSource`) of a second, never-installed
+// extension is copied as `nimbus extension clone` copies it, installed from that path and approved
+// to run. Invariant I44 is the property; the unit and integration layers prove each refusal,
 // and this file proves the whole chain is wired through both dispatcher layers of a real gateway.
 //
 // The registry folder is built by the gateway-side fixture (`build-test-registry.ts`): the gateway
@@ -20,11 +22,20 @@
 //
 // Embeddings are skipped (NIMBUS_SKIP_EMBEDDING_RUNTIME=1); nothing here needs the index.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import net from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { inspectPackage } from "@nimbus-dev/registry-format";
 
 import { evictPublisherKey } from "../../src/extensions/publisher-keys.ts";
 import {
@@ -138,6 +149,8 @@ async function until<T>(probe: () => T | undefined, what: string, ms = 30_000): 
 
 const RUNNER = join(import.meta.dir, "_fixtures", "gateway-runner.ts");
 const EXTENSION_ID = "com.example.accept";
+/** Published only for the clone step; never installed from the registry. */
+const CLONE_ID = "com.example.cloneme";
 const REGISTRY = "local";
 
 /** A registry-signed `quality` (scorer 1) for `passed` of `cases`, all rubric cases `exact`. */
@@ -452,6 +465,82 @@ describe("registry acceptance: add, search, install, approve, update, tamper", (
     });
     expect((await listing())?.version).toBe("2.0.0");
     expect(installedEntry()).toContain('"2.0.0"');
+  }, 60_000);
+
+  test("an author's clone of a published extension installs from its path and is approved to run", async () => {
+    // A second extension, never installed in this run, published into the same folder at the next
+    // sequence, laid out as `nimbus extension pack` builds a package (manifest at the root).
+    const indexPath = join(regDir, "index.json");
+    const before = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      extensions: Record<string, unknown>;
+    };
+    await buildTestRegistry(regDir, {
+      id: CLONE_ID,
+      publisherId,
+      versions: [{ version: "1.0.0" }],
+      rootLayout: true,
+    });
+    const after = JSON.parse(readFileSync(indexPath, "utf8")) as Record<string, unknown> & {
+      extensions: Record<string, unknown>;
+    };
+    resignIndex(indexPath, {
+      ...after,
+      sequence: 4,
+      extensions: { ...before.extensions, ...after.extensions },
+    });
+
+    // The gateway's verified fetch: no prompt, nothing installed, the archive staged in dataDir.
+    let src:
+      | { id: string; version: string; packageSha256: string; archivePath: string }
+      | undefined;
+    const raisedByClone = await promptsDuring(async () => {
+      src = await client.call("registry.cloneSource", { id: CLONE_ID });
+    });
+    expect(raisedByClone).toEqual([]);
+    if (src === undefined) throw new Error("no clone reply");
+    expect(src).toMatchObject({ id: CLONE_ID, version: "1.0.0" });
+    expect(dirname(dirname(src.archivePath))).toBe(join(paths.dataDir, "registry-clone-staging"));
+    const out = await client.call<{ extensions: ExtensionListing[] }>("extension.list", {});
+    expect(out.extensions.some((e) => e.id === CLONE_ID)).toBe(false);
+
+    // The CLI's copy step (`nimbus extension clone`; the gateway test tree may not import CLI
+    // source): hash the bytes read, unpack with the registry-format reader, copy the package
+    // files, and strip the original publisher's identity from the manifest.
+    const bytes = readFileSync(src.archivePath);
+    expect(createHash("sha256").update(bytes).digest("hex")).toBe(src.packageSha256);
+    const work = join(tmp, "clone-work");
+    mkdirSync(work);
+    writeFileSync(join(work, "package.tgz"), bytes);
+    const inspected = await inspectPackage(join(work, "package.tgz"), work);
+    expect(inspected.manifest["id"]).toBe(CLONE_ID);
+    const into = join(tmp, "my-clone");
+    for (const rel of inspected.files) {
+      mkdirSync(dirname(join(into, rel)), { recursive: true });
+      copyFileSync(join(work, "x", rel), join(into, rel));
+    }
+    const { signature: _s, publisher: _p, ...unsigned } = inspected.manifest;
+    writeFileSync(
+      join(into, "nimbus.extension.json"),
+      `${JSON.stringify(unsigned, null, 2)}
+`,
+    );
+    expect(existsSync(join(into, "dist", "index.js"))).toBe(true);
+
+    // Installs from that path behind the owner's approval, then is approved to run.
+    const raisedByInstall = await promptsDuring(() =>
+      client.call("extension.install", { sourcePath: into }),
+    );
+    expect(raisedByInstall).toEqual(["extension.install"]);
+    const raisedByApprove = await promptsDuring(() =>
+      client.call("extension.approveRun", { id: CLONE_ID }),
+    );
+    expect(raisedByApprove).toEqual(["extension.run"]);
+    const listed = await client.call<{ extensions: ExtensionListing[] }>("extension.list", {});
+    expect(listed.extensions.find((e) => e.id === CLONE_ID)).toMatchObject({
+      version: "1.0.0",
+      runState: "ready",
+      source_registry: null,
+    });
   }, 60_000);
 
   test("a local registry made no outbound request: no registry egress row was appended", async () => {

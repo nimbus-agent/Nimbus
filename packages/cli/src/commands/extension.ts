@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
 import {
@@ -43,6 +43,7 @@ import { authorMetadataLines } from "./author-metadata-lines.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { declaredName, runExtensionAudit } from "./extension-audit.ts";
+import { runExtensionClone } from "./extension-clone.ts";
 import { runExtensionKey } from "./extension-key.ts";
 import {
   listObservationLines,
@@ -105,7 +106,9 @@ export function stripFlags(args: string[]): string[] {
       a === "--to" ||
       a === "--accept-publisher-key" ||
       a === "--index" ||
-      a === "--network"
+      a === "--network" ||
+      a === "--into" ||
+      a === "--publisher"
     ) {
       i += 1;
       continue;
@@ -1311,7 +1314,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | sponsor <id> [--registry <name>] [--index <n>] | audit [<id>] [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | sponsor <id> [--registry <name>] [--index <n>] | clone <id> [--registry <name>] [--version <v>] [--into <dir>] [--publisher <id>] [--json] | audit [<id>] [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
  * Subcommands that need no gateway. `publish`, `key` and `pack` get the RAW args: `stripFlags` drops
@@ -1380,6 +1383,15 @@ async function dispatchExtensionWithCode(
         isTty: process.stdin.isTTY === true && process.stdout.isTTY === true,
         confirm: async (q) => /^y(es)?$/i.test(await readLine(q)),
         openUrl: (u) => openHttpsUrl(u),
+        log: (s) => process.stdout.write(s),
+        err: (s) => process.stderr.write(s),
+      }),
+    clone: () =>
+      runExtensionClone(args.slice(1), {
+        client,
+        cwd: process.cwd(),
+        tmpDir: tmpdir(),
+        now: () => new Date(),
         log: (s) => process.stdout.write(s),
         err: (s) => process.stderr.write(s),
       }),
@@ -1453,6 +1465,10 @@ export function extensionUpdateApplies(rest: string[]): boolean {
 
 export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number | undefined {
   if (sub === "install" || sub === "rehash" || sub === "approve" || sub === "downgrade") {
+    return INTERACTIVE_RPC_TIMEOUT_MS;
+  }
+  // `clone` fetches and verifies the registry index and the package, like a registry install.
+  if (sub === "clone") {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
   // Registry lookups fetch and verify every index; the 30s default is the fetch timeout itself.

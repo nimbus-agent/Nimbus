@@ -15,6 +15,7 @@ import {
   publisherKeyFingerprint,
   type RegistryChannel,
   RegistryError,
+  type RegistryExtensionEntry,
   type RegistryIndex,
   type RegistryVersionEntry,
   readManifestRepository,
@@ -87,7 +88,11 @@ import {
   type RegistryFetchDeps,
 } from "./registry-fetch.ts";
 import { readRegistryLiveness } from "./registry-liveness.ts";
-import { fetchRegistryManifest, verifyRegistryManifestSignature } from "./registry-manifest.ts";
+import {
+  fetchRegistryManifest,
+  type RegistryManifest,
+  verifyRegistryManifestSignature,
+} from "./registry-manifest.ts";
 import {
   assertEmptyStagingDir,
   extractVerifiedPackage,
@@ -141,7 +146,7 @@ export interface InstallFromRegistryRequest {
 function selectVersion(
   id: string,
   versions: Readonly<Record<string, RegistryVersionEntry>>,
-  req: InstallFromRegistryRequest,
+  req: Pick<VerifiedPackageBytesRequest, "version" | "channel">,
   isBlocked: (version: string) => boolean,
 ): [string, RegistryVersionEntry] {
   if (req.version !== undefined) {
@@ -215,6 +220,64 @@ export interface VerifiedRegistryPackage {
   readonly index?: RegistryIndex;
 }
 
+/** What `fetchVerifiedPackageBytes` is asked for: the id, and optionally the registry, version and channel. */
+export interface VerifiedPackageBytesRequest {
+  readonly id: string;
+  readonly registry?: string;
+  readonly version?: string;
+  readonly channel?: RegistryChannel;
+}
+
+/** A registry package's bytes, hash-checked against the signed index, and its I16-verified manifest. */
+export interface VerifiedPackageBytes {
+  readonly reg: RegistryRow;
+  readonly index: RegistryIndex;
+  readonly entry: RegistryExtensionEntry;
+  readonly version: string;
+  readonly vEntry: RegistryVersionEntry;
+  readonly fetched: RegistryManifest;
+  readonly packageBytes: Uint8Array;
+  readonly rootFingerprint: string;
+}
+
+/**
+ * The verified chain an install and an author's clone share (I44), in this order: resolve the entry
+ * through verified indexes, pick the version (I48: never a blocked one by default), refuse a blocked
+ * version, fetch the hash-checked manifest, fetch the hash-checked package, verify the manifest's
+ * I16 signature with the INDEX's publisher key. It makes no publisher-key decision, writes nothing to
+ * the Vault and nothing to disk; its only writes are the fetch's own (the registry anti-rollback
+ * sequence advances, and remote requests append registry egress rows).
+ */
+export async function fetchVerifiedPackageBytes(
+  fetchDeps: RegistryFetchDeps,
+  db: Database,
+  req: VerifiedPackageBytesRequest,
+): Promise<VerifiedPackageBytes> {
+  const { reg, index, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
+  const rootFingerprint = publisherKeyFingerprint(reg.rootKey);
+  // I48: refused BEFORE any manifest or package request, and before the owner is asked anything.
+  const subjectAt = (version: string): BlockSubject => ({
+    extensionId: req.id,
+    version,
+    publisherId: entry.publisher.id,
+    keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
+    source: { registry: reg.name, rootFingerprint },
+  });
+  const [version, vEntry] = selectVersion(
+    req.id,
+    entry.versions,
+    req,
+    (v) => blocksFor(db, subjectAt(v)).length > 0,
+  );
+  assertNotBlocked(db, subjectAt(version));
+
+  const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, req.id, version, vEntry);
+  // Hashes first: nothing is verified or extracted from bytes the index did not sign.
+  const packageBytes = await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry);
+  await verifyRegistryManifestSignature(fetched, req.id, version);
+  return { reg, index, entry, version, vEntry, fetched, packageBytes, rootFingerprint };
+}
+
 /**
  * Spec § 8.6 steps 1-5 for an install: resolve the entry, fetch the signed index's manifest and
  * package, check every hash and the I16 publisher signature, check the Vault's cached publisher key,
@@ -245,29 +308,9 @@ export async function fetchVerifiedRegistryPackage(
   }
   assertEmptyStagingDir(intoDir);
   const fetchDeps: RegistryFetchDeps = { ...deps.fetch, db: deps.db };
-  const { reg, index, entry } = await resolveRegistryEntry(fetchDeps, req.id, req.registry);
-  const rootFingerprint = publisherKeyFingerprint(reg.rootKey);
-  // I48: refused BEFORE any manifest or package request, and before the owner is asked anything.
-  const subjectAt = (version: string): BlockSubject => ({
-    extensionId: req.id,
-    version,
-    publisherId: entry.publisher.id,
-    keyFingerprint: publisherKeyFingerprint(entry.publisher.key),
-    source: { registry: reg.name, rootFingerprint },
-  });
-  const [version, vEntry] = selectVersion(
-    req.id,
-    entry.versions,
-    req,
-    (v) => blocksFor(deps.db, subjectAt(v)).length > 0,
-  );
-  assertNotBlocked(deps.db, subjectAt(version));
-
-  const fetched = await fetchRegistryManifest(fetchDeps, reg, entry, req.id, version, vEntry);
-  // Hashes first: nothing is verified or extracted from bytes the index did not sign.
-  const packageBytes = await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry);
+  const { reg, index, entry, version, vEntry, fetched, packageBytes, rootFingerprint } =
+    await fetchVerifiedPackageBytes(fetchDeps, deps.db, req);
   const { manifest } = fetched;
-  await verifyRegistryManifestSignature(fetched, req.id, version);
 
   // A key the Vault does not trust yet is accepted only along the publisher's rotation chain, when
   // Nimbus vouches for it, or when the owner named its exact fingerprint (spec R5).

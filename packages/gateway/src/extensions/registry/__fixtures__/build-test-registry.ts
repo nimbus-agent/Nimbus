@@ -80,6 +80,11 @@ export async function buildTestRegistry(
      * no `dist/`, and the index `entryHash` is the hash of the manifest (its entry).
      */
     starterPack?: boolean;
+    /**
+     * Pack the files at the archive root (`nimbus.extension.json`, `dist/`), as `nimbus extension
+     * pack` builds a package, instead of one directory deep under `pkg/` (which install also accepts).
+     */
+    rootLayout?: boolean;
   },
 ): Promise<TestRegistry> {
   const root = nacl.sign.keyPair.fromSeed(ROOT_SEED);
@@ -204,7 +209,12 @@ async function buildTestVersion(
   });
   writeFileSync(join(pkg, "nimbus.extension.json"), manifestText);
   writeFileSync(join(base, "manifest.json"), manifestText);
-  await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: buildDir }, ["pkg"]);
+  if (opts.rootLayout === true) {
+    const members = starterPack ? ["nimbus.extension.json"] : ["nimbus.extension.json", "dist"];
+    await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: pkg }, members);
+  } else {
+    await tar.c({ gzip: true, file: join(base, "package.tgz"), cwd: buildDir }, ["pkg"]);
+  }
   const tgz = await Bun.file(join(base, "package.tgz")).bytes();
   const entryHash = sha(starterPack ? manifestText : entrySource);
   return {

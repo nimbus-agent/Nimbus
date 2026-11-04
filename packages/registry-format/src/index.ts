@@ -166,6 +166,7 @@ export {
   parseExtensionManifestJson,
   type RegistryParseResult,
 } from "./manifest.ts";
+export { nonOsiLicenseIds, OSI_LICENSE_IDS } from "./osi-licenses.ts";
 export { packExtensionDir } from "./pack.ts";
 export { isPackageFile, listPackageFiles, PACKAGE_MANIFEST_FILE } from "./package-set.ts";
 export {

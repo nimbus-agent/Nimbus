@@ -39,18 +39,26 @@ function parseExtensionArgs(args: string[]): ScaffoldArgs {
     throw new Error(EXTENSION_USAGE);
   }
   const publisher = rest[1]?.trim() ?? "";
+  const problem = publisherIdProblem(publisher);
+  if (problem !== undefined) throw new Error(problem);
+  return { kind: "extension", name, publisher };
+}
+
+/**
+ * Why `id` cannot be a `--publisher` id, or undefined when it can. Shared by `nimbus scaffold
+ * extension` and `nimbus extension clone`, so the two cannot disagree.
+ */
+export function publisherIdProblem(id: string): string | undefined {
   // A trailing `.` or `.lock` is a git ref component git refuses (`publish/<id>/<version>`).
   if (
-    publisher.length > MAX_PUBLISHER_ID_LENGTH ||
-    !PUBLISHER_ID_RE.test(publisher) ||
-    publisher.endsWith(".") ||
-    publisher.endsWith(".lock")
+    id.length > MAX_PUBLISHER_ID_LENGTH ||
+    !PUBLISHER_ID_RE.test(id) ||
+    id.endsWith(".") ||
+    id.endsWith(".lock")
   ) {
-    throw new Error(
-      `--publisher must match [a-z0-9][a-z0-9._-]*, not ending in '.' or '.lock' (max ${String(MAX_PUBLISHER_ID_LENGTH)} chars)`,
-    );
+    return `--publisher must match [a-z0-9][a-z0-9._-]*, not ending in '.' or '.lock' (max ${String(MAX_PUBLISHER_ID_LENGTH)} chars)`;
   }
-  return { kind: "extension", name, publisher };
+  return undefined;
 }
 
 export function parseScaffoldArgs(args: string[]): ScaffoldArgs {
