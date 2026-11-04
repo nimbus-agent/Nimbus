@@ -2,7 +2,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
-import { publicKeyFromSeed, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  assertAuthorMetadata,
+  publicKeyFromSeed,
+  publisherKeyFingerprint,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
   decodeBase64,
@@ -34,6 +39,7 @@ import {
 } from "../lib/verified-publisher-text.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { NIMBUS_VERSION } from "../version.ts";
+import { authorMetadataLines } from "./author-metadata-lines.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { declaredName, runExtensionAudit } from "./extension-audit.ts";
@@ -133,6 +139,11 @@ type ExtensionListEntry = {
   blockedBy?: TrustBlockView[];
   /** R6: Nimbus verified the publisher and vouches for the key that verified this copy. */
   verifiedPublisher?: VerifiedPublisherCli | null;
+  /** Author-declared funding and license, with the gateway's invalid markers. */
+  funding?: unknown;
+  fundingInvalid?: unknown;
+  license?: unknown;
+  licenseInvalid?: unknown;
 };
 
 export type TrustBlockView = {
@@ -481,6 +492,7 @@ export async function runExtensionInfo(
   if (runLine !== null) console.log(`Run:       ${runLine}`);
   for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
+  for (const line of authorMetadataLines(e)) console.log(line);
   for (const line of accessLines(e.access)) console.log(line);
   for (const line of installedEvidenceLines(e)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
@@ -1275,6 +1287,16 @@ export async function runExtensionSign(args: string[]): Promise<number> {
     return 2;
   }
   const parsed = JSON.parse(text) as Record<string, unknown>;
+  try {
+    assertAuthorMetadata(parsed);
+  } catch (e) {
+    if (!(e instanceof RegistryError)) throw e;
+    const cut = e.detail.indexOf(": ");
+    const field = cut < 0 ? e.detail : e.detail.slice(0, cut);
+    const reason = cut < 0 ? "" : e.detail.slice(cut + 2);
+    process.stderr.write(`manifest ${field} is invalid: ${reason}; fix it before signing\n`);
+    return 2;
+  }
   delete parsed["signature"];
   const keyRefusal = applySigningPublisherKey(parsed, priv);
   if (keyRefusal !== undefined) {

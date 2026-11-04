@@ -278,6 +278,33 @@ describe("runExtensionInfo", () => {
     checked: true,
   };
 
+  test("prints License and Funding after the publisher block, cleaned", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext1",
+          version: "1.2.3",
+          enabled: 1,
+          license: "MIT",
+          funding: [
+            {
+              url: "https://github.com/sponsors/a",
+              label: "A" + String.fromCodePoint(0x1b) + "[2J",
+            },
+          ],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    const lines = out.stdout.split("\n");
+    const pub = lines.findIndex((l) => l.startsWith("Publisher:"));
+    const lic = lines.findIndex((l) => l === "License: MIT");
+    expect(lic).toBeGreaterThan(pub);
+    expect(lines[lic + 1]).toBe("Funding:");
+    expect(lines[lic + 2]).toBe("  1. A[2J https://github.com/sponsors/a");
+  });
+
   test("prints reach and files above the network isolation line, escaped", async () => {
     const { client } = createMockIpcClient([
       {
@@ -2779,6 +2806,40 @@ describe("runExtensionSign", () => {
     const updated = JSON.parse(rfs(manifestPath, "utf8")) as Record<string, unknown>;
     expect(updated["signature"]).not.toBe("old-signature");
     expect(typeof updated["signature"]).toBe("string");
+  });
+});
+
+describe("runExtensionSign author metadata", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-sign-meta-test-"));
+  test("a malformed license is refused before any write", async () => {
+    const { privkey } = generateEd25519Keypair();
+    const keyPath = join(tmpRoot, `sign-key-meta-${Date.now()}`);
+    writeFileSync(keyPath, encodeBase64(privkey));
+    const extDir = mkdtempSync(join(tmpRoot, "ext-sign-meta-"));
+    const manifestPath = join(extDir, "nimbus.extension.json");
+    const original = JSON.stringify({
+      id: "t.ext",
+      version: "1.0.0",
+      name: "T",
+      license: "MIT OR",
+    });
+    writeFileSync(manifestPath, original);
+    const errs: string[] = [];
+    const real = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      errs.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    let code: number;
+    try {
+      code = await runExtensionSign([extDir, "--key", keyPath]);
+    } finally {
+      process.stderr.write = real;
+    }
+    expect(code).toBe(2);
+    expect(errs.join("")).toContain("manifest license is invalid: ");
+    expect(errs.join("")).toContain("; fix it before signing");
+    expect(readFileSync(manifestPath, "utf8")).toBe(original);
   });
 });
 
