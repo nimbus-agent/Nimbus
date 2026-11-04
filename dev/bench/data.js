@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793811558428,
+  "lastUpdate": 1793819461096,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ea69b388fac48dfe8b6d0ad0e59b18aadfb35705",
-          "message": "test(perf): 🧪 add empty array edge case tests to poolTrimmedSamples (#1214)\n\n🎯 **What:** The testing gap addressed was missing edge case tests for\nthe array input of `poolTrimmedSamples` in `bench-harness.ts`.\n📊 **Coverage:** Scenarios now tested include passing an empty array\n(`[]`) and passing an array of empty runs (`[[], [], []]`). Both\ncorrectly return an empty array as intended by the utility function\nlogic.\n✨ **Result:** Increased test robustness by covering array boundary\nconditions.\n\n---\n*PR created automatically by Jules for task\n[1166933202576600570](https://jules.google.com/task/1166933202576600570)\nstarted by @asafgolombek*\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Tests**\n* Added coverage confirming sample pooling returns no results when given\nno runs or only empty runs.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\nCo-authored-by: google-labs-jules[bot] <161369871+google-labs-jules[bot]@users.noreply.github.com>\nCo-authored-by: asafgolombek <18427644+asafgolombek@users.noreply.github.com>",
-          "timestamp": "2026-08-15T20:12:50+03:00",
-          "tree_id": "5db38f3779737f011771a8dce0736b4f7a80bf1d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ea69b388fac48dfe8b6d0ad0e59b18aadfb35705"
-        },
-        "date": 1786814362485,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 205.24869750000215,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 207.34082980000167,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 188.86879559999943,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a603171722bdd472c04c300fd194c1ca12e75415",
+          "message": "refactor(connectors): one generated manifest and row table for every connector write (#1883)\n\nFirst PR of Phase 9.7, connector write-enablement and the first S4\nproject: Wave 1, A1. It puts every connector write in one table, checks\nthat table against a manifest generated from the installed connectors\npackage, and derives the D20 static rule from it. Runtime behaviour is\nunchanged apart from one new gated action type.\n\n## What replaced what\n\n- **The write table.** `connectors/connector-writes/` now holds every\nconnector write as a row: tool id, gateway action type, transport, wave.\n  - There are 88 rows in ten group files.\n- 18 rows use `transport: \"write\"`: the warehouse/BI and GitOps/ML\nwrites that dispatch through the credential-aware transport. They are\nunchanged.\n- 70 rows use `transport: \"mesh\"`: the writes that were in\n`MIGRATED_WRITE_TOOL_IDS`, which still dispatch through the mesh.\n- It replaces `warehouse-write-tools.ts`, `gitops-ml-write-tools.ts` and\n`connector-write-tool-ids.ts`, which are deleted.\n- **The registry.** `connector-write-registry.ts` keeps its exports\n(`isConnectorWriteToolId`, `connectorWriteByActionType`,\n`CONNECTOR_WRITES`) and now derives them from the rows. It also adds\n`connectorWriteRowByToolId`.\n- **The generated manifest.** `connector-writes/manifest.generated.ts`\nlists the 87 writes that the installed `@nimbus-dev/connectors` 0.3.0\nregisters, across 36 connectors.\n- It is produced by `bun run gen:connector-write-manifest`, a new script\nthat reuses the existing fail-closed scanner.\n- It leaves out the four gate-confined ids, the ChatOps posts and KB\nappends, which D17/D19 keep in their own gates.\n- `manifest.sync.test.ts` fails when the committed manifest, the rows\nand the package disagree.\n- **D20.** The rule's id regex was a hand-spelled list of 18 ids. It is\nnow built from the 88 rows, with a check on each id's shape, so the\nother 70 write ids are confined too. The allowed sites are now:\n  - `connector-writes/`, as a directory prefix;\n  - the write transport and the write dispatch;\n  - the act door's routing table, `proposable-actions.ts`;\n  - the code-execution id classification.\n\n## The one behaviour change\n\n`gdrive_file_trash` changes data, but upstream still registers it as a\nread, so the scanner cannot see it. It gets a `registeredAs: \"read\"` row\nwith the new frozen-set type `google_drive.file.trash`, classified as\n`denied(\"file\")` in `ACTION_PROPOSABILITY`. A test fails as soon as\nupstream registers it as a write, so the overlay cannot go stale\nsilently.\n\nEvery tool id the I26 predicate refused before is still refused, both\nbare and as `<server>_<tool>`. A literal list of the 88 ids pins this.\n\n## Decisions made in the plan\n\n- R1: the manifest records `{ toolId, connector }` but no `mutates`. A\nliteral `mutates` can be read at only 74 of the 91 call sites, so the\nrow's action type is the authority. A test checks every literal it can\nread, at least 60 of them, against its row; there are no mismatches.\n- R2: the input-schema hash moves to A5, its first consumer.\n- R3: `slack_message_post_dm` maps to `slack.message.post`, as the\nconnector declares.\n- R4: action types are unique among `write` rows only.\n- R5: every row has a wave. These waves stay inert until the model door\nreads them.\n- R6: no model-offerable flag yet.\n\n## Tests\n\n- `connector-writes/rows.test.ts`, which checks:\n  - the row count and that every row's type is HITL-gated;\n  - the 18 write rows, pinned;\n  - the refusal set, bare and namespaced, plus the gate-confined sets;\n  - the `gdrive_file_trash` overlay.\n- `connector-writes/manifest.sync.test.ts`, which checks:\n  - drift between the generator and the committed file;\n  - that no gate-confined id appears in the generated file;\n  - totality in both directions between the rows and the manifest;\n  - that the overlay row is still registered as a read;\n  - that a literal `mutates` agrees with its row.\n- D20 tests: a migrated id outside the allowed sites is flagged, the new\nallowed sites pass, and the deleted module path is now flagged.\n- The I26 block in `security-invariants.test.ts` now checks all 88 rows.\n- Docs: I26 in `SECURITY-INVARIANTS.md`, `architecture.md`, the Phase\n9.7 roadmap section with its Wave 1 contract row ticked, `CHANGELOG.md`,\nand the I26 line in `CLAUDE.md` and `GEMINI.md`.\n\nLocal results:\n- `bun run preflight:fast` and `bun run typecheck:tests` pass.\n- The scoped suite gives 7,128 pass and 0 fail. It covered connectors,\nengine, `security-invariants`, `mcp-sink`, share, federation invoke and\nstructure-audit.\n- `audit:invariants`, `audit:doc-refs` and `audit:status-drift` are\nclean.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Security**\n* Expanded coverage of connector write actions across 36 connectors,\nwith safeguards maintained for actions that aren’t available for direct\ndispatch.\n* Google Drive file trashing is now explicitly covered by the\nprotected-action controls.\n* **Documentation**\n* Updated security and connector documentation to reflect the expanded\nwrite-action coverage.\n* **Developer Tools**\n* Added a command to generate and verify the connector write-action\nmanifest.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T19:04:22Z",
+          "tree_id": "0da03a6f1aea802afb59e2bf4164a4c7fab73ca6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a603171722bdd472c04c300fd194c1ca12e75415"
+        },
+        "date": 1793819457649,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 191.93614294999898,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 191.03040645000146,
             "unit": "ms"
           }
         ]
