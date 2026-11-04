@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793827779592,
+  "lastUpdate": 1793831682744,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4e773395d6152b0ad84dabe3c3cfc45b20bb0ce9",
-          "message": "test(security): floor the static structure auditor so a broken scan cannot report clean (#1217)\n\n## The defect\n\n`scripts/structure-audit/check-nimbus-invariants.ts` enforces fourteen\nstatic rules (D10–D22) and runs **before** the test suite precisely so\nit fails first. Every check in it has the same shape — scan `files`,\nreport what is out of place — so every one of them reports *clean* when\n`files` is empty or has lost the subtree it polices. There was no floor\nanywhere in the file.\n\n**Proven, not assumed.** Pointing `iterateSourceFiles`'s package glob at\na directory that does not exist:\n\n```\n-  yield* iterateGlob(new Glob(\"packages/*/src/**/*.ts\"), seen);\n+  yield* iterateGlob(new Glob(\"packages/*/srcTYPO/**/*.ts\"), seen);\n```\n\nleaves **179 files still scanned** — the second\n`packages/mcp-connectors/*/src/**/*.ts` glob keeps matching — and the\npre-fix auditor **exits 0 with zero errors**, `db-run census: 0 hits`.\nAll fourteen D-rules silently no-op, and CI is green.\n\nThat 179 is why a naive `files.length > 0` floor would not have caught\nit.\n\n## The fix\n\nThe floor keys on `RULE_ANCHORS` — the thirteen production files the\nrules actually confine something *to* (`engine/executor.ts` for D22,\n`db/write.ts` for D12, `federation/query-gate.ts` for D13, …). If the\nfile a rule confines `connectors.dispatch` to is not in the scanned set,\nthat rule is not enforcing anything, whatever it reports.\n\n`assertScanIsMeaningful(files)` runs in `run()` before the first rule\nblock and exits **2**, not 1, so *\"this auditor is broken\"* stays\ndistinguishable from *\"this auditor found a violation\"* — the same split\n`--db-run` already makes.\n\nSame run, with the floor in place:\n\n```\n::error::structure audit scanned 179 file(s) but 13 rule anchor(s) are absent, so D10-D22\nwould report clean without enforcing anything: packages/gateway/src/engine/executor.ts, …\n::error::Either a policed file moved (update RULE_ANCHORS in the same commit) or\niterateSourceFiles() stopped reaching it (fix the glob/exclusions in scripts/structure-audit/lib.ts).\nexit 2\n```\n\n## Tests\n\n`lib.test.ts` was vacuous: its single test asserted\n`expect(testingPaths).toEqual([])`, which a walk that visited\n**nothing** satisfies just as well. Rewritten — the walk is collected\nonce and now carries a non-vacuity floor (>500 files, and `executor.ts`\nspecifically), a guard-the-guard test proving `*/testing/*` directories\nexist on disk for the exclusion to exclude, and coverage of the\n`.test.ts` / `.d.ts` / `__fixtures__` exclusions.\n\nSix new tests in `check-nimbus-invariants.test.ts` cover the floor: the\nempty scan, the 500-file scan that lost the gateway subtree,\nsingle-anchor precision, and that every anchor names a file that still\nexists — because an anchor pointing at a deleted file fails forever and\ngets \"fixed\" by deleting the anchor, which is how a floor quietly\nbecomes shorter than the rule set it protects.\n\nThe sixth is a **wiring** test. The other five pass just fine if the\ncall is deleted from `run()`, which would put the auditor straight back\nto exiting 0 on a scan that enforces nothing — the exact defect this\nfloor exists to prevent. It asserts the call and its `process.exit(2)`\nboth land ahead of the first `if (mode ===` rule block.\n\n## Red-prove\n\nEach guard was reverted and confirmed to fail naming the right thing:\n\n| Mutation | Result |\n| --- | --- |\n| Break the package glob, run pre-fix auditor from `origin/main` |\n**exit 0**, zero errors (the defect) |\n| Break the package glob, run patched auditor | **exit 2**, 13 anchors\nnamed |\n| Break the package glob, run `lib.test.ts` | fails `visits the\nproduction source tree at all` — `Expected: > 500, Received: 179` |\n| Delete `assertScanIsMeaningful(files)` from `run()` | fails `run()\nconsults the floor, and exits, before the first rule block` |\n\n`bun run preflight:fast` — 29/29 gates pass. `bun test\nscripts/structure-audit/` — 585 pass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved structure validation to detect incomplete or invalid scans\nbefore enforcing rules.\n* Added clear diagnostics when required project files are missing from\nvalidation.\n  * Prevented false confidence from scans that omit production files.\n\n* **Tests**\n* Expanded coverage for empty scans, missing files, scan ordering, and\nrequired file detection.\n* Improved verification that source scanning includes production files\nwhile excluding tests, fixtures, and declaration files.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T05:19:26Z",
-          "tree_id": "c30016361217bd458179f23c26659faa4db16361",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4e773395d6152b0ad84dabe3c3cfc45b20bb0ce9"
-        },
-        "date": 1786858256894,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.13007319999997,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.35275035000814,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 230.24718155000008,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6b6479f5f019b791e38d7871778f48253f658d00",
+          "message": "feat(gateway): owner opt-in for model connector writes (nimbus connector writes) (#1887)\n\nThis is Phase 9.7 Wave 1, A4: the owner's opt-in to model connector\nwrites. It adds the opt-in, the approval and the org-policy lock-off.\nNothing hands a write tool to the model yet, because the model door is\nA5. Today the only reader of the opt-in is `nimbus connector writes\nstatus`.\n\n## What the owner can do\n\n- **`nimbus connector writes enable <service> [--wave 2|3|4]`** turns\nmodel writes on for one service, up to a wave.\n  - Every connector is off by default.\n- Leaving out `--wave` means up to wave 3. Wave 4 needs an explicit\n`--wave 4`.\n- Only a service with rows in the write table is eligible, such as\n`github`, `kubernetes` or `snowflake`.\n- It raises an owner approval, `connector.writes.enable`. The prompt\nnames the service, the wave and every write the opt-in covers, then says\n\"Each call will still ask you before it runs.\"\n- **`nimbus connector writes disable <service>`** needs no approval and\nis idempotent.\n- **`nimbus connector writes status [--json]`** lists every eligible\nservice and whether the org policy allows the opt-in.\n\n## Boundaries\n\n- **I20: the local owner only.** `connector.writes.enable` is added to\nthe explicit fallback condition in `ToolExecutor.tryDelegatedApproval`,\nbeside `registry.add`, `pack.install` and `extension.*`. Without it, an\nactive delegate for service `connector` would be asked instead. The IPC\nexecutor already carries no delegation, so this is a second layer.\n- **I22: the lock-off fails closed.** `connector_write_model_access`\njoins `AI_V2_CAPABILITIES`. It is read live on each call. A policy that\nforbids it, or a policy that cannot be read, refuses `enable` before the\nprompt; `disable` always works. `dispatchConnectorRpc` gains a REQUIRED\n`getEnforcedPolicy`, wired from `policyGate.enforced()`.\n- **I5 and I7: CLI only.**\n- On LAN, all three methods are in `FORBIDDEN_OVER_LAN`, and enable and\ndisable are also in `WRITE_METHODS`.\n- None of the three is in the Tauri `ALLOWED_METHODS`, and a regression\ntest guards that.\n- The approval is classified `denied(\"gateway_internal\")`, so the MCP\nsink cannot propose it.\n- **Gate-only.** The handler calls `toolExecutor.gate()` only, never\n`execute()`. The executor uses `NULL_EGRESS_SINK`, because this is a\nlocal mutation and not egress.\n- **Storage is schema V83.** The new table is\n`connector_write_enablement (service, max_wave CHECK 2–4, enabled_at)`.\nWrites go only through `dbRun` (I14), and the `bun:sqlite` import is\ntype-only (D30). Storing it in a table rather than `nimbus.toml` means\nno profile can switch it on.\n\n## Rulings\n\n- O1: a table, not config.\n- O2: three named `connector.*` methods, each listed on the LAN\ndenylist.\n- O3: `status` lists every eligible service.\n- O4: re-enabling with a different wave replaces the row, behind a fresh\napproval.\n\n## Tests\n\nThese red-proofs were each temporary mutations, reverted afterwards:\n- removing the I20 fallback fails both I20 tests;\n- removing the policy check fails the live-policy and absent-policy\ntests;\n- removing the LAN entries fails the LAN test.\n\nThe new and changed tests:\n- `enablement-store.test.ts`, `runner-v83.test.ts`,\n`model-write-capability.test.ts` and `enable-prompt.test.ts`;\n- `connector-rpc-model-writes.test.ts`, which covers:\n  - an unknown service, and a wave of 1, 5 or a non-number;\n  - a live policy, and an absent policy;\n  - a declined prompt, which writes nothing;\n  - that the prompt lists every write;\n  - disable refusals and idempotence;\n  - the `status` shape;\n- `executor-delegation.test.ts`, `lan-rpc.test.ts` and the CLI tests;\n- the I2, I20, I22, I5 and I7 blocks in `security-invariants.test.ts`.\n\nLocal results:\n- `preflight:fast` and `typecheck:tests` pass.\n- The scoped suites give 12,128 pass and 0 fail.\n- `bun test packages/cli --parallel` shows only the 11 TUI Yoga failures\nthat were already there.\n\n## Docs\n\nUpdated:\n- `CLAUDE.md` and `GEMINI.md`: the I20 list, V83 and S4 progress;\n- `docs/roadmap.md`, `docs/architecture.md` (ten AI v2 capabilities) and\n`docs/README.md`;\n- `docs/cli-reference.md`: the three subcommands, with the note that no\nwrite is offered to the model yet;\n- `docs/SECURITY-INVARIANTS.md`: the frozen set is now 146, the I20\nlist, the ten I22 capabilities, I5 and I7;\n- the schema reference, `CHANGELOG.md` and the commands skill.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added CLI commands to enable, disable, and check model connector\nwrites for eligible services. Writes remain off by default, and enabling\nrequires owner approval.\n* Added optional wave selection and status details, including whether\npolicy permits model writes.\n* **Security**\n* Each model write still requires separate approval. These controls are\nunavailable over LAN, and enablement is blocked when policy disallows it\nor cannot be checked.\n* **Documentation**\n* Updated command references, security guidance, and project status to\ncover connector write controls.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T22:28:24Z",
+          "tree_id": "f270a7846fd2d9b47208b3679971bba16f5000e5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6b6479f5f019b791e38d7871778f48253f658d00"
+        },
+        "date": 1793831679263,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 198.9435268499974,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 194.45681675000233,
             "unit": "ms"
           }
         ]
