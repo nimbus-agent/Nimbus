@@ -553,3 +553,18 @@ describe("user-MCP list/call over LAN (I42 — CLI-only)", () => {
     ).not.toThrow();
   });
 });
+
+describe("connector write opt-in methods", () => {
+  test("all three are refused over the LAN, even for a peer granted write", () => {
+    for (const method of [
+      "connector.writesEnable",
+      "connector.writesDisable",
+      "connector.writesStatus",
+    ]) {
+      expect(
+        () => checkLanMethodAllowed(method, { peerId: "p", writeAllowed: true }),
+        method,
+      ).toThrow(LanError);
+    }
+  });
+});

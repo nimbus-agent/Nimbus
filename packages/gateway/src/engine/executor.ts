@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
 import {
   buildConnectorWritePreview,
   renderConnectorWritePreviewLines,
@@ -390,6 +390,13 @@ export function formatConsentPrompt(action: PlannedAction): string {
   if (action.type === "pack.install" && typeof action.payload?.["promptText"] === "string") {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
     lines.push("", action.payload["promptText"]);
+    return lines.join("\n");
+  }
+  const enableLines =
+    action.type === "connector.writes.enable" ? enableWritesPromptLines(action.payload) : undefined;
+  if (enableLines !== undefined) {
+    // Purpose-built, escaped rendering of exactly which writes the model may then propose.
+    lines.push("", ...enableLines);
     return lines.join("\n");
   }
   const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;

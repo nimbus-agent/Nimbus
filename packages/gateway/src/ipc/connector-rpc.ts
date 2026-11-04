@@ -8,6 +8,7 @@ import type { ToolExecutor } from "../engine/executor.ts";
 import type { ContinuityEntry } from "../extensions/continuity/continuity-table.ts";
 import { describeNetworkReach, type ReachRunner } from "../extensions/extension-reach.ts";
 import type { LocalIndex } from "../index/local-index.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { isConnectorConfigured } from "../sync/connector-configured.ts";
 import type { SyncScheduler } from "../sync/scheduler.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -30,6 +31,10 @@ import {
   handleConnectorSync,
   handleConnectorUserMcpCall,
   handleConnectorUserMcpTools,
+  handleConnectorWritesDisable,
+  handleConnectorWritesEnable,
+  handleConnectorWritesStatus,
+  type ModelWritesDeps,
   refuseExtensionBackedRemoval,
   resolveConnectorAddMcp,
 } from "./connector-rpc-handlers/index.ts";
@@ -134,6 +139,13 @@ export async function dispatchConnectorRpc(options: {
   realpath?: (p: string) => string;
   /** The composition's continuity table (`connector.remove`'s refusal); absent = production default. */
   continuityTable?: readonly ContinuityEntry[];
+  /**
+   * LIVE read of the resolved org policy (I22), REQUIRED so no caller can forget it: `undefined`
+   * means "cannot tell" and `connector.writesEnable` refuses (fail-closed).
+   */
+  getEnforcedPolicy: () => Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
+  /** Test seam for the enablement timestamp (production: `Date.now`). */
+  now?: () => number;
 }): Promise<{ kind: "hit"; value: unknown } | { kind: "miss" }> {
   const {
     method,
@@ -151,6 +163,8 @@ export async function dispatchConnectorRpc(options: {
     resolveCommand,
     realpath,
     continuityTable,
+    getEnforcedPolicy,
+    now,
   } = options;
   const rec = asRecord(params);
   const ctx = {
@@ -167,6 +181,13 @@ export async function dispatchConnectorRpc(options: {
     ...(realpath === undefined ? {} : { realpath }),
     ...(continuityTable === undefined ? {} : { continuityTable }),
   };
+
+  const modelWritesDeps = (): ModelWritesDeps => ({
+    db: localIndex.getDatabase(),
+    toolExecutor,
+    getEnforcedPolicy,
+    now: now ?? Date.now,
+  });
 
   switch (method) {
     case "connector.addMcp":
@@ -238,6 +259,15 @@ export async function dispatchConnectorRpc(options: {
       });
       return { kind: "hit", value };
     }
+    case "connector.writesEnable":
+      return {
+        kind: "hit",
+        value: await handleConnectorWritesEnable(rec, modelWritesDeps()),
+      };
+    case "connector.writesDisable":
+      return { kind: "hit", value: handleConnectorWritesDisable(rec, modelWritesDeps()) };
+    case "connector.writesStatus":
+      return { kind: "hit", value: handleConnectorWritesStatus(modelWritesDeps()) };
     default:
       return { kind: "miss" };
   }

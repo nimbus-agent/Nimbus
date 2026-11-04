@@ -26,6 +26,7 @@ import type { SessionMemoryStore } from "../../memory/session-memory-store.ts";
 import type { OwnershipRefresher } from "../../ownership/ownership-refresh.ts";
 import type { PackLayerStore } from "../../packs/pack-layer-store.ts";
 import type { SandboxRunner } from "../../platform/sandbox/sandbox-runner.ts";
+import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import type { PremortemRefresher } from "../../premortem/premortem-refresh.ts";
 import type { ShareFile } from "../../share/share-format.ts";
 import type { ForwardShareDeps, ReceiveShareDeps } from "../../share/share-forward.ts";
@@ -182,6 +183,9 @@ export type CreateIpcServerOptions = {
   // which is the pre-2026-08-16 behaviour and remains correct for a gateway with no org policy.
   // It can never subtract from `HITL_REQUIRED` — see `ExecutorPolicyDep` in `engine/executor.ts`.
   policyHitl?: ExecutorPolicyDep;
+  // LIVE read of the resolved org policy (I22): a getter over `policyGate.enforced()`, never a
+  // snapshot. `connector.writesEnable` reads it per call; absent means refuse (fail-closed).
+  enforcedPolicy?: () => EnforcedPolicy;
   // ChatOps (Phase 6 Slice 5). The dependency seam behind the chatops.* IPC namespace (status,
   // start, stop, test). Present only when [chatops].enabled at boot; the dispatcher skips when unset.
   chatopsRpcCtx?: ChatopsRpcCtx;

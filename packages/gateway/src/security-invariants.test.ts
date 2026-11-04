@@ -854,6 +854,20 @@ describe("I5 — LAN method allowlist is intrinsic to LanServer", () => {
       /ERR_METHOD_NOT_ALLOWED/,
     );
   });
+
+  test("FORBIDDEN_OVER_LAN names the three connector write opt-in methods by name", async () => {
+    const src = await read("packages/gateway/src/ipc/lan-rpc.ts");
+    const { checkLanMethodAllowed } = await import("./ipc/lan-rpc.ts");
+    const peer = { peerId: "peer:x", writeAllowed: true };
+    for (const m of [
+      "connector.writesEnable",
+      "connector.writesDisable",
+      "connector.writesStatus",
+    ]) {
+      expect(src).toContain(`"${m}"`);
+      expect(() => checkLanMethodAllowed(m, peer), m).toThrow(/ERR_METHOD_NOT_ALLOWED/);
+    }
+  });
 });
 
 describe("I6 — LAN bind defaults to loopback", () => {
@@ -1509,6 +1523,17 @@ describe("I16 — Verified-publisher invariant", () => {
 });
 
 describe("I7 — Tauri ALLOWED_METHODS surface for T2 PR 3", () => {
+  test("regression guard (green on day one by design): the connector write opt-in methods are not renderer-callable", async () => {
+    const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
+    for (const m of [
+      "connector.writesEnable",
+      "connector.writesDisable",
+      "connector.writesStatus",
+    ]) {
+      expect(rust).not.toContain(`"${m}"`);
+    }
+  });
+
   test("ALLOWED_METHODS contains extension.checkForUpdates and extension.update", async () => {
     const rust = await read("packages/ui/src-tauri/src/gateway_bridge.rs");
     expect(rust).toContain(`"extension.checkForUpdates"`);

@@ -2277,6 +2277,7 @@ export async function tryDispatchConnectorRpc(
         ? {}
         : { sandboxRunner: ctx.options.sandboxRunner }),
       notify: (m, p) => ctx.broadcastNotification(m, p),
+      getEnforcedPolicy: () => ctx.options.enforcedPolicy?.(),
       toolExecutor,
       ...(userMcpExecutor === undefined ? {} : { userMcpExecutor }),
       ...(ctx.options.continuityTable === undefined
