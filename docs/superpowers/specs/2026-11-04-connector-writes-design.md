@@ -27,7 +27,10 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
 - Standing approvals, auto-fire, scheduled writes, the taint barrier (Phase 10, owner ruling W3).
 - New connectors. Mobile release writes (TestFlight, Firebase, Codemagic) need new connector tools
   in `nimbus-mcp-servers`; they are in scope only as that cross-repo work (§ 9).
-- Changing delegation for the existing doors. Today I20 honours a delegate for connector-write types on the MCP sink, workflow and ChatOps doors; that stays as it is. Only the new model door is never delegable (§ 5.2).
+- Changing delegation for the existing doors. Today the MCP sink's `acceptAction` passes no
+  delegate (I28), ChatOps routes a write's approval to the policy-resolved resource owner as its
+  delegate, and the ask executor (`run-ask.ts` `buildAskExecutor`) passes the turn's delegation. That
+  stays as it is. Only the new model door is never delegable, and structurally so (§ 5.2).
 
 **Anti-goals** (works, and is still a failure)
 - A write that can run without the owner seeing what it will change.
@@ -58,8 +61,8 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
 - **Coupling sites per new write:** the connector's `registerWriteTool`; `HITL_REQUIRED_BACKING`; a
   group SSoT or the migrated set; the hand-spelled D20 regex; `ACTION_PROPOSABILITY` (and
   `PROPOSABLE_WRITE_TOOLS`); group count tests; I26 doc lists.
-- **Doors that reach a write today:** the MCP sink's `acceptAction` (I28), ChatOps `runGatedWrite`,
-  tribal capture (I25), workflows. The model is offered none (`engine/agent.ts` `toolsFor`).
+- **Doors that reach a write today:** the MCP sink's `acceptAction` (I28, no delegate), ChatOps
+  `runGatedWrite` (owner-as-delegate), tribal capture (I25, no delegate), workflows. The model is offered none (`engine/agent.ts` `toolsFor`).
 - **Consent:** `formatConsentPrompt` = `Type:` + JSON of the redacted payload; the desktop's
   `StructuredPreview` falls back to key/value rows. No before/after anywhere. The connector kit's
   `capturePreState` runs after approval and only in standalone mode.
@@ -93,9 +96,18 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
   The manifest records both; a test lists every mismatch, and 9.7 renames no type. Write ids with no
   frozen-set type today (e.g. `slack_message_post_dm`) and tools registered as reads that mutate
   (e.g. `gdrive_file_trash`) are classified in A1, each with a type added to the frozen set.
-- `HITL_REQUIRED_BACKING` gains each manifest action type by derivation, checked by a test that the
-  frozen set contains every manifest type (the set itself stays a literal; I2 forbids a derived,
-  mutable set).
+- **Mutating reads:** the generator sees `registerWriteTool` calls only, so a tool that mutates while
+  registered as a read (`gdrive_file_trash` today) is invisible to it. A hand-written overlay,
+  `connectors/connector-writes/mutating-reads.ts`, lists those ids; the generator merges it into the
+  manifest, and a test asserts every overlay id is in the manifest and `isConnectorWriteToolId`
+  returns true for it, so the federated refusal (I26) never loses one when the hand-kept
+  `MIGRATED_WRITE_TOOL_IDS` is deleted.
+- **Proposability:** every action type A1 adds to the frozen set is classified in
+  `ACTION_PROPOSABILITY` in the same PR (`denied("unroutable", ...)` until a wave makes it
+  proposable), because that table's totality test fails on an unclassified frozen-set type.
+- `HITL_REQUIRED_BACKING` stays a hand-written literal in `engine/executor.ts` (I2 forbids a
+  derived, mutable set). Each manifest action type is added to it by hand, and a test asserts the
+  literal contains every manifest type.
 - D20 is regenerated from the manifest instead of hand-spelled: the static rule confines write tool
   ids to the manifest and the transport sites.
 - The sync test (`connector-write-sync.test.ts`) becomes: every installed `registerWriteTool`
@@ -110,20 +122,39 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
   allowlist (`sanitiseUserMcpInputSchema`, I11).
 - It is offered only on the local owner's turn, through a per-request executor in the request
   context, exactly like the user-MCP source (`getAgentRequestUserMcpExecutor`). No executor, no
-  tools: a non-owner, federated, LAN or demo turn sees none. That executor is built WITHOUT the
-  turn's delegation, so a model-initiated write always asks the local owner (I3 keeps the gate
-  blind to the door, so the guarantee is the executor's construction, pinned by a test).
+  tools: a non-owner, federated, LAN or demo turn sees none.
+- **Never delegated, structurally (review fix):** construction alone is not enough, because the ask
+  turn's one executor (`buildAskExecutor`) carries the turn's delegation. The door therefore builds
+  each `PlannedAction` with a gateway-set top-level `origin: "model"` (never inside `payload`; the
+  model's arguments live only under `payload.input`), and `ToolExecutor.tryDelegatedApproval`
+  returns `"fallback"` for it, beside the existing `registry.add` / `pack.install` / `extension.*`
+  exemption. `origin` only removes delegation; whether HITL is required is still decided by
+  `action.type` alone (I3). The door's executor is also built with `delegation: undefined`, and a
+  test proves both: with an active in-scope delegate, a model-origin write still prompts the local
+  owner, on either executor.
 - **Tool list and schemas:** the door lists the enabled connectors' tools from their running mesh
   servers (`listTools`, cached per server process, as the user-MCP source does), keeps only
   manifest write rows, and rebuilds each input schema with `sanitiseUserMcpInputSchema`. The
-  manifest's schema hash is a drift check, not the schema source.
+  manifest's schema hash is a drift check, not the schema source: when a running server's schema
+  hash differs from the manifest's, that tool is not offered (one warning per server process), and
+  `nimbus connector writes status` names it until the manifest is regenerated.
 - **Opt-in (my call):** off by default. The owner enables model writes per connector with
   `nimbus connector writes enable <service> [--wave <n>]` (and `disable`, `status`); an org-policy
-  lockoff `connector_write_model_access` (I22, tighten-only) can forbid it. Wave 4 writes are never
-  offered by default even when the connector is enabled; they need `--wave 4` explicitly.
-- A call builds an `Action` with the manifest's action type and `payload.mcpToolId`, and goes
-  through `ToolExecutor.gate()`: HITL prompt, audit row, egress row, dispatch through
-  `invokeConnectorWrite`. The tool result returns to the model wrapped in `<tool_output>` (I11). A
+  lockoff `connector_write_model_access` (I22, tighten-only) can forbid it.
+  - Storage: a new SQLite table `connector_write_enablement(service PRIMARY KEY, max_wave,
+    enabled_at)`, the same shape as the user-MCP `--model` flag (a row, not `nimbus.toml`, so the
+    layered config reader D35 is untouched and no profile can turn it on).
+  - `--wave` sets `max_wave`; omitted, it is 3. Wave 4 needs `--wave 4` explicitly.
+  - `enable` is an owner HITL type (`connector.writes.enable`, frozen set, gate-only executor) on an
+    IPC method that is not renderer-exposed (I7) and refused on LAN; `disable` needs no approval.
+  - Every call re-reads the row, the policy lockoff and the row's wave at execute time, not only
+    when the tool list was built, so a `disable` mid-turn stops the next call.
+- A call builds a `PlannedAction` with the manifest's action type, `origin: "model"` and
+  `payload: { mcpToolId, input }`, and calls `ToolExecutor.execute()`, which runs `gate()` (HITL
+  prompt, audit row, egress row) and then `connectors.dispatch`. The dispatcher routes by the
+  manifest row's `transport`: `write` through `invokeConnectorWrite`, `mesh` through the mesh
+  client under the row's `<server>_<tool>` key (the mesh lists first-party tools under that key; a
+  bare tool id is "Tool not found"). The door never calls a transport itself. The tool result returns to the model wrapped in `<tool_output>` (I11). A
   denial returns a fixed "the owner declined" result, never the payload.
 - Prompt injection: the envelope note already tells the model tool output is data; this project
   adds a suite of injection fixtures (an indexed item, a tool reply and a federated answer each
@@ -146,9 +177,16 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
   template does not name is listed under `Other fields`, its value as compact JSON cut at 2,000
   characters with a marker, so the preview never shows less than will be sent. Routing keys the
   executor adds (`mcpToolId`, `requestedBy`) are not part of the input and are not shown.
-- CLI: the consent handler renders the preview as aligned lines (cleaned of control and bidi
-  characters) before the yes/no question. Desktop: a `ConnectorWritePreview` component in
-  `StructuredPreview`.
+- Every string the preview carries (`target`, `summary`, each field value, `Other fields`) is
+  model-controlled. The gateway strips C0/C1 control characters, ANSI escapes and bidi overrides
+  from each one when it builds the preview, and the CLI renders each value on its own labelled line
+  so a value cannot forge a line of the prompt (a newline inside a value is shown as `\n`).
+- CLI: the consent handler renders the preview as aligned lines before the yes/no question.
+  Desktop: a `ConnectorWritePreview` component in `StructuredPreview`; a `markdown` field renders
+  with raw HTML disabled, no remote images, and links shown as text, never followed.
+- `destination` is the service id plus the credential kind (`personal` or `team`) and, where the
+  Vault holds one for that service, its stored account label; it never needs a credential read
+  beyond the existing configured-check.
 - On the model door a write with no template is never offered (and refused if called). The other
   doors (MCP sink, ChatOps, tribal, workflows) show the typed preview when a template exists and
   today's prompt otherwise, so nothing that works today breaks. Templates arrive with each write's
@@ -158,18 +196,21 @@ blast radius. Phase 10 (standing approvals, scheduled writes) is the consumer.
 ### 5.4 Before-state (Waves 2–4)
 
 - A group file may declare `before: { tool, args(payload) → readArgs, select(reply) → fields }`,
-  naming one of the connector's READ tools. When present, the gateway runs that read through the
-  normal read path (ledgered as a read, I29) before the prompt and shows `before` beside the new
-  values. A failed or slow read (5 s) shows `before: unavailable (<reason>)`; it never blocks the
-  prompt.
+  naming one of the connector's READ tools. When present, the gateway runs that read as a
+  `PlannedAction` through the same executor's `execute()` before the prompt, so the dispatch
+  chokepoint appends its `authorized` egress row first (I29; a read type needs no HITL). `args` may
+  use only the row's target-identifying fields, the read runs only for a row the owner enabled, and
+  its reply feeds the preview alone: it is never returned to the model. A failed or slow read (5 s)
+  shows `before: unavailable (<reason>)`; it never blocks the prompt.
 - Wave 4 writes require a `before` (or a plan, for IaC): a Wave 4 row without one is refused at the
   gate.
 
 ### 5.5 Egress and federation
 
-- A contract test iterates the manifest: for each write, a gated approval appends exactly one
-  egress row before dispatch; a denial appends one `blocked` row; an append failure dispatches
-  nothing.
+- A contract test iterates the manifest: for each write, `ToolExecutor.execute()` with a recording
+  dispatcher and a real egress sink shows that an approval appends exactly one row before dispatch,
+  a denial appends one `blocked` row, and an append failure dispatches nothing. It needs no model
+  door and no live transport, so it ships on its own.
 - The federated refusal of a write stays an audit row only, with no egress row (my call, reversing
   the first draft): I29 records only real egress, a peer's refused request never leaves the
   machine, and a ledger row per refusal would let a peer inflate `nimbus prove` counts. The
@@ -202,7 +243,7 @@ Before-state where cheap: issue status and labels, page current tail.
 
 - **I53 (new):** a first-party connector write reaches the model only as a tool offered on the
   local owner's turn for a connector the owner enabled (and policy allows); every call goes through
-  `ToolExecutor.gate()` with HITL, is never delegated, appends its egress row before dispatch, and
+  `ToolExecutor.execute()` with HITL, carries `origin: "model"` so no delegate can approve it, appends its egress row before dispatch, and
   shows a preview derived from the payload it will send; no other door offers it to a model. Static
   rule: the model tool source is the only file that builds model tools from the write manifest.
 - **I26 amended:** writes are declared in the one manifest; D20 derived from it.
@@ -223,9 +264,10 @@ Each lands under the triple rule in the PR that wires it.
 One PR at a time from `main`, a plan per PR on this branch reviewed by Antigravity:
 - **Project A (Wave 1):** A1 the manifest generator, group files, the `transport` field, the
   classification of unclassified writes, and the derived D20 (no behaviour change); A2 the typed
-  preview (executor, CLI, desktop); A3 the per-write egress coverage test; A4 the model door, the
-  owner-only no-delegation executor, the opt-in command, the policy lockoff, the injection suite and
-  I53.
+  preview (executor, CLI, desktop); A3 the per-write egress coverage test; A4 the opt-in command,
+  the `connector_write_enablement` table, the `connector.writes.enable` approval and the policy
+  lockoff (nothing reads them yet but `status`); A5 the model door, `origin: "model"` and its
+  delegation refusal, the injection suite and I53.
 - **Project B (Wave 2):** B1 messaging and comments; B2 issues (create, transition, label/assign);
   B3 drafts and knowledge append; before-state readers where cheap.
 - **Project C (Wave 3)** and **Project D (Wave 4):** design round, then PRs per write group.
@@ -239,6 +281,15 @@ W1-W4: delegation is refused on the model door only; the preview is unredacted e
 fields; rows keep their transport; templates gate only the model door; schemas come from the running
 mesh; the gateway's action type wins; the federated refusal stays audit-only; preview paths are
 relative to the tool input; D20's allowed sites follow from A1.
+
+The Antigravity review (2026-11-04) raised fifteen points. Applied: structural non-delegation
+(`origin: "model"`); the mutating-read overlay; dispatch through `execute()` by `transport`; the
+before-state read through the executor chokepoint and never shown to the model; the proposability
+classification in A1; preview sanitisation and safe markdown; the corrected per-door delegation
+facts; opt-in storage, default wave and per-call re-check; drift semantics; `destination`; the A4/A5
+split. Not applied: substring redaction of `Other fields` (it reopens the hole § 5.3 closes;
+credentials never travel in the payload), and an egress row for a federated refusal (kept
+audit-only, the call listed for the owner).
 
 ## 12. Left to the builder
 
