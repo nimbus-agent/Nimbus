@@ -80,6 +80,30 @@ describe("ConnectorWritePreview", () => {
     expect(container).toHaveTextContent('{"n":1}');
   });
 
+  it("shows an empty other-field key as a visible label rather than dropping the field", () => {
+    render(
+      <ConnectorWritePreview
+        details={details({ otherFields: [{ key: "", value: '"hidden payload"' }] })}
+      />,
+    );
+    const other = screen.getByTestId("connector-write-other-fields");
+    expect(other).toHaveTextContent("(empty key)");
+    expect(other).toHaveTextContent('"hidden payload"');
+  });
+
+  it("counts and cuts a collapsed value by code points, never through a surrogate pair", () => {
+    const smile = String.fromCodePoint(0x1f600);
+    const long = smile.repeat(2001);
+    render(
+      <ConnectorWritePreview
+        details={details({ fields: [{ label: "B", kind: "text", value: long }] })}
+      />,
+    );
+    expect(screen.getByText(/2,001 characters/)).toBeInTheDocument();
+    const text = screen.getByTestId("connector-write-preview").textContent ?? "";
+    expect(text).toContain(`${smile.repeat(2000)}…`);
+  });
+
   it("renders with fields and otherFields missing", () => {
     const { container } = render(
       <ConnectorWritePreview details={{ kind: "connector-write", summary: "S" }} />,

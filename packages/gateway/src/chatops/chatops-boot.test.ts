@@ -494,6 +494,30 @@ describe("buildChatopsBoot — full production graph", () => {
     await h.boot.service.stop();
   });
 
+  test("local-consent fallback receives the executor's prompt text and details verbatim (A2 F1 pin)", async () => {
+    // Accepted exception: on the ChatOps local fallback the assemble.ts wrapper broadcasts the
+    // prompt (not the details) to the owner's local IPC sessions, so a connector write's typed
+    // preview reaches every local session on this path. This pins that the executor's prompt is
+    // handed to the fallback unchanged; changing that path is a deliberate act, not drift.
+    const h = await buildHarness();
+    const asked: { prompt: string; details: unknown }[] = [];
+    h.boot.bindLocalConsent((prompt, details) => {
+      asked.push({ prompt, details });
+      return Promise.resolve(true);
+    });
+    await h.boot.service.start();
+    h.socket.emit(
+      mention("C0", "U_BOB", "@nimbus run deployment.rollback service=payment-service", "31c"),
+    );
+    await until(() => h.posts.some((p) => p.text.includes("Approval needed")));
+    h.socket.emit(mention("C0", "U_BOB", "@nimbus approve", "32c"));
+    await until(() => asked.length === 1);
+    expect(asked[0]?.prompt).toContain("deployment.rollback");
+    expect(asked[0]?.prompt).toContain("payment-service");
+    expect(asked[0]?.details).toEqual({ service: "payment-service" });
+    await h.boot.service.stop();
+  });
+
   test("I29 fix 3: a chatops-approved dispatch appends a real egress row, not a silent NULL sink", async () => {
     // ChatopsBootDeps.egressSink is now REQUIRED (dropped the `?? NULL_EGRESS_SINK` default) —
     // this proves the executor actually calls the sink it was handed, wired into a real dispatch.

@@ -97,16 +97,20 @@ function rawJson(v: unknown): string {
   }
 }
 
-/** A string as is; anything else as compact JSON. Always sanitised, never truncated. */
+/**
+ * A string as is (target and summary text); anything else as compact JSON. Always sanitised,
+ * never truncated.
+ */
 function renderValue(v: unknown): string {
-  if (typeof v === "string") return sanitisePreviewText(v);
-  let json: string | undefined;
-  try {
-    json = JSON.stringify(v);
-  } catch {
-    json = undefined;
-  }
-  return sanitisePreviewText(json ?? String(v));
+  return sanitisePreviewText(typeof v === "string" ? v : rawJson(v));
+}
+
+/**
+ * A field or "Other fields" value: a string is JSON-quoted so it can never read as the bare
+ * unset text and `"true"` differs from `true`; anything else is compact JSON.
+ */
+function renderQuoted(v: unknown): string {
+  return sanitisePreviewText(rawJson(v));
 }
 
 function isUnset(input: Record<string, unknown>, key: string): boolean {
@@ -144,7 +148,7 @@ function renderField(
     const rawText = typeof raw === "string" ? raw : rawJson(raw);
     return `(hidden, ${[...rawText].length} characters)`;
   }
-  return renderValue(raw);
+  return renderQuoted(raw);
 }
 
 function findRow(
@@ -185,7 +189,7 @@ export function buildConnectorWritePreviewFrom(
       target: interpolate(template.target, {}),
       summary: interpolate(template.summary, {}),
       fields: [],
-      otherFields: [{ key: "(input)", value: renderValue(rawInput) }],
+      otherFields: [{ key: "(input)", value: renderQuoted(rawInput) }],
       destination,
     };
   }
@@ -201,7 +205,7 @@ export function buildConnectorWritePreviewFrom(
     })),
     otherFields: Object.keys(rawInput)
       .filter((k) => !named.has(k))
-      .map((k) => ({ key: sanitisePreviewText(k), value: renderValue(rawInput[k]) })),
+      .map((k) => ({ key: sanitisePreviewText(k), value: renderQuoted(rawInput[k]) })),
     destination,
   };
 }

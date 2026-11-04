@@ -55,7 +55,7 @@ describe("buildConnectorWritePreview", () => {
     expect(p.destination).toEqual({ service: "argocd" });
     expect(p.target).toBe("web");
     expect(p.summary).toBe("Sync Argo CD application web");
-    expect(p.fields).toEqual([{ label: "Revision", kind: "text", value: "abc" }]);
+    expect(p.fields).toEqual([{ label: "Revision", kind: "text", value: '"abc"' }]);
   });
 
   test("a missing key shows (not set)", () => {
@@ -105,8 +105,9 @@ describe("buildConnectorWritePreview", () => {
     expect(value).not.toContain(ESC);
     expect(value).not.toContain("\r");
     expect(value).not.toContain(RLO);
-    expect(value).toContain("\\u{001B}");
-    expect(value).toContain("\\u{000D}");
+    // JSON-quoting escapes ESC and CR itself (visibly); the sanitiser covers the rest.
+    expect(value).toContain("\\u001b");
+    expect(value).toContain("\\r");
     expect(value).toContain("\\u{202E}");
     const lines = renderConnectorWritePreviewLines(p);
     expect(lines.join("\n")).toContain("\\n");
@@ -135,7 +136,7 @@ describe("buildConnectorWritePreview", () => {
     for (const bad of [ESC, RLO, BEL]) expect(everything).not.toContain(bad);
     expect(p.target).toBe("a\\u{001B}[2Kb");
     expect(p.summary).toBe("Sync Argo CD application a\\u{001B}[2Kb");
-    expect(p.otherFields).toEqual([{ key: "k\\u{001B}]0;t\\u{0007}\\u{202E}", value: "v" }]);
+    expect(p.otherFields).toEqual([{ key: "k\\u{001B}]0;t\\u{0007}\\u{202E}", value: '"v"' }]);
   });
 
   test("zero-width, format and tag characters are shown as escapes", () => {
@@ -146,13 +147,13 @@ describe("buildConnectorWritePreview", () => {
 
   test("a key that differs only by an invisible character stays distinct", () => {
     const p = build({ name: "n", [`revision${RLO}`]: "evil" });
-    expect(p.otherFields).toEqual([{ key: "revision\\u{202E}", value: "evil" }]);
+    expect(p.otherFields).toEqual([{ key: "revision\\u{202E}", value: '"evil"' }]);
   });
 
   test("a long value is never truncated", () => {
     const long = "x".repeat(2500);
     const p = build({ name: "n", revision: long });
-    expect(p.fields[0]?.value).toBe(long);
+    expect(p.fields[0]?.value).toBe(`"${long}"`);
     expect(renderConnectorWritePreviewLines(p).join("\n")).toContain(long);
   });
 
@@ -228,7 +229,23 @@ describe("buildConnectorWritePreview", () => {
       rowsWith(TEMPLATE),
     );
     expect(p?.fields).toEqual([]);
-    expect(p?.otherFields).toEqual([{ key: "(input)", value: "just text\n" }]);
+    expect(p?.otherFields).toEqual([{ key: "(input)", value: '"just text\\n"' }]);
+  });
+
+  test("a string value is quoted, so it never reads as the unset text", () => {
+    const unsetText = "(not set: the tag is REMOVED)";
+    const t: ConnectorWritePreviewTemplate = {
+      ...TEMPLATE,
+      fields: [{ key: "revision", label: "Revision", kind: "text", whenUnset: unsetText }],
+    };
+    const set = build({ name: "x", revision: unsetText }, t);
+    const unset = build({ name: "x" }, t);
+    expect(set.fields[0]?.value).toBe(`"${unsetText}"`);
+    expect(unset.fields[0]?.value).toBe(unsetText);
+    expect(set.fields[0]?.value).not.toBe(unset.fields[0]?.value);
+    expect(build({ name: "x", revision: "true" }, t).fields[0]?.value).toBe('"true"');
+    expect(build({ name: "x", revision: true }, t).fields[0]?.value).toBe("true");
+    expect(build({ name: "x", extra: "(not set)" }, t).otherFields[0]?.value).toBe('"(not set)"');
   });
 
   test("CLI lines have the documented shape", () => {
@@ -238,7 +255,7 @@ describe("buildConnectorWritePreview", () => {
       "Target:  web",
       "Sync Argo CD application web",
       "",
-      "  Revision: abc",
+      '  Revision: "abc"',
       "Other fields:",
       "  f: 1",
     ]);

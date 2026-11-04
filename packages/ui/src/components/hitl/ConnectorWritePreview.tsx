@@ -61,20 +61,28 @@ function readOtherFields(v: unknown): Row[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((entry, i) => {
     const rec = asRecord(entry);
-    const key = text(rec["key"]);
-    if (key === undefined) return [];
-    return [{ id: `o${i}`, label: key, kind: "text", value: valueText(rec["value"]) } as Row];
+    const key = rec["key"];
+    if (typeof key !== "string") return [];
+    return [
+      {
+        id: `o${i}`,
+        label: key === "" ? "(empty key)" : key,
+        kind: "text",
+        value: valueText(rec["value"]),
+      } as Row,
+    ];
   });
 }
 
 function LongText({ value }: { readonly value: string }): ReactNode {
   const [expanded, setExpanded] = useState(false);
-  if (value.length <= COLLAPSE_AT) return <>{value}</>;
+  const points = Array.from(value);
+  if (points.length <= COLLAPSE_AT) return <>{value}</>;
   return (
     <>
-      {expanded ? value : `${value.slice(0, COLLAPSE_AT)}…`}
+      {expanded ? value : `${points.slice(0, COLLAPSE_AT).join("")}…`}
       <span className="block text-xs text-[var(--color-fg-muted)]">
-        {value.length.toLocaleString("en-US")} characters
+        {points.length.toLocaleString("en-US")} characters
       </span>
       <button
         type="button"
