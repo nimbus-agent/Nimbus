@@ -33,6 +33,7 @@ import type { ExpertBrief } from "./agents/_lib/findings.ts";
 import { listExtensions } from "./automation/extension-store.ts";
 import { CATALOG_AGENT_NAMES } from "./catalog/agent-catalog.ts";
 import { builtinCatalogConnectorIds } from "./catalog/catalog-list.ts";
+import { CHATOPS_POST_TOOL_IDS } from "./chatops/transport/connector-post.ts";
 import { type ApiScope, LEGACY_SCOPES } from "./clips/api-scopes.ts";
 import { CLIP_TOKENS_VAULT_KEY, verifyApiToken } from "./clips/clip-token-store.ts";
 import { PairingWindowController } from "./clips/pairing-window.ts";
@@ -48,7 +49,7 @@ import {
 } from "./config/layered-config.ts";
 import { CONNECTOR_SERVICE_IDS } from "./connectors/connector-catalog.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
-import { CONNECTOR_WRITES } from "./connectors/connector-write-registry.ts";
+import { CONNECTOR_WRITES, isConnectorWriteToolId } from "./connectors/connector-write-registry.ts";
 import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
@@ -69,6 +70,8 @@ import { EGRESS_SOURCE_TYPES, MARKER_SOURCE_TYPES } from "./egress/egress-source
 import { egressHead, listEgress } from "./egress/egress-verify.ts";
 import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
 import { consentDisplayPayload, formatConsentPrompt, HITL_REQUIRED } from "./engine/executor.ts";
+import { serviceOf } from "./engine/service-of.ts";
+import type { PlannedAction } from "./engine/types.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
 import type { ReachRunner } from "./extensions/extension-reach.ts";
@@ -87,6 +90,7 @@ import { buildTestRegistry } from "./extensions/registry/__fixtures__/build-test
 import type { BuiltinRegistryConfig } from "./extensions/registry/builtin-registry.ts";
 import { getRunGrant } from "./extensions/run-grant-store.ts";
 import { computeExtensionTreeDigest } from "./extensions/tree-digest.ts";
+import { answerFederatedInvoke, type InvokeGateCtx } from "./federation/invoke-gate.ts";
 import { buildFleetInvoker } from "./fleet/fleet-invoker.ts";
 import {
   createFleetRemoteBudget,
@@ -144,6 +148,7 @@ import { unboundSyncCapabilities } from "./sync/sync-capabilities.ts";
 import type { SyncRuntimeContext } from "./sync/types.ts";
 import { __setSessionSpawnerForTest } from "./teamvault/connector-session.ts";
 import { spawnTeamToolAndCall, spawnTeamWriteAndCall } from "./teamvault/team-tool-spawn.ts";
+import { TeamVaultStore } from "./teamvault/team-vault-store.ts";
 import { createMemoryVault, openMemoryIndexDatabase } from "./testing/bun-test-support.ts";
 import { artifactDigest, canonicalArtifactBytes } from "./toolgen/toolgen-artifact.ts";
 import { sweepToolgenCredentials } from "./toolgen/toolgen-credential-sweep.ts";
@@ -160,7 +165,7 @@ import { savedToolDir, writeSavedTool } from "./toolgen/toolgen-saved-store.ts";
 import { buildGeneratedManifest } from "./toolgen/toolgen-stub.ts";
 import { type GeneratedToolArtifact, ToolgenError } from "./toolgen/toolgen-types.ts";
 import { TribalClusterStore } from "./tribal/cluster-store.ts";
-import { captureToKnowledgeBase } from "./tribal/tribal-write-gate.ts";
+import { captureToKnowledgeBase, TRIBAL_KB_WRITE_TOOL_IDS } from "./tribal/tribal-write-gate.ts";
 import { encodeBase64 } from "./util/base64.ts";
 import { generateEd25519Keypair } from "./util/ed25519.ts";
 import { EphemeralVault } from "./vault/ephemeral.ts";
@@ -2836,6 +2841,53 @@ code_execution=true
   });
 });
 
+// ---- Per-write coverage helpers (ruling E1: they live in this test file, never in a non-test .ts).
+interface WriteUnderTest {
+  readonly label: string;
+  readonly action: PlannedAction;
+}
+
+/** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
+function writesUnderTest(): readonly WriteUnderTest[] {
+  const rows: WriteUnderTest[] = CONNECTOR_WRITE_ROWS.map((row) => ({
+    label: row.toolId,
+    action:
+      row.transport === "mesh"
+        ? { type: row.actionType, payload: { mcpToolId: row.toolId, input: {} } }
+        : { type: row.actionType, payload: {} },
+  }));
+  const confined = [
+    "slack.chat.post",
+    "teams.chat.post",
+    "notion.knowledge.write",
+    "confluence.knowledge.write",
+  ].map((t) => ({ label: t, action: { type: t, payload: {} } }));
+  return [...rows, ...confined];
+}
+
+let migratedTemplate: Uint8Array | undefined;
+
+/** A fully migrated in-memory database; migrated once, then cloned (a migration run per row is slow). */
+function freshEgressDb(): Database {
+  if (migratedTemplate === undefined) {
+    const seed = new Database(":memory:");
+    runIndexedSchemaMigrations(seed, CURRENT_SCHEMA_VERSION);
+    migratedTemplate = seed.serialize();
+    seed.close();
+  }
+  return Database.deserialize(migratedTemplate);
+}
+
+function egressRows(
+  db: Database,
+): Array<{ resultStatus: string; destination: string; hitlStatus: string }> {
+  return db
+    .query(
+      "SELECT result_status AS resultStatus, destination, hitl_status AS hitlStatus FROM egress_ledger ORDER BY id",
+    )
+    .all() as Array<{ resultStatus: string; destination: string; hitlStatus: string }>;
+}
+
 describe("I26 — every connector write row is confined to the local I2 path; federated gate rejects them", () => {
   test("answerFederatedInvoke is wired with the union isConnectorWriteToolId predicate in federation-rpc.ts", async () => {
     const src = await read("packages/gateway/src/ipc/federation-rpc.ts");
@@ -2847,6 +2899,70 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
     const gate = await read("packages/gateway/src/federation/invoke-gate.ts");
     expect(gate).toContain("isWriteForbiddenToolId");
     expect(gate).toContain("write_forbidden");
+  });
+
+  test("a federated peer naming any write is refused and audited write_forbidden", async () => {
+    const ids = new Set<string>();
+    for (const row of CONNECTOR_WRITE_ROWS) {
+      ids.add(row.toolId);
+      ids.add(`${serviceOf(row.actionType)}_${row.toolId}`);
+    }
+    for (const id of [...CHATOPS_POST_TOOL_IDS, ...TRIBAL_KB_WRITE_TOOL_IDS]) ids.add(id);
+    expect(ids.size).toBeGreaterThanOrEqual(CONNECTOR_WRITE_ROWS.length + 4);
+
+    const failures: string[] = [];
+    const db = freshEgressDb();
+    const store = new TeamVaultStore(db);
+    store.createEntry("prod-aws", "aws", "owner", 1000);
+    for (const toolId of ids) {
+      // The grant exists, so the write refusal is the only barrier before runTool.
+      store.grant("prod-aws", "peer:abc", toolId, 1000);
+      let ran = 0;
+      const ctx: InvokeGateCtx = {
+        db,
+        store,
+        quorumFor: () => undefined,
+        runQuorum: async () => ({ outcome: "approved", approvers: [] }),
+        runTool: async () => {
+          ran += 1;
+          return {};
+        },
+        isCodeExecutionForbiddenToolId: () => false,
+        isWriteForbiddenToolId: isConnectorWriteToolId,
+        isConnectorAllowed: () => true,
+        now: () => 5000,
+      };
+      const count = (): number =>
+        (
+          db
+            .query(
+              "SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'teamvault.invoke.write_forbidden'",
+            )
+            .get() as { n: number }
+        ).n;
+      const before = count();
+      const r = await answerFederatedInvoke(ctx, {
+        peerId: "peer:abc",
+        entry: "prod-aws",
+        toolId,
+        args: {},
+        purpose: "x",
+      });
+      if (r.kind !== "error" || r.error !== "no_grant") {
+        failures.push(`${toolId}: result ${JSON.stringify(r)}`);
+      }
+      if (ran !== 0) failures.push(`${toolId}: runTool was called`);
+      if (count() - before !== 1) {
+        failures.push(`${toolId}: write_forbidden audit rows ${count() - before}`);
+      }
+    }
+    db.close();
+    expect(failures).toEqual([]);
+  });
+
+  test("the federated invoke gate has no egress seam, so a refused write appends no egress row", async () => {
+    const gate = stripComments(await read("packages/gateway/src/federation/invoke-gate.ts"));
+    expect(/\begress/i.test(gate)).toBe(false);
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
@@ -3272,6 +3388,121 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
     const connectors3 = { dispatch: async () => ({}) };
     const exec3 = new ToolExecutor(consent, audit, connectors3, undefined, throwingSink);
     await expect(exec3.execute({ type: "search.run", payload: {} })).rejects.toThrow();
+  });
+
+  test("every connector write prompts the owner and appends exactly one egress row BEFORE dispatch", async () => {
+    const { ToolExecutor } = await import("./engine/executor.ts");
+    const failures: string[] = [];
+    for (const { label, action } of writesUnderTest()) {
+      const db = freshEgressDb();
+      let prompts = 0;
+      let dispatches = 0;
+      let rowsAtDispatch = -1;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return true;
+          },
+        },
+        { recordAudit: () => {} },
+        {
+          dispatch: async () => {
+            dispatches += 1;
+            rowsAtDispatch = egressRows(db).length;
+            return {};
+          },
+        },
+        undefined,
+        makeEgressSink(db),
+      );
+      await exec.execute(action);
+      const rows = egressRows(db);
+      if (prompts !== 1) failures.push(`${label}: consent asked ${prompts} times`);
+      if (dispatches !== 1) failures.push(`${label}: dispatched ${dispatches} times`);
+      if (rowsAtDispatch !== 1) failures.push(`${label}: ${rowsAtDispatch} rows at dispatch`);
+      const row = rows[0];
+      if (rows.length !== 1 || row === undefined) {
+        failures.push(`${label}: ${rows.length} rows after`);
+      } else {
+        if (row.resultStatus !== "authorized")
+          failures.push(`${label}: result ${row.resultStatus}`);
+        if (row.hitlStatus !== "approved") failures.push(`${label}: hitl ${row.hitlStatus}`);
+        if (row.destination !== serviceOf(action.type)) {
+          failures.push(`${label}: destination ${row.destination}`);
+        }
+      }
+      db.close();
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("a denied write appends one blocked row and dispatches nothing", async () => {
+    const { ToolExecutor } = await import("./engine/executor.ts");
+    const failures: string[] = [];
+    for (const { label, action } of writesUnderTest()) {
+      const db = freshEgressDb();
+      let dispatches = 0;
+      const exec = new ToolExecutor(
+        { requestApproval: async () => false },
+        { recordAudit: () => {} },
+        {
+          dispatch: async () => {
+            dispatches += 1;
+            return {};
+          },
+        },
+        undefined,
+        makeEgressSink(db),
+      );
+      const r = await exec.execute(action);
+      const rows = egressRows(db);
+      if (r.status !== "rejected") failures.push(`${label}: status ${r.status}`);
+      if (dispatches !== 0) failures.push(`${label}: dispatched`);
+      if (rows.length !== 1 || rows[0]?.resultStatus !== "blocked") {
+        failures.push(`${label}: rows ${JSON.stringify(rows)}`);
+      }
+      db.close();
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("a failed append dispatches nothing", async () => {
+    const { ToolExecutor } = await import("./engine/executor.ts");
+    const failures: string[] = [];
+    for (const { label, action } of writesUnderTest()) {
+      let dispatches = 0;
+      const exec = new ToolExecutor(
+        { requestApproval: async () => true },
+        { recordAudit: () => {} },
+        {
+          dispatch: async () => {
+            dispatches += 1;
+            return {};
+          },
+        },
+        undefined,
+        {
+          append: () => {
+            throw new Error("append failed");
+          },
+        },
+      );
+      let threw = false;
+      try {
+        await exec.execute(action);
+      } catch {
+        threw = true;
+      }
+      if (!threw) failures.push(`${label}: execute did not reject`);
+      if (dispatches !== 0) failures.push(`${label}: dispatched after a failed append`);
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("the coverage set is the whole table", () => {
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(88);
+    expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
   test("D22 confines connectors.dispatch to executor.ts, the egress append to egress/*, the agent brief append to agents-rpc.ts, emitter imports to agents-rpc.ts, and registerRoute to llm/registry.ts", async () => {
