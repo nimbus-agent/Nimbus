@@ -2,6 +2,15 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.19.0](https://github.com/nimbus-agent/Nimbus/compare/v10.18.0...v10.19.0) (2026-11-04)
+
+
+### Features
+
+* **cli:** scaffold an extension from an OpenAPI document ([#1881](https://github.com/nimbus-agent/Nimbus/issues/1881)) ([42767ca](https://github.com/nimbus-agent/Nimbus/commit/42767caab96d8429e405229b34451473f7192df1))
+* **extensions:** manifest funding and license, and nimbus extension sponsor ([#1878](https://github.com/nimbus-agent/Nimbus/issues/1878)) ([af08869](https://github.com/nimbus-agent/Nimbus/commit/af088696c9784ee26040798f620a4d9281d25ebe))
+* **extensions:** nimbus extension clone writes an editable copy of a published extension ([#1880](https://github.com/nimbus-agent/Nimbus/issues/1880)) ([6012e3f](https://github.com/nimbus-agent/Nimbus/commit/6012e3f8df688852c21062af81c3ba8cf905511c))
+
 ## [10.18.0](https://github.com/nimbus-agent/Nimbus/compare/v10.17.0...v10.18.0) (2026-11-03)
 
 
