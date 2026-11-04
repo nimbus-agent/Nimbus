@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793826410502,
+  "lastUpdate": 1793827779592,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "e049de9ff6ba8282455fa41a23fe89c8469a0912",
-          "message": "test(security): close the I23(c) subdirectory blind spot and floor both D17 scans (#1216)\n\nAuditing whether the I1–I30 enforcement tests can actually fail. Most\nare in good shape — the file consistently guards its own guards (`I17`\nasserts `toContain(\"query-gate.ts\")`; the D22 `_lib` scan carries an\nexplicit *\"Guard the guard: if the directory scan finds nothing, the\nassertion above is vacuous\"*). **I23's two D17 scans were the\nexceptions**, and one of them had a real hole.\n\n## I23(c) could not see a subdirectory\n\n`(b)` and `(c)` enforce the same D17 rule with the same regex against\nthe same two tool ids. `(b)` walked recursively. `(c)` called `readdir`\nonce, flat.\n\n`tribal/` has no subdirectories today, so `(c)` was complete **by\naccident, not by construction** — the moment anyone adds\n`tribal/<group>/foo.ts`, a direct `slack_chat_post` there walks straight\npast the invariant.\n\nProved rather than argued. With a planted `tribal/nested/leak.ts`\nexporting `slack_chat_post`:\n\n```\nOLD scan offenders: [] -> PASSES (violation missed)\nNEW: (fail) I23 ... (c) no tribal module references the connector post tools\n  +   \"nested/leak.ts\",\n```\n\nI ran the pre-fix scan verbatim against the planted file to get that\nfirst line — the old code, not a reconstruction of it. I23 is the\ninvariant that keeps operational ChatOps posts bound to a server-derived\n`ReplyTarget`, so the blind spot was in a rule about **where the agent\nis allowed to send messages**.\n\n## Both scans could have passed while checking nothing\n\nNeither `(b)` nor `(c)` asserted it had scanned anything. `readdir`\nthrows on a missing directory, so the wrong-path case already failed\nloudly — but every *exclusion* in `(b)` is a filter\n(`reply-dispatcher.ts`, `transport/`), and a filter that widened until\nit swallowed the directory would leave `offenders` empty and the test\ngreen.\n\nBoth now assert a floor, matching what the rest of the file already\ndoes.\n\n## What changed\n\nThe recursive walk is now a shared `productionTsUnder()` helper, so the\ntwo siblings cannot drift apart again — the asymmetry existed for no\nreason either invariant states. The `POST_TOOLS` regex is likewise named\nonce instead of written twice.\n\n## Verified as still enforcing\n\nBefore changing anything I confirmed both scans genuinely catch a\nviolation today, by planting `slack_chat_post` in\n`tribal/tribal-suggestion.ts` and in `chatops/intent-router.ts` — each\nfailed the right test, naming the right file, and passed again on\nrevert. This is a real gap being closed, not a dead guard being\nresuscitated.\n\n## Verification\n\n`bun test security-invariants.test.ts` — **115 pass, 0 fail** (348\nassertions; the two new floors take I23 from 5 expectations to 7).\n`bun run preflight:fast` — **PASSED**, all gates including `audit:any`,\n`audit:cross-platform`, `audit:exclusion-parity` and jscpd.",
-          "timestamp": "2026-08-16T03:23:32Z",
-          "tree_id": "61925dd46d789afa6a5764b242ccd4fc8b3a0864",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/e049de9ff6ba8282455fa41a23fe89c8469a0912"
-        },
-        "date": 1786851293275,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 313.96222350000136,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 312.42721624998956,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 308.13209079999285,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "14b29bd94177e8d5911e39de5ed97dd416114150",
+          "message": "test(security): every connector write is gated, ledgered and refused over federation (#1886)\n\nThis is Phase 9.7 Wave 1, A3: a per-write egress and federation coverage\nproof. It adds tests and docs only, and changes no production code.\n\n## What is now proven for every connector write\n\nThe table drives the tests: all 88 rows in `CONNECTOR_WRITE_ROWS`, plus\nthe four gate-confined writes. A write added later is covered as soon as\nits row lands. The tests are in the I29 and I26 blocks of\n`security-invariants.test.ts`, as the triple rule asks. Before this PR,\nthe I29 ordering test exercised only `search.run` and `email.send`.\n\n- **Executor chokepoint, I2 and I29:**\n  - The owner is asked exactly once.\n- Exactly one `authorized` egress row is in the ledger when dispatch\nruns. It has `hitl_status` set to `approved` and destination\n`serviceOf(type)`.\n  - A denial gives one `blocked` row and no dispatch.\n  - A failed append dispatches nothing.\n\nEach action is built the way its door builds it: `mesh` rows carry\n`mcpToolId` and `input`, and `write` rows use an empty payload.\n- **Federation, I26:** every id is tested in three forms: the bare id,\nthe `<server>_<tool>` form a federated session executes, and the two\ngate-confined sets.\n- The peer holds a grant for the tool, so the write refusal is the only\nbarrier.\n- Each id is refused with `no_grant`, gets exactly one\n`teamvault.invoke.write_forbidden` audit row, and `runTool` is never\ncalled.\n- **No egress row for a federated refusal:** the federated invoke gate\nhas no egress seam. A source assertion pins this structurally, instead\nof a check against a table that would always be empty.\n\n## Acceptance criterion reworded\n\nThe Phase 9.7 criterion said a federated write refusal leaves \"a\n`blocked` ledger row\". It now says \"no dispatch, and a `write_forbidden`\naudit row\". Nothing leaves the machine, and I29 records only real\negress. This is the spec's § 5.5 decision, which was listed for the\nowner.\n\n## Red-proofs\n\nEach was a temporary mutation, reverted afterwards.\n\n- Removing `google_drive.file.trash` from the frozen set makes the test\nreport that `gdrive_file_trash` was prompted 0 times.\n- Dispatching before the gate makes it report 0 rows at dispatch.\n- Making the write predicate return false for one id makes that id reach\n`runTool` and fail the test.\n\n## Checks\n\n- `security-invariants.test.ts`: 421 pass, 0 fail.\n- `typecheck`, `typecheck:tests` (0 new), `audit:invariants`,\n`audit:doc-refs`, `audit:status-drift`, `preflight:fast` and biome all\npass.\n\n## Docs\n\nUpdated:\n- `CLAUDE.md` and `GEMINI.md` (the S4 progress line);\n- the roadmap: the Wave 1 row ticked, the criterion reworded, and A3\nmarked done;\n- `SECURITY-INVARIANTS.md` (I29 and I26);\n- `architecture.md`;\n- `CHANGELOG.md`.\n\n`docs/README.md` and `cli-reference.md` need no change: README carries\nno A-level progress, and there is no CLI change.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T21:23:02Z",
+          "tree_id": "d0ac1e2cb0884999db87884ff6aef92e339d135f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/14b29bd94177e8d5911e39de5ed97dd416114150"
+        },
+        "date": 1793827775759,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 221.58261794999956,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 230.24718155000008,
             "unit": "ms"
           }
         ]
