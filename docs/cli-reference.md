@@ -5041,7 +5041,7 @@ The desktop app shows no funding yet; a Sponsor button there and on the registry
 
 ### `nimbus extension clone <id> [--registry <name>] [--version <v>] [--into <dir>] [--publisher <id>] [--json]`
 
-Writes an editable copy of a published extension. The gateway fetches the package through the same verified chain as a registry install (the pinned root key, the sequence floor, the index hashes, the index-named publisher key's signature, and any takedown or revocation block) and stages it; this command checks the staged file, unpacks it and copies the package files into `--into`. Nothing is installed, no approval is asked, and no extension row is written. `<id>` is the published id (`publisher/name`); `--registry` and `--version` are resolved by the gateway exactly as `nimbus registry install` resolves them (version selection never picks a blocked version by default).
+Writes an editable copy of a published extension. The gateway fetches the package through the same verified chain as a registry install (the pinned root key, the sequence floor, the index hashes, the index-named publisher key's signature, and any takedown or revocation block) and stages it; this command checks the staged file, unpacks it and copies the package files into `--into`. Nothing is installed, no approval is asked, and no extension row is written. `<id>` is the published id (`publisher/name`); Without `--version`, clone takes the newest stable version that nothing blocks; there is no `--channel`, so a beta needs `--version`. Without `--registry`, the id is looked up across your added registries plus the built-in one (the built-in is skipped under an air gap); an id that two of them carry is refused as `ERR_REGISTRY_AMBIGUOUS`, and so is a bare id while any of them could not be read, since the unreadable one might carry it. Pass `--registry <name>` to look in one registry only.
 
 `--into` defaults to `./<name>` (the part of the id after the last `/`). It must not exist: any existing path (an empty directory, a file, a symbolic link) is refused with exit `2`, and so is a parent that does not exist. Clone creates the directory, and removes it again if writing the copy fails.
 
@@ -5057,7 +5057,7 @@ Next steps, printed last. With `--publisher`: `Sign it first: nimbus extension k
 
 `--json` prints one object: `id`, `version`, `registry`, `into`, `publisherId`, `keyFingerprint`, `verifiedPublisher` (`{ github, verifiedAt }` or `null`), `license`, `licenseWarning`, `repository` (each a string or `null`) and `newId` (`null` without `--publisher`).
 
-Exit code `0` for success. Exit code `1` for a refused or failed clone (a registry error, a takedown or revocation block, a staged package that cannot be read or changed, a package whose manifest names another id). Exit code `2` for a usage error, an unusable `--publisher` or id, or an `--into` that exists or has no parent directory.
+Exit code `0` for success. Exit code `1` for a refused or failed clone (a registry refusal, `ERR_REGISTRY_*`, a takedown or revocation block (`ERR_EXTENSION_TAKEN_DOWN`, `ERR_EXTENSION_KEY_REVOKED`), a staged package that cannot be read or changed, a package whose manifest names another id). Exit code `2` for a usage error, an unusable `--publisher` or id, or an `--into` that exists or has no parent directory.
 
 ```bash
 nimbus extension clone acme/notion-tasks
