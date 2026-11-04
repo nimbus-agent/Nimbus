@@ -103,6 +103,7 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "onedrive.item.move",
       "google_drive.file.move",
       "google_drive.file.rename",
+      "google_drive.file.trash",
     ]),
     ...denied("calendar_delete", [
       "calendar.event.delete",

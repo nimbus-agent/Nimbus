@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { WAREHOUSE_BI_WRITE_TOOL_IDS } from "../connectors/warehouse-write-tools.ts";
+import { CONNECTOR_WRITES } from "../connectors/connector-write-registry.ts";
 import { HITL_REQUIRED } from "../engine/executor.ts";
 import { isReadOnlyToolId } from "./read-tool-registry.ts";
 
@@ -78,8 +78,8 @@ describe("isReadOnlyToolId — positive read-only allowlist", () => {
     expect(isReadOnlyToolId(fabricatedWrite)).toBe(false); // …yet still classified non-read
   });
 
-  test("warehouse/BI write tool ids are all non-read (they end in write verbs)", () => {
-    for (const id of WAREHOUSE_BI_WRITE_TOOL_IDS) {
+  test("dispatchable connector write tool ids are all non-read (they end in write verbs)", () => {
+    for (const id of CONNECTOR_WRITES.map((w) => w.toolId)) {
       expect(isReadOnlyToolId(id)).toBe(false);
     }
   });

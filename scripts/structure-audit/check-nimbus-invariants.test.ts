@@ -579,11 +579,11 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
     expect(v.some((x) => x.rule === "D20-connector-write")).toBe(true);
   });
 
-  test("does NOT flag the gitops-ml SSoT module", () => {
+  test("does NOT flag the gitops-ml row file", () => {
     const v = checkConnectorWriteConfinement([
       {
-        relPath: "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
-        contents: `w("argocd.app.sync", "argocd_app_sync", "argocd");`,
+        relPath: "packages/gateway/src/connectors/connector-writes/gitops-ml.ts",
+        contents: `row("argocd_app_sync", "argocd.app.sync", "write", 4);`,
       },
     ]);
     expect(v).toHaveLength(0);
@@ -592,7 +592,7 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
   test("allows the SSoT, connector servers, and transport/dispatch sites", () => {
     const v = checkConnectorWriteConfinement([
       {
-        relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
+        relPath: "packages/gateway/src/connectors/connector-writes/warehouse-bi.ts",
         contents: `"tableau_datasource_refresh"`,
       },
     ]);

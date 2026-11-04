@@ -664,8 +664,8 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 // left this repo in the v3.0.0 extraction to nimbus-mcp-servers, so only the gateway-side
 // registry, transport and dispatch sites remain to exempt.
 const CONNECTOR_WRITE_ALLOWED = [
-  "packages/gateway/src/connectors/warehouse-write-tools.ts",
-  "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
+  "packages/gateway/src/connectors/connector-writes/warehouse-bi.ts",
+  "packages/gateway/src/connectors/connector-writes/gitops-ml.ts",
   "packages/gateway/src/connectors/connector-write-transport.ts",
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
 ];

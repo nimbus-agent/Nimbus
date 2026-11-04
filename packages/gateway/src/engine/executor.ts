@@ -67,6 +67,7 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "google_drive.file.create",
   "google_drive.file.move",
   "google_drive.file.rename",
+  "google_drive.file.trash",
   "onedrive.item.delete",
   "onedrive.item.move",
   // Wave 6 — mail + calendar. Per-connector types so serviceOf names the actual mail service:
@@ -169,8 +170,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "vault.delete",
   "teamvault.put",
   "teamvault.delete",
-  // Phase 6 Slice 7 Wave 7c — warehouse/BI writes (kept in sync with WAREHOUSE_BI_WRITES;
-  // see connectors/warehouse-write-tools.ts; drift asserted in warehouse-write-tools.test.ts).
+  // Phase 6 Slice 7 Wave 7c — warehouse/BI writes (kept in sync with the rows in
+  // connectors/connector-writes/warehouse-bi.ts; drift asserted in connector-writes/rows.test.ts).
   "snowflake.tag.set",
   "snowflake.comment.set",
   "tableau.datasource.refresh",
@@ -183,8 +184,8 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "montecarlo.incident.resolve",
   "bigeye.issue.acknowledge",
   "bigeye.issue.resolve",
-  // Phase 6 Slice 9 W1 — GitOps + ML writes (kept in sync with GITOPS_ML_WRITES; see
-  // connectors/gitops-ml-write-tools.ts; drift asserted in connector-write-registry.test.ts).
+  // Phase 6 Slice 9 W1 — GitOps + ML writes (kept in sync with the rows in
+  // connectors/connector-writes/gitops-ml.ts; drift asserted in connector-writes/rows.test.ts).
   "argocd.app.sync",
   "argocd.app.rollback",
   "flux.kustomization.reconcile",

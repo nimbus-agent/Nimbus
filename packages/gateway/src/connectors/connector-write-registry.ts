@@ -1,31 +1,28 @@
 // packages/gateway/src/connectors/connector-write-registry.ts
 import { CHATOPS_POST_TOOL_IDS } from "../chatops/transport/connector-post.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import { TRIBAL_KB_WRITE_TOOL_IDS } from "../tribal/tribal-write-gate.ts";
 import type { ConnectorWrite } from "./connector-write.ts";
-import { MIGRATED_WRITE_TOOL_IDS } from "./connector-write-tool-ids.ts";
-import {
-  GITOPS_ML_WRITES,
-  gitopsMlWriteByActionType,
-  isGitopsMlWriteToolId,
-} from "./gitops-ml-write-tools.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
+import type { ConnectorWriteRow } from "./connector-writes/types.ts";
 import { matchesBareOrNamespacedToolId } from "./namespaced-tool-id.ts";
-import {
-  isWarehouseWriteToolId,
-  WAREHOUSE_BI_WRITES,
-  warehouseWriteByActionType,
-} from "./warehouse-write-tools.ts";
 
-/** The union of every connector write action across all groups. Drives the generalized I26 predicate
- *  (federated peer fail-closed rejection) and the credential-aware dispatch routing. */
-export { MIGRATED_WRITE_TOOL_IDS };
+/** The rows with a dispatch path (`transport === "write"`). Drives the credential-aware dispatch
+ *  routing; the I26 predicate below spans every row, dispatchable or not. */
+export const CONNECTOR_WRITES: readonly ConnectorWrite[] = CONNECTOR_WRITE_ROWS.filter(
+  (r) => r.transport === "write",
+).map((r) => ({ actionType: r.actionType, toolId: r.toolId, service: serviceOf(r.actionType) }));
 
-export const CONNECTOR_WRITES: readonly ConnectorWrite[] = [
-  ...WAREHOUSE_BI_WRITES,
-  ...GITOPS_ML_WRITES,
-];
+const ROW_BY_TOOL_ID: ReadonlyMap<string, ConnectorWriteRow> = new Map(
+  CONNECTOR_WRITE_ROWS.map((r) => [r.toolId, r]),
+);
+
+const WRITE_BY_ACTION_TYPE: ReadonlyMap<string, ConnectorWrite> = new Map(
+  CONNECTOR_WRITES.map((w) => [w.actionType, w]),
+);
 
 /**
- * The writes whose literals static rules confine to their own gates, so no set here may name them:
+ * The writes whose literals static rules confine to their own gates, so no row may name them:
  * the KB appends (D19, `tribal/tribal-write-gate.ts`) and the ChatOps operational posts (D17,
  * `chatops/transport/connector-post.ts`). Those gates pin the DESTINATION when the gateway itself
  * calls the tool (I25 / I23); a federated invoke carries the peer's own arguments, destination
@@ -37,22 +34,15 @@ const GATE_CONFINED_WRITE_TOOL_IDS: readonly ReadonlySet<string>[] = [
 ];
 
 function isWriteToolIdExactly(toolId: string): boolean {
-  return (
-    isWarehouseWriteToolId(toolId) ||
-    isGitopsMlWriteToolId(toolId) ||
-    // Migrated connector write tools. They have no dispatch row, but a federated peer must be
-    // rejected for naming one just the same — the predicate is about write-ness, not routability.
-    MIGRATED_WRITE_TOOL_IDS.has(toolId) ||
-    GATE_CONFINED_WRITE_TOOL_IDS.some((ids) => ids.has(toolId))
-  );
+  // Every row, dispatchable or not: a federated peer must be rejected for naming a write just the
+  // same — the predicate is about write-ness, not routability.
+  return ROW_BY_TOOL_ID.has(toolId) || GATE_CONFINED_WRITE_TOOL_IDS.some((ids) => ids.has(toolId));
 }
 
 /** The longest write tool id: no suffix longer than this can name a write. */
 const LONGEST_WRITE_TOOL_ID = Math.max(
-  ...CONNECTOR_WRITES.map((w) => w.toolId.length),
-  ...[MIGRATED_WRITE_TOOL_IDS, ...GATE_CONFINED_WRITE_TOOL_IDS].flatMap((ids) =>
-    [...ids].map((id) => id.length),
-  ),
+  ...CONNECTOR_WRITE_ROWS.map((r) => r.toolId.length),
+  ...GATE_CONFINED_WRITE_TOOL_IDS.flatMap((ids) => [...ids].map((id) => id.length)),
 );
 
 /**
@@ -76,6 +66,12 @@ export function isConnectorWriteToolId(toolId: string): boolean {
   return matchesBareOrNamespacedToolId(toolId, isWriteToolIdExactly, LONGEST_WRITE_TOOL_ID);
 }
 
+/** The dispatchable (`write`-transport) write for an action type. */
 export function connectorWriteByActionType(actionType: string): ConnectorWrite | undefined {
-  return warehouseWriteByActionType(actionType) ?? gitopsMlWriteByActionType(actionType);
+  return WRITE_BY_ACTION_TYPE.get(actionType);
+}
+
+/** The row for a BARE tool id, whatever its transport. */
+export function connectorWriteRowByToolId(toolId: string): ConnectorWriteRow | undefined {
+  return ROW_BY_TOOL_ID.get(toolId);
 }

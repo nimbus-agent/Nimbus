@@ -5,14 +5,14 @@ import {
   CONNECTOR_WRITES,
   connectorWriteByActionType,
   isConnectorWriteToolId,
-  MIGRATED_WRITE_TOOL_IDS,
 } from "./connector-write-registry.ts";
-import { GITOPS_ML_WRITES } from "./gitops-ml-write-tools.ts";
-import { WAREHOUSE_BI_WRITES } from "./warehouse-write-tools.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 
 describe("connector-write-registry — union of all connector writes", () => {
-  test("union is exactly warehouse ∪ gitops-ml with no collision", () => {
-    expect(CONNECTOR_WRITES).toHaveLength(WAREHOUSE_BI_WRITES.length + GITOPS_ML_WRITES.length);
+  test("dispatchable writes are exactly the write-transport rows, with no collision", () => {
+    expect(CONNECTOR_WRITES).toHaveLength(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.transport === "write").length,
+    );
     expect(new Set(CONNECTOR_WRITES.map((x) => x.toolId)).size).toBe(CONNECTOR_WRITES.length);
     expect(new Set(CONNECTOR_WRITES.map((x) => x.actionType)).size).toBe(CONNECTOR_WRITES.length);
   });
@@ -102,11 +102,12 @@ describe("migrated write tool ids", () => {
     expect(isConnectorWriteToolId("github_repo_list")).toBe(false);
   });
 
-  test("no migrated id overlaps a dispatchable row", () => {
+  test("no mesh row overlaps a dispatchable row", () => {
     // A tool with a dispatch path belongs in CONNECTOR_WRITES; one without belongs here. Both
     // would make connectorWriteByActionType and this set disagree about the same tool.
-    for (const id of MIGRATED_WRITE_TOOL_IDS) {
-      expect(CONNECTOR_WRITES.some((w) => w.toolId === id)).toBe(false);
+    for (const r of CONNECTOR_WRITE_ROWS.filter((x) => x.transport === "mesh")) {
+      expect(CONNECTOR_WRITES.some((w) => w.toolId === r.toolId)).toBe(false);
+      expect(connectorWriteByActionType(r.actionType)?.toolId).not.toBe(r.toolId);
     }
   });
 
