@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793729371765,
+  "lastUpdate": 1793785937838,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8e6863c5e0b3633c428610338a2c444b685e5a99",
-          "message": "chore: release main (#1209)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.4</summary>\n\n##\n[2.4.4](https://github.com/nimbus-agent/Nimbus/compare/v2.4.3...v2.4.4)\n(2026-08-15)\n\n\n### Bug Fixes\n\n* **sonar:** resolve the six minor findings and annotate the S8786 false\npositive ([#1206](https://github.com/nimbus-agent/Nimbus/issues/1206))\n([fa65d95](https://github.com/nimbus-agent/Nimbus/commit/fa65d957c46ff46354f8c17d9d37cf4d13957c19))\n* **tui:** render the watcher pane, and stop claiming OS notifications\nwork ([#1204](https://github.com/nimbus-agent/Nimbus/issues/1204))\n([78cb49b](https://github.com/nimbus-agent/Nimbus/commit/78cb49b0b8242e8ce56245c4454cc6e49c507244))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-15T14:00:27Z",
-          "tree_id": "c73defb13332d667ab5e428f505b6d1b31956e4a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8e6863c5e0b3633c428610338a2c444b685e5a99"
-        },
-        "date": 1786802931125,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 242.43058469999886,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 242.29715205000358,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.8064351499943,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "af088696c9784ee26040798f620a4d9281d25ebe",
+          "message": "feat(extensions): manifest funding and license, and nimbus extension sponsor (#1878)\n\nPhase 9.5 project 7, author onboarding, PR 1 of 4. An extension manifest\ncan now carry optional `funding` links and an SPDX `license`. Nimbus\nrefuses malformed ones where an author signs or a registry publishes,\nshows them in `nimbus extension info`, and the new `nimbus extension\nsponsor <id>` opens a funding link after an explicit yes. Owner rulings\nof 2026-11-04 set the scope.\n\n## The two fields\n\n- **`funding`:** 1 to 8 entries of `{ \"url\": string, \"label\"?: string\n}`.\n- `url`: `https:` with a host and no userinfo, at most 2048 characters,\nwith no control, bidi or whitespace characters.\n  - `label`: 1 to 64 characters, with no control or bidi characters.\n  - No other keys, and no duplicate url.\n- **`license`:** an SPDX license expression of at most 128 characters.\nThe check is the `AND` / `OR` / `WITH` grammar with parentheses, and\nplain spaces only.\n- **Where they are read:** both are read raw from the signed manifest by\npure readers in `@nimbus-dev/registry-format` (`author-metadata.ts`),\nthe same way `repository` is. The strict manifest parser is unchanged,\nand older gateways ignore the keys. The publisher signature already\ncovers the raw manifest, so both fields are signed.\n\n## Where a malformed value is refused, and where it is ignored\n\n- **Refused:** `validatePublish` rule 2b refuses it with\n`ERR_REGISTRY_MANIFEST_INVALID`. That covers `nimbus extension publish`,\n`registry maintain add`, and the registry action's check and sign modes;\nthe action `dist` is rebuilt. `nimbus extension sign` refuses before\nwriting anything, prints `manifest <field> is invalid: <reason>; fix it\nbefore signing`, and exits 2.\n- **Ignored:** at runtime it is never a manifest error. `info` shows\n`(invalid, ignored)`.\n- **Stated bound:** a registry still on an older action can sign a\nmalformed value, and every gateway then ignores it.\n\n## Display\n\n- **`extension.info`** reads the installed manifest once and checks its\nsha256 against the recorded `manifest_hash` before trusting it. A\nmanifest edited after install shows nothing. Every return branch carries\nthe fields.\n- **`registry.info`** reads them from the newest listed version's\nhash-checked manifest, the same version every other remote field\ndescribes, labelled by `evidenceFor`. The `reportOnly` reply is\nunchanged.\n- **`nimbus extension info`**, local and `--registry` / `--remote`,\nprints `License:` and `Funding:` lines. Every manifest string is cleaned\nbefore printing.\n\n## `nimbus extension sponsor <id> [--registry <name>] [--index <n>]`\n\n- **Listing:** it prints the links, keeping only entries that pass the\nURL check. `--index` counts the same kept list.\n- **Opening:** on a terminal it asks `Open <host> in your browser?\n[y/N]` and opens only on a yes, through `openHttpsUrl`. Off a terminal\nit prints and opens nothing. This is the `extension report` shape.\n- **`--registry`:** it uses the interactive IPC budget, as `info\n--registry` does, and makes no liveness request.\n- **Blocked extensions:** a blocked or signature-disabled extension gets\na one-line note before the question.\n\n## Not in this PR\n\n- **Desktop:** the desktop shows nothing yet, because it has no\nextension details view. The Sponsor button and the desktop text move to\nthe open roadmap row \"Marketplace page and desktop tile\".\n- **`license` in clone:** clone's use of `license` comes in PR 2, which\nwarns and never refuses (owner ruling R6).\n- **No new surface:** no new IPC method, no allowlist change on Tauri or\nLAN, no migration and no invariant change.\n\n## Verification\n\n- **Tests:**\n  - the new readers, 825 pass in `packages/registry-format`;\n- the gateway info fields, 242 pass across every test file that touches\n`extension.info` or `registry.info`;\n- the CLI `info`, `sign` and `sponsor` tests, 269 pass across the\ntouched files.\n- **Gates:** `preflight:fast` and `typecheck:tests` (0 new) pass, and so\ndoes `audit:action-dist`. The complexity lint finds nothing over 15.\n- **Reviews:**\n- Antigravity reviewed the plan, and all 6 of its findings were applied.\n- Each of the 5 tasks had its own review; one fix round each on tasks 1\nand 5.\n- The whole-branch review found the `sponsor --registry` timeout and a\nneedless liveness read, both fixed, and the blocked-extension note was\nadded.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added optional license and sponsorship metadata for extensions.\nExtension information now displays this metadata when available.\n* Added `nimbus extension sponsor` to list sponsorship links and, with\nterminal confirmation, open a selected link.\n* **Bug Fixes**\n* Invalid metadata is identified in extension information and ignored at\nruntime. Signing and publishing reject malformed license or funding\nmetadata.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T09:41:06Z",
+          "tree_id": "62fc21d3c745b27f588f7212c4d2287ebc689428",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/af088696c9784ee26040798f620a4d9281d25ebe"
+        },
+        "date": 1793785927535,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 281.20574250000135,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 284.2657007999969,
             "unit": "ms"
           }
         ]
