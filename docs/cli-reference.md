@@ -3132,6 +3132,24 @@ A call to an extension tool is held to the same I42 prompt as any user MCP tool 
 
 ---
 
+### `nimbus connector writes enable <service> [--wave 2|3|4]` / `disable <service>` / `status [--json]`
+
+The owner's opt-in to connector writes for the model. It is **off for every connector**; `nimbus ask` is offered none of a service's writes until you enable that service. Only a service that has connector writes is eligible (for example `github`, `kubernetes`, `snowflake`); `status` lists them.
+
+- `enable <service>` asks for your approval at the terminal (the prompt names the service, the wave and each write that becomes offerable), then prints `Model writes enabled for <service> up to wave <n> (<k> writes). Each call will still ask you.` `--wave` takes only `2`, `3` or `4` and defaults to `3`; wave `4` needs an explicit `--wave 4`. Enabling again with another wave replaces the first, behind a fresh approval.
+- `disable <service>` needs no approval and prints `Model writes disabled for <service>.`, or `Model writes were not enabled for <service>.` when nothing was on.
+- `status` prints one line per eligible service (`<service>  enabled  wave <n>  <k> writes` or `<service>  off`), then `Policy: allows` or `Policy: forbids (connector_write_model_access)`. `--json` prints the raw `{ services, policyAllows }` object.
+
+Enabling grants no write: each call the model proposes still asks you, is ledgered, and is refused over federation. Exit codes: `0` success; `2` usage error (a missing service, an unknown verb, an extra argument, `--wave` other than 2, 3 or 4) or a refusal before anything changed (`ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE`, `ERR_CONNECTOR_WRITES_POLICY` when a signed org policy sets `connector_write_model_access = false`, `ERR_CONNECTOR_WRITES_DECLINED` when you decline the approval); `1` any other failure. Backed by the CLI-only, LAN-forbidden `connector.writesEnable`, `connector.writesDisable` and `connector.writesStatus` methods, none on the Tauri allowlist.
+
+```bash
+nimbus connector writes status
+nimbus connector writes enable github --wave 2
+nimbus connector writes disable github
+```
+
+---
+
 ### `nimbus connector remove <name>`
 
 Remove a connector: deletes all associated Vault entries and index rows atomically. For a user MCP server it also deletes that server's sandbox working directory, best-effort.

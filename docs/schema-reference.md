@@ -1318,6 +1318,16 @@ CREATE TABLE extension_observation_notice (
   last_notified_at INTEGER NOT NULL,
   PRIMARY KEY (extension_id, version)
 );
+
+-- V83 -- the owner's opt-in for model connector writes (2026-11-04; Phase 9.7 PR A4).
+-- One row per connector service the owner enabled; absent = no write of that service is offered
+-- to the model. max_wave is the widest migration wave offered (2, 3 or 4). Written only behind
+-- the HITL-gated connector.writes.enable approval; removing a row only narrows.
+CREATE TABLE connector_write_enablement (
+  service TEXT PRIMARY KEY,
+  max_wave INTEGER NOT NULL CHECK (max_wave IN (2, 3, 4)),
+  enabled_at INTEGER NOT NULL
+);
 ```
 
 **SQLite write boundary.** Every production write goes through `dbRun` / `dbExec` / `dbStmtRun` in `packages/gateway/src/db/write.ts` (invariant `I14`). The wrappers translate `SQLITE_FULL` into a typed `DiskFullError`; the static-audit gate `D12` (`bun run audit:invariants`) fails the build on any direct `db.run(` / `db.exec(` outside the wrapper.

@@ -464,6 +464,10 @@ nimbus extension list [--json]            # every extension, with its runState
 nimbus extension info <id>                # one extension; runState: disabled | no_grant | grant_stale | ready | running
 nimbus connector tools <serviceId> [--json]  # the full service id approve printed, e.g. ext_com_example_x; starts it on first use
 nimbus connector call <serviceId> <tool> [--input <json>]  # every call behind the I42 prompt; exit 0/1/2 = ran/failed/refused
+nimbus connector writes enable <service> [--wave 2|3|4]  # owner opt-in for MODEL connector writes (off by default; asks you); exit 0 ok / 2 usage or refused
+nimbus connector writes disable <service>   # no approval; idempotent
+nimbus connector writes status [--json]     # eligible services + whether policy connector_write_model_access allows
+# IPC: connector.writesEnable / writesDisable / writesStatus - CLI-only, FORBIDDEN_OVER_LAN, not on the Tauri allowlist.
 # IPC: extension.approveRun / extension.revokeRun — CLI-only, FORBIDDEN_OVER_LAN, not on the Tauri allowlist.
 # nimbus.toml knob:
 #   [extensions] runtime = true   # default; false runs no extension and approve refuses
