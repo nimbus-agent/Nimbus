@@ -98,7 +98,7 @@ export interface RegistryRpcOptions {
   vault?: NimbusVault;
   /** `registry.install` only: what the approval states reach and the file outcome from. */
   evidence?: ExtensionEvidenceDeps;
-  /** `registry.install` only: the trust feed, refreshed best-effort first (spec § 6.2). */
+  /** `registry.install` and `registry.cloneSource`: the trust feed, refreshed best-effort first (spec § 6.2). */
   trustFeed?: FreshenHandle;
   /**
    * `registry.install` only: the composition's continuity table, which connector requirement status
@@ -422,6 +422,9 @@ async function handleCloneSource(
   if (o.cloneStagingDir === undefined || o.cloneStagingDir.trim() === "") {
     throw new RpcMethodError(-32603, "Gateway has no data directory for clone staging");
   }
+  // Fresh before acting (I48), as `registry.install`: a takedown published since the last hourly
+  // fetch should refuse this clone. Unreachable: proceed on stored state.
+  await freshenTrustFeed(o.trustFeed, o.db, Date.now());
   const value = await cloneRegistrySource(
     { db: o.db, fetch },
     {

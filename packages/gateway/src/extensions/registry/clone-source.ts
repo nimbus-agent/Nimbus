@@ -13,7 +13,7 @@
  * inside `stagingRoot`.
  */
 import type { Database } from "bun:sqlite";
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import { verifiedPublisherFor } from "../trust/verified-publisher.ts";
@@ -51,7 +51,7 @@ export const CLONE_STAGING_MAX_AGE_MS = 3_600_000;
 const STAGE_PREFIX = "c-";
 
 /**
- * Removes staged clone directories older than `maxAgeMs`. Best-effort: a missing root, or an entry
+ * Removes staged clone directories (real directories only) older than `maxAgeMs`. Best-effort: a missing root, or an entry
  * that cannot be read or removed, is skipped.
  */
 export function sweepCloneStaging(
@@ -69,7 +69,11 @@ export function sweepCloneStaging(
     if (!name.startsWith(STAGE_PREFIX)) continue;
     const path = join(stagingRoot, name);
     try {
-      if (now - statSync(path).mtimeMs > maxAgeMs) rmSync(path, { recursive: true, force: true });
+      // `lstat`: a link or a file is never followed or removed; only a real staged directory is.
+      const st = lstatSync(path);
+      if (st.isDirectory() && now - st.mtimeMs > maxAgeMs) {
+        rmSync(path, { recursive: true, force: true });
+      }
     } catch {
       /* best-effort: the next clone sweeps again */
     }

@@ -7654,7 +7654,7 @@ describe("I44 — registry-sourced extension code arrives only through the verif
 
   // ---- an author's clone (`registry.cloneSource`) --------------------------------------------
 
-  test("behavioural: a clone of an unknown-key package writes no Vault key and no extension row", async () => {
+  test("behavioural: a clone of an unknown-key package writes no extension row", async () => {
     const { cloneRegistrySource } = await import("./extensions/registry/clone-source.ts");
     const s = await setup({ main: ["1.0.0"] });
     const out = await cloneRegistrySource(
@@ -7665,7 +7665,8 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     expect(out.version).toBe("1.0.0");
     expect(readFileSync(out.archivePath).byteLength).toBeGreaterThan(0);
     expect(installedIds(s.db)).toEqual([]);
-    expect(await s.vault.listKeys()).toEqual([]);
+    // No Vault write is structural, not observed: `CloneSourceDeps` carries no Vault at all, and the
+    // source pin below forbids `vault` and `publisherKeyDecision` in the clone path.
   });
 
   test("behavioural: a clone of a blocked version is refused, and nothing is staged", async () => {
@@ -7700,14 +7701,35 @@ describe("I44 — registry-sourced extension code arrives only through the verif
   });
 
   test("source pin: a clone goes through install's shared verified chain and makes no key decision", async () => {
-    const clone = stripComments(
+    const forbidden =
+      /publisherKeyDecision|extractVerifiedPackage|installExtensionFromLocalDirectory|writePublisherKey|fetchRegistryBytes|fetchHashedPackage|resolveRegistryEntry|vault/i;
+    const file = stripComments(
       await read("packages/gateway/src/extensions/registry/clone-source.ts"),
     );
-    expect(clone).toMatch(/await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, \{/);
-    // Nothing installed, extracted, approved or trusted, and no second way to the registry bytes.
-    expect(clone).not.toMatch(
-      /publisherKeyDecision|extractVerifiedPackage|installExtensionFromLocalDirectory|writePublisherKey|fetchRegistryBytes|fetchHashedPackage|resolveRegistryEntry|vault/i,
+    // The clone function's own body, bounded at the next top-level declaration.
+    const fnAt = file.indexOf("export async function cloneRegistrySource(");
+    expect(fnAt).toBeGreaterThan(-1);
+    const fnEnd = file.indexOf("\n}\n", fnAt);
+    const fn = file.slice(fnAt, fnEnd === -1 ? undefined : fnEnd);
+    expect(fn).toMatch(/await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, \{/);
+    // The archive is written only after the chain returned.
+    expect(fn.indexOf("writeFileSync(")).toBeGreaterThan(
+      fn.indexOf("await fetchVerifiedPackageBytes("),
     );
+    // Nothing installed, extracted, approved or trusted, and no second way to the registry bytes —
+    // in the function, and anywhere in its module (so its deps type carries no Vault either).
+    expect(fn).not.toMatch(forbidden);
+    expect(file).not.toMatch(forbidden);
+    // The RPC door refreshes the trust feed (I48) BEFORE the clone, and hands it no Vault or gate.
+    const rpc = stripComments(await read("packages/gateway/src/ipc/registry-rpc.ts"));
+    const doorAt = rpc.indexOf("async function handleCloneSource(");
+    expect(doorAt).toBeGreaterThan(-1);
+    const door = rpc.slice(doorAt, rpc.indexOf("\n}\n", doorAt));
+    const freshAt = door.indexOf("await freshenTrustFeed(o.trustFeed, o.db, Date.now());");
+    const cloneAt = door.indexOf("await cloneRegistrySource(");
+    expect(freshAt).toBeGreaterThan(-1);
+    expect(cloneAt).toBeGreaterThan(freshAt);
+    expect(door).not.toMatch(/vault|ownerGate|publisherKeyDecision/i);
   });
 
   // ---- dependencies (extension dependencies, PR 2) -------------------------------------------
@@ -9122,17 +9144,20 @@ describe("I48 — revoked or taken-down extension code is never installed, updat
     );
     // The install and the author's clone share one verified chain (`fetchVerifiedPackageBytes`),
     // and the install reaches its manifest only through it.
-    const sharedAt = reg.indexOf("export async function fetchVerifiedPackageBytes(");
-    const installAt = reg.indexOf("export async function fetchVerifiedRegistryPackage(");
-    expect(sharedAt).toBeGreaterThan(-1);
-    const fetchFn = reg.slice(sharedAt, installAt > sharedAt ? installAt : undefined);
+    // Each body bounded at the next top-level export, so a later function cannot satisfy it.
+    const bodyOf = (code: string, header: string): string => {
+      const at = code.indexOf(header);
+      expect(at, header).toBeGreaterThan(-1);
+      const next = code.indexOf("\nexport ", at + 1);
+      return code.slice(at, next === -1 ? undefined : next);
+    };
+    const fetchFn = bodyOf(reg, "export async function fetchVerifiedPackageBytes(");
+    const installFn = bodyOf(reg, "export async function fetchVerifiedRegistryPackage(");
     expect(fetchFn.indexOf("assertNotBlocked(db, subjectAt(version));")).toBeGreaterThan(-1);
     expect(fetchFn.indexOf("assertNotBlocked(db, subjectAt(version));")).toBeLessThan(
       fetchFn.indexOf("await fetchRegistryManifest("),
     );
-    expect(reg.slice(installAt)).toMatch(
-      /await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, req\)/,
-    );
+    expect(installFn).toMatch(/await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, req\)/);
 
     const local = stripComments(
       await read("packages/gateway/src/extensions/install-from-local.ts"),

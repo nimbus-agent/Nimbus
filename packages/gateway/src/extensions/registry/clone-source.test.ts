@@ -84,7 +84,6 @@ function staged(): string[] {
 describe("cloneRegistrySource", () => {
   test("clones a version whose publisher key the Vault has never seen, installing and trusting nothing", async () => {
     await setup(["1.0.0"]);
-    const vault = new MockVault();
     const before = listExtensions(db);
     const out = await clone();
     expect(out).toMatchObject({
@@ -101,7 +100,8 @@ describe("cloneRegistrySource", () => {
     const bytes = readFileSync(out.archivePath);
     expect(createHash("sha256").update(bytes).digest("hex")).toBe(out.packageSha256);
     expect(listExtensions(db)).toEqual(before);
-    expect(await vault.listKeys()).toEqual([]);
+    // No Vault write is structural: `CloneSourceDeps` carries no Vault, and the I44 source pin in
+    // security-invariants.test.ts forbids `vault` and `publisherKeyDecision` in the clone function.
   });
 
   test("clones an id that is installed, leaving the row and its run grant unchanged", async () => {
@@ -188,6 +188,28 @@ describe("cloneRegistrySource", () => {
   });
 });
 
+describe("cloneRegistrySource picks versions as install does (I48)", () => {
+  test("an implicit clone skips a taken-down 1.1.0 for the clean 1.0.0", async () => {
+    await setup(["1.0.0", "1.1.0"]);
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 70);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const s = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: ID,
+        publisherId: "acme",
+        versions: ["1.1.0"],
+        reason: "malware",
+      },
+      seed,
+    );
+    recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    expect((await clone()).version).toBe("1.0.0");
+  });
+});
+
 describe("sweepCloneStaging", () => {
   test("removes an entry older than the max age and keeps a fresh one", () => {
     mkdirSync(stagingRoot, { recursive: true });
@@ -201,6 +223,16 @@ describe("sweepCloneStaging", () => {
     utimesSync(old, twoHoursAgo, twoHoursAgo);
     sweepCloneStaging(stagingRoot, now);
     expect(readdirSync(stagingRoot)).toEqual(["c-fresh"]);
+  });
+
+  test("an old entry that is not a real directory is left alone", () => {
+    mkdirSync(stagingRoot, { recursive: true });
+    const file = join(stagingRoot, "c-file");
+    writeFileSync(file, "x");
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
+    utimesSync(file, twoHoursAgo, twoHoursAgo);
+    sweepCloneStaging(stagingRoot, Date.now());
+    expect(readdirSync(stagingRoot)).toEqual(["c-file"]);
   });
 
   test("a missing staging root is not an error", () => {
