@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793800248497,
+  "lastUpdate": 1793803745864,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c6824c7a361af60a966d3aa9004e079ff3dbd914",
-          "message": "fix: `nimbus config set` on a fresh machine, and an unactionable brief footer (#1212)\n\nTwo defects found by **actually running Nimbus against a local Ollama**,\nneither reachable by any test in the suite. That was the point of the\nexercise — a fake gateway agrees with the code; a real one does not.\n\nSetup was a fully isolated install: `APPDATA` / `LOCALAPPDATA` /\n`USERPROFILE` / `HOME` all redirected to a temp root — **not** just\n`NIMBUS_CONFIG_DIR`, which moves the config dir only and would have left\nthe gateway writing to the real index. Confirmed afterwards that the\nreal config (untouched since 2026-08-10) and data dir were never\nwritten.\n\n## 1. `nimbus config set` fails on a fresh machine\n\n`writeUtf8FileAtomicReplace` calls `mkdtempSync(join(dir, …))` without\nensuring `dir` exists. The install guide runs\n\n```bash\nnimbus config set llm.local_model llama3.2\n```\n\n**before** \"Start the Gateway\" — which is the thing that would otherwise\ncreate the directory. So step one of setup on a new machine dies with:\n\n```\nENOENT: no such file or directory, mkdtemp '<configDir>/.nimbus.toml.swap-XXXXXX'\n```\n\nAn error naming a swap file the user never asked for, with no hint that\nthe real problem is a missing directory.\n\nFix is one `mkdirSync(dir, { recursive: true })`. **Red-proved**:\nreverting it fails the new test, and a control test confirms an existing\ndirectory and its other files are left alone (the mkdir is recursive and\nidempotent).\n\n## 2. The deterministic-brief footer told users to fix something that\nchanges nothing\n\nEvery built-in brief ended with:\n\n> _Rendered deterministically — configure an LLM for prose synthesis._\n\nConfiguring one does nothing. Both production callers of\n`dispatchAgentsRpc` omit `llm`:\n\n- `ipc/server/dispatchers.ts`\n- `agent-runs/agent-http-invoke.ts` — explicitly, in a comment:\n*\"omitting `llm`, which that path also omits, so an HTTP brief and a\nsocket brief are the same\"*\n\nSo `AgentsRpcContext.llm` is **always** undefined in production.\n`briefs/brief-llm-adapter.ts` states the same from the other side,\ndescribing itself as *\"the first place an LLM is wired into a built-in\ngateway agent surface (`AgentsRpcContext.llm` has always been left\nundefined in production, so every other brief is deterministic\nMarkdown)\"*.\n\n**Confirmed live, not by reading**: with `local_model = \"llama3.2\"`,\n`prefer_local = true`, and Ollama running — a configuration `nimbus ask`\nused successfully in the same session — `nimbus why` still printed the\nold footer. The advice sent a user who had done everything right to go\nand do it again.\n\nThe footer now states the mode instead of prescribing a fix:\n\n> _Rendered deterministically — built-in briefs do not use an LLM,\nregardless of `[llm]` settings._\n\nThe empty/throwing-LLM fallback branches deliberately still do **not**\nget this footer: there an LLM genuinely was supplied and just produced\nnothing usable, so calling the render LLM-free would be the inverse\nerror.\n\n## What the run confirmed working\n\nWorth recording, because it is the local-first claim end to end with\nzero cloud calls:\n\n- `nimbus init` inside a git repo appended a `[[filesystem.roots]]`\nblock, **detected the running gateway** and said to restart rather than\nsilently indexing nothing, then indexed on the second run — and\nsuggested a real command derived from the actual code: `nimbus why\nsrc/resize.ts:1 # resizeToThumbnail`.\n- `nimbus search \"thumbnail\"` returned the indexed `code_symbol`.\n- `nimbus ask` routed to Ollama and answered **from indexed context**,\nciting the repo's own commit message, in 24.7 s on a 3.2B model.\n- `nimbus why` produced real git-blame attribution and listed its gaps\nhonestly.\n- `nimbus egress` reported **0 outbound events** for the entire session,\nwith an accurate scope label and its two boot markers — the I29 zero-row\nclaim observed rather than asserted.\n\n## Verification\n\n- `bun test packages/cli/src/lib/nimbus-toml-config.test.ts\npackages/gateway/src/agents/_lib` — **201 pass, 0 fail**\n- `bun test packages/gateway/src/agents` — 436 pass, 0 fail\n- `bun run preflight:fast` — **29/29 gates PASSED**\n- New footer verified **live** against a restarted gateway, not just in\ntests\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T15:45:21Z",
-          "tree_id": "6e481b44e0d067e102a1246d01c476286f2ec1df",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c6824c7a361af60a966d3aa9004e079ff3dbd914"
-        },
-        "date": 1786809345162,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 299.14926000000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 302.22763205000666,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 223.33027834999922,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0ff2f1ad6347ef924d87d58b08e4d441ba3b8e1c",
+          "message": "docs: an Authors section, and Phase 9.5 and S3 complete (#1882)\n\nPhase 9.5 project 7, author onboarding, PR 4 of 4, and the last PR of\nPhase 9.5. It adds an **Authors** section to the docs site, and it marks\nproject 7, Phase 9.5 and Spine S3 complete.\n\n## The Authors section (owner ruling R4)\n\nSeven Starlight pages under `packages/docs/src/content/docs/authors/`,\nin a new sidebar group between User Guide and Reference:\n- Overview\n- Start: `scaffold extension`, `--from-openapi`, `extension clone`\n- Build and test\n- Evals\n- Sign and publish\n- Funding and license\n- Verified publishers\n\nEach page is a short guide that ends with absolute links into\n`docs/cli-reference.md`, which stays the reference. Each page also\nstates its bounds:\n- clone copies built `dist/`, not source;\n- the OpenAPI fetch happens in the CLI, outside the egress ledger;\n- no live registry publishes scores yet.\n\nThe verified-publishers page describes the trust-feed mechanism as\ndocumented: a `publishers/<id>.json` file, written with `nimbus trust\nmaintain verify-publisher`, signed by the `trust-sign` workflow. It\ninvents no criteria, fees or promises. The grant program, a registry web\npage and a desktop tile are not claimed.\n\nThe author walkthrough links the section and corrects a stale line:\nmodel access shipped on 2026-10-17 as `nimbus extension approve <id>\n--model`.\n\n## The close-out\n\n- **Project 7:** ✅ 2026-11-04 in 4 PRs:\n  - #1878: funding, license and `extension sponsor`;\n  - #1880: `extension clone`;\n  - #1881: the OpenAPI scaffold;\n  - this PR.\n- **Phase 9.5:** ✅, all seven projects.\n- **Spine S3 (Open Surface):** ✅, 2026-10-11 to 2026-11-04. Its record\nis moved to Shipped with what it delivered, invariants I28 and I43 to\nI52, and what stays open.\n- **Next:** **S4 — Autonomous Agent** is named next and is not started.\nOpening it is the owner's call.\n- **Unticked Phase 9.5 rows, every one reconciled:**\n- **Ticked, with what shipped:** Bring your own registry, rewritten to\n`nimbus registry add`; Starter packs; `extension search`/`info`;\nprovenance at its stated scope; and the Extension Author Hub, now the\n`/authors/` section.\n- **Re-homed to Carried into S4, with deferral reasons kept:** the\nMarketplace page and desktop tile, ratings, install counts, and offline\nprovenance checking.\n  - **Moved to a new Owner's open items list:**\n- the owner's non-buildable items: `registry.nimbus-agent.dev` hosting,\nVerified Publisher pricing and KYC, the grant program, the 30-extension\n/ 5-publisher bar, and the liveness setup;\n    - the acceptance criteria that are still open.\n- **Score-drop acceptance criterion:** marked met 2026-11-01.\n`registry-acceptance.e2e.test.ts` asserts its exact text.\n- **Other files updated:** the status in `docs/roadmap.md` (Contents,\nStatus Overview, the spine table, Current build slot, `## Active`), the\nCHANGELOG, the CLAUDE.md and GEMINI.md status paragraph (identical in\nboth), the `nimbus-architecture` skill, `docs/README.md` and\n`docs/architecture.md`.\n\n## Verification\n\n- **Docs site:** the build passes, its links validator reports \"All\ninternal links are valid\", and 62 pages are built.\n- **Gates:** `audit:status-drift`, `audit:doc-refs` (1870 refs),\n`lint:markdown` (0 issues), `preflight:fast` and `typecheck:tests` (0\nnew) all pass. The CLAUDE.md and GEMINI.md status paragraphs are\nidentical.\n- **Reviews:**\n- Antigravity reviewed the plan and applied 5 of 6 findings. The sixth,\nthat I50 was not part of S3, was rejected: I50 shipped on 2026-10-31.\n- The Authors pages had a review and one fix round. It corrected the\nreinstall advice, the service-id rule, the verified-publisher mechanism\nand an example registry shown without a label.\n- The final review checked every tick against the code and the\nCHANGELOG, plus every anchor. Its one Important finding, a line still\ncalling S3 active, is fixed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added a new extension-authoring guide collection covering how to\nstart, build, test, evaluate, sign, publish, and maintain extensions.\n* Added guidance on funding and licensing details, verified publishers,\napproval, and sandboxing.\n* Updated the author walkthrough with current approval and local testing\ninstructions.\n* Updated roadmap and delivery records to reflect completion of Spine S3\nand identify the next stage as not yet started.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T14:42:45Z",
+          "tree_id": "56dc2e6daaffb77fa867dc4ba0260cca0dfb6163",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0ff2f1ad6347ef924d87d58b08e4d441ba3b8e1c"
+        },
+        "date": 1793803742046,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 181.3358768000002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 184.22094364999938,
             "unit": "ms"
           }
         ]
