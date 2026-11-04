@@ -95,7 +95,11 @@ interface LicenseView {
 interface CloneResult {
   license: LicenseView;
   repository: string | null;
+  /** `--publisher` only: the original publisher's `funding` links were dropped from the copy. */
+  fundingRemoved: boolean;
 }
+
+const FUNDING_REMOVED = "Funding links were removed; add your own before you publish.";
 
 /** A refusal with its exit code; its message is printed as is. */
 class CloneRefusal extends Error {
@@ -347,11 +351,18 @@ function copyFiles(files: readonly string[], from: string, into: string): void {
 
 function rewriteManifest(manifest: Record<string, unknown>, plan: Plan): string {
   const { signature: _signature, publisher: _publisher, ...rest } = manifest;
-  const out: Record<string, unknown> =
-    plan.publisher === undefined || plan.newId === undefined
-      ? rest
-      : { ...rest, id: plan.newId, publisher: { id: plan.publisher } };
+  if (plan.publisher === undefined || plan.newId === undefined) {
+    return `${JSON.stringify(rest, null, 2)}\n`;
+  }
+  // The original publisher's funding links never travel into a copy someone else will publish.
+  const { funding: _funding, ...own } = rest;
+  const out = { ...own, id: plan.newId, publisher: { id: plan.publisher } };
   return `${JSON.stringify(out, null, 2)}\n`;
+}
+
+/** Whether the copy drops the manifest's `funding`: only a `--publisher` clone, which re-publishes. */
+function dropsFunding(manifest: Record<string, unknown>, plan: Plan): boolean {
+  return plan.publisher !== undefined && plan.newId !== undefined && "funding" in manifest;
 }
 
 function verifiedText(v: CloneSource["verifiedPublisher"]): string {
@@ -502,6 +513,7 @@ function humanLines(plan: Plan, src: CloneSource, r: CloneResult): string[] {
       ? "This copy is built JavaScript (dist/); the package names no source repository."
       : `Source: https://github.com/${clean(r.repository)}`,
   );
+  if (r.fundingRemoved) lines.push(FUNDING_REMOVED);
   return [...lines, ...nextSteps(plan, src)];
 }
 
@@ -522,6 +534,7 @@ function jsonReport(plan: Plan, src: CloneSource, r: CloneResult): string {
       licenseWarning: cleanOrNull(r.license.warning),
       repository: cleanOrNull(r.repository),
       newId: plan.newId ?? null,
+      fundingRemoved: r.fundingRemoved,
     },
     null,
     2,
@@ -543,6 +556,7 @@ async function clone(args: readonly string[], deps: CloneDeps): Promise<number> 
   const result: CloneResult = {
     license: licenseView(inspected.manifest),
     repository: readManifestRepository(inspected.manifest) ?? null,
+    fundingRemoved: dropsFunding(inspected.manifest, plan),
   };
   if (plan.json) deps.log(jsonReport(plan, src, result));
   else deps.log(`${humanLines(plan, src, result).join("\n")}\n`);

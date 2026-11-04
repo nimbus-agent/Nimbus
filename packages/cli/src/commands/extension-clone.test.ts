@@ -447,7 +447,51 @@ describe("nimbus extension clone", () => {
       licenseWarning: "LicenseRef-acme is not an OSI-approved licence id",
       repository: "acme/tool",
       newId: "bob/tool",
+      fundingRemoved: false,
     });
+  });
+
+  test("--publisher removes the original publisher's funding and says so", async () => {
+    const manifest = baseManifest("acme/tool");
+    manifest["funding"] = [{ url: "https://github.com/sponsors/acme" }];
+    const s = await stage(manifest);
+    const h = harness({ reply: reply(s) });
+    expect(await runExtensionClone(["acme/tool", "--publisher", "bob"], h.deps)).toBe(0);
+    const m = readJson(join(cwd, "tool", "nimbus.extension.json"));
+    expect(m["funding"]).toBeUndefined();
+    const out = h.out();
+    expect(out).toContain(
+      "Source: https://github.com/acme/tool\nFunding links were removed; add your own before you publish.\n",
+    );
+  });
+
+  test("--publisher --json reports fundingRemoved true", async () => {
+    const manifest = baseManifest("acme/tool");
+    manifest["funding"] = [{ url: "https://github.com/sponsors/acme" }];
+    const s = await stage(manifest);
+    const h = harness({ reply: reply(s) });
+    expect(await runExtensionClone(["acme/tool", "--json", "--publisher", "bob"], h.deps)).toBe(0);
+    expect((JSON.parse(h.out()) as Record<string, unknown>)["fundingRemoved"]).toBe(true);
+    expect(readJson(join(cwd, "tool", "nimbus.extension.json"))["funding"]).toBeUndefined();
+  });
+
+  test("without --publisher the funding is kept and nothing is said", async () => {
+    const manifest = baseManifest("acme/tool");
+    manifest["funding"] = [{ url: "https://github.com/sponsors/acme" }];
+    const s = await stage(manifest);
+    const h = harness({ reply: reply(s) });
+    expect(await runExtensionClone(["acme/tool", "--json"], h.deps)).toBe(0);
+    expect((JSON.parse(h.out()) as Record<string, unknown>)["fundingRemoved"]).toBe(false);
+    expect(readJson(join(cwd, "tool", "nimbus.extension.json"))["funding"]).toEqual([
+      { url: "https://github.com/sponsors/acme" },
+    ]);
+  });
+
+  test("a --publisher clone with no funding says nothing about it", async () => {
+    const s = await stage(baseManifest("acme/tool"));
+    const h = harness({ reply: reply(s) });
+    expect(await runExtensionClone(["acme/tool", "--publisher", "bob"], h.deps)).toBe(0);
+    expect(h.out()).not.toContain("Funding links");
   });
 
   test("--json with no publisher, licence or repository gives nulls", async () => {
