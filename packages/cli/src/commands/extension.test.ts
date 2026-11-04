@@ -111,6 +111,9 @@ describe("stripFlags", () => {
       stripFlags(["install", "--channel", "beta", "--to", "2.0.0", "--remote", "a.b"]),
     ).toEqual(["install", "a.b"]);
   });
+  test("removes clone's --into and --publisher value pairs", () => {
+    expect(stripFlags(["acme/tool", "--into", "/d", "--publisher", "bob"])).toEqual(["acme/tool"]);
+  });
   test("preserves non-flag positional args", () => {
     expect(stripFlags(["install", "/some/path"])).toEqual(["install", "/some/path"]);
   });
@@ -3507,6 +3510,13 @@ describe("extension update/downgrade owner prompt", () => {
       INTERACTIVE_RPC_TIMEOUT_MS,
     );
     expect(rpcTimeoutForExtensionSub("sponsor", ["a/b"])).toBeUndefined();
+  });
+
+  test("clone gets the interactive budget: it fetches and verifies a registry package", () => {
+    expect(rpcTimeoutForExtensionSub("clone", ["a/b"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+    expect(rpcTimeoutForExtensionSub("clone", ["a/b", "--registry", "main"])).toBe(
+      INTERACTIVE_RPC_TIMEOUT_MS,
+    );
   });
 
   test("read-only subcommands keep the default timeout", () => {
