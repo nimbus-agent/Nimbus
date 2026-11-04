@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
+import { CONNECTOR_WRITE_ROWS } from "../../packages/gateway/src/connectors/connector-writes/index.ts";
 import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
 import { auditOutputPath, iterateSourceFiles, stripComments, stripStringLiterals } from "./lib.ts";
 
@@ -653,25 +654,35 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
   return out;
 }
 
-// D20 (I26): connector write tool ids (warehouse/BI ∪ GitOps/ML) may be NAMED only in the SSoT
-// modules, the connector servers, and the gateway transport/dispatch sites. Any other reference could
-// route a write outside the local executor I2 gate. Also requires answerFederatedInvoke
-// (federation/invoke-gate.ts) to consult the write-id predicate (isWriteForbiddenToolId) so a
-// federated peer can never trigger a connector write, and the code-execution predicate
-// (isCodeExecutionForbiddenToolId) so it can never run caller-directed code on the anchor either.
-// The nine connector definition sites that used to need an exemption here
-// (`packages/mcp-connectors/{snowflake,tableau,looker,powerbi,monte-carlo,bigeye,argocd,flux,mlflow}/src/server.ts`)
-// left this repo in the v3.0.0 extraction to nimbus-mcp-servers, so only the gateway-side
-// registry, transport and dispatch sites remain to exempt.
+// D20 (I26): every connector write tool id in the row table (connectors/connector-writes) may be
+// NAMED only in five gateway sites: the row table itself (and the manifest generated from the
+// installed package), the write transport, the write dispatch, the act door's routing table
+// (proposable-actions.ts) and the code-execution id classification. Any other reference could route
+// a write outside the local executor I2 gate. The id set is DERIVED from CONNECTOR_WRITE_ROWS, so a
+// new row is confined the moment it lands; there is no hand-spelled list to forget. A trailing
+// slash in an allowed entry makes it a directory prefix (the shape D17 uses). Also requires
+// answerFederatedInvoke (federation/invoke-gate.ts) to consult the write-id predicate
+// (isWriteForbiddenToolId) so a federated peer can never trigger a connector write, and the
+// code-execution predicate (isCodeExecutionForbiddenToolId) so it can never run caller-directed
+// code on the anchor either. The gate-confined ids (D17/D19) are not rows and stay confined there.
 const CONNECTOR_WRITE_ALLOWED = [
-  "packages/gateway/src/connectors/connector-writes/warehouse-bi.ts",
-  "packages/gateway/src/connectors/connector-writes/gitops-ml.ts",
-  "packages/gateway/src/connectors/connector-writes/manifest.generated.ts",
+  "packages/gateway/src/connectors/connector-writes/",
   "packages/gateway/src/connectors/connector-write-transport.ts",
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
+  "packages/gateway/src/connectors/proposable-actions.ts",
+  "packages/gateway/src/connectors/connector-code-execution-tool-ids.ts",
 ];
-const CONNECTOR_WRITE_RE =
-  /\b(?:snowflake_tag_set|snowflake_comment_set|tableau_datasource_refresh|tableau_workbook_refresh|looker_datagroup_trigger|looker_schedule_run_once|powerbi_dataset_refresh|powerbi_dataflow_refresh|montecarlo_incident_acknowledge|montecarlo_incident_resolve|bigeye_issue_acknowledge|bigeye_issue_resolve|argocd_app_sync|argocd_app_rollback|flux_kustomization_reconcile|flux_helmrelease_reconcile|mlflow_model_promote|mlflow_model_transition_stage)\b/;
+const WRITE_ID_SHAPE = /^[a-z0-9_]+$/;
+/** Build the D20 regex from the row tool ids; a malformed id throws rather than widening it. */
+function buildConnectorWriteRe(ids: readonly string[]): RegExp {
+  for (const id of ids) {
+    if (!WRITE_ID_SHAPE.test(id)) {
+      throw new Error(`D20: connector write row has a malformed tool id: ${JSON.stringify(id)}`);
+    }
+  }
+  return new RegExp(`\\b(?:${ids.join("|")})\\b`);
+}
+const CONNECTOR_WRITE_RE = buildConnectorWriteRe(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
 
 const INVOKE_GATE_FILE = "packages/gateway/src/federation/invoke-gate.ts";
 /** The predicates `answerFederatedInvoke` must consult, and the rule each one's absence breaks. */
@@ -705,7 +716,13 @@ export function checkConnectorWriteConfinement(files: readonly FileEntry[]): Vio
       out.push(...invokeGatePredicateViolations(f));
       continue;
     }
-    if (CONNECTOR_WRITE_ALLOWED.some((p) => f.relPath === p)) continue;
+    if (
+      CONNECTOR_WRITE_ALLOWED.some(
+        (p) => f.relPath === p || (p.endsWith("/") && f.relPath.startsWith(p)),
+      )
+    ) {
+      continue;
+    }
     const strippedLines = stripComments(f.contents).split("\n");
     const originalLines = f.contents.split("\n");
     for (let i = 0; i < strippedLines.length; i++) {

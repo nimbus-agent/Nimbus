@@ -557,7 +557,57 @@ dispatch("notion_kb_append")`,
   });
 });
 
-describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", () => {
+describe("D20 — connector write-id confinement (every row in connectors/connector-writes)", () => {
+  test("a migrated write id outside the allowed sites is a D20 violation", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
+  test("proposable-actions.ts may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/proposable-actions.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("connector-code-execution-tool-ids.ts may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/connector-code-execution-tool-ids.ts",
+        contents: `const id = "argocd_app_sync";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("a file under connector-writes/ may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/connector-writes/anything.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("the deleted warehouse-write-tools.ts path is now flagged", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
+        contents: `const id = "tableau_datasource_refresh";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
   test("flags a write tool id referenced outside the allowed sites", () => {
     const v = checkConnectorWriteConfinement([
       {
