@@ -40,6 +40,16 @@ export function withPreview(
   r: ConnectorWriteRow,
   preview: ConnectorWritePreviewTemplate,
 ): ConnectorWriteRow {
+  const secrets = new Set(preview.fields.filter((f) => f.kind === "secret").map((f) => f.key));
+  for (const text of [preview.target, preview.summary]) {
+    for (const m of text.matchAll(/\{([A-Za-z0-9_]+)\}/g)) {
+      if (m[1] !== undefined && secrets.has(m[1])) {
+        throw new Error(
+          `connector write preview: placeholder {${m[1]}} names a secret field (row ${r.toolId})`,
+        );
+      }
+    }
+  }
   return Object.freeze({ ...r, preview });
 }
 
