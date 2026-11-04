@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793819461096,
+  "lastUpdate": 1793826410502,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "68bfd47d21811877ef469f4aee66bb8de8cfd41d",
-          "message": "refactor(cli): collapse eleven copies of the gateway-connect lifecycle into one (#1215)\n\nEvery `nimbus` command that talks to the Gateway re-derived the same\nfive steps: read gateway state, throw the not-running message, construct\na client, connect, `try/finally` disconnect.\n\n**Eleven local helpers did it** — `withIpc` in `audit`, `clip`,\n`people`, `share`, `vault`, `watch`, `connector`, `workflow`, `prove`,\nplus `withConsentIpc` and `data`'s `withClient` — alongside the shared\n`withGatewayIpc` that already existed. **Six were byte-identical to\nit.** The rest differed only in which of `onConnect` /\n`requestTimeoutMs` they exposed, so both are now options on the shared\nhelper.\n\n## Why this mattered beyond line count\n\nEach copy was its own opportunity to get the lifecycle subtly wrong, and\ntwo of them did.\n\n`connector reindex --depth full` and `nimbus workflow run` both shipped\nwith **no `consent.request` handler**, so a HITL gate hung until the\nrequest timeout. I fixed that a day ago — in two places, because there\nwere two places. There is one now.\n\n## Behaviour changes, both improvements\n\n- The six identical helpers threw a bare `Error` where the shared one\nthrows **`GatewayNotRunningError`**. Strict upgrade: the message is\nunchanged, so the tests asserting on it still pass, and callers gain an\n`instanceof` to branch on rather than a string to match.\n- `onConnect` runs after `connect()` and before `fn` — the seam for\nregistering notification handlers.\n\n## Tests\n\n`onConnect` is tested for **ordering**, not merely for running:\n\n```\n[\"connect\", \"onConnect\", \"onNotification:consent.request\", \"call\", \"disconnect\"]\n```\n\nThat ordering is the whole point — a handler registered after the first\ncall is issued can miss a notification arriving in the same socket chunk\nas that call's response, which is precisely how those two commands came\nto hang. A third test pins that a throwing `onConnect` doesn't strand\nthe connection.\n\n**Two guards keep it consolidated**, both red-proved by reintroducing\nthe duplication into `watch.ts` and confirming they fail *and name the\nfile*:\n\n1. a local helper must delegate to `withGatewayIpc`\n2. a file declaring one must not also contain the raw `\"Gateway is not\nrunning\"` throw\n\nThin wrappers are still allowed — `connector.ts` keeps one because\neleven call sites use its positional `(fn, onConnect, timeout)` shape.\nWhat's forbidden is a wrapper that does the work itself.\n\n## Verification\n\n- `bun run preflight:fast` — **29/29 gates PASSED**\n- `bun test packages/cli/src` — **2291 pass** (was 2286), **same 3\npre-existing failures**\n\nOn those 3: `nimbus tui fallback behavior` fails only in the combined\nrun and passes in isolation — I confirmed it fails identically on clean\n`main` before attributing it. It's the `mock.module` contamination\nCLAUDE.md documents for `bun test packages/cli/src`. Verified before\n*and* after, so this refactor changed no test outcome.\n\nNet **−97 lines** of source.\n\n## One incidental fix\n\nFour `useImportType` lint warnings appeared because removing the local\nhelpers made `IPCClient` type-only in those files. Fixed. Not touched:\n`biome.json`'s `$schema` pin (2.5.6 vs the locked CLI 2.5.7) — it's\ninfo-level, pre-dates this change, and landed with #1049.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T17:27:04Z",
-          "tree_id": "c8d22eb3caf61fd59ccecd56e487113a92aa774d",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/68bfd47d21811877ef469f4aee66bb8de8cfd41d"
-        },
-        "date": 1786815521131,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 334.17085869999573,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 333.5374039500064,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 191.03040645000146,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "535dc80202a8b3705477fd61cf06c9e276f59404",
+          "message": "feat(gateway): a typed preview in the approval prompt for connector writes (#1884)\n\nThis is Phase 9.7 Wave 1, A2: a typed preview in the consent prompt for\nconnector writes. When a connector write has a preview template, the\nowner is no longer shown a `Details: {json}` line. Instead they see the\nservice, the target, a one-line summary and every input field. The\npreview is built from the same normalised input that is dispatched\n(`extractToolInput`), and the CLI and the desktop show the same thing.\nThis PR adds the first templates, for the 18 `write`-transport rows:\nwarehouse, BI, GitOps and ML.\n\n## What the owner sees\n\n- **The service, target, summary and labelled fields.** An unset\noptional field shows the connector's real default. Two examples: if\nSnowflake `value` is omitted, the tag is removed. If MLflow promote\n`archiveExisting` is omitted, it defaults to `true`.\n- **`Other fields`**, which lists every input key the template does not\nname. The preview never shows less than will be sent, and nothing is\ntruncated: the desktop folds a value over 2,000 characters behind \"Show\nfull\".\n- **Visible escapes for unsafe characters.** These characters are\nreplaced with a visible `\\u{XXXX}` escape, so the owner sees exactly\nwhat will be sent:\n  - ESC and the other C0 controls;\n  - DEL and the C1 controls;\n  - U+2028 and U+2029;\n  - bidi controls;\n  - zero-width and format characters;\n  - the tag block.\n\nIn the CLI, a newline or tab is shown as `\\n` or `\\t`, so a value cannot\nforge a prompt line. String values are shown JSON-quoted, so a value\ncannot pass itself off as the unset text.\n- **No redaction except template `secret` fields.** This follows I42's\nreasoning: a key-name regex would let an injected input hide content\nunder a key like `issueKey`. A template cannot put a `secret` field into\nits target or summary; `withPreview` throws if it tries.\n\n## The display-only boundary\n\n- **Unchanged:** HITL is still decided by `action.type` alone (I3).\nAudit rows stay redacted (`redactAuditPayload`). Egress, delegation and\ndispatch are untouched.\n- **Byte-for-byte prompts:** a write with no template keeps today's\nprompt exactly, and the tests compare it against hard-coded strings.\n- **No preview for a different write:** if `mcpToolId` names a row whose\naction type is not `action.type`, there is no typed preview.\n- **A payload cannot pose as a preview.** Any other display record whose\ntop-level `kind` is `\"connector-write\"`, for example a verbatim user-MCP\npayload, is wrapped under `payload`. The desktop also shows the typed\nview only when `details.actionType` equals the action.\n\n## A stated exception (review finding)\n\nThe executor's consent request is unicast to the asking client\n(`ipc/consent.ts`). The ChatOps local-fallback path is different. It\nbroadcasts the prompt text to the owner's local IPC sessions\n(`federation.approvalRequest`), so on that path a templated write's\npreview reaches every local session.\n\nThis is accepted and documented, for three reasons:\n- the sessions belong to the same user, on a user-only socket, and LAN\nclients do not receive it;\n- that prompt already carried argument values before this PR;\n- a ChatOps write's input arrived from the chat channel.\n\n`chatops-boot.test.ts` pins that the fallback receives the executor's\nprompt verbatim.\n\n## Rulings\n\n- P1: `destination` names the service only. The credential kind arrives\nwith the model door (A5).\n- P2: markdown fields render as plain text in both clients.\n- P3: there is no `diff` kind yet.\n- P4: templates live on the row (`withPreview`).\n- P5: the first templates are on the 18 write rows only. A tripwire test\nfails if a proposable row gets a template, because the MCP sink replaces\nthe executor's prompt.\n- P6: `extractToolInput` moves to `engine/tool-input.ts`, and\n`connectors/registry.ts` re-exports it.\n- P7: the `whenUnset` defaults come from the upstream handlers.\n- P8: a key named by the template is never repeated under `Other\nfields`.\n- P9: the desktop heading is fixed text.\n- During the build, the sanitiser was changed to escape characters\nrather than delete them, and its set was widened to the zero-width,\nformat and tag characters.\n\n## Tests\n\n- `connector-writes/preview.test.ts` covers:\n  - interpolation, `(not set)` and `whenUnset`;\n  - Other fields, routing keys and sensitive-looking keys;\n  - secret masking and the placeholder refusal;\n  - line forging through the target, the summary and keys;\n  - escapes and no truncation;\n  - prototype keys;\n  - a mismatched or namespaced `mcpToolId`;\n  - non-object input, and a real row.\n- `rows.test.ts` checks that every write row has a template, plus the\nproposable-row tripwire.\n- `manifest.sync.test.ts` checks every template key against the tool's\nregistering call, with a negative control.\n- `engine/executor-connector-write-preview.test.ts` covers:\n  - the prompt and the details;\n  - that the audit row stays redacted;\n- that an untemplated write and a mismatched id each give today's prompt\nbyte for byte;\n  - that a denial dispatches nothing;\n  - that a payload cannot pose as a preview.\n- `engine/tool-input.test.ts` and the `chatops-boot.test.ts` fallback\npin.\n- Desktop: `ConnectorWritePreview.test.tsx` and\n`HitlPopupPage.test.tsx`. They cover:\n  - text-only rendering, where an `<img>` stays text;\n  - markdown shown as plain text;\n  - malformed details;\n  - the two-part gate;\n  - collapse by code point;\n  - the empty key;\n  - the fixed heading.\n\nLocal results:\n- `bun run preflight:fast` and `bun run typecheck:tests` pass.\n- The scoped gateway suites give 10,647 pass and 0 fail before the final\nfix round. After it, connectors, engine and ChatOps give 5,265 pass.\n- The desktop HITL suite gives 87 of 87.\n- `bun test packages/cli --parallel` shows only the 11 TUI Yoga failures\nthat were already there.\n\nDocs updated: `CLAUDE.md` and `GEMINI.md` (S4 is active; the owner's S4\nexit condition), `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md`, `docs/SECURITY-INVARIANTS.md` and `docs/CHANGELOG.md`.\n`docs/cli-reference.md` needs no change, because there is no new command\nor flag.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Approval prompts for supported connector writes now show a structured\npreview of the target, summary, and relevant inputs instead of raw JSON.\nSensitive values are masked, and long values can be expanded.\n* Writes without a preview template retain their existing prompt\ndetails.\n\n* **Documentation**\n* Updated project status and roadmap to reflect the active delivery\nphase and shipped preview support.\n  * Documented preview behavior and related security safeguards.\n\n* **Tests**\n* Added coverage for preview rendering, input handling, masking, and\nconsent behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T20:51:36Z",
+          "tree_id": "52eba39d994a2b08cc791fce5f4cb4bdb86f187a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/535dc80202a8b3705477fd61cf06c9e276f59404"
+        },
+        "date": 1793826405895,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 306.0508058500021,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 308.13209079999285,
             "unit": "ms"
           }
         ]
