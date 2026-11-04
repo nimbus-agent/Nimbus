@@ -121,8 +121,8 @@ describe("connector writes disable", () => {
 describe("connector writes status", () => {
   const reply = {
     services: [
-      { service: "github", enabled: true, maxWave: 3, enabledAt: 1, writes: 9 },
-      { service: "kubernetes", enabled: false, writes: 4 },
+      { service: "github", enabled: true, maxWave: 3, enabledAt: 1, writes: 9, offerable: 0 },
+      { service: "kubernetes", enabled: false, writes: 4, offerable: 0 },
     ],
     policyAllows: true,
   };
@@ -131,7 +131,7 @@ describe("connector writes status", () => {
     const h = harness(reply);
     await runConnectorWrites(["status"], h.deps);
     expect(h.logs).toEqual([
-      "github      enabled  wave 3  9 writes",
+      "github      enabled  wave 3  9 writes, 0 offerable now",
       "kubernetes  off",
       "Policy: allows",
     ]);

@@ -22,6 +22,11 @@ export interface ConnectorWriteRow {
   readonly registeredAs?: "read";
   /** How the owner's consent prompt shows this write's input; absent = today's raw prompt. */
   readonly preview?: ConnectorWritePreviewTemplate;
+  /**
+   * Reads the target's current state for the typed preview. No row has one yet (Waves 2-4 add them);
+   * it exists so {@link isModelOfferableRow} type-checks today.
+   */
+  readonly before?: unknown;
 }
 
 export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";

@@ -1,4 +1,6 @@
 import { isConnectorCodeExecutionToolId } from "../connectors/connector-code-execution-tool-ids.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { matchesBareOrNamespacedToolId } from "../connectors/namespaced-tool-id.ts";
 import { isOwnerCodeServerToolKey } from "../connectors/owner-code-server.ts";
 
 /**
@@ -56,9 +58,36 @@ const READ_VERBS: ReadonlySet<string> = new Set([
   "metadata", // gdrive_file_metadata
 ]);
 
-/** Classify a tool id as read-only by its trailing `_`-segment verb. Pure; fail-safe on bad input. */
-export function isReadOnlyToolId(toolId: string): boolean {
+/**
+ * Every connector write tool id, from the row table (`connector-writes/index.ts`, never
+ * `connector-write-registry.ts`, which pulls in the ChatOps and tribal gates). The gate-confined
+ * ids are left out of the table on purpose; they are refused elsewhere.
+ */
+export const CONNECTOR_WRITE_TOOL_IDS: ReadonlySet<string> = new Set(
+  CONNECTOR_WRITE_ROWS.map((r) => r.toolId),
+);
+
+function longestId(ids: ReadonlySet<string>): number {
+  let n = 0;
+  for (const id of ids) n = Math.max(n, id.length);
+  return n;
+}
+
+/**
+ * Classify a tool id as read-only by its trailing `_`-segment verb. Pure; fail-safe on bad input.
+ *
+ * A connector write id (bare or `<server>_<tool>`) is never read-only, whatever verb it ends in: a
+ * write whose name ends in a read verb must not be replayable from a share file. `writeIds` is a
+ * seam for tests that need a write id ending in a read verb.
+ */
+export function isReadOnlyToolId(
+  toolId: string,
+  writeIds: ReadonlySet<string> = CONNECTOR_WRITE_TOOL_IDS,
+): boolean {
   if (typeof toolId !== "string") return false;
+  if (matchesBareOrNamespacedToolId(toolId, (id) => writeIds.has(id), longestId(writeIds))) {
+    return false;
+  }
   // A code-execution tool id is never replayable, whatever read verb its name happens to end in.
   if (isConnectorCodeExecutionToolId(toolId)) return false;
   // I42: a user-MCP tool is never replayable — every call to one needs the local owner.

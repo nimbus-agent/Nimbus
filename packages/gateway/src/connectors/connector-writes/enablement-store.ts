@@ -7,6 +7,7 @@ import type { Database } from "bun:sqlite";
 import { dbRun } from "../../db/write.ts";
 import { serviceOf } from "../../engine/service-of.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { isModelOfferableRow } from "./model-offerable.ts";
 import type { ConnectorWriteRow, ConnectorWriteWave } from "./types.ts";
 
 export interface ModelWriteEnablement {
@@ -79,4 +80,12 @@ export function writesEnabledBy(
   return CONNECTOR_WRITE_ROWS.filter(
     (r) => serviceOf(r.actionType) === service && r.wave <= maxWave,
   );
+}
+
+/** The subset of {@link writesEnabledBy} the model can actually be offered now (M1). */
+export function offerableWritesEnabledBy(
+  service: string,
+  maxWave: ConnectorWriteWave,
+): readonly ConnectorWriteRow[] {
+  return writesEnabledBy(service, maxWave).filter(isModelOfferableRow);
 }

@@ -87,7 +87,9 @@ describe("connector.writesEnable", () => {
     const p = prompts[0] ?? "";
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 3");
-    for (const r of expected) expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}`);
+    for (const r of expected) {
+      expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  (not offered yet)`);
+    }
     expect(p).toContain("Each call will still ask you before it runs.");
   });
 
@@ -201,6 +203,13 @@ describe("connector.writesDisable and writesStatus", () => {
       maxWave: 2,
     });
     expect(s.services.find((x) => x.service === "kubernetes")?.enabled).toBe(false);
+    // Covered but not offerable: argocd's writes have previews but are wave 4 with no reader.
+    expect(s.services.find((x) => x.service === "argocd")).toMatchObject({
+      enabled: false,
+      writes: 2,
+      offerable: 0,
+    });
+    expect(s.services.find((x) => x.service === "github")).toMatchObject({ offerable: 0 });
     const locked = (await call("connector.writesStatus", {}, { policy: () => undefined })) as {
       policyAllows: boolean;
     };
