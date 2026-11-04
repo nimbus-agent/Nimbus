@@ -680,7 +680,10 @@ function buildConnectorWriteRe(ids: readonly string[]): RegExp {
       throw new Error(`D20: connector write row has a malformed tool id: ${JSON.stringify(id)}`);
     }
   }
-  return new RegExp(`\\b(?:${ids.join("|")})\\b`);
+  // The start is "no letter or digit before", not `\b`: `_` is a word character, so `\b` missed
+  // the `<server>_<tool>` spelling a federated session executes (`jira_jira_issue_create`).
+  // Every id is `[a-z0-9_]+` (checked above), so the alternation is literal and cannot backtrack.
+  return new RegExp(`(?<![A-Za-z0-9])(?:${ids.join("|")})\\b`);
 }
 const CONNECTOR_WRITE_RE = buildConnectorWriteRe(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
 

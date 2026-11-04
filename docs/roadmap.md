@@ -1921,7 +1921,7 @@ Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-o
 
 #### Wave 1 — Write-Authoring Framework *(prerequisite substrate)*
 
-- [x] **Generalized connector-write contract** — promoted the per-group `I26` registries into one row table plus a manifest generated from the installed connectors package, so a connector declares a write tool with one row, its frozen-set type and its proposability class, then `bun run gen:connector-write-manifest`, instead of bespoke wiring at each coupling site (2026-11-04, Phase 9.7 PR A1).
+- [x] **Generalized connector-write contract** — promoted the per-group `I26` registries into one row table plus a manifest generated from the installed connectors package, so a connector declares a write tool with one row in `connectors/connector-writes/`, its action type added by hand to `HITL_REQUIRED_BACKING` (engine/executor.ts) and classified in `ACTION_PROPOSABILITY` (connectors/proposable-actions.ts), then `bun run gen:connector-write-manifest`, instead of bespoke wiring at each coupling site (2026-11-04, Phase 9.7 PR A1).
 - [ ] **HITL consent preview renderer** — the consent dialog renders a before/after diff (action target + payload summary) so the owner approves the *exact* change, not just an action name.
 - [ ] **Egress-ledger coverage proof** — a contract test asserts every registered write tool id appends an `egress_ledger` row on the gated path (extends `I29`).
 - [ ] **Standing-approval + taint integration** — write tools become eligible for Phase 10 standing rules only behind the taint barrier; an untrusted-tainted trigger falls back to HITL.

@@ -568,6 +568,26 @@ describe("D20 — connector write-id confinement (every row in connectors/connec
     expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
   });
 
+  test("a namespaced <server>_<tool> write id outside the allowed sites is a D20 violation", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "jira_jira_issue_create";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
+  test("a longer id that merely ends in a write id's letters is not flagged", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "xjira_issue_create";`,
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
   test("proposable-actions.ts may name write ids", () => {
     const v = checkConnectorWriteConfinement([
       {
