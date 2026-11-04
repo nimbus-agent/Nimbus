@@ -5187,7 +5187,7 @@ nimbus connector add --mcp mcp_my_server -- "$PWD/dist/my_server"
 
 ---
 
-### `nimbus scaffold extension <name> [--publisher <id>]`
+### `nimbus scaffold extension <name> [--publisher <id>] [--from-openapi <path|url> [--max-operations <n>]]`
 
 Scaffold an extension the Gateway can install and run, at `./<name>/` (the command refuses if that directory exists). Unlike `scaffold mcp` it writes a `nimbus.extension.json` (`id` = `<publisher>/<name>` with `--publisher`, else `<name>`; `version` `0.1.0`; `entry` `dist/index.js`; empty permissions; `updateChannel` `stable`; `publisher: { id }` when `--publisher` is given), an MCP server with one `echo` tool (`src/tools.ts`, started unconditionally by `src/server.ts`), its test, and a README with the publish steps. `<name>` is lowercase letters, digits and underscores, starting with a letter or digit (1-62 characters). `--publisher` must match `[a-z0-9][a-z0-9._-]*`, not ending in `.` or `.lock` (max 64 characters), so every scaffolded id is one a registry accepts. The command refuses (exit 2) an id whose service id (`ext_` plus the id) would exceed 62 characters after `ext_`.
 
@@ -5198,6 +5198,35 @@ nimbus scaffold extension my_ext --publisher acme
 cd my_ext && bun install && bun test && bun run build
 nimbus extension keygen && nimbus extension sign .
 ```
+
+#### `--from-openapi <path|url>`: one tool per operation
+
+`--from-openapi` builds the extension from an OpenAPI document instead of the `echo` tool: an MCP server with one tool per operation, no sync handler (an extension, not a first-party connector). `--max-operations <n>` (a positive integer, only with `--from-openapi`) raises the operation cap, which is 200: a document with more operations is refused unless the cap is raised. AsyncAPI is not read: it describes message channels, not request and response tools.
+
+```bash
+nimbus scaffold extension petstore --publisher acme --from-openapi ./openapi.yaml
+nimbus scaffold extension petstore --from-openapi https://example.com/openapi.json --max-operations 400
+```
+
+**What is written.** Under `./<name>/`: `nimbus.extension.json` (`permissions.network` set to the hosts below, and a `credentials` entry for each credential an operation uses), `package.json`, `.gitignore`, `src/server.ts`, `src/operations.json` (the operation table), `src/request.ts`, `src/tools.ts`, `src/tools.test.ts` and a `README.md` listing the operations, credentials, skipped operations, shortened names, unsupported schemes and warnings. The operation table is data: every value taken from the document is written into `src/operations.json` (with `JSON.stringify`) and, with control characters stripped, into the README; `src/request.ts` and `src/tools.ts` are fixed code, so a hostile document cannot put code in them. To change what a tool sends, edit the table.
+
+**Input.** OpenAPI `3.0.x` or `3.1.x`, JSON or YAML. A Swagger 2.0 document is refused (`Swagger 2.0 is not supported; convert it to OpenAPI 3 first (for example with swagger2openapi)`), as is one with no `openapi` string. Only local `$ref`s (`#/...`) are resolved; percent-decoding and `~0`/`~1` follow RFC 6901 order, the segments `__proto__`, `constructor` and `prototype` are refused, an external `$ref` is refused naming its pointer, a cycle is cut at depth 8 with a warning, and one run resolves at most 1,000,000 nodes.
+
+**Hosts.** The manifest's `permissions.network` is built from the `servers` entries of the document and of each operation (server variables replaced by their defaults). Only `https:` servers count. IP literals, `localhost`, `*.local` and `*.localhost` are skipped with a warning, as is any host the manifest rules refuse. A host is written as `host` for port 443 or no port, else `host:port`; the list is deduplicated and sorted. A document with no usable server is refused (`the document names no https server the extension could call`).
+
+**Tools.** The tool name is the `operationId` lower-cased to `[a-z0-9_]`, else `<method>_<path segments>`; a clash gets `_2`, `_3`; a name is cut to fit the 64-character limit with the extension's service id and the cut is listed in the output. The input schema holds the path, query and header parameters (a name used in two places is prefixed with its location) plus `body` for a JSON request body (`application/json` or `+json`). The `Accept`, `Content-Type` and `Authorization` headers, and any parameter that duplicates the credential, are dropped with a warning. The description is the `summary`, else the `description`, cut at 512 characters. A required non-JSON body (form or multipart) generates the tool, lists it in the README, and the tool refuses every call; an optional non-JSON body is sent empty.
+
+**Credentials.** An `apiKey` in a header or the query and an `http` bearer scheme each become one credential; `http` basic becomes `<scheme>_user` and `<scheme>_password`. Only credentials an operation uses are declared. Each operation uses the first supported alternative of its own `security`, else the document's; `oauth2`, `openIdConnect` and cookie `apiKey` schemes are not supported and are listed in the README. Set each with `nimbus extension credential set <id> <name>`.
+
+**What a generated call does.** The URL is the server (a base path such as `/v1` is kept) plus the path, with each path parameter percent-encoded; a path parameter of `.` or `..` is refused, a missing required parameter is refused before any request, and a URL whose host is not in the table's host set is refused. The credential is read from the environment variable the manifest names. The request uses `redirect: "manual"`, so a redirect never carries the credential: a 3xx answer returns its status and `Location` as text, and 304 answers `HTTP 304 not modified`. The timeout is 30 seconds, a JSON request body is capped at 10 MiB, and a response is returned as text cut at 65,536 characters (never inside a surrogate pair) with a `[truncated]` marker.
+
+**Output and exit codes.** A refused input (a document it cannot read, parse or use, a cap exceeded, a clash it cannot resolve) prints the reason and exits `2` with nothing written; warnings, skipped operations and shortened names are printed after the summary line. The target directory must not exist. The command validates the generated manifest with the registry's own parser.
+
+**Stated bounds.**
+
+- A URL is fetched by the CLI itself, not the Gateway: the fetch is not in the egress ledger and the air-gap setting is not consulted. It accepts `https:` only, follows at most 5 redirects (each `https:`), reads at most 10 MiB and gives up after 30 seconds. A query string is kept out of error messages.
+- No eval suite is generated: evals run with no network (invariant I49), so every call would fail there. Once tools answer without the network, record a suite with `nimbus eval --package . --record <inputs.json>`.
+- The scaffold only generates code. Each call of the resulting `ext_*` tool asks the owner (invariant I42), and the extension runs only after `nimbus extension approve`.
 
 ---
 
