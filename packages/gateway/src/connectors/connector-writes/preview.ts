@@ -85,7 +85,8 @@ export function sanitisePreviewText(s: string): string {
 const NOT_SET = "(not set)";
 const PLACEHOLDER = /\{(\w+)\}/g;
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+/** A plain object (prototype `Object.prototype` or `null`): not an array, class instance or box. */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto: unknown = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;

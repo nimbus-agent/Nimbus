@@ -23,6 +23,8 @@ export function createConnectorWriteDispatcher(
       if (write === undefined) return inner.dispatch(action);
       // The transport routes by TYPE; a named tool must be this row's own, so what runs is
       // always the tool the owner's preview showed (`findRow` in the preview reads the same id).
+      // Stricter than the registry's `payload.mcpToolId || action.type`: an EMPTY string is a
+      // string that names no tool, so it is refused here rather than read as "absent".
       const named = action.payload?.["mcpToolId"];
       if (
         typeof named === "string" &&

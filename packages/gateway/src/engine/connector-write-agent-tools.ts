@@ -10,16 +10,23 @@
  * Per-call checks, in this order: (1) the executor resolved at CALL time is present (in production
  * only on the local owner's non-demo `cli`/`ui` turn), else a fixed refusal and NOTHING else is
  * read; (2) the source's recheck (enablement row with `row.wave <= maxWave`, org policy, the row is
- * offerable now) AND the mesh's tools epoch still equals the one this tool was listed under — a
- * restarted server must be re-listed and re-drift-checked — else a fixed refusal and nothing
- * dispatched; (3) the input is a plain object. Only then the executor runs it.
+ * offerable now) AND the generation of the slot hosting THIS service still equals the one read
+ * right after its listing — a restarted server must be re-listed and re-drift-checked, while
+ * unrelated mesh activity changes nothing — else a fixed refusal and nothing dispatched; (3) the
+ * input is a plain object. Only then the executor runs it.
  *
  * Offer-time checks: the name fits `[A-Za-z0-9_-]{1,64}` (never truncated) and is not taken; the
  * listing carries the row's own key `mcpClientToolKey(service, toolId)`, which becomes
  * `payload.mcpToolId` (the write transport refuses an `mcpToolId` that names another tool,
  * `connectors/connector-write-dispatch.ts`); and every input key the typed preview names is a
  * top-level property of the listed schema (drift: otherwise not offered, one warning per
- * `<epoch>:<service>`).
+ * `<generation>:<service>`). A service whose generation is negative (no known slot) offers nothing.
+ *
+ * Drift is checked against the LISTED schema, while the model is shown (and validated against) the
+ * SANITISED one (`offeredInputSchema` → `sanitiseUserMcpInputSchema`), which may drop a property
+ * (an over-long name) or fall back to a permissive schema. So a template key the model's schema no
+ * longer declares can still be sent or omitted; that only changes what the preview shows (an unset
+ * key reads as its `whenUnset` text or `(not set)`), and the owner is still prompted with it.
  *
  * I11: the listed description is delimited as data inside `<tool_description>` behind a fixed
  * first-party prefix, the schema is rebuilt by the same path user-MCP uses (`offeredInputSchema`),
@@ -30,6 +37,7 @@
 import { createTool } from "@mastra/core/tools";
 import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import {
+  isPlainObject,
   previewTemplateKeys,
   sanitisePreviewText,
 } from "../connectors/connector-writes/preview.ts";
@@ -47,8 +55,11 @@ export interface ConnectorWriteToolSource {
   offerableEnabledRows(): readonly ConnectorWriteRow[];
   /** ONE first-party server's raw listing (`description` + `inputSchema` per key), or undefined. */
   listServerTools(service: string): Promise<Readonly<Record<string, unknown>> | undefined>;
-  /** The mesh's tool-map epoch; bumps whenever a server (re)starts. */
-  toolsEpoch(): number;
+  /**
+   * The generation of the slot hosting `service`'s server; bumps only when THAT slot is spawned or
+   * stopped. Negative means no known slot: that service's writes are not offered.
+   */
+  toolsEpoch(service: string): number;
   /** Per-call: enablement row with `row.wave <= maxWave`, policy allows, row offerable now. */
   recheck(row: ConnectorWriteRow): boolean;
   warn(bindings: Record<string, unknown>, msg: string): void;
@@ -65,14 +76,10 @@ const NON_OBJECT_INPUT_REFUSAL = "input must be an object";
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
-/** One drift warning per `<epoch>:<service>`, process-wide. */
+/** One drift warning per `<generation>:<service>`, process-wide. */
 const driftWarned = new Set<string>();
 
 type Wrap = <T>(service: string, tool: string, def: T) => T;
-
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -117,10 +124,11 @@ function describeFor(row: ConnectorWriteRow, service: string, listedDescription:
 function stillEnabled(
   source: ConnectorWriteToolSource,
   row: ConnectorWriteRow,
-  listedEpoch: number,
+  service: string,
+  listedGeneration: number,
 ): boolean {
   try {
-    return source.recheck(row) && source.toolsEpoch() === listedEpoch;
+    return source.recheck(row) && source.toolsEpoch(service) === listedGeneration;
   } catch {
     return false;
   }
@@ -152,7 +160,9 @@ function buildDoorTool(
       const ex = executor();
       if (ex === undefined) return { refused: NOT_OWNER_REFUSAL };
       // (2) Enablement, policy, offerability and the listing epoch, re-read at call time.
-      if (!stillEnabled(source, row, listedEpoch)) return { refused: NO_LONGER_ENABLED_REFUSAL };
+      if (!stillEnabled(source, row, service, listedEpoch)) {
+        return { refused: NO_LONGER_ENABLED_REFUSAL };
+      }
       // (3) Never substitute: the owner approves exactly the input the model sent.
       if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
       let result: ActionResult;
@@ -194,7 +204,7 @@ function warnDriftOnce(
   if (driftWarned.has(key)) return;
   driftWarned.add(key);
   source.warn(
-    { service, toolId, toolsEpoch: epoch },
+    { service, toolId, generation: epoch },
     "connector write preview names an input key the server's schema does not declare; not offered",
   );
 }
@@ -271,8 +281,13 @@ export async function buildConnectorWriteAgentTools(
       // Sequential on purpose: a listing may spawn a server, and only enabled services list.
       const listing = await source.listServerTools(service); // NOSONAR S9382: a listing may spawn a sandboxed slot
       if (listing === undefined) continue;
-      // Read AFTER the listing: a spawn it caused bumps the epoch the tools are listed under.
-      const epoch = source.toolsEpoch();
+      // Read AFTER the listing, once per service: a spawn it caused bumps the generation the
+      // tools are listed under.
+      const epoch = source.toolsEpoch(service);
+      if (!Number.isInteger(epoch) || epoch < 0) {
+        source.warn({ service }, "connector write server has no known slot; not offered");
+        continue;
+      }
       offerService(source, executor, wrap, taken, out, service, serviceRows, listing, epoch);
     } catch (err) {
       source.warn(

@@ -62,10 +62,15 @@ function entry(description: string, inputSchema: unknown = SYNC_SCHEMA) {
 type Listings = Record<string, Readonly<Record<string, unknown>> | Error | undefined>;
 
 type FakeSource = ConnectorWriteToolSource & {
+  /** The generation every service reports unless `generations` overrides it. */
   epoch: number;
+  generations: Map<string, number>;
+  /** Runs inside `listServerTools`, after the call is recorded (e.g. to bump a generation). */
+  onList: ((service: string) => void) | undefined;
   recheckResult: boolean | Error;
   listCalls: string[];
   recheckCalls: number;
+  recheckRows: ConnectorWriteRow[];
   epochCalls: number;
   warnings: Array<{ bindings: Record<string, unknown>; msg: string }>;
 };
@@ -74,26 +79,31 @@ let nextEpoch = 1000;
 
 function fakeSource(rows: readonly ConnectorWriteRow[], listings: Listings): FakeSource {
   const src: FakeSource = {
-    // A fresh epoch per source: the drift warning set is process-wide, keyed by epoch.
+    // A fresh generation per source: the drift warning set is process-wide, keyed by it.
     epoch: nextEpoch++,
+    generations: new Map(),
+    onList: undefined,
     recheckResult: true,
     listCalls: [],
     recheckCalls: 0,
+    recheckRows: [],
     epochCalls: 0,
     warnings: [],
     offerableEnabledRows: () => rows,
     listServerTools: async (service) => {
       src.listCalls.push(service);
+      src.onList?.(service);
       const l = listings[service];
       if (l instanceof Error) throw l;
       return l;
     },
-    toolsEpoch: () => {
+    toolsEpoch: (service) => {
       src.epochCalls += 1;
-      return src.epoch;
+      return src.generations.get(service) ?? src.epoch;
     },
-    recheck: () => {
+    recheck: (r) => {
       src.recheckCalls += 1;
+      src.recheckRows.push(r);
       if (src.recheckResult instanceof Error) throw src.recheckResult;
       return src.recheckResult;
     },
@@ -244,6 +254,46 @@ describe("buildConnectorWriteAgentTools: what is offered", () => {
     expect(src.listCalls).toEqual(["argocd"]);
   });
 
+  test("a service whose listing is undefined offers nothing, silently; the control is offered", async () => {
+    const src = fakeSource([REFRESH, SYNC], { tableau: undefined, argocd: argocdListing() });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    expect(src.listCalls).toEqual(["tableau", "argocd"]);
+    expect(src.warnings).toEqual([]);
+  });
+
+  test("two rows of one service, NOT adjacent in the row list: the service is listed once, both offered", async () => {
+    const src = fakeSource([SYNC, REFRESH, ROLLBACK], {
+      argocd: argocdListing({
+        argocd_argocd_app_rollback: entry("rollback", schema({ name: {}, id: {} })),
+      }),
+      tableau: {
+        tableau_tableau_datasource_refresh: entry("refresh", schema({ id: { type: "string" } })),
+      },
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(src.listCalls).toEqual(["argocd", "tableau"]);
+    expect(keys(tools)).toEqual([
+      "argocd__argocd_app_rollback",
+      SYNC_NAME,
+      "tableau__tableau_datasource_refresh",
+    ]);
+  });
+
+  test("a service with no known slot (generation -1) offers nothing; the control is offered", async () => {
+    const src = fakeSource([SYNC, REFRESH], {
+      argocd: argocdListing(),
+      tableau: {
+        tableau_tableau_datasource_refresh: entry("refresh", schema({ id: { type: "string" } })),
+      },
+    });
+    src.generations.set("tableau", -1);
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    expect(src.warnings).toHaveLength(1);
+    expect(src.warnings[0]?.bindings["service"]).toBe("tableau");
+  });
+
   test("lists each service once, in row order, and never throws on a failing listing", async () => {
     const boom = fakeSource([REFRESH, SYNC], {
       tableau: new Error("spawn failed"),
@@ -366,7 +416,6 @@ describe("description and schema", () => {
     const src = fakeSource([SYNC], { argocd: { [SYNC_KEY]: entry("d", listed) } });
     const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
     const offered = (tools[SYNC_NAME] as { inputSchema: unknown }).inputSchema;
-    expect(offered).not.toBe(listed);
     const text = JSON.stringify(
       standardSchemaToJSONSchema(offered as typeof listed, { io: "input" }),
     );
@@ -421,16 +470,54 @@ describe("execute: per-call checks and results", () => {
     }
   });
 
-  test("a changed tools epoch (restarted server) refuses and the executor is never called", async () => {
+  test("the SAME service's generation bumped between listing and call (its server restarted): refused, executor never called", async () => {
     const src = fakeSource([SYNC], { argocd: argocdListing() });
     const ex = fakeExecutor({ status: "ok", result: "SENT" });
     const tools = await syncTools(src, ex);
-    src.epoch = nextEpoch++;
+    src.generations.set("argocd", nextEpoch++);
     expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
       refused: "this connector write is no longer enabled; ask again",
     });
     expect(src.recheckCalls).toBe(1);
     expect(ex.actions).toEqual([]);
+  });
+
+  test("ANOTHER service's generation moving (even mid-build, by its own listing) refuses nothing", async () => {
+    const src = fakeSource([SYNC, REFRESH], {
+      argocd: argocdListing(),
+      tableau: {
+        tableau_tableau_datasource_refresh: entry("refresh", schema({ id: { type: "string" } })),
+      },
+    });
+    // Listing tableau (the second, cold service) spawns it: tableau's generation moves, argocd's does not.
+    src.onList = (service) => {
+      if (service === "tableau") src.generations.set("tableau", nextEpoch++);
+    };
+    const ex = fakeExecutor({ status: "ok", result: "SENT" });
+    const tools = await syncTools(src, ex);
+    expect(keys(tools)).toEqual([SYNC_NAME, "tableau__tableau_datasource_refresh"]);
+    // And afterwards argocd's slot restarting does not touch tableau's tools either.
+    src.generations.set("argocd", nextEpoch++);
+    expect(await call(tools, "tableau__tableau_datasource_refresh", { id: "ds" })).toBe("SENT");
+    src.generations.delete("argocd");
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toBe("SENT");
+    expect(ex.actions.map((a) => a.type)).toEqual([
+      "tableau.datasource.refresh",
+      "argocd.app.sync",
+    ]);
+  });
+
+  test("the recheck is given the row of the tool being called", async () => {
+    const src = fakeSource([SYNC, REFRESH], {
+      argocd: argocdListing(),
+      tableau: {
+        tableau_tableau_datasource_refresh: entry("refresh", schema({ id: { type: "string" } })),
+      },
+    });
+    const tools = await syncTools(src, fakeExecutor({ status: "ok", result: "SENT" }));
+    await call(tools, "tableau__tableau_datasource_refresh", { id: "ds" });
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(src.recheckRows).toEqual([REFRESH, SYNC]);
   });
 
   test("a non-object input is refused and the executor is never called", async () => {

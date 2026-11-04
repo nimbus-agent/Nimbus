@@ -128,3 +128,43 @@ describe("listFirstPartyServerTools", () => {
     expect(ensures()).toBe(0);
   });
 });
+
+describe("toolsGenerationFor: a per-slot generation", () => {
+  type Private = {
+    setLazyClient(key: string, client: MCPClient): void;
+    stopLazyClient(key: string): Promise<void>;
+  };
+  const fakeClient = () =>
+    ({
+      listTools: () => Promise.resolve({}),
+      disconnect: () => Promise.resolve(),
+    }) as unknown as MCPClient;
+
+  test("spawning or stopping ANOTHER slot leaves the listing slot's generation unchanged", async () => {
+    const { m } = await build({});
+    const p = m as unknown as Private;
+    expect(m.toolsGenerationFor("argocd")).toBe(0);
+    p.setLazyClient(LAZY_MESH.discord, fakeClient());
+    await p.stopLazyClient(LAZY_MESH.discord);
+    expect(m.toolsGenerationFor("argocd")).toBe(0);
+    // The global epoch DID move: that is exactly what the door must not key on.
+    expect(m.getToolsEpoch()).toBeGreaterThan(0);
+  });
+
+  test("spawning or stopping the listing slot itself bumps every hosted service's generation", async () => {
+    const { m } = await build({});
+    const p = m as unknown as Private;
+    p.setLazyClient(LAZY_MESH.phase3Bundle, fakeClient());
+    expect(m.toolsGenerationFor("argocd")).toBe(1);
+    expect(m.toolsGenerationFor("tableau")).toBe(1);
+    await p.stopLazyClient(LAZY_MESH.phase3Bundle);
+    expect(m.toolsGenerationFor("argocd")).toBe(2);
+  });
+
+  test("a service the listing map does not name is -1 (never offerable), never NaN", async () => {
+    const { m } = await build({});
+    expect(m.toolsGenerationFor("github")).toBe(-1);
+    expect(m.toolsGenerationFor("mcp_x")).toBe(-1);
+    expect(m.toolsGenerationFor("__proto__")).toBe(-1);
+  });
+});

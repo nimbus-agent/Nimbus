@@ -212,7 +212,8 @@ export async function main(): Promise<void> {
             db: platform.localIndex.getDatabase(),
             enforcedPolicy: platform.enforcedPolicy,
             listServerTools: (service) => platform.connectorMesh.listFirstPartyServerTools(service),
-            toolsEpoch: () => platform.connectorMesh.getToolsEpoch(),
+            // Per-slot, not the global epoch: unrelated slot activity must not refuse a listed tool.
+            toolsEpoch: (service) => platform.connectorMesh.toolsGenerationFor(service),
             warn: (bindings, msg) => connectorWriteLogger.warn(bindings, msg),
           }),
         });
