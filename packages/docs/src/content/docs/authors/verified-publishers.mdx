@@ -36,7 +36,7 @@ file, `publishers/<publisherId>.json`, holding `{ publisherId, keys, github }`.
 A Nimbus maintainer writes it with `nimbus trust maintain verify-publisher`,
 which records that the maintainer checked the publisher's GitHub identity; it
 does not check it. The file reaches the feed by pull request, and the
-`trust-sign` workflow signs the next feed behind a required approval. Removing
+`trust-sign` workflow signs the next feed in the `trust-signing` GitHub environment. Removing
 the file drops the badge. This page states no criteria, fee or promise of
 acceptance, because none is documented. What you can do now is sign your
 extensions (see [Sign and publish](/authors/sign-and-publish/)) and keep your
