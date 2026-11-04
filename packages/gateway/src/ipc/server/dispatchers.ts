@@ -2432,6 +2432,10 @@ export async function tryDispatchRegistryRpc(
     ...(ctx.options.continuityTable === undefined
       ? {}
       : { continuityTable: ctx.options.continuityTable }),
+    // `registry.cloneSource` stages its archive here and nowhere else.
+    ...(ctx.options.dataDir === undefined
+      ? {}
+      : { cloneStagingDir: join(ctx.options.dataDir, "registry-clone-staging") }),
   });
   if (out.kind === "hit") {
     return out.value;

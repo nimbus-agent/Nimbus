@@ -7444,24 +7444,42 @@ describe("I44 — registry-sourced extension code arrives only through the verif
     // (2) The fetch half: resolve through verified indexes, then the manifest, the package hash, the
     // I16 signature and the Vault key check, ALL before a byte is written or extracted and before
     // the verified package is handed back.
+    // The verified chain install shares with an author's clone (`fetchVerifiedPackageBytes`): the
+    // installed-id refusal comes BEFORE it, the key decision and extraction AFTER it.
     const fetchBody = bodyOf(src, "export async function fetchVerifiedRegistryPackage(");
-    const resolveAt = fetchBody.indexOf("await resolveRegistryEntry(");
-    const manifestAt = fetchBody.indexOf("await fetchRegistryManifest(");
+    const installedAt = fetchBody.indexOf('"ERR_REGISTRY_ALREADY_INSTALLED"');
+    const sharedAt = fetchBody.indexOf("await fetchVerifiedPackageBytes(fetchDeps, deps.db, req)");
+    const shared = bodyOf(src, "export async function fetchVerifiedPackageBytes(");
+    const resolveAt = shared.indexOf("await resolveRegistryEntry(");
+    const blockedAt = shared.indexOf("assertNotBlocked(db, subjectAt(version));");
+    const manifestAt = shared.indexOf("await fetchRegistryManifest(");
     // The package fetch refuses bytes the index did not sign, and extraction writes the first byte;
     // both live in registry-package-stage.ts, shared with the dependency resolver (pinned below).
-    const shaAt = fetchBody.indexOf(
+    const shaAt = shared.indexOf(
       "await fetchHashedPackage(fetchDeps, reg, req.id, version, vEntry)",
     );
-    const sigAt = fetchBody.indexOf("await verifyRegistryManifestSignature(");
+    const sigAt = shared.indexOf("await verifyRegistryManifestSignature(");
+    const sharedReturnAt = shared.indexOf("return {");
+    for (const at of [resolveAt, blockedAt, manifestAt, shaAt, sigAt, sharedReturnAt]) {
+      expect(at).toBeGreaterThan(-1);
+    }
+    expect(blockedAt).toBeGreaterThan(resolveAt);
+    expect(manifestAt).toBeGreaterThan(blockedAt);
+    expect(shaAt).toBeGreaterThan(manifestAt);
+    expect(sigAt).toBeGreaterThan(shaAt);
+    expect(sharedReturnAt).toBeGreaterThan(sigAt);
+    // The shared chain decides nothing about the key and writes nothing to the Vault or disk.
+    expect(shared).not.toMatch(/publisherKeyDecision|extractVerifiedPackage|writeFileSync|vault/);
     // The publisher-key decision (trusted, rotation, Nimbus or owner-accepted; spec R5).
     const vaultAt = fetchBody.indexOf("await publisherKeyDecision(deps, {");
     const writeAt = fetchBody.indexOf("await extractVerifiedPackage(");
     const returnAt = fetchBody.indexOf("return {");
-    for (const at of [resolveAt, manifestAt, shaAt, sigAt, vaultAt, writeAt, returnAt]) {
+    for (const at of [installedAt, sharedAt, vaultAt, writeAt, returnAt]) {
       expect(at).toBeGreaterThan(-1);
     }
-    expect(manifestAt).toBeGreaterThan(resolveAt);
-    expect(writeAt).toBeGreaterThan(Math.max(manifestAt, shaAt, sigAt, vaultAt));
+    expect(sharedAt).toBeGreaterThan(installedAt);
+    expect(vaultAt).toBeGreaterThan(sharedAt);
+    expect(writeAt).toBeGreaterThan(vaultAt);
     expect(returnAt).toBeGreaterThan(writeAt);
     const stage = stripComments(
       await read("packages/gateway/src/extensions/registry/registry-package-stage.ts"),
@@ -7632,6 +7650,64 @@ describe("I44 — registry-sourced extension code arrives only through the verif
       .filter((f) => /\bcreateRegistryDependencyResolver\b/.test(stripComments(f.contents)))
       .map((f) => f.rel);
     expect(namingFactory).toEqual(["extensions/registry/install-from-registry.ts"]);
+  });
+
+  // ---- an author's clone (`registry.cloneSource`) --------------------------------------------
+
+  test("behavioural: a clone of an unknown-key package writes no Vault key and no extension row", async () => {
+    const { cloneRegistrySource } = await import("./extensions/registry/clone-source.ts");
+    const s = await setup({ main: ["1.0.0"] });
+    const out = await cloneRegistrySource(
+      { db: s.db, fetch: NO_NETWORK },
+      { id: ID },
+      join(s.root, "data", "registry-clone-staging"),
+    );
+    expect(out.version).toBe("1.0.0");
+    expect(readFileSync(out.archivePath).byteLength).toBeGreaterThan(0);
+    expect(installedIds(s.db)).toEqual([]);
+    expect(await s.vault.listKeys()).toEqual([]);
+  });
+
+  test("behavioural: a clone of a blocked version is refused, and nothing is staged", async () => {
+    const { cloneRegistrySource } = await import("./extensions/registry/clone-source.ts");
+    const { signTrustStatement } = await import("@nimbus-dev/registry-format");
+    const { recordTrustStatements } = await import("./extensions/trust/trust-store.ts");
+    const { TrustBlockError } = await import("./extensions/trust/trust-blocks.ts");
+    const { encodeBase64 } = await import("./util/base64.ts");
+    const nacl = (await import("tweetnacl")).default;
+    const s = await setup({ main: ["1.0.0"] });
+    const seed = Uint8Array.from({ length: 32 }, (_, i) => i + 70);
+    const nimbusKey = encodeBase64(nacl.sign.keyPair.fromSeed(seed).publicKey);
+    const statement = await signTrustStatement(
+      {
+        kind: "extension.takedown",
+        issuedAt: "2026-10-26T12:00:00Z",
+        signerKey: nimbusKey,
+        extensionId: ID,
+        publisherId: "acme",
+        versions: "*",
+        reason: "malware",
+      },
+      seed,
+    );
+    recordTrustStatements(s.db, [statement], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
+    const staging = join(s.root, "data", "registry-clone-staging");
+    const settled = await cloneRegistrySource({ db: s.db, fetch: NO_NETWORK }, { id: ID }, staging)
+      .then(() => undefined)
+      .catch((e: unknown) => e);
+    expect(settled).toBeInstanceOf(TrustBlockError);
+    expect(readdirSync(staging)).toEqual([]);
+  });
+
+  test("source pin: a clone goes through install's shared verified chain and makes no key decision", async () => {
+    const clone = stripComments(
+      await read("packages/gateway/src/extensions/registry/clone-source.ts"),
+    );
+    expect(clone).toMatch(/await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, \{/);
+    // Nothing installed, extracted, approved or trusted, and no second way to the registry bytes.
+    expect(clone).not.toMatch(
+      /publisherKeyDecision|extractVerifiedPackage|installExtensionFromLocalDirectory|writePublisherKey|fetchRegistryBytes|fetchHashedPackage|resolveRegistryEntry|vault/i,
+    );
   });
 
   // ---- dependencies (extension dependencies, PR 2) -------------------------------------------
@@ -9044,10 +9120,18 @@ describe("I48 — revoked or taken-down extension code is never installed, updat
     const reg = stripComments(
       await read("packages/gateway/src/extensions/registry/install-from-registry.ts"),
     );
-    const fetchFn = reg.slice(reg.indexOf("export async function fetchVerifiedRegistryPackage("));
-    expect(fetchFn.indexOf("assertNotBlocked(deps.db, subjectAt(version));")).toBeGreaterThan(-1);
-    expect(fetchFn.indexOf("assertNotBlocked(deps.db, subjectAt(version));")).toBeLessThan(
+    // The install and the author's clone share one verified chain (`fetchVerifiedPackageBytes`),
+    // and the install reaches its manifest only through it.
+    const sharedAt = reg.indexOf("export async function fetchVerifiedPackageBytes(");
+    const installAt = reg.indexOf("export async function fetchVerifiedRegistryPackage(");
+    expect(sharedAt).toBeGreaterThan(-1);
+    const fetchFn = reg.slice(sharedAt, installAt > sharedAt ? installAt : undefined);
+    expect(fetchFn.indexOf("assertNotBlocked(db, subjectAt(version));")).toBeGreaterThan(-1);
+    expect(fetchFn.indexOf("assertNotBlocked(db, subjectAt(version));")).toBeLessThan(
       fetchFn.indexOf("await fetchRegistryManifest("),
+    );
+    expect(reg.slice(installAt)).toMatch(
+      /await fetchVerifiedPackageBytes\(fetchDeps, deps\.db, req\)/,
     );
 
     const local = stripComments(

@@ -35,6 +35,7 @@ import {
   BUILTIN_REGISTRY_NAME,
   builtinRegistryOf,
 } from "../extensions/registry/builtin-registry.ts";
+import { cloneRegistrySource } from "../extensions/registry/clone-source.ts";
 import { installFromRegistry } from "../extensions/registry/install-from-registry.ts";
 import {
   fetchRegistryBytes,
@@ -108,6 +109,11 @@ export interface RegistryRpcOptions {
   requirementStatuses?: ConnectorRequirementStatusesFn;
   /** Test seam: where an incomplete install rollback is warned; absent means this module's logger. */
   logger?: Pick<Logger, "warn">;
+  /**
+   * `registry.cloneSource` only: `<dataDir>/registry-clone-staging`, the one directory the clone
+   * writes its hash-checked archive into (the archive never travels over IPC).
+   */
+  cloneStagingDir?: string;
 }
 
 const registryRpcLog = pino({
@@ -398,6 +404,34 @@ async function handleInstall(
       ...(connectorRequirements === undefined ? {} : { connectorRequirements }),
     },
   };
+}
+
+/**
+ * `registry.cloneSource` (`nimbus extension clone`): the verified chain of an install (I44) with no
+ * publisher-key decision, no approval and no install; the archive is staged under
+ * `cloneStagingDir` and its path returned.
+ */
+async function handleCloneSource(
+  rec: Record<string, unknown> | undefined,
+  o: RegistryRpcOptions,
+): Promise<Hit> {
+  const id = stringParam(rec, "id");
+  const registry = rec?.["registry"] === undefined ? undefined : stringParam(rec, "registry");
+  const version = rec?.["version"] === undefined ? undefined : stringParam(rec, "version");
+  const fetch = requireFetch(o.fetch);
+  if (o.cloneStagingDir === undefined || o.cloneStagingDir.trim() === "") {
+    throw new RpcMethodError(-32603, "Gateway has no data directory for clone staging");
+  }
+  const value = await cloneRegistrySource(
+    { db: o.db, fetch },
+    {
+      id,
+      ...(registry === undefined ? {} : { registry }),
+      ...(version === undefined ? {} : { version }),
+    },
+    o.cloneStagingDir,
+  );
+  return { kind: "hit", value };
 }
 
 function handleList(o: RegistryRpcOptions): Hit {
@@ -709,6 +743,8 @@ export async function dispatchRegistryRpc(o: RegistryRpcOptions): Promise<Hit | 
         return await handleSearch(rec, o);
       case "registry.info":
         return await handleInfo(rec, o);
+      case "registry.cloneSource":
+        return await handleCloneSource(rec, o);
       default:
         return { kind: "miss" };
     }

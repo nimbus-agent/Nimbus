@@ -1594,6 +1594,47 @@ describe("registry.install", () => {
   });
 });
 
+describe("registry.cloneSource", () => {
+  test("routes, returns the verified package's reply and stages the archive under cloneStagingDir", async () => {
+    const dir = join(tmp, "reg");
+    await buildTestRegistry(dir, { id: "acme.tool", versions: [{ version: "1.0.0" }] });
+    pin("main", dir);
+    const cloneStagingDir = join(tmp, "data", "registry-clone-staging");
+    const out = (await dispatchRegistryRpc({
+      method: "registry.cloneSource",
+      params: { id: "acme.tool" },
+      db,
+      fetch: fetchBag(),
+      cloneStagingDir,
+    })) as { kind: string; value: { archivePath: string; packageSha256: string } };
+    expect(out).toMatchObject({
+      kind: "hit",
+      value: { id: "acme.tool", version: "1.0.0", channel: "stable", registry: "main" },
+    });
+    expect(out.value.archivePath.startsWith(cloneStagingDir)).toBe(true);
+    const digest = createHash("sha256").update(readFileSync(out.value.archivePath)).digest("hex");
+    expect(digest).toBe(out.value.packageSha256);
+  });
+
+  test("refuses without a clone staging directory", async () => {
+    await expect(call("registry.cloneSource", { id: "acme.tool" })).rejects.toThrow(
+      "Gateway has no data directory for clone staging",
+    );
+  });
+
+  test("refuses a missing id as invalid params", async () => {
+    await expect(
+      dispatchRegistryRpc({
+        method: "registry.cloneSource",
+        params: {},
+        db,
+        fetch: fetchBag(),
+        cloneStagingDir: join(tmp, "staging"),
+      }),
+    ).rejects.toThrow("ERR_INVALID_PARAMS");
+  });
+});
+
 describe("the reserved built-in registry name", () => {
   /** A fixture built-in registry: the official root key, served from `tmp`. */
   const builtinBag = (): RegistryFetchBag => fetchBag({ builtin: { url: tmp, rootKey: ROOT_KEY } });
