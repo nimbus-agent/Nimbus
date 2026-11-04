@@ -130,7 +130,12 @@ function interpolate(text: string, input: Record<string, unknown>): string {
   );
 }
 
-function namedKeys(t: ConnectorWritePreviewTemplate): Set<string> {
+/**
+ * Every input key a template names: each `fields[].key` (including fields that carry `whenUnset`)
+ * and each `{key}` placeholder in `target` and `summary`. The connector-write door's drift check
+ * reads the same set, so a key the preview shows is a key the listed schema must declare.
+ */
+export function previewTemplateKeys(t: ConnectorWritePreviewTemplate): Set<string> {
   const named = new Set<string>(t.fields.map((f) => f.key));
   for (const text of [t.target, t.summary]) {
     for (const m of text.matchAll(PLACEHOLDER)) {
@@ -215,7 +220,7 @@ export function buildConnectorWritePreviewFrom(
       destination,
     };
   }
-  const named = namedKeys(template);
+  const named = previewTemplateKeys(template);
   return {
     ...base,
     target: interpolate(template.target, rawInput),

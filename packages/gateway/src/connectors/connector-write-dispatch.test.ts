@@ -80,4 +80,58 @@ describe("createConnectorWriteDispatcher", () => {
       args: { name: "web" },
     });
   });
+
+  describe("the listed-key guard", () => {
+    function guarded(): { d: ConnectorDispatcher; sent: unknown[] } {
+      const sent: unknown[] = [];
+      const d = createConnectorWriteDispatcher(
+        { dispatch: async () => ({ inner: true }) },
+        {
+          vault: {} as never,
+          sandboxCwd: SANDBOX_CWD,
+          isConnectorAllowed: () => true,
+          credentialFor: () => ({ credential: "team", teamEntry: "argo" }),
+          runTeamInvoke: async (req) => {
+            sent.push(req);
+            return { ok: true };
+          },
+        },
+      );
+      return { d, sent };
+    }
+
+    test("an mcpToolId naming another tool is refused and nothing is sent", async () => {
+      const { d, sent } = guarded();
+      await expect(
+        d.dispatch({
+          type: "argocd.app.sync",
+          payload: { mcpToolId: "argocd_argocd_app_rollback", name: "web" },
+        }),
+      ).rejects.toThrow(/mcpToolId does not name its tool/);
+      await expect(
+        d.dispatch({ type: "argocd.app.sync", payload: { mcpToolId: "", name: "web" } }),
+      ).rejects.toThrow(/mcpToolId does not name its tool/);
+      expect(sent).toEqual([]);
+    });
+
+    test("the row's bare id, its listed key, or no id at all is dispatched", async () => {
+      const { d, sent } = guarded();
+      for (const payload of [
+        { mcpToolId: "argocd_app_sync", name: "web" },
+        { mcpToolId: "argocd_argocd_app_sync", name: "web" },
+        { name: "web" },
+      ]) {
+        expect(await d.dispatch({ type: "argocd.app.sync", payload })).toEqual({ ok: true });
+      }
+      expect(sent).toHaveLength(3);
+      for (const req of sent) {
+        expect(req).toEqual({
+          entry: "argo",
+          service: "argocd",
+          toolId: "argocd_app_sync",
+          args: { name: "web" },
+        });
+      }
+    });
+  });
 });
