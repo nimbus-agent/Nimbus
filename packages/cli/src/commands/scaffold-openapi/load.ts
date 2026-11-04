@@ -58,12 +58,24 @@ function assertHttps(raw: string): URL {
   try {
     url = new URL(raw);
   } catch {
-    throw new OpenApiLoadError(`Not a valid URL: ${raw}`);
+    throw new OpenApiLoadError("Not a valid URL");
   }
   if (url.protocol !== "https:") {
     throw new OpenApiLoadError(`Only https: URLs are supported, not ${url.protocol}`);
   }
   return url;
+}
+
+function describeUrl(url: URL): string {
+  return `${url.origin}${url.pathname}`;
+}
+
+function resolveRedirect(location: string, base: URL): string {
+  try {
+    return new URL(location, base).href;
+  } catch {
+    throw new OpenApiLoadError("the server sent an unusable redirect");
+  }
 }
 
 async function fetchBytes(source: string, deps: LoadDeps): Promise<Uint8Array> {
@@ -74,16 +86,17 @@ async function fetchBytes(source: string, deps: LoadDeps): Promise<Uint8Array> {
     try {
       res = await deps.fetch(url.href, { redirect: "manual", signal });
     } catch (e) {
-      throw new OpenApiLoadError(`Could not fetch ${url.href}: ${(e as Error).message}`);
+      throw new OpenApiLoadError(`Could not fetch ${describeUrl(url)}: ${(e as Error).message}`);
     }
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (location === null) throw new OpenApiLoadError("Redirect without a Location header");
-      url = assertHttps(new URL(location, url).href);
+      await res.body?.cancel();
+      url = assertHttps(resolveRedirect(location, url));
       continue;
     }
     if (!res.ok) {
-      throw new OpenApiLoadError(`Fetching ${url.href} failed with status ${res.status}`);
+      throw new OpenApiLoadError(`Fetching ${describeUrl(url)} failed with status ${res.status}`);
     }
     return await readBodyCapped(res);
   }
@@ -91,10 +104,7 @@ async function fetchBytes(source: string, deps: LoadDeps): Promise<Uint8Array> {
 }
 
 async function readBytes(source: string, deps: LoadDeps): Promise<Uint8Array> {
-  if (source.startsWith("https://")) return await fetchBytes(source, deps);
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) {
-    throw new OpenApiLoadError("Only https: URLs and file paths are supported");
-  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return await fetchBytes(source, deps);
   let bytes: Uint8Array;
   try {
     bytes = await deps.readFile(source);

@@ -165,4 +165,62 @@ describe("loadOpenApiDocument", () => {
     const e = await rejectionOf(loadOpenApiDocument("nope.json", depsFor({})));
     expect(e).toBeInstanceOf(OpenApiLoadError);
   });
+
+  test("a malformed Location is an OpenApiLoadError", async () => {
+    const f = fetchReturning(
+      () => new Response(null, { status: 302, headers: { location: "http://[" } }),
+    );
+    const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
+    expect(e).toBeInstanceOf(OpenApiLoadError);
+    expect(e.message).toBe("the server sent an unusable redirect");
+  });
+
+  test("a redirect to ftp: is refused", async () => {
+    const f = fetchReturning(
+      () => new Response(null, { status: 302, headers: { location: "ftp://x.test/a" } }),
+    );
+    const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
+    expect(e).toBeInstanceOf(OpenApiLoadError);
+  });
+
+  test("a relative Location resolves against the current hop", async () => {
+    const seen: string[] = [];
+    const f = (async (u: string) => {
+      seen.push(u);
+      if (seen.length === 1) {
+        return new Response(null, { status: 302, headers: { location: "/spec/b.json" } });
+      }
+      return new Response('{"openapi":"3.0.1"}', { status: 200 });
+    }) as unknown as typeof fetch;
+    await loadOpenApiDocument("https://x.test/a/b?token=secret", depsFor({}, f));
+    expect(seen[1]).toBe("https://x.test/spec/b.json");
+  });
+
+  test("a query string never appears in an error message", async () => {
+    const f = fetchReturning(() => new Response("no", { status: 404 }));
+    const e = await rejectionOf(
+      loadOpenApiDocument("https://x.test/a?token=secret#frag", depsFor({}, f)),
+    );
+    expect(e.message).not.toContain("secret");
+    expect(e.message).not.toContain("frag");
+    const g = (async () => {
+      throw new Error("boom");
+    }) as unknown as typeof fetch;
+    const e2 = await rejectionOf(
+      loadOpenApiDocument("https://x.test/a?token=secret", depsFor({}, g)),
+    );
+    expect(e2.message).not.toContain("secret");
+    const e3 = await rejectionOf(
+      loadOpenApiDocument("https://x.test/a?token=secret[", depsFor({}, f)),
+    );
+    expect(e3.message).not.toContain("secret");
+  });
+
+  test("the scheme is compared case-insensitively", async () => {
+    const f = fetchReturning(() => new Response('{"openapi":"3.0.1"}', { status: 200 }));
+    const doc = await loadOpenApiDocument("HTTPS://x.test/a", depsFor({}, f));
+    expect(doc["openapi"]).toBe("3.0.1");
+    const e = await rejectionOf(loadOpenApiDocument("HTTP://x.test/a", depsFor({})));
+    expect(e.message).toContain("not http:");
+  });
 });
