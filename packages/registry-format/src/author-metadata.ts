@@ -113,11 +113,11 @@ export function readManifestFunding(raw: unknown): AuthorField<readonly FundingE
 const LICENSE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]*\+?$/;
 const LICENSE_REF_RE = /^LicenseRef-[A-Za-z0-9.-]+$/;
 
-const isOperator = (t: string): boolean => t === "AND" || t === "OR" || t === "WITH";
+export const isOperator = (t: string): boolean => t === "AND" || t === "OR" || t === "WITH";
 const isLicenseId = (t: string | undefined): boolean =>
   t !== undefined && !isOperator(t) && (LICENSE_ID_RE.test(t) || LICENSE_REF_RE.test(t));
 
-function tokenise(s: string): string[] {
+export function tokenise(s: string): string[] {
   return s
     .replaceAll("(", " ( ")
     .replaceAll(")", " ) ")
