@@ -1936,8 +1936,8 @@ describes, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–4c** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
-  stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
+- **The trust layer, PRs 1–5** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+  stored, the feed is fetched, revoked or taken-down code is refused (I48), publishers can
   rotate keys, a registry carries their rotations and revocations, the verified-publisher badge is shown, registry
   maintainers can block, users can report, Nimbus can run its trust feed, and a registry can vouch for a
   version's build provenance.
