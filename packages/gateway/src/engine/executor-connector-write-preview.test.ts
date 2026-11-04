@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
-import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import type { EgressSink } from "../egress/egress-ledger.ts";
+import type { EgressEntry } from "../egress/egress-record.ts";
 import { consentDisplayPayload, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
@@ -8,6 +9,8 @@ function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
   const prompts: string[] = [];
   const details: Array<Record<string, unknown> | undefined> = [];
   const dispatched: string[] = [];
+  const egress: EgressEntry[] = [];
+  const sink: EgressSink = { append: (e) => void egress.push(e) };
   const audits: Array<{ actionType: string; actionJson: string }> = [];
   const consent: ConsentChannel = {
     requestApproval: async (prompt: string, d?: Record<string, unknown>) => {
@@ -32,11 +35,11 @@ function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
     audit,
     connectors,
     undefined,
-    NULL_EGRESS_SINK,
+    sink,
     NO_POLICY_OVERLAY,
     credentialFor,
   );
-  return { exec, prompts, details, dispatched, audits };
+  return { exec, prompts, details, dispatched, audits, egress };
 }
 
 describe("the executor shows a connector write's typed preview", () => {
@@ -140,6 +143,7 @@ describe("the preview's credential kind", () => {
       expect(h.prompts[0]).toContain("Target:  web");
       expect(h.prompts[0]).not.toContain("Credential:");
       expect(h.audits).toHaveLength(1);
+      expect(h.egress).toHaveLength(1);
     }
   });
 });
