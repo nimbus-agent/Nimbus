@@ -27,6 +27,10 @@
 - **Desktop text dropped from PR 1.** Spec § 6 says "the desktop shows the entries as text in the extension details". The desktop has no details view (`packages/ui/src/pages/Marketplace.tsx` renders one list row from `extension.list`). Adding a view is the open **Marketplace page and desktop tile** row's work. Cost if wrong: one small UI PR later. The spec is updated to say so.
 - **Remote reads describe the newest LISTED version.** Spec § 6 says `--registry` reads "the version an install would take". `registry.info` fetches and hash-checks exactly one manifest, the newest listed version's, and every other remote field (permissions, evidence, provenance) already describes it, labelled by `evidenceFor`. Funding and license follow the same version and the same label rather than adding a second manifest fetch. Cost if wrong: a beta's funding shown for a stable install, visibly labelled. The spec is updated.
 
+## Plan review record
+
+Antigravity (2026-11-04, second run; the first timed out with no output) raised 6 findings, all verified and applied: the `RegistryError` `detail` vs `message` prefix (two places), the `extension.info` vs `registry.info` reply shapes in `sponsor`, `clean()` on every `sponsor` output, checking entries before printing them, and `--index` in `stripFlags`.
+
 ## Review Focus
 
 1. A `funding.url` of `javascript:`, `http:`, `file:` or `https://user:pass@host/` is invalid and can never reach `openHttpsUrl` (Task 1 reader test; Task 4 test that an invalid view opens nothing).
@@ -82,7 +86,7 @@
   - license ok: `"MIT"`, `"Apache-2.0"`, `"MIT OR Apache-2.0"`, `"(MIT OR Apache-2.0) AND BSD-3-Clause"`, `"Apache-2.0 WITH LLVM-exception"`, `"LicenseRef-Acme-1.0"`, `"GPL-2.0-or-later"`, `"GPL-2.0+"`.
   - license invalid: `""`, `42`, `"MIT OR"`, `"OR MIT"`, `"MIT AND AND BSD"`, `"(MIT"`, `"MIT)"`, `"MIT WITH"`, `"MIT WITH (X)"`, `"M I T"`, a 129-character string, `"MIT\n"`.
   - `authorMetadataView` maps absent → `null` with no `*Invalid` key, ok → value, invalid → `null` plus `fundingInvalid: true` / `licenseInvalid: true`.
-  - `assertAuthorMetadata({ license: "MIT OR" })` throws a `RegistryError` with code `ERR_REGISTRY_MANIFEST_INVALID` and message starting `license: `; `({})` does not throw.
+  - `assertAuthorMetadata({ license: "MIT OR" })` throws a `RegistryError` with code `ERR_REGISTRY_MANIFEST_INVALID` whose `detail` starts `license: ` (its `message` is `ERR_REGISTRY_MANIFEST_INVALID: license: …`, `errors.ts:55`); `({})` does not throw.
 
 - [ ] **Step 2: Run** `bun test packages/registry-format/src/author-metadata.test.ts` — expected FAIL (module not found).
 
@@ -145,7 +149,8 @@
 
 - [ ] **Step 1: Write the failing tests:** `author-metadata-lines.test.ts` for every line form above, including a label with `"\u001b[2J"` coming out cleaned; `extension.test.ts`: local `info` prints the lines after the publisher block; `extension-registry-cmds.test.ts`: remote `info` prints them after the provenance line; `sign` on a manifest with `license: "MIT OR"` exits 2, writes `manifest license is invalid: ` to stderr and leaves the file byte-identical; `sign` on a manifest with neither field still signs (existing test, keep).
 - [ ] **Step 2: Run** `bun test packages/cli/src/commands/author-metadata-lines.test.ts packages/cli/src/commands/extension.test.ts packages/cli/src/commands/extension-registry-cmds.test.ts` — expected FAIL.
-- [ ] **Step 3: Implement.** In `runExtensionSign`, call `assertAuthorMetadata(parsed)` after `JSON.parse` and before deleting `signature`; on a `RegistryError` print `manifest <field> is invalid: <reason>; fix it before signing` (field and reason from the error message) and return 2.
+- [ ] **Step 3: Implement.** In `runExtensionSign`, call `assertAuthorMetadata(parsed)` after `JSON.parse` and before deleting `signature`; on a `RegistryError` write `manifest <field> is invalid: <reason>; fix it before signing
+` with `process.stderr.write`, taking `<field>: <reason>` from the error's `detail` (not `message`, which carries the code prefix), and return 2.
 - [ ] **Step 4: Run** — expected PASS.
 - [ ] **Step 5: Commit** `feat(cli): show funding and license in extension info; sign refuses malformed ones`.
 
@@ -153,7 +158,7 @@
 
 **Files:**
 - Create: `packages/cli/src/commands/extension-sponsor.ts` (+ `.test.ts`)
-- Modify: `packages/cli/src/commands/extension.ts` (`dispatchExtensionWithCode` handler `sponsor`, wired exactly like `report`; `EXTENSION_USAGE`)
+- Modify: `packages/cli/src/commands/extension.ts` (`dispatchExtensionWithCode` handler `sponsor`, wired exactly like `report` with `args.slice(1)`; `EXTENSION_USAGE`; `--index` added to `stripFlags`'s value-taking flags)
 
 **Interfaces:**
 - Consumes: `extension.info` / `registry.info` fields (Task 2), `isFundingUrl` (Task 1), `openHttpsUrl`, `clean`.
@@ -161,7 +166,9 @@
   `SponsorDeps = { client: IPCClient; isTty: boolean; confirm: (q: string) => Promise<boolean>; openUrl: (u: string) => Promise<void>; log: (s: string) => void; err: (s: string) => void }`.
 - Usage: `nimbus extension sponsor <id> [--registry <name>] [--index <n>]`.
 - Behaviour:
-  - Without `--registry`: `extension.info { id }`; with it: `registry.info { id, registry }`.
+  - Without `--registry`: `extension.info { id }` and read the fields from `reply.extension`; with it: `registry.info { id, registry }` and read them from the reply's top level. Normalise to one `{ funding, fundingInvalid, version?, channel? }` view before any check.
+  - Every entry is checked with `isFundingUrl` BEFORE anything is printed; failing entries are dropped (as in `authorMetadataLines`), and `--index` counts only the kept entries. `new URL(url).host` is computed only on a checked URL.
+  - Every printed value (`id`, `version`, `channel`, `label`, `url`, the host in the question) goes through `clean()`.
   - Prints `Funding links for <id>:` (remote: plus `(from <version>, <channel>)` from `evidenceFor`) and the numbered list.
   - `funding` null → `<id> declares no funding links.` exit 1; `fundingInvalid` → `<id>'s funding field is malformed and is ignored.` exit 1. An IPC error naming `ERR_REGISTRY_` or `Extension not found` → its message cleaned, exit 1.
   - `--index n` picks entry n (1-based; default 1). Missing value, not a positive integer, or out of range → usage message, exit 2.
@@ -169,7 +176,7 @@
   - Off a TTY: print `Open <url> in your browser to sponsor.` and exit 0 without asking.
   - On a TTY: `confirm("Open <host> in your browser? [y/N] ")` (host from `new URL(url).host`); yes → `openUrl(url)`, exit 0; no → exit 0, nothing opened. An `openUrl` rejection → `could not open the browser: <message>` (cleaned), exit 1, the URL already printed.
 
-- [ ] **Step 1: Write the failing tests** with fake deps (record `openUrl` calls; assert the call COUNT): one per behaviour bullet above, plus: a `javascript:` URL that somehow arrives in the reply opens nothing; the remote form passes `registry` to `registry.info`; `--index 2` opens the second entry.
+- [ ] **Step 1: Write the failing tests** with fake deps (record `openUrl` calls; assert the call COUNT): one per behaviour bullet above, plus: a `javascript:` URL in the reply is neither printed nor opened; a label carrying `"[2J"` is printed cleaned; the local form reads `reply.extension.funding` and the remote form the top-level `funding` (a fixture of each shape); the remote form passes `registry` to `registry.info`; `--index 2` opens the second kept entry.
 - [ ] **Step 2: Run** `bun test packages/cli/src/commands/extension-sponsor.test.ts` — expected FAIL.
 - [ ] **Step 3: Implement** and wire the handler.
 - [ ] **Step 4: Run** the test, then `bun test packages/cli/src/commands/extension.test.ts` — expected PASS.
