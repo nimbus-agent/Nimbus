@@ -289,7 +289,7 @@ describe("runExtensionInfo", () => {
           funding: [
             {
               url: "https://github.com/sponsors/a",
-              label: "A" + String.fromCodePoint(0x1b) + "[2J",
+              label: `A${String.fromCodePoint(0x1b)}[2J`,
             },
           ],
         },
@@ -299,7 +299,7 @@ describe("runExtensionInfo", () => {
     await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
     const lines = out.stdout.split("\n");
     const pub = lines.findIndex((l) => l.startsWith("Publisher:"));
-    const lic = lines.findIndex((l) => l === "License: MIT");
+    const lic = lines.indexOf("License: MIT");
     expect(lic).toBeGreaterThan(pub);
     expect(lines[lic + 1]).toBe("Funding:");
     expect(lines[lic + 2]).toBe("  1. A[2J https://github.com/sponsors/a");
