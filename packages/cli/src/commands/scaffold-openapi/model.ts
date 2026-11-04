@@ -107,6 +107,8 @@ function resolveIn(ctx: Context, node: unknown, label: string): unknown {
       );
     },
     ctx.budget,
+    () =>
+      warn(ctx, `${label}: a "__proto__" property was dropped (a bundled build cannot carry it)`),
   );
 }
 
@@ -381,6 +383,10 @@ function toRawParam(param: unknown, label: string, ctx: Context): RawParam | und
   if (!PARAM_LOCATIONS.has(where)) {
     throw new SkipOperation(`parameter ${name} has the unsupported location ${where}`);
   }
+  if (name === "__proto__") {
+    warn(ctx, `${label}: ${where} parameter __proto__ dropped (a bundled build cannot carry it)`);
+    return undefined;
+  }
   const required = where === "path" || own(param, "required") === true;
   if (where === "cookie") {
     if (required) throw new SkipOperation(`required cookie parameter ${name} is not supported`);
@@ -410,6 +416,15 @@ function collectParams(pathItem: Obj, op: Obj, label: string, ctx: Context): Raw
 
 function templateNames(path: string): Set<string> {
   return new Set([...path.matchAll(/\{([^{}]+)\}/g)].map((m) => m[1] as string));
+}
+
+/** A segment the URL parser resolves as "." or ".." (it decodes %2e). */
+const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
+
+function assertNoDotSegments(path: string): void {
+  if (path.split("/").some((segment) => DOT_SEGMENT.test(segment))) {
+    throw new SkipOperation('the path has a "." or ".." segment');
+  }
 }
 
 function assertPathParamsDeclared(path: string, params: readonly RawParam[]): void {
@@ -656,6 +671,7 @@ function draftOperation(
   schemes: SchemeTable,
   ctx: Context,
 ): Draft {
+  assertNoDotSegments(c.path);
   const server = chooseServer(c, docServer, ctx);
   const scheme = pickScheme(c, ctx, schemes);
   const collected = collectParams(c.pathItem, c.op, c.label, ctx);
@@ -681,6 +697,15 @@ function draftOperation(
   };
 }
 
+/**
+ * Drops what a skipped operation warned about, so it leaves only its skip reason. (Its warnings
+ * were all new: `warn` records a message once, so each dropped one is forgotten too.)
+ */
+function discardWarningsSince(ctx: Context, mark: { warnings: number; cuts: number }): void {
+  for (const message of ctx.warnings.splice(mark.warnings)) ctx.seenWarnings.delete(message);
+  ctx.cuts = mark.cuts;
+}
+
 function draftAll(
   candidates: readonly Candidate[],
   docServer: UsableServer | undefined,
@@ -690,10 +715,12 @@ function draftAll(
 ): Draft[] {
   const drafts: Draft[] = [];
   for (const c of candidates) {
+    const mark = { warnings: ctx.warnings.length, cuts: ctx.cuts };
     try {
       drafts.push(draftOperation(c, docServer, schemes, ctx));
     } catch (e) {
       if (!(e instanceof SkipOperation)) throw e;
+      discardWarningsSince(ctx, mark);
       skipped.push({ operation: c.label, reason: e.message });
     }
   }

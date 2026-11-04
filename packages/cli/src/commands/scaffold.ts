@@ -334,12 +334,15 @@ function createTargetDir(dir: string, name: string): void {
   try {
     mkdirSync(dir);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
-      console.error(`./${name}/ already exists`);
-      throw new CliExit(2);
-    }
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") refuseExisting(name);
     throw e;
   }
+}
+
+/** The target exists: refused like any other input (exit 2), with nothing written. */
+function refuseExisting(name: string): never {
+  console.error(`./${name}/ already exists`);
+  throw new CliExit(2);
 }
 
 /**
@@ -349,9 +352,7 @@ function createTargetDir(dir: string, name: string): void {
 export async function runScaffold(args: string[], deps: ScaffoldDeps = {}): Promise<void> {
   const parsed = parseScaffoldArgs(args);
   const dir = join(process.cwd(), parsed.name);
-  if (existsSync(dir)) {
-    throw new Error(`./${parsed.name}/ already exists`);
-  }
+  if (existsSync(dir)) refuseExisting(parsed.name);
   let plan: ScaffoldPlan;
   try {
     plan = await planScaffold(parsed, dir, deps);

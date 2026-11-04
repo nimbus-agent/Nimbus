@@ -7,6 +7,9 @@
   "servers": [
     {
       "url": "https://api.hostile.example.com/base/"
+    },
+    {
+      "url": "http://insecure.example.com\u001b[2J"
     }
   ],
   "security": [

@@ -262,7 +262,9 @@ describe("runScaffold", () => {
     expect(out.stdout).toContain("Scaffolded MCP server at ./echo/");
     const marker = join(dir, "package.json");
     writeFileSync(marker, "changed", "utf8");
-    await expect(runScaffold(["mcp", "echo"])).rejects.toThrow(/already exists/);
+    out.reset();
+    await expect(runScaffold(["mcp", "echo"])).rejects.toThrow(CliExit);
+    expect(out.stderr).toContain("./echo/ already exists");
     expect(readFileSync(marker, "utf8")).toBe("changed");
   });
 

@@ -94,12 +94,23 @@ describe("resolveRefs", () => {
     expect(resolveRefs({ $ref: "#/a" }, root, MAX_REF_DEPTH - 1)).toEqual({ v: 1 });
   });
 
-  test("a document key __proto__ lands as own data on a null-prototype object", () => {
-    const parsed = JSON.parse('{"__proto__": {"polluted": true}, "x": 1}') as unknown;
-    const out = resolveRefs(parsed, {}) as Record<string, unknown>;
+  test("a document key __proto__ is dropped (reported), never set as a prototype", () => {
+    const parsed = JSON.parse(
+      '{"__proto__": {"polluted": true}, "x": {"__proto__": 1}}',
+    ) as unknown;
+    let dropped = 0;
+    const budget = { used: 0, limit: 1000 };
+    const out = resolveRefs(parsed, {}, 0, undefined, budget, () => {
+      dropped += 1;
+    }) as Record<string, unknown>;
     expect(Object.getPrototypeOf(out)).toBeNull();
-    expect(Object.hasOwn(out, "__proto__")).toBe(true);
+    expect(Object.hasOwn(out, "__proto__")).toBe(false);
+    expect(Object.keys(out)).toEqual(["x"]);
+    expect(Object.keys(out["x"] as object)).toEqual([]);
+    expect(dropped).toBe(2);
     expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    // With no callback the key is still dropped.
+    expect(Object.keys(resolveRefs(parsed, {}) as object)).toEqual(["x"]);
   });
 
   test("a $ref key whose value is not a string is ordinary data", () => {

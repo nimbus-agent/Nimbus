@@ -100,9 +100,28 @@ function item(line: string): string {
 }
 
 function describeOp(op: OperationDef): string {
-  const request = `\`${op.tool}\` — ${codeSpan(`${op.method} ${op.path}`)}`;
+  const methodAndPath = codeSpan(`${op.method} ${op.path}`);
+  const request = `\`${op.tool}\` — ${methodAndPath}`;
   if (op.body !== "unsupported") return request;
-  return `${request} (non-JSON body, ${op.bodyRequired ? "required: refuses every call" : "optional: sent without it"})`;
+  const handling = op.bodyRequired ? "required: refuses every call" : "optional: sent without it";
+  return `${request} (non-JSON body, ${handling})`;
+}
+
+/**
+ * Each declared credential with the hosts that receive it, in declaration order. A basic scheme's
+ * `_user` and `_password` entries both match the operation's credential.
+ */
+export function credentialHosts(model: OperationModel): { name: string; hosts: string[] }[] {
+  return Object.entries(model.credentials).map(([name, { env }]) => {
+    const hosts = new Set<string>();
+    for (const op of model.operations) {
+      const cred = op.credential;
+      if (cred !== null && (cred.env === env || cred.passwordEnv === env)) {
+        hosts.add(new URL(op.server).host);
+      }
+    }
+    return { name, hosts: [...hosts].sort() };
+  });
 }
 
 function section(title: string, intro: string, lines: readonly string[]): string {
@@ -115,6 +134,9 @@ function credentialsSection(id: string, model: OperationModel): string {
   if (entries.length === 0) return "";
   const commands = entries.map(([n]) => `nimbus extension credential set ${id} ${n}`).join("\n");
   const envs = entries.map(([n, c]) => `\`${n}\` reaches the extension as \`${c.env}\``);
+  const recipients = credentialHosts(model).map(
+    ({ name, hosts }) => `credential \`${name}\` is sent to: ${hosts.map(codeSpan).join(", ")}`,
+  );
   return `## Credentials
 
 Set each credential once the extension is installed and approved; a call that needs one refuses
@@ -125,6 +147,7 @@ ${commands}
 \`\`\`
 
 ${envs.map(item).join("")}
+${recipients.map(item).join("")}
 `;
 }
 
@@ -213,5 +236,8 @@ export function openApiReportLines(model: OperationModel): string[] {
     ...model.warnings.map((w) => `warning: ${w}`),
     ...model.skipped.map((s) => `skipped ${s.operation}: ${s.reason}`),
     ...model.cutNames.map((c) => `shortened tool name ${c.from} → ${c.to}`),
+    ...credentialHosts(model).map(
+      ({ name, hosts }) => `credential ${name} is sent to: ${hosts.join(", ")}`,
+    ),
   ].map(cleanDocumentText);
 }

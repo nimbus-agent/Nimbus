@@ -600,15 +600,32 @@ describe("input schema", () => {
     ]);
   });
 
-  test("a parameter named __proto__ lands as own data", () => {
+  test("a parameter named __proto__ and __proto__ schema keys are dropped with a warning", () => {
+    // A bundled build inlines operations.json as an object literal, where "__proto__" vanishes.
     const parsed = JSON.parse(
       JSON.stringify(
-        doc({ parameters: [{ name: "__proto__", in: "query", schema: { type: "string" } }] }),
+        doc({
+          parameters: [
+            { name: "__proto__", in: "query", schema: { type: "string" } },
+            {
+              name: "q",
+              in: "query",
+              schema: JSON.parse(
+                '{"type":"object","properties":{"__proto__":{"type":"string"},"a":{}}}',
+              ),
+            },
+          ],
+        }),
       ),
     ) as Doc;
-    const props = build(parsed).operations[0]?.inputSchema["properties"] as Record<string, unknown>;
-    expect(Object.hasOwn(props, "__proto__")).toBe(true);
-    expect(Object.getPrototypeOf(props)).toBeNull();
+    const m = build(parsed);
+    const props = m.operations[0]?.inputSchema["properties"] as Record<string, unknown>;
+    expect(Object.keys(props)).toEqual(["q"]);
+    expect(Object.keys((props["q"] as { properties: object }).properties)).toEqual(["a"]);
+    expect(m.warnings).toEqual([
+      "GET /things: query parameter __proto__ dropped (a bundled build cannot carry it)",
+      'GET /things: a "__proto__" property was dropped (a bundled build cannot carry it)',
+    ]);
   });
 });
 
@@ -992,6 +1009,59 @@ describe("fix round 1", () => {
       "GET /things: header parameter accept is set by the extension; dropped",
       "GET /things: header parameter Content-Type is set by the extension; dropped",
       "GET /things: header parameter AUTHORIZATION is set by the extension; dropped",
+    ]);
+  });
+
+  test('an operation whose path template has a literal "." or ".." segment is skipped', () => {
+    const paths: Doc = { "/ok": { get: { operationId: "ok" } } };
+    for (const path of ["/a/../b", "/a/./b", "/a/%2e%2E/b", "/%2e", "/.."]) {
+      paths[path] = { get: {} };
+    }
+    paths["/a/.../b"] = { get: { operationId: "three" } };
+    paths["/a/{x}..{y}"] = {
+      get: {
+        operationId: "composed",
+        parameters: [
+          { name: "x", in: "path", required: true },
+          { name: "y", in: "path", required: true },
+        ],
+      },
+    };
+    const m = build(doc({}, { paths }));
+    expect(m.operations.map((o) => o.tool)).toEqual(["ok", "three", "composed"]);
+    expect(m.skipped).toEqual(
+      ["/a/../b", "/a/./b", "/a/%2e%2E/b", "/%2e", "/.."].map((p) => ({
+        operation: `GET ${p}`,
+        reason: 'the path has a "." or ".." segment',
+      })),
+    );
+  });
+
+  test("a skipped operation leaves only its skip reason, not the warnings it raised", () => {
+    const paths: Doc = {
+      "/kept": { get: { operationId: "kept", parameters: [{ name: "c", in: "cookie" }] } },
+      "/gone/{p}": {
+        get: {
+          operationId: "gone",
+          security: [{ o: [] }],
+          parameters: [{ name: "c", in: "cookie" }],
+        },
+      },
+      "/also-gone": {
+        get: {
+          operationId: "also_gone",
+          servers: [{ url: "http://insecure.example.com" }],
+        },
+      },
+    };
+    const m = build(
+      doc({}, { paths, components: { securitySchemes: { o: { type: "oauth2", flows: {} } } } }),
+    );
+    expect(m.operations.map((o) => o.tool)).toEqual(["kept"]);
+    expect(m.warnings).toEqual(["GET /kept: cookie parameter c ignored"]);
+    expect(m.skipped).toEqual([
+      { operation: "GET /gone/{p}", reason: "path parameter {p} is not declared" },
+      { operation: "GET /also-gone", reason: "none of its servers is a usable https server" },
     ]);
   });
 

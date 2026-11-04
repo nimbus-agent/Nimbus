@@ -47,8 +47,16 @@ export interface RefBudget {
 interface WalkContext {
   readonly root: Obj;
   readonly onCut: ((ref: string) => void) | undefined;
+  readonly onProtoKey: (() => void) | undefined;
   readonly budget: RefBudget;
 }
+
+/**
+ * A key the output never carries. It is plain data in a null-prototype object, but a bundled
+ * build inlines operations.json as an object literal, where `"__proto__": …` sets the prototype
+ * instead of a property — the key would silently vanish.
+ */
+const PROTO_KEY = "__proto__";
 
 const formatCount = new Intl.NumberFormat("en-US");
 
@@ -123,6 +131,10 @@ function walk(node: unknown, ctx: WalkContext, refDepth: number, nesting: number
   }
   const out = emptyObject();
   for (const key of Object.keys(node)) {
+    if (key === PROTO_KEY) {
+      ctx.onProtoKey?.();
+      continue;
+    }
     // A key's first CHARS_PER_NODE characters ride on its value's charge; the rest are counted.
     countNode(ctx, Math.max(0, Math.ceil(key.length / CHARS_PER_NODE) - 1));
     out[key] = walk((node as Obj)[key], ctx, refDepth, nesting + 1);
@@ -133,7 +145,8 @@ function walk(node: unknown, ctx: WalkContext, refDepth: number, nesting: number
 /**
  * A deep, null-prototype copy of `node` with every local `$ref` replaced by its target. `depth` is
  * the number of `$ref`s already followed (0 at the top); `onCut` is called once per cut; `budget`
- * (default: {@link MAX_RESOLVED_NODES} for this call alone) bounds the nodes built.
+ * (default: {@link MAX_RESOLVED_NODES} for this call alone) bounds the nodes built; `onProtoKey`
+ * is called for each `__proto__` key dropped.
  */
 export function resolveRefs(
   node: unknown,
@@ -141,6 +154,7 @@ export function resolveRefs(
   depth = 0,
   onCut?: (ref: string) => void,
   budget: RefBudget = { used: 0, limit: MAX_RESOLVED_NODES },
+  onProtoKey?: () => void,
 ): unknown {
-  return walk(node, { root, onCut, budget }, depth, 0);
+  return walk(node, { root, onCut, onProtoKey, budget }, depth, 0);
 }

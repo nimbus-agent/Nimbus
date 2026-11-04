@@ -95,6 +95,10 @@ describe("buildOpenApiScaffoldFiles — the Petstore fixture", () => {
     expect(readme).toContain("- `delete_pets_petid` — ` DELETE /pets/{petId} `\n");
     expect(readme).toContain("nimbus extension credential set petstore basic_password\n");
     expect(readme).toContain("- `api_key` reaches the extension as `API_KEY`\n");
+    expect(readme).toContain("- credential `api_key` is sent to: ` eu.petstore.example.com `\n");
+    expect(readme).toContain(
+      "- credential `basic_password` is sent to: ` eu.petstore.example.com `\n",
+    );
     expect(readme).toContain("## Unsupported security schemes");
     expect(readme).toContain("- ` oauth (oauth2) `\n");
     expect(readme).toContain("nimbus eval --package . --record <inputs.json>");
@@ -222,7 +226,8 @@ describe("buildOpenApiScaffoldFiles — hostile document strings (Review Focus 1
     };
     expect(table).toEqual({ hosts: [...hostile.hosts], operations: [...hostile.operations] });
     const op = table.operations.find((o) => o.description.startsWith("Read"));
-    expect(op?.params.map((p) => p.name)).toEqual(["id", `q"*/\`$\{y}\`\nz`, "__proto__"]);
+    // `__proto__` is dropped by the model: a bundled build could not carry it.
+    expect(op?.params.map((p) => p.name)).toEqual(["id", `q"*/\`$\{y}\`\nz`]);
   });
 
   test("README and printed lines carry no control characters", () => {
@@ -245,10 +250,12 @@ describe("buildOpenApiScaffoldFiles — hostile document strings (Review Focus 1
     expect(readme).toContain("server http://insecure.example.com[2J: not an absolute URL; skipped");
     const lines = openApiReportLines(hostile);
     // The apiKey header name `X-Token`${x}` is not an HTTP token, so the scheme is unsupported.
+    // GET /old's own server warning went with it when it was skipped; the doc-level one stays.
     expect(lines).toEqual([
-      `warning: GET /items\`*/"'$\{/{id}: no supported security alternative; generated without a credential`,
-      "warning: POST /upload: no supported security alternative; generated without a credential",
       "warning: server http://insecure.example.com[2J: not an absolute URL; skipped",
+      `warning: GET /items\`*/"'$\{/{id}: no supported security alternative; generated without a credential`,
+      `warning: GET /items\`*/"'$\{/{id}: query parameter __proto__ dropped (a bundled build cannot carry it)`,
+      "warning: POST /upload: no supported security alternative; generated without a credential",
       "skipped GET /old: none of its servers is a usable https server",
     ]);
   });
@@ -288,6 +295,7 @@ describe("document text in the README", () => {
       cutNames: [{ from: `long${RLO}_name`, to: "long" }],
       unsupportedSchemes: [`[s](https://evil)`],
       warnings: [`![img](https://evil/x.png)${RLO}`],
+      credentials: {},
     };
     const readme = contentOf(
       buildOpenApiScaffoldFiles("petstore", undefined, "linux", "/w/p", model),
@@ -321,6 +329,10 @@ describe("openApiReportLines", () => {
       "warning: w[31m1",
       "skipped GET /a: r2",
       "shortened tool name very_long → very",
+      "credential api_key is sent to: eu.petstore.example.com",
+      "credential bearer_auth is sent to: eu.petstore.example.com",
+      "credential basic_user is sent to: eu.petstore.example.com",
+      "credential basic_password is sent to: eu.petstore.example.com",
     ]);
   });
 });
