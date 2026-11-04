@@ -306,7 +306,7 @@ export function consentDisplayPayload(action: PlannedAction): Record<string, unk
 function neverPosesAsPreview(
   shown: Record<string, unknown> | undefined,
 ): Record<string, unknown> | undefined {
-  if (shown === undefined || shown["kind"] !== "connector-write") return shown;
+  if (shown?.["kind"] !== "connector-write") return shown;
   return { payload: shown };
 }
 

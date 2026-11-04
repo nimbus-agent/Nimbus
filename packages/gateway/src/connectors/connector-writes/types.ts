@@ -52,7 +52,7 @@ export function withPreview(
 ): ConnectorWriteRow {
   const secrets = new Set(preview.fields.filter((f) => f.kind === "secret").map((f) => f.key));
   for (const text of [preview.target, preview.summary]) {
-    for (const m of text.matchAll(/\{([A-Za-z0-9_]+)\}/g)) {
+    for (const m of text.matchAll(/\{(\w+)\}/g)) {
       if (m[1] !== undefined && secrets.has(m[1])) {
         throw new Error(
           `connector write preview: placeholder {${m[1]}} names a secret field (row ${r.toolId})`,
@@ -84,4 +84,14 @@ export interface ConnectorWrite {
   readonly actionType: string;
   readonly toolId: string;
   readonly service: string;
+}
+
+/** A wave-4 write with no input fields beyond what its target and summary already show. */
+export function fieldlessWrite(
+  toolId: string,
+  actionType: string,
+  target: string,
+  summary: string,
+): ConnectorWriteRow {
+  return withPreview(row(toolId, actionType, "write", 4), { target, summary, fields: [] });
 }

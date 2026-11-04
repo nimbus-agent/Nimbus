@@ -74,13 +74,15 @@ function sanitisePreviewText(s: string): string {
   let out = "";
   for (const ch of s) {
     const c = ch.codePointAt(0) ?? 0;
-    out += isUnsafeCodePoint(c) ? `\\u{${c.toString(16).toUpperCase().padStart(4, "0")}}` : ch;
+    out += isUnsafeCodePoint(c)
+      ? String.raw`\u{${c.toString(16).toUpperCase().padStart(4, "0")}}`
+      : ch;
   }
   return out;
 }
 
 const NOT_SET = "(not set)";
-const PLACEHOLDER = /\{([A-Za-z0-9_]+)\}/g;
+const PLACEHOLDER = /\{(\w+)\}/g;
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
@@ -160,7 +162,7 @@ function findRow(
     const hit = rows.find(
       (r) => r.toolId === id || `${serviceOf(r.actionType)}_${r.toolId}` === id,
     );
-    return hit !== undefined && hit.actionType === action.type ? hit : undefined;
+    return hit?.actionType === action.type ? hit : undefined;
   }
   const writes = rows.filter((r) => r.transport === "write" && r.actionType === action.type);
   return writes.length === 1 ? writes[0] : undefined;
@@ -218,7 +220,7 @@ export function buildConnectorWritePreview(
 
 /** One physical line per entry: a newline or tab inside any value is shown as `\n` / `\t`. */
 function oneLine(s: string): string {
-  return s.replaceAll("\n", "\\n").replaceAll("\t", "\\t");
+  return s.replaceAll("\n", String.raw`\n`).replaceAll("\t", String.raw`\t`);
 }
 
 export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): string[] {
