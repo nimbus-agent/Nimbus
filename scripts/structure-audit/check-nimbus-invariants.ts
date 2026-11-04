@@ -666,6 +666,7 @@ export function checkTribalKbWriteInvariant(files: readonly FileEntry[]): Violat
 const CONNECTOR_WRITE_ALLOWED = [
   "packages/gateway/src/connectors/connector-writes/warehouse-bi.ts",
   "packages/gateway/src/connectors/connector-writes/gitops-ml.ts",
+  "packages/gateway/src/connectors/connector-writes/manifest.generated.ts",
   "packages/gateway/src/connectors/connector-write-transport.ts",
   "packages/gateway/src/connectors/connector-write-dispatch.ts",
 ];
