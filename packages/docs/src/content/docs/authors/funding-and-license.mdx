@@ -1,0 +1,47 @@
+---
+title: Funding and license
+description: Declare funding links and an SPDX license in your extension manifest, and how users reach the links with nimbus extension sponsor.
+---
+
+Two optional fields in `nimbus.extension.json` say how to support you and under
+what terms the code is offered.
+
+```json
+{
+  "funding": [{ "url": "https://github.com/sponsors/acme", "label": "GitHub Sponsors" }],
+  "license": "MIT"
+}
+```
+
+- **`funding`**: 1 to 8 entries of `{ "url", "label" }`. The `url` is required:
+  `https` with a host, no user name or password, at most 2048 characters. The
+  `label` is optional, 1 to 64 characters. No two entries share a `url`.
+- **`license`**: an SPDX license expression such as `MIT` or
+  `Apache-2.0 OR MIT`, at most 128 characters.
+
+## Checks
+
+A malformed field is never a runtime error: every gateway ignores it and
+`extension info` shows `(invalid, ignored)`. But `sign` refuses it (exit `2`,
+`manifest <field> is invalid: <reason>; fix it before signing`) and `publish`
+refuses it with `ERR_REGISTRY_MANIFEST_INVALID`, so a bad field cannot reach a
+registry through Nimbus's own tools. Nimbus never verifies that a link works or
+that a license is true.
+
+## What users see
+
+```bash
+nimbus extension sponsor acme/notion-tasks
+```
+
+`sponsor` prints every link and, on a terminal, asks `Open <host> in your
+browser? [y/N]` before opening one (`--index <n>` picks which). Nimbus takes no
+payment and sees none. The desktop app shows no funding yet.
+
+If someone clones your extension with `--publisher`, your `funding` links are
+removed from their copy, so they cannot be mistaken for theirs.
+
+## Reference
+
+- [Manifest fields `funding` and `license`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#manifest-fields-funding-and-license)
+- [`nimbus extension sponsor`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-sponsor-id---registry-name---index-n)

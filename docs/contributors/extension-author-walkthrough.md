@@ -1,8 +1,10 @@
 # Extension author walkthrough
 
+The same path as a guided site section: <https://nimbus-agent.dev/authors/>.
+
 This is a short path from zero to a locally installed Nimbus extension. For the full contract, see `docs/architecture.md` (Extension Registry) and `packages/gateway/src/extensions/manifest.ts`.
 
-> **Installing does not run an extension; approving it does.** Install hashes, Ed25519-verifies, records and enables an extension. Since extension runtime PR 3 (2026-10-17), the owner can then approve it to run (`nimbus extension approve <id>`), and it runs as a sandboxed MCP stdio server on first use, from a verified per-spawn copy of its install tree that is also its working directory (invariant I43). Its tools are invoked by the owner with `nimbus connector tools|call ext_<id>`, each call behind an approval prompt; they are **not** offered to the agent's model yet (that is PR 4). Tracked in [`ecosystem-roadmap.md` § Track 0](../ecosystem-roadmap.md#track-0--shipped-but-dark).
+> **Installing does not run an extension; approving it does.** Install hashes, Ed25519-verifies, records and enables an extension. Since extension runtime PR 3 (2026-10-17), the owner can then approve it to run (`nimbus extension approve <id>`), and it runs as a sandboxed MCP stdio server on first use, from a verified per-spawn copy of its install tree that is also its working directory (invariant I43). Its tools are invoked by the owner with `nimbus connector tools|call ext_<id>`, each call behind an approval prompt; they are offered to the agent's model only if the owner approves with `nimbus extension approve <id> --model` (shipped 2026-10-17). Tracked in [`ecosystem-roadmap.md` § Track 0](../ecosystem-roadmap.md#track-0--shipped-but-dark).
 
 ## 1. Scaffold
 
@@ -49,7 +51,7 @@ The tool copies into the configured extensions directory, records SHA-256 manife
 
 ## 5. Test locally
 
-Use a scratch config dir and `nimbus start` so you do not touch your primary index. After changing code, bump `version` or reinstall so hashes stay consistent with the registry row.
+Use a scratch config dir and `nimbus start` so you do not touch your primary index. After changing code, run `nimbus extension remove <id>` and install again from the path: installing an id that is already installed is refused whatever its version.
 
 Run **`nimbus test .`** from the extension package root: it validates the manifest contract (`runContractTests` from `@nimbus-dev/sdk`) and, when `package.json` defines a `test` script, runs `bun test`.
 

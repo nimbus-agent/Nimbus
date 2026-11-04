@@ -1925,9 +1925,10 @@ environment**. See [Model Router](#model-router-local-llm) above for how a route
 
 ## Spine S3 Subsystems — Open Surface
 
-S3 opens the Gateway to other agents and to third-party code. It is the active slot, and it closes when
-all seven Phase 9.5 projects have shipped ([`roadmap.md` § Phase 9.5](./roadmap.md#phase-95--marketplace-registry)).
-Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
+S3 opens the Gateway to other agents and to third-party code. It closed on 2026-11-04 (opened 2026-10-11), when
+the last of the seven Phase 9.5 projects shipped ([`roadmap.md` § Phase 9.5](./roadmap.md#phase-95--marketplace-registry));
+its record is [`roadmap.md` § Spine S3](./roadmap.md#spine-s3). The list below names the subsystems this file
+describes, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 
 - **The extension runtime, 4 of 4** (2026-10-11 → 2026-10-17): the install gate, run grants, the
   sandboxed runtime and `--model` access ([§ Extension run grants](#extension-run-grants),
@@ -1935,8 +1936,8 @@ Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 - **The MCP capture sink, 3 of 3** (2026-10-12 → 2026-10-15; [§ MCP capture sink](#mcp-capture-sink)).
 - **The registry**: the client (2026-10-18), publishing (2026-10-23) and the Readwise unbundling pilot
   ([§ Extension registry client](#extension-registry-client), [§ Connector migration](#connector-migration)).
-- **The trust layer, PRs 1–4c** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
-  stored, the feed is fetched (unset in this build), revoked or taken-down code is refused (I48), publishers can
+- **The trust layer, PRs 1–5** (2026-10-26 → 2026-10-27; [§ Trust layer](#trust-layer)): statements are
+  stored, the feed is fetched, revoked or taken-down code is refused (I48), publishers can
   rotate keys, a registry carries their rotations and revocations, the verified-publisher badge is shown, registry
   maintainers can block, users can report, Nimbus can run its trust feed, and a registry can vouch for a
   version's build provenance.

@@ -1,0 +1,49 @@
+---
+title: Verified publishers
+description: What the verified-publisher badge means in Nimbus, what it does not mean, and where the verification comes from.
+---
+
+Wherever Nimbus shows an extension with publisher data, it says either
+`Verified publisher: @<handle> (verified <date>)` or `Unverified publisher` (an extension with no
+publisher is `(unsigned)`). `extension search` has a Verified column showing `✓ @<handle>` or `-`.
+
+## What the badge means
+
+It is shown exactly when the **current Nimbus verification** of the publisher
+lists the key that signed (or, for a registry entry, would sign) the code, and
+that key is not revoked on this machine (a revocation carried by a registry
+removes the badge only for that registry's copies). Nothing is refused or warned about
+beyond the label.
+
+It does not mean the code is safe, reviewed or fit for a purpose. An unverified
+publisher can still install, and a verified one still needs the owner's
+`nimbus extension approve`.
+
+## Where it comes from
+
+The verification is published in the Nimbus trust feed, a signed `trust.json`
+that also carries publisher-key revocations and extension takedowns. The release
+carries a snapshot of the feed and the gateway refreshes it on a timer
+(`nimbus trust status` and `nimbus trust refresh` show and fetch it). A publisher
+shows as verified only once Nimbus has verified it there.
+
+A local-path install never carries the badge: its manifest signature does not
+bind its code.
+
+## How a publisher is verified
+
+In the feed repository (`nimbus-agent/nimbus-trust`) a verified publisher is one
+file, `publishers/<publisherId>.json`, holding `{ publisherId, keys, github }`.
+A Nimbus maintainer writes it with `nimbus trust maintain verify-publisher`,
+which records that the maintainer checked the publisher's GitHub identity; it
+does not check it. The file reaches the feed by pull request, and the
+`trust-sign` workflow signs the next feed in the `trust-signing` GitHub environment. Removing
+the file drops the badge. This page states no criteria, fee or promise of
+acceptance, because none is documented. What you can do now is sign your
+extensions (see [Sign and publish](/authors/sign-and-publish/)) and keep your
+key history signed, so a rotation reaches users without a key-conflict prompt.
+
+## Reference
+
+- [Trust feed in the CLI reference](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#trust-feed)
+- [`nimbus extension search`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-search-query---json)

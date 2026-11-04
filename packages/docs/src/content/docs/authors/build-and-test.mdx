@@ -1,0 +1,102 @@
+---
+title: Build and test
+description: Build an extension, install it from a folder, approve it to run and call its tools on your own machine.
+---
+
+## Test the package
+
+Run the contract and unit tests from the package root:
+
+```bash
+bun run build
+nimbus test .
+```
+
+`nimbus test` validates the manifest against the `@nimbus-dev/sdk` contract and
+then runs the package's own `bun test`.
+
+## Sign it first if it has a publisher
+
+A package scaffolded with `--publisher` names a publisher but carries no key or
+signature yet, and install verifies the signature of any package that names a
+publisher. Generate a key once and sign:
+
+```bash
+nimbus extension keygen
+nimbus extension sign .
+```
+
+The key goes to `~/.nimbus/publisher-key`, outside your package. (A package
+scaffolded without `--publisher` is unsigned and needs this step only before
+you publish.) See [Sign and publish](/authors/sign-and-publish/).
+
+## Install it from a folder
+
+With the Gateway running, from the directory that contains `my_ext` (or use
+`nimbus extension install .` from inside it):
+
+```bash
+nimbus extension install ./my_ext
+```
+
+The Gateway shows you an `extension.install` approval (the id, version,
+publisher as the manifest claims it, declared permissions), then copies the
+package, records its hashes and a digest of every file, and enables it. **Install
+runs nothing.** To try a change, run `nimbus extension remove acme/my_ext` and
+install again from the path: installing an id that is already installed is
+refused whatever its version. Removal also purges every index item the
+extension synced and every credential its approval granted, so develop against
+a scratch profile: `nimbus --demo` runs a command against an isolated demo root
+with its own config, data and an in-memory vault, and never touches your real
+install. (`nimbus extension rehash` adopts a changed tree
+only when the manifest and entry file still match their install-time hashes.)
+
+## Approve it to run
+
+```bash
+nimbus extension approve acme/my_ext
+```
+
+This is a second, terminal-only approval for `extension.run`: it shows the exact
+tree digest, the `ext_` service id, the network hosts and the read and write
+paths. There is no `--yes`. Use `--network <a,b|none>` to grant only some of
+the hosts you declared, and `--model` to also offer the tools to the model in
+`nimbus ask` (each call still asks you). Approving again without `--model`
+turns model access off. The extension starts on first use, from a verified
+per-spawn copy of the package that is also its working directory, so write only
+to paths your manifest declares under `permissions.filesystem.write`.
+
+## Call its tools
+
+```bash
+nimbus connector tools ext_acme_my_ext
+nimbus connector call ext_acme_my_ext echo --input '{"text":"hi"}'
+```
+
+The service id is `ext_` plus the manifest id lower-cased with every character
+outside `a-z0-9` turned into `_`, so `acme/my_ext` becomes `ext_acme_my_ext`;
+`approve` prints it. At most 62 characters may follow `ext_`. Tools offered to
+the model with `--model` are named `ext_<slug>__<tool>`. Every call asks for the owner's
+approval (invariant I42); a delegate can never answer it.
+
+## See what it did
+
+```bash
+nimbus extension info acme/my_ext
+nimbus extension audit acme/my_ext
+```
+
+`info` shows the manifest, reach and signature state. `audit` shows the network
+use seen on this machine next to what the manifest declared; it is local
+observation only and notes its own gaps (short connections can be missed, file
+access is not observed).
+
+## Reference
+
+- [`nimbus extension install`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-install-path--id---registry-name---version-v---channel-beta---accept-publisher-key-fingerprint---publisher-key-path---yes)
+- [`nimbus extension approve`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-approve-id---model---network-abnone)
+- [`nimbus connector tools`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-connector-tools-mcp_id---json) and [`nimbus connector call`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-connector-call-mcp_id-tool---input-json---json)
+- [`nimbus extension info`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-info-id---deps---registry-name----remote---json) and [`nimbus extension audit`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-audit-id---json)
+- [Sandbox](https://github.com/nimbus-agent/Nimbus/blob/main/docs/sandbox.md)
+
+Next: [Evals](/authors/evals/).
