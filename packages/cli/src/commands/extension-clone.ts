@@ -21,6 +21,8 @@ import {
   readFileSync,
   rmdirSync,
   rmSync,
+  type Stats,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -65,9 +67,8 @@ interface Plan {
   id: string;
   registry?: string;
   version?: string;
+  /** Absolute; checked absent (with an existing parent) before any IPC, created by clone. */
   into: string;
-  /** `--into` was an existing empty directory, so clone did not create it. */
-  intoExisted: boolean;
   publisher?: string;
   newId?: string;
   json: boolean;
@@ -138,20 +139,45 @@ function errorMessage(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** Whether `--into` may be used: absent, or an empty real directory. Throws a refusal otherwise. */
-function checkInto(into: string): boolean {
-  let st: ReturnType<typeof lstatSync>;
+function errnoCode(e: unknown): string | undefined {
+  return (e as NodeJS.ErrnoException | undefined)?.code;
+}
+
+/** `lstat` of `p`, or undefined when nothing is there (ENOENT, or ENOTDIR under a file). */
+function lstatOrAbsent(p: string): Stats | undefined {
   try {
-    st = lstatSync(into);
+    return lstatSync(p);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw e;
+    const code = errnoCode(e);
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw new CloneRefusal(`cannot use ${clean(p)}: ${clean(errorMessage(e))}`, 2);
   }
-  if (st.isSymbolicLink()) throw new CloneRefusal(`${clean(into)} is a symbolic link`, 2);
-  if (!st.isDirectory() || readdirSync(into).length > 0) {
-    throw new CloneRefusal(`${clean(into)} already exists and is not empty`, 2);
+}
+
+function existingIntoMessage(into: string, st: Stats): string {
+  const dir = clean(into);
+  if (st.isSymbolicLink()) return `${dir} is a symbolic link`;
+  if (st.isDirectory() && readdirSync(into).length === 0) {
+    return `${dir} already exists; clone needs a new directory`;
   }
-  return true;
+  return `${dir} already exists and is not empty`;
+}
+
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** `--into` must not exist at all, and its parent must be a directory. Refuses (exit 2) otherwise. */
+function checkInto(into: string): void {
+  const st = lstatOrAbsent(into);
+  if (st !== undefined) throw new CloneRefusal(existingIntoMessage(into, st), 2);
+  if (!isDirectory(dirname(into))) {
+    throw new CloneRefusal(`the parent of ${clean(into)} does not exist`, 2);
+  }
 }
 
 function checkSourceId(id: string): string {
@@ -183,13 +209,12 @@ function buildPlan(raw: RawArgs, cwd: string): Plan {
   const publisher = raw.flags.get("--publisher");
   const newId = publisher === undefined ? undefined : newIdFor(name, publisher);
   const into = resolve(cwd, raw.flags.get("--into") ?? name);
-  const intoExisted = checkInto(into);
+  checkInto(into);
   return {
     id: raw.id,
     ...optionalString("registry", raw.flags.get("--registry")),
     ...optionalString("version", raw.flags.get("--version")),
     into,
-    intoExisted,
     ...optionalString("publisher", publisher),
     ...optionalString("newId", newId),
     json: raw.json,
@@ -300,12 +325,13 @@ function takeStagedArchive(src: CloneSource): Buffer {
 
 // ---- phases 4-6: unpack, copy, rewrite, record -----------------------------------------------
 
-function isStrictlyInside(root: string, p: string): boolean {
+/** Whether `p` is below `root` (never `root` itself); both absolute. Exported for its tests. */
+export function isStrictlyInside(root: string, p: string): boolean {
   const rel = relative(root, p);
   return rel !== "" && !isAbsolute(rel) && rel.split(sep)[0] !== "..";
 }
 
-function copyFiles(files: readonly string[], from: string, into: string, wrote: Set<string>): void {
+function copyFiles(files: readonly string[], from: string, into: string): void {
   const fromRoot = resolve(from);
   const intoRoot = resolve(into);
   for (const rel of files) {
@@ -314,7 +340,6 @@ function copyFiles(files: readonly string[], from: string, into: string, wrote: 
     if (!isStrictlyInside(fromRoot, source) || !isStrictlyInside(intoRoot, dest)) {
       throw new CloneRefusal(`package file ${clean(rel)} is outside the package; refused`, 1);
     }
-    wrote.add(relative(intoRoot, dest).split(sep)[0] as string);
     mkdirSync(dirname(dest), { recursive: true });
     copyFileSync(source, dest, constants.COPYFILE_EXCL);
   }
@@ -356,24 +381,30 @@ function notesText(src: CloneSource, repository: string | null, now: Date): stri
   return `${lines.join("\n")}\n`;
 }
 
-/** `--into`, created here unless it already existed (empty); a fresh one fails if it appeared. */
-function openInto(plan: Plan): boolean {
-  if (!plan.intoExisted) {
-    mkdirSync(plan.into);
-    return true;
+/** Creates `--into` (non-recursive); one that appeared since the check is refused. */
+function createInto(into: string): void {
+  try {
+    mkdirSync(into);
+  } catch (e) {
+    if (errnoCode(e) === "EEXIST") {
+      throw new CloneRefusal(`${clean(into)} appeared while cloning; nothing was written`, 1);
+    }
+    throw new CloneRefusal(clean(errorMessage(e)), 1);
   }
-  checkInto(plan.into);
-  return false;
 }
 
-function undoInto(into: string, created: boolean, wrote: ReadonlySet<string>): void {
-  if (created) {
-    rmSync(into, { recursive: true, force: true });
-    return;
+/** The package must be the extension asked for; checked before `--into` is created. */
+function checkManifestId(inspected: InspectedPackage, src: CloneSource): void {
+  const mid = inspected.manifest["id"];
+  if (mid !== src.id) {
+    throw new CloneRefusal(
+      `the package's manifest names ${clean(String(mid))}, not ${clean(src.id)}; nothing was written`,
+      1,
+    );
   }
-  for (const name of wrote) rmSync(join(into, name), { recursive: true, force: true });
 }
 
+/** Fills the `--into` clone just created; any failure removes it (clone created it). */
 function populateInto(
   plan: Plan,
   src: CloneSource,
@@ -381,17 +412,19 @@ function populateInto(
   extracted: string,
   now: Date,
 ): void {
-  const created = openInto(plan);
-  const wrote = new Set<string>();
+  createInto(plan.into);
   try {
-    copyFiles(inspected.files, extracted, plan.into, wrote);
+    copyFiles(inspected.files, extracted, plan.into);
     writeFileSync(join(plan.into, MANIFEST_FILE), rewriteManifest(inspected.manifest, plan));
-    wrote.add(NOTES_FILE);
     const repository = readManifestRepository(inspected.manifest) ?? null;
     writeFileSync(join(plan.into, NOTES_FILE), notesText(src, repository, now));
   } catch (e) {
-    undoInto(plan.into, created, wrote);
-    throw e;
+    rmSync(plan.into, { recursive: true, force: true });
+    if (e instanceof CloneRefusal) throw e;
+    throw new CloneRefusal(
+      `could not write the copy: ${clean(errorMessage(e))}; ${clean(plan.into)} was removed`,
+      1,
+    );
   }
 }
 
@@ -414,6 +447,7 @@ async function writeCopy(
         e instanceof RegistryError ? e.message : `ERR_REGISTRY_EXTRACT_FAILED: ${errorMessage(e)}`;
       throw new CloneRefusal(clean(detail), 1);
     }
+    checkManifestId(inspected, src);
     populateInto(plan, src, inspected, join(work, "x"), deps.now());
     return inspected;
   } finally {

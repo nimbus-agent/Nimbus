@@ -10,11 +10,12 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { packExtensionDir } from "@nimbus-dev/registry-format";
+import { create as tarCreate } from "tar";
 
 import type { IPCClient } from "../ipc-client/index.ts";
-import { type CloneDeps, runExtensionClone } from "./extension-clone.ts";
+import { type CloneDeps, isStrictlyInside, runExtensionClone } from "./extension-clone.ts";
 
 const ESC = String.fromCodePoint(0x1b);
 const FINGERPRINT = "ab12cd34ef56";
@@ -264,14 +265,41 @@ describe("nimbus extension clone", () => {
     expect(h.err()).toContain(`${into} is a symbolic link`);
   });
 
-  test("an existing empty --into is used", async () => {
-    const s = await stage(baseManifest("acme/tool"));
+  test("an existing empty --into is refused before any IPC", async () => {
     const into = join(tmp, "empty");
     mkdirSync(into);
-    const h = harness({ reply: reply(s) });
-    expect(await runExtensionClone(["acme/tool", "--into", into], h.deps)).toBe(0);
-    expect(existsSync(join(into, "dist", "index.js"))).toBe(true);
+    const h = harness({});
+    expect(await runExtensionClone(["acme/tool", "--into", into], h.deps)).toBe(2);
+    expect(h.calls).toHaveLength(0);
+    expect(h.err()).toContain(`${into} already exists; clone needs a new directory`);
   });
+
+  test("a missing parent of --into is refused before any IPC", async () => {
+    const into = join(tmp, "no", "such", "dir");
+    const h = harness({});
+    expect(await runExtensionClone(["acme/tool", "--into", into], h.deps)).toBe(2);
+    expect(h.calls).toHaveLength(0);
+    expect(h.err()).toContain(`the parent of ${into} does not exist`);
+  });
+
+  test("an --into below a file (ENOTDIR on POSIX) is refused before any IPC", async () => {
+    const file = join(tmp, "plain");
+    writeFileSync(file, "x");
+    const into = join(file, "sub");
+    const h = harness({});
+    expect(await runExtensionClone(["acme/tool", "--into", into], h.deps)).toBe(2);
+    expect(h.calls).toHaveLength(0);
+    expect(h.err()).toContain(`the parent of ${into} does not exist`);
+  });
+
+  test.each([["../x"], ["a//b"], [" a/b"]])(
+    "an invalid source id %p exits 2 with no IPC",
+    async (id) => {
+      const h = harness({});
+      expect(await runExtensionClone([id], h.deps)).toBe(2);
+      expect(h.calls).toHaveLength(0);
+    },
+  );
 
   test("an archivePath outside the staging shape is neither read nor removed", async () => {
     const elsewhere = join(tmp, "elsewhere", "c-test", "package.tgz");
@@ -436,7 +464,7 @@ describe("nimbus extension clone", () => {
     expect(j["license"]).toBe("MIT");
   });
 
-  test("a package clone cannot inspect removes the --into it created", async () => {
+  test("a package clone cannot inspect does not create --into", async () => {
     const s = await stage(baseManifest("acme/tool"));
     // Overwrite the archive with junk and point the sha at the junk, so only inspect fails.
     writeFileSync(s.archivePath, "not a tarball");
@@ -445,5 +473,81 @@ describe("nimbus extension clone", () => {
     expect(await runExtensionClone(["acme/tool"], h.deps)).toBe(1);
     expect(existsSync(join(cwd, "tool"))).toBe(false);
     expect(existsSync(s.archivePath)).toBe(false);
+  });
+
+  test("a failure after --into was created removes it", async () => {
+    // The same file listed twice: inspect accepts it, the second copy fails with EEXIST.
+    const src = mkdtempSync(join(tmp, "dup-"));
+    mkdirSync(join(src, "dist"));
+    writeFileSync(join(src, "nimbus.extension.json"), JSON.stringify(baseManifest("acme/tool")));
+    writeFileSync(join(src, "dist", "index.js"), "export {};\n");
+    const archivePath = join(tmp, "data", "registry-clone-staging", "c-dup", "package.tgz");
+    mkdirSync(join(archivePath, ".."), { recursive: true });
+    await tarCreate({ gzip: true, file: archivePath, cwd: src, portable: true }, [
+      "nimbus.extension.json",
+      "dist/index.js",
+      "dist/index.js",
+    ]);
+    const sha = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
+    const h = harness({ reply: reply({ archivePath, sha, stageDir: "" }) });
+    expect(await runExtensionClone(["acme/tool"], h.deps)).toBe(1);
+    expect(h.err()).toContain("could not write the copy");
+    expect(existsSync(join(cwd, "tool"))).toBe(false);
+  });
+
+  test("a manifest naming another id is refused before --into is created", async () => {
+    const s = await stage(baseManifest("evil/other"));
+    const h = harness({ reply: reply(s) });
+    expect(await runExtensionClone(["acme/tool"], h.deps)).toBe(1);
+    expect(h.err()).toContain(
+      "the package's manifest names evil/other, not acme/tool; nothing was written",
+    );
+    expect(existsSync(join(cwd, "tool"))).toBe(false);
+  });
+
+  test("an unreadable staged archive writes nothing", async () => {
+    const archivePath = join(tmp, "data", "registry-clone-staging", "c-gone", "package.tgz");
+    const h = harness({ reply: reply({ archivePath, sha: "0".repeat(64), stageDir: "" }) });
+    expect(await runExtensionClone(["acme/tool"], h.deps)).toBe(1);
+    expect(h.err()).toContain("the staged package could not be read; nothing was written");
+    expect(existsSync(join(cwd, "tool"))).toBe(false);
+  });
+
+  test.each([
+    ["not an object", "acme"],
+    ["missing verifiedAt", { github: "acme" }],
+    ["a non-string github", { github: 7, verifiedAt: "2026-10-01T00:00:00.000Z" }],
+  ])("a verifiedPublisher that is %s reads as unverified", async (_label, vp) => {
+    const s = await stage(baseManifest("acme/tool"));
+    const h = harness({ reply: reply(s, { verifiedPublisher: vp }) });
+    expect(await runExtensionClone(["acme/tool"], h.deps)).toBe(0);
+    expect(h.out()).toContain(`(key ${FINGERPRINT}), Unverified publisher`);
+  });
+});
+
+describe("isStrictlyInside", () => {
+  const root = resolve(tmpdir(), "clone-root");
+
+  test.each([
+    ["the root itself", root, false],
+    ["its parent", resolve(root, ".."), false],
+    ["a sibling via ..", resolve(root, "../x"), false],
+    ["a name starting with ..", join(root, "..foo"), true],
+    ["a nested file", join(root, "a", "b.js"), true],
+    ["an absolute path elsewhere", resolve(tmpdir(), "elsewhere", "x"), false],
+  ])("%s", (_label, p, expected) => {
+    expect(isStrictlyInside(root, p)).toBe(expected);
+  });
+
+  test("a different drive, and a case-only difference, take the platform's branch", () => {
+    if (process.platform === "win32") {
+      // path.relative across drives returns an absolute path: refused.
+      expect(isStrictlyInside(String.raw`C:\r\root`, String.raw`D:\r\root\x`)).toBe(false);
+      // Windows paths compare case-insensitively: the same directory.
+      expect(isStrictlyInside(String.raw`C:\R\Root`, String.raw`c:\r\root\x`)).toBe(true);
+    } else {
+      // POSIX paths are case-sensitive: a case-only difference is another directory.
+      expect(isStrictlyInside("/r/Root", "/r/root/x")).toBe(false);
+    }
   });
 });
