@@ -19,6 +19,7 @@ import { ADD_MCP_USAGE } from "./connector-add-mcp-args.ts";
 import { runConnectorDetect } from "./connector-detect.ts";
 import { runConnectorMigrate } from "./connector-migrate.ts";
 import { runConnectorAddMcp, runConnectorCall, runConnectorTools } from "./connector-user-mcp.ts";
+import { runConnectorWrites } from "./connector-writes-cli.ts";
 
 type SyncStatus = {
   serviceId: string;
@@ -1347,6 +1348,9 @@ export async function runConnector(args: string[]): Promise<void> {
     case "migrate":
       await runConnectorMigrate(tail);
       return;
+    case "writes":
+      await runConnectorWrites(tail);
+      return;
     default:
       throw new Error(`Unknown connector subcommand: ${sub}. Try: nimbus connector help`);
   }
@@ -1375,7 +1379,10 @@ Usage:
   nimbus connector migrate accept <id>               Keep it: one approval at a terminal (no --yes)
   nimbus connector migrate decline <id>              Keep it off; items are kept
   nimbus connector migrate retry [--json]            Prepare failed and declined migrations again
-  nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes
+  nimbus connector writes enable <service> [--wave 2|3|4]   Let the model propose this service's writes (asks you; each call still asks)
+  nimbus connector writes disable <service>
+  nimbus connector writes status [--json]
+  nimbus connector remove <service> [--yes]       Irreversible; prompts unless --yes
 
 Services (examples): google_drive, gmail, google_photos, onedrive, outlook, teams, github, gitlab, linear, jira, notion, confluence, jenkins, circleci, pagerduty, kubernetes
 
