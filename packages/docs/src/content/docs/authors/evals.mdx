@@ -17,24 +17,21 @@ offline. Each case has a 30 second limit and the whole run 10 minutes. On
 Windows the sandbox helper is required and on Linux bubblewrap; without them the
 eval is refused, never run unconfined.
 
-## Run a suite
+## Before you start
 
-```bash
-nimbus eval --package ./my_ext
-nimbus eval --package ./my_ext --suite evals/basic.eval.json --json
-```
-
-No Gateway, Vault or index is involved. The output ends with
-`score N/100 (passed of cases cases)`. The score is `floor(100 * passed / cases)`,
-so the same package always scores the same. The exit code is `0` whenever the
-eval ran, whatever the score.
+The scaffold writes no `evals/` suite, so scoring fails with
+`ERR_EVAL_NO_SUITES` until you record or write one. Also, a package that names a
+publisher is signature-checked before it runs: sign it first
+(`nimbus extension keygen`, then `nimbus extension sign .`), or scaffold without
+`--publisher` for local evaluation. The examples assume the scaffolded `my_ext`
+with its `echo` tool.
 
 ## Record a golden suite
 
 Write an inputs file by hand, a suite without `expect`:
 
 ```json
-{ "format": 1, "name": "golden", "cases": [{ "name": "list", "tool": "notes_list", "input": {} }] }
+{ "format": 1, "name": "golden", "cases": [{ "name": "say-hi", "tool": "echo", "input": { "text": "hi" } }] }
 ```
 
 ```bash
@@ -45,10 +42,24 @@ The server is started twice under the same sandbox, every call is made in both,
 and the replies become expectations: identical replies become `exact`,
 same-shape JSON replies become `json-match` with type markers for the values
 that changed, and anything else is skipped and named. The file is written to
-`evals/golden.eval.json` (change it with `--out`; `--force` replaces it). The
-suite holds reply text verbatim, so review it before committing it. It records
-what the package answered offline, not whether the service behind it still
-answers the same.
+`evals/golden.eval.json` by default (change it with `--out`; `--force` replaces
+it). The suite holds reply text verbatim, so review it before committing it. It
+records what the package answered offline, not whether the service behind it
+still answers the same.
+
+## Run a suite
+
+```bash
+nimbus eval --package ./my_ext
+nimbus eval --package ./my_ext --suite evals/golden.eval.json --json
+```
+
+(`--suite` takes the path of any suite in the package, including one you wrote
+by hand as `evals/<name>.eval.json`.) No Gateway, Vault or index is involved. The
+output ends with `score N/100 (passed of cases cases)`. The score is
+`floor(100 * passed / cases)`; the same results always give the same score, but
+tool replies that depend on time or randomness can pass here and fail in a
+registry's run. The exit code is `0` whenever the eval ran, whatever the score.
 
 ## Evaluate what you installed
 

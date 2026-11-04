@@ -15,9 +15,25 @@ nimbus test .
 `nimbus test` validates the manifest against the `@nimbus-dev/sdk` contract and
 then runs the package's own `bun test`.
 
+## Sign it first if it has a publisher
+
+A package scaffolded with `--publisher` names a publisher but carries no key or
+signature yet, and install verifies the signature of any package that names a
+publisher. Generate a key once and sign:
+
+```bash
+nimbus extension keygen
+nimbus extension sign .
+```
+
+The key goes to `~/.nimbus/publisher-key`, outside your package. (A package
+scaffolded without `--publisher` is unsigned and needs this step only before
+you publish.) See [Sign and publish](/authors/sign-and-publish/).
+
 ## Install it from a folder
 
-With the Gateway running:
+With the Gateway running, from the directory that contains `my_ext` (or use
+`nimbus extension install .` from inside it):
 
 ```bash
 nimbus extension install ./my_ext
@@ -28,7 +44,11 @@ publisher as the manifest claims it, declared permissions), then copies the
 package, records its hashes and a digest of every file, and enables it. **Install
 runs nothing.** To try a change, run `nimbus extension remove acme/my_ext` and
 install again from the path: installing an id that is already installed is
-refused whatever its version. (`nimbus extension rehash` adopts a changed tree
+refused whatever its version. Removal also purges every index item the
+extension synced and every credential its approval granted, so develop against
+a scratch profile: `nimbus --demo` runs a command against an isolated demo root
+with its own config, data and an in-memory vault, and never touches your real
+install. (`nimbus extension rehash` adopts a changed tree
 only when the manifest and entry file still match their install-time hashes.)
 
 ## Approve it to run

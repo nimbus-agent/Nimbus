@@ -50,20 +50,28 @@ maintainer approves the registry's signing run, which signs your version into
 its index. `--channel stable|beta` picks the channel.
 
 A registry may require a namespaced id (`publisher/name`), and every segment
-must start with a letter or digit. A scaffolded id always qualifies.
+must start with a letter or digit. A package scaffolded with `--publisher`
+qualifies; one scaffolded without it has no namespace and a registry that
+requires one refuses it, so scaffold with `--publisher` or add the namespace to
+the manifest `id` before publishing.
 
 ## Rotate or revoke a key
 
 ```bash
-nimbus extension keygen --out ./publisher-key-2
-nimbus extension key rotate --from ~/.nimbus/publisher-key --to ./publisher-key-2 --publisher acme
-nimbus extension sign . --key ./publisher-key-2
+nimbus extension keygen --out ~/.nimbus/publisher-key-2
+nimbus extension key rotate --from ~/.nimbus/publisher-key --to ~/.nimbus/publisher-key-2 --publisher acme
+# remove the "key" line from "publisher" in nimbus.extension.json, then:
+nimbus extension sign . --key ~/.nimbus/publisher-key-2
 nimbus extension publish . --registry-repo <owner>/<repo> --statement ./<statement id>.json
 ```
 
-A rotation is signed by the old key and goes in the same pull request as the
-first publish under the new key. Revocation is permanent: code signed by the
-revoked key stops running until its owner re-approves it. A revocation of your
+Keep private keys outside your package directory (the scaffold's `.gitignore`
+does not exclude them). A rotation is signed by the old key and goes in the same
+pull request as the first publish under the new key. `sign` refuses a manifest
+whose `publisher.key` is a different key, so remove `publisher.key` before
+signing with the new key; `sign` then fills in the new public key. Revocation is
+permanent: installed code signed by the revoked key, or by a key rotated from
+it, stops running until its owner re-approves it. A revocation of your
 current key cannot ride a publish; `key revoke` tells you to send it as its own
 pull request.
 

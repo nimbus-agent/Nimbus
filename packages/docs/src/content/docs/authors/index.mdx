@@ -13,12 +13,20 @@ exact sections of the [CLI reference](https://github.com/nimbus-agent/Nimbus/blo
 Three things hold for every extension, and they shape the steps below:
 
 - **Installing does not run it.** The owner installs a package, then approves it
-  to run in a separate step (`nimbus extension approve`). Your code never runs
-  on a machine until its owner has approved those exact bytes.
-- **It runs sandboxed.** Only the network hosts and paths your manifest declares
-  are granted, and the owner sees them before approving.
-- **Every tool call asks the owner.** Calls to an extension's tools raise an
-  approval prompt each time.
+  to run in a separate step (`nimbus extension approve`) before it runs as an
+  extension on that machine.
+- **It runs sandboxed.** Only the paths and network your manifest declares are
+  granted, and the owner sees them before approving. How tightly the network is
+  limited depends on the OS: on Linux with the sandbox helper, only the declared
+  hosts and ports; on Linux without it, the whole network or none; on macOS, the
+  declared ports to any host; on Windows, all internet hosts whenever any
+  network is granted.
+- **Every tool call asks the owner.** Calls to an installed extension's tools
+  raise an approval prompt each time.
+- **Evals are the exception.** `nimbus eval --package` runs your server with no
+  run approval and no per-call prompt, but sandboxed, with no network and no
+  credentials. Evaluating an installed extension takes one `extension.eval`
+  approval and grants it nothing.
 
 <CardGrid>
   <LinkCard title="Start" description="Scaffold from a template or an OpenAPI document, or clone a published extension." href="/authors/start/" />

@@ -3,8 +3,11 @@ title: Start
 description: Scaffold a Nimbus extension from a template or an OpenAPI document, or clone a published one to modify.
 ---
 
-There are three ways to start. Each writes a directory you can build, test and
-install; none installs or runs anything.
+There are three ways to start. Each writes a directory; none installs or runs
+anything. The two scaffolds give you source you can build and test. A clone
+holds only the published package (built `dist/`, the manifest, evals, README and
+license), so it has no `package.json` and no source and cannot be rebuilt in
+place: rebuilding needs the source repository, if the package names one.
 
 ## From the template
 
