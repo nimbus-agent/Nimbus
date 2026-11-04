@@ -28,6 +28,16 @@ export interface PreviewFieldTemplate {
   readonly whenUnset?: string;
 }
 
+/** A plain text preview field; the label defaults to the key. */
+export function textField(key: string, label?: string, whenUnset?: string): PreviewFieldTemplate {
+  return {
+    key,
+    label: label ?? key,
+    kind: "text",
+    ...(whenUnset === undefined ? {} : { whenUnset }),
+  };
+}
+
 export interface ConnectorWritePreviewTemplate {
   /** `{key}` placeholders over top-level input keys, e.g. "{namespace}/{name}". */
   readonly target: string;

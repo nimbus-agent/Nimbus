@@ -1,27 +1,17 @@
 // packages/gateway/src/connectors/connector-writes/warehouse-bi.ts
-import { type ConnectorWriteRow, type PreviewFieldTemplate, row, withPreview } from "./types.ts";
-
-/** A plain text field; the label defaults to the key. */
-function text(key: string, label?: string, whenUnset?: string): PreviewFieldTemplate {
-  return {
-    key,
-    label: label ?? key,
-    kind: "text",
-    ...(whenUnset === undefined ? {} : { whenUnset }),
-  };
-}
+import { type ConnectorWriteRow, row, textField, withPreview } from "./types.ts";
 
 export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
   withPreview(row("snowflake_tag_set", "snowflake.tag.set", "write", 4), {
     target: "{object}",
     summary: "Set or remove tag {tag} on {object}",
     // The upstream handler runs UNSET TAG when `value` is omitted.
-    fields: [text("tag"), text("value", undefined, "(not set: the tag is REMOVED)")],
+    fields: [textField("tag"), textField("value", undefined, "(not set: the tag is REMOVED)")],
   }),
   withPreview(row("snowflake_comment_set", "snowflake.comment.set", "write", 4), {
     target: "{object}",
     summary: "Set the comment on {object}",
-    fields: [text("comment", "Comment")],
+    fields: [textField("comment", "Comment")],
   }),
   withPreview(row("tableau_datasource_refresh", "tableau.datasource.refresh", "write", 4), {
     target: "{id}",
@@ -47,12 +37,12 @@ export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
     target: "{datasetId}",
     summary: "Refresh Power BI dataset {datasetId}",
     // The upstream handler refreshes the caller's My Workspace when `groupId` is omitted.
-    fields: [text("groupId", "Workspace", "(not set: My Workspace)")],
+    fields: [textField("groupId", "Workspace", "(not set: My Workspace)")],
   }),
   withPreview(row("powerbi_dataflow_refresh", "powerbi.dataflow.refresh", "write", 4), {
     target: "{dataflowId}",
     summary: "Refresh Power BI dataflow {dataflowId}",
-    fields: [text("groupId", "Workspace")],
+    fields: [textField("groupId", "Workspace")],
   }),
   withPreview(
     row("montecarlo_incident_acknowledge", "montecarlo.incident.acknowledge", "write", 4),

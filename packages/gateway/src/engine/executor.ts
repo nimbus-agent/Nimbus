@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import {
+  buildConnectorWritePreview,
+  renderConnectorWritePreviewLines,
+} from "../connectors/connector-writes/preview.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
@@ -287,6 +291,26 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
  * global regex is deliberately left as is for every other action type.
  */
 export function consentDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
+  // A connector write with a preview template is shown as the gateway-built typed preview. No
+  // user-MCP type has a row, so this cannot shadow the verbatim user-MCP display below.
+  const preview = buildConnectorWritePreview(action);
+  if (preview !== undefined) return preview as unknown as Record<string, unknown>;
+  return neverPosesAsPreview(otherDisplayPayload(action));
+}
+
+/**
+ * `details.kind === "connector-write"` must mean the gateway built the preview. A payload shown
+ * verbatim (a user-MCP one, I42) or redacted that carries that top-level `kind` itself is wrapped
+ * under `payload`, so it can never pass for one.
+ */
+function neverPosesAsPreview(
+  shown: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (shown === undefined || shown["kind"] !== "connector-write") return shown;
+  return { payload: shown };
+}
+
+function otherDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
   if (action.payload === undefined) return undefined;
   if (isUserMcpActionType(action.type)) return action.payload;
   if (action.type === "extension.migrate") {
@@ -368,6 +392,12 @@ export function formatConsentPrompt(action: PlannedAction): string {
   if (evalLines !== undefined) {
     // Purpose-built rendering; a JSON Details line would repeat it.
     lines.push("", ...evalLines, "", "runs with no network and no credentials");
+    return lines.join("\n");
+  }
+  const preview = buildConnectorWritePreview(action);
+  if (preview !== undefined) {
+    // Purpose-built, escaped rendering; a JSON Details line would repeat it (and show it raw).
+    lines.push("", ...renderConnectorWritePreviewLines(preview));
     return lines.join("\n");
   }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
