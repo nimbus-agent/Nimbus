@@ -1,6 +1,7 @@
 // packages/gateway/src/connectors/connector-writes/enablement-store.ts
 // The owner's opt-in for model connector writes (V83 `connector_write_enablement`). Written only by
-// the HITL-gated `connector.writes.enable` handler; reads feed the model's tool source.
+// the HITL-gated `connector.writes.enable` handler; today only `connector.writesStatus` reads it, and the
+// model's tool source will (Phase 9.7 A5).
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";

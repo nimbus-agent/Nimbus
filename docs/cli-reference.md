@@ -3134,9 +3134,9 @@ A call to an extension tool is held to the same I42 prompt as any user MCP tool 
 
 ### `nimbus connector writes enable <service> [--wave 2|3|4]` / `disable <service>` / `status [--json]`
 
-The owner's opt-in to connector writes for the model. It is **off for every connector**; `nimbus ask` is offered none of a service's writes until you enable that service. Only a service that has connector writes is eligible (for example `github`, `kubernetes`, `snowflake`); `status` lists them.
+The owner's opt-in to connector writes for the model. It is **off for every connector**. No write tool is offered to the model yet: enabling records your opt-in, which the model door (a later Phase 9.7 step) will read; until then only `status` reads it. Only a service that has connector writes is eligible (for example `github`, `kubernetes`, `snowflake`); `status` lists them.
 
-- `enable <service>` asks for your approval at the terminal (the prompt names the service, the wave and each write that becomes offerable), then prints `Model writes enabled for <service> up to wave <n> (<k> writes). Each call will still ask you.` `--wave` takes only `2`, `3` or `4` and defaults to `3`; wave `4` needs an explicit `--wave 4`. Enabling again with another wave replaces the first, behind a fresh approval.
+- `enable <service>` asks for your approval at the terminal (the prompt names the service, the wave and each write the opt-in covers), then prints `Model writes enabled for <service> up to wave <n> (<k> writes). Each call will still ask you.` `--wave` takes only `2`, `3` or `4` and defaults to `3`; wave `4` needs an explicit `--wave 4`. Enabling again with another wave replaces the first, behind a fresh approval.
 - `disable <service>` needs no approval and prints `Model writes disabled for <service>.`, or `Model writes were not enabled for <service>.` when nothing was on.
 - `status` prints one line per eligible service (`<service>  enabled  wave <n>  <k> writes` or `<service>  off`), then `Policy: allows` or `Policy: forbids (connector_write_model_access)`. `--json` prints the raw `{ services, policyAllows }` object.
 

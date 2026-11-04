@@ -1411,12 +1411,12 @@ Everything in S2 is **default off**. Not one of these capabilities does anything
 install; each needs an explicit `nimbus.toml` opt-in.
 
 The S2 capabilities can additionally be locked off org-wide by signed policy (`I22`,
-`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries nine names
+`EnforcedPolicy.capabilitiesDisabled`). `[policy.capabilities.ai_v2]` carries ten names
 (`AI_V2_CAPABILITIES`): `code_execution`, `computer_use`, `tool_generation`, `multimodal_input`
 and `agent_fleet` each gate one S2 capability; `local_finetuning` is config-forward and gates
 nothing yet; and `user_mcp_model_access` gates no S2 capability but the engine agent being offered
 the tools of user MCP servers registered with `--model` (I42), enforced at that tool source,
-fail-closed, and read per turn (a turn already in flight keeps the tool list it built); `mcp_capture` gates agent-submitted notes arriving over MCP (I28), read per call; and `mcp_action` gates the I28 act door (agent-proposed connector actions), read per call. **Cloud model
+fail-closed, and read per turn (a turn already in flight keeps the tool list it built); `mcp_capture` gates agent-submitted notes arriving over MCP (I28), read per call; `mcp_action` gates the I28 act door (agent-proposed connector actions), read per call; and `connector_write_model_access` gates `connector.writesEnable` (the owner's opt-in to model connector writes, Phase 9.7), read per call and fail-closed when the policy cannot be read. **Cloud model
 routing is the exception and has no lockoff name of its own** — it is governed by the per-vendor
 `[llm.remote.<vendor>] enabled` opt-in and, gateway-wide, by the local `[llm] enforce_air_gap`,
 which refuses every non-local route rather than one named capability. A signed org policy cannot

@@ -1382,7 +1382,7 @@ Usage:
   nimbus connector writes enable <service> [--wave 2|3|4]   Let the model propose this service's writes (asks you; each call still asks)
   nimbus connector writes disable <service>
   nimbus connector writes status [--json]
-  nimbus connector remove <service> [--yes]       Irreversible; prompts unless --yes
+  nimbus connector remove <service> [--yes]         Irreversible; prompts unless --yes
 
 Services (examples): google_drive, gmail, google_photos, onedrive, outlook, teams, github, gitlab, linear, jira, notion, confluence, jenkins, circleci, pagerduty, kubernetes
 

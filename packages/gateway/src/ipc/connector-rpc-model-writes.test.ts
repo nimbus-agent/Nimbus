@@ -178,6 +178,14 @@ describe("connector.writesDisable and writesStatus", () => {
     });
   });
 
+  test("disable refuses a missing or empty service", async () => {
+    for (const service of [undefined, "", 42]) {
+      expect(await refusal(call("connector.writesDisable", { service }))).toContain(
+        "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE",
+      );
+    }
+  });
+
   test("status lists every eligible service, sorted, with policyAllows", async () => {
     await call("connector.writesEnable", { service: "github", wave: 2 }, { exec: executor(true) });
     const s = (await call("connector.writesStatus", {})) as {
