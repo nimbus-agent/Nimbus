@@ -1,0 +1,80 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Petstore", "version": "1.0.0" },
+  "servers": [
+    {
+      "url": "https://{region}.petstore.example.com/v1/",
+      "variables": { "region": { "default": "eu", "enum": ["eu", "us"] } }
+    }
+  ],
+  "security": [{ "api_key": [] }],
+  "paths": {
+    "/pets": {
+      "get": {
+        "operationId": "listPets",
+        "summary": "List all pets",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "integer", "maximum": 100 }
+          },
+          { "name": "X-Request-Id", "in": "header", "schema": { "type": "string" } }
+        ]
+      },
+      "post": {
+        "operationId": "createPet",
+        "description": "Create a pet in the store",
+        "security": [{ "oauth": ["write"] }, { "bearer_auth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Pet" } }
+          }
+        }
+      }
+    },
+    "/pets/{petId}": {
+      "parameters": [{ "$ref": "#/components/parameters/PetId" }],
+      "get": {
+        "operationId": "showPetById",
+        "summary": "Info for a specific pet",
+        "security": [{ "basic": [] }],
+        "parameters": [{ "name": "petId", "in": "query", "schema": { "type": "string" } }]
+      },
+      "delete": {
+        "summary": "Delete a pet",
+        "security": [],
+        "servers": [{ "url": "https://admin.petstore.example.com:8443/" }]
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "PetId": {
+        "name": "petId",
+        "in": "path",
+        "required": true,
+        "description": "The pet id",
+        "schema": { "type": "string" }
+      }
+    },
+    "schemas": {
+      "Pet": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "parent": { "$ref": "#/components/schemas/Pet" }
+        }
+      }
+    },
+    "securitySchemes": {
+      "api_key": { "type": "apiKey", "in": "header", "name": "X-Api-Key" },
+      "bearer_auth": { "type": "http", "scheme": "bearer" },
+      "basic": { "type": "http", "scheme": "Basic" },
+      "oauth": { "type": "oauth2", "flows": {} }
+    }
+  }
+}

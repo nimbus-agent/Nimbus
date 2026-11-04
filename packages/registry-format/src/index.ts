@@ -158,6 +158,7 @@ export {
   type ExtensionSyncManifest,
   extensionEntryRelPath,
   isCrossRegistryDependency,
+  isReservedEnv,
   isStarterPack,
   OFFICIAL_REGISTRY_NAME,
   PUBLISHER_ID_RE,
