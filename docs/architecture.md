@@ -2182,8 +2182,10 @@ with `--registry nimbus-official` is refused. (3) *Plain offline is not air gap:
 possible carrier, so a bare install is refused as ambiguous (another registry was readable) or unreachable (none was), per
 I44. `registry search` reads the owner's registries only, so it does not include the built-in.
 
-**IPC.** `registry.add|list|refresh|remove|search|info|install`, all CLI-only; the whole `registry` namespace is LAN-forbidden
+**IPC.** `registry.add|list|refresh|remove|search|info|install|cloneSource`, all CLI-only; the whole `registry` namespace is LAN-forbidden
 (the denylist, so this is an explicit entry), refused on a demo root, and absent from the Tauri allowlist.
+
+**`registry.cloneSource` (author onboarding PR 2, `nimbus extension clone`).** `extensions/registry/clone-source.ts` `cloneRegistrySource` refreshes the trust feed first (as `registry.install`), then runs the install's verified chain (`fetchVerifiedPackageBytes`: root key, sequence floor, index hashes, the I16 signature against the index-named key, I48 blocks) and stages the archive at `<dataDir>/registry-clone-staging/c-*/package.tgz`, swept after one hour. It makes no publisher-key decision and stores no key (owner ruling R5), writes no `extension` row and asks no approval. Its only shared writes are the fetch's own: the registry's sequence advance and registry egress ledger rows (I29).
 
 **Rejected alternatives.**
 
