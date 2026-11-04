@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793789863073,
+  "lastUpdate": 1793800248497,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9e95d8c9b379328cb0ba087cbdf8da8200bfca41",
-          "message": "refactor: clear the nine cognitive-complexity findings (#1211)\n\nClears the last **9** open SonarCloud issues in this repo, all `S3776`.\nThat takes the org to zero across all six repos.\n\nEvery change is an extraction of a block that already existed as a unit\n— no behaviour change, no signature change on anything exported.\n\n| file | was | what moved |\n|---|---|---|\n| `graph/graph-populator.ts` | 17 | a **fifteen-arm `if` chain** on\n`row.type` → `GRAPH_SYNC_BY_TYPE` lookup table |\n| `connectors/sentry-issue-sync.ts` | 27 | the per-page upsert loop →\n`upsertSentryIssuePage` |\n| `agents/negotiate.ts` | 32 | two byte-identical connector-gap blocks →\none `pushConnectorOrEdgeGap` |\n| `agents/negotiate.ts` | 17 | the PR-metadata fold →\n`accumulateAuthoredPrStats` |\n| `agents/premortem.ts` | 28 | epic resolve/validate →\n`requireIndexedJiraEpic`; the non-Jira brief → `nonJiraTrackerBrief` |\n| `connectors/pagerduty-attribution.ts` | 16 | the inner actor loop →\n`addUnresolvedActorIds` |\n| `connectors/pagerduty-sync.ts` | 16 | the email merge →\n`mergeNewEmails`; **two identical** early-return literals →\n`partialSyncResult` |\n| `connectors/github-sync.ts` | 16 | the merged-only fields →\n`applyMergeFields` |\n| `cli/commands/doctor-core.ts` | 16 | print-and-score →\n`printAndScoreLines` |\n\nTwo are worth more than a complexity number: the `graph-populator` chain\nwas fifteen arms of identical shape, so a table makes the handled set\nreadable at a glance and adding one a single row; and `negotiate` /\n`pagerduty-sync` each had genuinely duplicated blocks that are now\nwritten once.\n\nThe table uses `Object.hasOwn` rather than a bare index — `row.type` is\na string off an indexed row, so `\"constructor\"` would otherwise reach\n`Object.prototype` and be invoked.\n\n## A gate weakness found on the way, and why I did not \"fix\" it here\n\n`audit:any` failed with `any count regressed: 5 > baseline 2`, blaming\n`doctor-core.ts` for **3**. I added no types — those were the English\nword in my new docblock.\n\n`countAnyInSource` strips comments with a hand-rolled scanner that does\nnot understand **regex literals**. The one at `doctor-core.ts:78` —\n\n```ts\nconst OBJECT_PATH_PATTERN = /(?:^|\\s)(?:object path|o)\\s+\"([^\"]*)\"/m;\n```\n\n— puts it into a string state it never leaves: only **1,177 of 25,554\nbytes** get stripped, so comment prose from the top of the file onward\nis scanned as code.\n\n**It over-counts only.** I checked the direction that would matter:\nappending a real `x: any` to that file still moves the count 3 → 5, so\nthe non-negotiable \"no `any`\" gate is not missing violations. That is\nworth stating precisely rather than alarming — the failure mode is a\nfalse positive on prose, not a hole.\n\nI reworded my comment instead of touching the scanner. Teaching it regex\nliterals would change counts across the tree and force a baseline\nre-bank; that belongs in its own change with its own red-prove, not\nbundled into nine refactors. The comment in `doctor-core.ts` records the\ntrap so the next person does not spend the same twenty minutes.\n\n## Verification\n\n- `bun test packages/gateway/src packages/cli/src` — **13452 pass, 0\nfail**\n- `bun run preflight:fast` — **29/29 gates PASSED**\n- per-area suites green after each extraction (graph 162, negotiate 72,\npremortem 44, sentry 44, pagerduty 57+18, github-sync 32, doctor 83)\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-15T15:13:38Z",
-          "tree_id": "6abfe78a488d1d275951b975da09a5fa26645cb8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9e95d8c9b379328cb0ba087cbdf8da8200bfca41"
-        },
-        "date": 1786807500866,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.64506374999655,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.9871882000007,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 183.49639405000235,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "42767caab96d8429e405229b34451473f7192df1",
+          "message": "feat(cli): scaffold an extension from an OpenAPI document (#1881)\n\nPhase 9.5 project 7, author onboarding, PR 3 of 4. `nimbus scaffold\nextension <name> --from-openapi <path|url> [--max-operations <n>]`\nwrites a working, installable extension with one MCP tool per OpenAPI\noperation. It declares the network hosts and credentials the tools need,\nand ships offline tests. Owner ruling R3 of 2026-11-04 applies: the\nscaffold produces an extension, not a first-party connector, so it\nwrites no sync handler. AsyncAPI is out of scope, because it describes\nmessage channels, not request/response tools.\n\n## How it works\n\nThree pure stages live under\n`packages/cli/src/commands/scaffold-openapi/`.\n\n- **Load:**\n- **Formats:** OpenAPI 3.0 or 3.1, as JSON or YAML. YAML aliases are\ncapped at 100.\n  - **URL fetch:**\n- https only, at most 5 redirects, each followed manually and each\nhttps;\n    - at most 10 MiB, in at most 30 s;\n    - URL queries are kept out of every message.\n- **Stated bounds:** the fetch runs in the CLI, so it is not in the\negress ledger and makes no air-gap check.\n- **Model:**\n  - **`$ref`:**\n    - only local refs, decoded in RFC 6901 order;\n    - only own properties are followed;\n    - `__proto__`, `constructor` and `prototype` are refused;\n- a run-wide budget of 1,000,000 nodes, which also counts string length.\n  - **Hosts:**\n- each operation uses the first usable https server of its own scope;\n- IP literals, `localhost`, `*.local` and `*.localhost` are skipped, as\nare servers with userinfo, a query or a fragment;\n    - only hosts that generated operations use are declared.\n- **Tool names:** capped so they fit `approve --model`, with collisions\nnumbered.\n  - **Input schemas:** built from the parameters plus a JSON body.\n  - **Dropped parameters, each with a warning:**\n- transport headers such as `Host`, `Cookie`, `Authorization` and\n`Proxy-*`, and header names that are not RFC 7230 tokens;\n    - any parameter that duplicates the operation's credential.\n- **Credentials:** apiKey, bearer and basic, declaring only those an\noperation uses. Credential names fit the 32-character rule, and env\nnames avoid the reserved set through registry-format's own\n`isReservedEnv`, which is now exported.\n- **Paths:** a template with a literal `.` or `..` segment, a space, a\nbackslash or a control character is skipped, because the URL parser\nwould rewrite it.\n- **Generate:**\n- **Data, not code:** the operation table is data,\n`src/operations.json`. Its size is capped at 50 MiB, and the cap is\nchecked incrementally.\n- **Fixed templates:** `src/request.ts`, `src/tools.ts` and\n`src/tools.test.ts` contain no text from the document.\n- **The README:** every document string is shown in a code span with\nbidi controls stripped, and it lists which hosts each credential is sent\nto.\n  - **Output:** printed lines are cleaned the same way.\n- **Refusals:** a refused input exits 2 and writes nothing. That covers\nan existing target directory, created non-recursively after planning.\n\n## What the generated request does\n\nThe generated extension runs with the owner's credentials, so the\nrequest code defends each step:\n\n- **Allowed destinations:** every URL goes through `checkedUrl`. It must\nbe https, to a host the table declares, and stay under the server's base\npath. The URL is joined as `<server>/<path>`, so a base path such as\n`/v1` is kept.\n- **Path values:** each is passed through `encodeURIComponent`. A `.` or\n`..` segment, including `%2e` forms, is refused before any request, and\na missing required parameter is refused too.\n- **The credential:**\n- it comes from the injected env, must be printable ASCII and is applied\nlast;\n  - `redirect: \"manual\"`, so it never follows a redirect;\n  - a returned `Location` shows only origin and path;\n- errors sent to the model carry only `RequestError` text, so a\ncredential value never reaches the model.\n- **Bodies:**\n- a required non-JSON body refuses the call, and an optional one is sent\nwithout a body;\n  - JSON bodies are capped at 10 MiB;\n- responses are read in a capped way and cut at 65,536 characters, never\nsplitting a surrogate pair.\n- **The MCP server:** the low-level `Server` with the tools capability\nserves the raw JSON schemas. The gateway already sanitises `ext_*` input\nschemas, as it does for `mcp_*`. Unknown tools, including `toString` and\n`__proto__`, are refused.\n- **No eval suite:** none is generated, because evals run with no\nnetwork (I49); the README points at `nimbus eval --record`. Each `ext_*`\ncall asks the owner (I42).\n\n## Also in this PR\n\n- The plain extension scaffold moved to `scaffold-extension.ts` to break\nan import cycle. It is re-exported, and its output is pinned\nbyte-identical by digests taken before the move.\n- Docs: `docs/cli-reference.md`, the extension author walkthrough, the\nroadmap row (ticked and rewritten), CHANGELOG, and the CLAUDE.md and\nGEMINI.md status lines.\n\n## Verification\n\n- **Tests:** 1066 across `registry-format`, `scaffold.test.ts` and\n`scaffold-openapi/`, with 0 failures.\n- The suite includes a generated project's own `bun test` and `bun\nbuild`, using the CLI's installed packages, with no `bun install` and no\nnetwork.\n  - Every security guard was proven red by reverting it once.\n- **Gates:** `preflight:fast`, `tsc` and `typecheck:tests` (0 new) pass,\nalong with the complexity lint (max 15, also run on the templates\nwritten out as files), `audit:boundaries`, `audit:doc-refs` and\n`audit:action-dist`.\n- **Smoke test:** a project generated from the fixture installs 92\npackages, its 3 tests pass, and `bun run build` writes a 0.55 MB bundle.\n\n## Reviews\n\n- Antigravity reviewed the plan, and all 11 findings were applied.\n- Each of the 4 tasks had its own review and fix round.\n- The whole-branch review found three real defects, now fixed:\n  - a credential echoed to the model through Bun's header error text;\n  - `Host`-class header parameters that bypassed the host check;\n  - `$ref`s to large strings that escaped the expansion budget.\n- Two follow-up reviews found path-template characters the URL parser\nrewrites (backslash, tab, LF, then a trailing space). Each is now\nrefused in both layers, and a direct test pins the base-path guard.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an extension scaffold option that generates tools from OpenAPI\n3.0 and 3.1 documents provided as a local file or HTTPS URL.\n* Generated extensions include operation details, required credentials\nand network permissions, plus a report of skipped operations and\nwarnings.\n  * Added a configurable operation limit; the default is 200.\n* **Documentation**\n* Updated the CLI reference, extension walkthrough, changelog, and\nproject status documentation with the new option and its limitations.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T13:42:29Z",
+          "tree_id": "5a86f9dc80b42d3d6012e707d1c7014b86652ff7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/42767caab96d8429e405229b34451473f7192df1"
+        },
+        "date": 1793800242835,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 222.8663263499944,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 223.33027834999922,
             "unit": "ms"
           }
         ]
