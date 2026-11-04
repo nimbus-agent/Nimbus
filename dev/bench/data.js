@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793831682744,
+  "lastUpdate": 1793834808938,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "828090ca7cc7ef931e020be71eeb61ae514a95e5",
-          "message": "fix(security): widen D12 past its receiver-name blind spot and D22(d) past its flat-path one (#1218)\n\nTwo static rules that report clean without enforcing what they document,\nand the three landed violations they were not seeing. Found by an audit\nof I1–I30; same defect class as #1216 and #1217, one layer down.\n\n## D12 (I14) — the receiver name was the enforcement\n\nThe rule was `/\\b(?:this\\.|ctx\\.)?db\\.(?:run|exec)\\s*\\(/`. `\\b` cannot\nmatch between the `w` and the `D` of `rawDb`, so **every aliased\nreceiver was invisible** — and `commands/data-delete.ts` has been\nrunning two unwrapped `DELETE`s through `input.index.rawDb.run(...)`, on\nthe production `data.delete` IPC path, with `audit:invariants` exiting 0\nthe whole time.\n\nThere was also no rule at all for the prepared-statement form, though\n`docs/SECURITY-INVARIANTS.md` has named `stmt.run(` an I14 anti-pattern\nsince the invariant was written and `db/write.ts` exports `dbStmtRun` to\nwrap it. `index/local-index.ts:436` ran an `UPDATE sync_state` through\n`.query(...).run(...)` — three lines above a compliant `dbRun` INSERT.\n\n**The widening was designed against data, not intuition.** I surveyed\nall 71 `.run(`/`.exec(` sites in production source first. They are\noverwhelmingly `RegExp.exec`, plus `AgentCoordinator.run` and\n`AsyncLocalStorage.run`; the only db-suffixed receivers are real\n`Database` handles. So the receiver is now any identifier ending in\n`db`/`Db`/`DB`, which adds no false positives, and the statement form is\nmatched over the whole file because the SQL routinely pushes `.run(`\nonto its own line.\n\nTurning it on flagged exactly the three predicted sites and nothing\nelse. All three are fixed here.\n\n`embedding-worker.ts` bound a `Database` to `d`, which the\nconvention-keyed rule still cannot see, so it is renamed to `db` and its\nPRAGMA routed through `dbRun` — matching `local-index.ts:279`, which\nalready does exactly that. That removes the one known-invisible site\nrather than leaving it as a live example of the bound.\n\nThe quantifiers are bounded (`[\\w$]{0,64}`) because an unbounded prefix\nin front of a required literal backtracks quadratically, and this scans\nevery line of every source file.\n\n## D22(d) (I29) — the same blind spot #1216 just fixed for D17\n\nAll three emitter patterns ended in `[A-Za-z][\\w-]*\\.ts`. `[\\w-]` cannot\ncross a `/`, so they matched `../agents/why.ts` and **missed\n`../agents/briefs/summary.ts` outright**. Grouping emitters into folders\n— an ordinary refactor — would have taken every emitter out of rule\n(d)'s sight at once, letting a new surface serve a brief with no\n`egress_ledger` row while the gate stayed green.\n\n`agents/` holds only `_lib/` today, so nothing is currently escaping.\nThe point is that the rule's shape could not express the property it\ndocuments. **This is the identical defect #1216 fixed for D17/I23 one\ncommit earlier** — two rules written in the same style shared it, which\nis the argument for the subdirectory case being part of the pattern\nrather than something each rule is trusted to remember.\n\nThe `_lib/` lookahead sits immediately after `/agents/`, so it still\nexcludes `agents/_lib/x/y.ts`; there is a test for that direction too.\n\n## Docs\n\nI14's stated rationale was wrong in both directions, so it is corrected\nrather than propagated. It claimed an unwrapped write means\n`SQLITE_FULL` \"is swallowed silently\" and data \"can end up half-written\nwithout surfacing a typed error\". `handleWriteError`\n(`db/write.ts:75-81`) re-throws unconditionally — a raw `.run()` throws\njust the same, nothing is swallowed. The real delta is the error's\n*shape*: a generic `SQLiteError` instead of the typed `DiskFullError`,\nand no `setDiskSpaceWarning(true)`.\n\nAnd `DiskFullError`, `isDiskSpaceWarning` and `onDiskFull` have **zero\nproduction consumers outside `write.ts`** (verified by grep across\n`packages/*/src`). Nothing in the gateway branches on a full disk yet,\nso I14 currently buys consistency and a future seam, not a live\nbehaviour difference. The section now says that. D22(d)'s entry also\ngains the subdirectory case and the `require()` form, which the rule has\nmatched for a while but the docs never mentioned.\n\n## Red-prove\n\nEach widening was reverted to its pre-fix form and the new tests\nconfirmed red, naming the right thing:\n\n| Mutation | Failing test |\n| --- | --- |\n| D12 receiver → old `db`-pinned pattern | `flags a dotted alias\nreceiver`, `flags a bare alias receiver`, `flags a capitalised suffix` |\n| D12 statement scan disabled | `flags the prepared-statement form,\nincluding across a line break` |\n| D22(d) static → flat filename pattern | `flags a static emitter import\nfrom a SUBDIRECTORY of agents/` |\n\nBoth widened patterns also carry a **time-bounded** test. Each puts a\nquantifier next to a required literal, and a correctness test cannot\ntell linear from catastrophic backtracking — an argument that a pattern\nis safe is not a measurement.\n\nThe negative side is pinned too: reads through the same statement shape\n(`.query(...).get(...)`) and the receivers that dominate\n`.run(`/`.exec(` in this tree are asserted **not** to flag, because a\nrule that cries wolf gets reverted, which is its own kind of unenforced.\n\n`bun run preflight:fast` — 29/29. `bun test scripts/structure-audit\npackages/gateway/src/index packages/gateway/src/embedding\npackages/gateway/test/unit/commands` — 1,590 pass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T06:01:33Z",
-          "tree_id": "52db286cf47b5760d3cfec490375e10316e08681",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/828090ca7cc7ef931e020be71eeb61ae514a95e5"
-        },
-        "date": 1786860608036,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 255.63458819999724,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 252.54476449999711,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 194.45681675000233,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c2b356f7c2753e2b61c6c6428dcf80ebd2005c5f",
+          "message": "feat(gateway): plumbing for the model's connector-write door (#1888)\n\nThis is Phase 9.7 Wave 1, A5a: the plumbing for the model's\nconnector-write door. The model is offered no write in this PR; A5b is\nthe door. Even after A5b, no row is offerable today, as § 13 of the spec\nexplains.\n\n## What it adds\n\n- **`PlannedAction.origin?: \"model\"`.** A delegate never approves such\nan action.\n- `ToolExecutor.tryDelegatedApproval` returns `\"fallback\"` when the\ntop-level `origin` is `\"model\"`, so the local owner is always prompted,\neven on an executor that carries the turn's delegation.\n- HITL is still decided by `action.type` alone (I3), and a\n`payload.origin` has no effect.\n- The consent prompt text gets a fixed line, `Requested by: the model`,\nright after `Type:`.\n- No production code sets `origin` yet. The desktop's typed\nconnector-write popup does not show that line yet; A5b adds it to the\ndetails.\n- **The typed preview names the credential.** A new `Credential:\npersonal|team` line comes from an injected resolver, `(s) =>\nconnectorWriteDeps.credentialFor(s).credential`, which is wired into\nboth `runAsk` sites.\n- The resolver runs inside its own `try/catch`, and only the exact\nstrings `personal` and `team` are accepted.\n- So it can never throw out of `gate()` before the audit and egress rows\nare written. A test proves both rows are still written with a throwing\nresolver.\n- **`LazyConnectorMesh.listFirstPartyServerTools(service)`** lists one\nfirst-party server's tools with their description and input schema.\n  - Every check runs before any slot is touched, in this order:\n    1. the service has write rows;\n    2. the I22 allowlist permits it;\n3. the service's own credential is configured, checked with the\nspawner's own check;\n    4. the slot is ensured, through an explicit map that fails closed;\n    5. the listing is filtered to the keys that server owns.\n- Each entry keeps only `description` and `inputSchema`. The listed\n`execute` closure is never handed out, so it cannot become a dispatch\npath around I2, I26 or I29.\n- Stated bound: ensuring the Phase-3 bundle starts its configured\nsibling servers. That is today's behaviour; only the requested service's\ntools are returned.\n- **Share replay refuses connector write ids,** bare or\n`<server>_<tool>`. This is defence in depth, because no write ends in a\nread verb today. The rows come from\n`connectors/connector-writes/index.ts`, with no gate imports.\n- **Covered vs. offerable now.** `isModelOfferableRow` means the row has\na template, and it is either below wave 4 or has a `before` reader.\n`nimbus connector writes status` now prints `<k> writes, <m> offerable\nnow`, and each line of the enable prompt says `(offered to the model)`\nor `(not offered yet)`. The offerable set is empty today: the 18\ntemplated rows are wave 4, and none has a `before` reader.\n\n## Red-proofs\n\nEach was a temporary mutation, reverted afterwards.\n- Removing the origin condition fails the I20 tests.\n- Removing the resolver's `try/catch` fails the throwing-resolver tests.\n- Moving the policy check after the ensure call fails the\n\"policy-blocked spawns nothing\" test.\n- Removing the write-id check fails the synthetic `fx_report_export`\ntest.\n\n## Checks\n\n- `preflight:fast` and `typecheck:tests` (0 new) pass.\n- The scoped gateway suites give 11,598 pass and 0 fail.\n- The desktop HITL tests give 87 of 87.\n- `bun test packages/cli --parallel` shows only the 11 TUI Yoga failures\nthat were already there.\n\n## Docs\n\n`CLAUDE.md` and `GEMINI.md`, `docs/roadmap.md`, `docs/architecture.md`,\n`docs/README.md`, `docs/cli-reference.md`, `docs/SECURITY-INVARIANTS.md`\n(I20, I22, the share replay note, the preview) and `docs/CHANGELOG.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-04T23:20:26Z",
+          "tree_id": "c21ccf8325134d7fa6027f1337b73b669ce01211",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c2b356f7c2753e2b61c6c6428dcf80ebd2005c5f"
+        },
+        "date": 1793834805397,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 222.89953629999962,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 224.67011835000085,
             "unit": "ms"
           }
         ]
