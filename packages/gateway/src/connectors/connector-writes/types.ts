@@ -14,6 +14,33 @@ export interface ConnectorWriteRow {
   readonly wave: ConnectorWriteWave;
   /** Set only for a tool that mutates while upstream registers it as a READ (invisible to the scanner). */
   readonly registeredAs?: "read";
+  /** How the owner's consent prompt shows this write's input; absent = today's raw prompt. */
+  readonly preview?: ConnectorWritePreviewTemplate;
+}
+
+export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";
+
+export interface PreviewFieldTemplate {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: PreviewFieldKind;
+  /** Text shown when the input omits the key (its real default), instead of `(not set)`. */
+  readonly whenUnset?: string;
+}
+
+export interface ConnectorWritePreviewTemplate {
+  /** `{key}` placeholders over top-level input keys, e.g. "{namespace}/{name}". */
+  readonly target: string;
+  readonly summary: string;
+  readonly fields: readonly PreviewFieldTemplate[];
+}
+
+/** A frozen copy of `r` carrying `preview`. */
+export function withPreview(
+  r: ConnectorWriteRow,
+  preview: ConnectorWritePreviewTemplate,
+): ConnectorWriteRow {
+  return Object.freeze({ ...r, preview });
 }
 
 /** One-line builder. Argument order: tool id FIRST, then action type. */
