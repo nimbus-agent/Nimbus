@@ -24,7 +24,7 @@ function tooLarge(): OpenApiLoadError {
 }
 
 function stripBom(text: string): string {
-  return text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return text.codePointAt(0) === 0xfeff ? text.slice(1) : text;
 }
 
 async function readBodyCapped(res: Response): Promise<Uint8Array> {

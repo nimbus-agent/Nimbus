@@ -14,6 +14,7 @@ import {
   type ScaffoldFile,
 } from "../scaffold-extension.ts";
 import { OpenApiModelError, type OperationDef, type OperationModel } from "./model.ts";
+import { compareCodeUnits } from "./names.ts";
 import { OPENAPI_REQUEST_TS, OPENAPI_TOOLS_TEST_TS, OPENAPI_TOOLS_TS } from "./templates.ts";
 
 const MANIFEST_PATH = "nimbus.extension.json";
@@ -140,7 +141,7 @@ export function credentialHosts(model: OperationModel): { name: string; hosts: s
         hosts.add(new URL(op.server).host);
       }
     }
-    return { name, hosts: [...hosts].sort() };
+    return { name, hosts: [...hosts].sort(compareCodeUnits) };
   });
 }
 

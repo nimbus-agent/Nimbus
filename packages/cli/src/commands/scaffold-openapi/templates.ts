@@ -413,7 +413,7 @@ export function errorText(e: unknown): string {
 `;
 
 /** `src/tools.test.ts`: offline — every call goes to an injected fetch, never the network. */
-export const OPENAPI_TOOLS_TEST_TS = `import { describe, expect, test } from "bun:test";
+export const OPENAPI_TOOLS_TEST_TS = String.raw`import { describe, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
@@ -478,7 +478,7 @@ describe("__NAME__", () => {
         expect(urls).toEqual([]);
         continue;
       }
-      expect(out.content).toEqual([{ type: "text", text: "HTTP 200\\nok" }]);
+      expect(out.content).toEqual([{ type: "text", text: "HTTP 200\nok" }]);
       expect(urls).toHaveLength(1);
       expect(TABLE.hosts).toContain(new URL(urls[0] ?? "").host);
     }

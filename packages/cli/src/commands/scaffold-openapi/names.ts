@@ -29,11 +29,22 @@ export function toolName(op: Record<string, unknown>, method: string, path: stri
   return normaliseName(`${method}_${path}`);
 }
 
+/**
+ * Orders strings by UTF-16 code unit, as `Array.prototype.sort()` does with no comparator: the
+ * same order on every machine, whatever its locale (`localeCompare` would not give that).
+ */
+export function compareCodeUnits(a: string, b: string): number {
+  if (a < b) return -1;
+  return a > b ? 1 : 0;
+}
+
 function firstFreeName(name: string, cap: number, taken: ReadonlySet<string>): string {
   let candidate = trimUnderscores(name.slice(0, Math.max(0, cap)), false);
-  for (let n = 2; taken.has(candidate); n++) {
+  let n = 2;
+  while (taken.has(candidate)) {
     const suffix = `_${n}`;
     candidate = `${trimUnderscores(name.slice(0, Math.max(0, cap - suffix.length)), false)}${suffix}`;
+    n++;
   }
   return candidate;
 }

@@ -87,13 +87,14 @@ describe("loadOpenApiDocument", () => {
     expect(e.message).toContain("openapi");
   });
 
-  test("http:// is refused without calling fetch", async () => {
-    const e = await rejectionOf(loadOpenApiDocument("http://x.test/a.json", depsFor({})));
-    expect(e).toBeInstanceOf(OpenApiLoadError);
-  });
-
-  test("another scheme is refused", async () => {
-    const e = await rejectionOf(loadOpenApiDocument("ftp://x.test/a.json", depsFor({})));
+  // depsFor({}) has no files and a fetch that throws "fetch must not be called", so each source
+  // must be refused before any fetch: http:, another scheme, or a file that is not there.
+  test.each([
+    ["http:// is refused without calling fetch", "http://x.test/a.json"],
+    ["another scheme is refused", "ftp://x.test/a.json"],
+    ["an unreadable file becomes an OpenApiLoadError", "nope.json"],
+  ])("%s", async (_name, source) => {
+    const e = await rejectionOf(loadOpenApiDocument(source, depsFor({})));
     expect(e).toBeInstanceOf(OpenApiLoadError);
   });
 
@@ -116,24 +117,18 @@ describe("loadOpenApiDocument", () => {
     expect(doc["openapi"]).toBe("3.0.1");
   });
 
-  test("a chain of 6 redirects is refused", async () => {
-    const f = fetchReturning(
-      () => new Response(null, { status: 302, headers: { location: "https://x.test/n" } }),
+  // Every hop answers with the same response, so a redirect here redirects forever.
+  test.each([
+    ["a chain of 6 redirects is refused", 302, "https://x.test/n"],
+    ["a redirect to http: is refused", 301, "http://x.test/a"],
+    ["a redirect to ftp: is refused", 302, "ftp://x.test/a"],
+    ["a non-2xx status is refused", 404, null],
+  ] as const)("%s", async (_name, status, location) => {
+    const f = fetchReturning(() =>
+      location === null
+        ? new Response("no", { status })
+        : new Response(null, { status, headers: { location } }),
     );
-    const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
-    expect(e).toBeInstanceOf(OpenApiLoadError);
-  });
-
-  test("a redirect to http: is refused", async () => {
-    const f = fetchReturning(
-      () => new Response(null, { status: 301, headers: { location: "http://x.test/a" } }),
-    );
-    const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
-    expect(e).toBeInstanceOf(OpenApiLoadError);
-  });
-
-  test("a non-2xx status is refused", async () => {
-    const f = fetchReturning(() => new Response("no", { status: 404 }));
     const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
     expect(e).toBeInstanceOf(OpenApiLoadError);
   });
@@ -161,11 +156,6 @@ describe("loadOpenApiDocument", () => {
     expect(e).toBeInstanceOf(OpenApiLoadError);
   });
 
-  test("an unreadable file becomes an OpenApiLoadError", async () => {
-    const e = await rejectionOf(loadOpenApiDocument("nope.json", depsFor({})));
-    expect(e).toBeInstanceOf(OpenApiLoadError);
-  });
-
   test("a malformed Location is an OpenApiLoadError", async () => {
     const f = fetchReturning(
       () => new Response(null, { status: 302, headers: { location: "http://[" } }),
@@ -173,14 +163,6 @@ describe("loadOpenApiDocument", () => {
     const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
     expect(e).toBeInstanceOf(OpenApiLoadError);
     expect(e.message).toBe("the server sent an unusable redirect");
-  });
-
-  test("a redirect to ftp: is refused", async () => {
-    const f = fetchReturning(
-      () => new Response(null, { status: 302, headers: { location: "ftp://x.test/a" } }),
-    );
-    const e = await rejectionOf(loadOpenApiDocument("https://x.test/a", depsFor({}, f)));
-    expect(e).toBeInstanceOf(OpenApiLoadError);
   });
 
   test("a relative Location resolves against the current hop", async () => {

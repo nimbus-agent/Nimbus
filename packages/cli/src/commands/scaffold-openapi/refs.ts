@@ -153,8 +153,9 @@ export function resolveRefs(
   root: Record<string, unknown>,
   depth = 0,
   onCut?: (ref: string) => void,
-  budget: RefBudget = { used: 0, limit: MAX_RESOLVED_NODES },
+  budget?: RefBudget,
   onProtoKey?: () => void,
 ): unknown {
-  return walk(node, { root, onCut, onProtoKey, budget }, depth, 0);
+  const ownBudget = budget ?? { used: 0, limit: MAX_RESOLVED_NODES };
+  return walk(node, { root, onCut, onProtoKey, budget: ownBudget }, depth, 0);
 }

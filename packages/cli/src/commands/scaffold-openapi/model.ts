@@ -7,6 +7,7 @@
 import { isIP } from "node:net";
 import { validateAndNormalizePermissions } from "@nimbus-dev/registry-format";
 import {
+  compareCodeUnits,
   credentialEnv,
   credentialName,
   fitCredentialNames,
@@ -426,7 +427,7 @@ const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
  * space (trimmed at the end, so "/x/.. " resolves ".."; a path spells a space %20 anyway).
  */
 function isRewrittenChar(ch: string): boolean {
-  const code = ch.charCodeAt(0);
+  const code = ch.codePointAt(0) ?? Number.NaN;
   return ch === "\\" || code <= 0x20 || code === 0x7f;
 }
 
@@ -605,7 +606,7 @@ function buildInputSchema(
 function cutDescription(text: string): string {
   if (text.length <= MAX_DESCRIPTION_CHARS) return text;
   const cut = text.slice(0, MAX_DESCRIPTION_CHARS);
-  const last = cut.charCodeAt(cut.length - 1);
+  const last = cut.codePointAt(cut.length - 1) ?? Number.NaN;
   return last >= 0xd800 && last <= 0xdbff ? cut.slice(0, -1) : cut;
 }
 
@@ -794,7 +795,7 @@ export function buildOperationModel(
     cap,
   );
   return {
-    hosts: [...new Set(drafts.map((d) => d.host))].sort(),
+    hosts: [...new Set(drafts.map((d) => d.host))].sort(compareCodeUnits),
     operations: drafts.map((d, i) => ({
       tool: names.names[i] as string,
       ...d.def,
