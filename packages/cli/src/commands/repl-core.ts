@@ -15,6 +15,8 @@ export interface ReplCoreDeps {
   readonly getCliPlatformPaths: () => CliPlatformPaths;
   readonly makeClient: (socketPath: string) => IPCClient;
   readonly registerHandlers: (client: IPCClient) => void;
+  /** Sent as the connection's first frame (`declareCliClientKind` in production; best-effort). */
+  readonly declareKind: (client: IPCClient) => Promise<void>;
 }
 
 export function parseReplArgs(args: string[]): { sessionId: string | undefined } {
@@ -85,6 +87,7 @@ export async function runRepl(
 
   const client = deps.makeClient(socketPath);
   await client.connect();
+  await deps.declareKind(client);
   deps.registerHandlers(client);
 
   const rl = makeInterface({ input, output, terminal: true });

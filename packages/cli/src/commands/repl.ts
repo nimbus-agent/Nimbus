@@ -1,3 +1,4 @@
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
 import { createIpcClient, INTERACTIVE_RPC_TIMEOUT_MS } from "../lib/rpc-timeouts.ts";
@@ -5,7 +6,7 @@ import { getCliPlatformPaths } from "../paths.ts";
 
 import { runRepl as coreRunRepl, type ReplCoreDeps } from "./repl-core.ts";
 
-const productionDeps: ReplCoreDeps = {
+export const productionReplDeps: ReplCoreDeps = {
   readGatewayState,
   getCliPlatformPaths,
   // The REPL holds one client for the whole session and issues a blocking
@@ -15,8 +16,9 @@ const productionDeps: ReplCoreDeps = {
   registerHandlers: (client) => {
     registerInteractiveCliIpcHandlers(client);
   },
+  declareKind: declareCliClientKind,
 };
 
 export function runRepl(args: string[]): Promise<void> {
-  return coreRunRepl(args, productionDeps);
+  return coreRunRepl(args, productionReplDeps);
 }

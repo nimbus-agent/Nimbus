@@ -50,6 +50,27 @@ export const USER_MCP_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
   push: false,
 };
 
+/**
+ * Which callers may be offered the model's connector-write door (Phase 9.7): `cli` and `ui` only.
+ * STRICTER than {@link USER_MCP_OFFER_BY_KIND}: `unknown` is FALSE, so a client that does not
+ * declare itself gets no door (the CLI's `ask`/`repl` declare `cli`, the desktop bridge `ui`).
+ *
+ * The declared kind is SELF-REPORTED, not an authorization: any local process on the user-only
+ * socket can declare `cli`. The boundary is the local socket plus the owner's HITL prompt on every
+ * call; this map keeps the MCP adapter (`mcp`), HTTP, ChatOps, fleet, push and non-declaring
+ * clients out. TOTAL over `ClientKind`, so a new kind is a compile error here until decided.
+ */
+export const CONNECTOR_WRITE_OFFER_BY_KIND: Readonly<Record<ClientKind, boolean>> = {
+  cli: true,
+  ui: true,
+  unknown: false,
+  mcp: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};
+
 function requireNonEmptyRpcString(rec: Record<string, unknown> | undefined, key: string): string {
   if (rec === undefined) {
     throw new RpcMethodError(-32602, `Missing or invalid ${key}`);
@@ -126,7 +147,9 @@ export async function dispatchAgentInvoke(
   // not silently switch the answer's whole posture.
   const devil = rec?.["devil"] === true;
   const streamId = parseOptionalString(rec, "streamId");
-  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[ctx.getClientKind(clientId)];
+  const clientKind = ctx.getClientKind(clientId);
+  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[clientKind];
+  const offerConnectorWriteTools = CONNECTOR_WRITE_OFFER_BY_KIND[clientKind];
   const handler = ctx.getAgentInvokeHandler();
   if (handler === undefined) {
     return {
@@ -148,6 +171,7 @@ export async function dispatchAgentInvoke(
           sendAgentChunkIfStreaming(session, stream, text, streamId);
         },
         offerUserMcpTools,
+        offerConnectorWriteTools,
         notifyGasLimit: (event: GasLimitEvent) => {
           sendGasLimitReached(session, event, streamId);
         },
@@ -402,7 +426,9 @@ export function dispatchEngineAskStream(
   }
   // Decided from THIS session's kind, the same way `dispatchAgentInvoke` decides it — this is the
   // desktop/editor path, and wiring the decision into only one entry would leave the other open.
-  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[ctx.getClientKind(clientId)];
+  const clientKind = ctx.getClientKind(clientId);
+  const offerUserMcpTools = USER_MCP_OFFER_BY_KIND[clientKind];
+  const offerConnectorWriteTools = CONNECTOR_WRITE_OFFER_BY_KIND[clientKind];
 
   const dispatch = createAskStreamHandler({
     registry: ctx.streamRegistry,
@@ -420,6 +446,7 @@ export function dispatchEngineAskStream(
         stream: innerCtx.stream,
         sendChunk: innerCtx.sendChunk ?? (() => undefined),
         offerUserMcpTools,
+        offerConnectorWriteTools,
       };
       if (innerCtx.sessionId !== undefined) payload.sessionId = innerCtx.sessionId;
       if (innerCtx.devil === true) payload.devil = true;

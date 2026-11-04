@@ -28,6 +28,7 @@ function makeDeps(overrides: Partial<ReplCoreDeps> = {}): ReplCoreDeps {
     getCliPlatformPaths: (): CliPlatformPaths => FAKE_PATHS,
     makeClient: (): IPCClient => createMockIpcClient([]).client,
     registerHandlers: (): void => {},
+    declareKind: async (): Promise<void> => {},
     ...overrides,
   };
 }
@@ -274,5 +275,40 @@ describe("runRepl (readline loop, injected interface)", () => {
       "Gateway is not running. Start with: nimbus start",
     );
     expect(clientMade).toBe(false);
+  });
+});
+
+describe("runRepl — declares the connection as the owner's CLI", () => {
+  it("declares the kind right after connect, before handlers and any turn", async () => {
+    const order: string[] = [];
+    const ipc = createMockIpcClient([]);
+    const client = {
+      ...(ipc.client as unknown as Record<string, unknown>),
+      connect: async (): Promise<void> => {
+        order.push("connect");
+      },
+    } as unknown as IPCClient;
+    const deps = makeDeps({
+      readGatewayState: async () => ({ socketPath: "fake-repl.sock" }),
+      makeClient: () => client,
+      declareKind: async (c) => {
+        expect(c).toBe(client);
+        order.push("declareKind");
+      },
+      registerHandlers: () => {
+        order.push("registerHandlers");
+      },
+    });
+    await runRepl([], deps, fakeInterface(["exit"]));
+    expect(order).toEqual(["connect", "declareKind", "registerHandlers"]);
+  });
+
+  it("production wiring declares kind cli, best-effort", async () => {
+    const { productionReplDeps } = await import("./repl.ts");
+    const ok = createMockIpcClient([{ kind: "cli" }]);
+    await productionReplDeps.declareKind(ok.client);
+    expect(ok.calls).toEqual([{ method: "session.declareKind", params: { kind: "cli" } }]);
+    const old = createMockIpcClient([new Error("Method not found")]);
+    await expect(productionReplDeps.declareKind(old.client)).resolves.toBeUndefined();
   });
 });

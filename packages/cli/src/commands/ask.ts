@@ -1,4 +1,5 @@
 import type { IPCClient } from "../ipc-client/index.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import { gatewayNotRunningMessage } from "../lib/gateway-not-running.ts";
 import { readGatewayState } from "../lib/gateway-process.ts";
 import { registerInteractiveCliIpcHandlers } from "../lib/interactive-ipc-handlers.ts";
@@ -173,6 +174,8 @@ export async function runAsk(args: string[]): Promise<void> {
   // prompt this client registers is answered from inside that pending call.
   const client = createIpcClient(state.socketPath, INTERACTIVE_RPC_TIMEOUT_MS);
   await client.connect();
+  // First frame: this turn is the owner's CLI (best-effort; see `declareCliClientKind`).
+  await declareCliClientKind(client);
   registerInteractiveCliIpcHandlers(client);
 
   try {

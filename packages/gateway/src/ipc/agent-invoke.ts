@@ -26,6 +26,12 @@ export type AgentInvokeContext = {
    */
   offerUserMcpTools?: boolean;
   /**
+   * Whether this turn may be offered the model's connector-write door (Phase 9.7). Decided ONCE at
+   * the IPC entry from the session's server-held `ClientKind` (`CONNECTOR_WRITE_OFFER_BY_KIND` in
+   * `ipc/server/inline-handlers.ts`: `cli` and `ui` only) — never from a request param.
+   */
+  offerConnectorWriteTools?: boolean;
+  /**
    * Set by `agent.invoke` only: writes a UNICAST `agent.gasLimitReached` to the session that
    * made the call when the agent step budget cut the turn short (`engine/step-budget.ts`). Never
    * a broadcast — the event describes one caller's turn.

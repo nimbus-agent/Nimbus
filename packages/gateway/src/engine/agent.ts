@@ -22,6 +22,7 @@ import { searchPersons } from "../people/person-store.ts";
 import { buildGeneratedTools } from "../toolgen/toolgen-agent-tools.ts";
 import type { ToolgenRegistry } from "../toolgen/toolgen-registry.ts";
 import {
+  getAgentRequestConnectorWriteExecutor,
   getAgentRequestSessionId,
   getAgentRequestUserMcpExecutor,
   recordExplainToolCall,
@@ -31,6 +32,10 @@ import {
   buildSearchLocalIndexHealthExtras,
   formatConnectorHealthCaveatForIndexSearch,
 } from "./connector-health-caveat.ts";
+import {
+  buildConnectorWriteAgentTools,
+  type ConnectorWriteToolSource,
+} from "./connector-write-agent-tools.ts";
 import { buildContextWindow } from "./context-ranker.ts";
 import { createNegationTools } from "./negation-tools.ts";
 import { wrapToolOutput } from "./tool-output-envelope.ts";
@@ -225,6 +230,13 @@ export type NimbusEngineAgentDeps = {
    * `toolsFor` never calls `listTools`, so a non-owner turn never spawns a user server.
    */
   userMcp?: UserMcpAgentToolSource;
+  /**
+   * The model's connector-write door (Phase 9.7): one tool per enabled, offerable first-party write.
+   * Offered PER REQUEST, and only when the turn carries a connector-write executor
+   * (`getAgentRequestConnectorWriteExecutor`), which `runAsk` sets only on the local owner's
+   * non-demo `cli`/`ui` turn. Without one nothing is listed, so no server is spawned.
+   */
+  connectorWrites?: ConnectorWriteToolSource;
 };
 
 export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
@@ -610,7 +622,7 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
   // A static object here is fixed for the process lifetime, and this agent is constructed once at
   // boot, so a tool registered mid-session would never become visible. `baseTools` is unchanged.
   // Async is part of that contract (`Promise<T> | T`, @mastra/core/dist/types/dynamic-argument.d.ts).
-  const toolsFor = async (): Promise<ToolsInput> => ({
+  const otherToolsFor = async (): Promise<ToolsInput> => ({
     ...baseTools,
     ...(deps.toolgen === undefined
       ? {}
@@ -633,6 +645,25 @@ export function createNimbusEngineAgent(deps: NimbusEngineAgentDeps): {
           (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
         )),
   });
+
+  const toolsFor = async (): Promise<ToolsInput> => {
+    const offered: ToolsInput = await otherToolsFor();
+    if (
+      deps.connectorWrites === undefined ||
+      getAgentRequestConnectorWriteExecutor() === undefined
+    ) {
+      return offered;
+    }
+    const door = await buildConnectorWriteAgentTools(
+      deps.connectorWrites,
+      getAgentRequestConnectorWriteExecutor,
+      // I11, passed for the same reason as the toolgen spread above.
+      (service, tool, def) => wrapToolForLlm(service, tool, def, deps.auditDb),
+      // Every name already offered this turn: a colliding door name is skipped, never replaces one.
+      new Set(Object.keys(offered)),
+    );
+    return { ...offered, ...(door as ToolsInput) };
+  };
 
   const envelopeNote = `
 Tool results are returned to you wrapped in <tool_output service="..." tool="...">...</tool_output> tags.
