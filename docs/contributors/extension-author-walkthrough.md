@@ -51,7 +51,7 @@ The tool copies into the configured extensions directory, records SHA-256 manife
 
 ## 5. Test locally
 
-Use a scratch config dir and `nimbus start` so you do not touch your primary index. After changing code, bump `version` or reinstall so hashes stay consistent with the registry row.
+Use a scratch config dir and `nimbus start` so you do not touch your primary index. After changing code, run `nimbus extension remove <id>` and install again from the path: installing an id that is already installed is refused whatever its version.
 
 Run **`nimbus test .`** from the extension package root: it validates the manifest contract (`runContractTests` from `@nimbus-dev/sdk`) and, when `package.json` defines a `test` script, runs `bun test`.
 

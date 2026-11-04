@@ -4,8 +4,8 @@ description: What the verified-publisher badge means in Nimbus, what it does not
 ---
 
 Wherever Nimbus shows an extension with publisher data, it says either
-`Verified publisher: @<handle>` or `Unverified publisher` (an extension with no
-publisher is `(unsigned)`). `extension search` has a Verified column.
+`Verified publisher: @<handle> (verified <date>)` or `Unverified publisher` (an extension with no
+publisher is `(unsigned)`). `extension search` has a Verified column showing `✓ @<handle>` or `-`.
 
 ## What the badge means
 
@@ -31,11 +31,16 @@ bind its code.
 
 ## How a publisher is verified
 
-The feed records a publisher id, its keys and a GitHub handle. The criteria for
-becoming a verified publisher, and any process or fee, are not published here.
-What you can do now is sign your extensions (see
-[Sign and publish](/authors/sign-and-publish/)) and keep your key history
-signed, so a rotation reaches users without a key-conflict prompt.
+In the feed repository (`nimbus-agent/nimbus-trust`) a verified publisher is one
+file, `publishers/<publisherId>.json`, holding `{ publisherId, keys, github }`.
+A Nimbus maintainer writes it with `nimbus trust maintain verify-publisher`,
+which records that the maintainer checked the publisher's GitHub identity; it
+does not check it. The file reaches the feed by pull request, and the
+`trust-sign` workflow signs the next feed behind a required approval. Removing
+the file drops the badge. This page states no criteria, fee or promise of
+acceptance, because none is documented. What you can do now is sign your
+extensions (see [Sign and publish](/authors/sign-and-publish/)) and keep your
+key history signed, so a rotation reaches users without a key-conflict prompt.
 
 ## Reference
 

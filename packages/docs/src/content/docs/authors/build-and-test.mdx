@@ -26,8 +26,10 @@ nimbus extension install ./my_ext
 The Gateway shows you an `extension.install` approval (the id, version,
 publisher as the manifest claims it, declared permissions), then copies the
 package, records its hashes and a digest of every file, and enables it. **Install
-runs nothing.** After a change, bump `version` or reinstall so the recorded
-hashes match.
+runs nothing.** To try a change, run `nimbus extension remove acme/my_ext` and
+install again from the path: installing an id that is already installed is
+refused whatever its version. (`nimbus extension rehash` adopts a changed tree
+only when the manifest and entry file still match their install-time hashes.)
 
 ## Approve it to run
 
@@ -47,11 +49,14 @@ to paths your manifest declares under `permissions.filesystem.write`.
 ## Call its tools
 
 ```bash
-nimbus connector tools ext_<id>
-nimbus connector call ext_<id> echo --input '{"text":"hi"}'
+nimbus connector tools ext_acme_my_ext
+nimbus connector call ext_acme_my_ext echo --input '{"text":"hi"}'
 ```
 
-The service id is the one `approve` printed. Every call asks for the owner's
+The service id is `ext_` plus the manifest id lower-cased with every character
+outside `a-z0-9` turned into `_`, so `acme/my_ext` becomes `ext_acme_my_ext`;
+`approve` prints it. At most 62 characters may follow `ext_`. Tools offered to
+the model with `--model` are named `ext_<slug>__<tool>`. Every call asks for the owner's
 approval (invariant I42); a delegate can never answer it.
 
 ## See what it did

@@ -57,7 +57,8 @@ nimbus eval --extension acme/my_ext
 nimbus eval --installed
 ```
 
-These run through the Gateway behind one owner approval at a terminal and grant
+These run through the Gateway behind one owner approval. Both need an
+interactive terminal and have no `--yes`. They grant
 the extension nothing; it still needs `nimbus extension approve` to run.
 `--installed` compares each local score with the one the extension's source
 registry signed for the same version. No live registry publishes scores yet, so

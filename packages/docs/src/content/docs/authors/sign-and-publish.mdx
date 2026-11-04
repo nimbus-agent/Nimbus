@@ -38,10 +38,11 @@ need `pack` only for a registry that adds packages by hand.
 ## Publish
 
 ```bash
-nimbus extension publish . --registry-repo nimbus-agent/extensions
+nimbus extension publish . --registry-repo <owner>/<repo>
 ```
 
-`publish` validates the package against the registry's own rules and its
+`<owner>/<repo>` is your registry's GitHub repository (the reference uses
+`nimbus-agent/extensions` as its example). `publish` validates the package against the registry's own rules and its
 published state, then opens a pull request from a fork, with `gh` if it is
 signed in. Otherwise, or with `--no-pr`, it prints the branch and the commands
 to finish by hand. It needs no gateway or Vault. After the merge, a registry
@@ -57,7 +58,7 @@ must start with a letter or digit. A scaffolded id always qualifies.
 nimbus extension keygen --out ./publisher-key-2
 nimbus extension key rotate --from ~/.nimbus/publisher-key --to ./publisher-key-2 --publisher acme
 nimbus extension sign . --key ./publisher-key-2
-nimbus extension publish . --registry-repo nimbus-agent/extensions --statement ./<statement id>.json
+nimbus extension publish . --registry-repo <owner>/<repo> --statement ./<statement id>.json
 ```
 
 A rotation is signed by the old key and goes in the same pull request as the
@@ -69,8 +70,9 @@ pull request.
 ## The official registry
 
 Every Nimbus release carries one registry, `nimbus-official`, which users do
-not add. Its first extension is Readwise. How a new extension is accepted there
-is the registry maintainers' decision; this page does not promise a listing.
+not add. It publishes through its own script, not through `nimbus extension
+publish`, so this flow does not submit to it. Its one extension today is
+Readwise, and this page promises no listing.
 
 ## Reference
 
