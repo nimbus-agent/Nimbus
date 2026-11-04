@@ -8,7 +8,10 @@ First-party GitHub Action run by a Nimbus extension registry repository (the rep
   `statements/<statement id>.json` files (publisher-signed `key.rotate` / `key.revoke`) exactly as
   `sign` will, failing on any it would skip, then validates the new `extensions/<id>/<version>/`
   (if any: a statement-only pull request is valid) against the signed index on `gh-pages` with
-  those statements admitted, and writes a job summary for the reviewer. With the `nimbus-gateway`
+  those statements admitted, and writes a job summary for the reviewer. The check also refuses a
+  manifest whose optional `funding` or `license` is malformed (`ERR_REGISTRY_MANIFEST_INVALID`); a
+  registry still on an older action version does not make that check, and gateways ignore a
+  malformed field. With the `nimbus-gateway`
   input, a version is checked as the `score` mode checks it: the summary reports `quality N/100` or
   `could not score: <code>` for a package with an eval suite, and a `Baseline` line (what the
   server did when started, never a verdict) for any package that is not a starter pack. Scoring runs extension code, so
