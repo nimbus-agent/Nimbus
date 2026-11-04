@@ -1925,9 +1925,10 @@ environment**. See [Model Router](#model-router-local-llm) above for how a route
 
 ## Spine S3 Subsystems — Open Surface
 
-S3 opens the Gateway to other agents and to third-party code. It is the active slot, and it closes when
-all seven Phase 9.5 projects have shipped ([`roadmap.md` § Phase 9.5](./roadmap.md#phase-95--marketplace-registry)).
-Shipped so far, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
+S3 opens the Gateway to other agents and to third-party code. It closed on 2026-11-04 (opened 2026-10-11), when
+the last of the seven Phase 9.5 projects shipped ([`roadmap.md` § Phase 9.5](./roadmap.md#phase-95--marketplace-registry));
+its record is [`roadmap.md` § Spine S3](./roadmap.md#spine-s3). The list below names the subsystems this file
+describes, each recorded in [`CHANGELOG.md`](./CHANGELOG.md):
 
 - **The extension runtime, 4 of 4** (2026-10-11 → 2026-10-17): the install gate, run grants, the
   sandboxed runtime and `--model` access ([§ Extension run grants](#extension-run-grants),
