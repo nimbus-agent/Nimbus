@@ -116,3 +116,9 @@ describe("fitCredentialNames", () => {
       expect(n.length).toBeLessThanOrEqual(MAX_CREDENTIAL_NAME);
   });
 });
+
+describe("uniqueNames with a tiny cap", () => {
+  test("a suffix longer than the room never slices from the end", () => {
+    expect(uniqueNames(["ab", "ab"], 1).names).toEqual(["a", "_2"]);
+  });
+});

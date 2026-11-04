@@ -30,10 +30,10 @@ export function toolName(op: Record<string, unknown>, method: string, path: stri
 }
 
 function firstFreeName(name: string, cap: number, taken: ReadonlySet<string>): string {
-  let candidate = trimUnderscores(name.slice(0, cap), false);
+  let candidate = trimUnderscores(name.slice(0, Math.max(0, cap)), false);
   for (let n = 2; taken.has(candidate); n++) {
     const suffix = `_${n}`;
-    candidate = `${trimUnderscores(name.slice(0, cap - suffix.length), false)}${suffix}`;
+    candidate = `${trimUnderscores(name.slice(0, Math.max(0, cap - suffix.length)), false)}${suffix}`;
   }
   return candidate;
 }

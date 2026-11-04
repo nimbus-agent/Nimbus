@@ -615,6 +615,14 @@ describe("description", () => {
 describe("credentials", () => {
   const withSchemes = (schemes: Doc, op: Doc = {}, extra: Doc = {}): OperationModel =>
     build(doc(op, { components: { securitySchemes: schemes }, ...extra }));
+  /** One operation per scheme, each using it, so every scheme is a USED one. */
+  const usingAll = (schemes: Doc): OperationModel => {
+    const paths: Doc = {};
+    Object.keys(schemes).forEach((name, i) => {
+      paths[`/s${i}`] = { get: { operationId: `s${i}`, security: [{ [name]: [] }] } };
+    });
+    return build(doc({}, { paths, components: { securitySchemes: schemes } }));
+  };
 
   test("apiKey in query is one entry carrying the parameter name", () => {
     const m = withSchemes(
@@ -626,12 +634,12 @@ describe("credentials", () => {
   });
 
   test("a scheme name not starting with a letter is prefixed c_", () => {
-    const m = withSchemes({ "2fa": { type: "http", scheme: "bearer" } });
+    const m = usingAll({ "2fa": { type: "http", scheme: "bearer" } });
     expect(m.credentials).toEqual({ c_2fa: { env: "C_2FA" } });
   });
 
   test("names collide to _2 and env names collide too", () => {
-    const m = withSchemes({
+    const m = usingAll({
       "Api Key": { type: "http", scheme: "bearer" },
       "api-key": { type: "http", scheme: "bearer" },
       path: { type: "http", scheme: "bearer" },
@@ -647,7 +655,7 @@ describe("credentials", () => {
   });
 
   test("env is prefixed API_ when it would be reserved", () => {
-    const m = withSchemes({
+    const m = usingAll({
       nimbus_token: { type: "http", scheme: "bearer" },
       home: { type: "apiKey", in: "header", name: "X" },
       ld_preload: { type: "http", scheme: "basic" },
@@ -663,7 +671,7 @@ describe("credentials", () => {
 
   test("a long basic scheme is cut so the final names are at most 32 characters", () => {
     const name = "an_extremely_long_basic_auth_scheme_name";
-    const m = withSchemes({
+    const m = usingAll({
       [name]: { type: "http", scheme: "basic" },
       [`${name}_x`]: { type: "http", scheme: "basic" },
     });
@@ -751,7 +759,8 @@ describe("credentials", () => {
 
   test("scheme names such as constructor and __proto__ stay own data", () => {
     const parsed = JSON.parse(
-      '{"openapi":"3.0.0","servers":[{"url":"https://a.example.com"}],"paths":{"/a":{"get":{}}},' +
+      '{"openapi":"3.0.0","servers":[{"url":"https://a.example.com"}],' +
+        '"paths":{"/a":{"get":{"security":[{"constructor":[]}]}},"/b":{"get":{"security":[{"__proto__":[]}]}}},' +
         '"components":{"securitySchemes":{"constructor":{"type":"http","scheme":"bearer"},' +
         '"__proto__":{"type":"http","scheme":"bearer"}}}}',
     ) as Doc;
@@ -856,5 +865,185 @@ describe("refusals and skips", () => {
       "PATCH",
       "TRACE",
     ]);
+  });
+});
+
+describe("fix round 1", () => {
+  test("only USED schemes get credentials; an unused one never pushes a used one to _2", () => {
+    const m = build(
+      doc(
+        { security: [{ "api-key": [] }] },
+        {
+          components: {
+            securitySchemes: {
+              "Api Key": { type: "http", scheme: "bearer" },
+              "api-key": { type: "apiKey", in: "header", name: "X-Key" },
+              unused_bearer: { type: "http", scheme: "bearer" },
+              o: { type: "oauth2", flows: {} },
+            },
+          },
+        },
+      ),
+    );
+    expect(m.credentials).toEqual({ api_key: { env: "API_KEY" } });
+    expect(m.operations[0]?.credential).toEqual({ kind: "header", name: "X-Key", env: "API_KEY" });
+    expect(m.unsupportedSchemes).toEqual(["o (oauth2)"]);
+  });
+
+  test("the bomb shape (60 parameters of a 10^4-leaf schema) is refused by the shared budget", () => {
+    const s: Doc = {};
+    for (let i = 0; i < 4; i++) {
+      s[`L${i}`] = { anyOf: Array.from({ length: 10 }, () => ({ $ref: `#/s/L${i + 1}` })) };
+    }
+    s["L4"] = { type: "string" };
+    const parameters = Array.from({ length: 60 }, (_, i) => ({
+      name: `p${i}`,
+      in: "query",
+      schema: { $ref: "#/s/L0" },
+    }));
+    const e = errorOf(() => build(doc({ parameters }, { s })));
+    expect(e).toBeInstanceOf(OpenApiModelError);
+    expect(e.message).toBe("the document expands to more than 1,000,000 schema nodes");
+  });
+
+  test("operations each under the old per-call budget are refused once their total passes the cap", () => {
+    const s: Doc = {};
+    for (let i = 0; i < 3; i++) {
+      s[`L${i}`] = { anyOf: Array.from({ length: 10 }, () => ({ $ref: `#/s/L${i + 1}` })) };
+    }
+    s["L3"] = { type: "string" };
+    const paths: Doc = {};
+    // One parameter of 2,334 nodes per operation (under the old 100,000 per call): × 200 ≈ 467,000, × 500 ≈ 1.17M.
+    const op = (i: number): Doc => ({
+      get: {
+        operationId: `o${i}`,
+        parameters: [{ name: "q", in: "query", schema: { $ref: "#/s/L0" } }],
+      },
+    });
+    for (let i = 0; i < 200; i++) paths[`/o${i}`] = op(i);
+    expect(build(doc({}, { s, paths })).operations).toHaveLength(200);
+    for (let i = 200; i < 500; i++) paths[`/o${i}`] = op(i);
+    expect(
+      errorOf(() => build(doc({}, { s, paths }), { serviceId: SERVICE_ID, maxOperations: 500 }))
+        .message,
+    ).toBe("the document expands to more than 1,000,000 schema nodes");
+  });
+
+  test("cut warnings stop at 100, then one summary line", () => {
+    const parameters = Array.from({ length: 105 }, (_, i) => ({
+      name: `p${i}`,
+      in: "query",
+      schema: { $ref: "#/c" },
+    }));
+    const m = build(doc({ parameters }, { c: { $ref: "#/c" } }));
+    expect(m.warnings).toHaveLength(101);
+    expect(m.warnings[0]).toBe(
+      "GET /things: $ref #/c nests more than 8 deep (a cycle?); cut to {}",
+    );
+    expect(m.warnings[100]).toBe("\u2026 and 5 more cut references");
+  });
+
+  test("Accept, Content-Type and Authorization header parameters are dropped with a warning", () => {
+    const m = build(
+      doc({
+        parameters: [
+          { name: "accept", in: "header" },
+          { name: "Content-Type", in: "header" },
+          { name: "AUTHORIZATION", in: "header" },
+          { name: "Accept", in: "query" },
+        ],
+      }),
+    );
+    expect(m.operations[0]?.params).toEqual([
+      { name: "Accept", in: "query", arg: "Accept", required: false },
+    ]);
+    expect(m.warnings).toEqual([
+      "GET /things: header parameter accept is set by the extension; dropped",
+      "GET /things: header parameter Content-Type is set by the extension; dropped",
+      "GET /things: header parameter AUTHORIZATION is set by the extension; dropped",
+    ]);
+  });
+
+  test("a parameter that carries the chosen credential is dropped with a warning", () => {
+    const schemes = {
+      h: { type: "apiKey", in: "header", name: "X-Key" },
+      q: { type: "apiKey", in: "query", name: "key" },
+    };
+    const header = build(
+      doc(
+        {
+          security: [{ h: [] }],
+          parameters: [
+            { name: "x-key", in: "header" },
+            { name: "X-Key", in: "query" },
+          ],
+        },
+        { components: { securitySchemes: schemes } },
+      ),
+    );
+    expect(header.operations[0]?.params).toEqual([
+      { name: "X-Key", in: "query", arg: "X-Key", required: false },
+    ]);
+    expect(header.warnings).toEqual([
+      "GET /things: header parameter x-key carries the credential; dropped",
+    ]);
+    const query = build(
+      doc(
+        {
+          security: [{ q: [] }],
+          parameters: [
+            { name: "key", in: "query" },
+            { name: "Key", in: "query" },
+          ],
+        },
+        { components: { securitySchemes: schemes } },
+      ),
+    );
+    expect(query.operations[0]?.params).toEqual([
+      { name: "Key", in: "query", arg: "Key", required: false },
+    ]);
+    expect(query.warnings).toEqual([
+      "GET /things: query parameter key carries the credential; dropped",
+    ]);
+  });
+
+  test("security with no supported alternative: no credential and a warning", () => {
+    const components = {
+      securitySchemes: { o: { type: "oauth2", flows: {} }, a: { type: "http", scheme: "bearer" } },
+    };
+    const m = build(doc({ security: [{ o: [] }, { o: [], a: [] }] }, { components }));
+    expect(m.operations[0]?.credential).toBeNull();
+    expect(m.warnings).toEqual([
+      "GET /things: no supported security alternative; generated without a credential",
+    ]);
+    expect(build(doc({ security: [] }, { components })).warnings).toEqual([]);
+    expect(build(doc({ security: [{}, { o: [] }] }, { components })).warnings).toEqual([]);
+  });
+
+  test("a declared path parameter absent from the template is dropped with a warning", () => {
+    const m = build(doc({ parameters: [{ name: "ghost", in: "path", required: true }] }));
+    expect(m.operations[0]?.params).toEqual([]);
+    expect(m.operations[0]?.inputSchema).toEqual({ type: "object", properties: {} });
+    expect(m.warnings).toEqual([
+      "GET /things: path parameter ghost is not in the path template; dropped",
+    ]);
+  });
+
+  test("a localhost subdomain is rejected like .local", () => {
+    expect(
+      build(doc({ servers: [{ url: "https://api.localhost" }, { url: "https://ok.example.com" }] }))
+        .warnings,
+    ).toEqual(["server https://api.localhost: is a local host name; skipped"]);
+  });
+
+  test("a usable but unused document server is not in hosts", () => {
+    const m = build(
+      doc(
+        {},
+        { servers: [{ url: "https://first.example.com" }, { url: "https://second.example.com" }] },
+      ),
+    );
+    expect(m.hosts).toEqual(["first.example.com"]);
+    expect(m.warnings).toEqual([]);
   });
 });

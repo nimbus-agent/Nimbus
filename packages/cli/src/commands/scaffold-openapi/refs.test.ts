@@ -123,8 +123,38 @@ describe("resolveRefs", () => {
     }
     s["L6"] = { leaf: true };
     expect(errorOf(() => resolveRefs({ $ref: "#/s/L0" }, { s })).message).toBe(
-      `$ref expansion exceeds ${MAX_RESOLVED_NODES} nodes`,
+      "the document expands to more than 100,000 schema nodes",
     );
+    expect(MAX_RESOLVED_NODES).toBe(100_000);
+  });
+
+  test("one budget object is shared across calls", () => {
+    const budget = { used: 0, limit: 10 };
+    resolveRefs({ a: { b: {} } }, {}, 0, undefined, budget);
+    expect(budget.used).toBe(3);
+    resolveRefs({ a: { b: { c: {} } } }, {}, 0, undefined, budget);
+    expect(budget.used).toBe(7);
+    expect(
+      errorOf(() => resolveRefs({ a: { b: { c: {} } } }, {}, 0, undefined, budget)).message,
+    ).toBe("the document expands to more than 10 schema nodes");
+  });
+
+  test("pointer segments are percent-decoded after ~ unescaping", () => {
+    const root = { paths: { "/pets/{id}": { ok: true }, "a b": { sp: true } } };
+    expect(resolveRefs({ $ref: "#/paths/~1pets~1%7Bid%7D" }, root)).toEqual({ ok: true });
+    expect(resolveRefs({ $ref: "#/paths/a%20b" }, root)).toEqual({ sp: true });
+  });
+
+  test("a percent-encoded forbidden segment is still refused", () => {
+    expect(errorOf(() => resolveRefs({ $ref: "#/a/%5F%5Fproto%5F%5F" }, { a: {} })).message).toBe(
+      '$ref #/a/%5F%5Fproto%5F%5F uses the forbidden segment "__proto__"',
+    );
+  });
+
+  test("a malformed percent-escape is refused", () => {
+    const e = errorOf(() => resolveRefs({ $ref: "#/a/%E0%A4%A" }, { a: {} }));
+    expect(e).toBeInstanceOf(OpenApiModelError);
+    expect(e.message).toBe("$ref #/a/%E0%A4%A has a malformed percent-escape");
   });
 
   test("primitives pass through", () => {

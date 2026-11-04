@@ -20,6 +20,7 @@ import {
   type Obj,
   OpenApiModelError,
   own,
+  type RefBudget,
   resolveRefs,
 } from "./refs.ts";
 
@@ -70,11 +71,18 @@ const PARAM_LOCATIONS: ReadonlySet<string> = new Set(["path", "query", "header",
 // Shared state
 // ---------------------------------------------------------------------------------------------
 
+/** Total `$ref` expansion allowed across one model build. */
+export const MAX_DOCUMENT_NODES = 1_000_000;
+/** Cut-reference warnings listed one by one before the rest are summarised. */
+export const MAX_CUT_WARNINGS = 100;
+
 interface Context {
   readonly doc: Obj;
   readonly warnings: string[];
   readonly seenWarnings: Set<string>;
+  readonly budget: RefBudget;
   sawUsableServer: boolean;
+  cuts: number;
 }
 
 function warn(ctx: Context, message: string): void {
@@ -85,14 +93,24 @@ function warn(ctx: Context, message: string): void {
 
 /** `resolveRefs` with each cut reported as a warning naming `label`. */
 function resolveIn(ctx: Context, node: unknown, label: string): unknown {
-  const cuts: string[] = [];
-  const out = resolveRefs(node, ctx.doc, 0, (ref) => cuts.push(ref));
-  for (const ref of cuts) {
-    ctx.warnings.push(
-      `${label}: $ref ${ref} nests more than ${MAX_REF_DEPTH} deep (a cycle?); cut to {}`,
-    );
-  }
-  return out;
+  return resolveRefs(
+    node,
+    ctx.doc,
+    0,
+    (ref) => {
+      ctx.cuts += 1;
+      if (ctx.cuts > MAX_CUT_WARNINGS) return;
+      ctx.warnings.push(
+        `${label}: $ref ${ref} nests more than ${MAX_REF_DEPTH} deep (a cycle?); cut to {}`,
+      );
+    },
+    ctx.budget,
+  );
+}
+
+function summariseCuts(ctx: Context): void {
+  const more = ctx.cuts - MAX_CUT_WARNINGS;
+  if (more > 0) ctx.warnings.push(`… and ${more} more cut references`);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -144,7 +162,7 @@ function trimTrailingSlashes(s: string): string {
 }
 
 function isLocalHostName(host: string): boolean {
-  return host === "localhost" || host.endsWith(".local");
+  return host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local");
 }
 
 function hostRejection(url: URL): string | undefined {
@@ -216,8 +234,8 @@ function hasServers(list: unknown): boolean {
 // ---------------------------------------------------------------------------------------------
 
 interface SchemeTable {
-  readonly uses: Map<string, CredentialUse>;
-  readonly credentials: Record<string, { env: string }>;
+  /** Every supported declared scheme, in declaration order. */
+  readonly supported: Map<string, SupportedScheme>;
   readonly unsupported: string[];
 }
 
@@ -252,63 +270,79 @@ function classifyScheme(scheme: unknown): SupportedScheme | string {
   return typeof type === "string" ? type : "no type";
 }
 
-function addCredential(
-  table: SchemeTable,
-  schemeName: string,
-  supported: SupportedScheme,
-  taken: { names: Set<string>; envs: Set<string> },
-): void {
-  const suffixes = supported.kind === "basic" ? ["_user", "_password"] : [""];
-  const names = fitCredentialNames(credentialName(schemeName), suffixes, taken.names, taken.envs);
-  const envs = names.map(credentialEnv);
-  names.forEach((n, i) => {
-    const env = envs[i] as string;
-    taken.names.add(n);
-    taken.envs.add(env);
-    table.credentials[n] = { env };
-  });
-  const env = envs[0] as string;
-  if (supported.kind === "basic") {
-    table.uses.set(schemeName, { kind: "basic", env, passwordEnv: envs[1] as string });
-  } else if (supported.kind === "bearer") {
-    table.uses.set(schemeName, { kind: "bearer", env });
-  } else {
-    table.uses.set(schemeName, { kind: supported.kind, name: supported.name, env });
-  }
-}
-
 function buildSchemeTable(ctx: Context): SchemeTable {
-  const table: SchemeTable = {
-    uses: new Map(),
-    credentials: emptyObject() as Record<string, { env: string }>,
-    unsupported: [],
-  };
+  const table: SchemeTable = { supported: new Map(), unsupported: [] };
   const schemes = own(own(ctx.doc, "components"), "securitySchemes");
   if (!isObject(schemes)) return table;
-  const taken = { names: new Set<string>(), envs: new Set<string>() };
   for (const schemeName of Object.keys(schemes)) {
     const scheme = resolveIn(ctx, schemes[schemeName], `security scheme ${schemeName}`);
     const supported = classifyScheme(scheme);
     if (typeof supported === "string") {
       table.unsupported.push(`${schemeName} (${supported})`);
     } else {
-      addCredential(table, schemeName, supported, taken);
+      table.supported.set(schemeName, supported);
     }
   }
   return table;
 }
 
-/** The first alternative of the operation's own `security` (else the document's) that names exactly one supported scheme. */
-function pickCredential(op: Obj, ctx: Context, schemes: SchemeTable): CredentialUse | null {
-  const security = Object.hasOwn(op, "security") ? op["security"] : own(ctx.doc, "security");
+/**
+ * The scheme the operation uses: the first alternative of its own `security` (else the
+ * document's) that names exactly one supported scheme. `null` when there is none; a list whose
+ * alternatives are all unsupported (and none is the anonymous `{}`) is warned about.
+ */
+function pickScheme(c: Candidate, ctx: Context, schemes: SchemeTable): string | null {
+  const security = Object.hasOwn(c.op, "security") ? c.op["security"] : own(ctx.doc, "security");
   if (!Array.isArray(security)) return null;
+  let anonymous = false;
   for (const alternative of security) {
     if (!isObject(alternative)) continue;
     const keys = Object.keys(alternative);
-    const use = keys.length === 1 ? schemes.uses.get(keys[0] as string) : undefined;
-    if (use !== undefined) return use;
+    if (keys.length === 0) anonymous = true;
+    const only = keys.length === 1 ? (keys[0] as string) : undefined;
+    if (only !== undefined && schemes.supported.has(only)) return only;
+  }
+  if (security.length > 0 && !anonymous) {
+    warn(ctx, `${c.label}: no supported security alternative; generated without a credential`);
   }
   return null;
+}
+
+function credentialUse(supported: SupportedScheme, envs: readonly string[]): CredentialUse {
+  const env = envs[0] as string;
+  if (supported.kind === "basic") return { kind: "basic", env, passwordEnv: envs[1] as string };
+  if (supported.kind === "bearer") return { kind: "bearer", env };
+  return { kind: supported.kind, name: supported.name, env };
+}
+
+interface AssignedCredentials {
+  readonly uses: ReadonlyMap<string, CredentialUse>;
+  readonly credentials: Record<string, { env: string }>;
+}
+
+/**
+ * Names and env vars for the schemes some generated operation USES, in declaration order, so an
+ * unused scheme never claims a name.
+ */
+function assignCredentials(schemes: SchemeTable, used: ReadonlySet<string>): AssignedCredentials {
+  const uses = new Map<string, CredentialUse>();
+  const credentials = emptyObject() as Record<string, { env: string }>;
+  const takenNames = new Set<string>();
+  const takenEnvs = new Set<string>();
+  for (const [schemeName, supported] of schemes.supported) {
+    if (!used.has(schemeName)) continue;
+    const suffixes = supported.kind === "basic" ? ["_user", "_password"] : [""];
+    const names = fitCredentialNames(credentialName(schemeName), suffixes, takenNames, takenEnvs);
+    const envs = names.map(credentialEnv);
+    names.forEach((n, i) => {
+      const env = envs[i] as string;
+      takenNames.add(n);
+      takenEnvs.add(env);
+      credentials[n] = { env };
+    });
+    uses.set(schemeName, credentialUse(supported, envs));
+  }
+  return { uses, credentials };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -368,14 +402,57 @@ function collectParams(pathItem: Obj, op: Obj, label: string, ctx: Context): Raw
   return [...byKey.values()];
 }
 
+function templateNames(path: string): Set<string> {
+  return new Set([...path.matchAll(/\{([^{}]+)\}/g)].map((m) => m[1] as string));
+}
+
 function assertPathParamsDeclared(path: string, params: readonly RawParam[]): void {
   const declared = new Set(params.filter((p) => p.in === "path").map((p) => p.name));
-  for (const match of path.matchAll(/\{([^{}]+)\}/g)) {
-    const name = match[1] as string;
+  for (const name of templateNames(path)) {
     if (!declared.has(name)) {
       throw new SkipOperation(`path parameter {${name}} is not declared`);
     }
   }
+}
+
+/** Header parameters the generated request sets itself. */
+const RESERVED_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "authorization"]);
+
+function carriesCredential(p: RawParam, scheme: SupportedScheme | undefined): boolean {
+  if (scheme === undefined || (scheme.kind !== "header" && scheme.kind !== "query")) return false;
+  if (p.in !== scheme.kind) return false;
+  return p.in === "header"
+    ? p.name.toLowerCase() === scheme.name.toLowerCase()
+    : p.name === scheme.name;
+}
+
+/** Why the generated tool drops this parameter, or `undefined` to keep it. */
+function dropReason(
+  p: RawParam,
+  template: ReadonlySet<string>,
+  scheme: SupportedScheme | undefined,
+): string | undefined {
+  if (p.in === "path" && !template.has(p.name)) return "is not in the path template";
+  if (p.in === "header" && RESERVED_HEADERS.has(p.name.toLowerCase())) {
+    return "is set by the extension";
+  }
+  if (carriesCredential(p, scheme)) return "carries the credential";
+  return undefined;
+}
+
+/** The parameters the tool exposes; each dropped one is warned about. */
+function keepParams(
+  raw: readonly RawParam[],
+  c: Candidate,
+  scheme: SupportedScheme | undefined,
+  ctx: Context,
+): RawParam[] {
+  const template = templateNames(c.path);
+  return raw.filter((p) => {
+    const why = dropReason(p, template, scheme);
+    if (why !== undefined) warn(ctx, `${c.label}: ${p.in} parameter ${p.name} ${why}; dropped`);
+    return why === undefined;
+  });
 }
 
 function assignArgs(params: readonly RawParam[], hasJsonBody: boolean): ParamDef[] {
@@ -480,7 +557,8 @@ interface Candidate {
 interface Draft {
   readonly baseName: string;
   readonly host: string;
-  readonly def: Omit<OperationDef, "tool">;
+  readonly scheme: string | null;
+  readonly def: Omit<OperationDef, "tool" | "credential">;
 }
 
 type Skipped = { operation: string; reason: string };
@@ -540,13 +618,17 @@ function draftOperation(
   ctx: Context,
 ): Draft {
   const server = chooseServer(c, docServer, ctx);
-  const raw = collectParams(c.pathItem, c.op, c.label, ctx);
-  assertPathParamsDeclared(c.path, raw);
+  const scheme = pickScheme(c, ctx, schemes);
+  const collected = collectParams(c.pathItem, c.op, c.label, ctx);
+  assertPathParamsDeclared(c.path, collected);
+  const chosen = scheme === null ? undefined : schemes.supported.get(scheme);
+  const raw = keepParams(collected, c, chosen, ctx);
   const body = bodyShape(c.op, c.label, ctx);
   const params = assignArgs(raw, body.body === "json");
   return {
     baseName: toolName(c.op, c.method, c.path),
     host: server.host,
+    scheme,
     def: {
       method: c.method.toUpperCase(),
       path: c.path,
@@ -555,7 +637,6 @@ function draftOperation(
       body: body.body,
       inputSchema: buildInputSchema(params, raw, body),
       description: describeOperation(c.op, c.label),
-      credential: pickCredential(c.op, ctx, schemes),
     },
   };
 }
@@ -599,7 +680,14 @@ export function buildOperationModel(
 ): OperationModel {
   assertMaxOperations(opts.maxOperations);
   const cap = toolNameCap(opts.serviceId);
-  const ctx: Context = { doc, warnings: [], seenWarnings: new Set(), sawUsableServer: false };
+  const ctx: Context = {
+    doc,
+    warnings: [],
+    seenWarnings: new Set(),
+    budget: { used: 0, limit: MAX_DOCUMENT_NODES },
+    sawUsableServer: false,
+    cuts: 0,
+  };
   const skipped: Skipped[] = [];
 
   const schemes = buildSchemeTable(ctx);
@@ -608,6 +696,9 @@ export function buildOperationModel(
   assertOperationCount(candidates.length, opts.maxOperations);
   const drafts = draftAll(candidates, docServer, schemes, ctx, skipped);
   assertSomethingGenerated(drafts, candidates.length, ctx);
+  summariseCuts(ctx);
+  const used = new Set(drafts.flatMap((d) => (d.scheme === null ? [] : [d.scheme])));
+  const assigned = assignCredentials(schemes, used);
 
   const names = uniqueNames(
     drafts.map((d) => d.baseName),
@@ -615,8 +706,12 @@ export function buildOperationModel(
   );
   return {
     hosts: [...new Set(drafts.map((d) => d.host))].sort(),
-    operations: drafts.map((d, i) => ({ tool: names.names[i] as string, ...d.def })),
-    credentials: schemes.credentials,
+    operations: drafts.map((d, i) => ({
+      tool: names.names[i] as string,
+      ...d.def,
+      credential: d.scheme === null ? null : (assigned.uses.get(d.scheme) ?? null),
+    })),
+    credentials: assigned.credentials,
     skipped,
     unsupportedSchemes: schemes.unsupported,
     warnings: ctx.warnings,

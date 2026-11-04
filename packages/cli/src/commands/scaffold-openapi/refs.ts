@@ -38,14 +38,30 @@ export function emptyObject(): Obj {
   return Object.create(null) as Obj;
 }
 
+/** A node budget; pass one object to several calls to share it. */
+export interface RefBudget {
+  used: number;
+  readonly limit: number;
+}
+
 interface WalkContext {
   readonly root: Obj;
   readonly onCut: ((ref: string) => void) | undefined;
-  nodes: number;
+  readonly budget: RefBudget;
 }
+
+const formatCount = new Intl.NumberFormat("en-US");
 
 function unescapeSegment(segment: string): string {
   return segment.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+
+function decodeSegment(raw: string, ref: string): string {
+  try {
+    return decodeURIComponent(unescapeSegment(raw));
+  } catch {
+    throw new OpenApiModelError(`$ref ${ref} has a malformed percent-escape`);
+  }
 }
 
 function lookupPointer(ref: string, root: Obj): unknown {
@@ -59,7 +75,7 @@ function lookupPointer(ref: string, root: Obj): unknown {
   }
   let node: unknown = root;
   for (const raw of pointer.slice(1).split("/")) {
-    const segment = unescapeSegment(raw);
+    const segment = decodeSegment(raw, ref);
     if (FORBIDDEN_SEGMENTS.has(segment)) {
       throw new OpenApiModelError(`$ref ${ref} uses the forbidden segment "${segment}"`);
     }
@@ -72,9 +88,11 @@ function lookupPointer(ref: string, root: Obj): unknown {
 }
 
 function countNode(ctx: WalkContext): void {
-  ctx.nodes += 1;
-  if (ctx.nodes > MAX_RESOLVED_NODES) {
-    throw new OpenApiModelError(`$ref expansion exceeds ${MAX_RESOLVED_NODES} nodes`);
+  ctx.budget.used += 1;
+  if (ctx.budget.used > ctx.budget.limit) {
+    throw new OpenApiModelError(
+      `the document expands to more than ${formatCount.format(ctx.budget.limit)} schema nodes`,
+    );
   }
 }
 
@@ -104,13 +122,15 @@ function walk(node: unknown, ctx: WalkContext, refDepth: number, nesting: number
 
 /**
  * A deep, null-prototype copy of `node` with every local `$ref` replaced by its target. `depth` is
- * the number of `$ref`s already followed (0 at the top); `onCut` is called once per cut.
+ * the number of `$ref`s already followed (0 at the top); `onCut` is called once per cut; `budget`
+ * (default: {@link MAX_RESOLVED_NODES} for this call alone) bounds the nodes built.
  */
 export function resolveRefs(
   node: unknown,
   root: Record<string, unknown>,
   depth = 0,
   onCut?: (ref: string) => void,
+  budget: RefBudget = { used: 0, limit: MAX_RESOLVED_NODES },
 ): unknown {
-  return walk(node, { root, onCut, nodes: 0 }, depth, 0);
+  return walk(node, { root, onCut, budget }, depth, 0);
 }
