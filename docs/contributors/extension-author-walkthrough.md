@@ -13,6 +13,16 @@ cd my_ext && bun install && bun test
 
 This writes `./my_ext/` with a `nimbus.extension.json` (`id` `acme/my_ext`, `version` `0.1.0`, `entry` `dist/index.js`, empty permissions, `publisher: { id: "acme" }`), an MCP server with one `echo` tool and its test. Without `--publisher` the id is just `my_ext`, which a registry that requires namespaced ids will refuse.
 
+### Start from an OpenAPI document
+
+If the service you wrap has an OpenAPI 3 document, generate the tools instead of writing them:
+
+```bash
+nimbus scaffold extension petstore --publisher acme --from-openapi ./openapi.yaml
+```
+
+You get one tool per operation, the hosts in `permissions.network`, the credentials the operations use, and a README listing what was skipped. Each tool is a row of `src/operations.json`; edit the table, not the code. The command takes a file or an `https` URL, refuses more than 200 operations unless you pass `--max-operations <n>`, and generates no eval suite (evals run without a network). The full rules are in [`cli-reference.md`](../cli-reference.md#nimbus-scaffold-extension-name---publisher-id---from-openapi-pathurl---max-operations-n).
+
 The manifest needs at least `id` (stable, no `..` segments), `version` (semver), `name` and `entry` (default `dist/index.js`). The Gateway hashes the manifest and the entry file at install time; any on-disk change that does not match the recorded hashes disables the extension on the next verify pass.
 
 ## 2. Build the entry

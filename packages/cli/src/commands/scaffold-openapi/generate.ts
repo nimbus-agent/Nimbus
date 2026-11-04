@@ -1,0 +1,264 @@
+/**
+ * The operation model → the files of an extension. The plain extension scaffold is the base; the
+ * manifest, the tools and the README are replaced and the operation table and request code are
+ * added. Document text reaches `src/operations.json` (via `JSON.stringify`) and `README.md` (with
+ * control characters stripped) only — the `.ts` files are the fixed templates.
+ */
+import { parseExtensionManifestForRegistry } from "@nimbus-dev/registry-format";
+import { stripControlChars } from "../../lib/strip-control-chars.ts";
+import {
+  buildExtensionScaffoldFiles,
+  extensionNamespaceNote,
+  extensionReadmeSteps,
+  resolveExtensionId,
+  type ScaffoldFile,
+} from "../scaffold-extension.ts";
+import { OpenApiModelError, type OperationDef, type OperationModel } from "./model.ts";
+import { compareCodeUnits } from "./names.ts";
+import { OPENAPI_REQUEST_TS, OPENAPI_TOOLS_TEST_TS, OPENAPI_TOOLS_TS } from "./templates.ts";
+
+const MANIFEST_PATH = "nimbus.extension.json";
+
+/** The largest `src/operations.json` written: the bundle inlines it, and the model reads it whole. */
+export const MAX_OPERATIONS_JSON_BYTES = 50 * 1024 * 1024;
+export const OPERATIONS_TOO_LARGE = "the generated operation table would exceed 50 MiB";
+
+function json(value: unknown): string {
+  return `${JSON.stringify(value, undefined, 2)}\n`;
+}
+
+function contentOf(files: readonly ScaffoldFile[], path: string): string {
+  const file = files.find((f) => f.path.join("/") === path);
+  if (file === undefined) throw new Error(`the extension scaffold has no ${path}`);
+  return file.content;
+}
+
+/** `JSON.stringify(value, undefined, 2)`; a value too large for it (a RangeError) is a refusal. */
+function stringifyOrRefuse(value: unknown): string {
+  try {
+    return JSON.stringify(value, undefined, 2);
+  } catch (e) {
+    if (e instanceof RangeError) throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+    throw e;
+  }
+}
+
+/** `text` as it appears nested `spaces` deep (JSON text has no raw newline inside a string). */
+function nest(text: string, spaces: string): string {
+  return text.replaceAll("\n", `\n${spaces}`);
+}
+
+/**
+ * `src/operations.json`, byte-identical to `JSON.stringify({ hosts, operations }, undefined, 2)`,
+ * but built one operation at a time so the {@link MAX_OPERATIONS_JSON_BYTES} cap is refused as
+ * soon as the running total passes it, never after serialising the whole table.
+ */
+function operationsJson(model: OperationModel): string {
+  const parts: string[] = [];
+  let bytes = 0;
+  for (const op of model.operations) {
+    const text = stringifyOrRefuse(op);
+    bytes += Buffer.byteLength(text, "utf8");
+    if (bytes > MAX_OPERATIONS_JSON_BYTES) throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+    parts.push(nest(text, "    "));
+  }
+  const hosts = nest(stringifyOrRefuse(model.hosts), "  ");
+  const operations = parts.length === 0 ? "[]" : `[\n    ${parts.join(",\n    ")}\n  ]`;
+  const out = `{\n  "hosts": ${hosts},\n  "operations": ${operations}\n}\n`;
+  if (Buffer.byteLength(out, "utf8") > MAX_OPERATIONS_JSON_BYTES) {
+    throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+  }
+  return out;
+}
+
+/** The plain manifest with the model's network hosts and credentials. */
+function buildManifest(plain: string, model: OperationModel): Record<string, unknown> {
+  const manifest = JSON.parse(plain) as Record<string, unknown>;
+  const permissions = manifest["permissions"] as Record<string, unknown>;
+  permissions["network"] = [...model.hosts];
+  if (Object.keys(model.credentials).length > 0) {
+    manifest["credentials"] = { ...model.credentials };
+  }
+  return manifest;
+}
+
+/**
+ * The registry's own parser over the manifest. An unsigned `publisher` is left out of the check:
+ * `nimbus extension sign` fills in its key and signature later, exactly as for the plain scaffold.
+ */
+function assertManifestParses(manifest: Record<string, unknown>): void {
+  const { publisher: _publisher, ...checked } = manifest;
+  try {
+    parseExtensionManifestForRegistry(JSON.stringify(checked));
+  } catch (e) {
+    // The parser throws only Error.
+    throw new Error(`bug: the generated manifest does not parse: ${(e as Error).message}`);
+  }
+}
+
+/** Bidirectional-text controls: they can make printed text read differently from what it is. */
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/** Document text made safe to print or write: C0/C1 controls, DEL and bidi controls removed. */
+export function cleanDocumentText(text: string): string {
+  return stripControlChars(text).replaceAll(BIDI_CONTROLS, "");
+}
+
+/**
+ * Document text as a Markdown code span, so nothing in it renders as a link, emphasis or HTML:
+ * the fence is one backtick longer than the longest run inside, and the padding spaces (which
+ * CommonMark strips) let the text start or end with a backtick.
+ */
+export function codeSpan(text: string): string {
+  const clean = cleanDocumentText(text);
+  const longest = Math.max(0, ...[...clean.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence} ${clean} ${fence}`;
+}
+
+function item(line: string): string {
+  return `- ${line}\n`;
+}
+
+function describeOp(op: OperationDef): string {
+  const methodAndPath = codeSpan(`${op.method} ${op.path}`);
+  const request = `\`${op.tool}\` — ${methodAndPath}`;
+  if (op.body !== "unsupported") return request;
+  const handling = op.bodyRequired ? "required: refuses every call" : "optional: sent without it";
+  return `${request} (non-JSON body, ${handling})`;
+}
+
+/**
+ * Each declared credential with the hosts that receive it, in declaration order. A basic scheme's
+ * `_user` and `_password` entries both match the operation's credential.
+ */
+export function credentialHosts(model: OperationModel): { name: string; hosts: string[] }[] {
+  return Object.entries(model.credentials).map(([name, { env }]) => {
+    const hosts = new Set<string>();
+    for (const op of model.operations) {
+      const cred = op.credential;
+      if (cred !== null && (cred.env === env || cred.passwordEnv === env)) {
+        hosts.add(new URL(op.server).host);
+      }
+    }
+    return { name, hosts: [...hosts].sort(compareCodeUnits) };
+  });
+}
+
+function section(title: string, intro: string, lines: readonly string[]): string {
+  if (lines.length === 0) return "";
+  return `## ${title}\n\n${intro}\n\n${lines.map(item).join("")}\n`;
+}
+
+function credentialsSection(id: string, model: OperationModel): string {
+  const entries = Object.entries(model.credentials);
+  if (entries.length === 0) return "";
+  const commands = entries.map(([n]) => `nimbus extension credential set ${id} ${n}`).join("\n");
+  const envs = entries.map(([n, c]) => `\`${n}\` reaches the extension as \`${c.env}\``);
+  const recipients = credentialHosts(model).map(
+    ({ name, hosts }) => `credential \`${name}\` is sent to: ${hosts.map(codeSpan).join(", ")}`,
+  );
+  return `## Credentials
+
+Set each credential once the extension is installed and approved; a call that needs one refuses
+until it is set.
+
+\`\`\`
+${commands}
+\`\`\`
+
+${envs.map(item).join("")}
+${recipients.map(item).join("")}
+`;
+}
+
+/** Every README section that lists what the model reports, in a fixed order. */
+function modelSections(id: string, model: OperationModel): string {
+  const unsupportedBodies = model.operations.filter((op) => op.body === "unsupported");
+  return [
+    section(
+      "Operations",
+      "One tool per operation. Each is a row of `src/operations.json`; edit that table to change what a tool sends.",
+      model.operations.map(describeOp),
+    ),
+    credentialsSection(id, model),
+    section(
+      "Skipped operations",
+      "These operations were not generated:",
+      model.skipped.map((s) => `${codeSpan(s.operation)}: ${codeSpan(s.reason)}`),
+    ),
+    section(
+      "Shortened tool names",
+      "These names were cut to fit the tool-name limit:",
+      model.cutNames.map((c) => `${codeSpan(c.from)} → ${codeSpan(c.to)}`),
+    ),
+    section(
+      "Unsupported security schemes",
+      "These schemes are not supported; an operation that offered only them was generated without a credential:",
+      model.unsupportedSchemes.map(codeSpan),
+    ),
+    section(
+      "Request bodies that are not JSON",
+      "These tools take a body that is not JSON. One whose body is required refuses every call until `src/request.ts` is taught to send it; one whose body is optional is sent without a body.",
+      unsupportedBodies.map(describeOp),
+    ),
+    section("Warnings", "Generating the extension reported:", model.warnings.map(codeSpan)),
+  ].join("");
+}
+
+function buildOpenApiReadme(
+  name: string,
+  id: string,
+  publisher: string | undefined,
+  model: OperationModel,
+): string {
+  return `# ${id}
+
+A Nimbus extension generated from an OpenAPI document: an MCP server with one tool per operation,
+installed and run by the Gateway. It reaches only the hosts \`nimbus.extension.json\` declares.
+${extensionNamespaceNote(name, id, publisher)}
+${modelSections(id, model)}## Evaluate
+
+No eval suite is generated: evals run with no network, so every call this extension makes would
+fail there. Once you add tools that answer without the network, record a golden suite from their
+replies with \`nimbus eval --package . --record <inputs.json>\`.
+
+${extensionReadmeSteps(publisher)}`;
+}
+
+/** The plain extension scaffold's files with the OpenAPI-specific ones replaced and added. */
+export function buildOpenApiScaffoldFiles(
+  name: string,
+  publisher: string | undefined,
+  platform: NodeJS.Platform,
+  absDir: string,
+  model: OperationModel,
+): readonly ScaffoldFile[] {
+  const plain = buildExtensionScaffoldFiles(name, publisher, platform, absDir);
+  const id = resolveExtensionId(name, publisher);
+  const manifest = buildManifest(contentOf(plain, MANIFEST_PATH), model);
+  assertManifestParses(manifest);
+  return [
+    { path: [MANIFEST_PATH], content: json(manifest) },
+    { path: ["package.json"], content: contentOf(plain, "package.json") },
+    { path: ["src", "server.ts"], content: contentOf(plain, "src/server.ts") },
+    { path: ["src", "operations.json"], content: operationsJson(model) },
+    { path: ["src", "request.ts"], content: OPENAPI_REQUEST_TS },
+    { path: ["src", "tools.ts"], content: OPENAPI_TOOLS_TS.replaceAll("__NAME__", name) },
+    { path: ["src", "tools.test.ts"], content: OPENAPI_TOOLS_TEST_TS.replaceAll("__NAME__", name) },
+    { path: ["README.md"], content: buildOpenApiReadme(name, id, publisher, model) },
+    { path: [".gitignore"], content: contentOf(plain, ".gitignore") },
+  ];
+}
+
+/** The lines `runScaffold` prints after the summary: warnings, skipped operations, cut names. */
+export function openApiReportLines(model: OperationModel): string[] {
+  return [
+    ...model.warnings.map((w) => `warning: ${w}`),
+    ...model.skipped.map((s) => `skipped ${s.operation}: ${s.reason}`),
+    ...model.cutNames.map((c) => `shortened tool name ${c.from} → ${c.to}`),
+    ...credentialHosts(model).map(
+      ({ name, hosts }) => `credential ${name} is sent to: ${hosts.join(", ")}`,
+    ),
+  ].map(cleanDocumentText);
+}

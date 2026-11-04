@@ -302,7 +302,8 @@ function parseSync(value: unknown): ExtensionSyncManifest | undefined {
   return { contract: "1", intervalSeconds: interval, itemTypes: [...(types as string[])] };
 }
 
-function isReservedEnv(env: string): boolean {
+/** `true` when `env` may not name an extension credential (see the reserved lists above). */
+export function isReservedEnv(env: string): boolean {
   return (
     RESERVED_ENV_NAMES.has(env) ||
     isExtensionBaselineEnvKey(env) ||

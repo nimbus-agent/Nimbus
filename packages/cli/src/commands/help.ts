@@ -139,6 +139,7 @@ AUTOMATION & EXTENSIONS
   nimbus trust status|refresh  What the Nimbus trust feed last said (revocations, takedowns)
   nimbus scaffold mcp <name>        Minimal, tested MCP server you can register with connector add --mcp
   nimbus scaffold extension <name> [--publisher <id>]  Installable extension (bundled MCP server) ready to sign and publish
+  nimbus scaffold extension <name> --from-openapi <path|url> [--max-operations <n>]  The same, with one tool per OpenAPI 3 operation
   nimbus test [dir]         Extension manifest contract + bun test when a test script exists
 
 CONFIG & DIAGNOSTICS

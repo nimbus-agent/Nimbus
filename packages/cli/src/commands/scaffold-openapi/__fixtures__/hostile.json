@@ -1,0 +1,93 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Hostile `${process.exit(1)}` */ \"quotes\"\nnewline",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.hostile.example.com/base/"
+    },
+    {
+      "url": "http://insecure.example.com\u001b[2J"
+    }
+  ],
+  "security": [
+    {
+      "token`${x}*/": []
+    }
+  ],
+  "paths": {
+    "/items`*/\"'${/{id}": {
+      "get": {
+        "operationId": "get`${globalThis.x=1}`*/item",
+        "summary": "Read `${process.exit(1)}` */ an item\n\"; process.exit(1); //",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "*/ `${1+1}` \"\n'",
+            "schema": {
+              "type": "string",
+              "pattern": "`${a}`*/"
+            }
+          },
+          {
+            "name": "q\"*/`${y}`\nz",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "`${process.env}` */"
+            }
+          },
+          {
+            "name": "__proto__",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/upload": {
+      "post": {
+        "operationId": "upload",
+        "description": "Upload a form `\u001b[31mred\u001b[0m`",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/old": {
+      "get": {
+        "operationId": "old",
+        "servers": [
+          {
+            "url": "http://insecure.example.com\u001b[2J"
+          }
+        ]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "token`${x}*/": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Token`${x}"
+      },
+      "oidc": {
+        "type": "openIdConnect",
+        "openIdConnectUrl": "https://id.example.com"
+      }
+    }
+  }
+}

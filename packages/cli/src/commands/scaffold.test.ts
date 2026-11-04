@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -30,6 +31,7 @@ const {
 } = mod;
 
 const out = captureOutput();
+const FIXTURES = join(import.meta.dir, "scaffold-openapi", "__fixtures__");
 
 afterAll(() => {
   out.restore();
@@ -68,6 +70,62 @@ describe("parseScaffoldArgs", () => {
       expect(() => parseScaffoldArgs(["extension", "echo", ...bad])).toThrow(
         /scaffold extension|--publisher must match/,
       );
+    }
+  });
+
+  it("accepts --from-openapi and --max-operations in any order with --publisher", () => {
+    const want = {
+      kind: "extension" as const,
+      name: "pets",
+      publisher: "acme",
+      fromOpenApi: "https://x.example.com/o.yaml",
+      maxOperations: 300,
+    };
+    const pairs = [
+      ["--publisher", "acme"],
+      ["--from-openapi", "https://x.example.com/o.yaml"],
+      ["--max-operations", "300"],
+    ];
+    for (const order of [
+      [0, 1, 2],
+      [2, 1, 0],
+      [1, 0, 2],
+      [1, 2, 0],
+    ]) {
+      const args = order.flatMap((i) => pairs[i] ?? []);
+      expect(parseScaffoldArgs(["extension", "pets", ...args])).toEqual(want);
+    }
+    expect(parseScaffoldArgs(["extension", "pets", "--from-openapi", "./o.json"])).toEqual({
+      kind: "extension",
+      name: "pets",
+      fromOpenApi: "./o.json",
+    });
+  });
+
+  it("refuses a repeated flag, a missing value and a bad --max-operations", () => {
+    const cases: [string[], RegExp][] = [
+      [
+        ["--from-openapi", "a.json", "--from-openapi", "b.json"],
+        /--from-openapi given more than once/,
+      ],
+      [["--publisher", "acme", "--publisher", "acme"], /--publisher given more than once/],
+      [["--from-openapi"], /--from-openapi needs a value/],
+      [["--from-openapi", ""], /--from-openapi needs a value/],
+      [["--from-openapi", "--publisher", "acme"], /--from-openapi needs a value/],
+      [["--from-openapi", "a.json", "--max-operations"], /--max-operations needs a value/],
+      [["--max-operations", "5"], /--max-operations needs --from-openapi/],
+      [["--from-openapi", "a.json", "--max-operations", "0"], /positive integer, got 0/],
+      [["--from-openapi", "a.json", "--max-operations", "-3"], /needs a value|positive integer/],
+      [["--from-openapi", "a.json", "--max-operations", "1.5"], /positive integer, got 1.5/],
+      [["--from-openapi", "a.json", "--max-operations", "abc"], /positive integer, got abc/],
+      [
+        ["--from-openapi", "a.json", "--max-operations", "99999999999999999999"],
+        /positive integer/,
+      ],
+      [["--from-openapi", "a.json", "--frm", "x"], /Usage: nimbus scaffold extension/],
+    ];
+    for (const [rest, message] of cases) {
+      expect(() => parseScaffoldArgs(["extension", "pets", ...rest])).toThrow(message);
     }
   });
 
@@ -189,8 +247,8 @@ describe("runScaffold", () => {
     }
   });
 
-  it("writes the files, then refuses to overwrite", () => {
-    runScaffold(["mcp", "echo"]);
+  it("writes the files, then refuses to overwrite", async () => {
+    await runScaffold(["mcp", "echo"]);
     const dir = join(tmpDir, "echo");
     for (const p of [
       "package.json",
@@ -204,12 +262,14 @@ describe("runScaffold", () => {
     expect(out.stdout).toContain("Scaffolded MCP server at ./echo/");
     const marker = join(dir, "package.json");
     writeFileSync(marker, "changed", "utf8");
-    expect(() => runScaffold(["mcp", "echo"])).toThrow(/already exists/);
+    out.reset();
+    await expect(runScaffold(["mcp", "echo"])).rejects.toThrow(CliExit);
+    expect(out.stderr).toContain("./echo/ already exists");
     expect(readFileSync(marker, "utf8")).toBe("changed");
   });
 
-  it("scaffold extension writes the extension tree", () => {
-    runScaffold(["extension", "echo2", "--publisher", "acme"]);
+  it("scaffold extension writes the extension tree", async () => {
+    await runScaffold(["extension", "echo2", "--publisher", "acme"]);
     expect(out.stdout).toContain("Scaffolded extension at ./echo2/");
     for (const p of [
       "nimbus.extension.json",
@@ -221,16 +281,116 @@ describe("runScaffold", () => {
     }
   });
 
-  it("scaffold refuses an id whose service id would exceed 62 characters", () => {
-    expect(() => runScaffold(["extension", "a".repeat(40), "--publisher", "b".repeat(30)])).toThrow(
-      CliExit,
-    );
+  it("scaffold refuses an id whose service id would exceed 62 characters", async () => {
+    await expect(
+      runScaffold(["extension", "a".repeat(40), "--publisher", "b".repeat(30)]),
+    ).rejects.toThrow(CliExit);
     expect(out.stderr).toContain("at most 62 characters");
     expect(existsSync(join(tmpDir, "a".repeat(40)))).toBe(false);
   });
 
-  it("propagates usage errors", () => {
-    expect(() => runScaffold([])).toThrow(/Usage: nimbus scaffold mcp <name>/);
+  it("scaffold extension --from-openapi writes the generated tree and reports what it dropped", async () => {
+    const source = join(tmpDir, "hostile.json");
+    writeFileSync(source, readFileSync(join(FIXTURES, "hostile.json")));
+    await runScaffold(["extension", "hostile", "--from-openapi", source]);
+    const dir = join(tmpDir, "hostile");
+    for (const p of ["src/operations.json", "src/request.ts", "src/tools.ts", "README.md"]) {
+      expect(existsSync(join(dir, ...p.split("/")))).toBe(true);
+    }
+    expect(out.stdout).toContain(
+      "Scaffolded extension at ./hostile/ from 2 operation(s) — next: cd hostile && bun install && bun test && bun run build",
+    );
+    expect(out.stdout).toContain(
+      "warning: server http://insecure.example.com[2J: not an absolute URL; skipped",
+    );
+    expect(out.stdout).toContain("skipped GET /old: none of its servers is a usable https server");
+    expect(out.stdout).not.toContain("\u001b");
+  });
+
+  it("--from-openapi with a relative path reads from the working directory", async () => {
+    writeFileSync(join(tmpDir, "pets.json"), readFileSync(join(FIXTURES, "petstore.json")));
+    await runScaffold([
+      "extension",
+      "pets",
+      "--from-openapi",
+      "pets.json",
+      "--max-operations",
+      "4",
+    ]);
+    expect(out.stdout).toContain("Scaffolded extension at ./pets/ from 4 operation(s)");
+  });
+
+  it("--from-openapi refusals exit 2 and write nothing", async () => {
+    writeFileSync(join(tmpDir, "pets.json"), readFileSync(join(FIXTURES, "petstore.json")));
+    writeFileSync(join(tmpDir, "swagger.json"), '{"swagger":"2.0"}');
+    for (const [args, message] of [
+      [["--from-openapi", "pets.json", "--max-operations", "3"], /more than the cap of 3/],
+      [["--from-openapi", "swagger.json"], /Swagger 2.0 is not supported/],
+      [["--from-openapi", "missing.json"], /Could not read missing.json/],
+      [["--from-openapi", "http://x.example.com/o.json"], /Only https: URLs are supported/],
+    ] as const) {
+      out.reset();
+      await expect(runScaffold(["extension", "pets", ...args])).rejects.toThrow(CliExit);
+      expect(out.stderr).toMatch(message);
+      expect(existsSync(join(tmpDir, "pets"))).toBe(false);
+    }
+  });
+
+  it("an operation table over 50 MiB exits 2 and writes nothing", async () => {
+    // 1 MiB referenced 55 times: under the node budget (16,384 nodes each), over the size cap.
+    const properties = Object.fromEntries(
+      Array.from({ length: 55 }, (_, i) => [`p${i}`, { $ref: "#/components/schemas/Big" }]),
+    );
+    const doc = {
+      openapi: "3.1.0",
+      servers: [{ url: "https://api.example.com" }],
+      paths: {
+        "/x": {
+          post: {
+            operationId: "x",
+            requestBody: { content: { "application/json": { schema: { properties } } } },
+          },
+        },
+      },
+      components: { schemas: { Big: { const: "x".repeat(1024 * 1024) } } },
+    };
+    writeFileSync(join(tmpDir, "big.json"), JSON.stringify(doc));
+    await expect(runScaffold(["extension", "big", "--from-openapi", "big.json"])).rejects.toThrow(
+      CliExit,
+    );
+    expect(out.stderr).toContain("the generated operation table would exceed 50 MiB");
+    expect(existsSync(join(tmpDir, "big"))).toBe(false);
+  });
+
+  it("a directory that appears during the URL load is refused, never written into", async () => {
+    const doc = readFileSync(join(FIXTURES, "petstore.json"), "utf8");
+    const target = join(tmpDir, "pets");
+    const racing = (async () => {
+      mkdirSync(target);
+      writeFileSync(join(target, "mine.txt"), "keep", "utf8");
+      return new Response(doc, { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(
+      runScaffold(["extension", "pets", "--from-openapi", "https://x.example.com/o.json"], {
+        fetch: racing,
+      }),
+    ).rejects.toThrow(CliExit);
+    expect(out.stderr).toContain("./pets/ already exists");
+    expect(readdirSync(target)).toEqual(["mine.txt"]);
+  });
+
+  it("--from-openapi loads an https URL through the injected fetch", async () => {
+    const doc = readFileSync(join(FIXTURES, "petstore.json"), "utf8");
+    const served = (async () => new Response(doc, { status: 200 })) as unknown as typeof fetch;
+    await runScaffold(["extension", "pets", "--from-openapi", "https://x.example.com/o.json"], {
+      fetch: served,
+    });
+    expect(out.stdout).toContain("Scaffolded extension at ./pets/ from 4 operation(s)");
+    expect(existsSync(join(tmpDir, "pets", "src", "operations.json"))).toBe(true);
+  });
+
+  it("propagates usage errors", async () => {
+    await expect(runScaffold([])).rejects.toThrow(/Usage: nimbus scaffold mcp <name>/);
   });
 });
 
@@ -296,6 +456,18 @@ describe("generated project", () => {
 
 describe("buildExtensionScaffoldFiles", () => {
   const files = buildExtensionScaffoldFiles("echo", undefined, "linux", "/w/echo");
+
+  it("scaffold extension output is unchanged by --from-openapi (pinned digest)", () => {
+    // Digests taken before `--from-openapi` existed; the plain scaffold must stay byte-identical.
+    const digest = (publisher: string | undefined): string =>
+      createHash("sha256")
+        .update(JSON.stringify(buildExtensionScaffoldFiles("echo", publisher, "linux", "/w/echo")))
+        .digest("hex");
+    expect(digest(undefined)).toBe(
+      "033a2a0c7ef747f1cf2d89212725a09e82d0ff9228d6243385e2a0e5567ef8c3",
+    );
+    expect(digest("acme")).toBe("9ac844396018b08b3ab6662bb8bf8515825f7457c55ff5c3c7024aa8201cae49");
+  });
 
   it("emits the manifest, sources, README and .gitignore", () => {
     expect(files.map((f) => f.path.join("/"))).toEqual([

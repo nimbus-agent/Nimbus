@@ -3,6 +3,7 @@ import { BASELINE_KEYS, isExtensionBaselineEnvKey } from "./extension-env.ts";
 import {
   extensionEntryRelPath,
   isCrossRegistryDependency,
+  isReservedEnv,
   isStarterPack,
   OFFICIAL_REGISTRY_NAME,
   parseExtensionManifestForRegistry,
@@ -505,5 +506,17 @@ describe("parseExtensionManifestJson — sync + credentials", () => {
   test("refuses bad credential names and unknown entry keys", () => {
     expect(() => parse({ credentials: { Bad: { env: "OK_VAR" } } })).toThrow(/credentials/);
     expect(() => parse({ credentials: { a: { env: "OK_VAR", x: 1 } } })).toThrow(/unknown key/);
+  });
+});
+
+describe("isReservedEnv", () => {
+  test("refuses reserved names, baseline keys and reserved prefixes; allows an ordinary name", () => {
+    expect(isReservedEnv("PATH")).toBe(true);
+    expect(isReservedEnv("COMSPEC")).toBe(true);
+    expect(isReservedEnv("LANG")).toBe(true);
+    expect(isReservedEnv("NIMBUS_TOKEN")).toBe(true);
+    expect(isReservedEnv("LD_PRELOAD")).toBe(true);
+    expect(isReservedEnv("API_PATH")).toBe(false);
+    expect(isReservedEnv("PETSTORE_KEY")).toBe(false);
   });
 });
