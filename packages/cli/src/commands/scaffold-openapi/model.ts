@@ -45,6 +45,8 @@ export interface OperationDef {
   readonly server: string;
   readonly params: readonly ParamDef[];
   readonly body: "json" | "unsupported" | null;
+  /** Whether the document marks the request body required (false when there is none). */
+  readonly bodyRequired: boolean;
   readonly inputSchema: Record<string, unknown>;
   readonly description: string;
   readonly credential: CredentialUse | null;
@@ -635,6 +637,7 @@ function draftOperation(
       server: server.url,
       params,
       body: body.body,
+      bodyRequired: body.required,
       inputSchema: buildInputSchema(params, raw, body),
       description: describeOperation(c.op, c.label),
     },

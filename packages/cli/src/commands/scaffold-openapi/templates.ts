@@ -35,6 +35,7 @@ export interface OperationDef {
   readonly server: string;
   readonly params: readonly ParamDef[];
   readonly body: "json" | "unsupported" | null;
+  readonly bodyRequired: boolean;
   readonly inputSchema: Record<string, unknown>;
   readonly description: string;
   readonly credential: CredentialUse | null;
@@ -52,6 +53,7 @@ export const TABLE = table as unknown as OperationTable;
 export const TIMEOUT_MS = 30_000;
 export const MAX_RESPONSE_CHARS = 65_536;
 export const TRUNCATED_MARKER = "\\n[truncated]";
+export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
 const HOSTS: ReadonlySet<string> = new Set(TABLE.hosts);
 
@@ -81,7 +83,13 @@ function fillPath(op: OperationDef, args: Args): string {
     if (p.in !== "path") continue;
     const value = ownValue(args, p.arg);
     if (value === undefined) continue;
-    path = path.split(\`{\${p.name}}\`).join(encodeURIComponent(asText(value)));
+    const text = asText(value);
+    // encodeURIComponent keeps dots, and the URL parser resolves "." and ".." as dot-segments,
+    // which would climb out of the operation's path and the server's base path.
+    if (text === "." || text === "..") {
+      throw new RequestError(\`path parameter \${p.arg} may not be "." or ".."\`);
+    }
+    path = path.split(\`{\${p.name}}\`).join(encodeURIComponent(text));
   }
   return path;
 }
@@ -140,16 +148,21 @@ function placeCredential(cred: CredentialUse | null, env: Env, url: URL, headers
   }
 }
 
+/** An optional non-JSON body is left out; a required one refuses the call. */
 function placeBody(op: OperationDef, args: Args, headers: Headers): string | undefined {
-  if (op.body === "unsupported") {
+  if (op.body === "unsupported" && op.bodyRequired) {
     throw new RequestError(
-      \`\${op.tool} takes a request body that is not JSON; edit src/request.ts to send it\`,
+      \`\${op.tool} requires a request body that is not JSON; edit src/request.ts to send it\`,
     );
   }
   const body = op.body === "json" ? ownValue(args, "body") : undefined;
   if (body === undefined) return undefined;
+  const text = JSON.stringify(body);
+  if (new TextEncoder().encode(text).byteLength > MAX_BODY_BYTES) {
+    throw new RequestError(\`the request body is larger than \${MAX_BODY_BYTES} bytes\`);
+  }
   headers.set("content-type", "application/json");
-  return JSON.stringify(body);
+  return text;
 }
 
 /** The URL and init for one call; throws RequestError before anything is sent. */
@@ -177,6 +190,14 @@ export function buildRequest(
   return { url: url.href, init };
 }
 
+/** The body cut at MAX_RESPONSE_CHARS, never between the two halves of a surrogate pair. */
+function truncate(text: string): string {
+  if (text.length <= MAX_RESPONSE_CHARS) return text;
+  const last = text.charCodeAt(MAX_RESPONSE_CHARS - 1);
+  const end = last >= 0xd800 && last <= 0xdbff ? MAX_RESPONSE_CHARS - 1 : MAX_RESPONSE_CHARS;
+  return text.slice(0, end) + TRUNCATED_MARKER;
+}
+
 /** Sends the call and returns the status and body as text. A redirect is never followed. */
 export async function callOperation(
   op: OperationDef,
@@ -185,14 +206,15 @@ export async function callOperation(
 ): Promise<string> {
   const { url, init } = buildRequest(op, args, deps.env);
   const res = await deps.fetch(url, init);
+  if (res.status === 304) {
+    await res.body?.cancel();
+    return "HTTP 304 not modified";
+  }
   if (res.status >= 300 && res.status < 400) {
     await res.body?.cancel();
     return \`HTTP \${res.status}; redirect to \${res.headers.get("location") ?? "(no Location header)"} not followed\`;
   }
-  const text = await res.text();
-  const body =
-    text.length > MAX_RESPONSE_CHARS ? text.slice(0, MAX_RESPONSE_CHARS) + TRUNCATED_MARKER : text;
-  return \`HTTP \${res.status}\\n\${body}\`;
+  return \`HTTP \${res.status}\\n\${truncate(await res.text())}\`;
 }
 `;
 
@@ -313,7 +335,7 @@ describe("__NAME__", () => {
     for (const op of TABLE.operations) {
       urls.length = 0;
       const out = await client.callTool({ name: op.tool, arguments: sampleArgs(op) });
-      if (op.body === "unsupported") {
+      if (op.body === "unsupported" && op.bodyRequired) {
         expect(out.isError).toBe(true);
         expect(urls).toEqual([]);
         continue;

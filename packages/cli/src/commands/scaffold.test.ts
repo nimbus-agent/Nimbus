@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -331,6 +332,33 @@ describe("runScaffold", () => {
       expect(out.stderr).toMatch(message);
       expect(existsSync(join(tmpDir, "pets"))).toBe(false);
     }
+  });
+
+  it("a directory that appears during the URL load is refused, never written into", async () => {
+    const doc = readFileSync(join(FIXTURES, "petstore.json"), "utf8");
+    const target = join(tmpDir, "pets");
+    const racing = (async () => {
+      mkdirSync(target);
+      writeFileSync(join(target, "mine.txt"), "keep", "utf8");
+      return new Response(doc, { status: 200 });
+    }) as unknown as typeof fetch;
+    await expect(
+      runScaffold(["extension", "pets", "--from-openapi", "https://x.example.com/o.json"], {
+        fetch: racing,
+      }),
+    ).rejects.toThrow(CliExit);
+    expect(out.stderr).toContain("./pets/ already exists");
+    expect(readdirSync(target)).toEqual(["mine.txt"]);
+  });
+
+  it("--from-openapi loads an https URL through the injected fetch", async () => {
+    const doc = readFileSync(join(FIXTURES, "petstore.json"), "utf8");
+    const served = (async () => new Response(doc, { status: 200 })) as unknown as typeof fetch;
+    await runScaffold(["extension", "pets", "--from-openapi", "https://x.example.com/o.json"], {
+      fetch: served,
+    });
+    expect(out.stdout).toContain("Scaffolded extension at ./pets/ from 4 operation(s)");
+    expect(existsSync(join(tmpDir, "pets", "src", "operations.json"))).toBe(true);
   });
 
   it("propagates usage errors", async () => {

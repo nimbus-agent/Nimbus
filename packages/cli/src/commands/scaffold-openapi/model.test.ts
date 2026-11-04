@@ -85,6 +85,7 @@ describe("buildOperationModel — the Petstore fixture", () => {
             { name: "X-Request-Id", in: "header", arg: "X-Request-Id", required: false },
           ],
           body: null,
+          bodyRequired: false,
           inputSchema: {
             type: "object",
             properties: {
@@ -102,6 +103,7 @@ describe("buildOperationModel — the Petstore fixture", () => {
           server: "https://eu.petstore.example.com/v1",
           params: [],
           body: "json",
+          bodyRequired: true,
           inputSchema: {
             type: "object",
             properties: { body: petAt(8) },
@@ -120,6 +122,7 @@ describe("buildOperationModel — the Petstore fixture", () => {
             { name: "petId", in: "query", arg: "query_petId", required: false },
           ],
           body: null,
+          bodyRequired: false,
           inputSchema: {
             type: "object",
             properties: {
@@ -138,6 +141,7 @@ describe("buildOperationModel — the Petstore fixture", () => {
           server: "https://admin.petstore.example.com:8443",
           params: [{ name: "petId", in: "path", arg: "petId", required: true }],
           body: null,
+          bodyRequired: false,
           inputSchema: {
             type: "object",
             properties: { petId: { type: "string", description: "The pet id" } },
@@ -468,6 +472,21 @@ describe("input schema", () => {
       }),
     ).operations[0];
     expect(op?.inputSchema).toEqual({ type: "object", properties: { body: { type: "number" } } });
+  });
+
+  test("bodyRequired follows requestBody.required for json and unsupported bodies", () => {
+    const bodyOf = (requestBody: unknown): unknown => {
+      const op = build(doc({ requestBody })).operations[0];
+      return [op?.body, op?.bodyRequired];
+    };
+    expect(bodyOf({ required: true, content: { "multipart/form-data": {} } })).toEqual([
+      "unsupported",
+      true,
+    ]);
+    expect(bodyOf({ content: { "multipart/form-data": {} } })).toEqual(["unsupported", false]);
+    expect(bodyOf({ required: true, content: { "application/json": {} } })).toEqual(["json", true]);
+    expect(bodyOf({ content: { "application/json": {} } })).toEqual(["json", false]);
+    expect(bodyOf(undefined)).toEqual([null, false]);
   });
 
   test("a form or multipart body still gives a tool, marked unsupported, with no body property", () => {

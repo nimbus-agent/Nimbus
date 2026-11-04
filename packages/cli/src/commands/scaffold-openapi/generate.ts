@@ -53,13 +53,34 @@ function assertManifestParses(manifest: Record<string, unknown>): void {
   }
 }
 
-/** One Markdown list line of document-derived text, control characters stripped. */
-function item(text: string): string {
-  return `- ${stripControlChars(text)}\n`;
+/** Bidirectional-text controls: they can make printed text read differently from what it is. */
+const BIDI_CONTROLS = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g;
+
+/** Document text made safe to print or write: C0/C1 controls, DEL and bidi controls removed. */
+export function cleanDocumentText(text: string): string {
+  return stripControlChars(text).replaceAll(BIDI_CONTROLS, "");
+}
+
+/**
+ * Document text as a Markdown code span, so nothing in it renders as a link, emphasis or HTML:
+ * the fence is one backtick longer than the longest run inside, and the padding spaces (which
+ * CommonMark strips) let the text start or end with a backtick.
+ */
+export function codeSpan(text: string): string {
+  const clean = cleanDocumentText(text);
+  const longest = Math.max(0, ...[...clean.matchAll(/`+/g)].map((m) => m[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence} ${clean} ${fence}`;
+}
+
+function item(line: string): string {
+  return `- ${line}\n`;
 }
 
 function describeOp(op: OperationDef): string {
-  return `\`${op.tool}\` — ${op.method} ${op.path}`;
+  const request = `\`${op.tool}\` — ${codeSpan(`${op.method} ${op.path}`)}`;
+  if (op.body !== "unsupported") return request;
+  return `${request} (non-JSON body, ${op.bodyRequired ? "required: refuses every call" : "optional: sent without it"})`;
 }
 
 function section(title: string, intro: string, lines: readonly string[]): string {
@@ -98,24 +119,24 @@ function modelSections(id: string, model: OperationModel): string {
     section(
       "Skipped operations",
       "These operations were not generated:",
-      model.skipped.map((s) => `${s.operation}: ${s.reason}`),
+      model.skipped.map((s) => `${codeSpan(s.operation)}: ${codeSpan(s.reason)}`),
     ),
     section(
       "Shortened tool names",
       "These names were cut to fit the tool-name limit:",
-      model.cutNames.map((c) => `${c.from} → ${c.to}`),
+      model.cutNames.map((c) => `${codeSpan(c.from)} → ${codeSpan(c.to)}`),
     ),
     section(
       "Unsupported security schemes",
       "These schemes are not supported; an operation that offered only them was generated without a credential:",
-      model.unsupportedSchemes,
+      model.unsupportedSchemes.map(codeSpan),
     ),
     section(
       "Request bodies that are not JSON",
-      "These tools are generated but refuse every call until `src/request.ts` is taught to send their body:",
+      "These tools take a body that is not JSON. One whose body is required refuses every call until `src/request.ts` is taught to send it; one whose body is optional is sent without a body.",
       unsupportedBodies.map(describeOp),
     ),
-    section("Warnings", "Generating the extension reported:", model.warnings),
+    section("Warnings", "Generating the extension reported:", model.warnings.map(codeSpan)),
   ].join("");
 }
 
@@ -173,5 +194,5 @@ export function openApiReportLines(model: OperationModel): string[] {
     ...model.warnings.map((w) => `warning: ${w}`),
     ...model.skipped.map((s) => `skipped ${s.operation}: ${s.reason}`),
     ...model.cutNames.map((c) => `shortened tool name ${c.from} → ${c.to}`),
-  ].map(stripControlChars);
+  ].map(cleanDocumentText);
 }

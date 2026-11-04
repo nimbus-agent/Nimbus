@@ -3,7 +3,6 @@ import { readFile } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 import { deriveExtensionServiceId, PUBLISHER_ID_RE } from "@nimbus-dev/registry-format";
 import { CliExit } from "../lib/cli-exit.ts";
-import { stripControlChars } from "../lib/strip-control-chars.ts";
 import {
   buildExtensionScaffoldFiles,
   resolveExtensionId,
@@ -12,7 +11,11 @@ import {
   type ScaffoldFile,
   ScaffoldIdRefusedError,
 } from "./scaffold-extension.ts";
-import { buildOpenApiScaffoldFiles, openApiReportLines } from "./scaffold-openapi/generate.ts";
+import {
+  buildOpenApiScaffoldFiles,
+  cleanDocumentText,
+  openApiReportLines,
+} from "./scaffold-openapi/generate.ts";
 import { loadOpenApiDocument, OpenApiLoadError } from "./scaffold-openapi/load.ts";
 import { buildOperationModel, OpenApiModelError } from "./scaffold-openapi/model.ts";
 
@@ -254,6 +257,11 @@ interface ScaffoldPlan {
   readonly report: readonly string[];
 }
 
+/** What a test may replace; production uses the real network. */
+export interface ScaffoldDeps {
+  readonly fetch?: typeof fetch;
+}
+
 function nextSteps(name: string): string {
   return `next: cd ${name} && bun install && bun test && bun run build`;
 }
@@ -264,10 +272,11 @@ async function planFromOpenApi(
   source: string,
   maxOperations: number,
   dir: string,
+  deps: ScaffoldDeps,
 ): Promise<ScaffoldPlan> {
   const serviceId = deriveExtensionServiceId(resolveExtensionId(name, publisher));
   const doc = await loadOpenApiDocument(source, {
-    fetch,
+    fetch: deps.fetch ?? fetch,
     readFile: (p) => readFile(p),
     now: Date.now,
   });
@@ -279,7 +288,11 @@ async function planFromOpenApi(
   };
 }
 
-async function planScaffold(parsed: ScaffoldArgs, dir: string): Promise<ScaffoldPlan> {
+async function planScaffold(
+  parsed: ScaffoldArgs,
+  dir: string,
+  deps: ScaffoldDeps,
+): Promise<ScaffoldPlan> {
   if (parsed.kind === "mcp") {
     return {
       files: buildScaffoldFiles(parsed.name, process.platform, dir),
@@ -294,6 +307,7 @@ async function planScaffold(parsed: ScaffoldArgs, dir: string): Promise<Scaffold
       parsed.fromOpenApi,
       parsed.maxOperations ?? DEFAULT_MAX_OPERATIONS,
       dir,
+      deps,
     );
   }
   return {
@@ -313,10 +327,26 @@ function isRefusal(e: unknown): e is Error {
 }
 
 /**
+ * Creates the target directory itself, NOT recursively, so a directory that appeared while the
+ * plan was being made (an OpenAPI URL load can take seconds) is refused, never written into.
+ */
+function createTargetDir(dir: string, name: string): void {
+  try {
+    mkdirSync(dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      console.error(`./${name}/ already exists`);
+      throw new CliExit(2);
+    }
+    throw e;
+  }
+}
+
+/**
  * `nimbus scaffold`. Everything is decided (and an OpenAPI document loaded) before the first
  * write, so a refusal leaves nothing behind.
  */
-export async function runScaffold(args: string[]): Promise<void> {
+export async function runScaffold(args: string[], deps: ScaffoldDeps = {}): Promise<void> {
   const parsed = parseScaffoldArgs(args);
   const dir = join(process.cwd(), parsed.name);
   if (existsSync(dir)) {
@@ -324,15 +354,16 @@ export async function runScaffold(args: string[]): Promise<void> {
   }
   let plan: ScaffoldPlan;
   try {
-    plan = await planScaffold(parsed, dir);
+    plan = await planScaffold(parsed, dir, deps);
   } catch (e) {
     if (isRefusal(e)) {
-      console.error(stripControlChars(e.message));
+      console.error(cleanDocumentText(e.message));
       throw new CliExit(2);
     }
     throw e;
   }
-  mkdirSync(join(dir, "src"), { recursive: true });
+  createTargetDir(dir, parsed.name);
+  mkdirSync(join(dir, "src"));
   for (const file of plan.files) {
     const target = join(dir, ...file.path);
     mkdirSync(dirname(target), { recursive: true });

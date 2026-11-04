@@ -15,7 +15,12 @@ import { pathToFileURL } from "node:url";
 import { parseExtensionManifestForRegistry } from "@nimbus-dev/registry-format";
 
 import type { ScaffoldFile } from "../scaffold-extension.ts";
-import { buildOpenApiScaffoldFiles, openApiReportLines } from "./generate.ts";
+import {
+  buildOpenApiScaffoldFiles,
+  cleanDocumentText,
+  codeSpan,
+  openApiReportLines,
+} from "./generate.ts";
 import { buildOperationModel, type OperationModel } from "./model.ts";
 import { OPENAPI_REQUEST_TS, OPENAPI_TOOLS_TEST_TS, OPENAPI_TOOLS_TS } from "./templates.ts";
 
@@ -85,12 +90,12 @@ describe("buildOpenApiScaffoldFiles — the Petstore fixture", () => {
 
   test("the README lists operations, credentials, unsupported schemes and the eval route", () => {
     const readme = contentOf(petFiles, "README.md");
-    expect(readme).toContain("- `listpets` — GET /pets\n");
-    expect(readme).toContain("- `delete_pets_petid` — DELETE /pets/{petId}\n");
+    expect(readme).toContain("- `listpets` — ` GET /pets `\n");
+    expect(readme).toContain("- `delete_pets_petid` — ` DELETE /pets/{petId} `\n");
     expect(readme).toContain("nimbus extension credential set petstore basic_password\n");
     expect(readme).toContain("- `api_key` reaches the extension as `API_KEY`\n");
     expect(readme).toContain("## Unsupported security schemes");
-    expect(readme).toContain("- oauth (oauth2)\n");
+    expect(readme).toContain("- ` oauth (oauth2) `\n");
     expect(readme).toContain("nimbus eval --package . --record <inputs.json>");
     expect(readme).toContain("requires a namespaced id");
     expect(readme).toContain("nimbus extension keygen");
@@ -172,16 +177,77 @@ describe("buildOpenApiScaffoldFiles — hostile document strings (Review Focus 1
     const control = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/;
     expect(readme).not.toMatch(control);
     expect(readme).toContain("## Skipped operations");
-    expect(readme).toContain("- GET /old: none of its servers is a usable https server\n");
+    expect(readme).toContain("- ` GET /old `: ` none of its servers is a usable https server `\n");
     expect(readme).toContain("## Request bodies that are not JSON");
-    expect(readme).toContain("- `upload` — POST /upload\n");
-    expect(readme).toContain("- oidc (openIdConnect)\n");
+    expect(readme).toContain(
+      "- `upload` — ` POST /upload ` (non-JSON body, optional: sent without it)\n",
+    );
+    // The path's own backtick run is one long, so its fence is two.
+    expect(readme).toContain(
+      `- \`get_globalthis_x_1_item\` — \`\` GET /items\`*/"'$\{/{id} \`\`\n`,
+    );
+    expect(readme).toContain("- ` oidc (openIdConnect) `\n");
     expect(readme).toContain("## Warnings");
     expect(readme).toContain("server http://insecure.example.com[2J: not an absolute URL; skipped");
     const lines = openApiReportLines(hostile);
     expect(lines).toEqual([
       "warning: server http://insecure.example.com[2J: not an absolute URL; skipped",
       "skipped GET /old: none of its servers is a usable https server",
+    ]);
+  });
+});
+
+const RLO = String.fromCodePoint(0x202e);
+const BIDI = [0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067]
+  .concat([0x2068, 0x2069])
+  .map((c) => String.fromCodePoint(c));
+
+describe("document text in the README", () => {
+  test("cleanDocumentText strips every bidi control as well as C0/C1 controls", () => {
+    expect(cleanDocumentText(`a${BIDI.join("")}b\u001b[2Jc\u0085d`)).toBe("ab[2Jcd");
+  });
+
+  test("codeSpan fences past the longest backtick run, padded so edge backticks survive", () => {
+    expect(codeSpan("plain")).toBe("` plain `");
+    expect(codeSpan("a`b")).toBe("`` a`b ``");
+    expect(codeSpan("```x`")).toBe("```` ```x` ````");
+    expect(codeSpan(`[x](https://evil)${RLO}gpj.exe`)).toBe("` [x](https://evil)gpj.exe `");
+  });
+
+  test("a link-shaped path, an RLO and a required non-JSON body render inert", () => {
+    const base = petstore.operations[0];
+    if (base === undefined) throw new Error("no operation");
+    const model: OperationModel = {
+      ...petstore,
+      operations: [
+        {
+          ...base,
+          path: `/[x](https://evil)/${RLO}fdp.exe`,
+          body: "unsupported",
+          bodyRequired: true,
+        },
+      ],
+      skipped: [{ operation: `GET /<b>${RLO}`, reason: "a *reason*" }],
+      cutNames: [{ from: `long${RLO}_name`, to: "long" }],
+      unsupportedSchemes: [`[s](https://evil)`],
+      warnings: [`![img](https://evil/x.png)${RLO}`],
+    };
+    const readme = contentOf(
+      buildOpenApiScaffoldFiles("petstore", undefined, "linux", "/w/p", model),
+      "README.md",
+    );
+    expect(readme).not.toContain(RLO);
+    expect(readme).toContain(
+      "- `listpets` — ` GET /[x](https://evil)/fdp.exe ` (non-JSON body, required: refuses every call)\n",
+    );
+    expect(readme).toContain("- ` GET /<b> `: ` a *reason* `\n");
+    expect(readme).toContain("- ` long_name ` → ` long `\n");
+    expect(readme).toContain("- ` [s](https://evil) `\n");
+    expect(readme).toContain("- ` ![img](https://evil/x.png) `\n");
+    expect(openApiReportLines(model)).toEqual([
+      "warning: ![img](https://evil/x.png)",
+      "skipped GET /<b>: a *reason*",
+      "shortened tool name long_name → long",
     ]);
   });
 });

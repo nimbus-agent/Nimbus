@@ -22,6 +22,7 @@ interface RequestModule {
   ): Promise<string>;
   RequestError: new (message: string) => Error;
   MAX_RESPONSE_CHARS: number;
+  MAX_BODY_BYTES: number;
   TRUNCATED_MARKER: string;
   TIMEOUT_MS: number;
 }
@@ -226,10 +227,58 @@ describe("generated request.ts — refusals", () => {
     );
   });
 
-  test("a non-JSON request body is refused at call time", () => {
-    const form: OperationDef = { ...op("createpet"), body: "unsupported" };
-    expect(() => req.buildRequest(form, {}, ENV)).toThrow(
-      "createpet takes a request body that is not JSON; edit src/request.ts to send it",
+  test("a required non-JSON body refuses before fetch; an optional one is sent without it", async () => {
+    const required: OperationDef = { ...op("createpet"), body: "unsupported", bodyRequired: true };
+    const rec = recordingFetch(() => new Response("ok"));
+    await expect(
+      req.callOperation(required, { body: "x" }, { fetch: rec.fetch, env: ENV }),
+    ).rejects.toThrow(
+      "createpet requires a request body that is not JSON; edit src/request.ts to send it",
+    );
+    expect(rec.calls).toEqual([]);
+    const optional: OperationDef = { ...required, bodyRequired: false };
+    expect(await req.callOperation(optional, { body: "x" }, { fetch: rec.fetch, env: ENV })).toBe(
+      "HTTP 200\nok",
+    );
+    expect(rec.calls).toHaveLength(1);
+    const init = rec.calls[0]?.[1] ?? {};
+    expect(init.body).toBeUndefined();
+    expect(headersOf(init).has("content-type")).toBe(false);
+  });
+
+  test('a path value of "." or ".." is refused before fetch', async () => {
+    // At the root of the path, ".." would climb past the server's /v1 base path.
+    const rootParam: OperationDef = { ...op("showpetbyid"), path: "/{petId}" };
+    for (const o of [op("showpetbyid"), rootParam]) {
+      for (const value of [".", ".."]) {
+        const rec = recordingFetch(() => new Response("x"));
+        await expect(
+          req.callOperation(o, { path_petId: value }, { fetch: rec.fetch, env: ENV }),
+        ).rejects.toThrow(`path parameter path_petId may not be "." or ".."`);
+        expect(rec.calls).toEqual([]);
+      }
+    }
+    // Dots inside a longer value are only text: encoded, never a segment of their own.
+    expect(req.buildRequest(rootParam, { path_petId: "../x" }, ENV).url).toBe(
+      "https://eu.petstore.example.com/v1/..%2Fx",
+    );
+    expect(req.buildRequest(rootParam, { path_petId: "..." }, ENV).url).toBe(
+      "https://eu.petstore.example.com/v1/...",
+    );
+  });
+
+  test("a JSON body over 10 MiB of UTF-8 is refused before fetch", async () => {
+    expect(req.MAX_BODY_BYTES).toBe(10 * 1024 * 1024);
+    const rec = recordingFetch(() => new Response("x"));
+    // Under the cap in UTF-16 code units, over it in UTF-8 bytes (é is two bytes).
+    const big = "é".repeat(req.MAX_BODY_BYTES / 2);
+    await expect(
+      req.callOperation(op("createpet"), { body: big }, { fetch: rec.fetch, env: ENV }),
+    ).rejects.toThrow(`the request body is larger than ${req.MAX_BODY_BYTES} bytes`);
+    expect(rec.calls).toEqual([]);
+    const fits = "a".repeat(req.MAX_BODY_BYTES - 2);
+    expect(req.buildRequest(op("createpet"), { body: fits }, ENV).init.body).toBe(
+      JSON.stringify(fits),
     );
   });
 });
@@ -277,5 +326,19 @@ describe("generated request.ts — responses", () => {
     expect(req.MAX_RESPONSE_CHARS).toBe(65_536);
     expect(req.TRUNCATED_MARKER).toBe("\n[truncated]");
     expect(out).toBe(`HTTP 200\n${"x".repeat(65_536)}\n[truncated]`);
+  });
+
+  test("the cut never splits a surrogate pair", async () => {
+    const text = `${"a".repeat(65_535)}\u{1F600}tail`;
+    const rec = recordingFetch(() => new Response(text));
+    const out = await req.callOperation(op("listpets"), {}, { fetch: rec.fetch, env: ENV });
+    expect(out).toBe(`HTTP 200\n${"a".repeat(65_535)}\n[truncated]`);
+  });
+
+  test("a 304 is reported as not modified", async () => {
+    const rec = recordingFetch(() => new Response(null, { status: 304 }));
+    expect(await req.callOperation(op("listpets"), {}, { fetch: rec.fetch, env: ENV })).toBe(
+      "HTTP 304 not modified",
+    );
   });
 });
