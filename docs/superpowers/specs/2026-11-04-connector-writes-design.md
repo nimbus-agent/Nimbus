@@ -297,3 +297,13 @@ audit-only, the call listed for the owner).
   `registerWriteTool` calls versus importing the package in a script).
 - Preview line formatting and the desktop component's layout.
 - Mock-server fixtures per wave.
+
+## 13. Addendum (2026-11-05, before A5): rulings from the A5 research
+
+- **Drift is structural, not a hash.** The generated manifest comes from a static scan and can hold no schema hash. The model door offers a tool only when every preview-template key (and every `whenUnset` field key) is a property of the input schema the running server lists; otherwise it is not offered, with one warning per server process (`getToolsEpoch`), and `nimbus connector writes status` names it.
+- **The § 5.4 Wave-4 rule binds the model door only.** A Wave-4 row is offered to the model only with a `before` reader (or a plan); the existing doors (ChatOps, IPC, workflows) keep today's behaviour for those rows. Today all 18 templated rows are Wave 4 with no `before`, so after A5 the model is offered no write in production until Project B templates Wave 2 rows; A5 is proven with test fixtures.
+- **Offerable vs covered.** `status` and the enable prompt distinguish the writes an opt-in covers from those offerable now (templated, and Wave < 4 or with a `before`).
+- **Team-credential connectors are not listed** in A5 (they have no personal mesh process to list from); stated bound, revisited in Project B.
+- **Demo turns are excluded** explicitly (`isDemo`), since the user-MCP precedent does not exclude them.
+- **`payload.mcpToolId` is the listed key** `<service>_<toolId>`; the door asserts it equals `mcpClientToolKey(serviceOf(row.actionType), row.toolId)`.
+- **Delivery:** A5 splits into A5a (plumbing with no model exposure: `PlannedAction.origin` and its delegation refusal, the consent line, the preview's credential kind, a raw per-server mesh listing, share-replay write refusal, offerable counts) and A5b (the door, its request-context executor without delegation, the injection suite, I53 and static rule D39).
