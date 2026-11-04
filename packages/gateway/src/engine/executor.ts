@@ -167,6 +167,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // layer. Gate site: packs/pack-install.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
   "pack.install",
+  // Connector write opt-in (Phase 9.7 S4): offering a service's write tools to the model. Gate site:
+  // the `connector.writes.enable` handler, through the IPC executor. Never delegable (I20; see
+  // tryDelegatedApproval).
+  "connector.writes.enable",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -549,6 +553,7 @@ export class ToolExecutor {
     if (
       action.type === "registry.add" ||
       action.type === "pack.install" ||
+      action.type === "connector.writes.enable" ||
       action.type.startsWith("extension.")
     ) {
       return "fallback";

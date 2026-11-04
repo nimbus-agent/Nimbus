@@ -353,6 +353,16 @@ describe("I2 — HITL frozen-set membership", () => {
     expect(src).toMatch(/"extension\.downgrade"/);
   });
 
+  test("connector.writes.enable is in the I2 HITL frozen set and is gateway-internal (never proposable)", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    expect(HITL_REQUIRED.has("connector.writes.enable")).toBe(true);
+    const { ACTION_PROPOSABILITY } = await import("./connectors/proposable-actions.ts");
+    expect(ACTION_PROPOSABILITY["connector.writes.enable"]).toEqual({
+      kind: "denied",
+      class: "gateway_internal",
+    });
+  });
+
   test("connector.adoptLocalAuth is in the I2 HITL frozen set", async () => {
     const { HITL_REQUIRED } = await import("./engine/executor.ts");
     expect(HITL_REQUIRED.has("connector.adoptLocalAuth")).toBe(true);
@@ -1951,7 +1961,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
     expect(badId).toBe("fallback_to_owner");
   });
 
-  test("I20: a delegate never approves registry.add, extension.* or pack.install: the delegate is not consulted and the owner is prompted", async () => {
+  test("I20: a delegate never approves registry.add, extension.*, pack.install or connector.writes.enable: the delegate is not consulted and the owner is prompted", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     for (const type of [
       "registry.add",
@@ -1961,6 +1971,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       "extension.migrate",
       "extension.eval",
       "pack.install",
+      "connector.writes.enable",
     ]) {
       let prompts = 0;
       let remote = 0;
@@ -2288,6 +2299,21 @@ code_execution=true
       capabilitiesDisabled: new Set(["code_execution"]),
     });
     expect(locked.enforced().capabilitiesDisabled.has("code_execution")).toBe(true);
+  });
+
+  test("(cap-5) connector_write_model_access is an ai_v2 capability and its accessor fails closed", async () => {
+    const { AI_V2_CAPABILITIES } = await import("./policy/types.ts");
+    const { isConnectorWriteModelAccessEnabled } = await import(
+      "./connectors/connector-writes/model-write-capability.ts"
+    );
+    expect([...AI_V2_CAPABILITIES]).toContain("connector_write_model_access");
+    expect(isConnectorWriteModelAccessEnabled(undefined)).toBe(false);
+    expect(
+      isConnectorWriteModelAccessEnabled({
+        capabilitiesDisabled: new Set(["connector_write_model_access"]),
+      }),
+    ).toBe(false);
+    expect(isConnectorWriteModelAccessEnabled({ capabilitiesDisabled: new Set() })).toBe(true);
   });
 
   test("(cap-4) a signed user_mcp_model_access lockoff empties the model's user-MCP tool source", async () => {

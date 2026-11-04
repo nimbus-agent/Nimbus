@@ -3,14 +3,14 @@ import { parsePolicyToml } from "./policy-toml.ts";
 import { AI_V2_CAPABILITIES } from "./types.ts";
 
 describe("AI_V2_CAPABILITIES", () => {
-  test("mcp_action is the ninth lockoff-able ai_v2 capability", () => {
+  test("mcp_action is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("mcp_action");
-    expect(AI_V2_CAPABILITIES).toHaveLength(9);
+    expect(AI_V2_CAPABILITIES).toHaveLength(10);
   });
 
   test("agent_fleet is a lockoff-able ai_v2 capability", () => {
     expect([...AI_V2_CAPABILITIES]).toContain("agent_fleet");
-    expect(AI_V2_CAPABILITIES).toHaveLength(9);
+    expect(AI_V2_CAPABILITIES).toHaveLength(10);
   });
 
   test("mcp_capture is a lockoff-able ai_v2 capability", () => {

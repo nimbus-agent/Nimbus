@@ -170,3 +170,42 @@ describe("executor gate — delegation branch", () => {
     expect(localPrompted).toBe(true);
   });
 });
+
+describe("executor gate — connector.writes.enable is never delegated (I20)", () => {
+  it("an active in-scope delegate for service `connector` is not asked: the owner is prompted", async () => {
+    const db = db35();
+    const store = new DelegationStore(db);
+    store.create({
+      delegatePeer: "peer:bob",
+      scopeKind: "service",
+      scopeValue: "connector",
+      expiresAt: 9e15,
+      nowMs: 1,
+    });
+    let localPrompted = 0;
+    let delegateAsked = 0;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          localPrompted += 1;
+          return false;
+        },
+      },
+      audit,
+      connectors,
+      {
+        store,
+        isOperatorValid: () => true,
+        requestRemote: async (): Promise<RemoteApprovalOutcome> => {
+          delegateAsked += 1;
+          return { kind: "answered", peerId: "peer:bob", approved: true };
+        },
+      },
+      NULL_EGRESS_SINK,
+    );
+    const r = await exec.gate({ type: "connector.writes.enable", payload: {} });
+    expect(r).not.toBe("proceed");
+    expect(delegateAsked).toBe(0);
+    expect(localPrompted).toBe(1);
+  });
+});
