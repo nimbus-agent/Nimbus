@@ -9,6 +9,7 @@ import {
   connectorWriteRowByToolId,
   isConnectorWriteToolId,
 } from "../connector-write-registry.ts";
+import { PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 
 const TODAYS_WRITE_ROWS: readonly string[] = [
@@ -109,7 +110,7 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 
 describe("connector write rows", () => {
   test("88 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(88);
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(88);
     expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(88);
   });
 
@@ -161,7 +162,27 @@ describe("connector write rows", () => {
   });
 
   test("no behaviour change: every id refused before A1 is refused after", () => {
-    expect(REFUSED_BEFORE_A1.length).toBe(88);
+    expect(REFUSED_BEFORE_A1).toHaveLength(88);
     expect(REFUSED_BEFORE_A1.filter((id) => !isConnectorWriteToolId(id))).toEqual([]);
+  });
+});
+
+describe("connector write preview templates", () => {
+  test("every write-transport row has a preview template", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.transport === "write" && r.preview === undefined).map(
+        (r) => r.toolId,
+      ),
+    ).toEqual([]);
+  });
+
+  test("no proposable row has a template yet (the MCP sink replaces the executor prompt)", () => {
+    const proposable = new Set(Object.values(PROPOSABLE_WRITE_TOOLS));
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => proposable.has(r.toolId) && r.preview !== undefined).map(
+        (r) => r.toolId,
+      ),
+      "extend ipc/capture-rpc.ts provenanceConsent to show the typed preview first",
+    ).toEqual([]);
   });
 });

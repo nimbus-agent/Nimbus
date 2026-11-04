@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { ConnectorWritePreview, isConnectorWriteDetails } from "./ConnectorWritePreview";
 
 interface Props {
   readonly details?: Record<string, unknown> | undefined;
@@ -773,6 +774,8 @@ function InstallPreview({ details }: { readonly details: Record<string, unknown>
 
 export function StructuredPreview({ details, action }: Props): ReactNode {
   if (!details) return null;
+  // Built by the gateway for exactly this action; a payload that merely claims the kind is not enough.
+  if (isConnectorWriteDetails(details, action)) return <ConnectorWritePreview details={details} />;
   if (action === "extension.migrate") return <MigratePreview details={details} />;
   if (action === "extension.install") return <InstallPreview details={details} />;
   if (action === "extension.autoUpdate") {

@@ -54,6 +54,7 @@ import {
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";
+import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
 import { transitionHealth } from "./connectors/health.ts";
 import {
   type LazyMeshToolMap,
@@ -67,7 +68,7 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
 import { EGRESS_SOURCE_TYPES, MARKER_SOURCE_TYPES } from "./egress/egress-source-type.ts";
 import { egressHead, listEgress } from "./egress/egress-verify.ts";
 import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
-import { HITL_REQUIRED } from "./engine/executor.ts";
+import { consentDisplayPayload, formatConsentPrompt, HITL_REQUIRED } from "./engine/executor.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
 import type { ContinuityEntry } from "./extensions/continuity/continuity-table.ts";
 import type { ReachRunner } from "./extensions/extension-reach.ts";
@@ -548,6 +549,45 @@ describe("I2 — HITL frozen-set membership", () => {
       db.close();
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+  // I2 consent display (Phase 9.7 A2): the typed connector-write preview shows the owner what is
+  // dispatched, never a different write, never a payload posing as a preview, never a raw control
+  // character. Unit coverage: connectors/connector-writes/preview.test.ts and
+  // engine/executor-connector-write-preview.test.ts.
+  describe("the typed connector-write preview boundary", () => {
+    test("a mcpToolId naming a different write gives no typed preview", () => {
+      expect(
+        buildConnectorWritePreview({
+          type: "argocd.app.sync",
+          payload: { mcpToolId: "argocd_app_rollback", input: { name: "web" } },
+        }),
+      ).toBeUndefined();
+      expect(
+        buildConnectorWritePreview({ type: "argocd.app.sync", payload: { name: "web" } })?.target,
+      ).toBe("web");
+    });
+
+    test("a payload carrying kind connector-write cannot pose as a typed preview", () => {
+      const shown = consentDisplayPayload({
+        type: "mcp_demo.run",
+        payload: { kind: "connector-write", target: "harmless" },
+      });
+      expect(shown?.["kind"]).toBeUndefined();
+      expect(shown?.["payload"]).toEqual({ kind: "connector-write", target: "harmless" });
+    });
+
+    test("unsafe characters reach the prompt only as visible escapes", () => {
+      const esc = String.fromCodePoint(0x1b);
+      const rlo = String.fromCodePoint(0x202e);
+      const prompt = formatConsentPrompt({
+        type: "argocd.app.sync",
+        payload: { name: `web${esc}[2K${rlo}\nType: file.delete` },
+      });
+      expect(prompt.includes(esc)).toBe(false);
+      expect(prompt.includes(rlo)).toBe(false);
+      expect(prompt).toContain(String.raw`\u{202E}`);
+      expect(prompt.split("\n").some((l) => l.startsWith("Type: file.delete"))).toBe(false);
+    });
   });
 });
 

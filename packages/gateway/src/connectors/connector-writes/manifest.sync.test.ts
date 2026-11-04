@@ -84,6 +84,47 @@ describe("connector write manifest", () => {
     expect(compared).toBeGreaterThanOrEqual(60);
   });
 
+  test("every template key names an input key the connector declares", () => {
+    const regByTool = new Map(scan.registrations.map((r) => [r.id, r]));
+    const code = new Map(sources.map((s) => [s.rel, stripComments(s.text)]));
+    const templateKeys = (r: (typeof CONNECTOR_WRITE_ROWS)[number], extra: string[] = []) => {
+      const t = r.preview;
+      if (t === undefined) return [];
+      const keys = new Set<string>([...t.fields.map((f) => f.key), ...extra]);
+      for (const text of [t.target, t.summary]) {
+        for (const m of text.matchAll(/\{([A-Za-z0-9_]+)\}/g))
+          if (m[1] !== undefined) keys.add(m[1]);
+      }
+      return [...keys];
+    };
+    const problemsFor = (r: (typeof CONNECTOR_WRITE_ROWS)[number], extra: string[] = []) => {
+      const reg = regByTool.get(r.toolId);
+      if (reg === undefined) return [`${r.toolId}: not registered`];
+      // Slice by the registration's own span: `id:` / `name:` appear for other tools in the file.
+      const fileCode = code.get(reg.file) ?? "";
+      // A tool registered through a local helper (Monte Carlo, Bigeye) declares its input schema in
+      // the helper's body, which the forwarding call's span does not contain; for those the file is
+      // the narrowest region available. Every other tool is checked against its own call only.
+      const call = reg.tags.includes("forwarder")
+        ? fileCode
+        : fileCode.slice(reg.span[0], reg.span[1] + 1);
+      return templateKeys(r, extra)
+        .filter((k) => !call.includes(`${k}:`))
+        .map((k) => `${r.toolId}: ${k}`);
+    };
+    const templated = CONNECTOR_WRITE_ROWS.filter(
+      (r) => r.preview !== undefined && r.registeredAs === undefined,
+    );
+    expect(templated.length).toBeGreaterThanOrEqual(18);
+    expect(templated.flatMap((r) => problemsFor(r))).toEqual([]);
+    // Negative control: a made-up key must be reported, so the check can fail.
+    const tableau = templated.find((r) => r.toolId === "tableau_datasource_refresh");
+    if (tableau === undefined) throw new Error("tableau_datasource_refresh row missing");
+    expect(problemsFor(tableau, ["nonexistentKey"])).toEqual([
+      "tableau_datasource_refresh: nonexistentKey",
+    ]);
+  });
+
   test("the manifest's size is plausible", () => {
     expect(CONNECTOR_WRITE_MANIFEST.length).toBeGreaterThanOrEqual(80);
   });

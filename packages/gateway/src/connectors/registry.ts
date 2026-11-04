@@ -1,6 +1,7 @@
 import pino from "pino";
 
 import { serviceOf } from "../engine/service-of.ts";
+import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
@@ -18,6 +19,8 @@ const registryLog = pino({
 });
 
 export { createLazyConnectorMesh, LazyConnectorMesh } from "./lazy-mesh/index.ts";
+
+export { extractToolInput };
 
 /**
  * Filesystem MCP (always) + lazy Google bundle (Drive, Gmail, Photos) when any Google OAuth vault key exists +
@@ -188,17 +191,4 @@ function assertUserMcpKeyMatchesActionType(actionType: string, resolvedKey: stri
   throw new Error(
     `ERR_USER_MCP_ACTION_MISMATCH: action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`,
   );
-}
-
-export function extractToolInput(action: PlannedAction): unknown {
-  const p = action.payload;
-  if (p === undefined) {
-    return {};
-  }
-  if (Object.hasOwn(p, "input")) {
-    return p["input"];
-  }
-  const rest: Record<string, unknown> = { ...p };
-  delete rest["mcpToolId"];
-  return rest;
 }

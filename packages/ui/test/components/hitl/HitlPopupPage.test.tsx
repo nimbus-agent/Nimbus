@@ -278,3 +278,50 @@ describe("HitlPopupPage", () => {
     expect(screen.getByTestId("auto-update-preview")).toHaveTextContent(heading);
   });
 });
+
+describe("HitlPopupPage: connector write preview", () => {
+  const typed = {
+    kind: "connector-write",
+    service: "github",
+    actionType: "github.issue.create",
+    toolId: "github_issue_create",
+    target: "acme/repo",
+    summary: "Create an issue",
+    fields: [],
+    otherFields: [],
+    destination: { service: "github" },
+  };
+
+  it("uses a fixed heading for a typed preview, not the multi-line prompt", () => {
+    storeState.pending = [
+      {
+        requestId: "cw",
+        prompt: "Create an issue\nline two",
+        details: typed,
+        receivedAtMs: 1,
+        actionType: "github.issue.create",
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(
+      screen.getByRole("heading", { name: "Approve this connector write?" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /line two/ })).toBeNull();
+    expect(screen.getByTestId("connector-write-preview")).toBeInTheDocument();
+  });
+
+  it("keeps the prompt heading when the details name a different action", () => {
+    storeState.pending = [
+      {
+        requestId: "cw2",
+        prompt: "Close an issue",
+        details: typed,
+        receivedAtMs: 1,
+        actionType: "github.issue.close",
+      },
+    ];
+    render(<HitlPopupPage />);
+    expect(screen.getByRole("heading", { name: "Close an issue" })).toBeInTheDocument();
+    expect(screen.queryByTestId("connector-write-preview")).toBeNull();
+  });
+});
