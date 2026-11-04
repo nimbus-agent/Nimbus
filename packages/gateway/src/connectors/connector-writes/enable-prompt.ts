@@ -14,16 +14,22 @@ export function enableWritesPromptLines(
   }
   const lines = [`Service: ${sanitisePreviewText(service)}`, `Up to wave: ${maxWave}`];
   for (const w of writes as unknown[]) {
-    const r = w as { toolId?: unknown; actionType?: unknown; wave?: unknown } | null;
+    const r = w as {
+      toolId?: unknown;
+      actionType?: unknown;
+      wave?: unknown;
+      offerable?: unknown;
+    } | null;
     if (
       typeof r?.toolId !== "string" ||
       typeof r.actionType !== "string" ||
-      typeof r.wave !== "number"
+      typeof r.wave !== "number" ||
+      typeof r.offerable !== "boolean"
     ) {
       return undefined;
     }
     lines.push(
-      `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}`,
+      `  ${sanitisePreviewText(r.toolId)}  ${sanitisePreviewText(r.actionType)}  wave ${r.wave}  ${r.offerable ? "(offered to the model)" : "(not offered yet)"}`,
     );
   }
   lines.push("", "Each call will still ask you before it runs.");

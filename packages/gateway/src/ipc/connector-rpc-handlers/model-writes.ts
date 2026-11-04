@@ -5,10 +5,12 @@ import type { Database } from "bun:sqlite";
 import {
   listModelWriteEnablement,
   modelWriteServices,
+  offerableWritesEnabledBy,
   removeModelWriteEnablement,
   setModelWriteEnablement,
   writesEnabledBy,
 } from "../../connectors/connector-writes/enablement-store.ts";
+import { isModelOfferableRow } from "../../connectors/connector-writes/model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "../../connectors/connector-writes/model-write-capability.ts";
 import type { ConnectorWriteWave } from "../../connectors/connector-writes/types.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
@@ -68,6 +70,7 @@ export async function handleConnectorWritesEnable(
     toolId: r.toolId,
     actionType: r.actionType,
     wave: r.wave,
+    offerable: isModelOfferableRow(r),
   }));
   const gate = await deps.toolExecutor.gate({
     type: "connector.writes.enable",
@@ -95,6 +98,7 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
     maxWave?: ConnectorWriteWave;
     enabledAt?: number;
     writes: number;
+    offerable: number;
   }>;
   policyAllows: boolean;
 } {
@@ -102,13 +106,19 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
   const services = modelWriteServices().map((service) => {
     const e = enabled.get(service);
     return e === undefined
-      ? { service, enabled: false, writes: writesEnabledBy(service, 4).length }
+      ? {
+          service,
+          enabled: false,
+          writes: writesEnabledBy(service, 4).length,
+          offerable: offerableWritesEnabledBy(service, 4).length,
+        }
       : {
           service,
           enabled: true,
           maxWave: e.maxWave,
           enabledAt: e.enabledAt,
           writes: writesEnabledBy(service, e.maxWave).length,
+          offerable: offerableWritesEnabledBy(service, e.maxWave).length,
         };
   });
   return {

@@ -289,3 +289,37 @@ describe("buildConnectorWritePreview", () => {
     expect(build({ name: "x", token: 10n }, t).fields[0]?.value).toBe("(hidden, 2 characters)");
   });
 });
+
+describe("buildConnectorWritePreview — credential resolver", () => {
+  const action: PlannedAction = { type: "argocd.app.sync", payload: { name: "web" } };
+
+  test("sets destination.credential only for the exact strings personal / team", () => {
+    expect(buildConnectorWritePreview(action, () => "personal")?.destination).toEqual({
+      service: "argocd",
+      credential: "personal",
+    });
+    expect(buildConnectorWritePreview(action, () => "team")?.destination.credential).toBe("team");
+    expect(buildConnectorWritePreview(action, (() => "Team") as never)?.destination).toEqual({
+      service: "argocd",
+    });
+  });
+
+  test("a throwing resolver leaves it unset and does not throw", () => {
+    const p = buildConnectorWritePreview(action, () => {
+      throw new Error("boom");
+    });
+    expect(p?.destination).toEqual({ service: "argocd" });
+  });
+
+  test("no resolver: no Credential line; with one, the line follows Service", () => {
+    const plain = buildConnectorWritePreview(action);
+    expect(plain && renderConnectorWritePreviewLines(plain).join("\n")).not.toContain(
+      "Credential:",
+    );
+    const withCred = buildConnectorWritePreview(action, () => "team");
+    expect(withCred && renderConnectorWritePreviewLines(withCred).slice(0, 2)).toEqual([
+      "Service: argocd",
+      "Credential: team",
+    ]);
+  });
+});

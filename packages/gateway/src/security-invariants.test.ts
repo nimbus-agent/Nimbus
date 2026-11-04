@@ -2029,6 +2029,47 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       expect(prompts, type).toBe(1);
     }
   });
+  test('I20: an origin "model" action is never delegated; a payload.origin has no effect', async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const run = async (action: {
+      type: string;
+      payload: Record<string, unknown>;
+      origin?: "model";
+    }) => {
+      let prompts = 0;
+      let remote = 0;
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return true;
+          },
+        },
+        { recordAudit: () => {} },
+        { dispatch: async () => ({}) },
+        {
+          store: { activeDelegateFor: () => true, activeDelegateePeer: () => "peer-1" },
+          isOperatorValid: () => true,
+          requestRemote: async () => {
+            remote += 1;
+            return { kind: "answered", peerId: "peer-1", approved: true };
+          },
+        },
+        NULL_EGRESS_SINK,
+        NO_POLICY_OVERLAY,
+      );
+      await exec.execute(action);
+      return { prompts, remote };
+    };
+    expect(await run({ type: "email.send", payload: {}, origin: "model" })).toEqual({
+      prompts: 1,
+      remote: 0,
+    });
+    expect(await run({ type: "email.send", payload: { origin: "model" } })).toEqual({
+      prompts: 0,
+      remote: 1,
+    });
+  });
 });
 
 describe("I21 — quorum counts only DISTINCT authenticated peers", () => {

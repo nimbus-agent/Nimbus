@@ -1,7 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_WRITES } from "../connectors/connector-write-registry.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { HITL_REQUIRED } from "../engine/executor.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import { isReadOnlyToolId } from "./read-tool-registry.ts";
+
+describe("isReadOnlyToolId — connector write ids", () => {
+  // Regression guard, not a failing-capable test: no real write id ends in a read verb today.
+  test("every connector write row id is refused, bare and namespaced", () => {
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      expect(isReadOnlyToolId(r.toolId), r.toolId).toBe(false);
+      expect(isReadOnlyToolId(`${serviceOf(r.actionType)}__${r.toolId}`), r.toolId).toBe(false);
+    }
+  });
+
+  // The one that can fail: a synthetic write id ending in a read verb is refused only by the new
+  // write-id check (its trailing `_export` would otherwise classify it read-only).
+  test("a write id that ends in a read verb is refused, bare and as <server>__<tool>", () => {
+    const writeIds = new Set(["fx_report_export"]);
+    expect(isReadOnlyToolId("fx_report_export")).toBe(true);
+    expect(isReadOnlyToolId("fx_report_export", writeIds)).toBe(false);
+    expect(isReadOnlyToolId("fx__fx_report_export", writeIds)).toBe(false);
+    expect(isReadOnlyToolId("fx_fx_report_export", writeIds)).toBe(false);
+    expect(isReadOnlyToolId("fx_report_list", writeIds)).toBe(true);
+  });
+});
 
 describe("isReadOnlyToolId — positive read-only allowlist", () => {
   test("the spec's four read-verb suffixes classify read-only", () => {

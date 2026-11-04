@@ -5,6 +5,7 @@ import {
   buildConnectorWritePreview,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
+import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
@@ -294,10 +295,13 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
  * otherwise move the input it wants approved under such a key and out of the owner's sight. The
  * global regex is deliberately left as is for every other action type.
  */
-export function consentDisplayPayload(action: PlannedAction): Record<string, unknown> | undefined {
+export function consentDisplayPayload(
+  action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
+): Record<string, unknown> | undefined {
   // A connector write with a preview template is shown as the gateway-built typed preview. No
   // user-MCP type has a row, so this cannot shadow the verbatim user-MCP display below.
-  const preview = buildConnectorWritePreview(action);
+  const preview = buildConnectorWritePreview(action, credentialFor);
   if (preview !== undefined) return preview as unknown as Record<string, unknown>;
   return neverPosesAsPreview(otherDisplayPayload(action));
 }
@@ -385,8 +389,13 @@ function omitPlanText(payload: Record<string, unknown>): Record<string, unknown>
   return rest;
 }
 
-export function formatConsentPrompt(action: PlannedAction): string {
+export function formatConsentPrompt(
+  action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
+): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
+  // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
+  if (action.origin === "model") lines.push("Requested by: the model");
   if (action.type === "pack.install" && typeof action.payload?.["promptText"] === "string") {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
     lines.push("", action.payload["promptText"]);
@@ -405,7 +414,7 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", ...evalLines, "", "runs with no network and no credentials");
     return lines.join("\n");
   }
-  const preview = buildConnectorWritePreview(action);
+  const preview = buildConnectorWritePreview(action, credentialFor);
   if (preview !== undefined) {
     // Purpose-built, escaped rendering; a JSON Details line would repeat it (and show it raw).
     lines.push("", ...renderConnectorWritePreviewLines(preview));
@@ -530,6 +539,8 @@ export class ToolExecutor {
     private readonly delegation: ExecutorDelegationDep | undefined,
     private readonly egressSink: EgressSink,
     private readonly policy: ExecutorPolicyDep = NO_POLICY_OVERLAY,
+    /** Names the credential kind in a connector write's preview; absent = not shown (M2). */
+    private readonly previewCredentialFor?: PreviewCredentialResolver,
   ) {}
 
   /**
@@ -554,6 +565,8 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
+    // I20: a delegate never approves an action the MODEL proposed (top-level `origin` only).
+    if (action.origin === "model") return "fallback";
     // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
     // pack install (`pack.install`, which writes the owner's config); only the local owner can.
     // Structural, not left to the gate's `delegation: undefined`.
@@ -584,8 +597,12 @@ export class ToolExecutor {
   private async resolveHitlApproval(action: PlannedAction): Promise<boolean> {
     const delegated = await this.tryDelegatedApproval(action);
     if (delegated === "fallback") {
-      const details = consentDisplayPayload(action);
-      return this.consent.requestApproval(formatConsentPrompt(action), details, action.type);
+      const details = consentDisplayPayload(action, this.previewCredentialFor);
+      return this.consent.requestApproval(
+        formatConsentPrompt(action, this.previewCredentialFor),
+        details,
+        action.type,
+      );
     }
     return delegated === "approved";
   }

@@ -1,9 +1,9 @@
 import { existsSync, rmSync } from "node:fs";
 
 import { MCPClient } from "@mastra/mcp";
-
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
 import { getAgentRequestSessionId } from "../../engine/agent-request-context.ts";
+import { serviceOf } from "../../engine/service-of.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
@@ -11,6 +11,7 @@ import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -58,16 +59,52 @@ import {
   USER_MESH_PREFIX,
   userMcpMeshKey,
 } from "./keys.ts";
-import type { LazyMcpSlot, MeshLogger, MeshSpawnContext } from "./slot.ts";
+import {
+  phase3AddArgocdMcp,
+  phase3AddBigeyeMcp,
+  phase3AddFluxMcp,
+  phase3AddLookerMcp,
+  phase3AddMlflowMcp,
+  phase3AddMonteCarloMcp,
+  phase3AddPowerBiMcp,
+  phase3AddSnowflakeMcp,
+  phase3AddTableauMcp,
+} from "./phase3-config.ts";
+import type { LazyMcpSlot, MeshLogger, MeshSpawnContext, ServerSpec } from "./slot.ts";
 import {
   type LazyMeshToolMap,
   listLazyMeshClientTools,
   mcpClientToolKey,
   mergeToolMapsOrThrow,
+  meshServerForToolKey,
   serviceIdForToolKey,
 } from "./tool-map.ts";
 import { ensureUserMcpClient } from "./user-mcp.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
+
+type Phase3ServerAdder = (
+  vault: NimbusVault,
+  servers: Record<string, ServerSpec>,
+  sandboxCwd: string,
+) => Promise<void>;
+
+/**
+ * The first-party services whose raw tool listing {@link LazyConnectorMesh.listFirstPartyServerTools}
+ * can serve, each with the SPAWNER's own credential check (the `phase3Add*` function registers the
+ * server only when the service's own vault secrets are present) and the slot that runs it. A service
+ * this map does not name is refused: there is no fallthrough that could start an unrelated slot.
+ */
+const FIRST_PARTY_LISTING_SERVICES: Readonly<Record<string, Phase3ServerAdder>> = {
+  snowflake: phase3AddSnowflakeMcp,
+  tableau: phase3AddTableauMcp,
+  looker: phase3AddLookerMcp,
+  powerbi: phase3AddPowerBiMcp,
+  montecarlo: phase3AddMonteCarloMcp,
+  bigeye: phase3AddBigeyeMcp,
+  argocd: phase3AddArgocdMcp,
+  flux: phase3AddFluxMcp,
+  mlflow: phase3AddMlflowMcp,
+};
 
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
@@ -563,6 +600,47 @@ export class LazyConnectorMesh {
     for (const row of rows) {
       ensureUserMcpClient(this.spawnContext, row);
     }
+  }
+
+  /**
+   * ONE first-party server's tools, raw (`description` and `inputSchema` kept), for the model's
+   * connector-write door. Order is the security property; every check precedes any slot touch:
+   *  1. the service has rows in the write table (so never `mcp_*` / `ext_*`);
+   *  2. org policy allows it (I22): a blocked service spawns nothing;
+   *  3. the SERVICE's own credential is configured (the spawner's own check), not merely "its
+   *     slot is running" — a bundle already up for a sibling does not make this service usable;
+   *  4. only then its slot is ensured, through an explicit map (unmapped: fail closed);
+   *  5. the listing is filtered to keys this server owns. No other slot is ever spawned.
+   * Each entry keeps ONLY `description` and `inputSchema`: the listed `execute` closure would
+   * dispatch straight to the server, outside the executor's HITL and egress chokepoint, so it is
+   * never handed out from here.
+   */
+  async listFirstPartyServerTools(
+    service: string,
+  ): Promise<Readonly<Record<string, unknown>> | undefined> {
+    if (!CONNECTOR_WRITE_ROWS.some((r) => serviceOf(r.actionType) === service)) return undefined;
+    if (!this.isConnectorAllowed(service)) return undefined;
+    const adder = Object.hasOwn(FIRST_PARTY_LISTING_SERVICES, service)
+      ? FIRST_PARTY_LISTING_SERVICES[service]
+      : undefined;
+    if (adder === undefined) return undefined;
+    const probe: Record<string, ServerSpec> = {};
+    await adder(this.vault, probe, this.spawnContext.sandboxCwd);
+    if (!Object.hasOwn(probe, service)) return undefined;
+    await this.filesystemSpawnGate;
+    await this.ensurePhase3BundleRunning();
+    const all: Readonly<Record<string, unknown>> = await listLazyMeshClientTools(
+      this.getLazyClient(LAZY_MESH.phase3Bundle),
+    );
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(all)) {
+      if (meshServerForToolKey(key) !== service) continue;
+      const entry = all[key];
+      const rec =
+        typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+      out[key] = { description: rec["description"], inputSchema: rec["inputSchema"] };
+    }
+    return out;
   }
 
   async ensurePhase3BundleRunning(): Promise<void> {

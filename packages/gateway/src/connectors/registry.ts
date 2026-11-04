@@ -55,6 +55,13 @@ export type McpToolListingClient = {
     | Record<string, { execute?: (input: unknown, context?: unknown) => Promise<unknown> }>
     | undefined
   >;
+  /**
+   * ONE first-party server's raw tools (schemas kept), or `undefined` when org policy, the
+   * service's own credential, or the listing map refuses it. Never spawns an unrelated slot.
+   */
+  listFirstPartyServerTools?: (
+    service: string,
+  ) => Promise<Readonly<Record<string, unknown>> | undefined>;
 };
 
 type DispatcherToolMap = Record<

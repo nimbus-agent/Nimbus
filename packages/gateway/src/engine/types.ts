@@ -1,6 +1,12 @@
 export type PlannedAction = {
   type: string;
   payload?: Record<string, unknown>;
+  /**
+   * Set only by the gateway for an action the MODEL proposed. It only ever REMOVES delegation (a
+   * delegate never approves it, I20) and adds a consent line; whether HITL is required stays
+   * decided by `type` alone (I3). Top level only: a `payload.origin` means nothing.
+   */
+  origin?: "model";
 };
 
 export type ActionResult =

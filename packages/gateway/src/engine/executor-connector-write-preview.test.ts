@@ -1,12 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
+import type { EgressSink } from "../egress/egress-ledger.ts";
+import type { EgressEntry } from "../egress/egress-record.ts";
 import { consentDisplayPayload, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
-function harness(approve: boolean) {
+function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
   const prompts: string[] = [];
   const details: Array<Record<string, unknown> | undefined> = [];
   const dispatched: string[] = [];
+  const egress: EgressEntry[] = [];
+  const sink: EgressSink = { append: (e) => void egress.push(e) };
   const audits: Array<{ actionType: string; actionJson: string }> = [];
   const consent: ConsentChannel = {
     requestApproval: async (prompt: string, d?: Record<string, unknown>) => {
@@ -31,10 +35,11 @@ function harness(approve: boolean) {
     audit,
     connectors,
     undefined,
-    NULL_EGRESS_SINK,
+    sink,
     NO_POLICY_OVERLAY,
+    credentialFor,
   );
-  return { exec, prompts, details, dispatched, audits };
+  return { exec, prompts, details, dispatched, audits, egress };
 }
 
 describe("the executor shows a connector write's typed preview", () => {
@@ -104,5 +109,41 @@ describe("the executor shows a connector write's typed preview", () => {
     expect(consentDisplayPayload({ type: "search.run", payload: spoof })).toEqual({
       payload: spoof,
     });
+  });
+});
+
+describe("the preview's credential kind", () => {
+  const action = { type: "argocd.app.sync", payload: { name: "web" } };
+
+  test("shows the credential kind and puts it in the structured details", async () => {
+    const h = harness(true, () => "team");
+    await h.exec.execute(action);
+    expect(h.prompts[0]).toContain("Service: argocd\nCredential: team\nTarget:  web");
+    expect(h.details[0]?.["destination"]).toEqual({ service: "argocd", credential: "team" });
+  });
+
+  test("no resolver: the prompt is unchanged byte for byte", async () => {
+    const withNone = harness(true);
+    await withNone.exec.execute(action);
+    expect(withNone.prompts[0]).not.toContain("Credential:");
+    expect(withNone.details[0]?.["destination"]).toEqual({ service: "argocd" });
+  });
+
+  test("a throwing or non-conforming resolver shows no credential; the gate still audits and ledgers", async () => {
+    const bad: PreviewCredentialResolver[] = [
+      () => {
+        throw new Error("config unreadable");
+      },
+      (() => "x") as unknown as PreviewCredentialResolver,
+    ];
+    for (const r of bad) {
+      const h = harness(true, r);
+      const res = await h.exec.execute(action);
+      expect(res.status).toBe("ok");
+      expect(h.prompts[0]).toContain("Target:  web");
+      expect(h.prompts[0]).not.toContain("Credential:");
+      expect(h.audits).toHaveLength(1);
+      expect(h.egress).toHaveLength(1);
+    }
   });
 });

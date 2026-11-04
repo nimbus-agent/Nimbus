@@ -8,12 +8,21 @@ describe("enableWritesPromptLines", () => {
       enableWritesPromptLines({
         service: "github",
         maxWave: 2,
-        writes: [{ toolId: "github_issue_create", actionType: "github.issue.create", wave: 2 }],
+        writes: [
+          {
+            toolId: "github_issue_create",
+            actionType: "github.issue.create",
+            wave: 2,
+            offerable: true,
+          },
+          { toolId: "github_pr_merge", actionType: "github.pr.merge", wave: 3, offerable: false },
+        ],
       }),
     ).toEqual([
       "Service: github",
       "Up to wave: 2",
-      "  github_issue_create  github.issue.create  wave 2",
+      "  github_issue_create  github.issue.create  wave 2  (offered to the model)",
+      "  github_pr_merge  github.pr.merge  wave 3  (not offered yet)",
       "",
       "Each call will still ask you before it runs.",
     ]);
@@ -29,7 +38,17 @@ describe("enableWritesPromptLines", () => {
       enableWritesPromptLines({
         service: "github",
         maxWave: 2,
-        writes: [{ actionType: "github.issue.create", wave: 2 }],
+        writes: [{ actionType: "github.issue.create", wave: 2, offerable: true }],
+      }),
+    ).toBeUndefined();
+  });
+
+  test("a writes entry without a boolean offerable is malformed", () => {
+    expect(
+      enableWritesPromptLines({
+        service: "github",
+        maxWave: 2,
+        writes: [{ toolId: "github_issue_create", actionType: "github.issue.create", wave: 2 }],
       }),
     ).toBeUndefined();
   });

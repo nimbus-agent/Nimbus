@@ -128,6 +128,7 @@ interface StatusRow {
   enabled: boolean;
   maxWave?: number;
   writes: number;
+  offerable?: number;
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -149,7 +150,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
       const name = row.service.padEnd(width);
       d.log(
         row.enabled
-          ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes`
+          ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now`
           : `${name}  off`,
       );
     }
