@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, join, posix, win32 } from "node:path";
 import { deriveExtensionServiceId, PUBLISHER_ID_RE } from "@nimbus-dev/registry-format";
 import { CliExit } from "../lib/cli-exit.ts";
@@ -278,6 +278,7 @@ async function planFromOpenApi(
   const doc = await loadOpenApiDocument(source, {
     fetch: deps.fetch ?? fetch,
     readFile: (p) => readFile(p),
+    fileSize: async (p) => (await stat(p)).size,
     now: Date.now,
   });
   const model = buildOperationModel(doc, { serviceId, maxOperations });

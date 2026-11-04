@@ -149,6 +149,35 @@ describe("loadOpenApiDocument", () => {
     expect(e).toBeInstanceOf(OpenApiLoadError);
   });
 
+  test("a file whose size is past the cap is refused before it is read", async () => {
+    let reads = 0;
+    const deps: LoadDeps = {
+      ...depsFor({}),
+      readFile: async () => {
+        reads += 1;
+        return enc.encode("{}");
+      },
+      fileSize: async () => MAX_OPENAPI_BYTES + 1,
+    };
+    const e = await rejectionOf(loadOpenApiDocument("big.json", deps));
+    expect(e).toBeInstanceOf(OpenApiLoadError);
+    expect(e.message).toBe(`The OpenAPI document is larger than ${MAX_OPENAPI_BYTES} bytes`);
+    expect(reads).toBe(0);
+    // At the cap it is read; a size the stat cannot give is a read failure, as before.
+    const atCap = { ...deps, fileSize: async () => MAX_OPENAPI_BYTES };
+    await rejectionOf(loadOpenApiDocument("big.json", atCap));
+    expect(reads).toBe(1);
+    const missing: LoadDeps = {
+      ...deps,
+      fileSize: async () => {
+        throw new Error("ENOENT big.json");
+      },
+    };
+    expect((await rejectionOf(loadOpenApiDocument("big.json", missing))).message).toBe(
+      "Could not read big.json: ENOENT big.json",
+    );
+  });
+
   test("a YAML alias bomb is refused", async () => {
     let yaml = "openapi: 3.0.0\na0: &a0 [x, x]\n";
     for (let i = 1; i <= 150; i++) yaml += `a${i}: &a${i} [*a${i - 1}, *a${i - 1}]\n`;

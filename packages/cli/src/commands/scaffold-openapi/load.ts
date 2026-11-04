@@ -3,6 +3,8 @@ import { parse as parseYaml } from "yaml";
 export interface LoadDeps {
   fetch: typeof fetch;
   readFile: (p: string) => Promise<Uint8Array>;
+  /** A local file's size in bytes, checked before it is read (omitted: only the read is capped). */
+  fileSize?: (p: string) => Promise<number>;
   now: () => number;
 }
 
@@ -107,8 +109,13 @@ async function readBytes(source: string, deps: LoadDeps): Promise<Uint8Array> {
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) return await fetchBytes(source, deps);
   let bytes: Uint8Array;
   try {
+    // Refused before the read, so a huge file is never loaded; the check below is the backstop.
+    if (deps.fileSize !== undefined && (await deps.fileSize(source)) > MAX_OPENAPI_BYTES) {
+      throw tooLarge();
+    }
     bytes = await deps.readFile(source);
   } catch (e) {
+    if (e instanceof OpenApiLoadError) throw e;
     throw new OpenApiLoadError(`Could not read ${source}: ${(e as Error).message}`);
   }
   if (bytes.byteLength > MAX_OPENAPI_BYTES) throw tooLarge();
