@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createIpcClient } from "../../ipc/client";
 import { useNimbusStore } from "../../store";
+import { isConnectorWriteDetails } from "./ConnectorWritePreview";
 import { StructuredPreview } from "./StructuredPreview";
 
 const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
@@ -50,6 +51,8 @@ export function HitlPopupPage(): ReactNode {
   // The gateway renders a role pack's prompt itself — the pack's exact defaults text — and it is
   // multi-line, so it is shown verbatim in a bounded scroll box rather than as a heading.
   const isPackInstall = action === "pack.install";
+  // A preview the gateway built for this very action: the heading is fixed, the body shows the write.
+  const isConnectorWrite = isConnectorWriteDetails(head?.details, action);
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
@@ -102,7 +105,7 @@ export function HitlPopupPage(): ReactNode {
     <div className="p-5 space-y-4">
       <header>
         <h2 className="text-base font-medium text-[var(--color-fg)]">
-          {packHeading(isMigrate, isPackInstall, head.prompt)}
+          {packHeading(isMigrate, isPackInstall, isConnectorWrite, head.prompt)}
         </h2>
       </header>
       {isPackInstall ? (
@@ -146,8 +149,14 @@ export function HitlPopupPage(): ReactNode {
   );
 }
 
-function packHeading(isMigrate: boolean, isPackInstall: boolean, prompt: string): string {
+function packHeading(
+  isMigrate: boolean,
+  isPackInstall: boolean,
+  isConnectorWrite: boolean,
+  prompt: string,
+): string {
   if (isMigrate) return "Keep this connector as a signed extension?";
   if (isPackInstall) return "Install this role pack?";
+  if (isConnectorWrite) return "Approve this connector write?";
   return prompt;
 }
