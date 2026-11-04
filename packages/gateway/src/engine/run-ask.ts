@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 import { resolvePersona } from "../config/persona.ts";
+import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
@@ -86,6 +87,8 @@ export type RunAskParams = {
   // "frozen set only". This is the path agent-PLANNED actions take, so it is the one an org's
   // `[policy.hitl] require` list most needs to reach.
   policyHitl?: ExecutorPolicyDep;
+  /** Names the credential kind in a connector write's consent preview (config-derived). */
+  previewCredentialFor?: PreviewCredentialResolver;
   /**
    * `nimbus explain last` (spec §4). Absent means "no recorder wired" — a test double or a
    * gate-only caller that has no use for it — in which case `runAsk` records nothing rather than
@@ -527,6 +530,7 @@ function buildAskExecutor(p: RunAskParams): ToolExecutor {
     p.delegation,
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
+    p.previewCredentialFor,
   );
 }
 

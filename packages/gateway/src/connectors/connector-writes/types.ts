@@ -4,6 +4,12 @@
  *  the I26 predicate and run only through the executor's mesh path behind the owner's HITL gate. */
 export type ConnectorWriteTransport = "write" | "mesh";
 
+/**
+ * Which credential kind a write to `service` will use. Config-derived (never read from the
+ * payload). Lives here, not in the executor, so the preview builder never imports the executor.
+ */
+export type PreviewCredentialResolver = (service: string) => "personal" | "team";
+
 /** The migration wave the row was classified in. */
 export type ConnectorWriteWave = 2 | 3 | 4;
 

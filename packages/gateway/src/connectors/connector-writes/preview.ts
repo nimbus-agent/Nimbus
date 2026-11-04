@@ -10,6 +10,7 @@ import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import type {
   ConnectorWritePreviewTemplate,
   ConnectorWriteRow,
+  PreviewCredentialResolver,
   PreviewFieldKind,
 } from "./types.ts";
 
@@ -168,10 +169,28 @@ function findRow(
   return writes.length === 1 ? writes[0] : undefined;
 }
 
+/**
+ * The credential kind the resolver names, or undefined. The resolver can never break the consent
+ * gate: a throw, or anything but the exact strings "personal" / "team", leaves it unset.
+ */
+function resolveCredential(
+  service: string,
+  credentialFor: PreviewCredentialResolver | undefined,
+): "personal" | "team" | undefined {
+  if (credentialFor === undefined) return undefined;
+  try {
+    const c: unknown = credentialFor(service);
+    return c === "personal" || c === "team" ? c : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Test seam: the same builder over an explicit row list. */
 export function buildConnectorWritePreviewFrom(
   action: PlannedAction,
   rows: readonly ConnectorWriteRow[],
+  credentialFor?: PreviewCredentialResolver,
 ): ConnectorWritePreview | undefined {
   const row = findRow(action, rows);
   const template = row?.preview;
@@ -184,7 +203,8 @@ export function buildConnectorWritePreviewFrom(
     actionType: row.actionType,
     toolId: row.toolId,
   } as const;
-  const destination = { service } as const;
+  const credential = resolveCredential(service, credentialFor);
+  const destination = credential === undefined ? { service } : { service, credential };
   if (!isPlainObject(rawInput)) {
     return {
       ...base,
@@ -214,8 +234,9 @@ export function buildConnectorWritePreviewFrom(
 
 export function buildConnectorWritePreview(
   action: PlannedAction,
+  credentialFor?: PreviewCredentialResolver,
 ): ConnectorWritePreview | undefined {
-  return buildConnectorWritePreviewFrom(action, CONNECTOR_WRITE_ROWS);
+  return buildConnectorWritePreviewFrom(action, CONNECTOR_WRITE_ROWS, credentialFor);
 }
 
 /** One physical line per entry: a newline or tab inside any value is shown as `\n` / `\t`. */
@@ -226,6 +247,7 @@ function oneLine(s: string): string {
 export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): string[] {
   const lines = [
     `Service: ${oneLine(p.service)}`,
+    ...(p.destination.credential === undefined ? [] : [`Credential: ${p.destination.credential}`]),
     `Target:  ${oneLine(p.target)}`,
     oneLine(p.summary),
     "",
