@@ -387,6 +387,8 @@ function omitPlanText(payload: Record<string, unknown>): Record<string, unknown>
 
 export function formatConsentPrompt(action: PlannedAction): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
+  // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
+  if (action.origin === "model") lines.push("Requested by: the model");
   if (action.type === "pack.install" && typeof action.payload?.["promptText"] === "string") {
     // The pack prompt is a purpose-built, escaped rendering; a JSON Details line would only add noise.
     lines.push("", action.payload["promptText"]);
@@ -554,6 +556,8 @@ export class ToolExecutor {
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
+    // I20: a delegate never approves an action the MODEL proposed (top-level `origin` only).
+    if (action.origin === "model") return "fallback";
     // I20: a delegate never approves a trust root (`registry.add`), local code (`extension.*`) or a
     // pack install (`pack.install`, which writes the owner's config); only the local owner can.
     // Structural, not left to the gate's `delegation: undefined`.
