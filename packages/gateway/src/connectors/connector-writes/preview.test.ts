@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import type { PlannedAction } from "../../engine/types.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import {
+  buildConnectorWritePreview,
   buildConnectorWritePreviewFrom,
   type ConnectorWritePreview,
   renderConnectorWritePreviewLines,
@@ -209,13 +210,16 @@ describe("buildConnectorWritePreview", () => {
 
   test("no template gives no preview", () => {
     // The matching row has no template; another row has one. Control: with the template it builds.
-    const other = CONNECTOR_WRITE_ROWS.find((r) => r.actionType === "argocd.app.rollback");
-    if (other === undefined) throw new Error("argocd.app.rollback row missing");
-    const templatedOther = withPreview(other, TEMPLATE);
-    expect(
-      buildConnectorWritePreviewFrom(act({ name: "x" }), [BASE, templatedOther]),
-    ).toBeUndefined();
-    expect(buildConnectorWritePreviewFrom(act({ name: "x" }), rowsWith(TEMPLATE))).toBeDefined();
+    const bare = CONNECTOR_WRITE_ROWS.find((r) => r.preview === undefined);
+    if (bare === undefined) throw new Error("no untemplated row left");
+    const other = CONNECTOR_WRITE_ROWS.find((r) => r.preview !== undefined);
+    if (other === undefined) throw new Error("no templated row");
+    const action = {
+      type: bare.actionType,
+      payload: { mcpToolId: bare.toolId, input: { name: "x" } },
+    };
+    expect(buildConnectorWritePreviewFrom(action, [bare, other])).toBeUndefined();
+    expect(buildConnectorWritePreviewFrom(action, [withPreview(bare, TEMPLATE)])).toBeDefined();
   });
 
   test("a non-object input is shown whole", () => {
@@ -238,5 +242,33 @@ describe("buildConnectorWritePreview", () => {
       "Other fields:",
       "  f: 1",
     ]);
+  });
+
+  test("a real row renders: flux_kustomization_reconcile", () => {
+    const p = buildConnectorWritePreview({
+      type: "flux.kustomization.reconcile",
+      payload: { namespace: "apps", name: "web" },
+    });
+    expect(p?.target).toBe("apps/web");
+    expect(p?.summary).toBe("Reconcile Flux Kustomization apps/web");
+    expect(p?.otherFields).toEqual([]);
+  });
+
+  test("the secret-placeholder refusal names the secret field", () => {
+    expect(() =>
+      withPreview(BASE, {
+        target: "{token}",
+        summary: "s",
+        fields: [{ key: "token", label: "T", kind: "secret" }],
+      }),
+    ).toThrow(/secret field/);
+  });
+
+  test("a secret that cannot be JSON-encoded does not throw", () => {
+    const t: ConnectorWritePreviewTemplate = {
+      ...TEMPLATE,
+      fields: [{ key: "token", label: "Token", kind: "secret" }],
+    };
+    expect(build({ name: "x", token: 10n }, t).fields[0]?.value).toBe("(hidden, 2 characters)");
   });
 });

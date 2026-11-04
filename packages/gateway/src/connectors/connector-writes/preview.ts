@@ -88,6 +88,15 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+/** Compact JSON of a non-string value; falls back to String() when it cannot be encoded. */
+function rawJson(v: unknown): string {
+  try {
+    return JSON.stringify(v) ?? String(v);
+  } catch {
+    return String(v);
+  }
+}
+
 /** A string as is; anything else as compact JSON. Always sanitised, never truncated. */
 function renderValue(v: unknown): string {
   if (typeof v === "string") return sanitisePreviewText(v);
@@ -132,7 +141,7 @@ function renderField(
   const raw = input[f.key];
   if (f.kind === "secret") {
     // Length of the RAW value, before any escaping.
-    const rawText = typeof raw === "string" ? raw : (JSON.stringify(raw) ?? String(raw));
+    const rawText = typeof raw === "string" ? raw : rawJson(raw);
     return `(hidden, ${[...rawText].length} characters)`;
   }
   return renderValue(raw);
