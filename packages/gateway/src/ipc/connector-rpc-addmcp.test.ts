@@ -178,6 +178,7 @@ describe("connector.addMcp — argv is stored verbatim", () => {
     known.add(cmd);
     try {
       const r = await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...opts(exec),
         method: "connector.addMcp",
         params: { serviceId: "mcp_spaced", argv: [cmd] },
@@ -200,6 +201,7 @@ describe("connector.addMcp — invalid requests never reach the gate", () => {
     try {
       const err = await rpcErrorOf(
         dispatchConnectorRpc({
+          getEnforcedPolicy: () => undefined,
           ...opts(exec),
           method: "connector.addMcp",
           params: { serviceId: "mcp_snoop", argv: ["node", "s.js"], readPaths: [inside] },
@@ -227,6 +229,7 @@ describe("connector.addMcp — invalid requests never reach the gate", () => {
     const { exec, calls } = stubExecutor("proceed");
     const err = await rpcErrorOf(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...opts(exec),
         resolveCommand: (c: string) => (c === "node" ? nodeBin : null),
         method: "connector.addMcp",
@@ -242,6 +245,7 @@ describe("connector.addMcp — invalid requests never reach the gate", () => {
     for (const serviceId of ["github", "not-mcp"]) {
       const err = await rpcErrorOf(
         dispatchConnectorRpc({
+          getEnforcedPolicy: () => undefined,
           ...opts(exec),
           method: "connector.addMcp",
           params: { serviceId, argv: ["node"] },
@@ -257,6 +261,7 @@ describe("connector.addMcp — invalid requests never reach the gate", () => {
     const { connectorMesh: _omit, ...rest } = opts(exec);
     const err = await rpcErrorOf(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...rest,
         method: "connector.addMcp",
         params: { serviceId: "mcp_x", argv: ["node"] },
@@ -292,6 +297,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
     const { exec, calls } = stubExecutor("proceed");
     const registered: string[] = [];
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec, registered),
       method: "connector.addMcp",
       params,
@@ -315,6 +321,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
     const { exec, calls } = stubExecutor({ status: "rejected", reason: "no" });
     const registered: string[] = [];
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec, registered),
       method: "connector.addMcp",
       params,
@@ -328,6 +335,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
   test("no networkNote without hosts, and modelAccess defaults to false", async () => {
     const { exec, calls } = stubExecutor("proceed");
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec),
       method: "connector.addMcp",
       params: { serviceId: "mcp_quiet", argv: ["node"] },
@@ -343,6 +351,7 @@ describe("connector.addMcp — the owner approves the resolved grants", () => {
   test("commandLine is still accepted (whitespace-split, compatibility)", async () => {
     const { exec, calls } = stubExecutor("proceed");
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec),
       method: "connector.addMcp",
       params: { serviceId: "mcp_legacy", commandLine: "node server.js" },
@@ -391,6 +400,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
     const { exec, calls } = stubExecutor("proceed");
     const registered: string[] = [];
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec, registered, mesh),
       method: "connector.addMcp",
       params: { serviceId: "mcp_reused", argv: ["node"] },
@@ -412,6 +422,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
     const registered: string[] = [];
     const err = await rpcErrorOf(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...opts(exec, registered, mesh),
         method: "connector.addMcp",
         params: { serviceId: "mcp_locked", argv: ["node"] },
@@ -433,6 +444,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
     });
     const { exec } = stubExecutor("proceed");
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec, [], mesh),
       method: "connector.addMcp",
       params: { serviceId: "mcp_fresh", argv: ["node"] },
@@ -448,6 +460,7 @@ describe("connector.addMcp — a sandbox leaf left by an earlier registration", 
     mkdirSync(leaf, { recursive: true });
     const { exec } = stubExecutor({ status: "rejected", reason: "no" });
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec, [], mesh),
       method: "connector.addMcp",
       params: { serviceId: "mcp_denied", argv: ["node"] },
@@ -504,6 +517,7 @@ describe("connector.addMcp — the runner reaches the prompt through dispatchCon
   test("a win32 runner puts 'Windows cannot limit' in the gated action, never 'not known here'", async () => {
     const { exec, calls } = stubExecutor("proceed");
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...opts(exec),
       method: "connector.addMcp",
       params: {
@@ -525,6 +539,7 @@ describe("connector.addMcp — no platform", () => {
     const { platform: _omit, ...rest } = opts(exec);
     const err = await rpcErrorOf(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...rest,
         method: "connector.addMcp",
         params: { serviceId: "mcp_x", argv: ["node"] },

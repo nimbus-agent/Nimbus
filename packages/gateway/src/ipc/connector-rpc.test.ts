@@ -88,6 +88,7 @@ const baseOpts = {
 describe("connector.setConfig", () => {
   test("returns miss for unknown method", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       method: "connector.unknown",
@@ -98,6 +99,7 @@ describe("connector.setConfig", () => {
 
   test("sets intervalMs only", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       method: "connector.setConfig",
@@ -117,6 +119,7 @@ describe("connector.setConfig", () => {
 
   test("sets enabled=false only (pause)", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       method: "connector.setConfig",
@@ -136,6 +139,7 @@ describe("connector.setConfig", () => {
 
   test("sets intervalMs and enabled=true together", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       method: "connector.setConfig",
@@ -156,6 +160,7 @@ describe("connector.setConfig", () => {
   test("rejects missing serviceId", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts,
         localIndex: makeIndex(),
         method: "connector.setConfig",
@@ -167,6 +172,7 @@ describe("connector.setConfig", () => {
   test("rejects unregistered serviceId", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts,
         localIndex: makeIndex(),
         method: "connector.setConfig",
@@ -178,6 +184,7 @@ describe("connector.setConfig", () => {
   test("rejects invalid intervalMs (zero)", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts,
         localIndex: makeIndex(),
         method: "connector.setConfig",
@@ -189,6 +196,7 @@ describe("connector.setConfig", () => {
   test("rejects invalid intervalMs (non-finite)", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts,
         localIndex: makeIndex(),
         method: "connector.setConfig",
@@ -199,6 +207,7 @@ describe("connector.setConfig", () => {
 
   test("floors fractional intervalMs", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       method: "connector.setConfig",
@@ -223,6 +232,7 @@ describe("connector.setConfig", () => {
       },
     } as never;
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       syncScheduler,
@@ -244,6 +254,7 @@ describe("connector.setConfig", () => {
       resume: (_id: string) => {},
     } as never;
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: makeIndex(),
       syncScheduler,
@@ -263,6 +274,7 @@ describe("connector.startAuth deprecated alias — REMOVED (2026-09-10)", () => 
   test("connector.startAuth is no longer routed and returns a miss", async () => {
     const idx = makeIndex();
     const gone = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: idx,
       method: "connector.startAuth",
@@ -275,6 +287,7 @@ describe("connector.startAuth deprecated alias — REMOVED (2026-09-10)", () => 
     const idx = makeIndex();
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts,
         localIndex: idx,
         method: "connector.auth",
@@ -286,6 +299,7 @@ describe("connector.startAuth deprecated alias — REMOVED (2026-09-10)", () => 
   test("an unknown connector method returns a miss too", async () => {
     const idx = makeIndex();
     const miss = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts,
       localIndex: idx,
       method: "connector.unknownMethod",
@@ -431,6 +445,7 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
   test("adoptLocalAuth without a toolExecutor is an internal error, never an ungated write", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         method: "connector.adoptLocalAuth",
         params: { source: "aws", profile: "dev" },
         vault: createMockVault(),
@@ -444,6 +459,7 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
   test("detectLocalAuth rejects an unknown source before touching the host", async () => {
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         method: "connector.detectLocalAuth",
         params: { sources: ["svn"] },
         vault: createMockVault(),
@@ -468,6 +484,7 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
     process.env["PATH"] = "";
     try {
       const hit = await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         method: "connector.detectLocalAuth",
         params: { sources: ["aws"] },
         vault: createMockVault(),
@@ -501,6 +518,7 @@ describe("connector.detectLocalAuth / connector.adoptLocalAuth routing", () => {
       } as unknown as ToolExecutor;
       await expect(
         dispatchConnectorRpc({
+          getEnforcedPolicy: () => undefined,
           method: "connector.adoptLocalAuth",
           params: { source: "aws" },
           vault: createMockVault(),

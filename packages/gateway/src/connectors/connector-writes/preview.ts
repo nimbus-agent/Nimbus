@@ -70,7 +70,7 @@ function isUnsafeCodePoint(c: number): boolean {
   );
 }
 
-function sanitisePreviewText(s: string): string {
+export function sanitisePreviewText(s: string): string {
   let out = "";
   for (const ch of s) {
     const c = ch.codePointAt(0) ?? 0;

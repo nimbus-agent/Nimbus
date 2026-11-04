@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
 import {
   buildConnectorWritePreview,
   renderConnectorWritePreviewLines,
@@ -167,6 +167,10 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // layer. Gate site: packs/pack-install.ts, through the gate-only executor that
   // ipc/server/dispatchers.ts builds per call. Never delegable (see tryDelegatedApproval).
   "pack.install",
+  // Connector write opt-in (Phase 9.7 S4): offering a service's write tools to the model. Gate site:
+  // the `connector.writes.enable` handler, through the IPC executor. Never delegable (I20; see
+  // tryDelegatedApproval).
+  "connector.writes.enable",
   "connector.addMcp",
   "data.export",
   "connector.reindex",
@@ -388,6 +392,13 @@ export function formatConsentPrompt(action: PlannedAction): string {
     lines.push("", action.payload["promptText"]);
     return lines.join("\n");
   }
+  const enableLines =
+    action.type === "connector.writes.enable" ? enableWritesPromptLines(action.payload) : undefined;
+  if (enableLines !== undefined) {
+    // Purpose-built, escaped rendering of exactly which writes the model may then propose.
+    lines.push("", ...enableLines);
+    return lines.join("\n");
+  }
   const evalLines = action.type === "extension.eval" ? evalPromptLines(action) : undefined;
   if (evalLines !== undefined) {
     // Purpose-built rendering; a JSON Details line would repeat it.
@@ -549,6 +560,7 @@ export class ToolExecutor {
     if (
       action.type === "registry.add" ||
       action.type === "pack.install" ||
+      action.type === "connector.writes.enable" ||
       action.type.startsWith("extension.")
     ) {
       return "fallback";

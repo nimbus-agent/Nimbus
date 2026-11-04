@@ -97,6 +97,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
   test("addMcp without toolExecutor -> -32603", async () => {
     try {
       await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts({}),
         method: "connector.addMcp",
         params: { serviceId: "mcp_x", commandLine: "echo" },
@@ -111,6 +112,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
   test("addMcp with rejected gate returns the gate result without dispatching", async () => {
     const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "user declined" });
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec, ...wired() }),
       ...seams,
       method: "connector.addMcp",
@@ -130,6 +132,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
   test("addMcp with proceed dispatches to handleConnectorAddMcp", async () => {
     const { exec } = makeStubExecutor("proceed");
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec, ...wired() }),
       ...seams,
       method: "connector.addMcp",
@@ -146,6 +149,7 @@ describe("dispatchConnectorRpc — addMcp gate", () => {
     // egress ledger. The payload is now the resolved registration the handler writes.
     const { exec, calls } = makeStubExecutor("proceed");
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec, ...wired() }),
       ...seams,
       method: "connector.addMcp",
@@ -171,6 +175,7 @@ describe("dispatchConnectorRpc — remove gate", () => {
   test("remove without toolExecutor -> -32603", async () => {
     try {
       await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts({}),
         method: "connector.remove",
         params: { serviceId: "github" },
@@ -184,6 +189,7 @@ describe("dispatchConnectorRpc — remove gate", () => {
   test("remove with rejected gate returns the gate result", async () => {
     const { exec } = makeStubExecutor({ status: "deferred", reason: "later" });
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec }),
       method: "connector.remove",
       params: { serviceId: "github" },
@@ -199,6 +205,7 @@ describe("dispatchConnectorRpc — remove gate", () => {
     // a destructive action (index entries deleted, Vault keys cleared) was blank.
     const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "no" });
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec }),
       method: "connector.remove",
       params: { serviceId: "github" },
@@ -211,6 +218,7 @@ describe("dispatchConnectorRpc — remove gate", () => {
 describe("dispatchConnectorRpc — simple routings", () => {
   test("connector.listStatus dispatches to handleConnectorListStatus", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.listStatus",
       params: {},
@@ -222,6 +230,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
 
   test("connector.pause routes through handleConnectorPause", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.pause",
       params: { serviceId: "github" },
@@ -233,6 +242,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
 
   test("connector.resume routes through handleConnectorResume", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.resume",
       params: { serviceId: "github" },
@@ -244,6 +254,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
 
   test("connector.setInterval routes through handleConnectorSetInterval", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.setInterval",
       params: { serviceId: "github", intervalMs: 90_000 },
@@ -255,6 +266,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
 
   test("connector.status routes through handleConnectorStatus", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.status",
       params: { serviceId: "github" },
@@ -264,6 +276,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
 
   test("connector.healthHistory routes through handleConnectorHealthHistory", async () => {
     const r = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({}),
       method: "connector.healthHistory",
       params: { service: "github" },
@@ -276,6 +289,7 @@ describe("dispatchConnectorRpc — simple routings", () => {
   test("connector.sync without scheduler -> -32603 via handleConnectorSync", async () => {
     try {
       await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts({}),
         method: "connector.sync",
         params: { serviceId: "github" },
@@ -300,6 +314,7 @@ describe("dispatchConnectorRpc — connector.startAuth alias removed", () => {
     }) as typeof process.stderr.write;
     try {
       const result = await dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         ...baseOpts({}),
         method: "connector.startAuth",
         params: { serviceId: "github" },
@@ -338,6 +353,7 @@ describe("dispatchConnectorRpc — connector.auth ignores a caller-supplied prob
     try {
       await expect(
         dispatchConnectorRpc({
+          getEnforcedPolicy: () => undefined,
           ...baseOpts({}),
           vault: probeVault,
           method: "connector.auth",
@@ -390,6 +406,7 @@ describe("dispatchConnectorRpc — an extension-backed remove is refused BEFORE 
       },
     } as unknown as ToolExecutor;
     const err = await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec }),
       method: "connector.remove",
       params: { serviceId: "ext_com_example_syncer" },
@@ -402,6 +419,7 @@ describe("dispatchConnectorRpc — an extension-backed remove is refused BEFORE 
   test("an unbacked id still goes through the gate", async () => {
     const { exec, calls } = makeStubExecutor({ status: "rejected", reason: "no" });
     await dispatchConnectorRpc({
+      getEnforcedPolicy: () => undefined,
       ...baseOpts({ toolExecutor: exec }),
       method: "connector.remove",
       params: { serviceId: "github" },

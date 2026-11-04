@@ -4125,6 +4125,8 @@ export async function assemblePlatformServices(
     // staying lazy. Until 2026-08-16 nothing consumed the resolved policy at all — an admin
     // could sign `[policy.hitl] require = [...]`, see it verify, and get no gate.
     policyHitl,
+    // LIVE getter (I22): `connector.writesEnable` reads the policy per call, not at boot.
+    enforcedPolicy: () => policyGate.enforced(),
     listenPath: paths.socketPath,
     vault,
     version: GATEWAY_VERSION,

@@ -2158,3 +2158,36 @@ describe("runConnector — remaining failure shapes", () => {
     );
   });
 });
+
+describe("runConnector writes", () => {
+  beforeEach(() => {
+    out.reset();
+  });
+  afterEach(() => {
+    clearFixture();
+  });
+
+  it("enable dispatches over IPC with the interactive budget and the consent handler", async () => {
+    const constructions: RecordedClientConstruction[] = [];
+    const ipc = createMockIpcClient([{ service: "github", maxWave: 3, writes: 5 }]);
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: { call: ipc.client.call, connect: () => {}, disconnect: () => {} },
+      clientConstructions: constructions,
+    });
+    await runConnector(["writes", "enable", "github"]);
+    expect(ipc.calls[0]).toEqual({
+      method: "connector.writesEnable",
+      params: { service: "github" },
+    });
+    expect(constructions[0]?.opts?.requestTimeoutMs).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+    expect(out.stdout).toContain("Model writes enabled for github up to wave 3 (5 writes)");
+  });
+
+  it("help lists the three writes subcommands", async () => {
+    await runConnector(["help"]);
+    expect(out.stdout).toContain("nimbus connector writes enable <service> [--wave 2|3|4]");
+    expect(out.stdout).toContain("nimbus connector writes disable <service>");
+    expect(out.stdout).toContain("nimbus connector writes status [--json]");
+  });
+});

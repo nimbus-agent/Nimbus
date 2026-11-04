@@ -13,6 +13,12 @@ export {
   handleConnectorSync,
 } from "./lifecycle.ts";
 export {
+  handleConnectorWritesDisable,
+  handleConnectorWritesEnable,
+  handleConnectorWritesStatus,
+  type ModelWritesDeps,
+} from "./model-writes.ts";
+export {
   handleConnectorRemove,
   refuseExtensionBackedRemoval,
   resumePendingRemovals,

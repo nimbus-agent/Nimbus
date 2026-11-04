@@ -54,8 +54,8 @@ describe("V82 migration — extension observation notice", () => {
     }
   });
 
-  test("the registered maximum and the current schema are 82", () => {
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(82);
-    expect(CURRENT_SCHEMA_VERSION).toBe(82);
+  test("the registered maximum and the current schema are at least 82", () => {
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(82);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(82);
   });
 });

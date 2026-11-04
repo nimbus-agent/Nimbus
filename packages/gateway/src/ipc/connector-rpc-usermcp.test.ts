@@ -91,6 +91,7 @@ function opts(method: string, params: unknown, mesh: LazyConnectorMesh, exec?: T
     openUrl: async (_u: string): Promise<void> => {},
     syncScheduler: undefined,
     connectorMesh: mesh,
+    getEnforcedPolicy: () => undefined,
     ...(exec === undefined ? {} : { userMcpExecutor: exec }),
   };
 }
@@ -175,6 +176,7 @@ describe("connector.userMcpTools", () => {
   test("no connector mesh → -32603", async () => {
     await expectRpcError(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         method: "connector.userMcpTools",
         params: { serviceId: "mcp_x" },
         vault: createMockVault(),

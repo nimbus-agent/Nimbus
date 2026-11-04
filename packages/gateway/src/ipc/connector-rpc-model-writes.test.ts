@@ -1,0 +1,229 @@
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import {
+  getModelWriteEnablement,
+  writesEnabledBy,
+} from "../connectors/connector-writes/enablement-store.ts";
+import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
+import { LocalIndex } from "../index/local-index.ts";
+import { createMockVault } from "../vault/mock.ts";
+import { ConnectorRpcError, dispatchConnectorRpc } from "./connector-rpc.ts";
+
+let db: Database;
+let localIndex: LocalIndex;
+
+beforeEach(() => {
+  db = new Database(":memory:");
+  LocalIndex.ensureSchema(db);
+  localIndex = new LocalIndex(db);
+});
+afterEach(() => db.close());
+
+type Policy = { capabilitiesDisabled: ReadonlySet<string> };
+const OPEN: Policy = { capabilitiesDisabled: new Set<string>() };
+const LOCKED: Policy = { capabilitiesDisabled: new Set(["connector_write_model_access"]) };
+
+function executor(approve: boolean, prompts: string[] = []): ToolExecutor {
+  return new ToolExecutor(
+    {
+      requestApproval: async (prompt: string) => {
+        prompts.push(prompt);
+        return approve;
+      },
+    },
+    localIndex,
+    { dispatch: async () => ({}) },
+    undefined,
+    NULL_EGRESS_SINK,
+    NO_POLICY_OVERLAY,
+  );
+}
+
+async function call(
+  method: string,
+  params: unknown,
+  opts: { policy?: () => Policy | undefined; exec?: ToolExecutor } = {},
+): Promise<unknown> {
+  const r = await dispatchConnectorRpc({
+    method,
+    params,
+    vault: createMockVault(),
+    localIndex,
+    openUrl: async () => {},
+    syncScheduler: undefined,
+    getEnforcedPolicy: (opts.policy ?? (() => OPEN)) as never,
+    ...(opts.exec === undefined ? {} : { toolExecutor: opts.exec }),
+  });
+  if (r.kind !== "hit") throw new Error("miss");
+  return r.value;
+}
+
+async function refusal(p: Promise<unknown>): Promise<string> {
+  try {
+    await p;
+  } catch (e) {
+    expect(e).toBeInstanceOf(ConnectorRpcError);
+    return (e as ConnectorRpcError).message;
+  }
+  throw new Error("expected a refusal");
+}
+
+describe("connector.writesEnable", () => {
+  test("an approved enable writes the row; the prompt names every write and the fixed sentence", async () => {
+    const prompts: string[] = [];
+    const out = await call(
+      "connector.writesEnable",
+      { service: "github", wave: 3 },
+      { exec: executor(true, prompts) },
+    );
+    const expected = writesEnabledBy("github", 3);
+    expect(out).toEqual({ service: "github", maxWave: 3, writes: expected.length });
+    expect(getModelWriteEnablement(db, "github")?.maxWave).toBe(3);
+    expect(prompts).toHaveLength(1);
+    const p = prompts[0] ?? "";
+    expect(p).toContain("Service: github");
+    expect(p).toContain("Up to wave: 3");
+    for (const r of expected) expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}`);
+    expect(p).toContain("Each call will still ask you before it runs.");
+  });
+
+  test("the wave defaults to 3, and a re-enable with another wave replaces the row (O4)", async () => {
+    await call("connector.writesEnable", { service: "github" }, { exec: executor(true) });
+    expect(getModelWriteEnablement(db, "github")?.maxWave).toBe(3);
+    const prompts: string[] = [];
+    await call(
+      "connector.writesEnable",
+      { service: "github", wave: 2 },
+      { exec: executor(true, prompts) },
+    );
+    expect(prompts).toHaveLength(1);
+    expect(getModelWriteEnablement(db, "github")?.maxWave).toBe(2);
+  });
+
+  test("a declined enable writes nothing and says so", async () => {
+    const msg = await refusal(
+      call("connector.writesEnable", { service: "github" }, { exec: executor(false) }),
+    );
+    expect(msg).toContain("ERR_CONNECTOR_WRITES_DECLINED");
+    expect(getModelWriteEnablement(db, "github")).toBeUndefined();
+  });
+
+  test("the gate decision is audited", async () => {
+    await call("connector.writesEnable", { service: "github" }, { exec: executor(true) });
+    const rows = db
+      .query("SELECT action_type FROM audit_log WHERE action_type = 'connector.writes.enable'")
+      .all();
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
+  test("a policy that forbids it refuses BEFORE any prompt, read live on every call", async () => {
+    const prompts: string[] = [];
+    let locked = false;
+    const policy = () => (locked ? LOCKED : OPEN);
+    const exec = executor(true, prompts);
+    await call("connector.writesEnable", { service: "github" }, { exec, policy });
+    locked = true; // applied after boot
+    const msg = await refusal(
+      call("connector.writesEnable", { service: "github" }, { exec, policy }),
+    );
+    expect(msg).toContain("ERR_CONNECTOR_WRITES_POLICY");
+    expect(prompts).toHaveLength(1);
+  });
+
+  test("an absent policy fails closed", async () => {
+    const prompts: string[] = [];
+    const msg = await refusal(
+      call(
+        "connector.writesEnable",
+        { service: "github" },
+        { exec: executor(true, prompts), policy: () => undefined },
+      ),
+    );
+    expect(msg).toContain("ERR_CONNECTOR_WRITES_POLICY");
+    expect(prompts).toHaveLength(0);
+  });
+
+  test("bad waves and unknown services are refused before any prompt", async () => {
+    const prompts: string[] = [];
+    const exec = executor(true, prompts);
+    for (const wave of [5, 1, "abc", "3", 2.5, null]) {
+      await refusal(call("connector.writesEnable", { service: "github", wave }, { exec }));
+    }
+    for (const service of ["mcp_x", "ext_y", "email", "", 7, undefined]) {
+      const msg = await refusal(call("connector.writesEnable", { service }, { exec }));
+      expect(msg).toContain("ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE");
+    }
+    expect(prompts).toHaveLength(0);
+    expect(getModelWriteEnablement(db, "github")).toBeUndefined();
+  });
+
+  test("it requires a toolExecutor", async () => {
+    await refusal(call("connector.writesEnable", { service: "github" }));
+  });
+});
+
+describe("connector.writesDisable and writesStatus", () => {
+  test("disable needs no approval, is idempotent, and works under a locked policy", async () => {
+    await call("connector.writesEnable", { service: "github" }, { exec: executor(true) });
+    const policy = () => LOCKED;
+    expect(await call("connector.writesDisable", { service: "github" }, { policy })).toEqual({
+      removed: true,
+    });
+    expect(await call("connector.writesDisable", { service: "github" }, { policy })).toEqual({
+      removed: false,
+    });
+  });
+
+  test("disable refuses a missing or empty service", async () => {
+    for (const service of [undefined, "", 42]) {
+      expect(await refusal(call("connector.writesDisable", { service }))).toContain(
+        "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE",
+      );
+    }
+  });
+
+  test("status lists every eligible service, sorted, with policyAllows", async () => {
+    await call("connector.writesEnable", { service: "github", wave: 2 }, { exec: executor(true) });
+    const s = (await call("connector.writesStatus", {})) as {
+      policyAllows: boolean;
+      services: Array<{ service: string; enabled: boolean; maxWave?: number; writes: number }>;
+    };
+    expect(s.policyAllows).toBe(true);
+    const names = s.services.map((x) => x.service);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    expect(names).toContain("kubernetes");
+    expect(s.services.find((x) => x.service === "github")).toMatchObject({
+      enabled: true,
+      maxWave: 2,
+    });
+    expect(s.services.find((x) => x.service === "kubernetes")?.enabled).toBe(false);
+    const locked = (await call("connector.writesStatus", {}, { policy: () => undefined })) as {
+      policyAllows: boolean;
+    };
+    expect(locked.policyAllows).toBe(false);
+  });
+});
+
+describe("wiring", () => {
+  test("the executor the connector dispatcher builds is gate-only: NULL_EGRESS_SINK, stub dispatcher", () => {
+    const src = readFileSync(join(import.meta.dir, "server", "dispatchers.ts"), "utf8");
+    const at = src.indexOf("export async function tryDispatchConnectorRpc(");
+    const body = src.slice(at, src.indexOf("export async function tryDispatchDiagnosticsRpc(", at));
+    expect(body).toContain("NULL_EGRESS_SINK");
+    expect(body).toContain("stubDispatcher");
+    expect(body).toContain("getEnforcedPolicy");
+  });
+
+  test("the handler calls gate(), never execute()", () => {
+    const src = readFileSync(
+      join(import.meta.dir, "connector-rpc-handlers", "model-writes.ts"),
+      "utf8",
+    );
+    expect(src).toContain(".gate(");
+    expect(src).not.toMatch(/\.execute\(/);
+  });
+});

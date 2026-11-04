@@ -68,6 +68,13 @@ export const AI_V2_CAPABILITIES = [
    * Locked off, `propose_action` is not offered, submit refuses and accept refuses.
    */
   "mcp_action",
+  /**
+   * The model being OFFERED connector write tools (Phase 9.7, S4) once the owner enabled a
+   * service (`nimbus connector writes enable`). Locked off, `connector.writes.enable` refuses and
+   * no write tool is offered to the model. Fail-closed when the policy accessor is absent
+   * (`connectors/connector-writes/model-write-capability.ts`).
+   */
+  "connector_write_model_access",
 ] as const;
 
 /** Where a persisted policy came from. */

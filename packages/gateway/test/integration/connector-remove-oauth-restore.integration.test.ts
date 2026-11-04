@@ -64,6 +64,7 @@ describe("connector.remove OAuth restore (integration)", () => {
 
     await expect(
       dispatchConnectorRpc({
+        getEnforcedPolicy: () => undefined,
         method: "connector.remove",
         params: { serviceId: "google_drive" },
         vault,

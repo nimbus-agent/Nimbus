@@ -1,0 +1,169 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+
+import { type ConnectorWritesDeps, runConnectorWrites } from "./connector-writes-cli.ts";
+
+function harness(reply: unknown) {
+  const calls: Array<{ method: string; params?: Record<string, unknown> | undefined }> = [];
+  const logs: string[] = [];
+  const errors: string[] = [];
+  const deps: ConnectorWritesDeps = {
+    call: async (method, params) => {
+      calls.push({ method, params });
+      if (reply instanceof Error) throw reply;
+      return reply;
+    },
+    log: (l) => logs.push(l),
+    error: (l) => errors.push(l),
+  };
+  return { deps, calls, logs, errors };
+}
+
+let savedExit: typeof process.exitCode;
+beforeEach(() => {
+  savedExit = process.exitCode;
+  process.exitCode = 0;
+});
+afterEach(() => {
+  process.exitCode = savedExit;
+});
+
+describe("connector writes enable", () => {
+  it("sends the service and wave, and prints the outcome", async () => {
+    const h = harness({ service: "github", maxWave: 4, writes: 12 });
+    await runConnectorWrites(["enable", "github", "--wave", "4"], h.deps);
+    expect(h.calls).toEqual([
+      { method: "connector.writesEnable", params: { service: "github", wave: 4 } },
+    ]);
+    expect(h.logs).toEqual([
+      "Model writes enabled for github up to wave 4 (12 writes). Each call will still ask you.",
+    ]);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("omits wave when not given", async () => {
+    const h = harness({ service: "github", maxWave: 3, writes: 5 });
+    await runConnectorWrites(["enable", "github"], h.deps);
+    expect(h.calls[0]?.params).toEqual({ service: "github" });
+  });
+
+  const badArgs: string[][] = [
+    ["enable"],
+    ["enable", "a", "b"],
+    ["enable", "github", "--wave", "5"],
+    ["enable", "github", "--wave", "1"],
+    ["enable", "github", "--wave", "abc"],
+    ["enable", "github", "--wave"],
+    ["enable", "--wave", "2"],
+    ["enable", "github", "--x"],
+  ];
+  for (const bad of badArgs) {
+    it(`exits 2 with usage and no RPC for ${bad.join(" ")}`, async () => {
+      const h = harness({});
+      await runConnectorWrites(bad, h.deps);
+      expect(h.calls).toEqual([]);
+      expect(h.errors[0]).toContain("Usage: nimbus connector writes enable");
+      expect(process.exitCode).toBe(2);
+    });
+  }
+
+  const refusals = [
+    ["ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE", "no connector writes"],
+    ["ERR_CONNECTOR_WRITES_POLICY", "policy forbids"],
+    ["ERR_CONNECTOR_WRITES_DECLINED", "declined"],
+    ["ERR_CONNECTOR_WRITES_BAD_WAVE", "--wave must be"],
+  ] as const;
+  for (const [code, text] of refusals) {
+    it(`maps ${code} to a one-line message and exit 2`, async () => {
+      const h = harness(new Error(`${code}: whatever`));
+      await runConnectorWrites(["enable", "github"], h.deps);
+      expect(h.errors).toHaveLength(1);
+      expect(h.errors[0]).toContain(text);
+      expect(process.exitCode).toBe(2);
+    });
+  }
+
+  it("exits 1 on any other error", async () => {
+    const h = harness(new Error("boom"));
+    await runConnectorWrites(["enable", "github"], h.deps);
+    expect(h.errors).toEqual(["boom"]);
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("connector writes disable", () => {
+  it("reports removal", async () => {
+    const h = harness({ removed: true });
+    await runConnectorWrites(["disable", "github"], h.deps);
+    expect(h.calls[0]).toEqual({
+      method: "connector.writesDisable",
+      params: { service: "github" },
+    });
+    expect(h.logs).toEqual(["Model writes disabled for github."]);
+  });
+
+  it("is idempotent", async () => {
+    const h = harness({ removed: false });
+    await runConnectorWrites(["disable", "github"], h.deps);
+    expect(h.logs).toEqual(["Model writes were not enabled for github."]);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("exits 2 without a service or with extras", async () => {
+    for (const a of [["disable"], ["disable", "a", "b"]]) {
+      const h = harness({});
+      await runConnectorWrites(a, h.deps);
+      expect(h.calls).toEqual([]);
+      expect(process.exitCode).toBe(2);
+    }
+  });
+});
+
+describe("connector writes status", () => {
+  const reply = {
+    services: [
+      { service: "github", enabled: true, maxWave: 3, enabledAt: 1, writes: 9 },
+      { service: "kubernetes", enabled: false, writes: 4 },
+    ],
+    policyAllows: true,
+  };
+
+  it("prints aligned lines and the policy", async () => {
+    const h = harness(reply);
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toEqual([
+      "github      enabled  wave 3  9 writes",
+      "kubernetes  off",
+      "Policy: allows",
+    ]);
+  });
+
+  it("reports a forbidding policy", async () => {
+    const h = harness({ services: [], policyAllows: false });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toEqual(["Policy: forbids (connector_write_model_access)"]);
+  });
+
+  it("--json prints the raw object", async () => {
+    const h = harness(reply);
+    await runConnectorWrites(["status", "--json"], h.deps);
+    expect(JSON.parse(h.logs.join("\n"))).toEqual(reply);
+  });
+
+  it("exits 2 on an extra positional", async () => {
+    const h = harness(reply);
+    await runConnectorWrites(["status", "github"], h.deps);
+    expect(process.exitCode).toBe(2);
+    expect(h.calls).toEqual([]);
+  });
+});
+
+describe("connector writes dispatch", () => {
+  it("exits 2 with usage for no or an unknown verb", async () => {
+    for (const a of [[], ["bogus"]]) {
+      const h = harness({});
+      await runConnectorWrites(a, h.deps);
+      expect(h.errors[0]).toContain("Usage:");
+      expect(process.exitCode).toBe(2);
+    }
+  });
+});
