@@ -754,7 +754,7 @@ dropped. `isReadOnlyToolId` therefore EXCLUDES any `isConnectorCodeExecutionTool
 id whatever its verb, so these reads are unreplayable exactly as the federated gate refuses them
 (kept in step by the same sync guard).
 
-`isReadOnlyToolId` also refuses every connector write id (from the row table in `connectors/connector-writes/index.ts`), bare or `<server>__<tool>`, before the read-verb check, so a write whose name ends in a read verb is never replayable from a share file (2026-11-05, Phase 9.7 PR A5a). No real write id ends in a read verb today, so the "every row id is refused" test is a regression guard; the test that can fail injects a synthetic one (`fx_report_export`) through the `writeIds` parameter (`share/read-tool-registry.test.ts`).
+`isReadOnlyToolId` also refuses every connector write id (from the row table in `connectors/connector-writes/index.ts`), bare or `<server>_<tool>`, before the read-verb check, so a write whose name ends in a read verb is never replayable from a share file (2026-11-05, Phase 9.7 PR A5a). No real write id ends in a read verb today, so the "every row id is refused" test is a regression guard; the test that can fail injects a synthetic one (`fx_report_export`) through the `writeIds` parameter (`share/read-tool-registry.test.ts`).
 
 A connector that gains the capability, or a new
 tool in one that has it, fails the guard until someone classifies it. The wire test now lists real

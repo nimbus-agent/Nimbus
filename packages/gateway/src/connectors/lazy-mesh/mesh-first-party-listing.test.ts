@@ -82,6 +82,10 @@ describe("listFirstPartyServerTools", () => {
     expect(Object.keys(out ?? {})).toEqual(["argocd_app_sync"]);
     const entry = out?.["argocd_app_sync"] as { inputSchema: unknown } | undefined;
     expect(entry?.inputSchema).toEqual(SCHEMA);
+    // The listed `execute` closure would dispatch around the executor chokepoint: never handed out.
+    expect(
+      Object.keys((out?.["argocd_app_sync"] ?? {}) as object).sort((x, y) => x.localeCompare(y)),
+    ).toEqual(["description", "inputSchema"]);
     expect(ensures()).toBe(1);
   });
 

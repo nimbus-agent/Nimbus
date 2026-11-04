@@ -611,6 +611,9 @@ export class LazyConnectorMesh {
    *     slot is running" — a bundle already up for a sibling does not make this service usable;
    *  4. only then its slot is ensured, through an explicit map (unmapped: fail closed);
    *  5. the listing is filtered to keys this server owns. No other slot is ever spawned.
+   * Each entry keeps ONLY `description` and `inputSchema`: the listed `execute` closure would
+   * dispatch straight to the server, outside the executor's HITL and egress chokepoint, so it is
+   * never handed out from here.
    */
   async listFirstPartyServerTools(
     service: string,
@@ -631,7 +634,11 @@ export class LazyConnectorMesh {
     );
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(all)) {
-      if (meshServerForToolKey(key) === service) out[key] = all[key];
+      if (meshServerForToolKey(key) !== service) continue;
+      const entry = all[key];
+      const rec =
+        typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+      out[key] = { description: rec["description"], inputSchema: rec["inputSchema"] };
     }
     return out;
   }
