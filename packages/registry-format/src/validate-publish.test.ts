@@ -328,6 +328,25 @@ describe("validatePublish", () => {
     expect(readdirSync(work)).toEqual([]);
   });
 
+  test("a malformed funding or license is refused; valid ones pass", async () => {
+    const run = async (extra: Record<string, unknown>) =>
+      validatePublish(
+        await candidate({ manifest: await signedManifest({ extra }) }),
+        await indexOf(),
+        NS,
+        work,
+      );
+    await expect(run({ funding: [{ url: "http://x.com" }] })).rejects.toThrow(
+      /ERR_REGISTRY_MANIFEST_INVALID: funding:/,
+    );
+    await expect(run({ license: "MIT OR" })).rejects.toThrow(/license:/);
+    const v = await run({
+      funding: [{ url: "https://github.com/sponsors/acme", label: "Sponsor" }],
+      license: "MIT",
+    });
+    expect(v.repository).toBeUndefined();
+  });
+
   test("a declared repository rides the verdict; a malformed one is absent, never a refusal", async () => {
     const declared = await signedManifest({ extra: { repository: "acme/echo" } });
     const v = await validatePublish(
