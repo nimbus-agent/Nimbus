@@ -172,9 +172,9 @@ so `funding` is signed with everything else.
   ignores (my call: a link the owner may open should be well-formed at the source). The funding PR
   rebuilds the action's `dist`. A registry still on an older action can sign a malformed `funding`, which
   every gateway then ignores; the docs say so rather than claiming no registry ever signs one.
-- `info --registry` and `sponsor --registry` read the manifest of the version an install would take (the
-  newest stable, or the channel the owner chose), checked against the root-signed index by hash, the same
-  trust `registry.info` gives every other manifest field today (my call).
+- `info --registry` and `sponsor --registry` read the manifest of the newest LISTED version, the one
+  `registry.info` already fetches, hash-checks against the root-signed index and labels with
+  `evidenceFor` for every other remote field (my call, PR 1 plan: no second manifest fetch).
 - No host allowlist (my call): GitHub Sponsors, Patreon, Buy Me a Coffee, Ko-fi, Open Collective and
   Stripe links all change; the confirmation shows the host instead.
 
@@ -182,8 +182,8 @@ so `funding` is signed with everything else.
 entries. `nimbus extension sponsor <id> [--registry <name>] [--index <n>]` prints every entry, and on a
 TTY asks before opening the chosen one (default the first) with `openHttpsUrl`, the
 `extension report` precedent: the URL is always printed, the host is named in the question, off a TTY
-nothing opens. The desktop shows the entries as text in the extension details; the button waits for
-the marketplace tile row.
+nothing opens. The desktop shows nothing yet: it has no extension details view (only the
+`extension.list` row), so the entries and the button move to the marketplace tile row (PR 1 plan).
 
 ## 7. The Authors section
 
