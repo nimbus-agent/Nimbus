@@ -2,9 +2,8 @@
 import { CHATOPS_POST_TOOL_IDS } from "../chatops/transport/connector-post.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { TRIBAL_KB_WRITE_TOOL_IDS } from "../tribal/tribal-write-gate.ts";
-import type { ConnectorWrite } from "./connector-write.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
-import type { ConnectorWriteRow } from "./connector-writes/types.ts";
+import type { ConnectorWrite, ConnectorWriteRow } from "./connector-writes/types.ts";
 import { matchesBareOrNamespacedToolId } from "./namespaced-tool-id.ts";
 
 /** The rows with a dispatch path (`transport === "write"`). Drives the credential-aware dispatch

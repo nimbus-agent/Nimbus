@@ -30,3 +30,11 @@ export function row(
       : { toolId, actionType, transport, wave, registeredAs },
   );
 }
+
+/** One dispatchable connector write: its HITL action.type, its MCP tool id, and its service id.
+ *  Derived from the `write`-transport rows (`CONNECTOR_WRITES` in `connector-write-registry.ts`). */
+export interface ConnectorWrite {
+  readonly actionType: string;
+  readonly toolId: string;
+  readonly service: string;
+}
