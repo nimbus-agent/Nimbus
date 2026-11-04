@@ -16,7 +16,7 @@ import { join } from "node:path";
 // every startup (I16), so a manifest accepted here is one every client accepts.
 import { verifyManifestSignature } from "@nimbus-dev/sdk"; // NOSONAR S1874
 import semver from "semver";
-
+import { assertAuthorMetadata } from "./author-metadata.ts";
 import { MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES } from "./caps.ts";
 import { codeUnitCompare } from "./code-unit-compare.ts";
 import { RegistryError } from "./errors.ts";
@@ -458,6 +458,7 @@ export async function validatePublish(
 ): Promise<PublishVerdict> {
   const req = parsePublishRequest(c.publishRequestBytes); // 1
   const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes); // 2
+  assertAuthorMetadata(raw); // 2b
   // Optional and never a refusal: a malformed value is simply absent (provenance never blocks).
   const repository = readManifestRepository(raw);
   assertCoordinates(c, m, req); // 3

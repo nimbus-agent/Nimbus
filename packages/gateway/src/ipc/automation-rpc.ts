@@ -89,6 +89,7 @@ import {
   reportIncompleteRollback,
 } from "../extensions/install-from-local.ts";
 import { oneLine } from "../extensions/install-plan-text.ts";
+import { installedAuthorMetadata } from "../extensions/installed-author-metadata.ts";
 import {
   EvalApprovalDenied,
   evaluateInstalledExtensions,
@@ -866,6 +867,7 @@ async function handleExtensionInfo(
     ...(requires === undefined ? {} : { requires }),
     ...installedAccess(row, ctx),
     ...installedEvidence(row),
+    ...installedAuthorMetadata(row),
   };
   const preT2 = new Set(preT2DisabledIds());
   if (preT2.has(row.id)) {

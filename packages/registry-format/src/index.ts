@@ -2,6 +2,20 @@
 export const REGISTRY_FORMAT_VERSION = 1;
 
 export {
+  type AuthorField,
+  type AuthorMetadataView,
+  assertAuthorMetadata,
+  authorMetadataView,
+  type FundingEntry,
+  isFundingUrl,
+  MAX_FUNDING_ENTRIES,
+  MAX_FUNDING_LABEL_CHARS,
+  MAX_FUNDING_URL_CHARS,
+  MAX_LICENSE_CHARS,
+  readManifestFunding,
+  readManifestLicense,
+} from "./author-metadata.ts";
+export {
   MAX_ENTRY_COUNT,
   MAX_EVAL_CASES,
   MAX_EVAL_INPUT_BYTES,

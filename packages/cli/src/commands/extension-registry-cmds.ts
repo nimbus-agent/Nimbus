@@ -11,6 +11,7 @@ import {
   verifiedPublisherCell,
   verifiedPublisherLine,
 } from "../lib/verified-publisher-text.ts";
+import { authorMetadataLines } from "./author-metadata-lines.ts";
 
 export interface ExtensionRegistryDeps {
   client: IPCClient;
@@ -58,6 +59,10 @@ interface RemoteInfo {
   verifiedPublisher?: VerifiedPublisherCli | null;
   /** The newest version's registry-verified build provenance (trust layer PR 4c), or null. */
   provenance?: unknown;
+  funding?: unknown;
+  fundingInvalid?: unknown;
+  license?: unknown;
+  licenseInvalid?: unknown;
   /** The newest version's tested / history / checked lines. Absent from an older gateway. */
   evidence?: unknown;
   /** Which version and channel `evidence` (and the reach and files lines) describe. */
@@ -252,6 +257,7 @@ export async function runExtensionInfoRemote(
   deps.stdout(`  key fingerprint: ${clean(out.publisherFingerprint)}\n`);
   deps.stdout(`  ${verifiedPublisherLine(out.verifiedPublisher)}\n`);
   deps.stdout(`${provenanceLine(out)}\n`);
+  for (const l of authorMetadataLines(out)) deps.stdout(`${l}\n`);
   for (const l of evidenceLines(out.evidence)) deps.stdout(`${l}\n`);
   deps.stdout("Versions:\n");
   for (const v of out.versions) {

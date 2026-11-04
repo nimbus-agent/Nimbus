@@ -18,6 +18,10 @@ Phase-level history before `v0.1.0` (Phases 1â€“4) lives in [`docs/roadmap.md` Â
 
 ## Post-Phase-6 deliveries
 
+- **2026-11-04: author funding and license (Phase 9.5 project 7, PR 1 of 4; no migration; no new invariant).**
+  The extension manifest takes an optional `funding` array (1 to 8 entries, each an `https` `url` and an optional `label`) and an optional SPDX `license`. A malformed field is ignored at runtime and shown `(invalid, ignored)`; `nimbus extension publish` and the registry action's publish check refuse it with `ERR_REGISTRY_MANIFEST_INVALID`, and `nimbus extension sign` refuses it with exit 2 and its own message. `nimbus extension info` prints `License:` and `Funding:` (a local `info` reads the hash-checked installed manifest; `--registry` and `--remote` read the newest listed version's), and the new `nimbus extension sponsor <id> [--registry <name>] [--index <n>]` prints the links and opens one in the system browser only on a terminal after an explicit yes.
+  **What it does not do:** it checks the shape of a link and a license, never that either is real; a registry still on an older registry action can sign a malformed field, which every gateway then ignores; the desktop and the registry page show nothing yet (the Sponsor button moved to the roadmap row **Marketplace page and desktop tile**).
+
 - **2026-11-03: the quality layer (Phase 9.5 project 6) is complete, in 12 PRs (owner ruling 2026-11-03).**
   Permission transparency and evidence lines, registry-signed scores and a baseline, liveness checks under a separate key (I51), golden suites recorded with `nimbus eval --record`, local network observation and `nimbus extension audit` on all three OSes with warnings, and owner-approved narrower network grants (I52). The registry web page and the desktop marketplace tile move to a new open roadmap row, **Marketplace page and desktop tile**; the official registry publishes its first baseline with the next Readwise publish. Project 7 remains before S3 closes.
 

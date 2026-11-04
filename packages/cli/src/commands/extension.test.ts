@@ -278,6 +278,33 @@ describe("runExtensionInfo", () => {
     checked: true,
   };
 
+  test("prints License and Funding after the publisher block, cleaned", async () => {
+    const { client } = createMockIpcClient([
+      {
+        extension: {
+          id: "ext1",
+          version: "1.2.3",
+          enabled: 1,
+          license: "MIT",
+          funding: [
+            {
+              url: "https://github.com/sponsors/a",
+              label: `A${String.fromCodePoint(0x1b)}[2J`,
+            },
+          ],
+        },
+      },
+      { sandbox: { platform_capabilities: { network: "per_host", reason: null } } },
+    ]);
+    await runExtensionInfo(client, ["ext1"], ["info", "ext1"]);
+    const lines = out.stdout.split("\n");
+    const pub = lines.findIndex((l) => l.startsWith("Publisher:"));
+    const lic = lines.indexOf("License: MIT");
+    expect(lic).toBeGreaterThan(pub);
+    expect(lines[lic + 1]).toBe("Funding:");
+    expect(lines[lic + 2]).toBe("  1. A[2J https://github.com/sponsors/a");
+  });
+
   test("prints reach and files above the network isolation line, escaped", async () => {
     const { client } = createMockIpcClient([
       {
@@ -2782,6 +2809,55 @@ describe("runExtensionSign", () => {
   });
 });
 
+describe("runExtensionSign author metadata", () => {
+  const tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-sign-meta-test-"));
+  async function signRefused(field: Record<string, unknown>): Promise<{
+    code: number;
+    stderr: string;
+    original: string;
+    after: string;
+  }> {
+    const { privkey } = generateEd25519Keypair();
+    const keyPath = join(tmpRoot, `sign-key-meta-${Math.random().toString(36).slice(2)}`);
+    writeFileSync(keyPath, encodeBase64(privkey));
+    const extDir = mkdtempSync(join(tmpRoot, "ext-sign-meta-"));
+    const manifestPath = join(extDir, "nimbus.extension.json");
+    const original = JSON.stringify({ id: "t.ext", version: "1.0.0", name: "T", ...field });
+    writeFileSync(manifestPath, original);
+    const errs: string[] = [];
+    const real = process.stderr.write.bind(process.stderr);
+    process.stderr.write = ((s: string) => {
+      errs.push(String(s));
+      return true;
+    }) as typeof process.stderr.write;
+    let code: number;
+    try {
+      code = await runExtensionSign([extDir, "--key", keyPath]);
+    } finally {
+      process.stderr.write = real;
+    }
+    return { code, stderr: errs.join(""), original, after: readFileSync(manifestPath, "utf8") };
+  }
+
+  test("a malformed license is refused before any write", async () => {
+    const r = await signRefused({ license: "MIT OR" });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toBe(
+      "manifest license is invalid: license is not an SPDX license expression; fix it before signing\n",
+    );
+    expect(r.after).toBe(r.original);
+  });
+
+  test("a malformed funding field is refused before any write", async () => {
+    const r = await signRefused({ funding: "not-array" });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toBe(
+      "manifest funding is invalid: funding must be an array; fix it before signing\n",
+    );
+    expect(r.after).toBe(r.original);
+  });
+});
+
 describe("runExtensionSign publisher key", () => {
   const root = mkdtempSync(join(tmpdir(), "nimbus-sign-pub-"));
   const makeKey = (): { path: string; pub: string } => {
@@ -3424,6 +3500,13 @@ describe("extension update/downgrade owner prompt", () => {
     expect(handlers.has("consent.request")).toBe(true);
     expect(mock.calls[0]?.method).toBe("extension.update");
     expect(rpcTimeoutForExtensionSub("downgrade", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("sponsor gets the interactive budget only with --registry", () => {
+    expect(rpcTimeoutForExtensionSub("sponsor", ["a/b", "--registry", "main"])).toBe(
+      INTERACTIVE_RPC_TIMEOUT_MS,
+    );
+    expect(rpcTimeoutForExtensionSub("sponsor", ["a/b"])).toBeUndefined();
   });
 
   test("read-only subcommands keep the default timeout", () => {

@@ -1,4 +1,4 @@
-// nimbus-action-dist bun=1.4.3 inputHash=sha256:7ad24c3c79449275529960efc49717c10d7b38c072eef8fb7b6b3aaf15eca3d5
+// nimbus-action-dist bun=1.3.14 inputHash=sha256:a3d60e3da5e163be8923a5fcf4e776d38212f15bad4de869cb87bfc8c6fccda4
 import { createRequire } from "node:module";
 var __create = Object.create;
 var __getProtoOf = Object.getPrototypeOf;
@@ -19,15 +19,13 @@ var __toESM = (mod, isNodeMode, target) => {
       return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
-  const to = isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default") ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
-  if (mod && typeof mod === "object" || typeof mod === "function") {
-    for (let key of __getOwnPropNames(mod))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
-          get: __accessProp.bind(mod, key),
-          enumerable: true
-        });
-  }
+  const to = isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target;
+  for (let key of __getOwnPropNames(mod))
+    if (!__hasOwnProp.call(to, key))
+      __defProp(to, key, {
+        get: __accessProp.bind(mod, key),
+        enumerable: true
+      });
   if (canCache)
     cache.set(mod, to);
   return to;
@@ -49,7 +47,7 @@ var __export = (target, all) => {
 var __require = /* @__PURE__ */ createRequire(import.meta.url);
 
 // ../../../node_modules/.bun/tweetnacl@1.0.3/node_modules/tweetnacl/nacl-fast.js
-var require_nacl_fast = __commonJS(function(exports, module) {
+var require_nacl_fast = __commonJS((exports, module) => {
   (function(nacl) {
     var gf = function(init) {
       var i, r = new Float64Array(16);
@@ -2347,7 +2345,7 @@ var require_nacl_fast = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/constants.js
-var require_constants = __commonJS(function(exports, module) {
+var require_constants = __commonJS((exports, module) => {
   var SEMVER_SPEC_VERSION = "2.0.0";
   var MAX_LENGTH = 256;
   var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER || 9007199254740991;
@@ -2375,13 +2373,13 @@ var require_constants = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/debug.js
-var require_debug = __commonJS(function(exports, module) {
+var require_debug = __commonJS((exports, module) => {
   var debug = typeof process === "object" && process.env && process.env.NODE_DEBUG && /\bsemver\b/i.test(process.env.NODE_DEBUG) ? (...args) => console.error("SEMVER", ...args) : () => {};
   module.exports = debug;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/re.js
-var require_re = __commonJS(function(exports, module) {
+var require_re = __commonJS((exports, module) => {
   var {
     MAX_SAFE_COMPONENT_LENGTH,
     MAX_SAFE_BUILD_LENGTH,
@@ -2466,7 +2464,7 @@ var require_re = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/parse-options.js
-var require_parse_options = __commonJS(function(exports, module) {
+var require_parse_options = __commonJS((exports, module) => {
   var looseOption = Object.freeze({ loose: true });
   var emptyOpts = Object.freeze({});
   var parseOptions = (options) => {
@@ -2482,7 +2480,7 @@ var require_parse_options = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/identifiers.js
-var require_identifiers = __commonJS(function(exports, module) {
+var require_identifiers = __commonJS((exports, module) => {
   var numeric = /^[0-9]+$/;
   var compareIdentifiers = (a, b) => {
     if (typeof a === "number" && typeof b === "number") {
@@ -2504,7 +2502,7 @@ var require_identifiers = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/classes/semver.js
-var require_semver = __commonJS(function(exports, module) {
+var require_semver = __commonJS((exports, module) => {
   var debug = require_debug();
   var { MAX_LENGTH, MAX_SAFE_INTEGER } = require_constants();
   var { safeRe: re, t } = require_re();
@@ -2786,7 +2784,7 @@ var require_semver = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/parse.js
-var require_parse = __commonJS(function(exports, module) {
+var require_parse = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var parse = (version, options, throwErrors = false) => {
     if (version instanceof SemVer) {
@@ -2805,7 +2803,7 @@ var require_parse = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/valid.js
-var require_valid = __commonJS(function(exports, module) {
+var require_valid = __commonJS((exports, module) => {
   var parse = require_parse();
   var valid = (version, options) => {
     const v = parse(version, options);
@@ -2815,7 +2813,7 @@ var require_valid = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/clean.js
-var require_clean = __commonJS(function(exports, module) {
+var require_clean = __commonJS((exports, module) => {
   var parse = require_parse();
   var clean = (version, options) => {
     const s = parse(version.trim().replace(/^[=v]+/, ""), options);
@@ -2825,7 +2823,7 @@ var require_clean = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/inc.js
-var require_inc = __commonJS(function(exports, module) {
+var require_inc = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var inc = (version, release, options, identifier, identifierBase) => {
     if (typeof options === "string") {
@@ -2843,7 +2841,7 @@ var require_inc = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/diff.js
-var require_diff = __commonJS(function(exports, module) {
+var require_diff = __commonJS((exports, module) => {
   var parse = require_parse();
   var diff = (version1, version2) => {
     const v1 = parse(version1, null, true);
@@ -2884,28 +2882,28 @@ var require_diff = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/major.js
-var require_major = __commonJS(function(exports, module) {
+var require_major = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var major = (a, loose) => new SemVer(a, loose).major;
   module.exports = major;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/minor.js
-var require_minor = __commonJS(function(exports, module) {
+var require_minor = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var minor = (a, loose) => new SemVer(a, loose).minor;
   module.exports = minor;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/patch.js
-var require_patch = __commonJS(function(exports, module) {
+var require_patch = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var patch = (a, loose) => new SemVer(a, loose).patch;
   module.exports = patch;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/prerelease.js
-var require_prerelease = __commonJS(function(exports, module) {
+var require_prerelease = __commonJS((exports, module) => {
   var parse = require_parse();
   var prerelease = (version, options) => {
     const parsed = parse(version, options);
@@ -2915,28 +2913,28 @@ var require_prerelease = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/compare.js
-var require_compare = __commonJS(function(exports, module) {
+var require_compare = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var compare = (a, b, loose) => new SemVer(a, loose).compare(new SemVer(b, loose));
   module.exports = compare;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/rcompare.js
-var require_rcompare = __commonJS(function(exports, module) {
+var require_rcompare = __commonJS((exports, module) => {
   var compare = require_compare();
   var rcompare = (a, b, loose) => compare(b, a, loose);
   module.exports = rcompare;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/compare-loose.js
-var require_compare_loose = __commonJS(function(exports, module) {
+var require_compare_loose = __commonJS((exports, module) => {
   var compare = require_compare();
   var compareLoose = (a, b) => compare(a, b, true);
   module.exports = compareLoose;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/compare-build.js
-var require_compare_build = __commonJS(function(exports, module) {
+var require_compare_build = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var compareBuild = (a, b, loose) => {
     const versionA = new SemVer(a, loose);
@@ -2947,63 +2945,63 @@ var require_compare_build = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/sort.js
-var require_sort = __commonJS(function(exports, module) {
+var require_sort = __commonJS((exports, module) => {
   var compareBuild = require_compare_build();
   var sort = (list, loose) => list.sort((a, b) => compareBuild(a, b, loose));
   module.exports = sort;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/rsort.js
-var require_rsort = __commonJS(function(exports, module) {
+var require_rsort = __commonJS((exports, module) => {
   var compareBuild = require_compare_build();
   var rsort = (list, loose) => list.sort((a, b) => compareBuild(b, a, loose));
   module.exports = rsort;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/gt.js
-var require_gt = __commonJS(function(exports, module) {
+var require_gt = __commonJS((exports, module) => {
   var compare = require_compare();
   var gt = (a, b, loose) => compare(a, b, loose) > 0;
   module.exports = gt;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/lt.js
-var require_lt = __commonJS(function(exports, module) {
+var require_lt = __commonJS((exports, module) => {
   var compare = require_compare();
   var lt = (a, b, loose) => compare(a, b, loose) < 0;
   module.exports = lt;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/eq.js
-var require_eq = __commonJS(function(exports, module) {
+var require_eq = __commonJS((exports, module) => {
   var compare = require_compare();
   var eq = (a, b, loose) => compare(a, b, loose) === 0;
   module.exports = eq;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/neq.js
-var require_neq = __commonJS(function(exports, module) {
+var require_neq = __commonJS((exports, module) => {
   var compare = require_compare();
   var neq = (a, b, loose) => compare(a, b, loose) !== 0;
   module.exports = neq;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/gte.js
-var require_gte = __commonJS(function(exports, module) {
+var require_gte = __commonJS((exports, module) => {
   var compare = require_compare();
   var gte = (a, b, loose) => compare(a, b, loose) >= 0;
   module.exports = gte;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/lte.js
-var require_lte = __commonJS(function(exports, module) {
+var require_lte = __commonJS((exports, module) => {
   var compare = require_compare();
   var lte = (a, b, loose) => compare(a, b, loose) <= 0;
   module.exports = lte;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/cmp.js
-var require_cmp = __commonJS(function(exports, module) {
+var require_cmp = __commonJS((exports, module) => {
   var eq = require_eq();
   var neq = require_neq();
   var gt = require_gt();
@@ -3050,7 +3048,7 @@ var require_cmp = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/coerce.js
-var require_coerce = __commonJS(function(exports, module) {
+var require_coerce = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var parse = require_parse();
   var { safeRe: re, t } = require_re();
@@ -3093,12 +3091,12 @@ var require_coerce = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/truncate.js
-var require_truncate = __commonJS(function(exports, module) {
+var require_truncate = __commonJS((exports, module) => {
   var parse = require_parse();
-  var constants = require_constants();
+  var constants2 = require_constants();
   var SemVer = require_semver();
   var truncate = (version, truncation, options) => {
-    if (!constants.RELEASE_TYPES.includes(truncation)) {
+    if (!constants2.RELEASE_TYPES.includes(truncation)) {
       return null;
     }
     const clonedVersion = cloneInputVersion(version, options);
@@ -3131,7 +3129,7 @@ var require_truncate = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/internal/lrucache.js
-var require_lrucache = __commonJS(function(exports, module) {
+var require_lrucache = __commonJS((exports, module) => {
   class LRUCache {
     constructor() {
       this.max = 1000;
@@ -3166,7 +3164,7 @@ var require_lrucache = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/classes/range.js
-var require_range = __commonJS(function(exports, module) {
+var require_range = __commonJS((exports, module) => {
   var SPACE_CHARACTERS = /\s+/g;
 
   class Range {
@@ -3548,7 +3546,7 @@ var require_range = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/classes/comparator.js
-var require_comparator = __commonJS(function(exports, module) {
+var require_comparator = __commonJS((exports, module) => {
   var ANY = Symbol("SemVer ANY");
 
   class Comparator {
@@ -3659,7 +3657,7 @@ var require_comparator = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/functions/satisfies.js
-var require_satisfies = __commonJS(function(exports, module) {
+var require_satisfies = __commonJS((exports, module) => {
   var Range = require_range();
   var satisfies = (version, range, options) => {
     try {
@@ -3673,14 +3671,14 @@ var require_satisfies = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/to-comparators.js
-var require_to_comparators = __commonJS(function(exports, module) {
+var require_to_comparators = __commonJS((exports, module) => {
   var Range = require_range();
   var toComparators = (range, options) => new Range(range, options).set.map((comp) => comp.map((c) => c.value).join(" ").trim().split(" "));
   module.exports = toComparators;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/max-satisfying.js
-var require_max_satisfying = __commonJS(function(exports, module) {
+var require_max_satisfying = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var Range = require_range();
   var maxSatisfying = (versions, range, options) => {
@@ -3706,7 +3704,7 @@ var require_max_satisfying = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/min-satisfying.js
-var require_min_satisfying = __commonJS(function(exports, module) {
+var require_min_satisfying = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var Range = require_range();
   var minSatisfying = (versions, range, options) => {
@@ -3732,7 +3730,7 @@ var require_min_satisfying = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/min-version.js
-var require_min_version = __commonJS(function(exports, module) {
+var require_min_version = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var Range = require_range();
   var gt = require_gt();
@@ -3786,7 +3784,7 @@ var require_min_version = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/valid.js
-var require_valid2 = __commonJS(function(exports, module) {
+var require_valid2 = __commonJS((exports, module) => {
   var Range = require_range();
   var validRange = (range, options) => {
     try {
@@ -3799,7 +3797,7 @@ var require_valid2 = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/outside.js
-var require_outside = __commonJS(function(exports, module) {
+var require_outside = __commonJS((exports, module) => {
   var SemVer = require_semver();
   var Comparator = require_comparator();
   var { ANY } = Comparator;
@@ -3865,21 +3863,21 @@ var require_outside = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/gtr.js
-var require_gtr = __commonJS(function(exports, module) {
+var require_gtr = __commonJS((exports, module) => {
   var outside = require_outside();
   var gtr = (version, range, options) => outside(version, range, ">", options);
   module.exports = gtr;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/ltr.js
-var require_ltr = __commonJS(function(exports, module) {
+var require_ltr = __commonJS((exports, module) => {
   var outside = require_outside();
   var ltr = (version, range, options) => outside(version, range, "<", options);
   module.exports = ltr;
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/intersects.js
-var require_intersects = __commonJS(function(exports, module) {
+var require_intersects = __commonJS((exports, module) => {
   var Range = require_range();
   var intersects = (r1, r2, options) => {
     r1 = new Range(r1, options);
@@ -3890,7 +3888,7 @@ var require_intersects = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/simplify.js
-var require_simplify = __commonJS(function(exports, module) {
+var require_simplify = __commonJS((exports, module) => {
   var satisfies = require_satisfies();
   var compare = require_compare();
   module.exports = (versions, range, options) => {
@@ -3937,7 +3935,7 @@ var require_simplify = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/ranges/subset.js
-var require_subset = __commonJS(function(exports, module) {
+var require_subset = __commonJS((exports, module) => {
   var Range = require_range();
   var Comparator = require_comparator();
   var { ANY } = Comparator;
@@ -4097,9 +4095,9 @@ var require_subset = __commonJS(function(exports, module) {
 });
 
 // ../../../node_modules/.bun/semver@7.8.5/node_modules/semver/index.js
-var require_semver2 = __commonJS(function(exports, module) {
+var require_semver2 = __commonJS((exports, module) => {
   var internalRe = require_re();
-  var constants = require_constants();
+  var constants2 = require_constants();
   var SemVer = require_semver();
   var identifiers = require_identifiers();
   var parse = require_parse();
@@ -4183,27 +4181,11 @@ var require_semver2 = __commonJS(function(exports, module) {
     re: internalRe.re,
     src: internalRe.src,
     tokens: internalRe.t,
-    SEMVER_SPEC_VERSION: constants.SEMVER_SPEC_VERSION,
-    RELEASE_TYPES: constants.RELEASE_TYPES,
+    SEMVER_SPEC_VERSION: constants2.SEMVER_SPEC_VERSION,
+    RELEASE_TYPES: constants2.RELEASE_TYPES,
     compareIdentifiers: identifiers.compareIdentifiers,
     rcompareIdentifiers: identifiers.rcompareIdentifiers
   };
-});
-
-// src/git-tree.ts
-var exports_git_tree = {};
-__export(exports_git_tree, {
-  REGISTRY_NOT_INITIALISED: () => REGISTRY_NOT_INITIALISED,
-  REGULAR_FILE_MODE: () => REGULAR_FILE_MODE,
-  assertSafeTreePath: () => assertSafeTreePath,
-  commitOf: () => commitOf,
-  commitTime: () => commitTime,
-  diffTree: () => diffTree,
-  fetchRefs: () => fetchRefs,
-  findMergeBase: () => findMergeBase,
-  listTreeEntries: () => listTreeEntries,
-  readBlob: () => readBlob,
-  remoteDefaultBranch: () => remoteDefaultBranch
 });
 
 // src/main.ts
@@ -4238,6 +4220,189 @@ import { mkdtempSync as mkdtempSync5, rmSync as rmSync4 } from "node:fs";
 import { tmpdir as osTmpdir3 } from "node:os";
 import { join as join6 } from "node:path";
 
+// ../../registry-format/src/errors.ts
+class RegistryError extends Error {
+  code;
+  detail;
+  constructor(code, detail) {
+    super(`${code}: ${detail}`);
+    this.code = code;
+    this.detail = detail;
+    this.name = "RegistryError";
+  }
+}
+
+// ../../registry-format/src/author-metadata.ts
+var MAX_FUNDING_ENTRIES = 8;
+var MAX_FUNDING_LABEL_CHARS = 64;
+var MAX_FUNDING_URL_CHARS = 2048;
+var MAX_LICENSE_CHARS = 128;
+var isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var invalid = (reason) => ({
+  kind: "invalid",
+  reason
+});
+var BIDI_CHARS = new Set([
+  1564,
+  8206,
+  8207,
+  8234,
+  8235,
+  8236,
+  8237,
+  8238,
+  8294,
+  8295,
+  8296,
+  8297
+].map((cp) => String.fromCodePoint(cp)));
+var CONTROL_RE = /\p{Cc}/u;
+function hasBidi(s) {
+  for (const ch of s)
+    if (BIDI_CHARS.has(ch))
+      return true;
+  return false;
+}
+var WHITESPACE_RE = /\s/u;
+function fundingUrlProblem(url) {
+  if (typeof url !== "string" || url.length === 0)
+    return "url must be a non-empty string";
+  if (url.length > MAX_FUNDING_URL_CHARS) {
+    return `url must be at most ${MAX_FUNDING_URL_CHARS} characters`;
+  }
+  if (CONTROL_RE.test(url))
+    return "url has a control character";
+  if (hasBidi(url))
+    return "url has a bidi control character";
+  if (WHITESPACE_RE.test(url))
+    return "url has whitespace";
+  if (!URL.canParse(url))
+    return "url must be an https URL with a host and no credentials";
+  const u = new URL(url);
+  if (u.protocol === "https:" && u.hostname !== "" && u.username === "" && u.password === "") {
+    return;
+  }
+  return "url must be an https URL with a host and no credentials";
+}
+function readEntry(raw, index) {
+  const at = `entry ${index}`;
+  if (!isObject(raw))
+    return `${at} is not an object`;
+  for (const k of Object.keys(raw)) {
+    if (k !== "url" && k !== "label")
+      return `${at} has an unknown key "${k}"`;
+  }
+  const url = raw["url"];
+  const urlProblem = fundingUrlProblem(url);
+  if (urlProblem !== undefined || typeof url !== "string") {
+    return `${at} ${urlProblem ?? "url must be a string"}`;
+  }
+  const label = raw["label"];
+  if (label === undefined)
+    return { url };
+  if (typeof label !== "string")
+    return `${at} label must be a string`;
+  if (label.length < 1 || label.length > MAX_FUNDING_LABEL_CHARS) {
+    return `${at} label must be 1 to ${MAX_FUNDING_LABEL_CHARS} characters`;
+  }
+  if (CONTROL_RE.test(label))
+    return `${at} label has a control character`;
+  if (hasBidi(label))
+    return `${at} label has a bidi control character`;
+  return { url, label };
+}
+function readManifestFunding(raw) {
+  if (!isObject(raw) || raw["funding"] === undefined)
+    return { kind: "absent" };
+  const f = raw["funding"];
+  if (!Array.isArray(f))
+    return invalid("funding must be an array");
+  if (f.length < 1 || f.length > MAX_FUNDING_ENTRIES) {
+    return invalid(`funding must have 1 to ${MAX_FUNDING_ENTRIES} entries`);
+  }
+  const out = [];
+  const seen = new Set;
+  for (const [i, item] of f.entries()) {
+    const e = readEntry(item, i);
+    if (typeof e === "string")
+      return invalid(e);
+    if (seen.has(e.url))
+      return invalid(`entry ${i} repeats a url`);
+    seen.add(e.url);
+    out.push(e);
+  }
+  return { kind: "ok", value: out };
+}
+var LICENSE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9.-]*\+?$/;
+var LICENSE_REF_RE = /^LicenseRef-[A-Za-z0-9.-]+$/;
+var isOperator = (t) => t === "AND" || t === "OR" || t === "WITH";
+var isLicenseId = (t) => t !== undefined && !isOperator(t) && (LICENSE_ID_RE.test(t) || LICENSE_REF_RE.test(t));
+function tokenise(s) {
+  return s.replaceAll("(", " ( ").replaceAll(")", " ) ").split(/\s+/).filter((t) => t !== "");
+}
+function isSpdxExpression(s) {
+  const tokens = tokenise(s);
+  let pos = 0;
+  const term = () => {
+    if (tokens[pos] === "(") {
+      pos++;
+      if (!expr() || tokens[pos] !== ")")
+        return false;
+      pos++;
+      return true;
+    }
+    if (!isLicenseId(tokens[pos]))
+      return false;
+    pos++;
+    if (tokens[pos] === "WITH") {
+      pos++;
+      if (!isLicenseId(tokens[pos]))
+        return false;
+      pos++;
+    }
+    return true;
+  };
+  const expr = () => {
+    if (!term())
+      return false;
+    while (tokens[pos] === "AND" || tokens[pos] === "OR") {
+      pos++;
+      if (!term())
+        return false;
+    }
+    return true;
+  };
+  return expr() && pos === tokens.length;
+}
+function readManifestLicense(raw) {
+  if (!isObject(raw) || raw["license"] === undefined)
+    return { kind: "absent" };
+  const l = raw["license"];
+  if (typeof l !== "string")
+    return invalid("license must be a string");
+  if (l.length < 1 || l.length > MAX_LICENSE_CHARS) {
+    return invalid(`license must be 1 to ${MAX_LICENSE_CHARS} characters`);
+  }
+  if (CONTROL_RE.test(l))
+    return invalid("license has a control character");
+  if (l !== l.trim())
+    return invalid("license has leading or trailing whitespace");
+  if (/[^\S ]/u.test(l))
+    return invalid("license has a whitespace character other than a space");
+  if (!isSpdxExpression(l))
+    return invalid("license is not an SPDX license expression");
+  return { kind: "ok", value: l };
+}
+function assertAuthorMetadata(raw) {
+  const f = readManifestFunding(raw);
+  if (f.kind === "invalid") {
+    throw new RegistryError("ERR_REGISTRY_MANIFEST_INVALID", `funding: ${f.reason}`);
+  }
+  const l = readManifestLicense(raw);
+  if (l.kind === "invalid") {
+    throw new RegistryError("ERR_REGISTRY_MANIFEST_INVALID", `license: ${l.reason}`);
+  }
+}
 // ../../registry-format/src/caps.ts
 var MAX_MANIFEST_BYTES = 64 * 1024;
 var MAX_PACKAGE_BYTES = 50 * 1024 * 1024;
@@ -4258,17 +4423,6 @@ function codeUnitCompare(a, b) {
   }
   return 0;
 }
-// ../../registry-format/src/errors.ts
-class RegistryError extends Error {
-  code;
-  detail;
-  constructor(code, detail) {
-    super(`${code}: ${detail}`);
-    this.code = code;
-    this.detail = detail;
-    this.name = "RegistryError";
-  }
-}
 // ../../registry-format/src/eval-baseline.ts
 var EVAL_BASELINE_SCORER_VERSION = 1;
 var EVAL_BASELINE_FAILURES = ["no-listing", "listing-timeout", "invalid-tool"];
@@ -4276,14 +4430,14 @@ var MAX_EVAL_BASELINE_TOOLS = 1e6;
 function bad(why) {
   return new RegistryError("ERR_REGISTRY_EVAL_QUALITY_INVALID", why);
 }
-function isObject(v) {
+function isObject2(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function isFailure(v) {
   return EVAL_BASELINE_FAILURES.includes(v);
 }
 function parseEvalBaseline(raw) {
-  if (!isObject(raw))
+  if (!isObject2(raw))
     throw bad("baseline must be an object");
   const passed = raw["passed"];
   if (typeof passed !== "boolean")
@@ -4314,11 +4468,11 @@ function parseEvalBaselineDocument(text) {
   } catch {
     return null;
   }
-  if (!isObject(raw))
+  if (!isObject2(raw))
     return null;
   if (raw["ok"] === false) {
     const e = raw["error"];
-    if (isObject(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
+    if (isObject2(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
       return { ok: false, error: { code: e["code"], message: e["message"] } };
     }
     return null;
@@ -4439,14 +4593,14 @@ function parseEvalQuality(raw) {
 var MAX_EVAL_RECORD_INPUTS_BYTES = 1024 * 1024;
 var SCALAR_TYPES = new Set(["string", "number", "boolean"]);
 // ../../registry-format/src/eval-role-document.ts
-function isObject2(v) {
+function isObject3(v) {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 function isResult(v) {
-  return isObject2(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
+  return isObject3(v) && typeof v["suite"] === "string" && typeof v["case"] === "string" && typeof v["rubric"] === "string" && typeof v["pass"] === "boolean" && (v["reason"] === null || typeof v["reason"] === "string");
 }
 function parseEvalReport(raw) {
-  if (!isObject2(raw) || !Array.isArray(raw["results"]))
+  if (!isObject3(raw) || !Array.isArray(raw["results"]))
     return null;
   if (!raw["results"].every(isResult))
     return null;
@@ -4470,11 +4624,11 @@ function parseEvalRoleDocument(text) {
   } catch {
     return null;
   }
-  if (!isObject2(raw))
+  if (!isObject3(raw))
     return null;
   if (raw["ok"] === false) {
     const e = raw["error"];
-    if (isObject2(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
+    if (isObject3(e) && typeof e["code"] === "string" && typeof e["message"] === "string") {
       return { ok: false, error: { code: e["code"], message: e["message"] } };
     }
     return null;
@@ -5023,6 +5177,84 @@ var KNOWN_ITEM_TYPES = [
 var KNOWN = new Set(KNOWN_ITEM_TYPES);
 // ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/ipc/ndjson-line-reader.js
 var IPC_MAX_LINE_BYTES = 1024 * 1024;
+function byteLengthUtf8(s) {
+  return new TextEncoder().encode(s).length;
+}
+var LINE_LIMIT_MESSAGE = "Message exceeds 1MB line limit";
+var BYTE_ORDER_MARK = "\uFEFF";
+
+class NdjsonLineReader {
+  lineLimitCtor;
+  decoder = new TextDecoder("utf-8", { fatal: false, ignoreBOM: true });
+  pending = "";
+  latched = false;
+  streamStarted = false;
+  constructor(opts = {}) {
+    this.lineLimitCtor = opts.lineLimitError ?? Error;
+  }
+  throwLineTooLong(message) {
+    this.latched = true;
+    this.pending = "";
+    throw new this.lineLimitCtor(message);
+  }
+  failIfLatched() {
+    if (this.latched) {
+      throw new this.lineLimitCtor(LINE_LIMIT_MESSAGE);
+    }
+  }
+  decode(chunk, stream) {
+    let text = this.decoder.decode(chunk, { stream });
+    if (text.length > 0 && !this.streamStarted) {
+      this.streamStarted = true;
+      if (text.startsWith(BYTE_ORDER_MARK)) {
+        text = text.slice(1);
+      }
+    }
+    return text;
+  }
+  push(chunk) {
+    this.failIfLatched();
+    this.pending += this.decode(chunk, true);
+    const out = [];
+    while (true) {
+      const nl = this.pending.indexOf(`
+`);
+      if (nl < 0) {
+        break;
+      }
+      const line = this.pending.slice(0, nl);
+      this.pending = this.pending.slice(nl + 1);
+      const trimmed = line.endsWith("\r") ? line.slice(0, -1) : line;
+      if (trimmed.length === 0) {
+        continue;
+      }
+      if (byteLengthUtf8(trimmed) > IPC_MAX_LINE_BYTES) {
+        this.throwLineTooLong(LINE_LIMIT_MESSAGE);
+      }
+      out.push(trimmed);
+    }
+    if (byteLengthUtf8(this.pending) > IPC_MAX_LINE_BYTES) {
+      this.throwLineTooLong(LINE_LIMIT_MESSAGE);
+    }
+    return out;
+  }
+  flushFrames() {
+    this.failIfLatched();
+    const rest = this.pending + this.decode(new Uint8Array(0), false);
+    this.pending = "";
+    if (byteLengthUtf8(rest) > IPC_MAX_LINE_BYTES) {
+      this.throwLineTooLong(LINE_LIMIT_MESSAGE);
+    }
+    const frame = rest.endsWith("\r") ? rest.slice(0, -1) : rest;
+    if (frame.length === 0) {
+      return { frames: [], truncated: false };
+    }
+    return { frames: [frame], truncated: true };
+  }
+  flush() {
+    return this.flushFrames().frames;
+  }
+}
 // ../../../node_modules/.bun/@nimbus-dev+sdk@2.1.0/node_modules/@nimbus-dev/sdk/dist/testing/sandbox-protocol.js
 var NETWORK_BLOCKED_CODES = new Set([
   "ECONNREFUSED",
@@ -5534,43 +5766,43 @@ var KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 var SIGNATURE_RE2 = /^[A-Za-z0-9+/]{86}==$/;
 var FINGERPRINT_RE = /^[0-9a-f]{32}$/;
 var GITHUB_HANDLE_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}$/;
-function invalid(detail) {
+function invalid2(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
 function asObject(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw invalid("a statement must be an object");
+    throw invalid2("a statement must be an object");
   }
   return value;
 }
 function str(o, key) {
   const v = o[key];
   if (typeof v !== "string" || v === "")
-    throw invalid(`${key} must be a non-empty string`);
+    throw invalid2(`${key} must be a non-empty string`);
   return v;
 }
 function matching(o, key, re) {
   const v = str(o, key);
   if (!re.test(v))
-    throw invalid(`${key} is malformed`);
+    throw invalid2(`${key} is malformed`);
   return v;
 }
 function timestamp(o, key) {
   const v = str(o, key);
   if (Number.isNaN(Date.parse(v)))
-    throw invalid(`${key} is not a timestamp`);
+    throw invalid2(`${key} is not a timestamp`);
   return v;
 }
 function publisherId(o) {
   const v = str(o, "publisherId");
   if (v.length > 64 || !PUBLISHER_ID_RE.test(v))
-    throw invalid("publisherId is malformed");
+    throw invalid2("publisherId is malformed");
   return v;
 }
 function reason(o) {
   const v = str(o, "reason");
   if ([...v].length > MAX_STATEMENT_REASON_CHARS) {
-    throw invalid(`reason exceeds ${String(MAX_STATEMENT_REASON_CHARS)} characters`);
+    throw invalid2(`reason exceeds ${String(MAX_STATEMENT_REASON_CHARS)} characters`);
   }
   return v;
 }
@@ -5579,17 +5811,17 @@ function versions(o) {
   if (v === "*")
     return v;
   if (!Array.isArray(v) || v.length === 0) {
-    throw invalid('versions must be "*" or a non-empty list');
+    throw invalid2('versions must be "*" or a non-empty list');
   }
   if (v.length > MAX_TAKEDOWN_VERSIONS) {
-    throw invalid(`versions lists more than ${String(MAX_TAKEDOWN_VERSIONS)} entries`);
+    throw invalid2(`versions lists more than ${String(MAX_TAKEDOWN_VERSIONS)} entries`);
   }
   const seen = new Set;
   for (const item of v) {
     if (typeof item !== "string" || !isValidSemver(item))
-      throw invalid("versions has a non-semver entry");
+      throw invalid2("versions has a non-semver entry");
     if (seen.has(item))
-      throw invalid("versions has a duplicate entry");
+      throw invalid2("versions has a duplicate entry");
     seen.add(item);
   }
   return v;
@@ -5597,14 +5829,14 @@ function versions(o) {
 function verifiedKeys(o) {
   const v = o["keys"];
   if (!Array.isArray(v) || v.length === 0 || v.length > MAX_VERIFIED_KEYS) {
-    throw invalid(`keys must list 1 to ${String(MAX_VERIFIED_KEYS)} keys`);
+    throw invalid2(`keys must list 1 to ${String(MAX_VERIFIED_KEYS)} keys`);
   }
   const seen = new Set;
   for (const k of v) {
     if (typeof k !== "string" || !KEY_RE.test(k))
-      throw invalid("keys has a malformed key");
+      throw invalid2("keys has a malformed key");
     if (seen.has(k))
-      throw invalid("keys has a duplicate key");
+      throw invalid2("keys has a duplicate key");
     seen.add(k);
   }
   return v;
@@ -5618,7 +5850,7 @@ function isKnownStatementKind(raw) {
 function parseTrustStatement(raw) {
   const o = asObject(raw);
   if (!isKnownStatementKind(o))
-    throw invalid("kind is not known");
+    throw invalid2("kind is not known");
   const base = {
     ...o,
     issuedAt: timestamp(o, "issuedAt"),
@@ -5639,7 +5871,7 @@ function parseTrustStatement(raw) {
       try {
         assertSafeExtensionId(extensionId);
       } catch (e) {
-        throw invalid(`extensionId is not safe: ${e.message}`);
+        throw invalid2(`extensionId is not safe: ${e.message}`);
       }
       return {
         ...base,
@@ -5654,7 +5886,7 @@ function parseTrustStatement(raw) {
       const fromKey = matching(o, "fromKey", KEY_RE);
       const toKey = matching(o, "toKey", KEY_RE);
       if (fromKey === toKey)
-        throw invalid("fromKey and toKey are the same key");
+        throw invalid2("fromKey and toKey are the same key");
       return { ...base, kind: "key.rotate", publisherId: publisherId(o), fromKey, toKey };
     }
     case "publisher.verified":
@@ -5712,7 +5944,7 @@ var MAX_TRUST_FEED_BYTES = 8 * 1024 * 1024;
 var MAX_STATEMENTS_PER_DOCUMENT = 1e4;
 var KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 var SIGNATURE_RE3 = /^[A-Za-z0-9+/]{86}==$/;
-function invalid2(detail) {
+function invalid3(detail) {
   return new RegistryError("ERR_TRUST_FEED_INVALID", detail);
 }
 function hasStringKind(entry) {
@@ -5753,7 +5985,7 @@ function parseTrustFeed(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid2("trust.json is not valid UTF-8");
+    throw invalid3("trust.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -5761,32 +5993,32 @@ function parseTrustFeed(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid2("trust.json is not valid JSON");
+    throw invalid3("trust.json is not valid JSON");
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid2("trust.json must be an object");
+    throw invalid3("trust.json must be an object");
   }
   const o = raw;
   for (const k of ["format", "rootKey", "sequence", "generatedAt", "statements", "signature"]) {
     if (!(k in o))
-      throw invalid2(`trust.json is missing key: ${k}`);
+      throw invalid3(`trust.json is missing key: ${k}`);
   }
   if (o["format"] !== 1)
-    throw invalid2("unsupported trust feed format");
+    throw invalid3("unsupported trust feed format");
   const sequence = o["sequence"];
   if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid2("sequence must be a positive integer");
+    throw invalid3("sequence must be a positive integer");
   }
   const rootKey = o["rootKey"];
   if (typeof rootKey !== "string" || !KEY_RE2.test(rootKey))
-    throw invalid2("rootKey is malformed");
+    throw invalid3("rootKey is malformed");
   const signature = o["signature"];
   if (typeof signature !== "string" || !SIGNATURE_RE3.test(signature)) {
-    throw invalid2("signature is malformed");
+    throw invalid3("signature is malformed");
   }
   const generatedAt = o["generatedAt"];
   if (typeof generatedAt !== "string" || Number.isNaN(Date.parse(generatedAt))) {
-    throw invalid2("generatedAt is not a timestamp");
+    throw invalid3("generatedAt is not a timestamp");
   }
   return {
     ...o,
@@ -5805,7 +6037,7 @@ function readTrustFeedStatements(feed) {
     if (s.kind !== "publisher.verified")
       continue;
     if (verified.has(s.publisherId)) {
-      throw invalid2(`two publisher.verified entries for "${s.publisherId}"`);
+      throw invalid3(`two publisher.verified entries for "${s.publisherId}"`);
     }
     verified.add(s.publisherId);
   }
@@ -5848,37 +6080,37 @@ var MAX_INDEX_BYTES = 8 * 1024 * 1024;
 var HEX64_RE = /^[0-9a-f]{64}$/;
 var KEY_RE3 = /^[A-Za-z0-9+/]{43}=$/;
 var SIGNATURE_RE4 = /^[A-Za-z0-9+/]{86}==$/;
-function invalid3(detail) {
+function invalid4(detail) {
   return new RegistryError("ERR_REGISTRY_INDEX_INVALID", detail);
 }
 function asObject2(value, what) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
-    throw invalid3(`${what} must be an object`);
+    throw invalid4(`${what} must be an object`);
   }
   return value;
 }
 function requireKeys(o, keys, what) {
   for (const k of keys) {
     if (!(k in o))
-      throw invalid3(`${what} is missing key: ${k}`);
+      throw invalid4(`${what} is missing key: ${k}`);
   }
 }
 function str2(o, key, what) {
   const v = o[key];
   if (typeof v !== "string" || v === "")
-    throw invalid3(`${what}.${key} must be a non-empty string`);
+    throw invalid4(`${what}.${key} must be a non-empty string`);
   return v;
 }
 function matching2(o, key, re, what) {
   const v = str2(o, key, what);
   if (!re.test(v))
-    throw invalid3(`${what}.${key} is malformed`);
+    throw invalid4(`${what}.${key} is malformed`);
   return v;
 }
 function isoTimestamp(o, key, what) {
   const v = str2(o, key, what);
   if (Number.isNaN(Date.parse(v)))
-    throw invalid3(`${what}.${key} is not a timestamp`);
+    throw invalid4(`${what}.${key} is not a timestamp`);
   return v;
 }
 function parseVersionEntry(raw, id, version) {
@@ -5897,17 +6129,17 @@ function parseVersionEntry(raw, id, version) {
   ], what);
   const channel = o["channel"];
   if (channel !== "stable" && channel !== "beta")
-    throw invalid3(`${what}.channel is not known`);
+    throw invalid4(`${what}.channel is not known`);
   const base = `extensions/${id}/${version}`;
   const manifest = str2(o, "manifest", what);
   if (manifest !== `${base}/manifest.json`)
-    throw invalid3(`${what}.manifest is not canonical`);
+    throw invalid4(`${what}.manifest is not canonical`);
   const pkg = str2(o, "package", what);
   if (pkg !== `${base}/package.tgz`)
-    throw invalid3(`${what}.package is not canonical`);
+    throw invalid4(`${what}.package is not canonical`);
   const size = o["packageSizeBytes"];
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) {
-    throw invalid3(`${what}.packageSizeBytes must be a positive integer`);
+    throw invalid4(`${what}.packageSizeBytes must be a positive integer`);
   }
   return {
     ...o,
@@ -5926,7 +6158,7 @@ function parseExtensionEntry(raw, id) {
   try {
     assertSafeExtensionId(id);
   } catch (e) {
-    throw invalid3(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
+    throw invalid4(`extension id ${JSON.stringify(id)} is not safe: ${e.message}`);
   }
   const what = `extensions.${id}`;
   const o = asObject2(raw, what);
@@ -5935,19 +6167,19 @@ function parseExtensionEntry(raw, id) {
   requireKeys(p, ["id", "key"], `${what}.publisher`);
   const pid = str2(p, "id", `${what}.publisher`);
   if (pid.length > 64 || !PUBLISHER_ID_RE.test(pid)) {
-    throw invalid3(`${what}.publisher.id is malformed`);
+    throw invalid4(`${what}.publisher.id is malformed`);
   }
   const key = matching2(p, "key", KEY_RE3, `${what}.publisher`);
   const versionsRaw = asObject2(o["versions"], `${what}.versions`);
-  const versions = {};
+  const versions2 = {};
   for (const [version, entry] of Object.entries(versionsRaw)) {
     if (!isValidSemver(version))
-      throw invalid3(`${what} has a non-semver version: ${version}`);
-    versions[version] = parseVersionEntry(entry, id, version);
+      throw invalid4(`${what} has a non-semver version: ${version}`);
+    versions2[version] = parseVersionEntry(entry, id, version);
   }
-  if (Object.keys(versions).length === 0)
-    throw invalid3(`${what} has no versions`);
-  return { ...o, publisher: { ...p, id: pid, key }, versions };
+  if (Object.keys(versions2).length === 0)
+    throw invalid4(`${what} has no versions`);
+  return { ...o, publisher: { ...p, id: pid, key }, versions: versions2 };
 }
 function parseRegistryIndex(bytes) {
   if (bytes.byteLength > MAX_INDEX_BYTES) {
@@ -5957,7 +6189,7 @@ function parseRegistryIndex(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid3("index.json is not valid UTF-8");
+    throw invalid4("index.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -5965,15 +6197,15 @@ function parseRegistryIndex(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid3("index.json is not valid JSON");
+    throw invalid4("index.json is not valid JSON");
   }
   const o = asObject2(raw, "index");
   requireKeys(o, ["format", "rootKey", "sequence", "generatedAt", "extensions", "signature"], "index");
   if (o["format"] !== 1)
-    throw invalid3("unsupported index format");
+    throw invalid4("unsupported index format");
   const sequence = o["sequence"];
   if (typeof sequence !== "number" || !Number.isSafeInteger(sequence) || sequence <= 0) {
-    throw invalid3("index.sequence must be a positive integer");
+    throw invalid4("index.sequence must be a positive integer");
   }
   const extensionsRaw = asObject2(o["extensions"], "index.extensions");
   const extensions = {};
@@ -7111,17 +7343,17 @@ var ft = class s {
     return new s(On(Tn(t), e), i);
   }
 };
-var On = (s, t) => t ? Object.assign({}, t, s) : s;
-var Tn = (s) => s.replace(/\n$/, "").split(`
+var On = (s2, t) => t ? Object.assign({}, t, s2) : s2;
+var Tn = (s2) => s2.replace(/\n$/, "").split(`
 `).reduce(xn, Object.create(null));
-var xn = (s, t) => {
+var xn = (s2, t) => {
   let e = parseInt(t, 10);
   if (e !== Buffer.byteLength(t) + 1)
-    return s;
+    return s2;
   t = t.slice((e + " ").length);
   let i = t.split("="), r = i.shift();
   if (!r)
-    return s;
+    return s2;
   let n = r.replace(/^SCHILY\.(dev|ino|nlink)/, "$1"), o = i.join("=").replace(/\0.*/, "");
   switch (n) {
     case "path":
@@ -7131,16 +7363,16 @@ var xn = (s, t) => {
     case "comment":
     case "gname":
     case "uname":
-      s[n] = o;
+      s2[n] = o;
       break;
     case "ctime":
     case "atime":
     case "mtime":
-      s[n] = new Date(Number(o) * 1000);
+      s2[n] = new Date(Number(o) * 1000);
       break;
     case "size":
       let h = +o;
-      h >= 0 && (s[n] = h);
+      h >= 0 && (s2[n] = h);
       break;
     case "gid":
     case "uid":
@@ -7148,13 +7380,13 @@ var xn = (s, t) => {
     case "ino":
     case "nlink":
     case "mode":
-      s[n] = +o;
+      s2[n] = +o;
       break;
   }
-  return s;
+  return s2;
 };
 var Ln = process.env.TESTING_TAR_FAKE_PLATFORM || process.platform;
-var f = Ln !== "win32" ? (s) => String(s) : (s) => String(s).replaceAll(/\\/g, "/");
+var f = Ln !== "win32" ? (s2) => String(s2) : (s2) => String(s2).replaceAll(/\\/g, "/");
 var $e = class extends A {
   extended;
   globalExtended;
@@ -7221,8 +7453,8 @@ var $e = class extends A {
     t.path && (t.path = f(t.path)), t.linkpath && (t.linkpath = f(t.linkpath)), Object.assign(this, Object.fromEntries(Object.entries(t).filter(([i, r]) => !(r == null || i === "path" && e))));
   }
 };
-var Dt = (s, t, e, i = {}) => {
-  s.file && (i.file = s.file), s.cwd && (i.cwd = s.cwd), i.code = e instanceof Error && e.code || t, i.tarCode = t, !s.strict && i.recoverable !== false ? (e instanceof Error && (i = Object.assign(e, i), e = e.message), s.emit("warn", t, e, i)) : e instanceof Error ? s.emit("error", Object.assign(e, i)) : s.emit("error", Object.assign(new Error(`${t}: ${e}`), i));
+var Dt = (s2, t, e, i = {}) => {
+  s2.file && (i.file = s2.file), s2.cwd && (i.cwd = s2.cwd), i.code = e instanceof Error && e.code || t, i.tarCode = t, !s2.strict && i.recoverable !== false ? (e instanceof Error && (i = Object.assign(e, i), e = e.message), s2.emit("warn", t, e, i)) : e instanceof Error ? s2.emit("error", Object.assign(e, i)) : s2.emit("error", Object.assign(new Error(`${t}: ${e}`), i));
 };
 var Nn = 1024 * 1024;
 var Xi = Buffer.from([31, 139]);
@@ -7520,20 +7752,20 @@ var rt = class extends Dn {
     return typeof t == "function" && (i = t, e = undefined, t = undefined), typeof e == "function" && (i = e, e = undefined), typeof t == "string" && (t = Buffer.from(t, e)), i && this.once("finish", i), this[$] || (this[w] ? (t && (this[le] += t.length, this[w].write(t)), this[w].end()) : (this[ut] = true, (this.brotli === undefined || this.zstd === undefined) && (t = t || Buffer.alloc(0)), t && this.write(t), this[Qe]())), this;
   }
 };
-var mt = (s) => {
-  let t = s.length - 1, e = -1;
-  for (;t > -1 && s.charAt(t) === "/"; )
+var mt = (s2) => {
+  let t = s2.length - 1, e = -1;
+  for (;t > -1 && s2.charAt(t) === "/"; )
     e = t, t--;
-  return e === -1 ? s : s.slice(0, e);
+  return e === -1 ? s2 : s2.slice(0, e);
 };
-var vn = (s) => {
-  let t = s.onReadEntry;
-  s.onReadEntry = t ? (e) => {
+var vn = (s2) => {
+  let t = s2.onReadEntry;
+  s2.onReadEntry = t ? (e) => {
     t(e), e.resume();
   } : (e) => e.resume();
 };
-var Qi = (s, t) => {
-  let e = new Map(t.map((o) => [mt(o), true])), i = s.filter, r = 100, n = (o, h = "", a = 0) => {
+var Qi = (s2, t) => {
+  let e = new Map(t.map((o) => [mt(o), true])), i = s2.filter, r = 100, n = (o, h = "", a = 0) => {
     if (a >= r)
       return e.set(o, false), false;
     let l = h || kn(o).root || ".", c;
@@ -7545,13 +7777,13 @@ var Qi = (s, t) => {
     }
     return e.set(o, c), c;
   };
-  s.filter = i ? (o, h) => i(o, h) && n(mt(o)) : (o) => n(mt(o));
+  s2.filter = i ? (o, h) => i(o, h) && n(mt(o)) : (o) => n(mt(o));
 };
-var Mn = (s) => {
-  let t = new rt(s), e = s.file, i;
+var Mn = (s2) => {
+  let t = new rt(s2), e = s2.file, i;
   try {
     i = Kt.openSync(e, "r");
-    let r = Kt.fstatSync(i), n = s.maxReadSize || 16 * 1024 * 1024;
+    let r = Kt.fstatSync(i), n = s2.maxReadSize || 16 * 1024 * 1024;
     if (r.size < n) {
       let o = Buffer.allocUnsafe(r.size), h = Kt.readSync(i, o, 0, r.size, 0);
       t.end(h === o.byteLength ? o : o.subarray(0, h));
@@ -7572,8 +7804,8 @@ var Mn = (s) => {
       } catch {}
   }
 };
-var Bn = (s, t) => {
-  let e = new rt(s), i = s.maxReadSize || 16 * 1024 * 1024, r = s.file;
+var Bn = (s2, t) => {
+  let e = new rt(s2), i = s2.maxReadSize || 16 * 1024 * 1024, r = s2.file;
   return new Promise((o, h) => {
     e.on("error", h), e.on("end", o), Kt.stat(r, (a, l) => {
       if (a)
@@ -7585,26 +7817,26 @@ var Bn = (s, t) => {
     });
   });
 };
-var Ct = K(Mn, Bn, (s) => new rt(s), (s) => new rt(s), (s, t) => {
-  t?.length && Qi(s, t), s.noResume || vn(s);
+var Ct = K(Mn, Bn, (s2) => new rt(s2), (s2) => new rt(s2), (s2, t) => {
+  t?.length && Qi(s2, t), s2.noResume || vn(s2);
 });
-var Ji = (s, t, e) => (s &= 4095, e && (s = (s | 384) & -19), t && (s & 256 && (s |= 64), s & 32 && (s |= 8), s & 4 && (s |= 1)), s);
+var Ji = (s2, t, e) => (s2 &= 4095, e && (s2 = (s2 | 384) & -19), t && (s2 & 256 && (s2 |= 64), s2 & 32 && (s2 |= 8), s2 & 4 && (s2 |= 1)), s2);
 var { isAbsolute: zn, parse: qs } = Pn;
-var ce = (s) => {
-  let t = "", e = qs(s);
-  for (;zn(s) || e.root; ) {
-    let i = s.charAt(0) === "/" && s.slice(0, 4) !== "//?/" ? "/" : e.root;
-    s = s.slice(i.length), t += i, e = qs(s);
+var ce = (s2) => {
+  let t = "", e = qs(s2);
+  for (;zn(s2) || e.root; ) {
+    let i = s2.charAt(0) === "/" && s2.slice(0, 4) !== "//?/" ? "/" : e.root;
+    s2 = s2.slice(i.length), t += i, e = qs(s2);
   }
-  return [t, s];
+  return [t, s2];
 };
 var ei = ["|", "<", ">", "?", ":"];
-var ji = ei.map((s) => String.fromCodePoint(61440 + Number(s.codePointAt(0))));
-var Un = new Map(ei.map((s, t) => [s, ji[t]]));
-var Hn = new Map(ji.map((s, t) => [s, ei[t]]));
-var ts = (s) => ei.reduce((t, e) => t.split(e).join(Un.get(e)), s);
-var Qs = (s) => ji.reduce((t, e) => t.split(e).join(Hn.get(e)), s);
-var rr = (s, t) => t ? (s = f(s).replace(/^\.(\/|$)/, ""), mt(t) + "/" + s) : f(s);
+var ji = ei.map((s2) => String.fromCodePoint(61440 + Number(s2.codePointAt(0))));
+var Un = new Map(ei.map((s2, t) => [s2, ji[t]]));
+var Hn = new Map(ji.map((s2, t) => [s2, ei[t]]));
+var ts = (s2) => ei.reduce((t, e) => t.split(e).join(Un.get(e)), s2);
+var Qs = (s2) => ji.reduce((t, e) => t.split(e).join(Hn.get(e)), s2);
+var rr = (s2, t) => t ? (s2 = f(s2).replace(/^\.(\/|$)/, ""), mt(t) + "/" + s2) : f(s2);
 var Wn = 16 * 1024 * 1024;
 var tr = Symbol("process");
 var er = Symbol("file");
@@ -7906,13 +8138,13 @@ var oi = class extends A {
     return this.blockRemain && super.write(Buffer.alloc(this.blockRemain)), typeof t == "function" && (i = t, e = undefined, t = undefined), typeof e == "function" && (i = e, e = undefined), typeof t == "string" && (t = Buffer.from(t, e ?? "utf8")), i && this.once("finish", i), t ? super.end(t, i) : super.end(i), this;
   }
 };
-var Gn = (s) => s.isFile() ? "File" : s.isDirectory() ? "Directory" : s.isSymbolicLink() ? "SymbolicLink" : "Unsupported";
-var hi = class s {
+var Gn = (s2) => s2.isFile() ? "File" : s2.isDirectory() ? "Directory" : s2.isSymbolicLink() ? "SymbolicLink" : "Unsupported";
+var hi = class s2 {
   tail;
   head;
   length = 0;
   static create(t = []) {
-    return new s(t);
+    return new s2(t);
   }
   constructor(t = []) {
     for (let e of t)
@@ -7990,14 +8222,14 @@ var hi = class s {
   }
   map(t, e) {
     e = e || this;
-    let i = new s;
+    let i = new s2;
     for (let r = this.head;r; )
       i.push(t.call(e, r.value, this)), r = r.next;
     return i;
   }
   mapReverse(t, e) {
     e = e || this;
-    var i = new s;
+    var i = new s2;
     for (let r = this.tail;r; )
       i.push(t.call(e, r.value, this)), r = r.prev;
     return i;
@@ -8040,7 +8272,7 @@ var hi = class s {
   }
   slice(t = 0, e = this.length) {
     e < 0 && (e += this.length), t < 0 && (t += this.length);
-    let i = new s;
+    let i = new s2;
     if (e < t || e < 0)
       return i;
     t < 0 && (t = 0), e > this.length && (e = this.length);
@@ -8053,7 +8285,7 @@ var hi = class s {
   }
   sliceReverse(t = 0, e = this.length) {
     e < 0 && (e += this.length), t < 0 && (t += this.length);
-    let i = new s;
+    let i = new s2;
     if (e < t || e < 0)
       return i;
     t < 0 && (t = 0), e > this.length && (e = this.length);
@@ -8086,15 +8318,15 @@ var hi = class s {
     return this.head = e, this.tail = t, this;
   }
 };
-function Zn(s, t, e) {
-  let i = t, r = t ? t.next : s.head, n = new ue(e, i, r, s);
-  return n.next === undefined && (s.tail = n), n.prev === undefined && (s.head = n), s.length++, n;
+function Zn(s3, t, e) {
+  let i = t, r = t ? t.next : s3.head, n = new ue(e, i, r, s3);
+  return n.next === undefined && (s3.tail = n), n.prev === undefined && (s3.head = n), s3.length++, n;
 }
-function Yn(s, t) {
-  s.tail = new ue(t, s.tail, undefined, s), s.head || (s.head = s.tail), s.length++;
+function Yn(s3, t) {
+  s3.tail = new ue(t, s3.tail, undefined, s3), s3.head || (s3.head = s3.tail), s3.length++;
 }
-function Kn(s, t) {
-  s.head = new ue(t, undefined, s.head, s), s.tail || (s.tail = s.head), s.length++;
+function Kn(s3, t) {
+  s3.head = new ue(t, undefined, s3.head, s3), s3.tail || (s3.tail = s3.head), s3.length++;
 }
 var ue = class {
   list;
@@ -8352,39 +8584,39 @@ var kt = class extends wt {
     });
   }
 };
-var Vn = (s, t) => {
-  let e = new kt(s), i = new Wt(s.file, { mode: s.mode || 438 });
+var Vn = (s3, t) => {
+  let e = new kt(s3), i = new Wt(s3.file, { mode: s3.mode || 438 });
   e.pipe(i), fr(e, t);
 };
-var $n = (s, t) => {
-  let e = new wt(s), i = new et(s.file, { mode: s.mode || 438 });
+var $n = (s3, t) => {
+  let e = new wt(s3), i = new et(s3.file, { mode: s3.mode || 438 });
   e.pipe(i);
   let r = new Promise((n, o) => {
     i.on("error", o), i.on("close", n), e.on("error", o);
   });
   return dr(e, t).catch((n) => e.emit("error", n)), r;
 };
-var fr = (s, t) => {
+var fr = (s3, t) => {
   t.forEach((e) => {
-    e.charAt(0) === "@" ? Ct({ file: cr.resolve(s.cwd, e.slice(1)), sync: true, noResume: true, onReadEntry: (i) => s.add(i) }) : s.add(e);
-  }), s.end();
+    e.charAt(0) === "@" ? Ct({ file: cr.resolve(s3.cwd, e.slice(1)), sync: true, noResume: true, onReadEntry: (i) => s3.add(i) }) : s3.add(e);
+  }), s3.end();
 };
-var dr = async (s, t) => {
+var dr = async (s3, t) => {
   for (let e of t)
-    e.charAt(0) === "@" ? await Ct({ file: cr.resolve(String(s.cwd), e.slice(1)), noResume: true, onReadEntry: (i) => {
-      s.add(i);
-    } }) : s.add(e);
-  s.end();
+    e.charAt(0) === "@" ? await Ct({ file: cr.resolve(String(s3.cwd), e.slice(1)), noResume: true, onReadEntry: (i) => {
+      s3.add(i);
+    } }) : s3.add(e);
+  s3.end();
 };
-var Xn = (s, t) => {
-  let e = new kt(s);
+var Xn = (s3, t) => {
+  let e = new kt(s3);
   return fr(e, t), e;
 };
-var qn = (s, t) => {
-  let e = new wt(s);
+var qn = (s3, t) => {
+  let e = new wt(s3);
   return dr(e, t).catch((i) => e.emit("error", i)), e;
 };
-var Qn = K(Vn, $n, Xn, qn, (s, t) => {
+var Qn = K(Vn, $n, Xn, qn, (s3, t) => {
   if (!t?.length)
     throw new TypeError("no paths specified to add to archive");
 });
@@ -8396,35 +8628,35 @@ var jn = Er && !!Rr;
 var to = 512 * 1024;
 var eo = Rr | Sr | wr | yr;
 var mr = !Er && typeof ur == "number" ? ur | Sr | wr | yr : null;
-var ms = mr !== null ? () => mr : jn ? (s) => s < to ? eo : "w" : () => "w";
-var ps = (s, t, e) => {
+var ms = mr !== null ? () => mr : jn ? (s3) => s3 < to ? eo : "w" : () => "w";
+var ps = (s3, t, e) => {
   try {
-    return wi.lchownSync(s, t, e);
+    return wi.lchownSync(s3, t, e);
   } catch (i) {
     if (i?.code !== "ENOENT")
       throw i;
   }
 };
-var Ei = (s, t, e, i) => {
-  wi.lchown(s, t, e, (r) => {
+var Ei = (s3, t, e, i) => {
+  wi.lchown(s3, t, e, (r) => {
     i(r && r?.code !== "ENOENT" ? r : null);
   });
 };
-var io = (s, t, e, i, r) => {
+var io = (s3, t, e, i, r) => {
   if (t.isDirectory())
-    Es(we.resolve(s, t.name), e, i, (n) => {
+    Es(we.resolve(s3, t.name), e, i, (n) => {
       if (n)
         return r(n);
-      let o = we.resolve(s, t.name);
+      let o = we.resolve(s3, t.name);
       Ei(o, e, i, r);
     });
   else {
-    let n = we.resolve(s, t.name);
+    let n = we.resolve(s3, t.name);
     Ei(n, e, i, r);
   }
 };
-var Es = (s, t, e, i) => {
-  wi.readdir(s, { withFileTypes: true }, (r, n) => {
+var Es = (s3, t, e, i) => {
+  wi.readdir(s3, { withFileTypes: true }, (r, n) => {
     if (r) {
       if (r.code === "ENOENT")
         return i();
@@ -8432,37 +8664,37 @@ var Es = (s, t, e, i) => {
         return i(r);
     }
     if (r || !n.length)
-      return Ei(s, t, e, i);
+      return Ei(s3, t, e, i);
     let o = n.length, h = null, a = (l) => {
       if (!h) {
         if (l)
           return i(h = l);
         if (--o === 0)
-          return Ei(s, t, e, i);
+          return Ei(s3, t, e, i);
       }
     };
     for (let l of n)
-      io(s, l, t, e, a);
+      io(s3, l, t, e, a);
   });
 };
-var so = (s, t, e, i) => {
-  t.isDirectory() && ws(we.resolve(s, t.name), e, i), ps(we.resolve(s, t.name), e, i);
+var so = (s3, t, e, i) => {
+  t.isDirectory() && ws(we.resolve(s3, t.name), e, i), ps(we.resolve(s3, t.name), e, i);
 };
-var ws = (s, t, e) => {
+var ws = (s3, t, e) => {
   let i;
   try {
-    i = wi.readdirSync(s, { withFileTypes: true });
+    i = wi.readdirSync(s3, { withFileTypes: true });
   } catch (r) {
     let n = r;
     if (n?.code === "ENOENT")
       return;
     if (n?.code === "ENOTDIR" || n?.code === "ENOTSUP")
-      return ps(s, t, e);
+      return ps(s3, t, e);
     throw n;
   }
   for (let r of i)
-    so(s, r, t, e);
-  return ps(s, t, e);
+    so(s3, r, t, e);
+  return ps(s3, t, e);
 };
 var Se = class extends Error {
   path;
@@ -8487,69 +8719,69 @@ var St = class extends Error {
     return "SymlinkError";
   }
 };
-var no = (s, t) => {
-  k.stat(s, (e, i) => {
-    (e || !i.isDirectory()) && (e = new Se(s, e?.code || "ENOTDIR")), t(e);
+var no = (s3, t) => {
+  k.stat(s3, (e, i) => {
+    (e || !i.isDirectory()) && (e = new Se(s3, e?.code || "ENOTDIR")), t(e);
   });
 };
-var gr = (s, t, e) => {
-  s = f(s);
-  let i = t.umask ?? 18, r = t.mode | 448, n = (r & i) !== 0, { uid: o, gid: h } = t, a = typeof o == "number" && typeof h == "number" && (o !== t.processUid || h !== t.processGid), { preserve: l, unlink: c } = t, d = f(t.cwd), y = (E, x) => {
-    E ? e(E) : x && a ? Es(x, o, h, (Le) => y(Le)) : n ? k.chmod(s, r, e) : e();
+var gr = (s3, t, e) => {
+  s3 = f(s3);
+  let i = t.umask ?? 18, r = t.mode | 448, n = (r & i) !== 0, o = t.uid, h = t.gid, a = typeof o == "number" && typeof h == "number" && (o !== t.processUid || h !== t.processGid), l = t.preserve, c = t.unlink, d = f(t.cwd), y = (E, x) => {
+    E ? e(E) : x && a ? Es(x, o, h, (Le) => y(Le)) : n ? k.chmod(s3, r, e) : e();
   };
-  if (s === d)
-    return no(s, y);
+  if (s3 === d)
+    return no(s3, y);
   if (l)
-    return ro.mkdir(s, { mode: r, recursive: true }).then((E) => y(null, E ?? undefined), y);
-  let D = f(Si.relative(d, s)).split("/");
+    return ro.mkdir(s3, { mode: r, recursive: true }).then((E) => y(null, E ?? undefined), y);
+  let D = f(Si.relative(d, s3)).split("/");
   Ss(d, D, r, c, d, undefined, y);
 };
-var Ss = (s, t, e, i, r, n, o) => {
+var Ss = (s3, t, e, i, r, n, o) => {
   if (t.length === 0)
     return o(null, n);
-  let h = t.shift(), a = f(Si.resolve(s + "/" + h));
+  let h = t.shift(), a = f(Si.resolve(s3 + "/" + h));
   k.mkdir(a, e, br(a, t, e, i, r, n, o));
 };
-var br = (s, t, e, i, r, n, o) => (h) => {
-  h ? k.lstat(s, (a, l) => {
+var br = (s3, t, e, i, r, n, o) => (h) => {
+  h ? k.lstat(s3, (a, l) => {
     if (a)
       a.path = a.path && f(a.path), o(a);
     else if (l.isDirectory())
-      Ss(s, t, e, i, r, n, o);
+      Ss(s3, t, e, i, r, n, o);
     else if (i)
-      k.unlink(s, (c) => {
+      k.unlink(s3, (c) => {
         if (c)
           return o(c);
-        k.mkdir(s, e, br(s, t, e, i, r, n, o));
+        k.mkdir(s3, e, br(s3, t, e, i, r, n, o));
       });
     else {
       if (l.isSymbolicLink())
-        return o(new St(s, s + "/" + t.join("/")));
+        return o(new St(s3, s3 + "/" + t.join("/")));
       o(h);
     }
-  }) : (n = n || s, Ss(s, t, e, i, r, n, o));
+  }) : (n = n || s3, Ss(s3, t, e, i, r, n, o));
 };
-var oo = (s) => {
+var oo = (s3) => {
   let t = false, e;
   try {
-    t = k.statSync(s).isDirectory();
+    t = k.statSync(s3).isDirectory();
   } catch (i) {
     e = i?.code;
   } finally {
     if (!t)
-      throw new Se(s, e ?? "ENOTDIR");
+      throw new Se(s3, e ?? "ENOTDIR");
   }
 };
-var _r = (s, t) => {
-  s = f(s);
-  let e = t.umask ?? 18, i = t.mode | 448, r = (i & e) !== 0, { uid: n, gid: o } = t, h = typeof n == "number" && typeof o == "number" && (n !== t.processUid || o !== t.processGid), { preserve: a, unlink: l } = t, c = f(t.cwd), d = (E) => {
-    E && h && ws(E, n, o), r && k.chmodSync(s, i);
+var _r = (s3, t) => {
+  s3 = f(s3);
+  let e = t.umask ?? 18, i = t.mode | 448, r = (i & e) !== 0, n = t.uid, o = t.gid, h = typeof n == "number" && typeof o == "number" && (n !== t.processUid || o !== t.processGid), a = t.preserve, l = t.unlink, c = f(t.cwd), d = (E) => {
+    E && h && ws(E, n, o), r && k.chmodSync(s3, i);
   };
-  if (s === c)
+  if (s3 === c)
     return oo(c), d();
   if (a)
-    return d(k.mkdirSync(s, { mode: i, recursive: true }) ?? undefined);
-  let T = f(Si.relative(c, s)).split("/"), D;
+    return d(k.mkdirSync(s3, { mode: i, recursive: true }) ?? undefined);
+  let T = f(Si.relative(c, s3)).split("/"), D;
   for (let E = T.shift(), x = c;E && (x += "/" + E); E = T.shift()) {
     x = f(Si.resolve(x));
     try {
@@ -8570,9 +8802,9 @@ var _r = (s, t) => {
 var ys = Object.create(null);
 var Or = 1e4;
 var Vt = new Set;
-var Tr = (s) => {
-  Vt.has(s) ? Vt.delete(s) : ys[s] = s.normalize("NFD").toLocaleLowerCase("en").toLocaleUpperCase("en"), Vt.add(s);
-  let t = ys[s], e = Vt.size - Or;
+var Tr = (s3) => {
+  Vt.has(s3) ? Vt.delete(s3) : ys[s3] = s3.normalize("NFD").toLocaleLowerCase("en").toLocaleUpperCase("en"), Vt.add(s3);
+  let t = ys[s3], e = Vt.size - Or;
   if (e > Or / 10) {
     for (let i of Vt)
       if (Vt.delete(i), delete ys[i], --e <= 0)
@@ -8582,7 +8814,7 @@ var Tr = (s) => {
 };
 var ho = process.env.TESTING_TAR_FAKE_PLATFORM || process.platform;
 var ao = ho === "win32";
-var lo = (s) => s.split("/").slice(0, -1).reduce((e, i) => {
+var lo = (s3) => s3.split("/").slice(0, -1).reduce((e, i) => {
   let r = e.at(-1);
   return r !== undefined && (i = xr(r, i)), e.push(i || "/"), e;
 }, []);
@@ -8690,23 +8922,23 @@ var Oe = Symbol("checkedCwd");
 var fo = process.env.TESTING_TAR_FAKE_PLATFORM || process.platform;
 var Te = fo === "win32";
 var uo = 1024;
-var mo = (s, t) => {
+var mo = (s3, t) => {
   if (!Te)
-    return u.unlink(s, t);
-  let e = s + ".DELETE." + Mr(16).toString("hex");
-  u.rename(s, e, (i) => {
+    return u.unlink(s3, t);
+  let e = s3 + ".DELETE." + Mr(16).toString("hex");
+  u.rename(s3, e, (i) => {
     if (i)
       return t(i);
     u.unlink(e, t);
   });
 };
-var po = (s) => {
+var po = (s3) => {
   if (!Te)
-    return u.unlinkSync(s);
-  let t = s + ".DELETE." + Mr(16).toString("hex");
-  u.renameSync(s, t), u.unlinkSync(t);
+    return u.unlinkSync(s3);
+  let t = s3 + ".DELETE." + Mr(16).toString("hex");
+  u.renameSync(s3, t), u.unlinkSync(t);
 };
-var vr = (s, t, e) => s !== undefined && s === s >>> 0 ? s : t !== undefined && t === t >>> 0 ? t : e;
+var vr = (s3, t, e) => s3 !== undefined && s3 === s3 >>> 0 ? s3 : t !== undefined && t === t >>> 0 ? t : e;
 var Xt = class extends rt {
   [gs] = false;
   [Oe] = false;
@@ -8994,9 +9226,9 @@ var Xt = class extends rt {
     });
   }
 };
-var ye = (s) => {
+var ye = (s3) => {
   try {
-    return [null, s()];
+    return [null, s3()];
   } catch (t) {
     return [t, null];
   }
@@ -9136,12 +9368,12 @@ var xe = class extends Xt {
     }
   }
 };
-var Eo = (s) => {
-  let t = new xe(s), e = s.file, i = Br.statSync(e), r = s.maxReadSize || 16 * 1024 * 1024;
+var Eo = (s3) => {
+  let t = new xe(s3), e = s3.file, i = Br.statSync(e), r = s3.maxReadSize || 16 * 1024 * 1024;
   new Be(e, { readSize: r, size: i.size }).pipe(t);
 };
-var wo = (s, t) => {
-  let e = new Xt(s), i = s.maxReadSize || 16 * 1024 * 1024, r = s.file;
+var wo = (s3, t) => {
+  let e = new Xt(s3), i = s3.maxReadSize || 16 * 1024 * 1024, r = s3.file;
   return new Promise((o, h) => {
     e.on("error", h), e.on("close", o), Br.stat(r, (a, l) => {
       if (a)
@@ -9153,17 +9385,17 @@ var wo = (s, t) => {
     });
   });
 };
-var So = K(Eo, wo, (s) => new xe(s), (s) => new Xt(s), (s, t) => {
-  t?.length && Qi(s, t);
+var So = K(Eo, wo, (s3) => new xe(s3), (s3) => new Xt(s3), (s3, t) => {
+  t?.length && Qi(s3, t);
 });
-var yo = (s, t) => {
-  let e = new kt(s), i = true, r, n;
+var yo = (s3, t) => {
+  let e = new kt(s3), i = true, r, n;
   try {
     try {
-      r = v.openSync(s.file, "r+");
+      r = v.openSync(s3.file, "r+");
     } catch (a) {
       if (a?.code === "ENOENT")
-        r = v.openSync(s.file, "w+");
+        r = v.openSync(s3.file, "w+");
       else
         throw a;
     }
@@ -9182,9 +9414,9 @@ var yo = (s, t) => {
         let l = 512 * Math.ceil((a.size || 0) / 512);
         if (n + l + 512 > o.size)
           break;
-        n += l, s.mtimeCache && a.mtime && s.mtimeCache.set(String(a.path), a.mtime);
+        n += l, s3.mtimeCache && a.mtime && s3.mtimeCache.set(String(a.path), a.mtime);
       }
-    i = false, Ro(s, e, n, r, t);
+    i = false, Ro(s3, e, n, r, t);
   } finally {
     if (i)
       try {
@@ -9192,13 +9424,13 @@ var yo = (s, t) => {
       } catch {}
   }
 };
-var Ro = (s, t, e, i, r) => {
-  let n = new Wt(s.file, { fd: i, start: e });
+var Ro = (s3, t, e, i, r) => {
+  let n = new Wt(s3.file, { fd: i, start: e });
   t.pipe(n), bo(t, r);
 };
-var go = (s, t) => {
+var go = (s3, t) => {
   t = Array.from(t);
-  let e = new wt(s), i = (n, o, h) => {
+  let e = new wt(s3), i = (n, o, h) => {
     let a = (T, D) => {
       T ? v.close(n, (E) => h(T)) : h(null, D);
     }, l = 0;
@@ -9219,7 +9451,7 @@ var go = (s, t) => {
       let x = 512 * Math.ceil((E.size ?? 0) / 512);
       if (l + x + 512 > o || (l += x + 512, l >= o))
         return a(null, l);
-      s.mtimeCache && E.mtime && s.mtimeCache.set(String(E.path), E.mtime), c = 0, v.read(n, d, 0, 512, l, y);
+      s3.mtimeCache && E.mtime && s3.mtimeCache.set(String(E.path), E.mtime), c = 0, v.read(n, d, 0, 512, l, y);
     };
     v.read(n, d, 0, 512, l, y);
   };
@@ -9227,7 +9459,7 @@ var go = (s, t) => {
     e.on("error", o);
     let h = "r+", a = (l, c) => {
       if (l && l.code === "ENOENT" && h === "r+")
-        return h = "w+", v.open(s.file, h, a);
+        return h = "w+", v.open(s3.file, h, a);
       if (l || !c)
         return o(l);
       v.fstat(c, (d, y) => {
@@ -9236,42 +9468,42 @@ var go = (s, t) => {
         i(c, y.size, (T, D) => {
           if (T)
             return o(T);
-          let E = new et(s.file, { fd: c, start: D });
+          let E = new et(s3.file, { fd: c, start: D });
           e.pipe(E), E.on("error", o), E.on("close", n), _o(e, t);
         });
       });
     };
-    v.open(s.file, h, a);
+    v.open(s3.file, h, a);
   });
 };
-var bo = (s, t) => {
+var bo = (s3, t) => {
   t.forEach((e) => {
-    e.charAt(0) === "@" ? Ct({ file: Pr.resolve(s.cwd, e.slice(1)), sync: true, noResume: true, onReadEntry: (i) => s.add(i) }) : s.add(e);
-  }), s.end();
+    e.charAt(0) === "@" ? Ct({ file: Pr.resolve(s3.cwd, e.slice(1)), sync: true, noResume: true, onReadEntry: (i) => s3.add(i) }) : s3.add(e);
+  }), s3.end();
 };
-var _o = async (s, t) => {
+var _o = async (s3, t) => {
   for (let e of t)
-    e.charAt(0) === "@" ? await Ct({ file: Pr.resolve(String(s.cwd), e.slice(1)), noResume: true, onReadEntry: (i) => s.add(i) }) : s.add(e);
-  s.end();
+    e.charAt(0) === "@" ? await Ct({ file: Pr.resolve(String(s3.cwd), e.slice(1)), noResume: true, onReadEntry: (i) => s3.add(i) }) : s3.add(e);
+  s3.end();
 };
 var vt = K(yo, go, () => {
   throw new TypeError("file is required");
 }, () => {
   throw new TypeError("file is required");
-}, (s, t) => {
-  if (!Bs(s))
+}, (s3, t) => {
+  if (!Bs(s3))
     throw new TypeError("file is required");
-  if (s.gzip || s.brotli || s.zstd || s.file.endsWith(".br") || s.file.endsWith(".tbr"))
+  if (s3.gzip || s3.brotli || s3.zstd || s3.file.endsWith(".br") || s3.file.endsWith(".tbr"))
     throw new TypeError("cannot append to compressed archives");
   if (!t?.length)
     throw new TypeError("no paths specified to add/replace");
 });
-var Oo = K(vt.syncFile, vt.asyncFile, vt.syncNoFile, vt.asyncNoFile, (s, t = []) => {
-  vt.validate?.(s, t), To(s);
+var Oo = K(vt.syncFile, vt.asyncFile, vt.syncNoFile, vt.asyncNoFile, (s3, t = []) => {
+  vt.validate?.(s3, t), To(s3);
 });
-var To = (s) => {
-  let t = s.filter;
-  s.mtimeCache || (s.mtimeCache = new Map), s.filter = t ? (e, i) => t(e, i) && !((s.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0)) : (e, i) => !((s.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0));
+var To = (s3) => {
+  let t = s3.filter;
+  s3.mtimeCache || (s3.mtimeCache = new Map), s3.filter = t ? (e, i) => t(e, i) && !((s3.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0)) : (e, i) => !((s3.mtimeCache?.get(e) ?? i.mtime ?? 0) > (i.mtime ?? 0));
 };
 
 // ../../registry-format/src/inspect.ts
@@ -9292,10 +9524,10 @@ function readRegularFile(path, missing, maxBytes) {
     throw missing();
   }
   try {
-    const st = fstatSync2(fd);
-    if (!st.isFile())
+    const st2 = fstatSync2(fd);
+    if (!st2.isFile())
       throw missing();
-    if (maxBytes !== undefined && st.size > maxBytes)
+    if (maxBytes !== undefined && st2.size > maxBytes)
       throw manifestInvalid("manifest is too large");
     return readFileSync(fd);
   } finally {
@@ -9349,8 +9581,8 @@ async function inspectPackage(tgz, work) {
   if (manifest === null || typeof manifest !== "object" || Array.isArray(manifest)) {
     throw manifestInvalid("manifest is not a JSON object");
   }
-  const m = manifest;
-  const entryRel = rawManifestEntryRelPath(m);
+  const m2 = manifest;
+  const entryRel = rawManifestEntryRelPath(m2);
   const entryPath = resolve(out, entryRel);
   const missing = () => manifestInvalid(`extension entry ${entryRel} is missing or outside the package`);
   if (!entryPath.startsWith(resolve(out) + sep))
@@ -9358,7 +9590,7 @@ async function inspectPackage(tgz, work) {
   const entryBytes = readRegularFile(entryPath, missing);
   return {
     manifestBytes,
-    manifest: m,
+    manifest: m2,
     entryHash: createHash4("sha256").update(entryBytes).digest("hex"),
     files: files.toSorted(codeUnitCompare)
   };
@@ -9373,7 +9605,7 @@ var KEY_RE4 = /^[A-Za-z0-9+/]{43}=$/;
 var SIGNATURE_RE5 = /^[A-Za-z0-9+/]{86}==$/;
 var NIMBUS_VERSION_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}(?:-[0-9A-Za-z.-]{1,64})?$/;
 var MAX_HOSTS = 1000;
-function invalid4(detail) {
+function invalid5(detail) {
   return new RegistryError("ERR_LIVENESS_INVALID", detail);
 }
 function parseLivenessFile(bytes) {
@@ -9384,7 +9616,7 @@ function parseLivenessFile(bytes) {
   try {
     text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch {
-    throw invalid4("liveness.json is not valid UTF-8");
+    throw invalid5("liveness.json is not valid UTF-8");
   }
   if (text.startsWith("\uFEFF"))
     text = text.slice(1);
@@ -9392,10 +9624,10 @@ function parseLivenessFile(bytes) {
   try {
     raw = JSON.parse(text);
   } catch {
-    throw invalid4("liveness.json is not valid JSON");
+    throw invalid5("liveness.json is not valid JSON");
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid4("liveness.json must be an object");
+    throw invalid5("liveness.json must be an object");
   }
   return readEnvelope(raw);
 }
@@ -9409,38 +9641,38 @@ var REQUIRED_KEYS = [
   "signature"
 ];
 var ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
-function isIsoUtc(v) {
-  if (typeof v !== "string" || !ISO_UTC_RE.test(v))
+function isIsoUtc(v2) {
+  if (typeof v2 !== "string" || !ISO_UTC_RE.test(v2))
     return false;
-  const ms = Date.parse(v);
-  if (!Number.isFinite(ms))
+  const ms2 = Date.parse(v2);
+  if (!Number.isFinite(ms2))
     return false;
-  return new Date(ms).toISOString().slice(0, 10) === v.slice(0, 10);
+  return new Date(ms2).toISOString().slice(0, 10) === v2.slice(0, 10);
 }
-function readSequence(v) {
-  if (typeof v !== "number" || !Number.isSafeInteger(v) || v <= 0) {
-    throw invalid4("sequence must be a positive integer");
+function readSequence(v2) {
+  if (typeof v2 !== "number" || !Number.isSafeInteger(v2) || v2 <= 0) {
+    throw invalid5("sequence must be a positive integer");
   }
-  return v;
+  return v2;
 }
-function readPatterned(v, re, detail) {
-  if (typeof v !== "string" || !re.test(v))
-    throw invalid4(detail);
-  return v;
+function readPatterned(v2, re2, detail) {
+  if (typeof v2 !== "string" || !re2.test(v2))
+    throw invalid5(detail);
+  return v2;
 }
 function readEnvelope(o) {
-  for (const k of REQUIRED_KEYS) {
-    if (!Object.hasOwn(o, k))
-      throw invalid4(`liveness.json is missing key: ${k}`);
+  for (const k2 of REQUIRED_KEYS) {
+    if (!Object.hasOwn(o, k2))
+      throw invalid5(`liveness.json is missing key: ${k2}`);
   }
   if (o["format"] !== 1)
-    throw invalid4("unsupported liveness format");
+    throw invalid5("unsupported liveness format");
   const sequence = readSequence(o["sequence"]);
   const livenessKey = readPatterned(o["livenessKey"], KEY_RE4, "livenessKey is malformed");
   const signature = readPatterned(o["signature"], SIGNATURE_RE5, "signature is malformed");
   const generatedAt = o["generatedAt"];
   if (!isIsoUtc(generatedAt))
-    throw invalid4("generatedAt is not a timestamp");
+    throw invalid5("generatedAt is not a timestamp");
   const nimbusVersion = readPatterned(o["nimbusVersion"], NIMBUS_VERSION_RE, "nimbusVersion is malformed");
   return {
     ...o,
@@ -9458,7 +9690,7 @@ function livenessSigningBytes(doc) {
   return new TextEncoder().encode(canonicalize(rest));
 }
 function verifyLivenessFile(doc, indexLivenessKey) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     if (doc.livenessKey !== indexLivenessKey) {
       throw new RegistryError("ERR_LIVENESS_KEY_MISMATCH", "liveness key differs from the key the index names");
     }
@@ -9471,56 +9703,56 @@ function verifyLivenessFile(doc, indexLivenessKey) {
     if (!ok) {
       throw new RegistryError("ERR_LIVENESS_SIGNATURE_INVALID", "liveness signature does not verify");
     }
-    resolve();
+    resolve2();
   });
 }
 function signLivenessFile(unsigned, seed) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const { signature: _omitted, ...rest } = unsigned;
     const sig = sign3(null, livenessSigningBytes(rest), privateKeyFromSeed(seed));
-    resolve({ ...rest, signature: sig.toString("base64") });
+    resolve2({ ...rest, signature: sig.toString("base64") });
   });
 }
-function isObject3(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isObject4(v2) {
+  return typeof v2 === "object" && v2 !== null && !Array.isArray(v2);
 }
 function onlyKeys(o, allowed) {
-  return Object.keys(o).every((k) => allowed.includes(k));
+  return Object.keys(o).every((k2) => allowed.includes(k2));
 }
-function isCount(v, min, max) {
-  return typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+function isCount(v2, min, max) {
+  return typeof v2 === "number" && Number.isInteger(v2) && v2 >= min && v2 <= max;
 }
 function readHosts(raw) {
-  if (!isObject3(raw) || !onlyKeys(raw, ["declared", "answered"]))
-    throw invalid4("hosts");
+  if (!isObject4(raw) || !onlyKeys(raw, ["declared", "answered"]))
+    throw invalid5("hosts");
   const declared = raw["declared"];
   if (!isCount(declared, 1, MAX_HOSTS))
-    throw invalid4("hosts.declared");
+    throw invalid5("hosts.declared");
   const answered = raw["answered"];
   if (!isCount(answered, 0, declared))
-    throw invalid4("hosts.answered");
+    throw invalid5("hosts.answered");
   return { declared, answered };
 }
 function readTests(raw) {
-  if (!isObject3(raw))
-    throw invalid4("tests");
+  if (!isObject4(raw))
+    throw invalid5("tests");
   if (Object.hasOwn(raw, "failure")) {
     const failure = raw["failure"];
     if (!onlyKeys(raw, ["failure"]))
-      throw invalid4("tests");
+      throw invalid5("tests");
     if (!LIVENESS_TEST_FAILURES.includes(failure)) {
-      throw invalid4("tests.failure");
+      throw invalid5("tests.failure");
     }
     return { failure };
   }
   if (!onlyKeys(raw, ["cases", "passed"]))
-    throw invalid4("tests");
+    throw invalid5("tests");
   const cases = raw["cases"];
   if (!isCount(cases, 1, MAX_EVAL_CASES))
-    throw invalid4("tests.cases");
+    throw invalid5("tests.cases");
   const passed = raw["passed"];
   if (!isCount(passed, 0, cases))
-    throw invalid4("tests.passed");
+    throw invalid5("tests.passed");
   return { cases, passed };
 }
 function readBaseline(raw) {
@@ -9528,23 +9760,23 @@ function readBaseline(raw) {
     return parseEvalBaseline(raw);
   } catch (e) {
     if (e instanceof RegistryError && e.code === "ERR_REGISTRY_EVAL_QUALITY_INVALID") {
-      throw invalid4("baseline");
+      throw invalid5("baseline");
     }
     throw e;
   }
 }
 function parseLivenessEntry(raw) {
-  if (!isObject3(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
-    throw invalid4("entry");
+  if (!isObject4(raw) || !onlyKeys(raw, ["checkedAt", "hosts", "tests", "baseline"])) {
+    throw invalid5("entry");
   }
   const checkedAt = raw["checkedAt"];
   if (!isIsoUtc(checkedAt))
-    throw invalid4("checkedAt");
+    throw invalid5("checkedAt");
   const hosts = Object.hasOwn(raw, "hosts") ? readHosts(raw["hosts"]) : undefined;
   const tests = Object.hasOwn(raw, "tests") ? readTests(raw["tests"]) : undefined;
   const baseline = Object.hasOwn(raw, "baseline") ? readBaseline(raw["baseline"]) : undefined;
   if (hosts === undefined && tests === undefined && baseline === undefined) {
-    throw invalid4("entry carries no result");
+    throw invalid5("entry carries no result");
   }
   return {
     checkedAt,
@@ -9558,14 +9790,14 @@ var REPOSITORY_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/
 var COMMIT_RE = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 var WORKFLOW_RE = /^[A-Za-z0-9._/@+-]{1,200}$/;
 var SLSA_V1 = "https://slsa.dev/provenance/v1";
-var isObject4 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject5 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
 function readManifestRepository(rawManifest) {
-  if (!isObject4(rawManifest))
+  if (!isObject5(rawManifest))
     return;
-  const v = rawManifest["repository"];
-  return typeof v === "string" && REPOSITORY_RE.test(v) ? v : undefined;
+  const v2 = rawManifest["repository"];
+  return typeof v2 === "string" && REPOSITORY_RE.test(v2) ? v2 : undefined;
 }
-var sameRepository = (a, b) => a.toLowerCase() === b.toLowerCase();
+var sameRepository = (a, b2) => a.toLowerCase() === b2.toLowerCase();
 function githubPath(uri) {
   if (typeof uri !== "string")
     return;
@@ -9588,16 +9820,16 @@ function githubPath(uri) {
   return { repository, rest: rest.join("/") };
 }
 function fromEntry(entry, repository, verifiedAt) {
-  if (!isObject4(entry))
+  if (!isObject5(entry))
     return { ok: false, reason: "an attestation entry is not an object" };
   const result = entry["verificationResult"];
-  const statement = isObject4(result) ? result["statement"] : undefined;
-  if (!isObject4(statement) || statement["predicateType"] !== SLSA_V1) {
+  const statement = isObject5(result) ? result["statement"] : undefined;
+  if (!isObject5(statement) || statement["predicateType"] !== SLSA_V1) {
     return { ok: false, reason: "not a SLSA v1 build provenance attestation" };
   }
-  const signature = isObject4(result) ? result["signature"] : undefined;
-  const cert = isObject4(signature) ? signature["certificate"] : undefined;
-  if (!isObject4(cert))
+  const signature = isObject5(result) ? result["signature"] : undefined;
+  const cert = isObject5(signature) ? signature["certificate"] : undefined;
+  if (!isObject5(cert))
     return { ok: false, reason: "the attestation carries no certificate" };
   const source = githubPath(cert["sourceRepositoryURI"]);
   if (source?.rest !== "" || !sameRepository(source.repository, repository)) {
@@ -9660,9 +9892,9 @@ function walk(start, next, allow) {
 function adjacency(edges, reverse) {
   const out = new Map;
   for (const e of edges) {
-    const [a, b] = reverse ? [e.to, e.from] : [e.from, e.to];
+    const [a, b2] = reverse ? [e.to, e.from] : [e.from, e.to];
     const list = out.get(a) ?? [];
-    list.push(b);
+    list.push(b2);
     out.set(a, list);
   }
   return out;
@@ -9678,7 +9910,7 @@ function successorsOf(edges, fp, usable) {
   const reachable = walk(fp, (n) => fwd.get(n) ?? [], usable);
   const terminal = new Set;
   for (const n of reachable) {
-    const onward = (fwd.get(n) ?? []).filter((m) => usable(m) && m !== n);
+    const onward = (fwd.get(n) ?? []).filter((m2) => usable(m2) && m2 !== n);
     if (onward.length === 0)
       terminal.add(n);
   }
@@ -9693,28 +9925,28 @@ function publisherAfterPublish(existing, signer) {
   return existing !== undefined && existing.publisher.key === signer.key ? existing.publisher : signer;
 }
 function indexedPublisherStatements(index) {
-  return readStatementList(index.statements).statements.filter((s) => (s.kind === "key.rotate" || s.kind === "key.revoke") && verifyTrustStatement(s, {}) === "publisher");
+  return readStatementList(index.statements).statements.filter((s3) => (s3.kind === "key.rotate" || s3.kind === "key.revoke") && verifyTrustStatement(s3, {}) === "publisher");
 }
-function boundKeys(index, publisherId) {
+function boundKeys(index, publisherId2) {
   const out = new Set;
   for (const e of Object.values(index.extensions)) {
-    if (e.publisher.id === publisherId)
+    if (e.publisher.id === publisherId2)
       out.add(e.publisher.key);
   }
   return out;
 }
-var rotationsOf = (list) => list.filter((s) => s.kind === "key.rotate");
+var rotationsOf = (list) => list.filter((s3) => s3.kind === "key.rotate");
 var edgesOf = (rotations) => rotations.map((r) => ({
   from: publisherKeyFingerprint(r.fromKey),
   to: publisherKeyFingerprint(r.toKey)
 }));
-var signingKey = (s) => s.kind === "key.rotate" ? s.fromKey : s.signerKey;
-function stateOf(index, publisherId, list = indexedPublisherStatements(index), bound = boundKeys(index, publisherId)) {
-  const mine = list.filter((s) => s.publisherId === publisherId);
+var signingKey = (s3) => s3.kind === "key.rotate" ? s3.fromKey : s3.signerKey;
+function stateOf(index, publisherId2, list = indexedPublisherStatements(index), bound = boundKeys(index, publisherId2)) {
+  const mine = list.filter((s3) => s3.publisherId === publisherId2);
   return {
     bound: new Set(bound),
     rotations: rotationsOf(mine),
-    revokedFps: new Set(mine.filter((s) => s.kind === "key.revoke").map((s) => s.keyFingerprint))
+    revokedFps: new Set(mine.filter((s3) => s3.kind === "key.revoke").map((s3) => s3.keyFingerprint))
   };
 }
 function revokedIn(state, fp) {
@@ -9728,8 +9960,8 @@ function revokedIn(state, fp) {
 }
 function currentOf(state) {
   const keyByFp = new Map;
-  for (const k of state.bound)
-    keyByFp.set(publisherKeyFingerprint(k), k);
+  for (const k2 of state.bound)
+    keyByFp.set(publisherKeyFingerprint(k2), k2);
   for (const r of state.rotations) {
     keyByFp.set(publisherKeyFingerprint(r.fromKey), r.fromKey);
     keyByFp.set(publisherKeyFingerprint(r.toKey), r.toKey);
@@ -9738,8 +9970,8 @@ function currentOf(state) {
   const usable = (fp) => !state.revokedFps.has(fp);
   const rotatedAway = new Set(edges.map((e) => e.from));
   const current = new Set;
-  for (const k of state.bound) {
-    const fp = publisherKeyFingerprint(k);
+  for (const k2 of state.bound) {
+    const fp = publisherKeyFingerprint(k2);
     if (!usable(fp))
       continue;
     const { reachable } = successorsOf(edges, fp, usable);
@@ -9750,12 +9982,12 @@ function currentOf(state) {
   }
   return current;
 }
-function publisherKeyStanding(index, publisherId, key) {
-  const state = stateOf(index, publisherId);
+function publisherKeyStanding(index, publisherId2, key) {
+  const state = stateOf(index, publisherId2);
   const current = [...currentOf(state)].sort(codeUnitCompare);
-  const refuse = (reason) => ({
+  const refuse = (reason2) => ({
     ok: false,
-    reason,
+    reason: reason2,
     current
   });
   if (revokedIn(state, publisherKeyFingerprint(key)))
@@ -9769,39 +10001,39 @@ function publisherKeyStanding(index, publisherId, key) {
   const known = new Set([...state.bound, ...state.rotations.map((r) => r.fromKey)]);
   if (known.has(key))
     return refuse("superseded");
-  const looped = current.length === 0 && [...state.bound].some((k) => !state.revokedFps.has(publisherKeyFingerprint(k)));
+  const looped = current.length === 0 && [...state.bound].some((k2) => !state.revokedFps.has(publisherKeyFingerprint(k2)));
   return refuse(looped ? "fork" : "unrelated");
 }
 function admitterOf(index, opts) {
   return {
-    bound: opts.boundKeys ?? ((publisherId) => boundKeys(index, publisherId)),
+    bound: opts.boundKeys ?? ((publisherId2) => boundKeys(index, publisherId2)),
     cap: opts.maxStatements ?? MAX_REGISTRY_STATEMENTS,
     where: opts.where ?? "this index",
-    unbound: opts.unbound ?? ((publisherId) => `publisher ${publisherId} has no extension in this index`)
+    unbound: opts.unbound ?? ((publisherId2) => `publisher ${publisherId2} has no extension in this index`)
   };
 }
-function structural(at, raw, skip) {
-  let s;
+function structural(at2, raw, skip) {
+  let s3;
   try {
-    s = parseTrustStatement(raw);
+    s3 = parseTrustStatement(raw);
   } catch (e) {
     skip(undefined, `not a valid statement: ${e.message}`);
     return;
   }
-  const id = trustStatementId(s);
-  if (s.kind !== "key.rotate" && s.kind !== "key.revoke") {
-    skip(id, `${s.kind} is signed by a root key, not a publisher; a registry admits only key.rotate and key.revoke here`);
+  const id = trustStatementId(s3);
+  if (s3.kind !== "key.rotate" && s3.kind !== "key.revoke") {
+    skip(id, `${s3.kind} is signed by a root key, not a publisher; a registry admits only key.rotate and key.revoke here`);
     return;
   }
-  if (verifyTrustStatement(s, {}) !== "publisher") {
-    skip(id, `${s.kind} is not signed by the key it concerns`);
+  if (verifyTrustStatement(s3, {}) !== "publisher") {
+    skip(id, `${s3.kind} is not signed by the key it concerns`);
     return;
   }
-  if (at.bound(s.publisherId).size === 0) {
-    skip(id, at.unbound(s.publisherId));
+  if (at2.bound(s3.publisherId).size === 0) {
+    skip(id, at2.unbound(s3.publisherId));
     return;
   }
-  return { id, s };
+  return { id, s: s3 };
 }
 function reachOf(bound, rotations) {
   const reach = new Set(bound);
@@ -9817,13 +10049,13 @@ function reachOf(bound, rotations) {
   }
   return reach;
 }
-function hasRoom(budget, id, publisherId, skip) {
+function hasRoom(budget, id, publisherId2, skip) {
   if (budget.total >= budget.cap) {
     skip(id, `${budget.where} is at its statement cap (${String(budget.cap)})`);
     return false;
   }
   if (budget.publisher >= MAX_STATEMENTS_PER_PUBLISHER) {
-    skip(id, `publisher ${publisherId} is at its statement cap (${String(MAX_STATEMENTS_PER_PUBLISHER)})`);
+    skip(id, `publisher ${publisherId2} is at its statement cap (${String(MAX_STATEMENTS_PER_PUBLISHER)})`);
     return false;
   }
   return true;
@@ -9834,28 +10066,28 @@ function spend(budget) {
 }
 function forks(pending, admitted) {
   const targets = new Map;
-  const add = (from, to) => {
+  const add = (from, to2) => {
     const set = targets.get(from) ?? new Set;
-    set.add(to);
+    set.add(to2);
     targets.set(from, set);
   };
   for (const r of admitted)
     add(r.fromKey, r.toKey);
-  for (const p of pending)
-    if (p.s.kind === "key.rotate")
-      add(p.s.fromKey, p.s.toKey);
+  for (const p2 of pending)
+    if (p2.s.kind === "key.rotate")
+      add(p2.s.fromKey, p2.s.toKey);
   const out = new Set;
-  for (const p of pending) {
-    if (p.s.kind === "key.rotate" && (targets.get(p.s.fromKey)?.size ?? 0) > 1)
-      out.add(p.id);
+  for (const p2 of pending) {
+    if (p2.s.kind === "key.rotate" && (targets.get(p2.s.fromKey)?.size ?? 0) > 1)
+      out.add(p2.id);
   }
   return out;
 }
 var fromRevoked = (run, r) => revokedIn(run.state, publisherKeyFingerprint(r.fromKey));
 function admitRevocationRound(run, reach) {
   let progressed = false;
-  for (const [id, p] of run.revocations) {
-    const r = p.s;
+  for (const [id, p2] of run.revocations) {
+    const r = p2.s;
     if (!reach.has(r.signerKey))
       continue;
     run.revocations.delete(id);
@@ -9867,7 +10099,7 @@ function admitRevocationRound(run, reach) {
       continue;
     run.state.revokedFps.add(r.keyFingerprint);
     spend(run.budget);
-    run.admitted.push(p);
+    run.admitted.push(p2);
     progressed = true;
   }
   return progressed;
@@ -9875,8 +10107,8 @@ function admitRevocationRound(run, reach) {
 function admitRotationRound(run, reach) {
   let progressed = false;
   const reachedNow = new Set;
-  for (const [id, p] of run.rotations) {
-    const r = p.s;
+  for (const [id, p2] of run.rotations) {
+    const r = p2.s;
     if (!reach.has(r.fromKey) || fromRevoked(run, r))
       continue;
     run.rotations.delete(id);
@@ -9893,32 +10125,32 @@ function admitRotationRound(run, reach) {
     run.state.rotations.push(r);
     reachedNow.add(r.toKey);
     spend(run.budget);
-    run.admitted.push(p);
+    run.admitted.push(p2);
     progressed = true;
   }
   return progressed;
 }
-function leftoverReason(run, p, publisherId) {
-  if (p.s.kind === "key.rotate" && fromRevoked(run, p.s)) {
-    return `from revoked key ${publisherKeyFingerprint(p.s.fromKey)}`;
+function leftoverReason(run, p2, publisherId2) {
+  if (p2.s.kind === "key.rotate" && fromRevoked(run, p2.s)) {
+    return `from revoked key ${publisherKeyFingerprint(p2.s.fromKey)}`;
   }
-  return `signing key ${publisherKeyFingerprint(signingKey(p.s))} is not bound to publisher ${publisherId} in ${run.budget.where} (directly or through an admitted rotation)`;
+  return `signing key ${publisherKeyFingerprint(signingKey(p2.s))} is not bound to publisher ${publisherId2} in ${run.budget.where} (directly or through an admitted rotation)`;
 }
-function admitForPublisher(publisherId, mine, state, budget, skip) {
-  const pendingRotations = mine.filter((p) => p.s.kind === "key.rotate");
+function admitForPublisher(publisherId2, mine, state, budget, skip) {
+  const pendingRotations = mine.filter((p2) => p2.s.kind === "key.rotate");
   const forked = forks(pendingRotations, state.rotations);
-  for (const p of pendingRotations) {
-    if (!forked.has(p.id))
+  for (const p2 of pendingRotations) {
+    if (!forked.has(p2.id))
       continue;
-    const from = publisherKeyFingerprint(p.s.fromKey);
-    skip(p.id, `fork: key ${from} already rotates, or is asked to rotate, to a different key`);
+    const from = publisherKeyFingerprint(p2.s.fromKey);
+    skip(p2.id, `fork: key ${from} already rotates, or is asked to rotate, to a different key`);
   }
   const run = {
     state,
     budget,
     skip,
-    revocations: new Map(mine.filter((p) => p.s.kind === "key.revoke").map((p) => [p.id, p])),
-    rotations: new Map(pendingRotations.filter((p) => !forked.has(p.id)).map((p) => [p.id, p])),
+    revocations: new Map(mine.filter((p2) => p2.s.kind === "key.revoke").map((p2) => [p2.id, p2])),
+    rotations: new Map(pendingRotations.filter((p2) => !forked.has(p2.id)).map((p2) => [p2.id, p2])),
     admitted: []
   };
   let progressed = true;
@@ -9928,49 +10160,49 @@ function admitForPublisher(publisherId, mine, state, budget, skip) {
     const rotated = admitRotationRound(run, reach);
     progressed = revoked || rotated;
   }
-  for (const p of [...run.revocations.values(), ...run.rotations.values()]) {
-    skip(p.id, leftoverReason(run, p, publisherId));
+  for (const p2 of [...run.revocations.values(), ...run.rotations.values()]) {
+    skip(p2.id, leftoverReason(run, p2, publisherId2));
   }
   return run.admitted;
 }
-function newCandidates(at, raws, existingIds, skip) {
+function newCandidates(at2, raws, existingIds, skip) {
   const byId = new Map;
   for (const raw of raws) {
-    const p = structural(at, raw, skip);
-    if (p !== undefined && !existingIds.has(p.id))
-      byId.set(p.id, p);
+    const p2 = structural(at2, raw, skip);
+    if (p2 !== undefined && !existingIds.has(p2.id))
+      byId.set(p2.id, p2);
   }
-  return [...byId.values()].sort((a, b) => codeUnitCompare(a.id, b.id));
+  return [...byId.values()].sort((a, b2) => codeUnitCompare(a.id, b2.id));
 }
 function admitPublisherStatements(index, candidates, opts = {}) {
-  const at = admitterOf(index, opts);
+  const at2 = admitterOf(index, opts);
   const existingRaw = Array.isArray(index.statements) ? [...index.statements] : [];
   const indexed = indexedPublisherStatements(index);
   const existingIds = new Set(readStatementList(index.statements).statements.map(trustStatementId));
   const skippedAll = [];
-  const skip = (id, reason) => {
-    skippedAll.push({ id, reason });
+  const skip = (id, reason2) => {
+    skippedAll.push({ id, reason: reason2 });
   };
-  const fresh = newCandidates(at, candidates, existingIds, skip);
+  const fresh = newCandidates(at2, candidates, existingIds, skip);
   const total = { value: existingRaw.length };
   const admitted = [];
-  const publishers = [...new Set(fresh.map((p) => p.s.publisherId))].sort(codeUnitCompare);
-  for (const publisherId of publishers) {
-    const state = stateOf(index, publisherId, indexed, new Set(at.bound(publisherId)));
-    const mine = fresh.filter((p) => p.s.publisherId === publisherId);
-    const already = indexed.filter((x) => x.publisherId === publisherId).length;
+  const publishers = [...new Set(fresh.map((p2) => p2.s.publisherId))].sort(codeUnitCompare);
+  for (const publisherId2 of publishers) {
+    const state = stateOf(index, publisherId2, indexed, new Set(at2.bound(publisherId2)));
+    const mine = fresh.filter((p2) => p2.s.publisherId === publisherId2);
+    const already = indexed.filter((x) => x.publisherId === publisherId2).length;
     const budget = {
       total: total.value,
       publisher: already,
-      cap: at.cap,
-      where: at.where
+      cap: at2.cap,
+      where: at2.where
     };
-    admitted.push(...admitForPublisher(publisherId, mine, state, budget, skip));
+    admitted.push(...admitForPublisher(publisherId2, mine, state, budget, skip));
     total.value = budget.total;
   }
   return {
-    index: admitted.length === 0 ? index : { ...index, statements: [...existingRaw, ...admitted.map((p) => p.s)] },
-    admitted: admitted.map((p) => p.s),
+    index: admitted.length === 0 ? index : { ...index, statements: [...existingRaw, ...admitted.map((p2) => p2.s)] },
+    admitted: admitted.map((p2) => p2.s),
     skipped: skippedAll
   };
 }
@@ -9982,10 +10214,10 @@ function publicKeyFromSeed(seed) {
 }
 var SPKI_ED25519_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 function signIndex(unsigned, privkey) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const { signature: _omitted, ...rest } = unsigned;
     const sig = sign4(null, registryIndexSigningBytes(rest), privateKeyFromSeed(privkey));
-    resolve({ ...rest, signature: sig.toString("base64") });
+    resolve2({ ...rest, signature: sig.toString("base64") });
   });
 }
 
@@ -9997,22 +10229,22 @@ var TAKEDOWN_REQUIRED = ["kind", "extensionId", "versions", "reason"];
 var PLACEHOLDER_KEY = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE = `${"A".repeat(86)}==`;
 var PLACEHOLDER_PUBLISHER = "placeholder";
-function invalid5(detail) {
+function invalid6(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
 function exactKeys2(o, allowed, required) {
-  for (const k of Object.keys(o)) {
-    if (!allowed.includes(k))
-      throw invalid5(`a request has an unknown key: ${k}`);
+  for (const k2 of Object.keys(o)) {
+    if (!allowed.includes(k2))
+      throw invalid6(`a request has an unknown key: ${k2}`);
   }
-  for (const k of required) {
-    if (!Object.hasOwn(o, k))
-      throw invalid5(`a request is missing key: ${k}`);
+  for (const k2 of required) {
+    if (!Object.hasOwn(o, k2))
+      throw invalid6(`a request is missing key: ${k2}`);
   }
 }
 function parseRegistryRequest(raw) {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw invalid5("a request must be an object");
+    throw invalid6("a request must be an object");
   }
   const o = raw;
   const signer = {
@@ -10022,42 +10254,42 @@ function parseRegistryRequest(raw) {
   };
   if (o["kind"] === "key.revoke") {
     exactKeys2(o, REVOKE_KEYS, REVOKE_KEYS);
-    const s = parseTrustStatement({ ...o, ...signer });
+    const s3 = parseTrustStatement({ ...o, ...signer });
     return {
       kind: "key.revoke",
-      publisherId: s.publisherId,
-      keyFingerprint: s.keyFingerprint,
-      reason: s.reason
+      publisherId: s3.publisherId,
+      keyFingerprint: s3.keyFingerprint,
+      reason: s3.reason
     };
   }
   if (o["kind"] === "extension.takedown") {
     exactKeys2(o, TAKEDOWN_KEYS, TAKEDOWN_REQUIRED);
     const explicit = o["publisherId"];
-    const s = parseTrustStatement({
+    const s3 = parseTrustStatement({
       ...o,
       publisherId: explicit === undefined ? PLACEHOLDER_PUBLISHER : explicit,
       ...signer
     });
     return {
       kind: "extension.takedown",
-      extensionId: s.extensionId,
-      ...explicit === undefined ? {} : { publisherId: s.publisherId },
-      versions: s.versions,
-      reason: s.reason
+      extensionId: s3.extensionId,
+      ...explicit === undefined ? {} : { publisherId: s3.publisherId },
+      versions: s3.versions,
+      reason: s3.reason
     };
   }
-  throw invalid5("a request's kind must be key.revoke or extension.takedown");
+  throw invalid6("a request's kind must be key.revoke or extension.takedown");
 }
 function takedownPublisher(req, index) {
   const entry = Object.hasOwn(index.extensions, req.extensionId) ? index.extensions[req.extensionId] : undefined;
   if (entry !== undefined) {
     if (req.publisherId !== undefined && req.publisherId !== entry.publisher.id) {
-      throw invalid5(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
+      throw invalid6(`${req.extensionId} is bound to publisher ${entry.publisher.id} in this registry, not ${req.publisherId}`);
     }
     return entry.publisher.id;
   }
   if (req.publisherId === undefined) {
-    throw invalid5(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
+    throw invalid6(`${req.extensionId} is not in this registry's index; name its publisher with --publisher to take down copies already installed`);
   }
   return req.publisherId;
 }
@@ -10067,13 +10299,13 @@ function assertRequestSignable(req, index) {
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(index.rootKey)) {
-    throw invalid5("a registry cannot revoke its own root key this way; re-initialise the registry instead");
+    throw invalid6("a registry cannot revoke its own root key this way; re-initialise the registry instead");
   }
 }
 async function signRegistryRequest(req, index, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== index.rootKey) {
-    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
+    throw invalid6(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not this registry's root key (${publisherKeyFingerprint(index.rootKey)})`);
   }
   assertRequestSignable(req, index);
   if (req.kind === "key.revoke") {
@@ -10087,13 +10319,13 @@ function covers(have, want) {
     return true;
   if (want === "*")
     return false;
-  return want.every((v) => have.includes(v));
+  return want.every((v2) => have.includes(v2));
 }
-function sameBlock(s, req, index) {
+function sameBlock(s3, req, index) {
   if (req.kind === "key.revoke") {
-    return s.kind === "key.revoke" && s.publisherId === req.publisherId && s.keyFingerprint === req.keyFingerprint;
+    return s3.kind === "key.revoke" && s3.publisherId === req.publisherId && s3.keyFingerprint === req.keyFingerprint;
   }
-  if (s.kind !== "extension.takedown" || s.extensionId !== req.extensionId)
+  if (s3.kind !== "extension.takedown" || s3.extensionId !== req.extensionId)
     return false;
   let publisher;
   try {
@@ -10101,16 +10333,16 @@ function sameBlock(s, req, index) {
   } catch {
     return false;
   }
-  return s.publisherId === publisher && covers(s.versions, req.versions);
+  return s3.publisherId === publisher && covers(s3.versions, req.versions);
 }
 function alreadyCarried(index, req, role = "registry") {
   const roots = role === "nimbus" ? { nimbusRootKey: index.rootKey } : { registryRootKey: index.rootKey };
-  return readStatementList(index.statements).statements.some((s) => verifyTrustStatement(s, roots) === role && s.signerKey === index.rootKey && sameBlock(s, req, index));
+  return readStatementList(index.statements).statements.some((s3) => verifyTrustStatement(s3, roots) === role && s3.signerKey === index.rootKey && sameBlock(s3, req, index));
 }
 async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
   const signerKey = Buffer.from(publicKeyFromSeed(rootSeed)).toString("base64");
   if (signerKey !== feedRootKey) {
-    throw invalid5(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
+    throw invalid6(`the key given (fingerprint ${publisherKeyFingerprint(signerKey)}) is not the trust feed's root key (${publisherKeyFingerprint(feedRootKey)})`);
   }
   assertFeedRequestSignable(req, feedRootKey);
   return signTrustStatement({ ...req, issuedAt, signerKey }, rootSeed);
@@ -10118,12 +10350,12 @@ async function signFeedRequest(req, feedRootKey, rootSeed, issuedAt) {
 function assertFeedRequestSignable(req, feedRootKey) {
   if (req.kind === "extension.takedown") {
     if (req.publisherId === undefined) {
-      throw invalid5(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
+      throw invalid6(`a trust feed takedown of ${req.extensionId} must name its publisher (the feed binds no extensions)`);
     }
     return;
   }
   if (req.keyFingerprint === publisherKeyFingerprint(feedRootKey)) {
-    throw invalid5("the trust feed cannot revoke its own root key");
+    throw invalid6("the trust feed cannot revoke its own root key");
   }
 }
 // ../../registry-format/src/scores-file.ts
@@ -10152,8 +10384,8 @@ function readAtMost(path, max) {
     closeSync3(fd);
   }
 }
-function isPlainObject3(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isPlainObject3(v2) {
+  return typeof v2 === "object" && v2 !== null && !Array.isArray(v2);
 }
 function readScores(path) {
   let bytes;
@@ -10191,17 +10423,17 @@ function baselineOf(raw) {
     return { baselineIgnored: BASELINE_INVALID };
   }
 }
-function judgeBaselineOnly(scores, v) {
-  const raw = scores.get(`${v.id}@${v.version}`);
+function judgeBaselineOnly(scores, v2) {
+  const raw = scores.get(`${v2.id}@${v2.version}`);
   if (raw === undefined)
     return { ok: true };
-  if (!isPlainObject3(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v.packageSha256) {
+  if (!isPlainObject3(raw) || sortedKeys(raw) !== "baseline,packageSha256" || raw["packageSha256"] !== v2.packageSha256) {
     return { ok: true, baselineIgnored: BASELINE_UNBOUND };
   }
   return { ok: true, ...baselineOf(raw) };
 }
-function judgeSuite(scores, v) {
-  const raw = scores.get(`${v.id}@${v.version}`);
+function judgeSuite(scores, v2) {
+  const raw = scores.get(`${v2.id}@${v2.version}`);
   if (raw === undefined) {
     return {
       ok: false,
@@ -10216,7 +10448,7 @@ function judgeSuite(scores, v) {
   if (core !== "packageSha256,quality" && core !== "error,packageSha256") {
     return { ok: false, reason: MALFORMED };
   }
-  if (raw["packageSha256"] !== v.packageSha256) {
+  if (raw["packageSha256"] !== v2.packageSha256) {
     return {
       ok: false,
       reason: "its scores.json entry is for another package (packageSha256 differs); not signed"
@@ -10235,18 +10467,18 @@ function judgeSuite(scores, v) {
     const detail = errorText(e).slice(0, MAX_REASON_DETAIL_CHARS);
     return { ok: false, reason: `its score is invalid: ${detail}; not signed` };
   }
-  if (!withBaseline || v.starterPack)
+  if (!withBaseline || v2.starterPack)
     return { ok: true, quality };
   return { ok: true, quality, ...baselineOf(raw) };
 }
-function judgeScoreEntry(scores, v) {
+function judgeScoreEntry(scores, v2) {
   if (scores === undefined)
     return { ok: true };
-  if (v.hasEvals)
-    return judgeSuite(scores, v);
-  if (v.starterPack)
+  if (v2.hasEvals)
+    return judgeSuite(scores, v2);
+  if (v2.starterPack)
     return { ok: true };
-  return judgeBaselineOnly(scores, v);
+  return judgeBaselineOnly(scores, v2);
 }
 // ../../registry-format/src/trust-feed-build.ts
 var TRUST_FEED_FILE = "trust.json";
@@ -10257,10 +10489,10 @@ var FEED_STATEMENTS_DIR = "statements/";
 var PLACEHOLDER_KEY2 = `${"A".repeat(43)}=`;
 var PLACEHOLDER_SIGNATURE2 = `${"A".repeat(86)}==`;
 var PUBLISHER_FILE_KEYS = ["publisherId", "keys", "github"];
-function invalid6(detail) {
+function invalid7(detail) {
   return new RegistryError("ERR_TRUST_STATEMENT_INVALID", detail);
 }
-var isObject5 = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+var isObject6 = (v2) => v2 !== null && typeof v2 === "object" && !Array.isArray(v2);
 function baseName(path, dir) {
   if (!path.startsWith(dir) || !path.endsWith(".json"))
     return;
@@ -10268,20 +10500,20 @@ function baseName(path, dir) {
   return name === "" || name.includes("/") ? undefined : name;
 }
 function parseFeedConfig(raw) {
-  if (!isObject5(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
+  if (!isObject6(raw) || Object.keys(raw).length !== 1 || raw["format"] !== 1) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `${FEED_CONFIG_FILE} must be exactly { "format": 1 }`);
   }
   return { format: 1 };
 }
 function parsePublisherFile(path, raw) {
-  if (!isObject5(raw))
-    throw invalid6("a publisher file must be an object");
-  for (const k of Object.keys(raw)) {
-    if (!PUBLISHER_FILE_KEYS.includes(k)) {
-      throw invalid6(`a publisher file has an unknown key: ${k}`);
+  if (!isObject6(raw))
+    throw invalid7("a publisher file must be an object");
+  for (const k2 of Object.keys(raw)) {
+    if (!PUBLISHER_FILE_KEYS.includes(k2)) {
+      throw invalid7(`a publisher file has an unknown key: ${k2}`);
     }
   }
-  const s = parseTrustStatement({
+  const s3 = parseTrustStatement({
     kind: "publisher.verified",
     ...raw,
     verifiedAt: "2026-01-01T00:00:00Z",
@@ -10289,79 +10521,79 @@ function parsePublisherFile(path, raw) {
     signerKey: PLACEHOLDER_KEY2,
     signature: PLACEHOLDER_SIGNATURE2
   });
-  if (baseName(path, FEED_PUBLISHERS_DIR) !== s.publisherId) {
-    throw invalid6(`${path} must be named ${FEED_PUBLISHERS_DIR}${s.publisherId}.json`);
+  if (baseName(path, FEED_PUBLISHERS_DIR) !== s3.publisherId) {
+    throw invalid7(`${path} must be named ${FEED_PUBLISHERS_DIR}${s3.publisherId}.json`);
   }
-  return { publisherId: s.publisherId, keys: [...s.keys].sort(codeUnitCompare), github: s.github };
+  return { publisherId: s3.publisherId, keys: [...s3.keys].sort(codeUnitCompare), github: s3.github };
 }
 function carriedEntries(prev) {
   if (!Array.isArray(prev.statements))
     return [];
-  return prev.statements.filter((e) => !(isObject5(e) && e["kind"] === "publisher.verified"));
+  return prev.statements.filter((e) => !(isObject6(e) && e["kind"] === "publisher.verified"));
 }
 function previousVerified(prev) {
   const out = new Map;
-  for (const s of readTrustFeedStatements(prev).statements) {
-    if (s.kind !== "publisher.verified")
+  for (const s3 of readTrustFeedStatements(prev).statements) {
+    if (s3.kind !== "publisher.verified")
       continue;
-    if (verifyTrustStatement(s, { nimbusRootKey: prev.rootKey }) !== "nimbus")
+    if (verifyTrustStatement(s3, { nimbusRootKey: prev.rootKey }) !== "nimbus")
       continue;
-    out.set(s.publisherId, s);
+    out.set(s3.publisherId, s3);
   }
   return out;
 }
-var sameEntry = (s, e) => s.github === e.github && s.keys.length === e.keys.length && [...s.keys].sort(codeUnitCompare).every((k, i) => k === e.keys[i]);
-function requestCovers(a, b) {
-  if (a.kind === "key.revoke" || b.kind === "key.revoke") {
-    return a.kind === "key.revoke" && b.kind === "key.revoke" && a.publisherId === b.publisherId && a.keyFingerprint === b.keyFingerprint;
+var sameEntry = (s3, e) => s3.github === e.github && s3.keys.length === e.keys.length && [...s3.keys].sort(codeUnitCompare).every((k2, i) => k2 === e.keys[i]);
+function requestCovers(a, b2) {
+  if (a.kind === "key.revoke" || b2.kind === "key.revoke") {
+    return a.kind === "key.revoke" && b2.kind === "key.revoke" && a.publisherId === b2.publisherId && a.keyFingerprint === b2.keyFingerprint;
   }
-  if (a.extensionId !== b.extensionId || a.publisherId !== b.publisherId)
+  if (a.extensionId !== b2.extensionId || a.publisherId !== b2.publisherId)
     return false;
   if (a.versions === "*")
     return true;
-  return b.versions !== "*" && b.versions.every((v) => a.versions.includes(v));
+  return b2.versions !== "*" && b2.versions.every((v2) => a.versions.includes(v2));
 }
 function planRequests(prev, carried, files, skipped) {
   const doc = { extensions: {}, statements: carried, rootKey: prev.rootKey };
   const blocks = [];
-  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
-    const name = baseName(f.path, FEED_REQUESTS_DIR);
+  for (const f2 of [...files].sort((a, b2) => codeUnitCompare(a.path, b2.path))) {
+    const name = baseName(f2.path, FEED_REQUESTS_DIR);
     if (name === undefined || !REQUEST_NAME_RE.test(name)) {
       skipped.push({
-        path: f.path,
+        path: f2.path,
         reason: `a request file must be ${FEED_REQUESTS_DIR}<name>.json`
       });
       continue;
     }
     let request;
     try {
-      request = parseRegistryRequest(f.raw);
+      request = parseRegistryRequest(f2.raw);
       assertFeedRequestSignable(request, prev.rootKey);
     } catch (e) {
       if (!(e instanceof RegistryError))
         throw e;
-      skipped.push({ path: f.path, reason: e.message });
+      skipped.push({ path: f2.path, reason: e.message });
       continue;
     }
     if (alreadyCarried(doc, request, "nimbus"))
       continue;
-    if (blocks.some((b) => requestCovers(b.request, request)))
+    if (blocks.some((b2) => requestCovers(b2.request, request)))
       continue;
-    blocks.push({ path: f.path, request });
+    blocks.push({ path: f2.path, request });
   }
   return blocks;
 }
 function planPublishers(prevVerified, files, skipped) {
   const next = new Map;
   const verified = [];
-  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
+  for (const f2 of [...files].sort((a, b2) => codeUnitCompare(a.path, b2.path))) {
     let entry;
     try {
-      entry = parsePublisherFile(f.path, f.raw);
+      entry = parsePublisherFile(f2.path, f2.raw);
     } catch (e) {
       if (!(e instanceof RegistryError))
         throw e;
-      skipped.push({ path: f.path, reason: e.message });
+      skipped.push({ path: f2.path, reason: e.message });
       continue;
     }
     next.set(entry.publisherId, entry);
@@ -10374,29 +10606,29 @@ function planPublishers(prevVerified, files, skipped) {
   const unverified = [...prevVerified.keys()].filter((id) => !next.has(id)).sort(codeUnitCompare);
   return { next, verified, unverified };
 }
-function planStatements(carried, verifiedKeys, files, skipped, reserved) {
+function planStatements(carried, verifiedKeys2, files, skipped, reserved) {
   const pathById = new Map;
   const candidates = [];
-  for (const f of [...files].sort((a, b) => codeUnitCompare(a.path, b.path))) {
+  for (const f2 of [...files].sort((a, b2) => codeUnitCompare(a.path, b2.path))) {
     try {
-      const s = parseTrustStatement(f.raw);
-      pathById.set(trustStatementId(s), f.path);
-      candidates.push(s);
+      const s3 = parseTrustStatement(f2.raw);
+      pathById.set(trustStatementId(s3), f2.path);
+      candidates.push(s3);
     } catch (e) {
       if (!(e instanceof RegistryError))
         throw e;
-      skipped.push({ path: f.path, reason: `not a valid statement: ${e.message}` });
+      skipped.push({ path: f2.path, reason: `not a valid statement: ${e.message}` });
     }
   }
   const admission = admitPublisherStatements({ extensions: {}, statements: carried }, candidates, {
-    boundKeys: (publisherId) => new Set(verifiedKeys.get(publisherId)?.keys ?? []),
+    boundKeys: (publisherId2) => new Set(verifiedKeys2.get(publisherId2)?.keys ?? []),
     maxStatements: MAX_STATEMENTS_PER_DOCUMENT - reserved,
     where: "the trust feed",
-    unbound: (publisherId) => `publisher ${publisherId} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`
+    unbound: (publisherId2) => `publisher ${publisherId2} is not verified in the trust feed: only a verified publisher's own statements ride the feed (block an unverified publisher's key with \`nimbus trust maintain revoke-key\`)`
   });
-  for (const s of admission.skipped) {
-    const path = pathById.get(s.id ?? "") ?? FEED_STATEMENTS_DIR;
-    skipped.push({ path, reason: s.reason });
+  for (const s3 of admission.skipped) {
+    const path = pathById.get(s3.id ?? "") ?? FEED_STATEMENTS_DIR;
+    skipped.push({ path, reason: s3.reason });
   }
   return admission.admitted;
 }
@@ -10417,7 +10649,7 @@ function planTrustFeed(prev, source) {
     skipped
   };
 }
-async function verifiedStatements(prev, source, seed, at) {
+async function verifiedStatements(prev, source, seed, at2) {
   const before = previousVerified(prev);
   const { next } = planPublishers(before, source.publishers, []);
   const out = [];
@@ -10433,14 +10665,14 @@ async function verifiedStatements(prev, source, seed, at) {
       publisherId: entry.publisherId,
       keys: [...entry.keys],
       github: entry.github,
-      verifiedAt: at,
-      issuedAt: at,
+      verifiedAt: at2,
+      issuedAt: at2,
       signerKey: prev.rootKey
     }, seed));
   }
   return out;
 }
-async function buildTrustFeed(prev, source, seed, at) {
+async function buildTrustFeed(prev, source, seed, at2) {
   const signer = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   if (signer !== prev.rootKey) {
     throw new RegistryError("ERR_TRUST_FEED_ROOT_KEY_CHANGED", `the key given (fingerprint ${publisherKeyFingerprint(signer)}) is not the trust feed's root key (${publisherKeyFingerprint(prev.rootKey)})`);
@@ -10449,20 +10681,20 @@ async function buildTrustFeed(prev, source, seed, at) {
   if (plan.status === "unchanged")
     return { plan, feed: undefined };
   const blocks = [];
-  for (const b of plan.blocks) {
-    blocks.push(await signFeedRequest(b.request, prev.rootKey, seed, at));
+  for (const b2 of plan.blocks) {
+    blocks.push(await signFeedRequest(b2.request, prev.rootKey, seed, at2));
   }
   const statements = [
     ...carriedEntries(prev),
     ...blocks,
-    ...await verifiedStatements(prev, source, seed, at),
+    ...await verifiedStatements(prev, source, seed, at2),
     ...plan.admitted
   ];
   if (statements.length > MAX_STATEMENTS_PER_DOCUMENT) {
     throw new RegistryError("ERR_TRUST_FEED_INVALID", `the next feed would carry ${String(statements.length)} statements; the cap is ${String(MAX_STATEMENTS_PER_DOCUMENT)}`);
   }
   const { signature: _previous, ...carried } = prev;
-  const feed = await signTrustFeed({ ...carried, format: 1, sequence: prev.sequence + 1, generatedAt: at, statements }, seed);
+  const feed = await signTrustFeed({ ...carried, format: 1, sequence: prev.sequence + 1, generatedAt: at2, statements }, seed);
   const reparsed = parseTrustFeed(new TextEncoder().encode(JSON.stringify(feed)));
   readTrustFeedStatements(reparsed);
   await verifyTrustFeedPinned(reparsed, prev.rootKey);
@@ -10491,13 +10723,13 @@ function decodeJsonObject(bytes, what, fail) {
   return raw;
 }
 function requireExactKeys(o, keys, what, fail) {
-  for (const k of Object.keys(o)) {
-    if (!keys.includes(k))
-      throw fail(`${what} has an unknown key: ${k}`);
+  for (const k2 of Object.keys(o)) {
+    if (!keys.includes(k2))
+      throw fail(`${what} has an unknown key: ${k2}`);
   }
-  for (const k of keys) {
-    if (!Object.hasOwn(o, k))
-      throw fail(`${what} is missing key: ${k}`);
+  for (const k2 of keys) {
+    if (!Object.hasOwn(o, k2))
+      throw fail(`${what} is missing key: ${k2}`);
   }
 }
 var configInvalid = (detail) => new RegistryError("ERR_REGISTRY_CONFIG_INVALID", detail);
@@ -10509,11 +10741,11 @@ function parseRegistryConfig(bytes) {
   requireExactKeys(o, CONFIG_KEYS, what, configInvalid);
   if (o["format"] !== 1)
     throw configInvalid(`${what} has an unsupported format`);
-  const ns = o["requirePublisherNamespace"];
-  if (typeof ns !== "boolean") {
+  const ns2 = o["requirePublisherNamespace"];
+  if (typeof ns2 !== "boolean") {
     throw configInvalid(`${what}.requirePublisherNamespace must be a boolean`);
   }
-  return { format: 1, requirePublisherNamespace: ns };
+  return { format: 1, requirePublisherNamespace: ns2 };
 }
 function effectiveRegistryConfig(pages, defaultBranch) {
   return {
@@ -10568,27 +10800,27 @@ function parseCandidateManifest(bytes) {
   }
   return { manifest, raw };
 }
-function assertCoordinates(c, m, req) {
+function assertCoordinates(c, m2, req) {
   for (const [field, dir, fromReq] of [
     ["id", c.dirId, req.id],
     ["version", c.dirVersion, req.version]
   ]) {
-    const fromManifest = m[field];
+    const fromManifest = m2[field];
     if (dir !== fromManifest || fromReq !== fromManifest) {
       throw requestInvalid(`manifest ${field} ${JSON.stringify(fromManifest)} must equal the directory's ` + `(${JSON.stringify(dir)}) and publish-request.json's (${JSON.stringify(fromReq)})`);
     }
   }
 }
-async function assertSigned(m, raw) {
-  if (m.publisher === undefined || m.signature === undefined) {
+async function assertSigned(m2, raw) {
+  if (m2.publisher === undefined || m2.signature === undefined) {
     throw new RegistryError("ERR_REGISTRY_SIGNATURE_INVALID", "a published manifest must carry publisher and signature");
   }
   try {
-    await verifyManifestSignature(raw, new Uint8Array(Buffer.from(m.publisher.key, "base64")));
+    await verifyManifestSignature(raw, new Uint8Array(Buffer.from(m2.publisher.key, "base64")));
   } catch {
-    throw new RegistryError("ERR_REGISTRY_SIGNATURE_INVALID", `manifest signature does not verify with publisher ${m.publisher.id}'s key`);
+    throw new RegistryError("ERR_REGISTRY_SIGNATURE_INVALID", `manifest signature does not verify with publisher ${m2.publisher.id}'s key`);
   }
-  return m.publisher;
+  return m2.publisher;
 }
 function indexedServiceIds(signed) {
   const out = new Map;
@@ -10629,23 +10861,23 @@ function assertKeyMoveOnStable(id, publisher, channel, signed) {
   throw keyConflict(`${id} is bound to key ${publisherKeyFingerprint(existing.publisher.key)}; publish the first version under key ${publisherKeyFingerprint(publisher.key)} on the stable channel, or default installs of the newest stable version would break`);
 }
 var keyConflict = (detail) => new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", detail);
-function assertRegistryState(m, publisher, serviceId, signed) {
-  const existing = Object.hasOwn(signed.extensions, m.id) ? signed.extensions[m.id] : undefined;
+function assertRegistryState(m2, publisher, serviceId, signed) {
+  const existing = Object.hasOwn(signed.extensions, m2.id) ? signed.extensions[m2.id] : undefined;
   if (existing === undefined) {
     const indexed = indexedServiceIds(signed);
     const hit = findServiceIdPrefixCollision(serviceId, [...indexed.keys()]);
     if (hit !== undefined) {
-      throw new RegistryError("ERR_REGISTRY_SERVICE_ID_COLLISION", `service id ${serviceId} of new id ${m.id} collides with ${hit} of indexed id ${String(indexed.get(hit))}`);
+      throw new RegistryError("ERR_REGISTRY_SERVICE_ID_COLLISION", `service id ${serviceId} of new id ${m2.id} collides with ${hit} of indexed id ${String(indexed.get(hit))}`);
     }
   }
   if (existing !== undefined && existing.publisher.id !== publisher.id) {
-    throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m.id} is bound to publisher ${existing.publisher.id}`);
+    throw new RegistryError("ERR_REGISTRY_PUBLISHER_KEY_CONFLICT", `${m2.id} is bound to publisher ${existing.publisher.id}`);
   }
   assertCurrentPublisherKey(publisher, signed);
   if (existing !== undefined) {
-    const taken = Object.keys(existing.versions).find((v) => v === m.version || import_semver6.default.compare(v, m.version) === 0);
+    const taken = Object.keys(existing.versions).find((v2) => v2 === m2.version || import_semver6.default.compare(v2, m2.version) === 0);
     if (taken !== undefined) {
-      throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m.id}@${m.version} is already in the index (as ${taken})`);
+      throw new RegistryError("ERR_REGISTRY_VERSION_EXISTS", `${m2.id}@${m2.version} is already in the index (as ${taken})`);
     }
   }
   return existing === undefined;
@@ -10654,60 +10886,61 @@ var fileSetInvalid = (detail) => new RegistryError("ERR_REGISTRY_PACKAGE_FILE_SE
 function isCleanRelPath(rel) {
   return rel.split("/").every((seg) => seg !== "" && seg !== "." && seg !== "..");
 }
-function assertFileSet(m, files) {
-  const starterPack = isStarterPack(m);
-  const entry = extensionEntryRelPath(m);
+function assertFileSet(m2, files) {
+  const starterPack = isStarterPack(m2);
+  const entry = extensionEntryRelPath(m2);
   if (!starterPack && (!entry.startsWith(DIST_PREFIX) || !isCleanRelPath(entry))) {
     throw fileSetInvalid(`extension entry ${entry} must be a file inside dist/`);
   }
   if (starterPack) {
-    const code = files.find((f) => f.startsWith(DIST_PREFIX));
+    const code = files.find((f2) => f2.startsWith(DIST_PREFIX));
     if (code !== undefined) {
       throw fileSetInvalid(`package holds ${code}, but a starter pack holds no dist/ files`);
     }
-    const evalFile = files.find((f) => f.startsWith(`${EVALS_DIR}/`));
+    const evalFile = files.find((f2) => f2.startsWith(`${EVALS_DIR}/`));
     if (evalFile !== undefined) {
       throw fileSetInvalid(`package holds ${evalFile}, but a starter pack holds no evals/ files`);
     }
   }
   const seen = new Set;
   const folded = new Map;
-  for (const f of files) {
-    if (seen.has(f))
-      throw fileSetInvalid(`package holds ${f} more than once`);
-    seen.add(f);
-    const twin = folded.get(f.toLowerCase());
+  for (const f2 of files) {
+    if (seen.has(f2))
+      throw fileSetInvalid(`package holds ${f2} more than once`);
+    seen.add(f2);
+    const twin = folded.get(f2.toLowerCase());
     if (twin !== undefined) {
-      throw fileSetInvalid(`package holds ${twin} and ${f}, which differ only by case`);
+      throw fileSetInvalid(`package holds ${twin} and ${f2}, which differ only by case`);
     }
-    folded.set(f.toLowerCase(), f);
-    if (!isCleanRelPath(f) || !isPackageFile(f)) {
-      throw fileSetInvalid(`package holds ${f}, which is outside the package file set`);
+    folded.set(f2.toLowerCase(), f2);
+    if (!isCleanRelPath(f2) || !isPackageFile(f2)) {
+      throw fileSetInvalid(`package holds ${f2}, which is outside the package file set`);
     }
   }
   if (!seen.has(PACKAGE_MANIFEST_FILE) || !seen.has(entry)) {
     throw fileSetInvalid(`package must hold ${PACKAGE_MANIFEST_FILE} and the entry ${entry}`);
   }
 }
-var sha256Hex = (b) => createHash6("sha256").update(b).digest("hex");
+var sha256Hex = (b2) => createHash6("sha256").update(b2).digest("hex");
 async function validatePublish(c, signed, config, work) {
   const req = parsePublishRequest(c.publishRequestBytes);
-  const { manifest: m, raw } = parseCandidateManifest(c.manifestBytes);
+  const { manifest: m2, raw } = parseCandidateManifest(c.manifestBytes);
+  assertAuthorMetadata(raw);
   const repository = readManifestRepository(raw);
-  assertCoordinates(c, m, req);
-  const publisher = await assertSigned(m, raw);
+  assertCoordinates(c, m2, req);
+  const publisher = await assertSigned(m2, raw);
   if (req.publisherFingerprint !== publisherKeyFingerprint(publisher.key)) {
     throw requestInvalid(`publish-request.json.publisherFingerprint does not match publisher ${publisher.id}'s key`);
   }
   if (config.requirePublisherNamespace) {
-    const ns = `${publisher.id}/`;
-    if (!m.id.startsWith(ns) || m.id.length === ns.length) {
-      throw new RegistryError("ERR_REGISTRY_NAMESPACE_REQUIRED", `this registry requires ids of the form ${ns}<name>; got ${m.id}`);
+    const ns2 = `${publisher.id}/`;
+    if (!m2.id.startsWith(ns2) || m2.id.length === ns2.length) {
+      throw new RegistryError("ERR_REGISTRY_NAMESPACE_REQUIRED", `this registry requires ids of the form ${ns2}<name>; got ${m2.id}`);
     }
   }
-  const serviceId = deriveExtensionServiceId(m.id);
-  const newId = assertRegistryState(m, publisher, serviceId, signed);
-  assertKeyMoveOnStable(m.id, publisher, req.channel, signed);
+  const serviceId = deriveExtensionServiceId(m2.id);
+  const newId = assertRegistryState(m2, publisher, serviceId, signed);
+  assertKeyMoveOnStable(m2.id, publisher, req.channel, signed);
   if (c.packageBytes.byteLength > MAX_PACKAGE_BYTES) {
     throw new RegistryError("ERR_REGISTRY_TOO_LARGE", `package exceeds ${String(MAX_PACKAGE_BYTES)} bytes`);
   }
@@ -10726,21 +10959,21 @@ async function validatePublish(c, signed, config, work) {
     if (!Buffer.from(c.manifestBytes).equals(inspected.manifestBytes)) {
       throw new RegistryError("ERR_REGISTRY_MANIFEST_MISMATCH", `the package's ${PACKAGE_MANIFEST_FILE} differs from the committed manifest.json`);
     }
-    assertFileSet(m, inspected.files);
+    assertFileSet(m2, inspected.files);
     return {
-      id: m.id,
-      version: m.version,
+      id: m2.id,
+      version: m2.version,
       channel: req.channel,
-      name: m.name ?? m.id,
+      name: m2.name ?? m2.id,
       publisher: { id: publisher.id, key: publisher.key },
       entryHash: inspected.entryHash,
       manifestSha256: sha256Hex(c.manifestBytes),
       packageSha256: sha256Hex(c.packageBytes),
       packageSizeBytes: c.packageBytes.byteLength,
       newId,
-      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
-      starterPack: isStarterPack(m),
-      permissions: m.permissions,
+      hasEvals: inspected.files.some((f2) => isEvalSuiteFile(f2)),
+      starterPack: isStarterPack(m2),
+      permissions: m2.permissions,
       ...repository !== undefined && { repository },
       ...repository === undefined && raw["repository"] !== undefined && { repositoryIgnored: true }
     };
@@ -10749,6 +10982,20 @@ async function validatePublish(c, signed, config, work) {
   }
 }
 // src/git-tree.ts
+var exports_git_tree = {};
+__export(exports_git_tree, {
+  remoteDefaultBranch: () => remoteDefaultBranch,
+  readBlob: () => readBlob,
+  listTreeEntries: () => listTreeEntries,
+  findMergeBase: () => findMergeBase,
+  fetchRefs: () => fetchRefs,
+  diffTree: () => diffTree,
+  commitTime: () => commitTime,
+  commitOf: () => commitOf,
+  assertSafeTreePath: () => assertSafeTreePath,
+  REGULAR_FILE_MODE: () => REGULAR_FILE_MODE,
+  REGISTRY_NOT_INITIALISED: () => REGISTRY_NOT_INITIALISED
+});
 import { execFileSync } from "node:child_process";
 var REGULAR_FILE_MODE = "100644";
 var EXTENSIONS_PREFIX = "extensions/";
@@ -10764,11 +11011,11 @@ function git(args, opts) {
 }
 function stderrOf(err) {
   if (err !== null && typeof err === "object" && "stderr" in err) {
-    const s = err.stderr;
-    if (typeof s === "string")
-      return s;
-    if (s instanceof Uint8Array)
-      return Buffer.from(s).toString("utf8");
+    const s3 = err.stderr;
+    if (typeof s3 === "string")
+      return s3;
+    if (s3 instanceof Uint8Array)
+      return Buffer.from(s3).toString("utf8");
   }
   return err instanceof Error ? err.message : String(err);
 }
@@ -10784,8 +11031,8 @@ function assertRev(rev) {
 }
 function assertSafeTreePath(path) {
   const segments = path.split("/");
-  const bad = path === "" || path.includes("\\") || /^[A-Za-z]:/.test(path) || /[\x00-\x1f\x7f]/.test(path) || segments.some((s) => s === "" || s === "." || s === "..");
-  if (bad)
+  const bad3 = path === "" || path.includes("\\") || /^[A-Za-z]:/.test(path) || /[\x00-\x1f\x7f]/.test(path) || segments.some((s3) => s3 === "" || s3 === "." || s3 === "..");
+  if (bad3)
     throw new Error(`refusing unsafe path in git tree: ${JSON.stringify(path)}`);
 }
 function refspecFor(branch) {
@@ -10835,14 +11082,14 @@ function readBlob(ref, path, opts) {
   assertSafeTreePath(path);
   return new Uint8Array(git(["cat-file", "blob", `${ref}:${path}`], opts));
 }
-function tryMergeBase(a, b, opts) {
+function tryMergeBase(a, b2, opts) {
   try {
-    return git(["merge-base", a, b], opts).toString("utf8").trim();
+    return git(["merge-base", a, b2], opts).toString("utf8").trim();
   } catch (err) {
     const status = err !== null && typeof err === "object" && "status" in err ? err.status : null;
     if (status === 1)
       return null;
-    throw new Error(`git merge-base ${a} ${b} failed: ${stderrOf(err).trim()}`);
+    throw new Error(`git merge-base ${a} ${b2} failed: ${stderrOf(err).trim()}`);
   }
 }
 function assertBranchList(refs, what) {
@@ -10851,30 +11098,30 @@ function assertBranchList(refs, what) {
   for (const r of refs)
     assertBranchName(r);
 }
-function findMergeBase(a, b, opts) {
+function findMergeBase(a, b2, opts) {
   assertRev(a);
-  assertRev(b);
+  assertRev(b2);
   assertBranchList(opts.deepen, "findMergeBase deepen");
   const step = opts.step ?? 50;
   const maxRounds = opts.maxRounds ?? 10;
   for (let round = 0;; round++) {
-    const base = tryMergeBase(a, b, opts);
+    const base = tryMergeBase(a, b2, opts);
     if (base !== null)
       return base;
     const shallow = git(["rev-parse", "--is-shallow-repository"], opts).toString("utf8").trim() === "true";
     if (!shallow)
-      throw new Error(`${a} and ${b} have no common history`);
+      throw new Error(`${a} and ${b2} have no common history`);
     if (round >= maxRounds) {
-      throw new Error(`no merge base of ${a} and ${b} within ${maxRounds} rounds of ${step} commits`);
+      throw new Error(`no merge base of ${a} and ${b2} within ${maxRounds} rounds of ${step} commits`);
     }
     git(["fetch", "--no-tags", `--deepen=${step}`, "origin", ...opts.deepen.map(refspecFor)], opts);
   }
 }
 var ABSENT_MODE = "000000";
-function diffTree(from, to, opts) {
+function diffTree(from, to2, opts) {
   assertRev(from);
-  assertRev(to);
-  const out = git(["diff-tree", "-r", "-z", "--no-renames", from, to], opts).toString("utf8");
+  assertRev(to2);
+  const out = git(["diff-tree", "-r", "-z", "--no-renames", from, to2], opts).toString("utf8");
   const fields = out.split("\x00");
   const changes = [];
   for (let i = 0;i + 1 < fields.length; i += 2) {
@@ -10886,9 +11133,9 @@ function diffTree(from, to, opts) {
     }
     assertSafeTreePath(path);
     if (path.startsWith(EXTENSIONS_PREFIX)) {
-      for (const m of [oldMode, mode]) {
-        if (m !== REGULAR_FILE_MODE && m !== ABSENT_MODE) {
-          throw new Error(`refusing ${path}: git mode ${m} is not a regular file (${REGULAR_FILE_MODE}); symlinks, submodules and executables are not accepted under extensions/`);
+      for (const m2 of [oldMode, mode]) {
+        if (m2 !== REGULAR_FILE_MODE && m2 !== ABSENT_MODE) {
+          throw new Error(`refusing ${path}: git mode ${m2} is not a regular file (${REGULAR_FILE_MODE}); symlinks, submodules and executables are not accepted under extensions/`);
         }
       }
     }
@@ -10903,18 +11150,18 @@ function commitOf(rev, opts) {
 function commitTime(rev, opts) {
   assertRev(rev);
   const raw = git(["log", "-1", "--format=%cI", rev, "--"], opts).toString("utf8").trim();
-  const ms = Date.parse(raw);
-  if (Number.isNaN(ms))
+  const ms2 = Date.parse(raw);
+  if (Number.isNaN(ms2))
     throw new Error(`git gave no commit time for ${rev}: ${JSON.stringify(raw)}`);
-  return new Date(ms).toISOString();
+  return new Date(ms2).toISOString();
 }
 function remoteDefaultBranch(opts) {
   const out = git(["ls-remote", "--symref", "origin", "HEAD"], opts).toString("utf8");
-  const m = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out);
-  if (m?.[1] === undefined)
+  const m2 = /^ref: refs\/heads\/(\S+)\tHEAD$/m.exec(out);
+  if (m2?.[1] === undefined)
     throw new Error("cannot tell origin's default branch from git ls-remote");
-  assertBranchName(m[1]);
-  return m[1];
+  assertBranchName(m2[1]);
+  return m2[1];
 }
 
 // src/provenance.ts
@@ -10942,21 +11189,21 @@ var GH_PATHS = {
   win32: [String.raw`C:\Program Files\GitHub CLI\gh.exe`]
 };
 function resolveGh(platform, exists = existsSync) {
-  return (GH_PATHS[platform] ?? []).find((p) => exists(p));
+  return (GH_PATHS[platform] ?? []).find((p2) => exists(p2));
 }
 function runGhAt(gh, exec = execFile) {
-  return (args, env, timeoutMs) => new Promise((resolve) => {
+  return (args, env, timeoutMs) => new Promise((resolve2) => {
     if (gh === undefined) {
-      resolve({ code: null, stdout: "", stderr: "", error: { code: "ENOENT" } });
+      resolve2({ code: null, stdout: "", stderr: "", error: { code: "ENOENT" } });
       return;
     }
-    exec(gh, [...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve(ghRunOf(err, stdout, stderr)));
+    exec(gh, [...args], { env, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => resolve2(ghRunOf(err, stdout, stderr)));
   });
 }
 var runGh = (args, env, timeoutMs) => runGhAt(resolveGh(process.platform))(args, env, timeoutMs);
 var CONTROL_CHARS = /[\x00-\x1f\x7f]/g;
-function firstLine(s) {
-  const line = s.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
+function firstLine(s3) {
+  const line = s3.split(/\r?\n/).find((l) => l.trim() !== "") ?? "";
   return line.replace(CONTROL_CHARS, " ").trim().slice(0, 200);
 }
 function classify(r) {
@@ -10996,10 +11243,10 @@ async function verifyProvenance(pkgPath, repository, verifiedAt, deps) {
   await deps.sleep(RETRY_DELAY_MS);
   return strip(await attempt(pkgPath, repository, verifiedAt, deps));
 }
-async function verifyNeverThrowing(verify, at) {
+async function verifyNeverThrowing(verify2, at2) {
   try {
-    writeFileSync2(at.pkgPath, at.packageBytes, { flag: "wx" });
-    return await verify(at.pkgPath, at.repository, at.verifiedAt);
+    writeFileSync2(at2.pkgPath, at2.packageBytes, { flag: "wx" });
+    return await verify2(at2.pkgPath, at2.repository, at2.verifiedAt);
   } catch (e) {
     return {
       ok: false,
@@ -11011,8 +11258,8 @@ function ghProvenance(token) {
   return (pkgPath, repository, verifiedAt) => verifyProvenance(pkgPath, repository, verifiedAt, {
     run: runGh,
     token,
-    sleep: (ms) => new Promise((resolve) => {
-      setTimeout(resolve, ms);
+    sleep: (ms2) => new Promise((resolve2) => {
+      setTimeout(resolve2, ms2);
     })
   });
 }
@@ -11028,34 +11275,34 @@ var CONFIG_FILE = "nimbus-registry.json";
 var STATEMENTS_DIR = "statements/";
 var REQUESTS_DIR = "trust-requests/";
 var CANDIDATE_FILES = ["manifest.json", "package.tgz", "publish-request.json"];
-function hasFile(git, ref, path, cwd) {
-  return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
+function hasFile(git2, ref, path, cwd) {
+  return git2.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
 }
-async function readVerifiedIndex(git, cwd) {
-  if (!hasFile(git, PAGES_REF, INDEX_FILE, cwd))
-    throw new Error(git.REGISTRY_NOT_INITIALISED);
-  const index = parseRegistryIndex(git.readBlob(PAGES_REF, INDEX_FILE, { cwd }));
+async function readVerifiedIndex(git2, cwd) {
+  if (!hasFile(git2, PAGES_REF, INDEX_FILE, cwd))
+    throw new Error(git2.REGISTRY_NOT_INITIALISED);
+  const index = parseRegistryIndex(git2.readBlob(PAGES_REF, INDEX_FILE, { cwd }));
   await verifyRegistryIndexSelf(index);
   return index;
 }
-function readConfigAt(git, ref, cwd) {
-  if (!hasFile(git, ref, CONFIG_FILE, cwd))
+function readConfigAt(git2, ref, cwd) {
+  if (!hasFile(git2, ref, CONFIG_FILE, cwd))
     return;
-  const bytes = git.readBlob(ref, CONFIG_FILE, { cwd });
+  const bytes = git2.readBlob(ref, CONFIG_FILE, { cwd });
   return { config: parseRegistryConfig(bytes), bytes };
 }
 function loosens(prev, next) {
   return prev.requirePublisherNamespace && !next.requirePublisherNamespace;
 }
 function splitExtensionDir(dir) {
-  const m = /^extensions\/(.+)\/([^/]+)$/.exec(dir);
-  if (m?.[1] === undefined || m[2] === undefined)
+  const m2 = /^extensions\/(.+)\/([^/]+)$/.exec(dir);
+  if (m2?.[1] === undefined || m2[2] === undefined)
     return;
-  return { id: m[1], version: m[2] };
+  return { id: m2[1], version: m2[2] };
 }
-function readCandidate(git, ref, dir, cwd) {
+function readCandidate(git2, ref, dir, cwd) {
   const base = `extensions/${dir.id}/${dir.version}`;
-  const read = (file) => git.readBlob(ref, `${base}/${file}`, { cwd });
+  const read = (file) => git2.readBlob(ref, `${base}/${file}`, { cwd });
   return {
     dirId: dir.id,
     dirVersion: dir.version,
@@ -11066,13 +11313,13 @@ function readCandidate(git, ref, dir, cwd) {
 }
 var MAX_STATEMENT_FILE_BYTES = 16 * 1024;
 var STATEMENT_FILE_RE = /^statements\/([0-9a-f]{64})\.json$/;
-function readStatementFile(git, ref, e, cwd) {
-  const m = STATEMENT_FILE_RE.exec(e.path);
-  if (m === null)
+function readStatementFile(git2, ref, e, cwd) {
+  const m2 = STATEMENT_FILE_RE.exec(e.path);
+  if (m2 === null)
     return { reason: "must be statements/<64 lowercase hex statement id>.json" };
-  if (e.mode !== git.REGULAR_FILE_MODE)
+  if (e.mode !== git2.REGULAR_FILE_MODE)
     return { reason: `git mode ${e.mode} is not a regular file` };
-  const bytes = git.readBlob(ref, e.path, { cwd });
+  const bytes = git2.readBlob(ref, e.path, { cwd });
   if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES) {
     return { reason: `exceeds ${String(MAX_STATEMENT_FILE_BYTES)} bytes` };
   }
@@ -11085,20 +11332,20 @@ function readStatementFile(git, ref, e, cwd) {
   let id;
   try {
     id = trustStatementId(parseTrustStatement(value));
-  } catch (e) {
-    return { reason: `is not a valid trust statement: ${e.message}` };
+  } catch (e2) {
+    return { reason: `is not a valid trust statement: ${e2.message}` };
   }
-  if (id !== m[1])
+  if (id !== m2[1])
     return { reason: "is not named by its statement id" };
   return { value };
 }
-function readStatementFiles(git, ref, cwd, only) {
+function readStatementFiles(git2, ref, cwd, only) {
   const out = { values: [], skipped: [] };
-  for (const e of git.listTreeEntries(ref, STATEMENTS_DIR, { cwd })) {
+  for (const e of git2.listTreeEntries(ref, STATEMENTS_DIR, { cwd })) {
     if (e.path === `${STATEMENTS_DIR}.gitkeep` || only !== undefined && !only.has(e.path)) {
       continue;
     }
-    const r = readStatementFile(git, ref, e, cwd);
+    const r = readStatementFile(git2, ref, e, cwd);
     if ("reason" in r) {
       out.skipped.push({ path: e.path, reason: r.reason });
     } else {
@@ -11110,10 +11357,10 @@ function readStatementFiles(git, ref, cwd, only) {
 function statementPath(id) {
   return id === undefined ? STATEMENTS_DIR : `${STATEMENTS_DIR}${id}.json`;
 }
-function readRequestFiles(git, ref, cwd, only) {
+function readRequestFiles(git2, ref, cwd, only) {
   const requests = [];
   const skipped = [];
-  for (const e of git.listTreeEntries(ref, REQUESTS_DIR, { cwd })) {
+  for (const e of git2.listTreeEntries(ref, REQUESTS_DIR, { cwd })) {
     if (e.path === `${REQUESTS_DIR}.gitkeep` || only !== undefined && !only.has(e.path))
       continue;
     const name = /^trust-requests\/(.+)\.json$/.exec(e.path)?.[1];
@@ -11124,11 +11371,11 @@ function readRequestFiles(git, ref, cwd, only) {
       });
       continue;
     }
-    if (e.mode !== git.REGULAR_FILE_MODE) {
+    if (e.mode !== git2.REGULAR_FILE_MODE) {
       skipped.push({ path: e.path, reason: `git mode ${e.mode} is not a regular file` });
       continue;
     }
-    const bytes = git.readBlob(ref, e.path, { cwd });
+    const bytes = git2.readBlob(ref, e.path, { cwd });
     try {
       if (bytes.byteLength > MAX_STATEMENT_FILE_BYTES)
         throw new Error("too large");
@@ -11151,8 +11398,8 @@ var GHA_IO = {
   }
 };
 var CONTROL_CHARS2 = /[\x00-\x1f\x7f]/g;
-function code(s) {
-  const flat = s.replace(CONTROL_CHARS2, " ");
+function code(s3) {
+  const flat = s3.replace(CONTROL_CHARS2, " ");
   const longest = Math.max(0, ...(flat.match(/`+/g) ?? []).map((run) => run.length));
   const fence = "`".repeat(longest + 1);
   const pad = longest > 0 ? " " : "";
@@ -11167,10 +11414,10 @@ import { basename, dirname, isAbsolute, join as join5 } from "node:path";
 
 // src/candidates.ts
 import { createHash as createHash7 } from "node:crypto";
-function extensionDirs(git, ref, cwd) {
+function extensionDirs(git2, ref, cwd) {
   const dirs = new Map;
   const paths = new Set;
-  for (const e of git.listTreeEntries(ref, "extensions/", { cwd })) {
+  for (const e of git2.listTreeEntries(ref, "extensions/", { cwd })) {
     paths.add(e.path);
     const slash = e.path.lastIndexOf("/");
     const dir = e.path.slice(0, slash);
@@ -11182,20 +11429,20 @@ function extensionDirs(git, ref, cwd) {
   }
   return { dirs, paths };
 }
-var sha256Hex2 = (b) => createHash7("sha256").update(b).digest("hex");
-function assertSignedIntact(git, index, ref, paths, cwd, verb) {
+var sha256Hex2 = (b2) => createHash7("sha256").update(b2).digest("hex");
+function assertSignedIntact(git2, index, ref, paths, cwd, verb) {
   const problems = [];
   const signedDirs = new Set;
   for (const [id, ext] of Object.entries(index.extensions)) {
-    for (const [version, v] of Object.entries(ext.versions)) {
+    for (const [version, v2] of Object.entries(ext.versions)) {
       signedDirs.add(`extensions/${id}/${version}`);
       for (const [path, want] of [
-        [v.manifest, v.manifestSha256],
-        [v.package, v.packageSha256]
+        [v2.manifest, v2.manifestSha256],
+        [v2.package, v2.packageSha256]
       ]) {
         if (!paths.has(path)) {
           problems.push(`${path} is signed but was deleted`);
-        } else if (sha256Hex2(git.readBlob(ref, path, { cwd })) !== want) {
+        } else if (sha256Hex2(git2.readBlob(ref, path, { cwd })) !== want) {
           problems.push(`${path} differs from the signed version`);
         }
       }
@@ -11207,19 +11454,19 @@ function assertSignedIntact(git, index, ref, paths, cwd, verb) {
   return signedDirs;
 }
 function sameFileSet(names) {
-  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f) => names.has(f));
+  return names.size === CANDIDATE_FILES.length && CANDIDATE_FILES.every((f2) => names.has(f2));
 }
-function admitStatements(git, index, ref, cwd, skipped) {
-  const files = readStatementFiles(git, ref, cwd);
-  for (const f of files.skipped)
-    skipped.push({ dir: f.path, reason: f.reason });
+function admitStatements(git2, index, ref, cwd, skipped) {
+  const files = readStatementFiles(git2, ref, cwd);
+  for (const f2 of files.skipped)
+    skipped.push({ dir: f2.path, reason: f2.reason });
   const admission = admitPublisherStatements(index, files.values);
-  for (const s of admission.skipped)
-    skipped.push({ dir: statementPath(s.id), reason: s.reason });
+  for (const s3 of admission.skipped)
+    skipped.push({ dir: statementPath(s3.id), reason: s3.reason });
   return admission;
 }
 async function* validateUnsigned(input) {
-  const { git, ref, cwd } = input;
+  const { git: git2, ref, cwd } = input;
   const unsigned = [...input.dirs.keys()].filter((d) => !input.signedDirs.has(d));
   for (const dir of unsigned.sort(codeUnitCompare)) {
     const coords = splitExtensionDir(dir);
@@ -11232,7 +11479,7 @@ async function* validateUnsigned(input) {
       };
       continue;
     }
-    const candidate = readCandidate(git, ref, coords, cwd);
+    const candidate = readCandidate(git2, ref, coords, cwd);
     let verdict;
     try {
       verdict = await input.validate(candidate, input.bindings(), input.config, input.work);
@@ -11245,23 +11492,23 @@ async function* validateUnsigned(input) {
     yield { kind: "valid", dir, candidate, verdict };
   }
 }
-function addVersion(extensions, v, publishedAt, extras = {}) {
+function addVersion(extensions, v2, publishedAt, extras = {}) {
   const { provenance, quality, baseline } = extras;
-  const base = `extensions/${v.id}/${v.version}`;
-  const existing = extensions[v.id];
-  extensions[v.id] = {
-    publisher: publisherAfterPublish(existing, v.publisher),
+  const base = `extensions/${v2.id}/${v2.version}`;
+  const existing = extensions[v2.id];
+  extensions[v2.id] = {
+    publisher: publisherAfterPublish(existing, v2.publisher),
     versions: {
       ...existing?.versions,
-      [v.version]: {
-        channel: v.channel,
-        name: v.name,
+      [v2.version]: {
+        channel: v2.channel,
+        name: v2.name,
         manifest: `${base}/manifest.json`,
-        manifestSha256: v.manifestSha256,
+        manifestSha256: v2.manifestSha256,
         package: `${base}/package.tgz`,
-        packageSha256: v.packageSha256,
-        packageSizeBytes: v.packageSizeBytes,
-        entryHash: v.entryHash,
+        packageSha256: v2.packageSha256,
+        packageSizeBytes: v2.packageSizeBytes,
+        entryHash: v2.entryHash,
         publishedAt,
         ...provenance !== undefined && { provenance },
         ...quality !== undefined && { quality },
@@ -11335,14 +11582,14 @@ function collectCapped(stream, max, onOverflow) {
   stream?.on("data", (chunk) => {
     if (over)
       return;
-    const b = asBuffer(chunk);
-    if (size + b.length > max) {
+    const b2 = asBuffer(chunk);
+    if (size + b2.length > max) {
       over = true;
       onOverflow();
       return;
     }
-    chunks.push(b);
-    size += b.length;
+    chunks.push(b2);
+    size += b2.length;
   });
   stream?.on("error", () => {});
   return () => Buffer.concat(chunks).toString("utf8");
@@ -11351,9 +11598,9 @@ function collectTail(stream, max) {
   const chunks = [];
   let size = 0;
   stream?.on("data", (chunk) => {
-    const b = asBuffer(chunk);
-    chunks.push(b);
-    size += b.length;
+    const b2 = asBuffer(chunk);
+    chunks.push(b2);
+    size += b2.length;
     while (chunks.length > 1 && size - (chunks[0]?.length ?? 0) >= max) {
       size -= chunks.shift()?.length ?? 0;
     }
@@ -11361,7 +11608,7 @@ function collectTail(stream, max) {
   stream?.on("error", () => {});
   return () => Buffer.concat(chunks);
 }
-var tailText = (b, max) => b.subarray(Math.max(0, b.length - max)).toString("utf8");
+var tailText = (b2, max) => b2.subarray(Math.max(0, b2.length - max)).toString("utf8");
 var notStarted = (why) => ({
   code: null,
   stdout: "",
@@ -11400,9 +11647,9 @@ function watchRole(child, timeoutMs, kill, done) {
       overflow: run.overflow
     });
   };
-  child.on("exit", (code) => {
+  child.on("exit", (code2) => {
     clearTimeout(deadline);
-    run.code = code;
+    run.code = code2;
     sweepGroup(child, kill);
     exited = true;
     grace ??= setTimeout(settle, ROLE_DRAIN_GRACE_MS);
@@ -11420,11 +11667,11 @@ function roleArgs(packageDir, extra = []) {
   return ["__nimbus-eval", "--package", packageDir, ...extra, "--json"];
 }
 function makeRoleRunner(extra, defaultTimeoutMs, spawnRole = nodeSpawn, tmp = osTmpdir, rm = removeDir, kill = killProcess) {
-  return (gateway, packageDir, timeoutMs = defaultTimeoutMs) => new Promise((resolve) => {
+  return (gateway, packageDir, timeoutMs = defaultTimeoutMs) => new Promise((resolve2) => {
     const home = mkdtempSync2(join3(tmp(), "nimbus-eval-home-"));
     const finish = (r) => {
       removeQuietly(rm, home);
-      resolve(r);
+      resolve2(r);
     };
     const env = { PATH: process.env["PATH"] ?? "", HOME: home };
     let child;
@@ -11447,16 +11694,16 @@ function roleRunner(spawnRole = nodeSpawn, tmp = osTmpdir, rm = removeDir, kill 
   return makeRoleRunner([], ROLE_TIMEOUT_MS, spawnRole, tmp, rm, kill);
 }
 var CONTROL_CHARS3 = /[\x00-\x1f\x7f]/g;
-var clip = (s) => s.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
+var clip = (s3) => s3.replace(CONTROL_CHARS3, " ").trim().slice(0, MAX_MESSAGE_CHARS);
 var roleCode = (c) => /^[A-Z][A-Z0-9_]{0,63}$/.test(c) ? c : "ERR_EVAL_FAILED";
-function lastLine(s) {
-  return s.split(/\r?\n/).findLast((l) => l.trim() !== "") ?? "";
+function lastLine(s3) {
+  return s3.split(/\r?\n/).findLast((l) => l.trim() !== "") ?? "";
 }
-var fail = (code, message) => ({
-  error: { code, message: clip(message) }
+var fail = (code2, message) => ({
+  error: { code: code2, message: clip(message) }
 });
-function duration(ms) {
-  return ms % 60000 === 0 ? `${String(ms / 60000)} minutes` : `${String(Math.ceil(ms / 1000))} seconds`;
+function duration(ms2) {
+  return ms2 % 60000 === 0 ? `${String(ms2 / 60000)} minutes` : `${String(Math.ceil(ms2 / 1000))} seconds`;
 }
 
 // src/score-baseline.ts
@@ -11491,26 +11738,26 @@ function judgeBaselineRun(r, want, timeoutMs = BASELINE_ROLE_TIMEOUT_MS) {
   }
   return { baseline: doc.baseline };
 }
-async function baselineCandidate(c, at, runBaseline, log = () => {}, rm = removeDir) {
+async function baselineCandidate(c, at2, runBaseline, log = () => {}, rm = removeDir) {
   const { id, version } = c.verdict;
-  const dir = mkdtempSync3(join4(at.work, "baseline-"));
+  const dir = mkdtempSync3(join4(at2.work, "baseline-"));
   try {
     const tgz = join4(dir, "package.tgz");
     writeFileSync3(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runBaseline(at.gateway, join4(dir, "x"), at.timeoutMs);
+    const r = await runBaseline(at2.gateway, join4(dir, "x"), at2.timeoutMs);
     log(r.stderrTail);
-    return judgeBaselineRun(r, { id, version }, at.timeoutMs);
+    return judgeBaselineRun(r, { id, version }, at2.timeoutMs);
   } catch (e) {
     return fail("ERR_EVAL_ROLE_FAILED", `the baseline check could not be run: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     removeQuietly(rm, dir);
   }
 }
-function baselineFact(b) {
-  if (b.passed)
-    return `starts and lists ${String(b.tools)} valid ${b.tools === 1 ? "tool" : "tools"}`;
-  return `failed with ${code(b.failure)}`;
+function baselineFact(b2) {
+  if (b2.passed)
+    return `starts and lists ${String(b2.tools)} valid ${b2.tools === 1 ? "tool" : "tools"}`;
+  return `failed with ${code(b2.failure)}`;
 }
 
 // src/score.ts
@@ -11544,16 +11791,16 @@ function judgeRoleRun(r, want, timeoutMs = ROLE_TIMEOUT_MS) {
     return fail("ERR_EVAL_BAD_OUTPUT", e instanceof Error ? e.message : String(e));
   }
 }
-async function scoreCandidate(c, at, runRole, log = () => {}, rm = removeDir) {
+async function scoreCandidate(c, at2, runRole, log = () => {}, rm = removeDir) {
   const { id, version, packageSha256 } = c.verdict;
-  const dir = mkdtempSync4(join5(at.work, "score-"));
+  const dir = mkdtempSync4(join5(at2.work, "score-"));
   try {
     const tgz = join5(dir, "package.tgz");
     writeFileSync4(tgz, c.packageBytes, { flag: "wx" });
     await inspectPackage(tgz, dir);
-    const r = await runRole(at.gateway, join5(dir, "x"), at.timeoutMs);
+    const r = await runRole(at2.gateway, join5(dir, "x"), at2.timeoutMs);
     logStderr(log, `${id}@${version}`, r.stderrTail);
-    return { packageSha256, ...judgeRoleRun(r, { id, version }, at.timeoutMs) };
+    return { packageSha256, ...judgeRoleRun(r, { id, version }, at2.timeoutMs) };
   } catch (e) {
     return {
       packageSha256,
@@ -11583,11 +11830,11 @@ function assertGateway(gateway) {
     throw new Error(`input "nimbus-gateway" must be an absolute path to an existing file; got ${JSON.stringify(gateway)}`);
   }
 }
-function writeFileAtomic(path, text, fs = { writeFileSync: writeFileSync4, renameSync }) {
+function writeFileAtomic(path, text, fs2 = { writeFileSync: writeFileSync4, renameSync }) {
   const temp = join5(dirname(path), `.${basename(path)}.${randomUUID()}.tmp`);
   try {
-    fs.writeFileSync(temp, text, { flag: "wx" });
-    fs.renameSync(temp, path);
+    fs2.writeFileSync(temp, text, { flag: "wx" });
+    fs2.renameSync(temp, path);
   } catch (e) {
     rmSync3(temp, { force: true });
     throw e;
@@ -11623,17 +11870,17 @@ var budgetSpent = (packageSha256, mode) => ({
   packageSha256,
   ...fail("ERR_EVAL_BUDGET", mode === "score" ? `not scored this run: earlier evals spent the score job's time budget; ${RETRY_NOTE}` : "not scored: the run's time budget was spent")
 });
-var budgetLeft = (at, now) => at.deadline === undefined ? Number.POSITIVE_INFINITY : at.deadline - now();
-async function baselineWithinBudget(c, at, deps) {
+var budgetLeft = (at2, now) => at2.deadline === undefined ? Number.POSITIVE_INFINITY : at2.deadline - now();
+async function baselineWithinBudget(c, at2, deps) {
   const ref = `${c.verdict.id}@${c.verdict.version}`;
-  const mode = at.mode ?? "score";
-  const left = budgetLeft(at, deps.now);
+  const mode = at2.mode ?? "score";
+  const left = budgetLeft(at2, deps.now);
   if (left < BASELINE_MIN_RUN_MS) {
     deps.io.annotate("warning", `baseline check of ${ref} not run: under ${duration(BASELINE_MIN_RUN_MS)} of the score job's time budget left; ${NO_BASELINE_TAIL[mode]}`);
     deps.noBaseline?.("ERR_EVAL_BUDGET");
     return;
   }
-  const r = await baselineCandidate(c, { gateway: at.gateway, work: at.work, timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, left) }, deps.runBaseline, (stderrTail) => logStderr(deps.io.log, `${ref} (baseline)`, stderrTail));
+  const r = await baselineCandidate(c, { gateway: at2.gateway, work: at2.work, timeoutMs: Math.min(BASELINE_ROLE_TIMEOUT_MS, left) }, deps.runBaseline, (stderrTail) => logStderr(deps.io.log, `${ref} (baseline)`, stderrTail));
   if ("error" in r) {
     deps.io.annotate("warning", clip(`no baseline check for ${ref} (${r.error.code}): ${r.error.message}; ${NO_BASELINE_TAIL[mode]}`));
     deps.noBaseline?.(r.error.code);
@@ -11644,33 +11891,33 @@ async function baselineWithinBudget(c, at, deps) {
   }
   return r.baseline;
 }
-function suiteWithinBudget(c, at, deps) {
-  const left = budgetLeft(at, deps.now);
+function suiteWithinBudget(c, at2, deps) {
+  const left = budgetLeft(at2, deps.now);
   if (left < SCORE_MIN_RUN_MS) {
-    return Promise.resolve(budgetSpent(c.verdict.packageSha256, at.mode ?? "score"));
+    return Promise.resolve(budgetSpent(c.verdict.packageSha256, at2.mode ?? "score"));
   }
   return scoreCandidate(c, {
-    gateway: at.gateway,
-    work: at.work,
-    ...at.deadline !== undefined && { timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) }
+    gateway: at2.gateway,
+    work: at2.work,
+    ...at2.deadline !== undefined && { timeoutMs: Math.min(ROLE_TIMEOUT_MS, left) }
   }, deps.runRole, deps.io.log);
 }
-async function scoreVersion(c, at, deps) {
+async function scoreVersion(c, at2, deps) {
   const { verdict } = c;
   if (verdict.starterPack)
     return;
-  const baseline = await baselineWithinBudget(c, at, deps);
+  const baseline = await baselineWithinBudget(c, at2, deps);
   if (!verdict.hasEvals) {
     return baseline === undefined ? undefined : { packageSha256: verdict.packageSha256, baseline };
   }
-  const suite = await suiteWithinBudget(c, at, deps);
+  const suite = await suiteWithinBudget(c, at2, deps);
   return baseline === undefined ? suite : { ...suite, baseline };
 }
-async function recordVersion(run, c, at, deps) {
+async function recordVersion(run, c, at2, deps) {
   const ref = `${c.verdict.id}@${c.verdict.version}`;
   if (c.verdict.starterPack)
     run.starterPacks.push(ref);
-  const entry = await scoreVersion(c, at, {
+  const entry = await scoreVersion(c, at2, {
     ...deps,
     noBaseline: (why) => run.noBaseline.set(ref, why)
   });
@@ -11685,23 +11932,23 @@ var emptyRun = () => ({
   starterPacks: []
 });
 async function scoreAll(opts, deps, work, deadline) {
-  const { git } = deps;
+  const { git: git2 } = deps;
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
-  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
-  const index = await readVerifiedIndex(git, cwd);
-  const config = readConfigAt(git, mainRef, cwd);
+  git2.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git2, cwd);
+  const config = readConfigAt(git2, mainRef, cwd);
   if (config === undefined) {
     throw new Error(`refusing to score: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
   }
-  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
-  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "score");
+  const { dirs, paths } = extensionDirs(git2, mainRef, cwd);
+  const signedDirs = assertSignedIntact(git2, index, mainRef, paths, cwd, "score");
   const run = emptyRun();
-  const admission = admitStatements(git, index, mainRef, cwd, run.skipped);
+  const admission = admitStatements(git2, index, mainRef, cwd, run.skipped);
   const extensions = { ...index.extensions };
-  const publishedAt = git.commitTime(mainRef, { cwd });
+  const publishedAt = git2.commitTime(mainRef, { cwd });
   for await (const o of validateUnsigned({
-    git,
+    git: git2,
     validate: deps.validate,
     ref: mainRef,
     cwd,
@@ -11715,18 +11962,18 @@ async function scoreAll(opts, deps, work, deadline) {
       run.skipped.push({ dir: o.dir, reason: o.reason });
       continue;
     }
-    const v = o.verdict;
-    const entry = await recordVersion(run, { verdict: v, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
+    const v2 = o.verdict;
+    const entry = await recordVersion(run, { verdict: v2, packageBytes: o.candidate.packageBytes }, { gateway: opts.gateway, work, deadline }, deps);
     if (entry !== undefined && "error" in entry)
       continue;
-    addVersion(extensions, v, publishedAt);
+    addVersion(extensions, v2, publishedAt);
   }
   return run;
 }
 function suiteText(e) {
   if ("quality" in e) {
-    const q = e.quality;
-    return `${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+    const q2 = e.quality;
+    return `${String(q2.score)}/100 (${String(q2.passed)} of ${String(q2.cases)} cases passed)`;
   }
   if ("error" in e)
     return `not scored, ${code(e.error.code)} ${code(e.error.message)}`;
@@ -11750,16 +11997,16 @@ function noEntryLines(r) {
 }
 var remedyFor = (mode) => mode === "score" ? FAILED_REMEDY : MAINTAIN_ADD_REMEDY;
 var isNoListing = (e) => e.baseline?.passed === false && e.baseline.failure === "no-listing";
-function entryLines(io, r, mode, lines) {
+function entryLines(io2, r, mode, lines) {
   const consequence = mode === "score" ? "sign will not sign it" : "there is no score to publish";
   const failed = [];
   for (const [ref, e] of Object.entries(r.scores)) {
     if ("error" in e) {
-      io.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedyFor(mode)}`);
+      io2.annotate("warning", `eval of ${ref} failed (${e.error.code}): ${e.error.message}; ${consequence}. ${remedyFor(mode)}`);
       failed.push(ref);
     }
     const parts = [suiteText(e), baselineText(e, r.noBaseline.get(ref))];
-    lines.push(`- ${code(ref)}: ${parts.filter((p) => p !== undefined).join("; ")}`);
+    lines.push(`- ${code(ref)}: ${parts.filter((p2) => p2 !== undefined).join("; ")}`);
   }
   return failed;
 }
@@ -11769,14 +12016,14 @@ function failedLines(failed, mode) {
   const heading = mode === "score" ? "**Not signed** (no score):" : "**No score:**";
   return ["", heading, "", ...failed.map((ref) => `- ${code(ref)}`), "", remedyFor(mode)];
 }
-function reportScores(io, r, mode = "score") {
+function reportScores(io2, r, mode = "score") {
   const lines = ["## Registry score", ""];
   const entries = Object.entries(r.scores);
   const noEntry = noEntryLines(r);
   if (entries.length === 0 && noEntry.length === 0 && r.skipped.length === 0) {
     lines.push("No unsigned version to score.");
   }
-  const failed = entryLines(io, r, mode, lines);
+  const failed = entryLines(io2, r, mode, lines);
   if (noEntry.length > 0)
     lines.push("", "**No entry recorded:**", "", ...noEntry);
   lines.push(...failedLines(failed, mode));
@@ -11784,12 +12031,12 @@ function reportScores(io, r, mode = "score") {
     lines.push("", NO_LISTING_NOTICE[mode]);
   if (r.skipped.length > 0) {
     lines.push("", "**Not scored** (fails validation; `sign` skips it too):", "");
-    for (const s of r.skipped)
-      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
+    for (const s3 of r.skipped)
+      lines.push(`- ${code(s3.dir)}: ${code(s3.reason)}`);
   }
-  io.summary(lines.join(`
+  io2.summary(lines.join(`
 `));
-  io.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
+  io2.log(`scored ${String(entries.length)} version(s); ${String(r.skipped.length)} not valid`);
 }
 async function runScore(opts, deps = SHARED) {
   const deadline = deps.now() + SCORE_RUN_BUDGET_MS;
@@ -11821,13 +12068,13 @@ function assertPublishShape(changes) {
   const statements = new Set;
   let dirFiles = 0;
   for (const c of changes) {
-    const m = FILE_RE.exec(c.path);
+    const m2 = FILE_RE.exec(c.path);
     if (c.status === "A" && STATEMENT_RE.test(c.path)) {
       statements.add(c.path);
-    } else if (c.status !== "A" || m?.[1] === undefined) {
+    } else if (c.status !== "A" || m2?.[1] === undefined) {
       offending.push(`${c.status} ${c.path}`);
     } else {
-      dirs.add(m[1]);
+      dirs.add(m2[1]);
       dirFiles++;
     }
   }
@@ -11846,14 +12093,14 @@ function assertPublishShape(changes) {
   }
   return { dir: coords, statements };
 }
-function admitPullRequestStatements(git, signed, baseRef, added, cwd) {
-  const index = admitPublisherStatements(signed, readStatementFiles(git, `origin/${baseRef}`, cwd).values).index;
+function admitPullRequestStatements(git2, signed, baseRef, added, cwd) {
+  const index = admitPublisherStatements(signed, readStatementFiles(git2, `origin/${baseRef}`, cwd).values).index;
   if (added.size === 0)
     return { index, admitted: [] };
-  const files = readStatementFiles(git, "HEAD", cwd, added);
+  const files = readStatementFiles(git2, "HEAD", cwd, added);
   const admission = admitPublisherStatements(index, files.values);
   const problems = [
-    ...files.skipped.map((f) => `${f.path} ${f.reason}`),
+    ...files.skipped.map((f2) => `${f2.path} ${f2.reason}`),
     ...admission.skipped.map((x) => `${statementPath(x.id)}: ${x.reason}`)
   ];
   if (problems.length > 0) {
@@ -11861,24 +12108,24 @@ function admitPullRequestStatements(git, signed, baseRef, added, cwd) {
   }
   return { index: admission.index, admitted: admission.admitted };
 }
-function effectiveConfig(git, baseRef, cwd) {
-  return effectiveRegistryConfig(readConfigAt(git, PAGES_REF, cwd)?.config, readConfigAt(git, `origin/${baseRef}`, cwd)?.config);
+function effectiveConfig(git2, baseRef, cwd) {
+  return effectiveRegistryConfig(readConfigAt(git2, PAGES_REF, cwd)?.config, readConfigAt(git2, `origin/${baseRef}`, cwd)?.config);
 }
 var listOf = (items) => items.length === 0 ? "none" : items.map(code).join(", ");
-function statementSubject(s) {
-  if (s.kind === "key.rotate") {
-    return `${code(publisherKeyFingerprint(s.fromKey))} -> ${code(publisherKeyFingerprint(s.toKey))}`;
+function statementSubject(s3) {
+  if (s3.kind === "key.rotate") {
+    return `${code(publisherKeyFingerprint(s3.fromKey))} -> ${code(publisherKeyFingerprint(s3.toKey))}`;
   }
-  if (s.kind === "key.revoke")
-    return `key ${code(s.keyFingerprint)}, reason ${code(s.reason)}`;
+  if (s3.kind === "key.revoke")
+    return `key ${code(s3.keyFingerprint)}, reason ${code(s3.reason)}`;
   return "";
 }
 function statementLines(admitted) {
   if (admitted.length === 0)
     return [];
   const lines = ["**Publisher statements**", ""];
-  for (const s of admitted) {
-    lines.push(`- ${code(s.kind)} for ${code(s.publisherId)}: ${statementSubject(s)} (${code(trustStatementId(s))})`);
+  for (const s3 of admitted) {
+    lines.push(`- ${code(s3.kind)} for ${code(s3.publisherId)}: ${statementSubject(s3)} (${code(trustStatementId(s3))})`);
   }
   lines.push("");
   return lines;
@@ -11887,89 +12134,89 @@ function statementOnlySummary(admitted) {
   return ["## Registry statements", "", ...statementLines(admitted)].join(`
 `);
 }
-function provenanceLine(v, r) {
-  if (v.repositoryIgnored === true) {
+function provenanceLine(v2, r) {
+  if (v2.repositoryIgnored === true) {
     return "- **Provenance:** none (the manifest's `repository` is not `owner/repo`, so it is ignored)";
   }
-  if (v.repository === undefined) {
+  if (v2.repository === undefined) {
     return "- **Provenance:** none (the manifest declares no `repository`)";
   }
   if (r === "deferred") {
-    return `- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies ${code(v.repository)} when it signs`;
+    return `- **Provenance:** not verified here (this check runs extension code and holds no token); the sign job verifies ${code(v2.repository)} when it signs`;
   }
   if (!r?.ok) {
-    return `- **Provenance:** none for ${code(v.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
+    return `- **Provenance:** none for ${code(v2.repository)} — ${code(r?.reason ?? "not checked")} (the version is signed without it)`;
   }
-  const p = r.provenance;
-  return `- **Provenance:** built from ${code(p.sourceRepository)} at ${code(p.commit.slice(0, 12))} by ${code(p.workflow)} (${p.runner})`;
+  const p2 = r.provenance;
+  return `- **Provenance:** built from ${code(p2.sourceRepository)} at ${code(p2.commit.slice(0, 12))} by ${code(p2.workflow)} (${p2.runner})`;
 }
 var MAX_SUMMARY_MESSAGE_CHARS = 300;
 function qualityLine(e) {
   if ("quality" in e) {
-    const q = e.quality;
-    return `- **Quality:** quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+    const q2 = e.quality;
+    return `- **Quality:** quality ${String(q2.score)}/100 (${String(q2.passed)} of ${String(q2.cases)} cases passed)`;
   }
   if (!("error" in e))
     return;
   const message = e.error.message.slice(0, MAX_SUMMARY_MESSAGE_CHARS);
   return `- **Quality:** could not score: ${code(e.error.code)} ${code(message)} (a sign job given scores will not sign this version without one)`;
 }
-function baselineLine(s) {
-  if (s.entry?.baseline !== undefined) {
-    return `- **Baseline:** ${baselineFact(s.entry.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
+function baselineLine(s3) {
+  if (s3.entry?.baseline !== undefined) {
+    return `- **Baseline:** ${baselineFact(s3.entry.baseline)} (checked here in the platform sandbox; a displayed fact, not a score)`;
   }
-  return s.noBaseline === undefined ? undefined : `- **Baseline:** none (${code(s.noBaseline)})`;
+  return s3.noBaseline === undefined ? undefined : `- **Baseline:** none (${code(s3.noBaseline)})`;
 }
-function runtimeSentence(s) {
-  if (!s.asked) {
+function runtimeSentence(s3) {
+  if (!s3.asked) {
     return "No runtime check of the package is performed: this check validated the signature, the " + "registry rules and the package's file set, not what the code does.";
   }
-  const suites = s.entry !== undefined && (("quality" in s.entry) || ("error" in s.entry));
+  const suites = s3.entry !== undefined && (("quality" in s3.entry) || ("error" in s3.entry));
   const ran = suites ? "The gateway was asked to run the package's eval suites and to start its server, up to twice, to list its tools," : "The package's server was asked to start, up to twice, to list its tools";
   return `${ran} in the platform sandbox, offline and without credentials; nothing else about what the code does was checked.`;
 }
-function scoreLines(s) {
-  const quality = s.entry === undefined ? undefined : qualityLine(s.entry);
-  return [quality, baselineLine(s)].filter((l) => l !== undefined);
+function scoreLines(s3) {
+  const quality = s3.entry === undefined ? undefined : qualityLine(s3.entry);
+  return [quality, baselineLine(s3)].filter((l) => l !== undefined);
 }
 var NOT_ASKED = { asked: false };
-function checkSummary(v, admitted = [], provenance, checked) {
+function checkSummary(v2, admitted = [], provenance, checked) {
   const score = checked ?? NOT_ASKED;
-  const ref = `${v.id}@${v.version}`;
+  const ref = `${v2.id}@${v2.version}`;
   const lines = [`## Registry publish: ${code(ref)}`, ""];
-  if (v.newId) {
-    lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
+  if (v2.newId) {
+    lines.push(`> [!WARNING]`, `> **NEW ID** — ${code(v2.id)} is not in the signed index yet. Check the publisher and the name before approving.`, "");
   }
-  lines.push(`- **Extension:** ${code(v.id)}`, `- **Version:** ${code(v.version)}`, `- **Channel:** ${code(v.channel)}`, `- **Name:** ${code(v.name)}`, `- **Publisher:** ${code(v.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v.publisher.key))}`, `- **Package:** ${String(v.packageSizeBytes)} bytes, sha256 ${code(v.packageSha256)}`, provenanceLine(v, provenance), ...scoreLines(score), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v.permissions.network)}`, `- Filesystem read: ${listOf(v.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v.permissions.filesystem.write)}`, "", runtimeSentence(score));
+  lines.push(`- **Extension:** ${code(v2.id)}`, `- **Version:** ${code(v2.version)}`, `- **Channel:** ${code(v2.channel)}`, `- **Name:** ${code(v2.name)}`, `- **Publisher:** ${code(v2.publisher.id)}, key fingerprint ${code(publisherKeyFingerprint(v2.publisher.key))}`, `- **Package:** ${String(v2.packageSizeBytes)} bytes, sha256 ${code(v2.packageSha256)}`, provenanceLine(v2, provenance), ...scoreLines(score), "", ...statementLines(admitted), "**Declared permissions**", "", `- Network hosts: ${listOf(v2.permissions.network)}`, `- Filesystem read: ${listOf(v2.permissions.filesystem.read)}`, `- Filesystem write: ${listOf(v2.permissions.filesystem.write)}`, "", runtimeSentence(score));
   return lines.join(`
 `);
 }
-function requestLine(f) {
-  const r = f.request;
+function requestLine(f2) {
+  const r = f2.request;
   if (r.kind === "key.revoke") {
-    return `- ${code(f.path)}: revoke publisher ${code(r.publisherId)}'s key ${code(r.keyFingerprint)} — ${code(r.reason)}`;
+    return `- ${code(f2.path)}: revoke publisher ${code(r.publisherId)}'s key ${code(r.keyFingerprint)} — ${code(r.reason)}`;
   }
-  const versions = r.versions === "*" ? "every version" : r.versions.map(code).join(", ");
+  const versions2 = r.versions === "*" ? "every version" : r.versions.map(code).join(", ");
   const publisher = r.publisherId === undefined ? "" : ` (publisher ${code(r.publisherId)})`;
-  return `- ${code(f.path)}: take down ${code(r.extensionId)}${publisher}, ${versions} — ${code(r.reason)}`;
+  return `- ${code(f2.path)}: take down ${code(r.extensionId)}${publisher}, ${versions2} — ${code(r.reason)}`;
 }
-function checkRequestPullRequest(git, index, changes, cwd, io) {
+function checkRequestPullRequest(git2, index, changes, cwd, io2) {
   const offending = changes.filter((c) => c.status !== "A" || !c.path.startsWith(REQUESTS_DIR));
   if (offending.length > 0) {
     throw new Error(`a maintainer request pull request may only add ${REQUESTS_DIR}<name>.json files; it also changes: ${offending.map((c) => `${c.status} ${c.path}`).join(", ")}`);
   }
-  const files = readRequestFiles(git, "HEAD", cwd, new Set(changes.map((c) => c.path)));
-  for (const f of files.requests) {
+  const files = readRequestFiles(git2, "HEAD", cwd, new Set(changes.map((c) => c.path)));
+  for (const f2 of files.requests) {
     try {
-      assertRequestSignable(f.request, index);
+      assertRequestSignable(f2.request, index);
     } catch (e) {
-      files.skipped.push({ path: f.path, reason: e.message });
+      files.skipped.push({ path: f2.path, reason: e.message });
     }
   }
   if (files.skipped.length > 0) {
-    throw new Error(`invalid maintainer request: ${files.skipped.map((f) => `${f.path} ${f.reason}`).join("; ")}`);
+    throw new Error(`invalid maintainer request: ${files.skipped.map((f2) => `${f2.path} ${f2.reason}`).join("; ")}`);
   }
-  io.summary([
+  io2.summary([
     "## Registry maintainer request",
     "",
     "> [!CAUTION]",
@@ -11978,25 +12225,25 @@ function checkRequestPullRequest(git, index, changes, cwd, io) {
     ...files.requests.map(requestLine)
   ].join(`
 `));
-  io.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
+  io2.log(`check passed: ${String(files.requests.length)} maintainer request(s)`);
 }
-async function checkProvenance(v, packageBytes, work, opts, deps) {
-  if (v.repository === undefined)
+async function checkProvenance(v2, packageBytes, work, opts, deps) {
+  if (v2.repository === undefined)
     return;
   if (opts.gateway !== undefined)
     return "deferred";
   return verifyNeverThrowing(deps.provenance ?? ghProvenance(opts.githubToken ?? ""), {
     pkgPath: join6(work, "provenance-check.tgz"),
     packageBytes,
-    repository: v.repository,
+    repository: v2.repository,
     verifiedAt: new Date().toISOString()
   });
 }
-async function checkScore(v, packageBytes, work, opts, deps) {
-  if (opts.gateway === undefined || v.starterPack)
+async function checkScore(v2, packageBytes, work, opts, deps) {
+  if (opts.gateway === undefined || v2.starterPack)
     return { asked: false };
   let noBaseline;
-  const entry = await scoreVersion({ verdict: v, packageBytes }, { gateway: opts.gateway, work, mode: "check" }, {
+  const entry = await scoreVersion({ verdict: v2, packageBytes }, { gateway: opts.gateway, work, mode: "check" }, {
     runRole: deps.runRole ?? roleRunner(),
     runBaseline: deps.runBaseline ?? baselineRoleRunner(),
     now: Date.now,
@@ -12012,7 +12259,7 @@ async function checkScore(v, packageBytes, work, opts, deps) {
   };
 }
 async function runCheck(opts, deps = SHARED2) {
-  const { git } = deps;
+  const { git: git2 } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
     throw new Error("check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
@@ -12023,26 +12270,26 @@ async function runCheck(opts, deps = SHARED2) {
     }
     assertGateway(opts.gateway);
   }
-  git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
-  const index = await readVerifiedIndex(git, cwd);
-  const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
+  git2.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git2, cwd);
+  const mergeBase = git2.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
     cwd,
     deepen: [opts.baseRef]
   });
-  const changes = git.diffTree(mergeBase, "HEAD", { cwd });
+  const changes = git2.diffTree(mergeBase, "HEAD", { cwd });
   if (changes.some((c) => c.path.startsWith(REQUESTS_DIR))) {
-    checkRequestPullRequest(git, index, changes, cwd, deps.io);
+    checkRequestPullRequest(git2, index, changes, cwd, deps.io);
     return;
   }
   const shape = assertPublishShape(changes);
-  const admitted = admitPullRequestStatements(git, index, opts.baseRef, shape.statements, cwd);
+  const admitted = admitPullRequestStatements(git2, index, opts.baseRef, shape.statements, cwd);
   if (shape.dir === undefined) {
     deps.io.summary(statementOnlySummary(admitted.admitted));
     deps.io.log(`check passed: ${String(admitted.admitted.length)} statement(s), no publish`);
     return;
   }
-  const candidate = readCandidate(git, "HEAD", shape.dir, cwd);
-  const config = effectiveConfig(git, opts.baseRef, cwd);
+  const candidate = readCandidate(git2, "HEAD", shape.dir, cwd);
+  const config = effectiveConfig(git2, opts.baseRef, cwd);
   const work = mkdtempSync5(join6(deps.tmpdir(), "nimbus-registry-check-"));
   try {
     const verdict = await deps.validate(candidate, admitted.index, config, work);
@@ -12127,30 +12374,30 @@ function ipv6Groups(address) {
   ];
   if (groups.length !== 8)
     return;
-  const out = groups.map((g) => /^[0-9a-f]{1,4}$/.test(g) ? Number.parseInt(g, 16) : Number.NaN);
+  const out = groups.map((g2) => /^[0-9a-f]{1,4}$/.test(g2) ? Number.parseInt(g2, 16) : Number.NaN);
   return out.some(Number.isNaN) ? undefined : out;
 }
-function dottedV4(g) {
-  const hi = g[6] ?? 0;
-  const lo = g[7] ?? 0;
-  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+function dottedV4(g2) {
+  const hi2 = g2[6] ?? 0;
+  const lo2 = g2[7] ?? 0;
+  return `${hi2 >> 8}.${hi2 & 255}.${lo2 >> 8}.${lo2 & 255}`;
 }
-function judgeEmbeddedV4(g, bare) {
-  if (g.slice(0, 4).every((x) => x === 0) && g[4] === 65535 && g[5] === 0) {
-    return !BLOCKED.check(dottedV4(g), "ipv4");
+function judgeEmbeddedV4(g2, bare) {
+  if (g2.slice(0, 4).every((x) => x === 0) && g2[4] === 65535 && g2[5] === 0) {
+    return !BLOCKED.check(dottedV4(g2), "ipv4");
   }
-  if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 65535 || g[5] === 0)) {
-    return !BLOCKED.check(dottedV4(g), "ipv4") && (g[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
+  if (g2.slice(0, 5).every((x) => x === 0) && (g2[5] === 65535 || g2[5] === 0)) {
+    return !BLOCKED.check(dottedV4(g2), "ipv4") && (g2[5] === 65535 || !BLOCKED.check(bare, "ipv6"));
   }
   return;
 }
 function isPublicV6(bare) {
   if (bare.length === 0)
     return false;
-  const g = ipv6Groups(bare);
-  if (g === undefined)
+  const g2 = ipv6Groups(bare);
+  if (g2 === undefined)
     return false;
-  return judgeEmbeddedV4(g, bare) ?? !BLOCKED.check(bare, "ipv6");
+  return judgeEmbeddedV4(g2, bare) ?? !BLOCKED.check(bare, "ipv6");
 }
 function isPublicAddress(address) {
   const bare = address.split("%")[0] ?? "";
@@ -12178,7 +12425,7 @@ async function realLookup(host) {
   }
 }
 function realConnect(o) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let settled = false;
     let timer;
     const socket = o.tls ? tlsConnect({ host: o.address, port: o.port, servername: o.servername }) : netConnect({ host: o.address, port: o.port, family: o.family });
@@ -12188,7 +12435,7 @@ function realConnect(o) {
       settled = true;
       clearTimeout(timer);
       socket.destroy();
-      resolve(ok);
+      resolve2(ok);
     };
     timer = setTimeout(() => done(false), o.timeoutMs);
     socket.setTimeout(o.timeoutMs, () => done(false));
@@ -12198,12 +12445,12 @@ function realConnect(o) {
   });
 }
 var REAL_HOST_PROBE = { lookup: realLookup, connect: realConnect };
-function withTimeout(p, ms) {
+function withTimeout(p2, ms2) {
   let timer;
-  const limit = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error("timed out")), ms);
+  const limit = new Promise((_2, reject) => {
+    timer = setTimeout(() => reject(new Error("timed out")), ms2);
   });
-  return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+  return Promise.race([p2, limit]).finally(() => clearTimeout(timer));
 }
 async function probeHost(entry, deps = REAL_HOST_PROBE, opts = {}) {
   const lookupMs = opts.lookupTimeoutMs ?? HOST_LOOKUP_TIMEOUT_MS;
@@ -12286,7 +12533,7 @@ var SHARED3 = {
   runBaseline: baselineRoleRunner(),
   now: Date.now
 };
-var sha256Hex3 = (b) => createHash8("sha256").update(b).digest("hex");
+var sha256Hex3 = (b2) => createHash8("sha256").update(b2).digest("hex");
 function notATgz(path, why) {
   return new Error(`input "package" must be a .tgz file: ${JSON.stringify(path)} ${why}. Pack a directory once with \`nimbus extension pack <dir> --out <file>\` and give that file to this mode and to \`maintain add\`: two runtimes gzip a directory differently, so it would never hash alike on both sides`);
 }
@@ -12347,7 +12594,7 @@ async function runScorePackage(opts, deps = SHARED3) {
       id: manifest.id,
       version: manifest.version,
       packageSha256: sha256Hex3(packageBytes),
-      hasEvals: inspected.files.some((f) => isEvalSuiteFile(f)),
+      hasEvals: inspected.files.some((f2) => isEvalSuiteFile(f2)),
       starterPack: isStarterPack(manifest)
     };
     await recordVersion(run, { verdict, packageBytes }, { gateway: opts.gateway, work, deadline, mode: "score-package" }, deps);
@@ -12372,27 +12619,27 @@ var SHARED4 = {
   probe: REAL_HOST_PROBE,
   now: Date.now
 };
-var sha256Hex4 = (b) => createHash9("sha256").update(b).digest("hex");
-function assertNimbusVersion(v) {
-  if (!NIMBUS_VERSION_RE.test(v)) {
-    throw new Error(`input "nimbus-version" must be a Nimbus release number such as 10.14.1; got ${JSON.stringify(clip(v))}`);
+var sha256Hex4 = (b2) => createHash9("sha256").update(b2).digest("hex");
+function assertNimbusVersion(v2) {
+  if (!NIMBUS_VERSION_RE.test(v2)) {
+    throw new Error(`input "nimbus-version" must be a Nimbus release number such as 10.14.1; got ${JSON.stringify(clip(v2))}`);
   }
 }
 function newestStableVersions(index) {
   const out = [];
   for (const id of Object.keys(index.extensions).sort(codeUnitCompare)) {
-    const versions = index.extensions[id]?.versions ?? {};
-    const stable = Object.keys(versions).filter((v) => versions[v]?.channel === "stable" && isValidSemver(v)).sort(compareVersionsDesc);
+    const versions2 = index.extensions[id]?.versions ?? {};
+    const stable = Object.keys(versions2).filter((v2) => versions2[v2]?.channel === "stable" && isValidSemver(v2)).sort(compareVersionsDesc);
     const [newest] = stable;
     if (newest !== undefined)
       out.push({ id, version: newest });
   }
   return out;
 }
-function testFailure(code) {
-  if (code === "ERR_EVAL_SANDBOX_UNAVAILABLE")
+function testFailure(code2) {
+  if (code2 === "ERR_EVAL_SANDBOX_UNAVAILABLE")
     return "sandbox-unavailable";
-  if (code === "ERR_EVAL_TIMEOUT")
+  if (code2 === "ERR_EVAL_TIMEOUT")
     return "run-timeout";
   return "run-failed";
 }
@@ -12451,15 +12698,15 @@ function assembleEntry(c, ref, observed) {
 async function checkPackage(c, id, version) {
   const { deps, opts } = c;
   const ref = `${id}@${version}`;
-  const v = c.index.extensions[id]?.versions[version];
-  if (v === undefined)
+  const v2 = c.index.extensions[id]?.versions[version];
+  if (v2 === undefined)
     return;
-  const at = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
-  if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+  const at2 = { gateway: opts.gateway, work: c.work, deadline: c.deadline };
+  if (budgetLeft(at2, deps.now) < BASELINE_MIN_RUN_MS) {
     deps.io.log(`liveness: ${ref} not checked: the run's time budget is spent`);
     return;
   }
-  const packageBytes = readCheckedPackage(c, ref, v.package, v.packageSha256);
+  const packageBytes = readCheckedPackage(c, ref, v2.package, v2.packageSha256);
   if (packageBytes === undefined)
     return;
   const checkedAt = new Date(deps.now()).toISOString();
@@ -12471,48 +12718,48 @@ async function checkPackage(c, id, version) {
     const { manifest } = parseExtensionManifestForRegistry(inspected.manifestBytes.toString("utf8"));
     if (isStarterPack(manifest))
       return;
-    const hasEvals = inspected.files.some((f) => isEvalSuiteFile(f));
+    const hasEvals = inspected.files.some((f2) => isEvalSuiteFile(f2));
     const hosts = await checkHosts(c, ref, manifest.permissions.network);
     const cand = {
-      verdict: { id, version, packageSha256: v.packageSha256 },
+      verdict: { id, version, packageSha256: v2.packageSha256 },
       packageBytes
     };
     let baseline;
     let tests;
-    if (budgetLeft(at, deps.now) < BASELINE_MIN_RUN_MS) {
+    if (budgetLeft(at2, deps.now) < BASELINE_MIN_RUN_MS) {
       deps.io.log(`liveness: ${ref}: baseline and suites not run: the time budget is spent`);
     } else {
-      baseline = await runBaseline(c, cand, at);
+      baseline = await runBaseline(c, cand, at2);
       if (hasEvals)
-        tests = await runSuites(c, cand, at);
+        tests = await runSuites(c, cand, at2);
     }
     return assembleEntry(c, ref, { checkedAt, hosts, tests, baseline });
   } finally {
-    removeQuietly((p) => rmSync6(p, { recursive: true, force: true }), dir);
+    removeQuietly((p2) => rmSync6(p2, { recursive: true, force: true }), dir);
   }
 }
 var BUDGET_TIMEOUT_NOTE = "budget-shortened run timed out; not recorded";
-async function runBaseline(c, cand, at) {
+async function runBaseline(c, cand, at2) {
   const { deps } = c;
   const ref = `${cand.verdict.id}@${cand.verdict.version}`;
-  const timeoutMs = Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at, deps.now));
-  const r = await baselineCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runBaseline);
+  const timeoutMs = Math.min(BASELINE_ROLE_TIMEOUT_MS, budgetLeft(at2, deps.now));
+  const r = await baselineCandidate(cand, { gateway: at2.gateway, work: at2.work, timeoutMs }, deps.runBaseline);
   if ("baseline" in r)
     return r.baseline;
   const shortened = timeoutMs < BASELINE_ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT";
   deps.io.log(shortened ? `liveness: ${ref} baseline: ${BUDGET_TIMEOUT_NOTE}` : `liveness: no baseline for ${ref} (${r.error.code})`);
   return;
 }
-async function runSuites(c, cand, at) {
+async function runSuites(c, cand, at2) {
   const { deps } = c;
-  const left = budgetLeft(at, deps.now);
+  const left = budgetLeft(at2, deps.now);
   const ref = `${cand.verdict.id}@${cand.verdict.version}`;
   if (left < SCORE_MIN_RUN_MS) {
     deps.io.log(`liveness: suites of ${ref} not run: under ${duration(SCORE_MIN_RUN_MS)} of the time budget left`);
     return;
   }
   const timeoutMs = Math.min(ROLE_TIMEOUT_MS, left);
-  const r = await scoreCandidate(cand, { gateway: at.gateway, work: at.work, timeoutMs }, deps.runRole, deps.io.log);
+  const r = await scoreCandidate(cand, { gateway: at2.gateway, work: at2.work, timeoutMs }, deps.runRole, deps.io.log);
   if ("error" in r) {
     if (timeoutMs < ROLE_TIMEOUT_MS && r.error.code === "ERR_EVAL_TIMEOUT") {
       deps.io.log(`liveness: suites of ${ref}: ${BUDGET_TIMEOUT_NOTE}`);
@@ -12596,10 +12843,10 @@ function commitSite(parent, files, message, cwd) {
   try {
     const env = { ...process.env, GIT_INDEX_FILE: join9(scratch, "index") };
     run(["read-tree", parent], { cwd, env });
-    for (const f of files) {
-      assertSafeTreePath(f.path);
-      const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], { cwd, input: f.bytes });
-      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f.path}`], { cwd, env });
+    for (const f2 of files) {
+      assertSafeTreePath(f2.path);
+      const blob = run(["hash-object", "-w", "--no-filters", "--stdin"], { cwd, input: f2.bytes });
+      run(["update-index", "--add", "--cacheinfo", `100644,${blob},${f2.path}`], { cwd, env });
     }
     const tree = run(["write-tree"], { cwd, env });
     if (tree === run(["rev-parse", `${parent}^{tree}`], { cwd }))
@@ -12639,14 +12886,14 @@ var KEY_INPUT_RE = /^[A-Za-z0-9+/]{43}=$/;
 var ENTRY_KEY_RE = /^(.+)@([^@]+)$/;
 var ENVELOPE_KEYS = new Set(["format", "nimbusVersion", "extensions"]);
 function parseLivenessKey(raw) {
-  const s = raw.trim();
-  if (!KEY_INPUT_RE.test(s)) {
+  const s3 = raw.trim();
+  if (!KEY_INPUT_RE.test(s3)) {
     throw new Error('input "liveness-key" is not a liveness signing key: expected the base64 of a 32-byte Ed25519 seed');
   }
-  return new Uint8Array(Buffer.from(s, "base64"));
+  return new Uint8Array(Buffer.from(s3, "base64"));
 }
-function isPlainObject4(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
+function isPlainObject4(v2) {
+  return typeof v2 === "object" && v2 !== null && !Array.isArray(v2);
 }
 function entryProblem(key, raw, now) {
   if (!ENTRY_KEY_RE.test(key))
@@ -12657,10 +12904,10 @@ function entryProblem(key, raw, now) {
   } catch {
     return "it is not a valid liveness entry";
   }
-  const at = Date.parse(entry.checkedAt);
-  if (at > now + RESULTS_MAX_SKEW_MS)
+  const at2 = Date.parse(entry.checkedAt);
+  if (at2 > now + RESULTS_MAX_SKEW_MS)
     return "its checkedAt is in the future";
-  if (at < now - RESULTS_MAX_AGE_MS)
+  if (at2 < now - RESULTS_MAX_AGE_MS)
     return "its checkedAt is more than 24 hours old";
   return entry;
 }
@@ -12694,7 +12941,7 @@ function readEnvelope2(path, expectedVersion) {
   } catch {
     throw new Error("refusing the results file: it is not valid JSON");
   }
-  if (!isPlainObject4(doc) || !Object.keys(doc).every((k) => ENVELOPE_KEYS.has(k))) {
+  if (!isPlainObject4(doc) || !Object.keys(doc).every((k2) => ENVELOPE_KEYS.has(k2))) {
     throw new Error("refusing the results file: it is not an object of exactly format, nimbusVersion and extensions");
   }
   if (doc["format"] !== 1)
@@ -12712,7 +12959,7 @@ function readEnvelope2(path, expectedVersion) {
   }
   return { nimbusVersion: version, raw };
 }
-function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
+function readLivenessResults(path, now, expectedVersion, io2 = GHA_IO) {
   const { nimbusVersion, raw } = readEnvelope2(path, expectedVersion);
   const extensions = Object.create(null);
   for (const key of Object.keys(raw)) {
@@ -12720,28 +12967,28 @@ function readLivenessResults(path, now, expectedVersion, io = GHA_IO) {
       continue;
     const r = entryProblem(key, raw[key], now);
     if (typeof r === "string") {
-      io.annotate("warning", `dropped results entry ${code(key)}: ${r}`);
+      io2.annotate("warning", `dropped results entry ${code(key)}: ${r}`);
     } else {
       extensions[key] = r;
     }
   }
   return { format: 1, nimbusVersion, extensions };
 }
-async function previousSequence(git, cwd, indexKey, io) {
-  if (!git.listTreeEntries(PAGES_REF, LIVENESS_FILE, { cwd }).some((e) => e.path === LIVENESS_FILE)) {
+async function previousSequence(git2, cwd, indexKey, io2) {
+  if (!git2.listTreeEntries(PAGES_REF, LIVENESS_FILE, { cwd }).some((e) => e.path === LIVENESS_FILE)) {
     return 0;
   }
   let prev;
   try {
-    prev = parseLivenessFile(git.readBlob(PAGES_REF, LIVENESS_FILE, { cwd }));
+    prev = parseLivenessFile(git2.readBlob(PAGES_REF, LIVENESS_FILE, { cwd }));
   } catch {
-    io.annotate("warning", `the previous ${LIVENESS_FILE} does not parse; starting at sequence 1`);
+    io2.annotate("warning", `the previous ${LIVENESS_FILE} does not parse; starting at sequence 1`);
     return 0;
   }
   try {
     await verifyLivenessFile(prev, indexKey);
   } catch {
-    io.log(`the previous ${LIVENESS_FILE} does not verify against the index key; its entries are not reused`);
+    io2.log(`the previous ${LIVENESS_FILE} does not verify against the index key; its entries are not reused`);
   }
   return prev.sequence;
 }
@@ -12750,9 +12997,9 @@ async function verifyCommittedBytes(bytes, indexKey) {
 }
 async function attemptSign(opts, seed, ownKey, deps) {
   const cwd = opts.workspace;
-  const { git, io } = deps;
-  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
-  const index = await readVerifiedIndex(git, cwd);
+  const { git: git2, io: io2 } = deps;
+  git2.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git2, cwd);
   const indexKey = readRegistryLivenessKey(index);
   if (indexKey === undefined) {
     throw new Error("refusing to sign: this registry's index names no liveness key; run `nimbus registry maintain set-liveness-key`");
@@ -12769,7 +13016,7 @@ async function attemptSign(opts, seed, ownKey, deps) {
   if (sameKeyBytes(indexKey, index.rootKey)) {
     throw new Error(`refusing to sign: the liveness key (fingerprint ${publisherKeyFingerprint(indexKey)}) is this registry's root key; the two must be different keys`);
   }
-  const read = readLivenessResults(opts.results, deps.now(), opts.nimbusVersion, io);
+  const read = readLivenessResults(opts.results, deps.now(), opts.nimbusVersion, io2);
   const allowed = new Set(newestStableVersions(index).map((e) => `${e.id}@${e.version}`));
   const extensions = {};
   for (const key of Object.keys(read.extensions)) {
@@ -12779,14 +13026,14 @@ async function attemptSign(opts, seed, ownKey, deps) {
     if (allowed.has(key)) {
       extensions[key] = entry;
     } else {
-      io.annotate("warning", `dropped results entry ${code(key)}: it is not the newest stable version of a listed extension`);
+      io2.annotate("warning", `dropped results entry ${code(key)}: it is not the newest stable version of a listed extension`);
     }
   }
   const checked = Object.keys(read.extensions).length;
   const kept = Object.keys(extensions).length;
   if (kept === 0)
     return { commit: undefined, sequence: 0, kept, checked };
-  const sequence = await previousSequence(git, cwd, indexKey, io) + 1;
+  const sequence = await previousSequence(git2, cwd, indexKey, io2) + 1;
   const signed = await signLivenessFile({
     format: 1,
     livenessKey: indexKey,
@@ -12798,33 +13045,33 @@ async function attemptSign(opts, seed, ownKey, deps) {
   const bytes = new TextEncoder().encode(`${JSON.stringify(signed, null, 2)}
 `);
   await verifyCommittedBytes(bytes, indexKey);
-  const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: LIVENESS_FILE, bytes }], `Publish liveness.json sequence ${String(sequence)}`, cwd);
+  const commit = commitSite(git2.commitOf(PAGES_REF, { cwd }), [{ path: LIVENESS_FILE, bytes }], `Publish liveness.json sequence ${String(sequence)}`, cwd);
   return { commit, sequence, kept, checked };
 }
-function report(io, a, pushed) {
+function report(io2, a, pushed) {
   const head = pushed ? `Signed ${code(LIVENESS_FILE)} sequence ${String(a.sequence)} with ${String(a.kept)} entries; pushed to ${code(PAGES_BRANCH)}.` : "There is nothing to publish: no results entry was fit to sign, so nothing was committed.";
   if (!pushed) {
-    io.annotate("warning", `liveness-sign published nothing: ${String(a.checked)} results entries passed validation and ${String(a.kept)} were for a newest stable version; check the liveness-check job`);
+    io2.annotate("warning", `liveness-sign published nothing: ${String(a.checked)} results entries passed validation and ${String(a.kept)} were for a newest stable version; check the liveness-check job`);
   }
-  io.summary(["## Liveness sign", "", head].join(`
+  io2.summary(["## Liveness sign", "", head].join(`
 `));
-  io.log(pushed ? `signed liveness sequence ${String(a.sequence)}` : "nothing to publish; no commit");
+  io2.log(pushed ? `signed liveness sequence ${String(a.sequence)}` : "nothing to publish; no commit");
 }
 async function signLoop(opts, seed, deps) {
   const ownKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1;attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS; attempt2++) {
     const a = await attemptSign({ ...opts, defaultBranch }, seed, ownKey, deps);
     if (a.commit === undefined) {
       report(deps.io, a, false);
       return;
     }
-    await deps.beforePush?.(attempt);
+    await deps.beforePush?.(attempt2);
     if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
       report(deps.io, a, true);
       return;
     }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt2)}; starting over`);
   }
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS)} times`);
 }
@@ -12851,87 +13098,87 @@ var SHARED6 = {
 var MAX_ATTEMPTS2 = 3;
 var ROOT_KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey(raw) {
-  const s = raw.trim();
-  if (!ROOT_KEY_RE.test(s)) {
+  const s3 = raw.trim();
+  if (!ROOT_KEY_RE.test(s3)) {
     throw new Error('input "root-key" is not a registry root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus registry maintain init` writes it');
   }
-  return new Uint8Array(Buffer.from(s, "base64"));
+  return new Uint8Array(Buffer.from(s3, "base64"));
 }
-async function provenanceFor(v, packageBytes, at, deps, memo) {
-  if (v.repository === undefined)
+async function provenanceFor(v2, packageBytes, at2, deps, memo) {
+  if (v2.repository === undefined)
     return;
-  let r = memo.get(v.packageSha256);
+  let r = memo.get(v2.packageSha256);
   if (r === undefined) {
     r = await verifyNeverThrowing(deps.verify, {
-      pkgPath: join10(at.work, `provenance-${v.packageSha256}.tgz`),
+      pkgPath: join10(at2.work, `provenance-${v2.packageSha256}.tgz`),
       packageBytes,
-      repository: v.repository,
-      verifiedAt: at.verifiedAt
+      repository: v2.repository,
+      verifiedAt: at2.verifiedAt
     });
-    memo.set(v.packageSha256, r);
+    memo.set(v2.packageSha256, r);
     if (!r.ok) {
-      deps.io.annotate("warning", `no provenance for ${v.id}@${v.version} (repository ${v.repository}): ${r.reason}; signed without it`);
+      deps.io.annotate("warning", `no provenance for ${v2.id}@${v2.version} (repository ${v2.repository}): ${r.reason}; signed without it`);
     }
   }
-  return r.ok ? { ...r.provenance, verifiedAt: at.verifiedAt } : undefined;
+  return r.ok ? { ...r.provenance, verifiedAt: at2.verifiedAt } : undefined;
 }
-async function takeCandidate(o, b, run, opts, deps) {
-  const { candidate, verdict: v } = o;
-  const q = judgeScoreEntry(run.scores, v);
-  if (!q.ok) {
-    b.skipped.push({ dir: o.dir, reason: q.reason });
+async function takeCandidate(o, b2, run2, opts, deps) {
+  const { candidate, verdict: v2 } = o;
+  const q2 = judgeScoreEntry(run2.scores, v2);
+  if (!q2.ok) {
+    b2.skipped.push({ dir: o.dir, reason: q2.reason });
     return;
   }
-  if (q.baselineIgnored !== undefined) {
-    deps.io.annotate("warning", `${v.id}@${v.version}: ${q.baselineIgnored}`);
+  if (q2.baselineIgnored !== undefined) {
+    deps.io.annotate("warning", `${v2.id}@${v2.version}: ${q2.baselineIgnored}`);
   }
-  const base = `extensions/${v.id}/${v.version}`;
-  const provenance = await provenanceFor(v, candidate.packageBytes, { work: b.work, verifiedAt: b.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run.memo);
-  addVersion(b.extensions, v, b.publishedAt, {
+  const base = `extensions/${v2.id}/${v2.version}`;
+  const provenance = await provenanceFor(v2, candidate.packageBytes, { work: b2.work, verifiedAt: b2.publishedAt }, { io: deps.io, verify: deps.provenance ?? ghProvenance(opts.githubToken ?? "") }, run2.memo);
+  addVersion(b2.extensions, v2, b2.publishedAt, {
     ...provenance !== undefined && { provenance },
-    ...q.quality !== undefined && { quality: q.quality },
-    ...q.baseline !== undefined && { baseline: q.baseline }
+    ...q2.quality !== undefined && { quality: q2.quality },
+    ...q2.baseline !== undefined && { baseline: q2.baseline }
   });
-  b.files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
-  b.added.push({
-    id: v.id,
-    version: v.version,
-    channel: v.channel,
-    ...q.quality !== undefined && { quality: q.quality },
-    ...q.baseline !== undefined && { baseline: q.baseline }
+  b2.files.push({ path: `${base}/manifest.json`, bytes: candidate.manifestBytes }, { path: `${base}/package.tgz`, bytes: candidate.packageBytes });
+  b2.added.push({
+    id: v2.id,
+    version: v2.version,
+    channel: v2.channel,
+    ...q2.quality !== undefined && { quality: q2.quality },
+    ...q2.baseline !== undefined && { baseline: q2.baseline }
   });
 }
-async function attemptSign2(opts, run, deps) {
-  const { seed, rootKey } = run;
-  const { git } = deps;
+async function attemptSign2(opts, run2, deps) {
+  const { seed, rootKey } = run2;
+  const { git: git2 } = deps;
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
-  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
-  const index = await readVerifiedIndex(git, cwd);
+  git2.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const index = await readVerifiedIndex(git2, cwd);
   if (index.rootKey !== rootKey) {
     throw new Error(`refusing to sign: the root-key input (public key fingerprint ${publisherKeyFingerprint(rootKey)}) is not this registry's root key (fingerprint ${publisherKeyFingerprint(index.rootKey)})`);
   }
-  const config = readConfigAt(git, mainRef, cwd);
+  const config = readConfigAt(git2, mainRef, cwd);
   if (config === undefined) {
     throw new Error(`refusing to sign: ${opts.defaultBranch} has no ${CONFIG_FILE}`);
   }
-  const pagesConfig = readConfigAt(git, PAGES_REF, cwd);
+  const pagesConfig = readConfigAt(git2, PAGES_REF, cwd);
   if (pagesConfig !== undefined && loosens(pagesConfig.config, config.config)) {
     throw new Error(`refusing to sign: ${opts.defaultBranch}'s ${CONFIG_FILE} loosens the rules the last signed run used (requirePublisherNamespace true -> false); loosening is a maintainer action done by hand`);
   }
-  const { dirs, paths } = extensionDirs(git, mainRef, cwd);
-  const signedDirs = assertSignedIntact(git, index, mainRef, paths, cwd, "sign");
+  const { dirs, paths } = extensionDirs(git2, mainRef, cwd);
+  const signedDirs = assertSignedIntact(git2, index, mainRef, paths, cwd, "sign");
   const skipped = [];
-  const admission = admitStatements(git, index, mainRef, cwd, skipped);
+  const admission = admitStatements(git2, index, mainRef, cwd, skipped);
   const extensions = { ...index.extensions };
-  const publishedAt = git.commitTime(mainRef, { cwd });
+  const publishedAt = git2.commitTime(mainRef, { cwd });
   const added = [];
   const files = [{ path: CONFIG_FILE, bytes: config.bytes }];
   const work = mkdtempSync9(join10(deps.tmpdir(), "nimbus-registry-sign-"));
   const batch = { extensions, files, added, skipped, publishedAt, work };
   try {
     for await (const o of validateUnsigned({
-      git,
+      git: git2,
       validate: deps.validate,
       ref: mainRef,
       cwd,
@@ -12945,12 +13192,12 @@ async function attemptSign2(opts, run, deps) {
         skipped.push({ dir: o.dir, reason: o.reason });
         continue;
       }
-      await takeCandidate(o, batch, run, opts, deps);
+      await takeCandidate(o, batch, run2, opts, deps);
     }
   } finally {
     rmSync8(work, { recursive: true, force: true });
   }
-  const requested = await signRequests(git, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
+  const requested = await signRequests(git2, { ...admission.index, extensions }, { ref: mainRef, cwd, seed, issuedAt: publishedAt }, skipped);
   const reportUrl = reportUrlFor(index, opts.repository);
   const statements = [...admission.admitted, ...requested].map(trustStatementId);
   let sequence = index.sequence;
@@ -12974,7 +13221,7 @@ async function attemptSign2(opts, run, deps) {
 `)
     });
   }
-  const parent = git.commitOf(PAGES_REF, { cwd });
+  const parent = git2.commitOf(PAGES_REF, { cwd });
   const message = commitMessage(added, statements, sequence, opts.defaultBranch);
   return {
     commit: commitSite(parent, files, message, cwd),
@@ -12984,24 +13231,24 @@ async function attemptSign2(opts, run, deps) {
     sequence
   };
 }
-async function signRequests(git, index, at, skipped) {
-  const files = readRequestFiles(git, at.ref, at.cwd);
-  for (const f of files.skipped)
-    skipped.push({ dir: f.path, reason: f.reason });
+async function signRequests(git2, index, at2, skipped) {
+  const files = readRequestFiles(git2, at2.ref, at2.cwd);
+  for (const f2 of files.skipped)
+    skipped.push({ dir: f2.path, reason: f2.reason });
   const signed = [];
   let current = index;
-  for (const f of [...files.requests].sort((a, b) => codeUnitCompare(a.name, b.name))) {
-    if (alreadyCarried(current, f.request))
+  for (const f2 of [...files.requests].sort((a, b2) => codeUnitCompare(a.name, b2.name))) {
+    if (alreadyCarried(current, f2.request))
       continue;
     try {
-      const s = await signRegistryRequest(f.request, current, at.seed, at.issuedAt);
-      signed.push(s);
+      const s3 = await signRegistryRequest(f2.request, current, at2.seed, at2.issuedAt);
+      signed.push(s3);
       const prior = Array.isArray(current.statements) ? current.statements : [];
-      current = { ...current, statements: [...prior, s] };
+      current = { ...current, statements: [...prior, s3] };
     } catch (e) {
       if (!(e instanceof RegistryError))
         throw e;
-      skipped.push({ dir: f.path, reason: e.message });
+      skipped.push({ dir: f2.path, reason: e.message });
     }
   }
   return signed;
@@ -13029,14 +13276,14 @@ function versionRef(x) {
 function qualityNote(x) {
   if (x.quality === undefined)
     return "";
-  const q = x.quality;
-  return `, quality ${String(q.score)}/100 (${String(q.passed)} of ${String(q.cases)} cases passed)`;
+  const q2 = x.quality;
+  return `, quality ${String(q2.score)}/100 (${String(q2.passed)} of ${String(q2.cases)} cases passed)`;
 }
 function baselineNote(x) {
   return x.baseline === undefined ? "" : `, baseline: ${baselineFact(x.baseline)}`;
 }
-function report2(io, a, pushed) {
-  warnSkipped(io, a);
+function report2(io2, a, pushed) {
+  warnSkipped(io2, a);
   const lines = ["## Registry sign", ""];
   if (a.added.length === 0 && a.statements.length === 0) {
     lines.push("Nothing new to sign.");
@@ -13049,36 +13296,36 @@ function report2(io, a, pushed) {
   }
   if (a.skipped.length > 0) {
     lines.push("", "**Skipped** (not signed; fix the directory or statement file and it is signed on a later run):", "");
-    for (const s of a.skipped)
-      lines.push(`- ${code(s.dir)}: ${code(s.reason)}`);
+    for (const s3 of a.skipped)
+      lines.push(`- ${code(s3.dir)}: ${code(s3.reason)}`);
   }
   lines.push("", pushed ? `Pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.");
-  io.summary(lines.join(`
+  io2.summary(lines.join(`
 `));
-  io.log(pushed ? `signed ${String(a.added.length)} version(s) and ${String(a.statements.length)} statement(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
+  io2.log(pushed ? `signed ${String(a.added.length)} version(s) and ${String(a.statements.length)} statement(s), skipped ${String(a.skipped.length)}; pushed ${PAGES_BRANCH}` : `nothing to sign; skipped ${String(a.skipped.length)}; no commit`);
 }
-function warnSkipped(io, a) {
-  for (const s of a.skipped)
-    io.annotate("warning", `skipped ${s.dir}: ${s.reason}`);
+function warnSkipped(io2, a) {
+  for (const s3 of a.skipped)
+    io2.annotate("warning", `skipped ${s3.dir}: ${s3.reason}`);
 }
 async function signLoop2(opts, seed, scores, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
   let last;
-  const run = { seed, rootKey, memo: new Map, scores };
+  const run2 = { seed, rootKey, memo: new Map, scores };
   try {
-    for (let attempt = 1;attempt <= MAX_ATTEMPTS2; attempt++) {
-      last = await attemptSign2({ ...opts, defaultBranch }, run, deps);
+    for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS2; attempt2++) {
+      last = await attemptSign2({ ...opts, defaultBranch }, run2, deps);
       if (last.commit === undefined) {
         report2(deps.io, last, false);
         return;
       }
-      await deps.beforePush?.(attempt);
+      await deps.beforePush?.(attempt2);
       if (pushCommit(last.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
         report2(deps.io, last, true);
         return;
       }
-      deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+      deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt2)}; starting over`);
     }
   } catch (e) {
     if (last !== undefined)
@@ -13102,33 +13349,33 @@ async function runSign(opts, deps = SHARED6) {
 var MAX_SOURCE_FILE_BYTES = 16 * 1024;
 var FEED_SOURCE_DIRS = [FEED_PUBLISHERS_DIR, FEED_REQUESTS_DIR, FEED_STATEMENTS_DIR];
 var FEED_NOT_INITIALISED = "gh-pages has no trust.json: initialise the feed with `nimbus trust maintain init --github` and push its site first";
-function hasFile2(git, ref, path, cwd) {
-  return git.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
+function hasFile2(git2, ref, path, cwd) {
+  return git2.listTreeEntries(ref, path, { cwd }).some((e) => e.path === path);
 }
-async function readVerifiedFeed(git, cwd) {
-  if (!hasFile2(git, PAGES_REF, TRUST_FEED_FILE, cwd))
+async function readVerifiedFeed(git2, cwd) {
+  if (!hasFile2(git2, PAGES_REF, TRUST_FEED_FILE, cwd))
     throw new Error(FEED_NOT_INITIALISED);
-  const feed = parseTrustFeed(git.readBlob(PAGES_REF, TRUST_FEED_FILE, { cwd }));
+  const feed = parseTrustFeed(git2.readBlob(PAGES_REF, TRUST_FEED_FILE, { cwd }));
   await verifyTrustFeedPinned(feed, feed.rootKey);
   return feed;
 }
-function assertFeedConfig(git, ref, cwd) {
-  if (!hasFile2(git, ref, FEED_CONFIG_FILE, cwd)) {
+function assertFeedConfig(git2, ref, cwd) {
+  if (!hasFile2(git2, ref, FEED_CONFIG_FILE, cwd)) {
     throw new Error(`${ref} has no ${FEED_CONFIG_FILE}: this is not a trust feed repository`);
   }
   let raw;
   try {
-    raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(git.readBlob(ref, FEED_CONFIG_FILE, { cwd })));
+    raw = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(git2.readBlob(ref, FEED_CONFIG_FILE, { cwd })));
   } catch {
     throw new Error(`${FEED_CONFIG_FILE} on ${ref} is not valid UTF-8 JSON`);
   }
   parseFeedConfig(raw);
 }
-function readSourceFile(git, ref, e, cwd) {
-  if (e.mode !== git.REGULAR_FILE_MODE) {
+function readSourceFile(git2, ref, e, cwd) {
+  if (e.mode !== git2.REGULAR_FILE_MODE) {
     return { path: e.path, reason: `git mode ${e.mode} is not a regular file` };
   }
-  const bytes = git.readBlob(ref, e.path, { cwd });
+  const bytes = git2.readBlob(ref, e.path, { cwd });
   if (bytes.byteLength > MAX_SOURCE_FILE_BYTES) {
     return { path: e.path, reason: `exceeds ${String(MAX_SOURCE_FILE_BYTES)} bytes` };
   }
@@ -13141,14 +13388,14 @@ function readSourceFile(git, ref, e, cwd) {
     return { path: e.path, reason: "is not valid UTF-8 JSON" };
   }
 }
-function readFeedSourceAt(git, ref, cwd) {
+function readFeedSourceAt(git2, ref, cwd) {
   const skipped = [];
   const read = (dir) => {
     const out = [];
-    for (const e of git.listTreeEntries(ref, dir, { cwd })) {
+    for (const e of git2.listTreeEntries(ref, dir, { cwd })) {
       if (e.path === `${dir}.gitkeep`)
         continue;
-      const r = readSourceFile(git, ref, e, cwd);
+      const r = readSourceFile(git2, ref, e, cwd);
       if ("reason" in r)
         skipped.push(r);
       else
@@ -13167,33 +13414,33 @@ function readFeedSourceAt(git, ref, cwd) {
 }
 
 // src/trust-summary.ts
-function blockLine(b) {
-  const r = b.request;
+function blockLine(b2) {
+  const r = b2.request;
   if (r.kind === "key.revoke") {
-    return `- **revoke** key ${code(r.keyFingerprint)} of publisher ${code(r.publisherId)} — ${code(r.reason)} (${code(b.path)})`;
+    return `- **revoke** key ${code(r.keyFingerprint)} of publisher ${code(r.publisherId)} — ${code(r.reason)} (${code(b2.path)})`;
   }
-  const versions = r.versions === "*" ? "all versions" : r.versions.join(", ");
-  return `- **take down** ${code(r.extensionId)} (${code(versions)}) of publisher ${code(r.publisherId ?? "?")} — ${code(r.reason)} (${code(b.path)})`;
+  const versions2 = r.versions === "*" ? "all versions" : r.versions.join(", ");
+  return `- **take down** ${code(r.extensionId)} (${code(versions2)}) of publisher ${code(r.publisherId ?? "?")} — ${code(r.reason)} (${code(b2.path)})`;
 }
 function planLines(plan, skipped) {
   const lines = [];
-  for (const b of plan.blocks)
-    lines.push(blockLine(b));
-  for (const v of plan.verified) {
-    lines.push(`- **verify** publisher ${code(v.publisherId)} as GitHub ${code(`@${v.github}`)} (${v.change}), keys ${v.keys.map((k) => code(publisherKeyFingerprint(k))).join(", ")}`);
+  for (const b2 of plan.blocks)
+    lines.push(blockLine(b2));
+  for (const v2 of plan.verified) {
+    lines.push(`- **verify** publisher ${code(v2.publisherId)} as GitHub ${code(`@${v2.github}`)} (${v2.change}), keys ${v2.keys.map((k2) => code(publisherKeyFingerprint(k2))).join(", ")}`);
   }
   for (const id of plan.unverified)
     lines.push(`- **un-verify** publisher ${code(id)}`);
-  for (const s of plan.admitted) {
-    lines.push(`- **carry** ${code(s.kind)} of publisher ${code(s.publisherId)} (${code(trustStatementId(s))})`);
+  for (const s3 of plan.admitted) {
+    lines.push(`- **carry** ${code(s3.kind)} of publisher ${code(s3.publisherId)} (${code(trustStatementId(s3))})`);
   }
   if (lines.length === 0)
     lines.push("Nothing to sign.");
   const skips = [...skipped, ...plan.skipped];
   if (skips.length > 0) {
     lines.push("", "**Skipped** (not signed):", "");
-    for (const s of skips)
-      lines.push(`- ${code(s.path)}: ${code(s.reason)}`);
+    for (const s3 of skips)
+      lines.push(`- ${code(s3.path)}: ${code(s3.reason)}`);
   }
   return lines;
 }
@@ -13209,24 +13456,24 @@ function assertSourceOnly(changes) {
   }
 }
 async function runTrustCheck(opts, deps = SHARED7) {
-  const { git } = deps;
+  const { git: git2 } = deps;
   const cwd = opts.workspace;
   if (opts.baseRef === "") {
     throw new Error("trust-check runs on pull_request: the base branch (GITHUB_BASE_REF) is empty");
   }
-  git.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
-  const prev = await readVerifiedFeed(git, cwd);
-  assertFeedConfig(git, `origin/${opts.baseRef}`, cwd);
-  const mergeBase = git.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
+  git2.fetchRefs([opts.baseRef, PAGES_BRANCH], { cwd });
+  const prev = await readVerifiedFeed(git2, cwd);
+  assertFeedConfig(git2, `origin/${opts.baseRef}`, cwd);
+  const mergeBase = git2.findMergeBase(`origin/${opts.baseRef}`, "HEAD", {
     cwd,
     deepen: [opts.baseRef]
   });
-  const changes = git.diffTree(mergeBase, "HEAD", { cwd });
+  const changes = git2.diffTree(mergeBase, "HEAD", { cwd });
   assertSourceOnly(changes);
-  const { source, skipped } = readFeedSourceAt(git, "HEAD", cwd);
+  const { source, skipped } = readFeedSourceAt(git2, "HEAD", cwd);
   const plan = planTrustFeed(prev, source);
   const touched = new Set(changes.filter((c) => c.status !== "D").map((c) => c.path));
-  const bad = [...skipped, ...plan.skipped].filter((s) => touched.has(s.path));
+  const bad3 = [...skipped, ...plan.skipped].filter((s3) => touched.has(s3.path));
   deps.io.summary([
     "## Trust feed change",
     "",
@@ -13236,8 +13483,8 @@ async function runTrustCheck(opts, deps = SHARED7) {
     ...planLines(plan, skipped)
   ].join(`
 `));
-  if (bad.length > 0) {
-    throw new Error(`the trust feed would not sign: ${bad.map((s) => `${code(s.path)}: ${s.reason}`).join("; ")}`);
+  if (bad3.length > 0) {
+    throw new Error(`the trust feed would not sign: ${bad3.map((s3) => `${code(s3.path)}: ${s3.reason}`).join("; ")}`);
   }
   deps.io.log(`trust-check passed: ${plan.status}`);
 }
@@ -13247,56 +13494,56 @@ var SHARED8 = { git: exports_git_tree, io: GHA_IO };
 var MAX_ATTEMPTS3 = 3;
 var ROOT_KEY_RE2 = /^[A-Za-z0-9+/]{43}=$/;
 function parseRootKey2(raw) {
-  const s = raw.trim();
-  if (!ROOT_KEY_RE2.test(s)) {
+  const s3 = raw.trim();
+  if (!ROOT_KEY_RE2.test(s3)) {
     throw new Error('input "root-key" is not a trust root key: expected the base64 of a 32-byte Ed25519 seed, as `nimbus trust maintain init` writes it');
   }
-  return new Uint8Array(Buffer.from(s, "base64"));
+  return new Uint8Array(Buffer.from(s3, "base64"));
 }
-async function attemptSign3(opts, seed, rootKey, git) {
+async function attemptSign3(opts, seed, rootKey, git2) {
   const cwd = opts.workspace;
   const mainRef = `origin/${opts.defaultBranch}`;
-  git.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
-  const prev = await readVerifiedFeed(git, cwd);
+  git2.fetchRefs([opts.defaultBranch, PAGES_BRANCH], { cwd });
+  const prev = await readVerifiedFeed(git2, cwd);
   if (prev.rootKey !== rootKey) {
     throw new Error(`refusing to sign: the root-key input (public key fingerprint ${publisherKeyFingerprint(rootKey)}) is not this feed's root key (fingerprint ${publisherKeyFingerprint(prev.rootKey)})`);
   }
-  assertFeedConfig(git, mainRef, cwd);
-  const { source, skipped } = readFeedSourceAt(git, mainRef, cwd);
-  const at = git.commitTime(mainRef, { cwd });
-  const { plan, feed } = await buildTrustFeed(prev, source, seed, at);
+  assertFeedConfig(git2, mainRef, cwd);
+  const { source, skipped } = readFeedSourceAt(git2, mainRef, cwd);
+  const at2 = git2.commitTime(mainRef, { cwd });
+  const { plan, feed } = await buildTrustFeed(prev, source, seed, at2);
   if (feed === undefined) {
     return { commit: undefined, plan, skipped, sequence: prev.sequence };
   }
   const bytes = new TextEncoder().encode(`${JSON.stringify(feed, null, 2)}
 `);
-  const commit = commitSite(git.commitOf(PAGES_REF, { cwd }), [{ path: TRUST_FEED_FILE, bytes }], `Sign trust feed sequence ${String(feed.sequence)}`, cwd);
+  const commit = commitSite(git2.commitOf(PAGES_REF, { cwd }), [{ path: TRUST_FEED_FILE, bytes }], `Sign trust feed sequence ${String(feed.sequence)}`, cwd);
   return { commit, plan, skipped, sequence: feed.sequence };
 }
-function report3(io, a, pushed) {
-  for (const s of [...a.skipped, ...a.plan.skipped]) {
-    io.annotate("warning", `skipped ${s.path}: ${s.reason}`);
+function report3(io2, a, pushed) {
+  for (const s3 of [...a.skipped, ...a.plan.skipped]) {
+    io2.annotate("warning", `skipped ${s3.path}: ${s3.reason}`);
   }
   const head = pushed ? `Signed trust feed sequence ${String(a.sequence)}; pushed to ${code(PAGES_BRANCH)}.` : "No change: nothing was committed.";
-  io.summary(["## Trust feed sign", "", head, "", ...planLines(a.plan, a.skipped)].join(`
+  io2.summary(["## Trust feed sign", "", head, "", ...planLines(a.plan, a.skipped)].join(`
 `));
-  io.log(pushed ? `signed trust feed sequence ${String(a.sequence)}` : "nothing to sign; no commit");
+  io2.log(pushed ? `signed trust feed sequence ${String(a.sequence)}` : "nothing to sign; no commit");
 }
 async function signLoop3(opts, seed, deps) {
   const rootKey = Buffer.from(publicKeyFromSeed(seed)).toString("base64");
   const defaultBranch = opts.defaultBranch ?? deps.git.remoteDefaultBranch({ cwd: opts.workspace });
-  for (let attempt = 1;attempt <= MAX_ATTEMPTS3; attempt++) {
+  for (let attempt2 = 1;attempt2 <= MAX_ATTEMPTS3; attempt2++) {
     const a = await attemptSign3({ ...opts, defaultBranch }, seed, rootKey, deps.git);
     if (a.commit === undefined) {
       report3(deps.io, a, false);
       return;
     }
-    await deps.beforePush?.(attempt);
+    await deps.beforePush?.(attempt2);
     if (pushCommit(a.commit, PAGES_BRANCH, opts.workspace) === "pushed") {
       report3(deps.io, a, true);
       return;
     }
-    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt)}; starting over`);
+    deps.io.log(`${PAGES_BRANCH} moved during attempt ${String(attempt2)}; starting over`);
   }
   throw new Error(`refusing to continue: the push to ${PAGES_BRANCH} lost to a concurrent update ${String(MAX_ATTEMPTS3)} times`);
 }
@@ -13321,7 +13568,7 @@ var MODES = [
   "trust-sign"
 ];
 function parseMode(raw) {
-  const mode = MODES.find((m) => m === raw);
+  const mode = MODES.find((m2) => m2 === raw);
   if (mode !== undefined)
     return mode;
   throw new Error(`input "mode" must be "check", "sign", "score", "score-package", "liveness-check", "liveness-sign", "trust-check" or "trust-sign"; got ${JSON.stringify(raw)}`);
@@ -13351,18 +13598,18 @@ function takeLivenessSignKeys() {
   return key;
 }
 function requireInput(name) {
-  const v = getInput(name);
-  if (v === "")
+  const v2 = getInput(name);
+  if (v2 === "")
     throw new Error(`input "${name}" is required`);
-  return v;
+  return v2;
 }
-function maskSecret(secret, write = (s) => process.stdout.write(s)) {
+function maskSecret(secret, write = (s3) => process.stdout.write(s3)) {
   const parts = new Set([secret, secret.trim(), ...secret.split(/[\r\n]+/).map((l) => l.trim())]);
   parts.delete("");
-  for (const p of parts) {
-    if (/[\r\n]/.test(p))
+  for (const p2 of parts) {
+    if (/[\r\n]/.test(p2))
       continue;
-    write(`::add-mask::${p.replaceAll("%", "%25")}
+    write(`::add-mask::${p2.replaceAll("%", "%25")}
 `);
   }
 }
@@ -13408,12 +13655,12 @@ function checkInputs() {
   refuseSecrets(["github-token", "root-key", "liveness-key"], (name) => `input "${name}" must not be set with "nimbus-gateway" in check mode: scoring runs extension code and holds no secrets`);
   return { gateway };
 }
-function scoresPath(ws, input) {
+function scoresPath(ws2, input) {
   const rel = input === "" ? "scores.json" : input;
-  return isAbsolute2(rel) ? rel : join11(ws, rel);
+  return isAbsolute2(rel) ? rel : join11(ws2, rel);
 }
-function resolveInWorkspace(ws, input) {
-  return isAbsolute2(input) ? input : join11(ws, input);
+function resolveInWorkspace(ws2, input) {
+  return isAbsolute2(input) ? input : join11(ws2, input);
 }
 function workspace() {
   return process.env["GITHUB_WORKSPACE"] ?? process.cwd();
@@ -13506,9 +13753,9 @@ if (__require.main == __require.module) {
   await main();
 }
 export {
-  main,
-  maskSecret,
-  parseMode,
+  signOptions,
   scoresPath,
-  signOptions
+  parseMode,
+  maskSecret,
+  main
 };

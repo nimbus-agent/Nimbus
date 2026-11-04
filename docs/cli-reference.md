@@ -4862,6 +4862,8 @@ With `--registry <name>` (or `--remote` to look in every added registry) the com
 
 **Baseline.** `Baseline:` is what a registry's score job saw when it started the version's server, up to twice, with no network and no credentials, and listed its tools: `starts and lists 3 valid tools (checked by <registry>)`, `starts and lists no tools (checked by <registry>)`, `did not start or answer a valid tool listing when checked offline with no credentials (checked by <registry>)`, `did not answer a tool listing in time when checked offline with no credentials (checked by <registry>)`, or `lists 2 tools, at least one without a valid name or input schema (checked by <registry>)` (`lists 1 tool, without a valid name or input schema` for one tool). Without a baseline it reads `no baseline check published`, `no baseline check (the registry's record for this version is malformed)` for a malformed record, or `not run (a starter pack runs nothing)`. "Valid" means the structural checks and nothing more: a tool name of 1 to 128 characters with no whitespace, and an `inputSchema` object that is well formed in shape (`type: "object"`, `properties` an object of objects or booleans, `required` an array of strings). The schema is not compiled. A pass does not say what any tool does, and because the check runs with no network it says nothing about the service the extension talks to. The baseline never changes the `Tested:` score and never blocks an install. No live registry publishes a baseline yet, and one reaches owners only from the next version a registry signs with a release that carries it, so until then every owner sees `no baseline check published`. Limits: Mastra drops a tool with an empty name before the check sees it. A tool with no `inputSchema` makes the whole listing fail, and so does the client's own parsing of a non-array `required` or a `type` other than `"object"`, so each of those reads as `no-listing`. A duplicate name is invisible: the client keeps only the last tool of that name, so the check sees only the tools the listing kept. `no-listing` is the `did not start or answer a valid tool listing` line. A run where no child could start would record that failure on a good version, so a registry's job summary says to check the sandbox setup whenever a baseline reads `no-listing`.
 
+**License and Funding.** `info` prints a `License:` line and a `Funding:` block (`license`, `funding` and, when a field is malformed, `licenseInvalid` and `fundingInvalid` in `--json`). `License:` reads the SPDX expression the manifest declares, `License: not declared`, or `License: (invalid, ignored)`. `Funding:` reads `Funding: none`, `Funding: (invalid, ignored)`, or `Funding:` followed by one numbered line per link, `<n>. <label> <url>` indented two spaces (the label is optional). These are the author's own statements, copied from the manifest: Nimbus checks only their shape, never that a link goes anywhere or that a license is true. A local `info` reads the installed manifest after its hash check, so a manifest edited since the install shows nothing for either field. `--registry` / `--remote` reads the hash-checked manifest of the newest LISTED version, the same version every other remote field in that output describes. See [Manifest fields `funding` and `license`](#manifest-fields-funding-and-license) under `publish`.
+
 Plain `info <id>` for an installed extension starts no registry read. A local install prints the same lines with `not run (from a local folder)`, `not evaluated (from a local folder)` and `none (from a local folder)`; one installed from a registry prints one line, `Baseline, tested, history, checks: read from <registry>: nimbus extension info <id> --registry <registry>`, naming the registry the extension came from, since the index is not on hand (`evidenceIn` in `--json`; `evidence` for a local install). A CLI and a gateway of different ages stay honest: the CLI prints only the text the gateway sent and never works a line out itself.
 
 ### `nimbus extension search <query> [--json]`
@@ -5020,6 +5022,23 @@ Opens a report about an installed extension on its SOURCE registry: the registry
 nimbus extension report acme/notion-tasks
 ```
 
+### `nimbus extension sponsor <id> [--registry <name>] [--index <n>]`
+
+Shows the funding links an extension's author declared and, on a terminal, opens one in your browser after an explicit yes. `<id>` is an installed extension, or with `--registry <name>` an extension in that added registry (its newest listed version's links, headed `Funding links for <id> (from <version>, <channel>):`). The command prints every link as `<n>. <label> <url>` first. `--index <n>` (default `1`) picks which one to open.
+
+On a terminal (stdin and stdout both) it asks `Open <host> in your browser? [y/N]` and opens the link through the system browser only for a yes; any other answer opens nothing and exits `0`. Off a terminal nothing is asked or opened: it prints `Open <url> in your browser to sponsor.` and exits `0`. Every link is checked as an `https` URL before it is printed or opened, and Nimbus takes no payment and sees none. When the installed extension is blocked or failed its signature check, a `Note:` line says Nimbus refuses to run it, so the owner can check before paying its author.
+
+Exit code `0` for success or a declined prompt. Exit code `1` for an unknown extension or a registry error, a malformed funding field (`<id>'s funding field is malformed and is ignored.`), an extension with no links (`<id> declares no funding links.`), or a browser that would not open. Exit code `2` for a usage error, including an `--index` past the last link.
+
+```bash
+nimbus extension sponsor acme/notion-tasks
+nimbus extension sponsor acme/notion-tasks --registry nimbus-official --index 2
+```
+
+The desktop app shows no funding yet; a Sponsor button there and on the registry page is tracked under **Marketplace page and desktop tile** in the [roadmap](./roadmap.md).
+
+---
+
 ### `nimbus extension downgrade <id> --to <version> [--json]`
 
 Roll an installed extension back to a cached previous version (T2 PR 3). The `<version>` must already exist on disk under the extension's `extension-versions/<slug>/prev/` directory — typically the version the auto-update flow saved when the user accepted the previous bump.
@@ -5051,6 +5070,8 @@ nimbus extension keygen --out ./my-publisher-key
 Sign an extension manifest (`nimbus.extension.json`) in the specified directory using the private key at `~/.nimbus/publisher-key` (or `<path>`). The `signature` field is injected directly into the manifest file.
 
 If the manifest has a `publisher` with an `id` but no `key`, `sign` fills `publisher.key` with the public half of the signing key before signing (what `nimbus scaffold extension --publisher <id>` leaves for you). If `publisher.key` is already set and is not the signing key's public half, `sign` refuses with exit code 2 and prints both key fingerprints, leaving the file untouched; it never re-keys silently. A manifest with no `publisher` is signed as before.
+
+`sign` also refuses a malformed `funding` or `license` (see [Manifest fields `funding` and `license`](#manifest-fields-funding-and-license)): it exits `2`, prints `manifest <field> is invalid: <reason>; fix it before signing` and leaves the file untouched.
 
 ```bash
 nimbus extension sign ./nimbus-my-connector
@@ -5111,6 +5132,15 @@ Every refusal happens before any branch, file or commit is written. Exit code `2
 nimbus extension publish . --registry-repo nimbus-agent/extensions
 nimbus extension publish . --registry-repo nimbus-agent/extensions --channel beta --no-pr
 ```
+
+#### Manifest fields `funding` and `license`
+
+Two optional fields in `nimbus.extension.json` say how to support the author and under what terms the code is offered.
+
+- `funding`: 1 to 8 entries, each `{ "url": "<https url>", "label": "<text>" }`. The `url` is required: `https`, with a host, no user name or password, at most 2048 characters, and no control, bidirectional-control or whitespace character. The `label` is optional, 1 to 64 characters, with no control or bidirectional-control character. No other key is allowed in an entry, and no two entries may share a `url`.
+- `license`: an SPDX license expression (for example `MIT` or `Apache-2.0 OR MIT`), at most 128 characters, using only plain spaces (U+0020), with none leading or trailing.
+
+A malformed field is never a manifest error at runtime: every gateway ignores it and `info` shows `(invalid, ignored)`. `publish` and the registry action's publish check refuse it with `ERR_REGISTRY_MANIFEST_INVALID`, and `sign` refuses it with exit code `2` and its own message, `manifest <field> is invalid: <reason>; fix it before signing`; each names the field and the reason, so a malformed field cannot reach a registry through Nimbus's own tools. Stated bound: a registry still running an older registry action does not make that check, so it can sign a manifest with a malformed field; every gateway then ignores the field. Nimbus never verifies that a link works or that a license is true.
 
 ---
 

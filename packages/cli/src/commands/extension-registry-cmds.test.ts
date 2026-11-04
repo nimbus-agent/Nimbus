@@ -362,6 +362,27 @@ describe("nimbus extension info --remote", () => {
     expect(bad.stdout()).toContain("Provenance: none");
   });
 
+  test("prints License and Funding after the provenance line", async () => {
+    const h = harness(() => ({
+      registry: "main",
+      id: "acme.tool",
+      publisherId: "acme",
+      publisherFingerprint: "f".repeat(32),
+      provenance: null,
+      license: "Apache-2.0",
+      funding: [{ url: "https://github.com/sponsors/a" }],
+      versions: [],
+    }));
+    await runExtensionInfoRemote("acme.tool", "main", false, h.deps);
+    const lines = h.stdout().split("\n");
+    const prov = lines.findIndex((l) => l.startsWith("Provenance"));
+    expect(lines.slice(prov + 1, prov + 4)).toEqual([
+      "License: Apache-2.0",
+      "Funding:",
+      "  1. https://github.com/sponsors/a",
+    ]);
+  });
+
   test("names a verified publisher and its verification date (R6)", async () => {
     const h = harness(() => ({
       registry: "main",

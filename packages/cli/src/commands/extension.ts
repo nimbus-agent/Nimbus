@@ -2,7 +2,12 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { confirm, isCancel } from "@clack/prompts";
-import { publicKeyFromSeed, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
+import {
+  assertAuthorMetadata,
+  publicKeyFromSeed,
+  publisherKeyFingerprint,
+  RegistryError,
+} from "@nimbus-dev/registry-format";
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
   decodeBase64,
@@ -34,6 +39,7 @@ import {
 } from "../lib/verified-publisher-text.ts";
 import { getCliPlatformPaths } from "../paths.ts";
 import { NIMBUS_VERSION } from "../version.ts";
+import { authorMetadataLines } from "./author-metadata-lines.ts";
 import { stripControl } from "./captures-format.ts";
 import { runConnector } from "./connector.ts";
 import { declaredName, runExtensionAudit } from "./extension-audit.ts";
@@ -62,6 +68,7 @@ import {
   formatNetworkIsolationLine,
   type SandboxPlatformCapabilities,
 } from "./extension-sandbox-format.ts";
+import { runExtensionSponsor } from "./extension-sponsor.ts";
 import { type InstalledExtensionForTree, renderTree } from "./extension-tree.ts";
 
 export function hasFlag(args: string[], flag: string): boolean {
@@ -97,6 +104,7 @@ export function stripFlags(args: string[]): string[] {
       a === "--channel" ||
       a === "--to" ||
       a === "--accept-publisher-key" ||
+      a === "--index" ||
       a === "--network"
     ) {
       i += 1;
@@ -133,6 +141,11 @@ type ExtensionListEntry = {
   blockedBy?: TrustBlockView[];
   /** R6: Nimbus verified the publisher and vouches for the key that verified this copy. */
   verifiedPublisher?: VerifiedPublisherCli | null;
+  /** Author-declared funding and license, with the gateway's invalid markers. */
+  funding?: unknown;
+  fundingInvalid?: unknown;
+  license?: unknown;
+  licenseInvalid?: unknown;
 };
 
 export type TrustBlockView = {
@@ -481,6 +494,7 @@ export async function runExtensionInfo(
   if (runLine !== null) console.log(`Run:       ${runLine}`);
   for (const line of formatBlockLines(e.id, e.blockedBy ?? [], e.kind)) console.log(line);
   printExtensionInfoPublisher(e);
+  for (const line of authorMetadataLines(e)) console.log(line);
   for (const line of accessLines(e.access)) console.log(line);
   for (const line of installedEvidenceLines(e)) console.log(line);
   console.log(formatNetworkIsolationLine(sandboxCap));
@@ -1275,6 +1289,16 @@ export async function runExtensionSign(args: string[]): Promise<number> {
     return 2;
   }
   const parsed = JSON.parse(text) as Record<string, unknown>;
+  try {
+    assertAuthorMetadata(parsed);
+  } catch (e) {
+    if (!(e instanceof RegistryError)) throw e;
+    const cut = e.detail.indexOf(": ");
+    const field = cut < 0 ? e.detail : e.detail.slice(0, cut);
+    const reason = cut < 0 ? "" : e.detail.slice(cut + 2);
+    process.stderr.write(`manifest ${field} is invalid: ${reason}; fix it before signing\n`);
+    return 2;
+  }
   delete parsed["signature"];
   const keyRefusal = applySigningPublisherKey(parsed, priv);
   if (keyRefusal !== undefined) {
@@ -1287,7 +1311,7 @@ export async function runExtensionSign(args: string[]): Promise<number> {
 }
 
 const EXTENSION_USAGE =
-  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | audit [<id>] [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
+  "Usage: nimbus extension list [--filter needs-reinstall] [--tree] [--json] | info <id> [--deps] [--registry <name> | --remote] [--json] | search <query> [--json] | install <path | id> [--registry <name>] [--version <v>] [--channel beta] [--accept-publisher-key <fingerprint>] [--publisher-key <path>] [--yes] | rehash <id> [--yes] | approve <id> [--model] | revoke <id> | credential set <id> <name> | credential status <id> | enable <id> | disable <id> | remove <id> [--yes] [--force] [--clean-deps] | update [<id>] [--check] [--to <version>] [--accept-publisher-key <fingerprint>] [--json] | downgrade <id> [--json] | report <id> | sponsor <id> [--registry <name>] [--index <n>] | audit [<id>] [--json] | pack <dir> --out <file> | publish <dir> --registry-repo <owner/repo> [--clone <path>] [--channel stable|beta] [--statement <file>]... [--no-pr] | key rotate --from <old key file> --to <new key file> --publisher <id> [--out <file>] [--force] | key revoke --key <key file> --publisher <id> --reason <text> [--out <file>] [--force]";
 
 /**
  * Subcommands that need no gateway. `publish`, `key` and `pack` get the RAW args: `stripFlags` drops
@@ -1349,6 +1373,15 @@ async function dispatchExtensionWithCode(
         err: (s) => process.stderr.write(s),
         nimbusVersion: NIMBUS_VERSION,
         osFamily: process.platform,
+      }),
+    sponsor: () =>
+      runExtensionSponsor(args.slice(1), {
+        client,
+        isTty: process.stdin.isTTY === true && process.stdout.isTTY === true,
+        confirm: async (q) => /^y(es)?$/i.test(await readLine(q)),
+        openUrl: (u) => openHttpsUrl(u),
+        log: (s) => process.stdout.write(s),
+        err: (s) => process.stderr.write(s),
       }),
     downgrade: () => runExtensionDowngrade(client, args),
     audit: () => runExtensionAudit(args.slice(1), { client, out: (s) => process.stdout.write(s) }),
@@ -1425,7 +1458,8 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
   // Registry lookups fetch and verify every index; the 30s default is the fetch timeout itself.
   if (
     sub === "search" ||
-    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry")))
+    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry"))) ||
+    (sub === "sponsor" && hasFlag(rest, "--registry"))
   ) {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }
