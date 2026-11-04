@@ -190,7 +190,10 @@ describe("buildOpenApiScaffoldFiles — hostile document strings (Review Focus 1
     expect(readme).toContain("## Warnings");
     expect(readme).toContain("server http://insecure.example.com[2J: not an absolute URL; skipped");
     const lines = openApiReportLines(hostile);
+    // The apiKey header name `X-Token`${x}` is not an HTTP token, so the scheme is unsupported.
     expect(lines).toEqual([
+      `warning: GET /items\`*/"'$\{/{id}: no supported security alternative; generated without a credential`,
+      "warning: POST /upload: no supported security alternative; generated without a credential",
       "warning: server http://insecure.example.com[2J: not an absolute URL; skipped",
       "skipped GET /old: none of its servers is a usable https server",
     ]);

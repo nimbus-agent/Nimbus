@@ -250,6 +250,10 @@ function classifyApiKey(scheme: Obj): SupportedScheme | string {
   const where = own(scheme, "in");
   const name = own(scheme, "name");
   if ((where === "header" || where === "query") && typeof name === "string" && name !== "") {
+    // A header key may be Authorization (common), but never Host or another transport header.
+    if (where === "header" && credentialHeaderRefused(name)) {
+      return "apiKey in a header the extension may not set";
+    }
     return { kind: where, name };
   }
   return `apiKey in ${typeof where === "string" ? where : "an unknown location"}`;
@@ -419,6 +423,38 @@ function assertPathParamsDeclared(path: string, params: readonly RawParam[]): vo
 
 /** Header parameters the generated request sets itself. */
 const RESERVED_HEADERS: ReadonlySet<string> = new Set(["accept", "content-type", "authorization"]);
+/** Headers that would redirect or reframe the request (Bun sends a caller-set Host as is). */
+const TRANSPORT_HEADERS: ReadonlySet<string> = new Set([
+  "host",
+  "cookie",
+  "connection",
+  "content-length",
+  "transfer-encoding",
+  "te",
+  "upgrade",
+  "keep-alive",
+  "expect",
+]);
+/** An RFC 7230 token: the only shape a header name may have. */
+const HEADER_TOKEN = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
+
+function isTransportHeader(lower: string): boolean {
+  return TRANSPORT_HEADERS.has(lower) || lower.startsWith("proxy-");
+}
+
+/** Why a header PARAMETER is dropped, or undefined to keep it. */
+function headerDropReason(name: string): string | undefined {
+  const lower = name.toLowerCase();
+  if (RESERVED_HEADERS.has(lower)) return "is set by the extension";
+  if (!HEADER_TOKEN.test(name)) return "is not a valid header name";
+  if (isTransportHeader(lower)) return "is a header the extension may not set";
+  return undefined;
+}
+
+/** A header an apiKey credential may not travel in. */
+function credentialHeaderRefused(name: string): boolean {
+  return !HEADER_TOKEN.test(name) || isTransportHeader(name.toLowerCase());
+}
 
 function carriesCredential(p: RawParam, scheme: SupportedScheme | undefined): boolean {
   if (scheme === undefined || (scheme.kind !== "header" && scheme.kind !== "query")) return false;
@@ -435,8 +471,9 @@ function dropReason(
   scheme: SupportedScheme | undefined,
 ): string | undefined {
   if (p.in === "path" && !template.has(p.name)) return "is not in the path template";
-  if (p.in === "header" && RESERVED_HEADERS.has(p.name.toLowerCase())) {
-    return "is set by the extension";
+  if (p.in === "header") {
+    const why = headerDropReason(p.name);
+    if (why !== undefined) return why;
   }
   if (carriesCredential(p, scheme)) return "carries the credential";
   return undefined;

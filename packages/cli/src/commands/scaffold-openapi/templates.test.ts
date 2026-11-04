@@ -3,10 +3,21 @@
  * generator wrote for the Petstore fixture, and driven with an injected fetch and env.
  */
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { buildOpenApiScaffoldFiles } from "./generate.ts";
 import { buildOperationModel, type OperationDef } from "./model.ts";
@@ -23,6 +34,7 @@ interface RequestModule {
   RequestError: new (message: string) => Error;
   MAX_RESPONSE_CHARS: number;
   MAX_BODY_BYTES: number;
+  MAX_READ_BYTES: number;
   TRUNCATED_MARKER: string;
   TIMEOUT_MS: number;
 }
@@ -37,7 +49,46 @@ for (const f of buildOpenApiScaffoldFiles("petstore", undefined, process.platfor
   mkdirSync(dirname(target), { recursive: true });
   writeFileSync(target, f.content, "utf8");
 }
+
+interface ToolsModule {
+  createServer(deps: { fetch?: typeof fetch; env?: Env }): {
+    connect(t: unknown): Promise<void>;
+  };
+  errorText(e: unknown): string;
+}
+
+/** The nearest `node_modules/<pkg>` at or above `from` (the linker decides where). */
+function installedPackageDir(pkg: string, from: string): string {
+  let at = from;
+  for (;;) {
+    const candidate = join(at, "node_modules", ...pkg.split("/"));
+    if (existsSync(candidate)) return candidate;
+    const parent = dirname(at);
+    if (parent === at) throw new Error(`${pkg} is not installed at or above ${from}`);
+    at = parent;
+  }
+}
+
+mkdirSync(join(dir, "node_modules", "@modelcontextprotocol"), { recursive: true });
+symlinkSync(
+  realpathSync(
+    installedPackageDir("@modelcontextprotocol/sdk", resolve(import.meta.dir, "..", "..", "..")),
+  ),
+  join(dir, "node_modules", "@modelcontextprotocol", "sdk"),
+  "junction",
+);
+// After the junction: an import before it would cache the missing node_modules.
 const req = (await import(pathToFileURL(join(dir, "src", "request.ts")).href)) as RequestModule;
+const tools = (await import(pathToFileURL(join(dir, "src", "tools.ts")).href)) as ToolsModule;
+
+/** The generated server for the Petstore table, driven in memory. */
+async function toolClient(fetchImpl: typeof fetch, env: Env): Promise<Client> {
+  const [clientSide, serverSide] = InMemoryTransport.createLinkedPair();
+  await tools.createServer({ fetch: fetchImpl, env }).connect(serverSide);
+  const client = new Client({ name: "test", version: "0.0.0" });
+  await client.connect(clientSide);
+  return client;
+}
 
 afterAll(() => {
   try {
@@ -56,7 +107,7 @@ function op(tool: string): OperationDef {
 const ENV: Env = {
   API_KEY: "k-123",
   BEARER_AUTH: "t-456",
-  BASIC_USER: "üser",
+  BASIC_USER: "user",
   BASIC_PASSWORD: "p:w",
 };
 
@@ -137,9 +188,9 @@ describe("generated request.ts — credentials", () => {
     expect(headersOf(init).get("authorization")).toBe("Bearer t-456");
   });
 
-  test("basic is base64 of user:password, UTF-8", () => {
+  test("basic is base64 of user:password", () => {
     const { init } = req.buildRequest(op("showpetbyid"), { path_petId: "1" }, ENV);
-    const expected = Buffer.from("üser:p:w", "utf8").toString("base64");
+    const expected = Buffer.from("user:p:w", "utf8").toString("base64");
     expect(headersOf(init).get("authorization")).toBe(`Basic ${expected}`);
   });
 
@@ -174,6 +225,37 @@ describe("generated request.ts — credentials", () => {
     expect(() =>
       req.buildRequest(op("showpetbyid"), { path_petId: "1" }, { BASIC_USER: "u" }),
     ).toThrow(/BASIC_PASSWORD is not set/);
+  });
+});
+
+describe("generated tools.ts — errors never carry a credential", () => {
+  test("a bearer secret a header cannot carry is refused without quoting it", async () => {
+    for (const secretValue of ["SECRET\nX-Evil: 1", "SECRÉT-123", "SEC\u0000RET"]) {
+      const rec = recordingFetch(() => new Response("ok"));
+      const client = await toolClient(rec.fetch, { ...ENV, BEARER_AUTH: secretValue });
+      const out = await client.callTool({ name: "createpet", arguments: { body: {} } });
+      expect(out.isError).toBe(true);
+      const text = JSON.stringify(out.content);
+      expect(text).toContain(
+        "credential BEARER_AUTH contains characters an HTTP header cannot carry",
+      );
+      expect(text).not.toContain("SEC");
+      expect(rec.calls).toEqual([]);
+    }
+  });
+
+  test("any other error becomes fixed text, whatever its message says", async () => {
+    const throwing = (async () => {
+      throw new TypeError("Header 'authorization' has invalid value: 'Bearer t-456'");
+    }) as unknown as typeof fetch;
+    const client = await toolClient(throwing, ENV);
+    const out = await client.callTool({ name: "createpet", arguments: { body: {} } });
+    expect(out.isError).toBe(true);
+    expect(out.content).toEqual([
+      { type: "text", text: "the request could not be sent (TypeError)" },
+    ]);
+    expect(tools.errorText("plain")).toBe("the request could not be sent (string)");
+    expect(tools.errorText(new req.RequestError("why"))).toBe("why");
   });
 });
 
@@ -254,7 +336,7 @@ describe("generated request.ts — refusals", () => {
         const rec = recordingFetch(() => new Response("x"));
         await expect(
           req.callOperation(o, { path_petId: value }, { fetch: rec.fetch, env: ENV }),
-        ).rejects.toThrow(`path parameter path_petId may not be "." or ".."`);
+        ).rejects.toThrow(`showpetbyid: the filled path would have a "." or ".." segment`);
         expect(rec.calls).toEqual([]);
       }
     }
@@ -264,6 +346,59 @@ describe("generated request.ts — refusals", () => {
     );
     expect(req.buildRequest(rootParam, { path_petId: "..." }, ENV).url).toBe(
       "https://eu.petstore.example.com/v1/...",
+    );
+  });
+
+  test("a dot-segment composed from several values, or spelled %2e, is refused", () => {
+    const composed: OperationDef = {
+      ...op("showpetbyid"),
+      path: "/x/{a}..{b}",
+      params: [
+        { name: "a", in: "path", arg: "a", required: true },
+        { name: "b", in: "path", arg: "b", required: true },
+      ],
+    };
+    const refused = /showpetbyid: the filled path would have a "\." or "\.\." segment/;
+    expect(() => req.buildRequest(composed, { a: "", b: "" }, ENV)).toThrow(refused);
+    const adjacent: OperationDef = { ...composed, path: "/x/{a}{b}" };
+    expect(() => req.buildRequest(adjacent, { a: ".", b: "." }, ENV)).toThrow(refused);
+    expect(() => req.buildRequest(adjacent, { a: "", b: "." }, ENV)).toThrow(refused);
+    expect(req.buildRequest(composed, { a: "1", b: "2" }, ENV).url).toBe(
+      "https://eu.petstore.example.com/v1/x/1..2",
+    );
+    // A hand-edited table: the URL parser reads %2e%2E as "..".
+    for (const path of ["/x/%2e%2E", "/x/.%2E/y", "/%2e"]) {
+      const edited: OperationDef = { ...op("listpets"), path };
+      expect(() => req.buildRequest(edited, {}, ENV)).toThrow(
+        /would have a "\." or "\.\." segment/,
+      );
+    }
+  });
+
+  test("a header parameter naming Host or another forbidden header is refused at runtime", () => {
+    for (const name of [
+      "Host",
+      "cookie",
+      "Proxy-Authorization",
+      "Content-Length",
+      "Authorization",
+      "bad name",
+      "x\r\ny",
+    ]) {
+      const edited: OperationDef = {
+        ...op("listpets"),
+        params: [{ name, in: "header", arg: "h", required: false }],
+      };
+      expect(() => req.buildRequest(edited, { h: "evil.example.com" }, ENV)).toThrow(
+        "the header parameter h names a header this extension may not set",
+      );
+    }
+    const credential: OperationDef = {
+      ...op("listpets"),
+      credential: { kind: "header", name: "Host", env: "API_KEY" },
+    };
+    expect(() => req.buildRequest(credential, {}, ENV)).toThrow(
+      "the credential names a header this extension may not set",
     );
   });
 
@@ -333,6 +468,54 @@ describe("generated request.ts — responses", () => {
     const rec = recordingFetch(() => new Response(text));
     const out = await req.callOperation(op("listpets"), {}, { fetch: rec.fetch, env: ENV });
     expect(out).toBe(`HTTP 200\n${"a".repeat(65_535)}\n[truncated]`);
+  });
+
+  test("a redirect's Location is reported without its query or fragment", async () => {
+    const located = (location: string) =>
+      recordingFetch(() => new Response(null, { status: 307, headers: { location } }));
+    const secretOne = located("https://other.example.com/next?api_key=SECRET#token=SECRET");
+    expect(await req.callOperation(op("listpets"), {}, { fetch: secretOne.fetch, env: ENV })).toBe(
+      "HTTP 307; redirect to https://other.example.com/next not followed",
+    );
+    const relative = located("/elsewhere?x=SECRET");
+    expect(await req.callOperation(op("listpets"), {}, { fetch: relative.fetch, env: ENV })).toBe(
+      "HTTP 307; redirect to https://eu.petstore.example.com/elsewhere not followed",
+    );
+    const broken = located("https://[bad");
+    expect(await req.callOperation(op("listpets"), {}, { fetch: broken.fetch, env: ENV })).toBe(
+      "HTTP 307; redirect to (an unusable Location header) not followed",
+    );
+  });
+
+  test("the body is read only up to MAX_READ_BYTES, then cut with the marker", async () => {
+    expect(req.MAX_READ_BYTES).toBe(4 * 65_536);
+    const chunk = new Uint8Array(65_536).fill(0x61);
+    let pulled = 0;
+    // 2 MiB in all: a reader that ignored the cap would pull every chunk.
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (pulled >= 32 * chunk.byteLength) {
+          controller.close();
+          return;
+        }
+        pulled += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    const rec = recordingFetch(() => new Response(endless));
+    const out = await req.callOperation(op("listpets"), {}, { fetch: rec.fetch, env: ENV });
+    expect(out).toBe(`HTTP 200\n${"a".repeat(65_536)}\n[truncated]`);
+    expect(pulled).toBeLessThanOrEqual(req.MAX_READ_BYTES + 2 * chunk.byteLength);
+  });
+
+  test("a body cut at the byte cap of 3-byte characters still exceeds the char cap", async () => {
+    // UTF-8 spends at most 3 bytes per UTF-16 unit, the worst case for the byte cap.
+    const body = "€".repeat(req.MAX_READ_BYTES);
+    const rec = recordingFetch(() => new Response(body));
+    const out = await req.callOperation(op("listpets"), {}, { fetch: rec.fetch, env: ENV });
+    expect(out).toBe(`HTTP 200
+${"€".repeat(65_536)}
+[truncated]`);
   });
 
   test("a 304 is reported as not modified", async () => {

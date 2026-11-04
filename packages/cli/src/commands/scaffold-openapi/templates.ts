@@ -55,7 +55,31 @@ export const MAX_RESPONSE_CHARS = 65_536;
 export const TRUNCATED_MARKER = "\\n[truncated]";
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
 
+/** Bytes read from a response before the rest is dropped (then cut to MAX_RESPONSE_CHARS). */
+export const MAX_READ_BYTES = 4 * MAX_RESPONSE_CHARS;
+
 const HOSTS: ReadonlySet<string> = new Set(TABLE.hosts);
+
+/** What an HTTP header value may carry here: printable ASCII, no CR, LF or NUL. */
+const HEADER_SAFE = /^[\\x20-\\x7e]+$/;
+/** An RFC 7230 token: the only shape a header name may have. */
+const HEADER_TOKEN = /^[!#$%&'*+.^_\`|~0-9A-Za-z-]+$/;
+/** Headers this extension sets itself. */
+const RESERVED_HEADERS: ReadonlySet<string> = new Set(["accept", "authorization", "content-type"]);
+/** Headers that would redirect or reframe the request (a caller-set Host is sent as is). */
+const TRANSPORT_HEADERS: ReadonlySet<string> = new Set([
+  "connection",
+  "content-length",
+  "cookie",
+  "expect",
+  "host",
+  "keep-alive",
+  "te",
+  "transfer-encoding",
+  "upgrade",
+]);
+/** A path segment the URL parser resolves as "." or ".." (it decodes %2e). */
+const DOT_SEGMENT = /^(?:\\.|%2e){1,2}$/i;
 
 /** A request this extension refuses to send; the message says why. */
 export class RequestError extends Error {}
@@ -83,13 +107,13 @@ function fillPath(op: OperationDef, args: Args): string {
     if (p.in !== "path") continue;
     const value = ownValue(args, p.arg);
     if (value === undefined) continue;
-    const text = asText(value);
-    // encodeURIComponent keeps dots, and the URL parser resolves "." and ".." as dot-segments,
-    // which would climb out of the operation's path and the server's base path.
-    if (text === "." || text === "..") {
-      throw new RequestError(\`path parameter \${p.arg} may not be "." or ".."\`);
-    }
-    path = path.split(\`{\${p.name}}\`).join(encodeURIComponent(text));
+    path = path.split(\`{\${p.name}}\`).join(encodeURIComponent(asText(value)));
+  }
+  // encodeURIComponent keeps dots, and the URL parser resolves "." and ".." (also spelled with
+  // %2e) as dot-segments, which would climb out of the operation's path and the server's base
+  // path. Checked on the FILLED path, so "{a}..{b}" with empty values is caught too.
+  if (path.split("/").some((segment) => DOT_SEGMENT.test(segment))) {
+    throw new RequestError(\`\${op.tool}: the filled path would have a "." or ".." segment\`);
   }
   return path;
 }
@@ -102,11 +126,27 @@ function assertRequired(op: OperationDef, args: Args): void {
   }
 }
 
+/** Not a header name at all, or one that would redirect or reframe the request. */
+function isTransportHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  return !HEADER_TOKEN.test(name) || TRANSPORT_HEADERS.has(lower) || lower.startsWith("proxy-");
+}
+
+/** A header name never taken from a parameter. Checked again here: the table is hand-editable. */
+function isForbiddenHeader(name: string): boolean {
+  return isTransportHeader(name) || RESERVED_HEADERS.has(name.toLowerCase());
+}
+
 function placeParams(op: OperationDef, args: Args, url: URL, headers: Headers): void {
   for (const p of op.params) {
     const value = ownValue(args, p.arg);
     if (value === undefined || p.in === "path") continue;
     if (p.in === "header") {
+      if (isForbiddenHeader(p.name)) {
+        throw new RequestError(
+          \`the header parameter \${p.arg} names a header this extension may not set\`,
+        );
+      }
       headers.set(p.name, asText(value));
     } else if (Array.isArray(value)) {
       for (const item of value) url.searchParams.append(p.name, asText(item));
@@ -122,6 +162,10 @@ function secret(env: Env, name: string): string {
     throw new RequestError(
       \`the credential in \${name} is not set; set it with nimbus extension credential set\`,
     );
+  }
+  // Checked here, not left to Headers: its error message would quote the secret itself.
+  if (!HEADER_SAFE.test(value)) {
+    throw new RequestError(\`credential \${name} contains characters an HTTP header cannot carry\`);
   }
   return value;
 }
@@ -142,7 +186,11 @@ function placeCredential(cred: CredentialUse | null, env: Env, url: URL, headers
     const password = secret(env, cred.passwordEnv ?? "");
     headers.set("authorization", \`Basic \${base64(\`\${value}:\${password}\`)}\`);
   } else if (cred.kind === "header") {
-    headers.set(cred.name ?? "", value);
+    const name = cred.name ?? "";
+    if (isTransportHeader(name)) {
+      throw new RequestError("the credential names a header this extension may not set");
+    }
+    headers.set(name, value);
   } else {
     url.searchParams.set(cred.name ?? "", value);
   }
@@ -190,12 +238,49 @@ export function buildRequest(
   return { url: url.href, init };
 }
 
+/**
+ * At most MAX_READ_BYTES of the body, decoded as UTF-8; the rest is never read. UTF-8 spends at
+ * most 3 bytes per UTF-16 unit, so a body cut here always decodes to more than
+ * MAX_RESPONSE_CHARS units and is always truncated, with the marker, below.
+ */
+async function readCapped(res: Response): Promise<string> {
+  if (res.body === null) return "";
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < MAX_READ_BYTES) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  if (total >= MAX_READ_BYTES) await reader.cancel();
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes.subarray(0, MAX_READ_BYTES));
+}
+
 /** The body cut at MAX_RESPONSE_CHARS, never between the two halves of a surrogate pair. */
 function truncate(text: string): string {
   if (text.length <= MAX_RESPONSE_CHARS) return text;
   const last = text.charCodeAt(MAX_RESPONSE_CHARS - 1);
   const end = last >= 0xd800 && last <= 0xdbff ? MAX_RESPONSE_CHARS - 1 : MAX_RESPONSE_CHARS;
   return text.slice(0, end) + TRUNCATED_MARKER;
+}
+
+/** A redirect target as origin and path only: a query or fragment may carry a secret. */
+function describeLocation(location: string | null, base: string): string {
+  if (location === null) return "(no Location header)";
+  try {
+    const target = new URL(location, base);
+    return \`\${target.origin}\${target.pathname}\`;
+  } catch {
+    return "(an unusable Location header)";
+  }
 }
 
 /** Sends the call and returns the status and body as text. A redirect is never followed. */
@@ -212,9 +297,10 @@ export async function callOperation(
   }
   if (res.status >= 300 && res.status < 400) {
     await res.body?.cancel();
-    return \`HTTP \${res.status}; redirect to \${res.headers.get("location") ?? "(no Location header)"} not followed\`;
+    const target = describeLocation(res.headers.get("location"), url);
+    return \`HTTP \${res.status}; redirect to \${target} not followed\`;
   }
-  return \`HTTP \${res.status}\\n\${truncate(await res.text())}\`;
+  return \`HTTP \${res.status}\\n\${truncate(await readCapped(res))}\`;
 }
 `;
 
@@ -227,7 +313,14 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 
-import { type Args, callOperation, type Env, type OperationDef, TABLE } from "./request.ts";
+import {
+  type Args,
+  callOperation,
+  type Env,
+  type OperationDef,
+  RequestError,
+  TABLE,
+} from "./request.ts";
 
 export interface ServerDeps {
   readonly fetch?: typeof fetch;
@@ -266,11 +359,20 @@ export function createServer(deps: ServerDeps = {}): Server {
       const text = await callOperation(op, args, { fetch: send, env });
       return { content: [{ type: "text", text }] };
     } catch (e) {
-      const text = e instanceof Error ? e.message : String(e);
-      return { content: [{ type: "text", text }], isError: true };
+      return { content: [{ type: "text", text: errorText(e) }], isError: true };
     }
   });
   return server;
+}
+
+/**
+ * What a failed call tells the model. Only this extension's own refusals are quoted: any other
+ * error (from fetch, Headers or URL) can carry a header value — a credential — in its message.
+ */
+export function errorText(e: unknown): string {
+  if (e instanceof RequestError) return e.message;
+  const kind = e instanceof Error ? e.name : typeof e;
+  return \`the request could not be sent (\${kind})\`;
 }
 `;
 

@@ -983,6 +983,78 @@ describe("fix round 1", () => {
     ]);
   });
 
+  test("Host-class and non-token header parameters are dropped with a warning", () => {
+    const names = [
+      "Host",
+      "cookie",
+      "Connection",
+      "content-length",
+      "Transfer-Encoding",
+      "TE",
+      "upgrade",
+      "Keep-Alive",
+      "Expect",
+      "Proxy-Authorization",
+      "proxy-anything",
+      "bad name",
+      "x:y",
+    ];
+    const m = build(
+      doc({
+        parameters: [
+          ...names.map((name) => ({ name, in: "header" })),
+          { name: "X-Kept", in: "header" },
+          { name: "host", in: "query" },
+        ],
+      }),
+    );
+    expect(m.operations[0]?.params.map((p) => `${p.in}:${p.name}`)).toEqual([
+      "header:X-Kept",
+      "query:host",
+    ]);
+    expect(m.warnings).toEqual(
+      names.map((n) => {
+        const why =
+          n === "bad name" || n === "x:y"
+            ? "is not a valid header name"
+            : "is a header the extension may not set";
+        return `GET /things: header parameter ${n} ${why}; dropped`;
+      }),
+    );
+  });
+
+  test("an apiKey in a Host-class or non-token header is an unsupported scheme", () => {
+    for (const name of ["Host", "Proxy-Authorization", "X Key"]) {
+      const m = build(
+        doc(
+          {},
+          {
+            security: [{ k: [] }],
+            components: { securitySchemes: { k: { type: "apiKey", in: "header", name } } },
+          },
+        ),
+      );
+      expect(m.unsupportedSchemes).toEqual(["k (apiKey in a header the extension may not set)"]);
+      expect(m.operations[0]?.credential).toBeNull();
+    }
+    const auth = build(
+      doc(
+        {},
+        {
+          security: [{ k: [] }],
+          components: {
+            securitySchemes: { k: { type: "apiKey", in: "header", name: "Authorization" } },
+          },
+        },
+      ),
+    );
+    expect(auth.operations[0]?.credential).toEqual({
+      kind: "header",
+      name: "Authorization",
+      env: "K",
+    });
+  });
+
   test("a parameter that carries the chosen credential is dropped with a warning", () => {
     const schemes = {
       h: { type: "apiKey", in: "header", name: "X-Key" },
