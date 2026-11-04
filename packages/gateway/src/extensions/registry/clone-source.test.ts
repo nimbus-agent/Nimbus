@@ -208,9 +208,30 @@ describe("cloneRegistrySource picks versions as install does (I48)", () => {
     recordTrustStatements(db, [s], { kind: "feed", nimbusRootKey: nimbusKey }, 1);
     expect((await clone()).version).toBe("1.0.0");
   });
+
+  test("an explicit registry clones from that registry, and a registry not added is refused", async () => {
+    await setup(["1.0.0"]);
+    expect(await clone({ id: ID, registry: "main" })).toMatchObject({
+      registry: "main",
+      version: "1.0.0",
+    });
+    await expect(clone({ id: ID, registry: "elsewhere" })).rejects.toThrow(
+      "ERR_REGISTRY_NOT_FOUND",
+    );
+  });
 });
 
 describe("sweepCloneStaging", () => {
+  test("an old entry without the c- prefix is left alone", () => {
+    mkdirSync(stagingRoot, { recursive: true });
+    const other = join(stagingRoot, "keep-me");
+    mkdirSync(other);
+    const twoHoursAgo = new Date(Date.now() - 2 * 3_600_000);
+    utimesSync(other, twoHoursAgo, twoHoursAgo);
+    sweepCloneStaging(stagingRoot, Date.now());
+    expect(readdirSync(stagingRoot)).toEqual(["keep-me"]);
+  });
+
   test("removes an entry older than the max age and keeps a fresh one", () => {
     mkdirSync(stagingRoot, { recursive: true });
     const old = join(stagingRoot, "c-old");
