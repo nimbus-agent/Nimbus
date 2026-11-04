@@ -78,6 +78,11 @@ const TRANSPORT_HEADERS: ReadonlySet<string> = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
+/** A character the URL parser rewrites in a path: "\\" (read as "/"), a C0 control or DEL. */
+function isRewrittenChar(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  return ch === "\\\\" || code < 0x20 || code === 0x7f;
+}
 /** A path segment the URL parser resolves as "." or ".." (it decodes %2e). */
 const DOT_SEGMENT = /^(?:\\.|%2e){1,2}$/i;
 
@@ -102,6 +107,11 @@ function joinUrl(server: string, path: string): string {
 }
 
 function fillPath(op: OperationDef, args: Args): string {
+  // The URL parser reads "\\" as "/" and drops tab, CR and LF before it resolves dot-segments,
+  // so "/a/..\\b" or "/a/.\\t./b" would climb. Filled values are percent-encoded and cannot add one.
+  if ([...op.path].some(isRewrittenChar)) {
+    throw new RequestError(\`\${op.tool}: the path has a character the URL parser would rewrite\`);
+  }
   let path = op.path;
   for (const p of op.params) {
     if (p.in !== "path") continue;
@@ -116,6 +126,19 @@ function fillPath(op: OperationDef, args: Args): string {
     throw new RequestError(\`\${op.tool}: the filled path would have a "." or ".." segment\`);
   }
   return path;
+}
+
+/**
+ * Whatever the URL parser normalised, the request stays under the server's own base path (such
+ * as /v1) and carries no "." or ".." segment.
+ */
+export function assertWithinBase(op: OperationDef, url: URL): void {
+  let base = new URL(op.server).pathname;
+  while (base.endsWith("/")) base = base.slice(0, -1);
+  const inside = url.pathname === base || url.pathname.startsWith(\`\${base}/\`);
+  if (!inside || url.pathname.split("/").some((segment) => DOT_SEGMENT.test(segment))) {
+    throw new RequestError(\`\${op.tool}: the URL would leave the server's base path\`);
+  }
 }
 
 function assertRequired(op: OperationDef, args: Args): void {
@@ -224,6 +247,7 @@ export function buildRequest(
   if (url.protocol !== "https:" || !HOSTS.has(url.host)) {
     throw new RequestError(\`\${url.host} is not a host this extension declares\`);
   }
+  assertWithinBase(op, url);
   const headers = new Headers();
   placeParams(op, args, url, headers);
   const body = placeBody(op, args, headers);

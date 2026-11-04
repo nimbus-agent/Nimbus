@@ -35,6 +35,7 @@ interface RequestModule {
   MAX_RESPONSE_CHARS: number;
   MAX_BODY_BYTES: number;
   MAX_READ_BYTES: number;
+  assertWithinBase(op: OperationDef, url: URL): void;
   TRUNCATED_MARKER: string;
   TIMEOUT_MS: number;
 }
@@ -347,6 +348,51 @@ describe("generated request.ts — refusals", () => {
     expect(req.buildRequest(rootParam, { path_petId: "..." }, ENV).url).toBe(
       "https://eu.petstore.example.com/v1/...",
     );
+  });
+
+  test("a path template with a backslash or control character is refused before fetch", async () => {
+    // WHATWG reads "\" as "/" for https and drops tab/LF before resolving dot-segments:
+    // unchecked, "/x\..\..\y" became https://host/y, above the /v1 base path.
+    for (const path of [
+      "/a/..\\b",
+      "/a/.\t./b",
+      "/x\\..\\..\\y",
+      "/a\r\n/b",
+      "/a\u0000b",
+      "/a\u007fb",
+    ]) {
+      const edited: OperationDef = { ...op("listpets"), path };
+      const rec = recordingFetch(() => new Response("x"));
+      await expect(req.callOperation(edited, {}, { fetch: rec.fetch, env: ENV })).rejects.toThrow(
+        "listpets: the path has a character the URL parser would rewrite",
+      );
+      expect(rec.calls).toEqual([]);
+    }
+    // A normal templated path still works, and a filled value cannot add a backslash.
+    expect(req.buildRequest(op("showpetbyid"), { path_petId: "a\\..\\b" }, ENV).url).toBe(
+      "https://eu.petstore.example.com/v1/pets/a%5C..%5Cb",
+    );
+  });
+
+  test("the URL must stay under the server's own base path, whatever the parser did", () => {
+    const listpets = op("listpets");
+    const check = (href: string): void => req.assertWithinBase(listpets, new URL(href));
+    check("https://eu.petstore.example.com/v1");
+    check("https://eu.petstore.example.com/v1/");
+    check("https://eu.petstore.example.com/v1/pets/1");
+    for (const href of [
+      "https://eu.petstore.example.com/y",
+      "https://eu.petstore.example.com/v10/pets",
+      "https://eu.petstore.example.com/",
+    ]) {
+      expect(() => check(href)).toThrow("listpets: the URL would leave the server's base path");
+    }
+    // A server with no base path accepts any path on its host.
+    const root: OperationDef = { ...listpets, server: "https://eu.petstore.example.com/" };
+    req.assertWithinBase(root, new URL("https://eu.petstore.example.com/anything"));
+    // A trailing-slash base is normalised.
+    const slash: OperationDef = { ...listpets, server: "https://eu.petstore.example.com/v1//" };
+    req.assertWithinBase(slash, new URL("https://eu.petstore.example.com/v1/pets"));
   });
 
   test("a dot-segment composed from several values, or spelled %2e, is refused", () => {

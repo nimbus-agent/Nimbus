@@ -32,22 +32,42 @@ function contentOf(files: readonly ScaffoldFile[], path: string): string {
   return file.content;
 }
 
-/**
- * `src/operations.json`, refused past {@link MAX_OPERATIONS_JSON_BYTES}. A table too large for
- * JSON.stringify itself (a RangeError) is the same refusal, not a crash.
- */
-function operationsJson(model: OperationModel): string {
-  let text: string;
+/** `JSON.stringify(value, undefined, 2)`; a value too large for it (a RangeError) is a refusal. */
+function stringifyOrRefuse(value: unknown): string {
   try {
-    text = json({ hosts: model.hosts, operations: model.operations });
+    return JSON.stringify(value, undefined, 2);
   } catch (e) {
     if (e instanceof RangeError) throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
     throw e;
   }
-  if (Buffer.byteLength(text, "utf8") > MAX_OPERATIONS_JSON_BYTES) {
+}
+
+/** `text` as it appears nested `spaces` deep (JSON text has no raw newline inside a string). */
+function nest(text: string, spaces: string): string {
+  return text.replaceAll("\n", `\n${spaces}`);
+}
+
+/**
+ * `src/operations.json`, byte-identical to `JSON.stringify({ hosts, operations }, undefined, 2)`,
+ * but built one operation at a time so the {@link MAX_OPERATIONS_JSON_BYTES} cap is refused as
+ * soon as the running total passes it, never after serialising the whole table.
+ */
+function operationsJson(model: OperationModel): string {
+  const parts: string[] = [];
+  let bytes = 0;
+  for (const op of model.operations) {
+    const text = stringifyOrRefuse(op);
+    bytes += Buffer.byteLength(text, "utf8");
+    if (bytes > MAX_OPERATIONS_JSON_BYTES) throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+    parts.push(nest(text, "    "));
+  }
+  const hosts = nest(stringifyOrRefuse(model.hosts), "  ");
+  const operations = parts.length === 0 ? "[]" : `[\n    ${parts.join(",\n    ")}\n  ]`;
+  const out = `{\n  "hosts": ${hosts},\n  "operations": ${operations}\n}\n`;
+  if (Buffer.byteLength(out, "utf8") > MAX_OPERATIONS_JSON_BYTES) {
     throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
   }
-  return text;
+  return out;
 }
 
 /** The plain manifest with the model's network hosts and credentials. */

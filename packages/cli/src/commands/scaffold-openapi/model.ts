@@ -421,6 +421,24 @@ function templateNames(path: string): Set<string> {
 /** A segment the URL parser resolves as "." or ".." (it decodes %2e). */
 const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
 
+/** A character the URL parser rewrites in a path: "\" (read as "/"), a C0 control or DEL. */
+function isRewrittenChar(ch: string): boolean {
+  const code = ch.charCodeAt(0);
+  return ch === "\\" || code < 0x20 || code === 0x7f;
+}
+
+/**
+ * The URL parser reads "\" as "/" and drops tab, CR and LF before resolving dot-segments, so a
+ * template such as "/a/..\b" or "/a/.\t./b" would climb out of its path.
+ */
+function assertNoRewrittenChars(path: string): void {
+  if ([...path].some(isRewrittenChar)) {
+    throw new SkipOperation(
+      "the path has a backslash or control character the URL parser would rewrite",
+    );
+  }
+}
+
 function assertNoDotSegments(path: string): void {
   if (path.split("/").some((segment) => DOT_SEGMENT.test(segment))) {
     throw new SkipOperation('the path has a "." or ".." segment');
@@ -671,6 +689,7 @@ function draftOperation(
   schemes: SchemeTable,
   ctx: Context,
 ): Draft {
+  assertNoRewrittenChars(c.path);
   assertNoDotSegments(c.path);
   const server = chooseServer(c, docServer, ctx);
   const scheme = pickScheme(c, ctx, schemes);

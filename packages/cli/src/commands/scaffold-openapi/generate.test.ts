@@ -79,6 +79,47 @@ describe("buildOpenApiScaffoldFiles — the Petstore fixture", () => {
     expect(table).toEqual({ hosts: [...petstore.hosts], operations: [...petstore.operations] });
   });
 
+  test("operations.json is byte-identical to JSON.stringify(…, undefined, 2), built per operation", () => {
+    const whole = (m: OperationModel): string =>
+      `${JSON.stringify({ hosts: m.hosts, operations: m.operations }, undefined, 2)}\n`;
+    const written = (m: OperationModel): string =>
+      contentOf(
+        buildOpenApiScaffoldFiles("petstore", undefined, "linux", "/w/p", m),
+        "src/operations.json",
+      );
+    const hostile = fixtureModel("hostile.json", "ext_hostile");
+    const one: OperationModel = { ...petstore, operations: petstore.operations.slice(0, 1) };
+    for (const m of [petstore, hostile, one]) expect(written(m)).toBe(whole(m));
+  });
+
+  test("the size cap fires on the running total, before the whole table is serialised", () => {
+    // "\u0001" escapes to six bytes: 1 Mi of them is 6 MiB per operation once written.
+    const escaped = "\u0001".repeat(1024 * 1024);
+    const base = petstore.operations[0];
+    if (base === undefined) throw new Error("no operation");
+    let lastReached = false;
+    const heavy = (i: number) => ({ ...base, tool: `t${i}`, description: escaped });
+    const operations = [
+      ...Array.from({ length: 9 }, (_, i) => heavy(i)),
+      {
+        ...base,
+        tool: "last",
+        inputSchema: {
+          toJSON: () => {
+            lastReached = true;
+            return {};
+          },
+        },
+      },
+    ];
+    const model: OperationModel = { ...petstore, operations, credentials: {} };
+    expect(() => buildOpenApiScaffoldFiles("petstore", undefined, "linux", "/w/p", model)).toThrow(
+      "the generated operation table would exceed 50 MiB",
+    );
+    // Nine operations reach 54 MiB; the tenth is never serialised.
+    expect(lastReached).toBe(false);
+  });
+
   test("the sources are the fixed templates", () => {
     expect(contentOf(petFiles, "src/request.ts")).toBe(OPENAPI_REQUEST_TS);
     expect(contentOf(petFiles, "src/tools.ts")).toBe(

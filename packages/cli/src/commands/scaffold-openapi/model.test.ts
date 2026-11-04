@@ -1037,6 +1037,24 @@ describe("fix round 1", () => {
     );
   });
 
+  test("an operation whose path template has a backslash or control character is skipped", () => {
+    const shapes = ["/a/..\\b", "/a/.\t./b", "/x\\..\\..\\y", "/a\nb", "/a\u0000b", "/a\u007fb"];
+    const paths: Doc = {
+      "/v1/pets/{id}": {
+        get: { operationId: "ok", parameters: [{ name: "id", in: "path", required: true }] },
+      },
+    };
+    for (const p of shapes) paths[p] = { get: {} };
+    const m = build(doc({}, { paths }));
+    expect(m.operations.map((o) => o.tool)).toEqual(["ok"]);
+    expect(m.skipped).toEqual(
+      shapes.map((p) => ({
+        operation: `GET ${p}`,
+        reason: "the path has a backslash or control character the URL parser would rewrite",
+      })),
+    );
+  });
+
   test("a skipped operation leaves only its skip reason, not the warnings it raised", () => {
     const paths: Doc = {
       "/kept": { get: { operationId: "kept", parameters: [{ name: "c", in: "cookie" }] } },
