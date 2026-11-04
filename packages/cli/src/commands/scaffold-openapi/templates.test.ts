@@ -36,6 +36,7 @@ interface RequestModule {
   MAX_BODY_BYTES: number;
   MAX_READ_BYTES: number;
   assertWithinBase(op: OperationDef, url: URL): void;
+  checkedUrl(op: OperationDef, href: string): URL;
   TRUNCATED_MARKER: string;
   TIMEOUT_MS: number;
 }
@@ -350,7 +351,7 @@ describe("generated request.ts — refusals", () => {
     );
   });
 
-  test("a path template with a backslash or control character is refused before fetch", async () => {
+  test("a path template with a space, backslash or control character is refused before fetch", async () => {
     // WHATWG reads "\" as "/" for https and drops tab/LF before resolving dot-segments:
     // unchecked, "/x\..\..\y" became https://host/y, above the /v1 base path.
     for (const path of [
@@ -360,6 +361,10 @@ describe("generated request.ts — refusals", () => {
       "/a\r\n/b",
       "/a\u0000b",
       "/a\u007fb",
+      // A trailing space is trimmed by the parser, which then resolves "..".
+      "/.. ",
+      "/x/.. ",
+      "/a b",
     ]) {
       const edited: OperationDef = { ...op("listpets"), path };
       const rec = recordingFetch(() => new Response("x"));
@@ -371,6 +376,20 @@ describe("generated request.ts — refusals", () => {
     // A normal templated path still works, and a filled value cannot add a backslash.
     expect(req.buildRequest(op("showpetbyid"), { path_petId: "a\\..\\b" }, ENV).url).toBe(
       "https://eu.petstore.example.com/v1/pets/a%5C..%5Cb",
+    );
+  });
+
+  test("checkedUrl, the one door every request URL takes, refuses a URL above the base path", () => {
+    // Pins the base-path guard's CALL: no template reaches it past the character and dot checks.
+    const listpets = op("listpets");
+    expect(() => req.checkedUrl(listpets, "https://eu.petstore.example.com/y")).toThrow(
+      "listpets: the URL would leave the server's base path",
+    );
+    expect(() => req.checkedUrl(listpets, "https://evil.example.com/v1/pets")).toThrow(
+      "evil.example.com is not a host this extension declares",
+    );
+    expect(req.checkedUrl(listpets, "https://eu.petstore.example.com/v1/pets").href).toBe(
+      "https://eu.petstore.example.com/v1/pets",
     );
   });
 

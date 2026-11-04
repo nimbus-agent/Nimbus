@@ -78,10 +78,13 @@ const TRANSPORT_HEADERS: ReadonlySet<string> = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-/** A character the URL parser rewrites in a path: "\\" (read as "/"), a C0 control or DEL. */
+/**
+ * A character the URL parser rewrites in a path: "\\" (read as "/"), a C0 control, DEL, or a
+ * space (trimmed at the end, so "/x/.. " resolves ".."; a path spells a space %20 anyway).
+ */
 function isRewrittenChar(ch: string): boolean {
   const code = ch.charCodeAt(0);
-  return ch === "\\\\" || code < 0x20 || code === 0x7f;
+  return ch === "\\\\" || code <= 0x20 || code === 0x7f;
 }
 /** A path segment the URL parser resolves as "." or ".." (it decodes %2e). */
 const DOT_SEGMENT = /^(?:\\.|%2e){1,2}$/i;
@@ -237,17 +240,26 @@ function placeBody(op: OperationDef, args: Args, headers: Headers): string | und
 }
 
 /** The URL and init for one call; throws RequestError before anything is sent. */
+/**
+ * The parsed request URL, refused unless it is https to a declared host and stays under the
+ * server's base path. Every request URL goes through here (exported so a test can pin that).
+ */
+export function checkedUrl(op: OperationDef, href: string): URL {
+  const url = new URL(href);
+  if (url.protocol !== "https:" || !HOSTS.has(url.host)) {
+    throw new RequestError(\`\${url.host} is not a host this extension declares\`);
+  }
+  assertWithinBase(op, url);
+  return url;
+}
+
 export function buildRequest(
   op: OperationDef,
   args: Args,
   env: Env,
 ): { url: string; init: RequestInit } {
   assertRequired(op, args);
-  const url = new URL(joinUrl(op.server, fillPath(op, args)));
-  if (url.protocol !== "https:" || !HOSTS.has(url.host)) {
-    throw new RequestError(\`\${url.host} is not a host this extension declares\`);
-  }
-  assertWithinBase(op, url);
+  const url = checkedUrl(op, joinUrl(op.server, fillPath(op, args)));
   const headers = new Headers();
   placeParams(op, args, url, headers);
   const body = placeBody(op, args, headers);

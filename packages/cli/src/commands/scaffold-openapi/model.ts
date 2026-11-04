@@ -421,10 +421,13 @@ function templateNames(path: string): Set<string> {
 /** A segment the URL parser resolves as "." or ".." (it decodes %2e). */
 const DOT_SEGMENT = /^(?:\.|%2e){1,2}$/i;
 
-/** A character the URL parser rewrites in a path: "\" (read as "/"), a C0 control or DEL. */
+/**
+ * A character the URL parser rewrites in a path: "\" (read as "/"), a C0 control, DEL, or a
+ * space (trimmed at the end, so "/x/.. " resolves ".."; a path spells a space %20 anyway).
+ */
 function isRewrittenChar(ch: string): boolean {
   const code = ch.charCodeAt(0);
-  return ch === "\\" || code < 0x20 || code === 0x7f;
+  return ch === "\\" || code <= 0x20 || code === 0x7f;
 }
 
 /**
@@ -434,7 +437,7 @@ function isRewrittenChar(ch: string): boolean {
 function assertNoRewrittenChars(path: string): void {
   if ([...path].some(isRewrittenChar)) {
     throw new SkipOperation(
-      "the path has a backslash or control character the URL parser would rewrite",
+      "the path has a space, backslash or control character the URL parser would rewrite",
     );
   }
 }

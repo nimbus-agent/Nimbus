@@ -1037,8 +1037,19 @@ describe("fix round 1", () => {
     );
   });
 
-  test("an operation whose path template has a backslash or control character is skipped", () => {
-    const shapes = ["/a/..\\b", "/a/.\t./b", "/x\\..\\..\\y", "/a\nb", "/a\u0000b", "/a\u007fb"];
+  test("an operation whose path template has a space, backslash or control character is skipped", () => {
+    // A trailing space is trimmed by the URL parser, which then resolves "..".
+    const shapes = [
+      "/a/..\\b",
+      "/a/.\t./b",
+      "/x\\..\\..\\y",
+      "/a\nb",
+      "/a\u0000b",
+      "/a\u007fb",
+      "/.. ",
+      "/x/.. ",
+      "/a b",
+    ];
     const paths: Doc = {
       "/v1/pets/{id}": {
         get: { operationId: "ok", parameters: [{ name: "id", in: "path", required: true }] },
@@ -1050,7 +1061,7 @@ describe("fix round 1", () => {
     expect(m.skipped).toEqual(
       shapes.map((p) => ({
         operation: `GET ${p}`,
-        reason: "the path has a backslash or control character the URL parser would rewrite",
+        reason: "the path has a space, backslash or control character the URL parser would rewrite",
       })),
     );
   });
