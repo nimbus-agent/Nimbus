@@ -23,11 +23,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { stripComments } from "../../../../scripts/structure-audit/lib.ts";
 import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
-import {
-  CONNECTOR_WRITES,
-  isConnectorWriteToolId,
-  MIGRATED_WRITE_TOOL_IDS,
-} from "./connector-write-registry.ts";
+import { isConnectorWriteToolId } from "./connector-write-registry.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { SHAPE_FIXTURES } from "./testing/connector-write-fixtures.ts";
 import {
   installedConnectorsPackageRoot,
@@ -58,8 +55,8 @@ describe("I26 sync guard — the installed connectors package", () => {
   test("every write tool it registers is refused at the federated invoke gate", () => {
     expect(
       unclassifiedWrites(SCAN).map(where).sort(),
-      "a connector registers a write the I26 predicate does not name — add it to " +
-        "MIGRATED_WRITE_TOOL_IDS in connectors/connector-write-tool-ids.ts",
+      "a connector registers a write the I26 predicate does not name — add a row to the " +
+        "group files in connectors/connector-writes/",
     ).toEqual([]);
   });
 
@@ -83,8 +80,7 @@ describe("I26 sync guard — the installed connectors package", () => {
     // read-verb classifier — so a write whose name ended in a read verb would run unapproved.
     const writes = new Set([
       ...SCAN.registrations.map((r) => r.id),
-      ...MIGRATED_WRITE_TOOL_IDS,
-      ...CONNECTOR_WRITES.map((w) => w.toolId),
+      ...CONNECTOR_WRITE_ROWS.map((r) => r.toolId),
     ]);
     expect([...writes].filter((id) => isReadOnlyToolId(id))).toEqual([]);
   });

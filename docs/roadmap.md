@@ -1900,11 +1900,11 @@ Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-o
 
 > **Sequencing (overlay):** **Track 1 — spine.** The write-substrate the autonomy arc assumes: Phase 10 (standing approvals / scheduled write-workflows), Phase 16 (team writes / runbook-as-agent), and Phase 17 (mitigation actions) all *consume* a broad write surface that no phase currently delivers. Numbered 9.7 (fractional insert — no renumber) so it lands immediately before Phase 10: build it before, or in lockstep with, the autonomy work that depends on it. See [§ Phase 7+ Sequencing Spine](#phase-7-sequencing-spine).
 
-**Goal:** Promote the connector roster from a read-only *index* into an *acting* agent. Today ~88 first-party connectors index data but only a handful can write (Looker datagroup/schedule triggers, ArgoCD `app_sync`, Flux, MLflow). The write *machinery* already exists — the `I26` write-registry (`connector-write-registry.ts`), the `I29` egress ledger, and the executor HITL chokepoint (`I2`) — but is barely exercised. This phase systematically builds HITL-gated write tools across the existing roster on that machinery, ordered by blast radius, so every new write is **gated, previewed, ledgered, and peer-unreachable by construction.**
+**Goal:** Promote the connector roster from a read-only *index* into an *acting* agent. Today ~88 first-party connectors index data. 88 write tools across 36 connectors are classified in one row table (`connectors/connector-writes/`), four more are refused through their own gates' sets (two ChatOps posts, two KB appends), and all are HITL-gated, but the model is offered none of them, and dispatch through the credential-aware transport covers only 18. The write *machinery* already exists — the `I26` write-registry (`connector-write-registry.ts`), the `I29` egress ledger, and the executor HITL chokepoint (`I2`) — but is barely exercised. This phase systematically builds HITL-gated write tools across the existing roster on that machinery, ordered by blast radius, so every new write is **gated, previewed, ledgered, and peer-unreachable by construction.**
 
 #### Dependencies
 
-- `I26` connector-write registry + the per-group write-tool SSoTs (`warehouse-write-tools.ts`, `gitops-ml-write-tools.ts`) — generalized in Wave 1
+- `I26` connector-write registry + the one row table `connectors/connector-writes/` (generalized in Wave 1 by A1)
 - `I29` egress ledger (every write appends one row before `connectors.dispatch`)
 - `I2` HITL frozen-set gate (every write action type is gated in the executor)
 - Phase 10 standing-approval **taint barrier** (attacker-influenceable tool output can never satisfy a standing rule) — co-designed; any write that auto-fires must respect it
@@ -1912,7 +1912,7 @@ Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-o
 
 #### Non-negotiable guardrails
 
-- Every write tool id is confined to the `I26` SSoTs and the connector/transport sites — the `D20` static audit fails on any leak.
+- Every write tool id is confined to the `I26` row table and the connector/transport sites — the `D20` static audit fails on any leak.
 - The federated peer invoke gate (`answerFederatedInvoke`) fail-closed rejects every write-classified tool id (`isWriteForbiddenToolId`): a peer can never trigger a connector write.
 - Every gated write appends exactly one `egress_ledger` row before dispatch; an append failure aborts the action (fail-closed; `I29`).
 - Infra/production writes (Wave 4) are preview-mandatory and excluded from standing-approval auto-fire by default.
@@ -1921,7 +1921,7 @@ Outside the seven: the **Readwise unbundling pilot** (`I46`, the baked `nimbus-o
 
 #### Wave 1 — Write-Authoring Framework *(prerequisite substrate)*
 
-- [ ] **Generalized connector-write contract** — promote the per-group `I26` registries into one authoring path so a connector can declare write tools without bespoke wiring at each coupling site.
+- [x] **Generalized connector-write contract** — promoted the per-group `I26` registries into one row table plus a manifest generated from the installed connectors package, so a connector declares a write tool with one row in `connectors/connector-writes/`, its action type added by hand to `HITL_REQUIRED_BACKING` (engine/executor.ts) and classified in `ACTION_PROPOSABILITY` (connectors/proposable-actions.ts), then `bun run gen:connector-write-manifest`, instead of bespoke wiring at each coupling site (2026-11-04, Phase 9.7 PR A1).
 - [ ] **HITL consent preview renderer** — the consent dialog renders a before/after diff (action target + payload summary) so the owner approves the *exact* change, not just an action name.
 - [ ] **Egress-ledger coverage proof** — a contract test asserts every registered write tool id appends an `egress_ledger` row on the gated path (extends `I29`).
 - [ ] **Standing-approval + taint integration** — write tools become eligible for Phase 10 standing rules only behind the taint barrier; an untrusted-tainted trigger falls back to HITL.

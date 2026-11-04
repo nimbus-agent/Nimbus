@@ -53,6 +53,7 @@ import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";
 import { transitionHealth } from "./connectors/health.ts";
 import {
   type LazyMeshToolMap,
@@ -2795,7 +2796,7 @@ code_execution=true
   });
 });
 
-describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to the local I2 path; federated gate rejects them", () => {
+describe("I26 — every connector write row is confined to the local I2 path; federated gate rejects them", () => {
   test("answerFederatedInvoke is wired with the union isConnectorWriteToolId predicate in federation-rpc.ts", async () => {
     const src = await read("packages/gateway/src/ipc/federation-rpc.ts");
     expect(src).toContain("isWriteForbiddenToolId");
@@ -2808,13 +2809,12 @@ describe("I26 — connector writes (warehouse/BI ∪ GitOps/ML) are confined to 
     expect(gate).toContain("write_forbidden");
   });
 
-  test("every connector write tool id (incl. GitOps/ML) is HITL-gated via its action type (local path)", () => {
-    for (const w of CONNECTOR_WRITES) {
-      expect(HITL_REQUIRED.has(w.actionType)).toBe(true);
-    }
+  test("every connector write row is HITL-gated via its action type (local path)", () => {
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(88);
+    expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
-  test("D20 confines connector write tool ids to the SSoT + connector + transport/dispatch sites", async () => {
+  test("D20 confines connector write tool ids to the row table and the transport, dispatch, act-door and code-execution sites", async () => {
     const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
     expect(audit).toContain("D20-connector-write");
     expect(audit).toContain("D20-invoke-gate-predicate");

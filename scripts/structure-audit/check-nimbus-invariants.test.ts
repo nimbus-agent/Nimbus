@@ -557,7 +557,77 @@ dispatch("notion_kb_append")`,
   });
 });
 
-describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", () => {
+describe("D20 — connector write-id confinement (every row in connectors/connector-writes)", () => {
+  test("a migrated write id outside the allowed sites is a D20 violation", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
+  test("a namespaced <server>_<tool> write id outside the allowed sites is a D20 violation", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "jira_jira_issue_create";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
+  test("a longer id that merely ends in a write id's letters is not flagged", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/agents/x.ts",
+        contents: `const id = "xjira_issue_create";`,
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("proposable-actions.ts may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/proposable-actions.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("connector-code-execution-tool-ids.ts may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/connector-code-execution-tool-ids.ts",
+        contents: `const id = "argocd_app_sync";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("a file under connector-writes/ may name write ids", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/connector-writes/anything.ts",
+        contents: `const id = "jira_issue_create";`,
+      },
+    ]);
+    expect(v).toHaveLength(0);
+  });
+
+  test("the deleted warehouse-write-tools.ts path is now flagged", () => {
+    const v = checkConnectorWriteConfinement([
+      {
+        relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
+        contents: `const id = "tableau_datasource_refresh";`,
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D20-connector-write"]);
+  });
+
   test("flags a write tool id referenced outside the allowed sites", () => {
     const v = checkConnectorWriteConfinement([
       {
@@ -579,11 +649,11 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
     expect(v.some((x) => x.rule === "D20-connector-write")).toBe(true);
   });
 
-  test("does NOT flag the gitops-ml SSoT module", () => {
+  test("does NOT flag the gitops-ml row file", () => {
     const v = checkConnectorWriteConfinement([
       {
-        relPath: "packages/gateway/src/connectors/gitops-ml-write-tools.ts",
-        contents: `w("argocd.app.sync", "argocd_app_sync", "argocd");`,
+        relPath: "packages/gateway/src/connectors/connector-writes/gitops-ml.ts",
+        contents: `row("argocd_app_sync", "argocd.app.sync", "write", 4);`,
       },
     ]);
     expect(v).toHaveLength(0);
@@ -592,7 +662,7 @@ describe("D20 — connector write-id confinement (warehouse/BI ∪ GitOps/ML)", 
   test("allows the SSoT, connector servers, and transport/dispatch sites", () => {
     const v = checkConnectorWriteConfinement([
       {
-        relPath: "packages/gateway/src/connectors/warehouse-write-tools.ts",
+        relPath: "packages/gateway/src/connectors/connector-writes/warehouse-bi.ts",
         contents: `"tableau_datasource_refresh"`,
       },
     ]);

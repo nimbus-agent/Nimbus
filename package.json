@@ -73,6 +73,7 @@
     "audit:gateway-native-deps": "bun scripts/structure-audit/check-gateway-native-deps.ts",
     "audit:import-meta-dir": "bun scripts/structure-audit/check-import-meta-dir.ts",
     "gen:connector-registry": "bun scripts/gen-bundled-connector-registry.ts",
+    "gen:connector-write-manifest": "bun scripts/gen-connector-write-manifest.ts",
     "test:connector-boot": "bun scripts/connector-boot-smoke.ts dist/nimbus-gateway",
     "audit:doc-refs": "bun scripts/structure-audit/check-doc-references.ts --check",
     "audit:launcher-contract": "bun scripts/structure-audit/check-launcher-installer-contract.ts",
