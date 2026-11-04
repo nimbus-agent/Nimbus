@@ -48,7 +48,11 @@
 - Create the following group files under `packages/gateway/src/connectors/connector-writes/`: `messaging.ts`, `tickets.ts`, `knowledge.ts`, `mail-calendar.ts`, `files.ts`, `vcs-ci.ts`, `incident.ts`, `cloud-infra.ts`, `warehouse-bi.ts`, `gitops-ml.ts`, and `index.ts`
 - Modify: `packages/gateway/src/connectors/connector-write-registry.ts`, `packages/gateway/src/connectors/connector-write.ts`, `packages/gateway/src/engine/executor.ts` (frozen set, and the comments at lines ~172 and ~186), `packages/gateway/src/connectors/proposable-actions.ts` (`denied("file", …)`)
 - Delete: `connectors/warehouse-write-tools.ts`, `connectors/gitops-ml-write-tools.ts`, `connectors/connector-write-tool-ids.ts`, and the tests `warehouse-write-tools.test.ts` and `gitops-ml-write-tools.test.ts`. Move each assertion they hold that is still meaningful into the new test.
-- Test: `packages/gateway/src/connectors/connector-writes/rows.test.ts`. Update `connector-write-registry.test.ts`, `share/read-tool-registry.test.ts`, `ipc/federation-rpc-invoke.test.ts` and `test/integration/connectors/session-tool-resolution.integration.test.ts` wherever they import a deleted module.
+- Test: `packages/gateway/src/connectors/connector-writes/rows.test.ts`.
+- Update the callers of the deleted modules (from `git grep`; `ipc/federation-rpc-invoke.test.ts` and `session-tool-resolution.integration.test.ts` import only `CONNECTOR_WRITES`, which stays, so they need no change):
+  - `connector-write-registry.test.ts`: drop its `MIGRATED_WRITE_TOOL_IDS` and group-SSoT imports, and assert over `CONNECTOR_WRITE_ROWS` instead.
+  - `share/read-tool-registry.test.ts`: replace `WAREHOUSE_BI_WRITE_TOOL_IDS` with `CONNECTOR_WRITES.map((w) => w.toolId)` imported from `../connectors/connector-write-registry.ts`.
+  - `connector-write-sync.test.ts`: in the share-replay test, replace `MIGRATED_WRITE_TOOL_IDS` with `CONNECTOR_WRITE_ROWS.map((r) => r.toolId)`, and point the first test's failure message at the group files. This must happen in this task, or Step 4's run fails on the import.
 
 **Interfaces:**
 - Produces, in `types.ts`:
@@ -64,7 +68,7 @@
     readonly registeredAs?: "read";
   }
   ```
-  Also a one-line builder `row(toolId, actionType, transport, wave, registeredAs?)` that returns a frozen row.
+  Also a one-line builder `row(toolId, actionType, transport, wave, registeredAs?)` that returns a frozen row. **Its argument order is the reverse of the deleted `w(actionType, toolId, service)`**: porting `w("snowflake.tag.set", "snowflake_tag_set", "snowflake")` gives `row("snowflake_tag_set", "snowflake.tag.set", "write", 4)`. The 18-row test in Step 1 catches a swap.
 - Produces, in `index.ts`: `export const CONNECTOR_WRITE_ROWS: readonly ConnectorWriteRow[]`, the concatenation of the group files in the order listed above.
 - `connector-write-registry.ts` keeps its exports and signatures, plus one new export:
   - `CONNECTOR_WRITES: readonly ConnectorWrite[]` is the rows with `transport === "write"`, each mapped to `{ actionType, toolId, service: serviceOf(actionType) }`.
@@ -168,17 +172,17 @@ That makes 88 rows: 70 `mesh` and 18 `write`.
   - `"every row's action type is in the HITL frozen set"`: `CONNECTOR_WRITE_ROWS.filter(r => !HITL_REQUIRED.has(r.actionType))` equals `[]`.
   - `"write-transport rows are exactly today's 18, unchanged"`: `CONNECTOR_WRITES` mapped to `` `${actionType} ${toolId} ${service}` `` and sorted equals the 18 strings spelled out in the test (copy them from today's two SSoT files before deleting them, e.g. `"snowflake.tag.set snowflake_tag_set snowflake"`, `"montecarlo.incident.acknowledge montecarlo_incident_acknowledge montecarlo"`).
   - `"action types are unique among write rows"`.
-  - `"every row is refused, bare and namespaced"`: for each row, `isConnectorWriteToolId(r.toolId)` is true, and so is `isConnectorWriteToolId(\`${server}_${r.toolId}\`)`, where `server` is the first segment of `serviceOf(r.actionType)`. Add the two literal cases `"aws_aws_ec2_instance_stop"` and `"github_actions_gha_run_trigger"`.
+  - `"every row is refused, bare and namespaced"`: for each row, `isConnectorWriteToolId(r.toolId)` is true, and so is `isConnectorWriteToolId(\`${server}_${r.toolId}\`)`, where `server` is `serviceOf(r.actionType)`. Also assert the two literals `"aws_aws_ec2_instance_stop"` and `"github_actions_gha_run_trigger"` directly, so a loop that builds the key wrongly cannot pass on its own output.
   - `"gate-confined ids stay refused through their gates"`: every id in `CHATOPS_POST_TOOL_IDS` and `TRIBAL_KB_WRITE_TOOL_IDS` is refused, and none of them is a row `toolId`.
   - `"gdrive_file_trash is a read-registered write"`: `connectorWriteRowByToolId("gdrive_file_trash")` deep-equals `{ toolId: "gdrive_file_trash", actionType: "google_drive.file.trash", transport: "mesh", wave: 3, registeredAs: "read" }`, and `HITL_REQUIRED.has("google_drive.file.trash")` is true.
   - `"no behaviour change: every id refused before A1 is refused after"`: a literal list of the 88 ids (today's `MIGRATED_WRITE_TOOL_IDS` plus the 18) all return true.
 
-- [ ] **Step 2: Run, expect FAIL.** Run `bun test packages/gateway/src/connectors/connector-writes`. It fails because the module is missing.
+- [ ] **Step 2: Run, expect FAIL.** Run `bun test packages/gateway/src/connectors/connector-writes`. It fails because the module is missing. Once the rows exist, `"every row's action type is in the HITL frozen set"` and the `gdrive_file_trash` test keep failing until Step 3 adds `google_drive.file.trash` to the executor.
 
 - [ ] **Step 3: Implement** `types.ts`, the group files (one `row(...)` call per row, exactly as in the table), `index.ts`, the new `connector-write-registry.ts` derivation, `"google_drive.file.trash"` added to `HITL_REQUIRED_BACKING` beside `google_drive.file.rename`, and `"google_drive.file.trash"` added to `denied("file", …)` in `proposable-actions.ts`.
   - Keep `LONGEST_WRITE_TOOL_ID` computed over the row ids ∪ the gate sets, and keep the `matchesBareOrNamespacedToolId` call unchanged.
   - Rewrite the executor comments so they point at `connectors/connector-writes/` and `rows.test.ts`.
-  - Delete the three old modules and port their tests.
+  - Delete the three old modules, port their tests, and update the callers listed under Files.
 
 - [ ] **Step 4: Run** `bun test packages/gateway/src/connectors packages/gateway/src/engine/executor.test.ts packages/gateway/src/security-invariants.test.ts packages/gateway/src/share packages/gateway/src/ipc/federation-rpc-invoke.test.ts packages/gateway/src/mcp-sink`. Expected: PASS, including `proposable-actions.test.ts`, whose totality test fails if the new type is left unclassified. Then run `bun run typecheck`.
 
@@ -189,7 +193,6 @@ That makes 88 rows: 70 `mesh` and 18 `write`.
 **Files:**
 - Create: `scripts/gen-connector-write-manifest.ts`, and a `gen:connector-write-manifest` entry in the root `package.json` `scripts`
 - Create (generated, committed): `packages/gateway/src/connectors/connector-writes/manifest.generated.ts`
-- Modify: `packages/gateway/src/connectors/connector-write-sync.test.ts`
 - Test: `packages/gateway/src/connectors/connector-writes/manifest.sync.test.ts`
 
 **Interfaces:**
@@ -208,13 +211,13 @@ That makes 88 rows: 70 `mesh` and 18 `write`.
   - `"every registered write has a row"`: manifest ids missing from the rows equal `[]`. The message reads: "classify it in packages/gateway/src/connectors/connector-writes/<group>.ts".
   - `"every row not marked registeredAs read names a registered write"`: such rows' ids that are not in the manifest equal `[]`.
   - `"every registeredAs-read row is still registered as a read"`: `registeredAs` rows whose id IS in the manifest equal `[]`. The message reads: "upstream now registers it as a write: drop registeredAs".
-  - `"a literal mutates agrees with the row"`: for each scan registration whose call text (from `r.span` over `stripComments(file text)`) holds `mutates: "<literal>"` with no `${`, that literal equals the row's `actionType`. Expected mismatches: `[]`.
+  - `"a literal mutates agrees with the row"`: for each scan registration that has a row (the four gate-confined ids have none: skip anything in `CHATOPS_POST_TOOL_IDS` or `TRIBAL_KB_WRITE_TOOL_IDS`, and fail on any OTHER registration with no row) whose call text (from `r.span` over `stripComments(file text)`) holds `mutates: "<literal>"` with no `${`, that literal equals the row's `actionType`. Expected mismatches: `[]`.
   - `"the manifest's size is plausible"`: `CONNECTOR_WRITE_MANIFEST.length >= 80`.
 
 - [ ] **Step 2: Run, expect FAIL.** Run `bun test packages/gateway/src/connectors/connector-writes/manifest.sync.test.ts`. It fails because the script and the generated file are missing.
 
 - [ ] **Step 3: Implement** the script. Its `main` runs the scan, writes the file and prints the count. Then run `bun run gen:connector-write-manifest` and commit the output.
-  - In `connector-write-sync.test.ts`, replace the `MIGRATED_WRITE_TOOL_IDS` import with `CONNECTOR_WRITE_ROWS` ids in the share-replay test. Point the first test's failure message at the group files. Keep every other test as it is.
+  - `connector-write-sync.test.ts` was already updated in Task 1. Leave it as it is.
 
 - [ ] **Step 4: Run** `bun test packages/gateway/src/connectors`. Expected: PASS. Then run `bun run lint` on the generated file (`bunx biome check packages/gateway/src/connectors/connector-writes`).
 
@@ -229,8 +232,9 @@ That makes 88 rows: 70 `mesh` and 18 `write`.
 **Interfaces:**
 - Consumes `CONNECTOR_WRITE_ROWS` from `packages/gateway/src/connectors/connector-writes/index.ts`. The audit already imports gateway source; import only `index.ts`, never the registry, which pulls in the ChatOps and tribal gates.
 - The regex: `new RegExp(String.raw\`\b(?:${ids.join("|")})\b\`)`, where `ids` are the row tool ids, each checked against `/^[a-z0-9_]+$/` before joining. Throw on any that fails, so a malformed id cannot widen the regex.
+- The allowed-site check today is exact equality (`CONNECTOR_WRITE_ALLOWED.some((p) => f.relPath === p)`). Change it to `f.relPath === p || (p.endsWith("/") && f.relPath.startsWith(p))`, the same shape D17 uses.
 - New allowed sites:
-  - Every file under `packages/gateway/src/connectors/connector-writes/` (prefix match)
+  - `packages/gateway/src/connectors/connector-writes/` (the trailing slash makes it a prefix)
   - `packages/gateway/src/connectors/connector-write-transport.ts`
   - `packages/gateway/src/connectors/connector-write-dispatch.ts`
   - `packages/gateway/src/connectors/proposable-actions.ts` (the act door's routing table spells tool ids)
@@ -242,7 +246,8 @@ That makes 88 rows: 70 `mesh` and 18 `write`.
   - `"a migrated write id outside the allowed sites is a D20 violation"`: a `FileEntry` at `packages/gateway/src/agents/x.ts` whose contents name `jira_issue_create` yields one `D20-connector-write` violation. This red-proves the newly covered 70.
   - `"proposable-actions.ts may name write ids"`: the same contents at that path yield none.
   - `"a file under connector-writes/ may name write ids"`.
-  - Keep every existing D20 test. Rename the describe to `D20 — connector write-id confinement (every row in connectors/connector-writes)`.
+  - Re-point the two existing tests whose `relPath` names a deleted module (`"does NOT flag the gitops-ml SSoT module"` with `gitops-ml-write-tools.ts`, and `"allows the SSoT, connector servers, and transport/dispatch sites"` with `warehouse-write-tools.ts`) at `connectors/connector-writes/gitops-ml.ts` and `connectors/connector-writes/warehouse-bi.ts`. Add one test asserting the deleted path `connectors/warehouse-write-tools.ts` is now flagged.
+  - Keep every other existing D20 test. Rename the describe to `D20 — connector write-id confinement (every row in connectors/connector-writes)`.
 
 - [ ] **Step 2: Run, expect FAIL.** Run `bun test scripts/structure-audit/check-nimbus-invariants.test.ts -t D20`. The first new test fails against the old regex.
 
