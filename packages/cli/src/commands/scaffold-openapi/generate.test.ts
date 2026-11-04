@@ -19,9 +19,10 @@ import {
   buildOpenApiScaffoldFiles,
   cleanDocumentText,
   codeSpan,
+  MAX_OPERATIONS_JSON_BYTES,
   openApiReportLines,
 } from "./generate.ts";
-import { buildOperationModel, type OperationModel } from "./model.ts";
+import { buildOperationModel, OpenApiModelError, type OperationModel } from "./model.ts";
 import { OPENAPI_REQUEST_TS, OPENAPI_TOOLS_TEST_TS, OPENAPI_TOOLS_TS } from "./templates.ts";
 
 function fixtureModel(file: string, serviceId: string): OperationModel {
@@ -127,6 +128,59 @@ describe("buildOpenApiScaffoldFiles — the Petstore fixture", () => {
     const readme = contentOf(files, "README.md");
     expect(readme).not.toContain("## Credentials");
     expect(readme).not.toContain("## Warnings");
+  });
+
+  test("an operation table over 50 MiB is a refusal, and so is one JSON.stringify cannot write", () => {
+    expect(MAX_OPERATIONS_JSON_BYTES).toBe(50 * 1024 * 1024);
+    const base = petstore.operations[0];
+    if (base === undefined) throw new Error("no operation");
+    const mib = "x".repeat(1024 * 1024);
+    const properties = Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`p${i}`, mib]));
+    const big: OperationModel = {
+      ...petstore,
+      operations: [{ ...base, inputSchema: { type: "object", properties } }],
+    };
+    const tooBig = (m: OperationModel): Error => {
+      try {
+        buildOpenApiScaffoldFiles("petstore", undefined, "linux", "/w/p", m);
+      } catch (e) {
+        return e as Error;
+      }
+      throw new Error("expected a throw");
+    };
+    const e = tooBig(big);
+    expect(e).toBeInstanceOf(OpenApiModelError);
+    expect(e.message).toBe("the generated operation table would exceed 50 MiB");
+    const unwritable: OperationModel = {
+      ...petstore,
+      operations: [
+        {
+          ...base,
+          inputSchema: {
+            toJSON: () => {
+              throw new RangeError("Out of memory");
+            },
+          },
+        },
+      ],
+    };
+    const r = tooBig(unwritable);
+    expect(r).toBeInstanceOf(OpenApiModelError);
+    expect(r.message).toBe("the generated operation table would exceed 50 MiB");
+    const other: OperationModel = {
+      ...petstore,
+      operations: [
+        {
+          ...base,
+          inputSchema: {
+            toJSON: () => {
+              throw new TypeError("not a size problem");
+            },
+          },
+        },
+      ],
+    };
+    expect(tooBig(other)).toBeInstanceOf(TypeError);
   });
 
   test("a model the manifest parser refuses is a bug, thrown before anything is returned", () => {

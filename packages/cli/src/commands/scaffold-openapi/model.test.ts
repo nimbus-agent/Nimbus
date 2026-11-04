@@ -925,6 +925,18 @@ describe("fix round 1", () => {
     expect(e.message).toBe("the document expands to more than 1,000,000 schema nodes");
   });
 
+  test("a long string referenced many times is refused by the shared budget (strings count)", () => {
+    // The reviewer's shape, scaled: 1.28 M characters (20,000 nodes) referenced 60 times.
+    const s: Doc = { Big: { type: "string", description: "x".repeat(64 * 20_000) } };
+    const properties = Object.fromEntries(
+      Array.from({ length: 60 }, (_, i) => [`p${i}`, { $ref: "#/s/Big" }]),
+    );
+    const requestBody = { content: { "application/json": { schema: { properties } } } };
+    const e = errorOf(() => build(doc({ requestBody }, { s })));
+    expect(e).toBeInstanceOf(OpenApiModelError);
+    expect(e.message).toBe("the document expands to more than 1,000,000 schema nodes");
+  });
+
   test("operations each under the old per-call budget are refused once their total passes the cap", () => {
     const s: Doc = {};
     for (let i = 0; i < 3; i++) {

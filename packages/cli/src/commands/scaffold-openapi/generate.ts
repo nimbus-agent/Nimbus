@@ -13,10 +13,14 @@ import {
   resolveExtensionId,
   type ScaffoldFile,
 } from "../scaffold-extension.ts";
-import type { OperationDef, OperationModel } from "./model.ts";
+import { OpenApiModelError, type OperationDef, type OperationModel } from "./model.ts";
 import { OPENAPI_REQUEST_TS, OPENAPI_TOOLS_TEST_TS, OPENAPI_TOOLS_TS } from "./templates.ts";
 
 const MANIFEST_PATH = "nimbus.extension.json";
+
+/** The largest `src/operations.json` written: the bundle inlines it, and the model reads it whole. */
+export const MAX_OPERATIONS_JSON_BYTES = 50 * 1024 * 1024;
+export const OPERATIONS_TOO_LARGE = "the generated operation table would exceed 50 MiB";
 
 function json(value: unknown): string {
   return `${JSON.stringify(value, undefined, 2)}\n`;
@@ -26,6 +30,24 @@ function contentOf(files: readonly ScaffoldFile[], path: string): string {
   const file = files.find((f) => f.path.join("/") === path);
   if (file === undefined) throw new Error(`the extension scaffold has no ${path}`);
   return file.content;
+}
+
+/**
+ * `src/operations.json`, refused past {@link MAX_OPERATIONS_JSON_BYTES}. A table too large for
+ * JSON.stringify itself (a RangeError) is the same refusal, not a crash.
+ */
+function operationsJson(model: OperationModel): string {
+  let text: string;
+  try {
+    text = json({ hosts: model.hosts, operations: model.operations });
+  } catch (e) {
+    if (e instanceof RangeError) throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+    throw e;
+  }
+  if (Buffer.byteLength(text, "utf8") > MAX_OPERATIONS_JSON_BYTES) {
+    throw new OpenApiModelError(OPERATIONS_TOO_LARGE);
+  }
+  return text;
 }
 
 /** The plain manifest with the model's network hosts and credentials. */
@@ -176,10 +198,7 @@ export function buildOpenApiScaffoldFiles(
     { path: [MANIFEST_PATH], content: json(manifest) },
     { path: ["package.json"], content: contentOf(plain, "package.json") },
     { path: ["src", "server.ts"], content: contentOf(plain, "src/server.ts") },
-    {
-      path: ["src", "operations.json"],
-      content: json({ hosts: model.hosts, operations: model.operations }),
-    },
+    { path: ["src", "operations.json"], content: operationsJson(model) },
     { path: ["src", "request.ts"], content: OPENAPI_REQUEST_TS },
     { path: ["src", "tools.ts"], content: OPENAPI_TOOLS_TS.replaceAll("__NAME__", name) },
     { path: ["src", "tools.test.ts"], content: OPENAPI_TOOLS_TEST_TS.replaceAll("__NAME__", name) },

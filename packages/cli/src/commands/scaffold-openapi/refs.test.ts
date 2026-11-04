@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  CHARS_PER_NODE,
   emptyObject,
   isObject,
   MAX_NESTING,
@@ -137,6 +138,32 @@ describe("resolveRefs", () => {
     expect(
       errorOf(() => resolveRefs({ a: { b: { c: {} } } }, {}, 0, undefined, budget)).message,
     ).toBe("the document expands to more than 10 schema nodes");
+  });
+
+  test("strings, other primitives and long keys are charged to the budget", () => {
+    const charge = (node: unknown): number => {
+      const budget = { used: 0, limit: 1_000_000 };
+      resolveRefs(node, {}, 0, undefined, budget);
+      return budget.used;
+    };
+    expect(CHARS_PER_NODE).toBe(64);
+    expect(charge("")).toBe(0);
+    expect(charge("a")).toBe(1);
+    expect(charge("a".repeat(64))).toBe(1);
+    expect(charge("a".repeat(65))).toBe(2);
+    expect(charge([1, true, null])).toBe(4);
+    // An object is 1; a key of up to 64 characters is free, then 1 more per 64.
+    expect(charge({ ["k".repeat(64)]: 1 })).toBe(2);
+    expect(charge({ ["k".repeat(129)]: 1 })).toBe(4);
+  });
+
+  test("a long string referenced many times exhausts the budget", () => {
+    const root = { big: "x".repeat(CHARS_PER_NODE * 1000) };
+    const refs = Array.from({ length: 20 }, () => ({ $ref: "#/big" }));
+    const budget = { used: 0, limit: 10_000 };
+    expect(errorOf(() => resolveRefs(refs, root, 0, undefined, budget)).message).toBe(
+      "the document expands to more than 10,000 schema nodes",
+    );
   });
 
   test("pointer segments are percent-decoded, then ~ unescaped (RFC 6901 fragment order)", () => {

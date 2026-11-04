@@ -334,6 +334,32 @@ describe("runScaffold", () => {
     }
   });
 
+  it("an operation table over 50 MiB exits 2 and writes nothing", async () => {
+    // 1 MiB referenced 55 times: under the node budget (16,384 nodes each), over the size cap.
+    const properties = Object.fromEntries(
+      Array.from({ length: 55 }, (_, i) => [`p${i}`, { $ref: "#/components/schemas/Big" }]),
+    );
+    const doc = {
+      openapi: "3.1.0",
+      servers: [{ url: "https://api.example.com" }],
+      paths: {
+        "/x": {
+          post: {
+            operationId: "x",
+            requestBody: { content: { "application/json": { schema: { properties } } } },
+          },
+        },
+      },
+      components: { schemas: { Big: { const: "x".repeat(1024 * 1024) } } },
+    };
+    writeFileSync(join(tmpDir, "big.json"), JSON.stringify(doc));
+    await expect(runScaffold(["extension", "big", "--from-openapi", "big.json"])).rejects.toThrow(
+      CliExit,
+    );
+    expect(out.stderr).toContain("the generated operation table would exceed 50 MiB");
+    expect(existsSync(join(tmpDir, "big"))).toBe(false);
+  });
+
   it("a directory that appears during the URL load is refused, never written into", async () => {
     const doc = readFileSync(join(FIXTURES, "petstore.json"), "utf8");
     const target = join(tmpDir, "pets");

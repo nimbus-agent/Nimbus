@@ -87,8 +87,11 @@ function lookupPointer(ref: string, root: Obj): unknown {
   return node;
 }
 
-function countNode(ctx: WalkContext): void {
-  ctx.budget.used += 1;
+/** Characters of a string that count as one node, so a `$ref`'d long string is not free. */
+export const CHARS_PER_NODE = 64;
+
+function countNode(ctx: WalkContext, nodes = 1): void {
+  ctx.budget.used += nodes;
   if (ctx.budget.used > ctx.budget.limit) {
     throw new OpenApiModelError(
       `the document expands to more than ${formatCount.format(ctx.budget.limit)} schema nodes`,
@@ -97,7 +100,12 @@ function countNode(ctx: WalkContext): void {
 }
 
 function walk(node: unknown, ctx: WalkContext, refDepth: number, nesting: number): unknown {
-  if (node === null || typeof node !== "object") return node;
+  if (node === null || typeof node !== "object") {
+    // Every value the walk returns lands in the output once per reference to it, so a long
+    // string referenced many times costs what it will cost to write.
+    countNode(ctx, typeof node === "string" ? Math.ceil(node.length / CHARS_PER_NODE) : 1);
+    return node;
+  }
   if (nesting > MAX_NESTING) {
     throw new OpenApiModelError(`the document nests more than ${MAX_NESTING} levels deep`);
   }
@@ -115,6 +123,8 @@ function walk(node: unknown, ctx: WalkContext, refDepth: number, nesting: number
   }
   const out = emptyObject();
   for (const key of Object.keys(node)) {
+    // A key's first CHARS_PER_NODE characters ride on its value's charge; the rest are counted.
+    countNode(ctx, Math.max(0, Math.ceil(key.length / CHARS_PER_NODE) - 1));
     out[key] = walk((node as Obj)[key], ctx, refDepth, nesting + 1);
   }
   return out;
