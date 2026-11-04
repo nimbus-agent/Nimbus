@@ -38,7 +38,7 @@ interface RequestModule {
   assertWithinBase(op: OperationDef, url: URL): void;
   checkedUrl(op: OperationDef, href: string): URL;
   TRUNCATED_MARKER: string;
-  TIMEOUT_MS: number;
+  REQUEST_TIMEOUT_MS: number;
 }
 
 const doc = JSON.parse(
@@ -175,7 +175,7 @@ describe("generated request.ts — URL and parameters", () => {
     const { init } = req.buildRequest(op("listpets"), {}, ENV);
     expect(init.redirect).toBe("manual");
     expect(init.signal).toBeInstanceOf(AbortSignal);
-    expect(req.TIMEOUT_MS).toBe(30_000);
+    expect(req.REQUEST_TIMEOUT_MS).toBe(30_000);
   });
 });
 

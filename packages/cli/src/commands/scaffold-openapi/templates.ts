@@ -50,7 +50,7 @@ export type Args = Record<string, unknown>;
 export type Env = Record<string, string | undefined>;
 
 export const TABLE = table as unknown as OperationTable;
-export const TIMEOUT_MS = 30_000;
+export const REQUEST_TIMEOUT_MS = 30_000;
 export const MAX_RESPONSE_CHARS = 65_536;
 export const TRUNCATED_MARKER = "\\n[truncated]";
 export const MAX_BODY_BYTES = 10 * 1024 * 1024;
@@ -268,7 +268,7 @@ export function buildRequest(
     method: op.method,
     headers,
     redirect: "manual",
-    signal: AbortSignal.timeout(TIMEOUT_MS),
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   };
   if (body !== undefined) init.body = body;
   return { url: url.href, init };
