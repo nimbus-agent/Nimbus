@@ -139,9 +139,38 @@ describe("runExtensionSponsor", () => {
     const h = harness();
     expect(await runExtensionSponsor(["acme/tool", "--registry", "main"], h.deps)).toBe(0);
     expect(h.calls).toEqual([
-      { method: "registry.info", params: { id: "acme/tool", registry: "main" } },
+      {
+        method: "registry.info",
+        params: { id: "acme/tool", registry: "main", liveness: false },
+      },
     ]);
     expect(h.out()).toContain("Funding links for acme/tool (from 2.0.0, stable):");
+  });
+
+  test.each([
+    ["blocked", { blockedBy: ["stmt-1"] }],
+    ["signature-disabled", { signature_disabled: true }],
+  ])("a %s extension prints the refusal note", async (_n, extra) => {
+    const h = harness({ local: { id: "acme/tool", version: "1", funding: [A], ...extra } });
+    expect(await runExtensionSponsor(["acme/tool"], h.deps)).toBe(0);
+    expect(h.out()).toContain(
+      "Note: Nimbus refuses to run acme/tool here (blocked or failed its signature check); check before you pay its author.\n",
+    );
+    expect(h.out().indexOf("Note:")).toBeLessThan(h.out().indexOf("to sponsor."));
+  });
+
+  test("a normal extension prints no note", async () => {
+    const h = harness({
+      local: {
+        id: "acme/tool",
+        version: "1",
+        funding: [A],
+        blockedBy: [],
+        signature_disabled: false,
+      },
+    });
+    await runExtensionSponsor(["acme/tool"], h.deps);
+    expect(h.out()).not.toContain("Note:");
   });
 
   test("the local form calls extension.info", async () => {

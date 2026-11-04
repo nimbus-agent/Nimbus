@@ -1458,7 +1458,8 @@ export function rpcTimeoutForExtensionSub(sub: string, rest: string[]): number |
   // Registry lookups fetch and verify every index; the 30s default is the fetch timeout itself.
   if (
     sub === "search" ||
-    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry")))
+    (sub === "info" && (hasFlag(rest, "--remote") || hasFlag(rest, "--registry"))) ||
+    (sub === "sponsor" && hasFlag(rest, "--registry"))
   ) {
     return INTERACTIVE_RPC_TIMEOUT_MS;
   }

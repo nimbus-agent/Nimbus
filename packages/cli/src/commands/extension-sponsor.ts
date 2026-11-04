@@ -33,6 +33,8 @@ interface FundingView {
   fundingInvalid: boolean;
   version?: string;
   channel?: string;
+  /** Local form only: Nimbus would refuse to run this extension. */
+  refused?: boolean;
 }
 
 /** The fields of an `extension.info` extension / `registry.info` reply this command reads. */
@@ -41,6 +43,8 @@ interface InfoFields {
   fundingInvalid?: unknown;
   version?: unknown;
   channel?: unknown;
+  blockedBy?: unknown;
+  signature_disabled?: unknown;
 }
 
 /** The value after a value-taking flag at `i`, or undefined when it is missing. */
@@ -86,11 +90,14 @@ async function loadView(client: IPCClient, p: Parsed): Promise<FundingView> {
       funding: e.funding,
       fundingInvalid: e.fundingInvalid === true,
       ...optional("version", e.version),
+      refused:
+        (Array.isArray(e.blockedBy) && e.blockedBy.length > 0) || e.signature_disabled === true,
     };
   }
   const r = await client.call<InfoFields & { evidenceFor?: InfoFields }>("registry.info", {
     id: p.id,
     registry: p.registry,
+    liveness: false,
   });
   const ev = r.evidenceFor ?? {};
   return {
@@ -176,9 +183,15 @@ export async function runExtensionSponsor(
   }
   const lines = fundingEntryLines(entries).join("\n");
   deps.log(`${heading(p.id, view, p.registry !== undefined)}\n${lines}\n`);
+  // Defence in depth: `keptEntries` already filtered, so this cannot fire today.
   if (!isFundingUrl(chosen.url)) {
     deps.err("The chosen funding link is not a valid https url.\n");
     return 1;
+  }
+  if (view.refused === true) {
+    deps.log(
+      `Note: Nimbus refuses to run ${id} here (blocked or failed its signature check); check before you pay its author.\n`,
+    );
   }
   return openChosen(chosen.url, deps);
 }

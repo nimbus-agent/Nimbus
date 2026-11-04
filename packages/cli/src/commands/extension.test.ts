@@ -2811,18 +2811,18 @@ describe("runExtensionSign", () => {
 
 describe("runExtensionSign author metadata", () => {
   const tmpRoot = mkdtempSync(join(tmpdir(), "nimbus-sign-meta-test-"));
-  test("a malformed license is refused before any write", async () => {
+  async function signRefused(field: Record<string, unknown>): Promise<{
+    code: number;
+    stderr: string;
+    original: string;
+    after: string;
+  }> {
     const { privkey } = generateEd25519Keypair();
-    const keyPath = join(tmpRoot, `sign-key-meta-${Date.now()}`);
+    const keyPath = join(tmpRoot, `sign-key-meta-${Math.random().toString(36).slice(2)}`);
     writeFileSync(keyPath, encodeBase64(privkey));
     const extDir = mkdtempSync(join(tmpRoot, "ext-sign-meta-"));
     const manifestPath = join(extDir, "nimbus.extension.json");
-    const original = JSON.stringify({
-      id: "t.ext",
-      version: "1.0.0",
-      name: "T",
-      license: "MIT OR",
-    });
+    const original = JSON.stringify({ id: "t.ext", version: "1.0.0", name: "T", ...field });
     writeFileSync(manifestPath, original);
     const errs: string[] = [];
     const real = process.stderr.write.bind(process.stderr);
@@ -2836,10 +2836,25 @@ describe("runExtensionSign author metadata", () => {
     } finally {
       process.stderr.write = real;
     }
-    expect(code).toBe(2);
-    expect(errs.join("")).toContain("manifest license is invalid: ");
-    expect(errs.join("")).toContain("; fix it before signing");
-    expect(readFileSync(manifestPath, "utf8")).toBe(original);
+    return { code, stderr: errs.join(""), original, after: readFileSync(manifestPath, "utf8") };
+  }
+
+  test("a malformed license is refused before any write", async () => {
+    const r = await signRefused({ license: "MIT OR" });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toBe(
+      "manifest license is invalid: license is not an SPDX license expression; fix it before signing\n",
+    );
+    expect(r.after).toBe(r.original);
+  });
+
+  test("a malformed funding field is refused before any write", async () => {
+    const r = await signRefused({ funding: "not-array" });
+    expect(r.code).toBe(2);
+    expect(r.stderr).toBe(
+      "manifest funding is invalid: funding must be an array; fix it before signing\n",
+    );
+    expect(r.after).toBe(r.original);
   });
 });
 
@@ -3485,6 +3500,13 @@ describe("extension update/downgrade owner prompt", () => {
     expect(handlers.has("consent.request")).toBe(true);
     expect(mock.calls[0]?.method).toBe("extension.update");
     expect(rpcTimeoutForExtensionSub("downgrade", ["ext-a"])).toBe(INTERACTIVE_RPC_TIMEOUT_MS);
+  });
+
+  test("sponsor gets the interactive budget only with --registry", () => {
+    expect(rpcTimeoutForExtensionSub("sponsor", ["a/b", "--registry", "main"])).toBe(
+      INTERACTIVE_RPC_TIMEOUT_MS,
+    );
+    expect(rpcTimeoutForExtensionSub("sponsor", ["a/b"])).toBeUndefined();
   });
 
   test("read-only subcommands keep the default timeout", () => {

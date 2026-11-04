@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionRow } from "../automation/extension-store.ts";
@@ -27,7 +27,6 @@ function rowFor(text: string | undefined, hashOf: string | undefined = text): Ex
   const dir = mkdtempSync(join(tmpdir(), "nimbus-author-meta-unit-"));
   dirs.push(dir);
   if (text !== undefined) writeFileSync(join(dir, EXTENSION_MANIFEST_FILENAME), text);
-  mkdirSync(dir, { recursive: true });
   return {
     id: "com.example.meta",
     version: "1.0.0",

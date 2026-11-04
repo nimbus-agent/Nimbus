@@ -41,9 +41,7 @@ describe("authorMetadataLines", () => {
       license: `MIT${ESC}[2J`,
       funding: [{ url: "https://x.org/y", label: `a${ESC}[2Jb` }],
     });
-    for (const l of lines) {
-      expect(l).not.toContain(ESC);
-    }
+    expect(lines).toEqual(["License: MIT[2J", "Funding:", "  1. a[2Jb https://x.org/y"]);
   });
 
   test("a funding list with no valid entry reads none", () => {
