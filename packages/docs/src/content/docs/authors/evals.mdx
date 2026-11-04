@@ -1,0 +1,71 @@
+---
+title: Evals
+description: Score an extension package offline with evals/*.eval.json suites, and record a golden suite from its own replies.
+---
+
+An eval suite is a file `evals/<name>.eval.json` in your package. Each case names
+one tool, a fixed input and an expectation. A registry that scores your version
+runs the same suites and signs the result into its index; clients then show
+`quality N/100` with the registry that measured it.
+
+## What an eval can and cannot do
+
+Evals run your server in the sandbox with **no network, no write access and no
+credentials** (invariant I49), whatever the manifest declares. A server that
+will not start without a credential is an eval error, so cases must work
+offline. Each case has a 30 second limit and the whole run 10 minutes. On
+Windows the sandbox helper is required and on Linux bubblewrap; without them the
+eval is refused, never run unconfined.
+
+## Run a suite
+
+```bash
+nimbus eval --package ./my_ext
+nimbus eval --package ./my_ext --suite evals/basic.eval.json --json
+```
+
+No Gateway, Vault or index is involved. The output ends with
+`score N/100 (passed of cases cases)`. The score is `floor(100 * passed / cases)`,
+so the same package always scores the same. The exit code is `0` whenever the
+eval ran, whatever the score.
+
+## Record a golden suite
+
+Write an inputs file by hand, a suite without `expect`:
+
+```json
+{ "format": 1, "name": "golden", "cases": [{ "name": "list", "tool": "notes_list", "input": {} }] }
+```
+
+```bash
+nimbus eval --package ./my_ext --record ./inputs.json
+```
+
+The server is started twice under the same sandbox, every call is made in both,
+and the replies become expectations: identical replies become `exact`,
+same-shape JSON replies become `json-match` with type markers for the values
+that changed, and anything else is skipped and named. The file is written to
+`evals/golden.eval.json` (change it with `--out`; `--force` replaces it). The
+suite holds reply text verbatim, so review it before committing it. It records
+what the package answered offline, not whether the service behind it still
+answers the same.
+
+## Evaluate what you installed
+
+```bash
+nimbus eval --extension acme/my_ext
+nimbus eval --installed
+```
+
+These run through the Gateway behind one owner approval at a terminal and grant
+the extension nothing; it still needs `nimbus extension approve` to run.
+`--installed` compares each local score with the one the extension's source
+registry signed for the same version. No live registry publishes scores yet, so
+today those rows read `no registry score`.
+
+## Reference
+
+- [`nimbus eval`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-eval---package-dir---suite-file---json--nimbus-eval---package-dir---record-inputsjson---out-file---force---json--nimbus-eval---extension-id---json--nimbus-eval---installed---threshold-n---json)
+- [Eval scores in registry hosting](https://github.com/nimbus-agent/Nimbus/blob/main/docs/registry-hosting.md#eval-scores)
+
+Next: [Sign and publish](/authors/sign-and-publish/).

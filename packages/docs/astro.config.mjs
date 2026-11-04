@@ -50,6 +50,18 @@ export default defineConfig({
           ],
         },
         {
+          label: "Authors",
+          items: [
+            { label: "Overview", link: "/authors/" },
+            { label: "Start", link: "/authors/start/" },
+            { label: "Build and test", link: "/authors/build-and-test/" },
+            { label: "Evals", link: "/authors/evals/" },
+            { label: "Sign and publish", link: "/authors/sign-and-publish/" },
+            { label: "Funding and license", link: "/authors/funding-and-license/" },
+            { label: "Verified publishers", link: "/authors/verified-publishers/" },
+          ],
+        },
+        {
           label: "Reference",
           items: [
             { label: "Run from source", link: "/getting-started/" },

@@ -1,0 +1,36 @@
+---
+title: Extension authors
+description: Build, test, sign and publish a Nimbus extension, from nimbus scaffold to a pull request on a registry.
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+An extension is a sandboxed MCP server that Nimbus installs from a folder or a
+registry. This section walks you from an empty directory to a published
+version. It is a path, not the full reference: each page ends with links to the
+exact sections of the [CLI reference](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md).
+
+Three things hold for every extension, and they shape the steps below:
+
+- **Installing does not run it.** The owner installs a package, then approves it
+  to run in a separate step (`nimbus extension approve`). Your code never runs
+  on a machine until its owner has approved those exact bytes.
+- **It runs sandboxed.** Only the network hosts and paths your manifest declares
+  are granted, and the owner sees them before approving.
+- **Every tool call asks the owner.** Calls to an extension's tools raise an
+  approval prompt each time.
+
+<CardGrid>
+  <LinkCard title="Start" description="Scaffold from a template or an OpenAPI document, or clone a published extension." href="/authors/start/" />
+  <LinkCard title="Build and test" description="Build the entry, install it from a folder, approve it and call its tools." href="/authors/build-and-test/" />
+  <LinkCard title="Evals" description="Write or record a suite and score your package offline." href="/authors/evals/" />
+  <LinkCard title="Sign and publish" description="Generate a key, sign, pack and open a pull request on a registry." href="/authors/sign-and-publish/" />
+  <LinkCard title="Funding and license" description="Declare how to support you and under what terms the code is offered." href="/authors/funding-and-license/" />
+  <LinkCard title="Verified publishers" description="What the badge means and how a publisher gets it." href="/authors/verified-publishers/" />
+</CardGrid>
+
+## Reference
+
+- [Extensions in the CLI reference](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#extensions)
+- [Extension author walkthrough](https://github.com/nimbus-agent/Nimbus/blob/main/docs/contributors/extension-author-walkthrough.md)
+- [Hosting an extension registry](https://github.com/nimbus-agent/Nimbus/blob/main/docs/registry-hosting.md)

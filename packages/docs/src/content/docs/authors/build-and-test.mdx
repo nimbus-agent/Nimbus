@@ -1,0 +1,77 @@
+---
+title: Build and test
+description: Build an extension, install it from a folder, approve it to run and call its tools on your own machine.
+---
+
+## Test the package
+
+Run the contract and unit tests from the package root:
+
+```bash
+bun run build
+nimbus test .
+```
+
+`nimbus test` validates the manifest against the `@nimbus-dev/sdk` contract and
+then runs the package's own `bun test`.
+
+## Install it from a folder
+
+With the Gateway running:
+
+```bash
+nimbus extension install ./my_ext
+```
+
+The Gateway shows you an `extension.install` approval (the id, version,
+publisher as the manifest claims it, declared permissions), then copies the
+package, records its hashes and a digest of every file, and enables it. **Install
+runs nothing.** After a change, bump `version` or reinstall so the recorded
+hashes match.
+
+## Approve it to run
+
+```bash
+nimbus extension approve acme/my_ext
+```
+
+This is a second, terminal-only approval for `extension.run`: it shows the exact
+tree digest, the `ext_` service id, the network hosts and the read and write
+paths. There is no `--yes`. Use `--network <a,b|none>` to grant only some of
+the hosts you declared, and `--model` to also offer the tools to the model in
+`nimbus ask` (each call still asks you). Approving again without `--model`
+turns model access off. The extension starts on first use, from a verified
+per-spawn copy of the package that is also its working directory, so write only
+to paths your manifest declares under `permissions.filesystem.write`.
+
+## Call its tools
+
+```bash
+nimbus connector tools ext_<id>
+nimbus connector call ext_<id> echo --input '{"text":"hi"}'
+```
+
+The service id is the one `approve` printed. Every call asks for the owner's
+approval (invariant I42); a delegate can never answer it.
+
+## See what it did
+
+```bash
+nimbus extension info acme/my_ext
+nimbus extension audit acme/my_ext
+```
+
+`info` shows the manifest, reach and signature state. `audit` shows the network
+use seen on this machine next to what the manifest declared; it is local
+observation only and notes its own gaps (short connections can be missed, file
+access is not observed).
+
+## Reference
+
+- [`nimbus extension install`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-install-path--id---registry-name---version-v---channel-beta---accept-publisher-key-fingerprint---publisher-key-path---yes)
+- [`nimbus extension approve`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-approve-id---model---network-abnone)
+- [`nimbus connector tools`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-connector-tools-mcp_id---json) and [`nimbus connector call`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-connector-call-mcp_id-tool---input-json---json)
+- [`nimbus extension info`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-info-id---deps---registry-name----remote---json) and [`nimbus extension audit`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-audit-id---json)
+- [Sandbox](https://github.com/nimbus-agent/Nimbus/blob/main/docs/sandbox.md)
+
+Next: [Evals](/authors/evals/).

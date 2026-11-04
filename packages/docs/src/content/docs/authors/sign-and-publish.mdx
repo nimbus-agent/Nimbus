@@ -1,0 +1,80 @@
+---
+title: Sign and publish
+description: Generate a signing key, sign your manifest, pack the package and open a publish pull request on an extension registry.
+---
+
+## Generate a key
+
+```bash
+nimbus extension keygen
+```
+
+This writes an Ed25519 private key to `~/.nimbus/publisher-key` (or
+`--out <path>`) and prints the public key. `--force` overwrites an existing key.
+Keep the private key; it is the only thing that can publish as you.
+
+## Sign
+
+```bash
+nimbus extension sign .
+```
+
+`sign` fills `publisher.key` with the public half of your key when
+`publisher.id` is set and no key is, then signs the manifest. It refuses to
+re-key a manifest that names a different key, and refuses a malformed
+`funding` or `license`. Re-sign after any change to the manifest, and bump
+`version` for each publish: a published `<id>@<version>` is never overwritten.
+
+## Pack (optional)
+
+```bash
+nimbus extension pack . --out ./package.tgz
+```
+
+Offline; the package is `nimbus.extension.json`, everything under `dist/` and
+`evals/`, and top-level `README*` and `LICENSE*`. `publish` packs for you; you
+need `pack` only for a registry that adds packages by hand.
+
+## Publish
+
+```bash
+nimbus extension publish . --registry-repo nimbus-agent/extensions
+```
+
+`publish` validates the package against the registry's own rules and its
+published state, then opens a pull request from a fork, with `gh` if it is
+signed in. Otherwise, or with `--no-pr`, it prints the branch and the commands
+to finish by hand. It needs no gateway or Vault. After the merge, a registry
+maintainer approves the registry's signing run, which signs your version into
+its index. `--channel stable|beta` picks the channel.
+
+A registry may require a namespaced id (`publisher/name`), and every segment
+must start with a letter or digit. A scaffolded id always qualifies.
+
+## Rotate or revoke a key
+
+```bash
+nimbus extension keygen --out ./publisher-key-2
+nimbus extension key rotate --from ~/.nimbus/publisher-key --to ./publisher-key-2 --publisher acme
+nimbus extension sign . --key ./publisher-key-2
+nimbus extension publish . --registry-repo nimbus-agent/extensions --statement ./<statement id>.json
+```
+
+A rotation is signed by the old key and goes in the same pull request as the
+first publish under the new key. Revocation is permanent: code signed by the
+revoked key stops running until its owner re-approves it. A revocation of your
+current key cannot ride a publish; `key revoke` tells you to send it as its own
+pull request.
+
+## The official registry
+
+Every Nimbus release carries one registry, `nimbus-official`, which users do
+not add. Its first extension is Readwise. How a new extension is accepted there
+is the registry maintainers' decision; this page does not promise a listing.
+
+## Reference
+
+- [`nimbus extension keygen`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-keygen---out-path---force), [`sign`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-sign-ext-dir---key-path), [`pack`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-pack-dir---out-file)
+- [`nimbus extension key rotate|revoke`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-key-rotaterevoke)
+- [`nimbus extension publish`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-publish-dir---registry-repo-ownerrepo---clone-path---channel-stablebeta---statement-file---no-pr)
+- [Hosting an extension registry](https://github.com/nimbus-agent/Nimbus/blob/main/docs/registry-hosting.md)

@@ -1,0 +1,67 @@
+---
+title: Start
+description: Scaffold a Nimbus extension from a template or an OpenAPI document, or clone a published one to modify.
+---
+
+There are three ways to start. Each writes a directory you can build, test and
+install; none installs or runs anything.
+
+## From the template
+
+```bash
+nimbus scaffold extension my_ext --publisher acme
+cd my_ext && bun install && bun test && bun run build
+```
+
+This creates `./my_ext/` (the command refuses if it exists) with a
+`nimbus.extension.json` (`id` `acme/my_ext`, `version` `0.1.0`, `entry`
+`dist/index.js`, empty permissions), an MCP server with one `echo` tool, its
+test and a README with the publish steps. Without `--publisher` the id is not
+namespaced, and the public registry requires a namespaced id. `bun run build`
+produces one self-contained `dist/index.js`; do not use `--compile`.
+
+## From an OpenAPI document
+
+If the service you wrap has an OpenAPI 3 document, generate the tools instead of
+writing them:
+
+```bash
+nimbus scaffold extension petstore --publisher acme --from-openapi ./openapi.yaml
+```
+
+You get one tool per operation, the hosts in `permissions.network`, the
+credentials the operations use, and a README listing what was skipped. Each tool
+is a row of `src/operations.json`; edit the table, not the code. Bounds worth
+knowing:
+
+- OpenAPI 3.0.x or 3.1.x, JSON or YAML, from a file or an `https` URL. Swagger
+  2.0 is refused.
+- More than 200 operations is refused unless you pass `--max-operations <n>`.
+- A URL is fetched by the CLI itself, not the Gateway: the fetch is not in the
+  egress ledger and the air-gap setting is not consulted.
+- No eval suite is generated, because evals run with no network. Record one once
+  your tools answer offline (see [Evals](/authors/evals/)).
+
+## Clone a published extension
+
+```bash
+nimbus extension clone acme/notion-tasks
+nimbus extension clone acme/notion-tasks --version 1.2.0 --into ./my-tasks --publisher me
+```
+
+Clone fetches the package through the same verified chain as a registry install
+and writes an editable copy. Nothing is installed and no approval is asked. A
+package carries built `dist/`, not source, so the copy is built JavaScript; when
+the package names a repository the output prints a `Source:` link. The copy has
+no `signature` and no `publisher`, plus a `CLONED_FROM.md` recording where it
+came from. With `--publisher <id>` the id becomes `<id>/<name>` and the original
+publisher's `funding` links are removed. Clone never refuses on a licence, but
+it warns when the licence is absent or not OSI-approved: check that it lets you
+modify and redistribute the code.
+
+## Reference
+
+- [`nimbus scaffold extension`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-scaffold-extension-name---publisher-id---from-openapi-pathurl---max-operations-n)
+- [`nimbus extension clone`](https://github.com/nimbus-agent/Nimbus/blob/main/docs/cli-reference.md#nimbus-extension-clone-id---registry-name---version-v---into-dir---publisher-id---json)
+
+Next: [Build and test](/authors/build-and-test/).
