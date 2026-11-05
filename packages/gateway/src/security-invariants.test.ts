@@ -1523,13 +1523,21 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       const darwin = stripComments(await read("packages/gateway/src/platform/sandbox/darwin.ts"));
       expect(darwin).toMatch(/\.map\(\(p\) => `\(allow file-write-data \(literal "\$\{p\}"\)\)`\)/);
       expect(darwin).toMatch(/writeFiles: writeFilesOf\(policy\)/);
-      expect(darwin).toMatch(/policy\.canonicalWriteFiles \?\? \[\]/);
+      // The declared kind comes from the shared `declaredWriteFiles` (both runners), which refuses
+      // a declared file missing from the final write list instead of falling back.
+      expect(darwin).toMatch(/return declaredWriteFiles\(policy\);/);
       expect(darwin).not.toMatch(/lstatSync|statSync/);
+      const canon = stripComments(
+        await read("packages/gateway/src/platform/sandbox/canonical-path.ts"),
+      );
+      expect(canon).toMatch(/export function declaredWriteFiles\(/);
+      expect(canon).toMatch(/policy\.canonicalWriteFiles \?\? \[\]/);
       const helper = await read("packages/gateway/src-native/sandbox-helper-win32/main.c");
       // The kind is DECLARED, never probed: win32-argv passes --grant-write-file for each
       // canonicalWriteFiles entry; the helper refuses one that is not a regular file and grants
       // it with NO_INHERITANCE.
       const argv = stripComments(await read("packages/gateway/src/platform/sandbox/win32-argv.ts"));
+      expect(argv).toMatch(/const files = declaredWriteFiles\(policy\);/);
       expect(argv).toMatch(/files\.has\(p\) \? "--grant-write-file" : "--grant-write"/);
       expect(helper).toMatch(/rc = require_regular_file\(o->write_files\[k\]\);/);
       expect(helper).toMatch(/grant_path\(o->write_files\[k\], sid,[\s\S]{0,120}NO_INHERITANCE\)/);
