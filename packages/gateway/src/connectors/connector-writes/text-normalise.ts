@@ -64,11 +64,17 @@ function isLineBreak(cp: number): boolean {
   return (cp >= 0x0a && cp <= 0x0d) || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
 }
 
+/** Printable ASCII (U+0020-U+007E) without `&` (U+0026): unchanged by one round. */
+const ROUND_FIXED_POINT = /^[\x20-\x25\x27-\x7e]*$/;
+
 /**
  * One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. With
  * `keepLines`, every line break becomes LF (a TAB a space); without it, TAB to CR are spaces.
  */
 function normaliseRound(s: string, invisible: string, keepLines: boolean): string {
+  // Fast path, same result: printable ASCII with no `&` is a fixed point of a round (NFKC leaves
+  // it unchanged, it holds no invisible, control or line character, and no entity can start).
+  if (ROUND_FIXED_POINT.test(s)) return s;
   let out = "";
   for (const ch of s.normalize("NFKC")) {
     const cp = ch.codePointAt(0) ?? 0;

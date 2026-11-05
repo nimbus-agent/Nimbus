@@ -48,6 +48,15 @@ describe("text-normalise (moved from model-write-refusals in B3r)", () => {
     expect(decodeEntitiesOnce("&constructor;")).toBe("&constructor;");
   });
 
+  test("settle: the printable-ASCII fast path stops exactly at `&`, C0 and DEL", () => {
+    expect(settle("Plain ASCII, no entity!", "")).toBe("plain ascii, no entity!");
+    expect(settle("a&amp;b", "")).toBe("a&b");
+    expect(settle(`a${String.fromCodePoint(0x01)}b`, "")).toBe("ab");
+    expect(settle(`a${String.fromCodePoint(0x7f)}b`, "")).toBe("ab");
+    expect(settle(`a${String.fromCodePoint(0x01)}b`, " ")).toBe("a b");
+    expect(settle(`a${TAB}b`, "", true)).toBe("a b");
+  });
+
   test("settle: the B1 loop (collapse, lower-case, keepLines, unsettled)", () => {
     expect(settle(`A${TAB}${TAB}B`, "")).toBe("a b");
     expect(settle(`a${ZWSP}b`, " ")).toBe("a b");

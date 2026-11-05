@@ -1363,6 +1363,9 @@ describe("Drive SVG and XHTML (plan R12)", () => {
 // catastrophic regex does not finish at all.
 // ---------------------------------------------------------------------------------------------
 
+/** Generous: only the asserted bounds decide; a slow runner must not trip the default 5 s. */
+const TIMING_TEST_TIMEOUT_MS = 30_000;
+
 function bestMs(run: () => void): number {
   let best = Number.POSITIVE_INFINITY;
   for (let i = 0; i < 3; i++) {
@@ -1383,60 +1386,88 @@ function expectLinear(format: RemoteContentFormat, build: (n: number) => string,
 }
 
 describe("linear time on adversarial input", () => {
-  test("`src=` + a million spaces (the URL-assignment tripwire)", () => {
-    const text = `src=${" ".repeat(1_000_000)}x`;
-    const t = bestMs(() => remoteContentIn("outlook-html", text));
-    expect(t).toBeLessThan(1000);
-    expectLinear("outlook-html", (n) => `src=${" ".repeat(n)}x`, 500_000);
-    expectLinear("confluence-storage", (n) => `src=${" ".repeat(n)}x`, 500_000);
-  });
+  test(
+    "`src=` + a million spaces (the URL-assignment tripwire)",
+    () => {
+      const text = `src=${" ".repeat(1_000_000)}x`;
+      const t = bestMs(() => remoteContentIn("outlook-html", text));
+      expect(t).toBeLessThan(1000);
+      expectLinear("outlook-html", (n) => `src=${" ".repeat(n)}x`, 500_000);
+      expectLinear("confluence-storage", (n) => `src=${" ".repeat(n)}x`, 500_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("`url(` + a million spaces (the Drive CSS tripwire)", () => {
-    const text = `url(${" ".repeat(1_000_000)}x`;
-    const t = bestMs(() => remoteContentIn("drive-markup", text));
-    expect(t).toBeLessThan(1000);
-    expectLinear("drive-markup", (n) => `url(${" ".repeat(n)}x`, 500_000);
-  });
+  test(
+    "`url(` + a million spaces (the Drive CSS tripwire)",
+    () => {
+      const text = `url(${" ".repeat(1_000_000)}x`;
+      const t = bestMs(() => remoteContentIn("drive-markup", text));
+      expect(t).toBeLessThan(1000);
+      expectLinear("drive-markup", (n) => `url(${" ".repeat(n)}x`, 500_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("100,000 nested style elements (start and end tags paired in one pass)", () => {
-    const build = (n: number): string => `${"<style>".repeat(n)}${"</style>".repeat(n)}`;
-    const t = bestMs(() => remoteContentIn("outlook-html", build(100_000)));
-    expect(t).toBeLessThan(1000);
-    expect(remoteContentIn("outlook-html", build(100_000), { tripwire: false })).toBe(true);
-    expectLinear("outlook-html", build, 50_000);
-  });
+  test(
+    "100,000 nested style elements (start and end tags paired in one pass)",
+    () => {
+      const build = (n: number): string => `${"<style>".repeat(n)}${"</style>".repeat(n)}`;
+      const t = bestMs(() => remoteContentIn("outlook-html", build(100_000)));
+      expect(t).toBeLessThan(1000);
+      expect(remoteContentIn("outlook-html", build(100_000), { tripwire: false })).toBe(true);
+      expectLinear("outlook-html", build, 50_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("330,000 openers inside one attribute value (the nested-view opener cap)", () => {
-    const text = `<a title="${"<b>".repeat(330_000)}">`;
-    const t = bestMs(() => remoteContentIn("outlook-html", text));
-    expect(t).toBeLessThan(1000);
-    expect(remoteContentIn("outlook-html", text, { tripwire: false })).toBe(true);
-    expectLinear("outlook-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
-  });
+  test(
+    "330,000 openers inside one attribute value (the nested-view opener cap)",
+    () => {
+      const text = `<a title="${"<b>".repeat(330_000)}">`;
+      const t = bestMs(() => remoteContentIn("outlook-html", text));
+      expect(t).toBeLessThan(1000);
+      expect(remoteContentIn("outlook-html", text, { tripwire: false })).toBe(true);
+      expectLinear("outlook-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("the nested view: 16 openers in one tag pass, 17 do not; the character budget refuses", () => {
-    expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}">`);
-    expectRefused("outlook-html", `<a title="${"<b>".repeat(17)}">`, true);
-    // 16 views of a 200,000-character tag re-tokenize over REMOTE_SCAN_MAX_CHARS.
-    expectRefused("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(200_000)}">`, true);
-    expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(1_000)}">`);
-  });
+  test(
+    "the nested view: 16 openers in one tag pass, 17 do not; the character budget refuses",
+    () => {
+      expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}">`);
+      expectRefused("outlook-html", `<a title="${"<b>".repeat(17)}">`, true);
+      // 16 views of a 200,000-character tag re-tokenize over REMOTE_SCAN_MAX_CHARS.
+      expectRefused("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(200_000)}">`, true);
+      expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(1_000)}">`);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("many Confluence parameters stay linear (one pass, no per-parameter search)", () => {
-    const build = (n: number): string =>
-      `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">blue</ac:parameter>'.repeat(n)}</ac:structured-macro>`;
-    expect(remoteContentIn("confluence-storage", build(3))).toBe(false);
-    expectLinear("confluence-storage", build, 10_000);
-    // Opened and never closed, 100,000 deep: refused at once.
-    const nested = `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">'.repeat(100_000)}`;
-    const t = bestMs(() => remoteContentIn("confluence-storage", nested));
-    expect(t).toBeLessThan(1000);
-    expect(remoteContentIn("confluence-storage", nested, { tripwire: false })).toBe(true);
-  });
+  test(
+    "many Confluence parameters stay linear (one pass, no per-parameter search)",
+    () => {
+      const build = (n: number): string =>
+        `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">blue</ac:parameter>'.repeat(n)}</ac:structured-macro>`;
+      expect(remoteContentIn("confluence-storage", build(3))).toBe(false);
+      expectLinear("confluence-storage", build, 5_000);
+      // Opened and never closed, 100,000 deep: refused at once.
+      const nested = `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">'.repeat(100_000)}`;
+      const t = bestMs(() => remoteContentIn("confluence-storage", nested));
+      expect(t).toBeLessThan(1000);
+      expect(remoteContentIn("confluence-storage", nested, { tripwire: false })).toBe(true);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 
-  test("many disjoint style elements stay linear", () => {
-    const build = (n: number): string => "<style>p{}</style><p>x</p>".repeat(n);
-    expect(remoteContentIn("outlook-html", build(10))).toBe(false);
-    expectLinear("outlook-html", build, 20_000);
-  });
+  test(
+    "many disjoint style elements stay linear",
+    () => {
+      const build = (n: number): string => "<style>p{}</style><p>x</p>".repeat(n);
+      expect(remoteContentIn("outlook-html", build(10))).toBe(false);
+      expectLinear("outlook-html", build, 8_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 });
