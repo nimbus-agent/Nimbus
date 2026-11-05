@@ -10,7 +10,8 @@
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
 // GitLab scoped labels; it covers issue titles, bodies and descriptions too) is the ONE function
 // both the model door and the MCP act door call; the KB refusal is model-door-only
-// (`modelWriteRefusal`).
+// (`modelWriteRefusal`), and the act door's Linear reassignment rule is act-door-only
+// (`actDoorRefusal`, which runs the messaging check first).
 //
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
@@ -49,6 +50,9 @@ const CHATOPS_POST_ROWS: Readonly<Record<string, { platform: Platform; key: stri
   teams_message_post: { platform: "teams", key: "channelId" },
   teams_message_post_chat: { platform: "teams", key: "chatId" },
 };
+
+/** The Linear update row: on the act door its `assigneeId` is refused (`actDoorRefusal`). */
+const LINEAR_ISSUE_UPDATE_ROW = "linear_issue_update";
 
 /** The Slack DM row: its destination is `user_ids`, never a channel (see `refusesSlackDm`). */
 const SLACK_DM_ROW = "slack_message_post_dm";
@@ -638,6 +642,25 @@ export function messagingDestinationRefusal(
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
   if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
   return refusesGitlabScopedLabel(toolId, input) ? GITLAB_SCOPED_LABEL_REFUSAL : undefined;
+}
+
+/**
+ * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`): the
+ * messaging check, then the Linear reassignment rule (OR-B2-3). The act door runs no before-read
+ * (B0b), so it cannot prove a Linear issue unassigned: a `linear_issue_update` proposal that sets
+ * `assigneeId` (anything but `undefined` or `null`) is refused, fail closed. The model door does
+ * NOT call this: there the `linear_issue_update` reader's guard decides from the current state.
+ */
+export function actDoorRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: { readonly chatops: ChatopsPolicy | undefined },
+): string | undefined {
+  const messaging = messagingDestinationRefusal(toolId, input, ctx);
+  if (messaging !== undefined) return messaging;
+  if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
+  const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
+  return assignee === undefined || assignee === null ? undefined : LINEAR_ASSIGNEE_REFUSAL;
 }
 
 /**

@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
+  actDoorRefusal,
+  LINEAR_ASSIGNEE_REFUSAL,
+  messagingDestinationRefusal,
+} from "../connectors/connector-writes/model-write-refusals.ts";
+import {
   buildConnectorWritePreviewFrom,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
@@ -721,5 +726,244 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     expect(
       await refusedCode(submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1" })),
     ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
+  });
+});
+
+// ---- B2: the issue writes on the act door (plan Task 4b, R8; OR-B2-2/3/4) --------------------
+
+/** The 12 proposable B2 types, with clean input. */
+const B2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
+  ["github.issue.create", { owner: "o", repo: "r", title: "Bug", body: "Steps" }],
+  ["github.issue.labels.add", { owner: "o", repo: "r", issueNumber: 42, labels: ["bug"] }],
+  ["github.issue.assignees.add", { owner: "o", repo: "r", issueNumber: 42, assignees: ["alice"] }],
+  ["github.issue.state.set", { owner: "o", repo: "r", issueNumber: 42, state: "closed" }],
+  ["gitlab.issue.create", { projectPath: "g/r", title: "Bug", labels: ["bug"] }],
+  ["gitlab.issue.labels.add", { projectPath: "g/r", issueIid: 7, labels: ["prio:high"] }],
+  ["gitlab.issue.assignees.add", { projectPath: "g/r", issueIid: 7, assigneeUsernames: ["bob"] }],
+  ["gitlab.issue.state.set", { projectPath: "g/r", issueIid: 7, stateEvent: "close" }],
+  ["jira.issue.create", { projectKey: "NIM", summary: "Bug" }],
+  ["jira.issue.update", { issueKey: "NIM-1", summary: "New" }],
+  ["linear.issue.create", { teamId: "t", title: "Bug", assigneeId: "user-1" }],
+  ["linear.issue.update", { issueId: "i", title: "New" }],
+];
+
+describe("B2 act door: every proposable issue write shows its typed preview, with no before", () => {
+  const PROV = {
+    captureId: "cap_b2",
+    clientLabel: "agent",
+    createdAt: 0,
+    expiresAt: 1,
+    summary: "why",
+  };
+
+  function wiring(dispatched: PlannedAction[]) {
+    const prompts: Array<{ prompt: string; details: Record<string, unknown> }> = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
+        prompts.push({ prompt: req.prompt, details: req.details ?? {} });
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const w: CaptureActWiring = {
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({});
+        },
+      },
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl: NO_POLICY_OVERLAY,
+    };
+    return { act: buildActDeps(w, coord, "c-cli"), prompts };
+  }
+
+  test("the B2 list is exactly the 12 proposable issue writes; the transition is withheld", () => {
+    expect(B2_PROPOSABLE).toHaveLength(12);
+    for (const [t] of B2_PROPOSABLE) {
+      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    }
+    expect(classifyActionType("jira.issue.transition", REAL_CLASSIFY)).toEqual({
+      kind: "denied",
+      class: "not_yet_offered",
+    });
+  });
+
+  for (const [type, input] of B2_PROPOSABLE) {
+    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+      const d: PlannedAction[] = [];
+      const { act, prompts } = wiring(d);
+      await act.execute(type, input, PROV);
+      const toolId = proposableWriteTool(type);
+      if (toolId === undefined) throw new Error(type);
+      const preview = buildConnectorWritePreviewFrom(
+        { type, payload: { mcpToolId: toolId, input } },
+        CONNECTOR_WRITE_ROWS,
+      );
+      if (preview === undefined) throw new Error(`no preview for ${type}`);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.prompt).toBe(
+        [
+          ...formatActionProvenanceLines(PROV),
+          "",
+          ...renderConnectorWritePreviewLines(preview),
+        ].join("\n"),
+      );
+      expect(prompts[0]?.details["kind"]).toBe("connector-write");
+      // Before-reads run on the model door only (B0b).
+      expect(prompts[0]?.details["before"]).toBeUndefined();
+      expect(prompts[0]?.prompt).not.toContain("Before:");
+      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+    });
+  }
+});
+
+describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)", () => {
+  const MCP = { clientId: "m", kind: "mcp" as const };
+  const OWNER = { clientId: "o", kind: "cli" as const };
+
+  function actCtx(
+    dispatched: PlannedAction[],
+    refusal: CaptureGateDeps["actionDestinationRefusal"] = createActionDestinationRefusal(() =>
+      boundPolicy([]),
+    ),
+  ): CaptureRpcCtx {
+    const gate: CaptureGateDeps = {
+      ...ctx.gate,
+      capability: () =>
+        resolveCaptureCapability(
+          {
+            ok: true,
+            config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+          },
+          { capabilitiesDisabled: new Set() },
+        ),
+      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      isServiceConfigured: () => Promise.resolve(true),
+      actionDestinationRefusal: refusal,
+    };
+    return {
+      gate,
+      act: {
+        dispatcher: {
+          dispatch: (a) => {
+            dispatched.push(a);
+            return Promise.resolve({});
+          },
+        },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+      },
+    };
+  }
+
+  async function submit(c: CaptureRpcCtx, actionType: string, input: Record<string, unknown>) {
+    return await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "action", payload: { actionType, input, summary: "why" } },
+      c,
+      MCP,
+    );
+  }
+
+  async function outcome(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return (e as RpcMethodError).rpcData;
+    }
+    return "queued";
+  }
+
+  const REFUSED: ReadonlyArray<[string, Record<string, unknown>]> = [
+    ["gitlab.issue.create", { projectPath: "g/r", title: "Bug", description: "fix\n/close" }],
+    ["gitlab.issue.create", { projectPath: "g/r", title: "Bug", labels: ["prio::high"] }],
+    ["github.issue.create", { owner: "o", repo: "r", title: "cc @org/team" }],
+    ["gitlab.issue.labels.add", { projectPath: "g/r", issueIid: 7, labels: ["prio::high"] }],
+    [
+      "gitlab.issue.labels.add",
+      {
+        projectPath: "g/r",
+        issueIid: 7,
+        labels: [`priority${String.fromCodePoint(0xff1a, 0xff1a)}low`],
+      },
+    ],
+    // The act door has no before-read: ANY assigneeId on a Linear update is refused.
+    ["linear.issue.update", { issueId: "i", assigneeId: "user-1" }],
+    ["linear.issue.update", { issueId: "i", title: "x", assigneeId: "" }],
+  ];
+
+  test("each is refused at submit with ERR_CAPTURE_ACTION_REFUSED; nothing is queued", async () => {
+    const c = actCtx([]);
+    for (const [type, input] of REFUSED) {
+      expect(await outcome(submit(c, type, input)), `${type} ${JSON.stringify(input)}`).toEqual({
+        code: "ERR_CAPTURE_ACTION_REFUSED",
+      });
+    }
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+  });
+
+  // One test each: the pending-action queue is bounded, and each test gets a fresh store.
+  for (const [type, input] of [
+    ...B2_PROPOSABLE,
+    ["linear.issue.update", { issueId: "i", assigneeId: null }] as [
+      string,
+      Record<string, unknown>,
+    ],
+  ]) {
+    test(`a clean ${type} ${JSON.stringify(input)} is queued`, async () => {
+      const c = actCtx([]);
+      expect(await outcome(submit(c, type, input))).toBe("queued");
+      expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+    });
+  }
+
+  test("the Jira transition is refused at submit as not proposable (OR-B2-4)", async () => {
+    expect(
+      await outcome(
+        submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1", transitionId: "31" }),
+      ),
+    ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
+  });
+
+  test("at accept: a Linear reassignment and a scoped label queued without the check are refused, nothing dispatched", async () => {
+    for (const [type, input] of [
+      ["linear.issue.update", { issueId: "i", assigneeId: "user-1" }],
+      ["gitlab.issue.labels.add", { projectPath: "g/r", issueIid: 7, labels: ["prio::high"] }],
+    ] as const) {
+      // Queued by a door that did not check (a row from before the rule): the accept re-checks.
+      const permissive = actCtx([], () => undefined);
+      const sub = await submit(permissive, type, input);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      const id = (sub.value as { id: string }).id;
+      const d: PlannedAction[] = [];
+      const strict = actCtx(d);
+      const consent = {
+        requestConsent: () => Promise.resolve(true),
+      } as unknown as ConsentCoordinator;
+      expect(
+        await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
+        type,
+      ).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
+      expect(strict.gate.store.get(id)?.state, type).toBe("proposed");
+      expect(d, type).toEqual([]);
+    }
+  });
+
+  test("actDoorRefusal equals messagingDestinationRefusal on every row but a Linear update that sets assigneeId", () => {
+    const NO_CHATOPS = { chatops: undefined };
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      for (const input of [{}, { assigneeId: "u" }, { title: "@all", labels: ["a::b"] }]) {
+        const expected =
+          r.toolId === "linear_issue_update" && "assigneeId" in input
+            ? LINEAR_ASSIGNEE_REFUSAL
+            : messagingDestinationRefusal(r.toolId, input, NO_CHATOPS);
+        expect(
+          actDoorRefusal(r.toolId, input, NO_CHATOPS),
+          `${r.toolId} ${JSON.stringify(input)}`,
+        ).toBe(expected);
+      }
+    }
   });
 });

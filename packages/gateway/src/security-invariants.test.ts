@@ -3403,7 +3403,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
   });
 
-  test("act door destination (OR1/OR2): both checks reach the injected dep, which assemble wires to messagingDestinationRefusal", async () => {
+  test("act door destination (OR1/OR2, OR-B2-2/3): both checks reach the injected dep, which assemble wires to actDoorRefusal (messaging first)", async () => {
     const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
     const req = gate.slice(gate.indexOf("function requireDestinationAllowed("));
     expect(req.slice(0, req.indexOf("\n}\n"))).toContain(
@@ -3422,12 +3422,21 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     }
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
     expect(rpc).toContain(
-      'import { messagingDestinationRefusal } from "../connectors/connector-writes/model-write-refusals.ts";',
+      'import { actDoorRefusal } from "../connectors/connector-writes/model-write-refusals.ts";',
     );
     const helper = rpc.slice(rpc.indexOf("export function createActionDestinationRefusal("));
     expect(helper.slice(0, helper.indexOf("\n}\n"))).toContain(
-      "return messagingDestinationRefusal(tool, input, { chatops });",
+      "return actDoorRefusal(tool, input, { chatops });",
     );
+    // ONE function on that path: it CALLS the messaging check first, then the Linear rule.
+    const refusals = stripComments(
+      await read("packages/gateway/src/connectors/connector-writes/model-write-refusals.ts"),
+    );
+    const actDoor = refusals.slice(refusals.indexOf("export function actDoorRefusal("));
+    const actBody = actDoor.slice(0, actDoor.indexOf("\n}\n"));
+    const first = actBody.indexOf("= messagingDestinationRefusal(toolId, input, ctx);");
+    expect(first).toBeGreaterThan(0);
+    expect(actBody.indexOf("LINEAR_ASSIGNEE_REFUSAL")).toBeGreaterThan(first);
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(
       /actionDestinationRefusal: createActionDestinationRefusal\(\(\) => policyGate\.enforced\(\)\)/,

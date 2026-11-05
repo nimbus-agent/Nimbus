@@ -1,5 +1,5 @@
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
-import { messagingDestinationRefusal } from "../connectors/connector-writes/model-write-refusals.ts";
+import { actDoorRefusal } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
   buildConnectorWritePreviewFrom,
   isPlainObject,
@@ -110,11 +110,12 @@ export function actConsentDisplay(
 }
 
 /**
- * The act door's destination refusal (owner rulings OR1/OR2), injected into the capture gate as
- * `actionDestinationRefusal` (built in `platform/assemble.ts`). It is the SAME
- * `messagingDestinationRefusal` the model door calls, run on the routing table's tool for the type,
- * so a proposed post to a channel ChatOps listens on, or text carrying a broadcast mention or a
- * GitLab quick action, is refused at submit and again at accept. The ChatOps bindings come from the
+ * The act door's destination refusal (owner rulings OR1/OR2, OR-B2-2, OR-B2-3), injected into the
+ * capture gate as `actionDestinationRefusal` (built in `platform/assemble.ts`). It is
+ * `actDoorRefusal`: the SAME `messagingDestinationRefusal` the model door calls, then the act
+ * door's Linear rule, run on the routing table's tool for the type, so a proposed post to a channel
+ * ChatOps listens on, text carrying a broadcast mention or a GitLab quick action, a GitLab scoped
+ * label, or a Linear update that sets `assigneeId` is refused at submit and again at accept. The ChatOps bindings come from the
  * LIVE enforced policy, read per call; a throw passes `undefined`, which refuses every Slack/Teams
  * post. The knowledge-base refusal stays model-door-only. A type with no routing row (a user-MCP
  * type) has no messaging destination here: `undefined`.
@@ -131,7 +132,7 @@ export function createActionDestinationRefusal(
     } catch {
       chatops = undefined;
     }
-    return messagingDestinationRefusal(tool, input, { chatops });
+    return actDoorRefusal(tool, input, { chatops });
   };
 }
 
