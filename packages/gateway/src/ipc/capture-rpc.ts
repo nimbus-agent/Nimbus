@@ -119,9 +119,11 @@ export function actConsentDisplay(
  * door's Linear rule, then the SAME KB-target check the model door calls, then the act door's
  * KB-child rule, run on the routing table's tool for the type, so a proposed post to a channel
  * ChatOps listens on, text carrying a broadcast mention or a GitLab quick action, a GitLab scoped
- * label, a Linear update that sets `assigneeId`, a page write to the tribal KB destination, or
- * (while a KB destination is configured for that service) a Notion/Confluence page update or
- * append is refused at submit and again at accept. Both accessors are read per call: the ChatOps
+ * label, (B4a) a calendar or Drive create with an optional field set to `null`, an Outlook or
+ * iCloud event time that does not show its zone, an iCloud event field or attendee with a line
+ * break or control character, a Linear update that sets `assigneeId`, a page write to the tribal
+ * KB destination, or (while a KB destination is configured for that service) a Notion/Confluence
+ * page update or append is refused at submit and again at accept. Both accessors are read per call: the ChatOps
  * bindings from the LIVE enforced policy (a throw passes `undefined`, which refuses every
  * Slack/Teams post) and the KB destinations (a throw refuses every KB-capable row, fail closed). A
  * type with no routing row (a user-MCP type) has no destination here: `undefined`.
