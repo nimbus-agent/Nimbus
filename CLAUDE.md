@@ -57,7 +57,7 @@ Each live invariant (I1–I53) has a production wiring site + an enforcement tes
 - **I12** — DPAPI passes `pOptionalEntropy` from `<configDir>/vault/.entropy` · `vault/win32.ts`
 - **I13** — HTTP writes via `WRITE_ROUTE_ALLOWLIST` + bearer auth · `ipc/http-server.ts`, `ipc/http-write-routes.ts`
 - **I14** — SQLite writes via `dbRun`/`dbExec`/`dbStmtRun` (static D12) · `db/write.ts`
-- **I15** — every lazy-mesh `ServerSpec` via `wrapServerSpec()` → sandbox (static D10); the Obsidian spawn alone may also WRITE, only inside the vaults found under `[[filesystem.roots]]` and only while the owner's Obsidian opt-in approved the append (`connectors/lazy-mesh/obsidian-write-grant.ts`; on Windows a fail-closed revoke from a persisted ledger before every spawn) · `connectors/lazy-mesh/*`
+- **I15** — every lazy-mesh `ServerSpec` via `wrapServerSpec()` → sandbox (static D10); beyond the filesystem MCP's `dataDir`, only the Obsidian spawn may also WRITE, only inside the vaults found under `[[filesystem.roots]]` and only while the owner's Obsidian opt-in approved the append (`connectors/lazy-mesh/obsidian-write-grant.ts`; on Windows a fail-closed revoke from a persisted ledger before every spawn) · `connectors/lazy-mesh/*`
 - **I16** — Ed25519 signature verify at install + every startup for `publisher` extensions · `extensions/{install-from-local,verify-extensions}.ts`
 - **I17** — federated answering only in `query-gate.ts` (grant+role+consent+namespace filter, leak-proof shape; static D13) · `federation/query-gate.ts`
 - **I18** — IdP token validation only in `identity/verifier.ts`; raw tokens Vault-only; federation consults `isOperatorValid()` (static D14) · `identity/verifier.ts`

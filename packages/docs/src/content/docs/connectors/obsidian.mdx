@@ -26,6 +26,7 @@ No credential. The Gateway discovers vaults by walking each `[[filesystem.roots]
 | `obsidian_get` | Read a single Obsidian note by id, or by `(vault, path)` pair. |
 | `obsidian_list` | List Obsidian notes (optionally filtered by vault id, vault path, or frontmatter tag). |
 | `obsidian_search` | Substring-match against note title and body across all configured vaults. |
+| `obsidian_daily_note_get` | Read the end (at most the last 16 KiB) of the daily note `obsidian_append_to_daily_note` would write for the same vault and date. Nimbus shows it in the approval prompt before an append. |
 
 ## Write tools (HITL-gated)
 
@@ -35,10 +36,13 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 |---|---|
 | `obsidian_append_to_daily_note` | Append text to today's daily note. Creates the file if it does not exist. **Always appends — never overwrites.** Adds a leading newline when the existing file does not end in one. |
 
+**The append needs your opt-in.** The connector runs in a sandbox that may only read your vaults. Run `nimbus connector writes enable obsidian` and approve it: the prompt names the folders the sandbox may then write, and only while that approval stands can an append (from the model, or an MCP client's proposal you accepted) reach the file. Each append still asks you first. `nimbus connector writes disable obsidian` withdraws it at once.
+
 ## Platform notes
 
 - **Local-only.** Vault roots come from `[[filesystem.roots]]` in `nimbus.toml`. Vaults are auto-discovered by walking each root for a `.obsidian/` marker.
-- All paths are validated by `assertWithinVault` against directory traversal — `..` segments and absolute paths outside the vault root are rejected.
+- All paths are validated by `assertWithinVault` against directory traversal — `..` segments and absolute paths outside the vault root are rejected — and, since connectors 0.5.0, by their real path, so a daily-notes folder that is or passes through a link out of the vault is refused.
+- **Links are not followed.** Indexing skips every symlink or junction below a configured root (a linked folder inside a vault included), and never reads a note through a link, so a note outside your roots is never indexed by way of one. A root that is itself a link is followed.
 - The sync also writes to the `obsidian_notes` table and the graph tables (`graph_entity` / `graph_relation`) so wikilink follows work in agent searches.
 
 ## See also

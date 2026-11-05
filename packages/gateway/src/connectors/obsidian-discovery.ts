@@ -127,9 +127,10 @@ function walkForNotes(currentDir: string, vaultRoot: string, out: string[]): voi
 
 // ---------------------------------------------------------------------------------------------
 // The write-grant walk (Phase 9.7 B4b). A SEPARATE walk from `discoverVaults` above, which feeds
-// the gateway's own Obsidian indexing (`obsidian-sync.ts`) and is left exactly as it was. This one
-// decides what the Obsidian connector's sandbox may WRITE (`lazy-mesh/obsidian-write-grant.ts`),
-// so every difference from it is narrower.
+// the gateway's own Obsidian indexing (`obsidian-sync.ts`). Both now skip every link below a
+// root (`lstat`); this one decides which vaults the Obsidian connector's sandbox write grant may
+// consider (`lazy-mesh/obsidian-write-grant.ts`) and is narrower still: a `.obsidian` DIRECTORY
+// that is not a link, and a depth and directory budget.
 // ---------------------------------------------------------------------------------------------
 
 /**
