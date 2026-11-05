@@ -733,7 +733,51 @@ function parameterAt(
   return { names, text };
 }
 
-/** R5 for one parameter: an external value, or a non-empty `jira` URL parameter. */
+/**
+ * The schemes that make an `ac:parameter` text a URL without a following `//` (coordinator
+ * ruling on B3r concern 6, 2026-11-05). Any other scheme counts only when `//` follows it.
+ */
+const PARAMETER_URL_SCHEMES: ReadonlySet<string> = new Set([
+  "javascript",
+  "data",
+  "vbscript",
+  "file",
+  "mailto",
+  "tel",
+  "blob",
+  "filesystem",
+  "about",
+  "ws",
+  "wss",
+  "ftp",
+  "http",
+  "https",
+]);
+const PARAMETER_SCHEME = /^([a-z][a-z0-9+.-]*):(\/\/)?/;
+
+/** One form of a parameter text: protocol-relative, a scheme + `//`, or a listed scheme. */
+function parameterFormIsUrl(form: string): boolean {
+  if (isSlash(form[0]) && isSlash(form[1])) return true;
+  const m = PARAMETER_SCHEME.exec(form);
+  if (m === null) return false;
+  return m[2] !== undefined || PARAMETER_URL_SCHEMES.has(m[1] ?? "");
+}
+
+/**
+ * R5 (narrowed by the coordinator ruling on B3r concern 6): an `ac:parameter` text is a URL only
+ * when it has a REAL URL scheme (a scheme followed by `//`, or one of
+ * {@link PARAMETER_URL_SCHEMES}) or is protocol-relative, in its RAW or SETTLED form (R2), or
+ * when its settled form keeps an unresolved character reference (R2(c)). So a panel title such as
+ * "Note: x" is allowed, while "JaVaScRiPt:x" and "//h" are refused. An unsettled text refuses.
+ */
+function parameterIsUrl(text: string): boolean {
+  if (parameterFormIsUrl(rawUrlForm(text))) return true;
+  const settled = settleUrl(text);
+  if (settled === undefined) return true;
+  return parameterFormIsUrl(settled) || UNRESOLVED_REFERENCE.test(settled);
+}
+
+/** R5 for one parameter: a URL value, or a non-empty `jira` URL parameter. */
 function refusesParameter(
   tokens: readonly MarkupToken[],
   open: StartToken,
@@ -742,7 +786,7 @@ function refusesParameter(
 ): boolean {
   const p = parameterAt(tokens, open, k);
   if (p === undefined) return true;
-  if (urlIsExternal(p.text, { allowCid: false })) return true;
+  if (parameterIsUrl(p.text)) return true;
   const inJira = walk.stack.at(-1)?.includes("jira") ?? false;
   return inJira && p.names.some((n) => JIRA_URL_PARAMETERS.has(n)) && rawUrlForm(p.text) !== "";
 }

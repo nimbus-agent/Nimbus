@@ -670,8 +670,48 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
       macro("excerpt-include", param("", `<ac:link><ri:page ri:content-title="X"/></ac:link>`)),
     );
     expectRefused("confluence-storage", param("x", "//h"), true);
-    // An external parameter value: every scheme counts, so "Note: x" is refused (stated over-refusal).
-    expectRefused("confluence-storage", macro("panel", param("title", "Note: x")), true);
+  });
+
+  // Coordinator ruling on B3r concern 6: a parameter text is a URL only with a REAL URL scheme
+  // (a scheme + `//`, or a listed scheme) or when protocol-relative.
+  test.each([
+    ["JaVaScRiPt:x"],
+    ["javascript:alert(1)"],
+    [`java${TAB}script:x`],
+    ["data:text/html,x"],
+    ["vbscript:x"],
+    ["file:///etc/passwd"],
+    ["mailto:a@h"],
+    ["tel:123"],
+    ["blob:x"],
+    ["filesystem:x"],
+    ["about:blank"],
+    ["ws:h"],
+    ["wss:h"],
+    ["ftp:h"],
+    ["http:h"],
+    ["HTTPS://h"],
+    ["//h"],
+    ["\\\\h"],
+    ["x-custom://h"],
+    ["&#104;ttps://h"],
+    [`https${FULLWIDTH_COLON}//h`],
+    ["&sol;&sol;h"],
+    ["&amp;amp;amp;amp;amp;"],
+  ])("a parameter that is a URL is refused: %p", (value) => {
+    expectRefused("confluence-storage", macro("panel", param("title", value)), true);
+  });
+
+  test.each([
+    ["Note: x"],
+    ["Warning: check the logs"],
+    ["Step 1: deploy"],
+    ["key:value"],
+    ["x-custom:no-slashes"],
+    ["a/b//c"],
+    ["/browse"],
+  ])("a parameter with a colon but no real URL scheme is allowed: %p", (value) => {
+    expectAllowed("confluence-storage", macro("panel", param("title", value)));
   });
 
   test("storage: input that does not tokenize is refused", () => {
