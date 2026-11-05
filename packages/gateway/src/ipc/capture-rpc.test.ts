@@ -15,6 +15,11 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import { row, textField, withPreview } from "../connectors/connector-writes/types.ts";
 import { classifyActionType, proposableWriteTool } from "../connectors/proposable-actions.ts";
+import {
+  REMOTE_CONTENT_ALLOWED_CASES,
+  REMOTE_CONTENT_REFUSED_CASES,
+  type RemoteContentDoorCase,
+} from "../connectors/testing/remote-content-fixtures.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
@@ -1035,10 +1040,7 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   ["google_drive.file.create", { name: "notes.md", parentId: "F1", content: "# Notes" }],
   // B4b (Task B6): the Obsidian daily-note append. Accepted, it still writes only while the
   // owner's Obsidian opt-in approved the append, because that approval is its sandbox grant.
-  [
-    "obsidian.note.append",
-    { vault_id: "Work", date_iso: "2026-11-05", content: "- standup done" },
-  ],
+  ["obsidian.note.append", { vault_id: "Work", date_iso: "2026-11-05", content: "- standup done" }],
 ];
 
 describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
@@ -1467,5 +1469,185 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.page.update"]);
+  });
+});
+
+// ---- B3r: remote content on the act door, at submit and at accept (plan Task 6) --------------
+
+describe("B3r act door: remote content is refused at submit and at accept", () => {
+  const MCP = { clientId: "m", kind: "mcp" as const };
+  const OWNER = { clientId: "o", kind: "cli" as const };
+  const REFUSED = { code: "ERR_CAPTURE_ACTION_REFUSED" };
+
+  function actCtx(
+    dispatched: PlannedAction[],
+    refusal: CaptureGateDeps["actionDestinationRefusal"] = createActionDestinationRefusal(
+      () => boundPolicy([]),
+      () => undefined,
+    ),
+  ): CaptureRpcCtx {
+    const gate: CaptureGateDeps = {
+      ...ctx.gate,
+      capability: () =>
+        resolveCaptureCapability(
+          {
+            ok: true,
+            config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+          },
+          { capabilitiesDisabled: new Set() },
+        ),
+      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      isServiceConfigured: () => Promise.resolve(true),
+      actionDestinationRefusal: refusal,
+    };
+    return {
+      gate,
+      act: {
+        dispatcher: {
+          dispatch: (a) => {
+            dispatched.push(a);
+            return Promise.resolve({});
+          },
+        },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+      },
+    };
+  }
+
+  /** The action type the act door proposes for a fixture's real row. */
+  function typeOf(c: RemoteContentDoorCase): string {
+    const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === c.toolId);
+    if (r === undefined) throw new Error(c.toolId);
+    return r.actionType;
+  }
+
+  async function submit(c: CaptureRpcCtx, k: RemoteContentDoorCase) {
+    return await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "action", payload: { actionType: typeOf(k), input: { ...k.input }, summary: "why" } },
+      c,
+      MCP,
+    );
+  }
+
+  async function outcome(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return (e as RpcMethodError).rpcData;
+    }
+    return "queued";
+  }
+
+  const submitAudits = (): number =>
+    (
+      db
+        .query("SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'capture.submit'")
+        .get() as { n: number }
+    ).n;
+
+  test("the nine scanned types are all proposable", () => {
+    const types = new Set(REMOTE_CONTENT_REFUSED_CASES.map(typeOf));
+    expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
+      "confluence.comment.add",
+      "confluence.page.append",
+      "confluence.page.create",
+      "confluence.page.update",
+      "google_drive.file.create",
+      "notion.block.append",
+      "notion.page.update",
+      "obsidian.note.append",
+      "outlook.draft.create",
+    ]);
+    for (const t of types)
+      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+  });
+
+  test("an ri:url image in a Confluence append: refused at submit, nothing queued, one audit row", async () => {
+    const c = actCtx([]);
+    const before = submitAudits();
+    const append: RemoteContentDoorCase = {
+      label: "ri:url",
+      toolId: "confluence_page_append",
+      input: {
+        pageId: "123",
+        storageHtml: '<ac:image><ri:url ri:value="https://h/x.png"/></ac:image>',
+      },
+    };
+    expect(await outcome(submit(c, append))).toEqual(REFUSED);
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+    expect(submitAudits()).toBe(before + 1);
+  });
+
+  test("every bypass form of both reviews is refused at submit; nothing is queued", async () => {
+    for (const k of REMOTE_CONTENT_REFUSED_CASES) {
+      // A fresh attempt limiter and refusal counter per proposal (the same store): this asserts
+      // the destination refusal, not the per-client refusal rate limit that would trip first.
+      const c = actCtx([]);
+      const fresh: CaptureRpcCtx = {
+        ...c,
+        gate: {
+          ...c.gate,
+          limiter: new CaptureAttemptLimiter(),
+          refusals: new CaptureRefusalCounter(),
+        },
+      };
+      expect(await outcome(submit(fresh, k)), k.label).toEqual(REFUSED);
+    }
+    expect(ctx.gate.store.countPendingActions(1_000)).toBe(0);
+  });
+
+  // One test each: the pending-action queue is bounded, and each test gets a fresh store.
+  for (const k of REMOTE_CONTENT_ALLOWED_CASES) {
+    test(`queued: ${k.label}`, async () => {
+      const c = actCtx([]);
+      expect(await outcome(submit(c, k))).toBe("queued");
+      expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+    });
+  }
+
+  /** One refused fixture of each scanned row (the last in the table): a proposal from before B3r. */
+  const ONE_PER_ROW: readonly RemoteContentDoorCase[] = [
+    ...new Map(REMOTE_CONTENT_REFUSED_CASES.map((k) => [k.toolId, k] as const)).values(),
+  ];
+
+  for (const k of ONE_PER_ROW) {
+    test(`at accept: ${k.label}, queued without the check, is refused; the row stays proposed, nothing dispatched`, async () => {
+      // Queued by a door that did not check (a row from before B3r): the accept re-checks.
+      const permissive = actCtx([], () => undefined);
+      const sub = await submit(permissive, k);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      const id = (sub.value as { id: string }).id;
+      const d: PlannedAction[] = [];
+      const strict = actCtx(d);
+      const consent = {
+        requestConsent: () => Promise.resolve(true),
+      } as unknown as ConsentCoordinator;
+      expect(
+        await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, consent)),
+      ).toEqual(REFUSED);
+      expect(strict.gate.store.get(id)?.state).toBe("proposed");
+      expect(d).toEqual([]);
+    });
+  }
+
+  test("at accept: a clean proposal goes through to the owner's prompt and one dispatch", async () => {
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const clean: RemoteContentDoorCase = {
+      label: "clean comment",
+      toolId: "confluence_comment_add",
+      input: { pageId: "123", storageHtml: '<p>see <a href="https://h">the doc</a></p>' },
+    };
+    const sub = await submit(c, clean);
+    if (sub.kind !== "hit") throw new Error("submit missed");
+    const id = (sub.value as { id: string }).id;
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+    expect(d.map((a) => a.type)).toEqual(["confluence.comment.add"]);
   });
 });
