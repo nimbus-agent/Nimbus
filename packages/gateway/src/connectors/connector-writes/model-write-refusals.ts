@@ -34,7 +34,7 @@
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
-import { FORMAT_INVISIBLE_RANGES } from "../../util/invisible-text.ts";
+import { foldAndStrip, settle } from "./text-normalise.ts";
 import type { TribalKbConfig } from "./types.ts";
 
 export const CHATOPS_CHANNEL_REFUSAL =
@@ -97,23 +97,6 @@ const CONFLUENCE_KB_KEYS: Readonly<Record<string, readonly string[]>> = {
 
 function ownLookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined;
-}
-
-/** A character that renders as nothing (`util/invisible-text.ts`) or a C0/C1 control. */
-function isInvisibleOrControl(cp: number): boolean {
-  return cp <= 0x1f || FORMAT_INVISIBLE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
-}
-
-/** `s` with every invisible or control character replaced by `replacement`. */
-function replaceInvisible(s: string, replacement: string): string {
-  let out = "";
-  for (const ch of s) out += isInvisibleOrControl(ch.codePointAt(0) ?? 0) ? replacement : ch;
-  return out;
-}
-
-/** NFKC (fullwidth forms fold to ASCII), then every invisible or control character deleted. */
-function foldAndStrip(s: string): string {
-  return replaceInvisible(s.normalize("NFKC"), "");
 }
 
 /**
@@ -288,7 +271,7 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 // OR1: broadcast mentions. A post or comment whose text would notify a whole channel, group or
 // team is refused. Matching runs on a NORMALISED copy (never on what is sent or shown):
 //
-//  1. In a loop until the text is stable (at most BROADCAST_MAX_ROUNDS rounds; still changing
+//  1. In a loop until the text is stable (at most NORMALISE_MAX_ROUNDS rounds; still changing
 //     after that is refused, fail closed): Unicode NFKC (fullwidth `@ ! < &` fold to ASCII), then
 //     every FORMAT_INVISIBLE_RANGES character and C0/C1 control removed, then ONE pass of HTML
 //     entity decoding (`&lt; &gt; &amp; &quot; &apos; &nbsp;`, decimal `&#NN;`, hex `&#xNN;`, the
@@ -344,73 +327,8 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 
 export type BroadcastService = "slack" | "teams" | "github" | "gitlab";
 
-/** The rounds of fold + strip + decode before the text must be stable. */
-const BROADCAST_MAX_ROUNDS = 4;
-
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-  lt: "<",
-  gt: ">",
-  amp: "&",
-  quot: '"',
-  apos: "'",
-  nbsp: String.fromCodePoint(0xa0),
-};
-
-const ENTITY = /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi;
-
-/** One pass of HTML entity decoding; an unknown name or an invalid code point is left as is. */
-function decodeEntitiesOnce(s: string): string {
-  return s.replace(ENTITY, (m: string, hex?: string, dec?: string, name?: string) => {
-    if (name !== undefined) return ownLookup(NAMED_ENTITIES, name.toLowerCase()) ?? m;
-    const cp = hex === undefined ? Number.parseInt(dec ?? "", 10) : Number.parseInt(hex, 16);
-    const valid = Number.isInteger(cp) && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff);
-    return valid ? String.fromCodePoint(cp) : m;
-  });
-}
-
-/** TAB, LF, VT, FF and CR: whitespace in both forms, never deleted. */
-function isLineSpace(cp: number): boolean {
-  return cp >= 0x09 && cp <= 0x0d;
-}
-
-/**
- * A line break for the line-preserving form: LF, CR, VT, FF, NEL, and the Unicode line and
- * paragraph separators (counted as breaks whether or not a platform splits on them: fail closed).
- */
-function isLineBreak(cp: number): boolean {
-  return (cp >= 0x0a && cp <= 0x0d) || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
-}
-
-/**
- * One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. With
- * `keepLines`, every line break becomes LF (a TAB a space); without it, TAB to CR are spaces.
- */
-function normaliseRound(s: string, invisible: string, keepLines: boolean): string {
-  let out = "";
-  for (const ch of s.normalize("NFKC")) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (keepLines && isLineBreak(cp)) out += "\n";
-    else if (isLineSpace(cp)) out += " ";
-    else out += isInvisibleOrControl(cp) ? invisible : ch;
-  }
-  return decodeEntitiesOnce(out);
-}
-
-/**
- * The stable, lower-cased form, or `undefined` when it does not settle (refused). Whitespace runs
- * collapse to one space, unless `keepLines`, which keeps one LF per line break.
- */
-function settle(text: string, invisible: string, keepLines = false): string | undefined {
-  let cur = text;
-  for (let i = 0; i < BROADCAST_MAX_ROUNDS; i++) {
-    const next = normaliseRound(cur, invisible, keepLines);
-    if (next === cur) {
-      return (keepLines ? cur : cur.replaceAll(/\s+/g, " ")).toLowerCase();
-    }
-    cur = next;
-  }
-  return undefined;
-}
+// The normalisation (`settle`, `foldAndStrip`, the entity decoder, NORMALISE_MAX_ROUNDS) lives in
+// `text-normalise.ts` since B3r; it is unchanged.
 
 // A plain-word mention ends where the name does: a name may contain `.` but never ends in one
 // (GitLab's own reference pattern), so `@all.` at the end of a sentence still means `@all`, while
@@ -436,6 +354,10 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
  * `tag` pattern is applied until the text stops changing and every pass is kept, so a tag split
  * by another tag is seen whole before a later pass removes it. Two tokenisations: innermost-first
  * (`<[^<>]*>`) and greedy (`<[^>]*>`, where `<x<y>` is one tag).
+ *
+ * The B3r remote-content detectors do NOT reuse this: a strip-and-match form is the shape of an
+ * incomplete sanitizer (a tag rebuilt by a strip passes it), so they read the tokens of the
+ * structural tokenizer (`markup-tokens.ts`) instead. Here it only ADDS matching forms.
  */
 const TAG_PATTERNS: readonly RegExp[] = [/<[^<>]*>/g, /<[^>]*>/g];
 
@@ -455,7 +377,8 @@ function tagStrippedForms(text: string): string[] {
 
 /**
  * OR1: whether `text`, posted to `service`, carries a broadcast mention (see the table above).
- * Pure; `true` also when the text does not settle within {@link BROADCAST_MAX_ROUNDS} rounds.
+ * Pure; `true` also when the text does not settle within `NORMALISE_MAX_ROUNDS` rounds
+ * (`text-normalise.ts`).
  */
 export function broadcastMentionIn(
   service: BroadcastService,
