@@ -1,8 +1,17 @@
-import { closeSync, fstatSync, openSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
+import { basename, dirname, join } from "node:path";
 import type { NimbusFilesystemRootToml } from "../config/filesystem-toml.ts";
 import type { ObsidianNoteWrite } from "../index/obsidian-notes-store.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
+import { isSameOrInside } from "../util/path-overlap.ts";
 
 import { discoverNotesInVault, discoverVaults } from "./obsidian-discovery.ts";
 import { parseNote, resolveWikilinks } from "./obsidian-parsing.ts";
@@ -102,15 +111,44 @@ function buildNoteWrite(
   };
 }
 
-function readNoteSource(abs: string): { source: string; mtimeMs: number } | null {
+/**
+ * Read one note, refusing anything that is or passes through a link (B4b review finding 2). Since
+ * the Obsidian connector's sandbox may WRITE inside a vault, a note can be swapped for a symlink
+ * (or, on Windows, a reparse point) between the walk's `lstat` and this read, and the index would
+ * then ingest a file outside the vault. So, in order:
+ *  1. `lstat` the note: a link or a non-file is refused;
+ *  2. the real path of its folder must still be inside the real path of the vault;
+ *  3. it is opened without following a final link (`O_NOFOLLOW`, off win32; Windows has no such
+ *     flag, and step 1 and 4 cover a reparse point there);
+ *  4. the opened file (`fstat`) must be the same file (`dev`, `ino`) as a fresh `lstat` of the
+ *     path, which must still not be a link.
+ * Any failure, or a mismatch, skips the note. Stated bound: a link swapped in after step 4 is not
+ * seen, but the open descriptor is already on the checked file.
+ */
+export function readNoteSource(
+  abs: string,
+  vaultRoot: string,
+  platform: NodeJS.Platform = process.platform,
+): { source: string; mtimeMs: number } | null {
   let fd: number | undefined;
   try {
-    fd = openSync(abs, "r");
-    const mtimeMs = fstatSync(fd).mtimeMs;
+    const before = lstatSync(abs);
+    if (before.isSymbolicLink() || !before.isFile()) return null;
+    const realVault = realpathSync.native(vaultRoot);
+    if (!isSameOrInside(platform, realpathSync.native(dirname(abs)), realVault)) return null;
+    fd =
+      platform === "win32"
+        ? openSync(abs, "r")
+        : openSync(abs, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+    const opened = fstatSync(fd);
+    const again = lstatSync(abs);
+    if (again.isSymbolicLink() || opened.dev !== again.dev || opened.ino !== again.ino) {
+      return null;
+    }
     const source = readFileSync(fd, "utf8");
-    return { source, mtimeMs };
+    return { source, mtimeMs: opened.mtimeMs };
   } catch {
-    // file disappeared / unreadable — skip to next entry
+    // file disappeared / unreadable / a link at open time (ELOOP) — skip to next entry
     return null;
   } finally {
     if (fd !== undefined) {
@@ -131,7 +169,7 @@ function parseNotesForVault(
 ): IndexedNote[] {
   const parsedNotes: IndexedNote[] = [];
   for (const rel of noteRelPaths) {
-    const read = readNoteSource(join(vaultRoot, rel));
+    const read = readNoteSource(join(vaultRoot, rel), vaultRoot);
     if (read === null) {
       continue;
     }
