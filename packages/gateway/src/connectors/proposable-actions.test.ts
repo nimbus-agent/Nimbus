@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { HITL_REQUIRED } from "../engine/executor.ts";
 import { serviceOf } from "../engine/service-of.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { meshServerForToolKey } from "./lazy-mesh/tool-map.ts";
 import {
   ACTION_PROPOSABILITY,
@@ -72,6 +73,38 @@ describe("ACTION_PROPOSABILITY", () => {
       expect(ACTION_PROPOSABILITY[t]?.kind, t).toBe("denied");
     }
   });
+});
+
+test("not_yet_offered is exactly the routable 0.4.0 writes, each a real connector-write row", () => {
+  const notYet = Object.entries(ACTION_PROPOSABILITY)
+    .filter(([, p]) => p.kind === "denied" && p.class === "not_yet_offered")
+    .map(([t]) => t)
+    .sort();
+  expect(notYet).toEqual(
+    [
+      "confluence.page.append",
+      "discord.message.post",
+      "github.issue.assignees.add",
+      "github.issue.comment.create",
+      "github.issue.labels.add",
+      "github.issue.state.set",
+      "gitlab.issue.assignees.add",
+      "gitlab.issue.create",
+      "gitlab.issue.labels.add",
+      "gitlab.issue.note.create",
+      "gitlab.issue.state.set",
+      "gitlab.mr.note.create",
+      "jira.issue.transition",
+      "outlook.draft.create",
+    ].sort(),
+  );
+  // Unlike `unroutable`, each resolves: a row names its tool on its own server.
+  const rowTypes = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.actionType));
+  expect(notYet.filter((t) => !rowTypes.has(t))).toEqual([]);
+  for (const t of notYet) {
+    expect(classifyActionType(t, OPEN), t).toEqual({ kind: "denied", class: "not_yet_offered" });
+    expect(proposableWriteTool(t), t).toBeUndefined();
+  }
 });
 
 test("share.publish stays denied as gateway_internal", () => {

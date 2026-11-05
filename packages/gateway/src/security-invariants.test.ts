@@ -3065,7 +3065,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(88);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(102);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -3600,7 +3600,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(88);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(102);
     expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 

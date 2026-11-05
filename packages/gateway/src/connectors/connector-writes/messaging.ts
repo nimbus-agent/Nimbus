@@ -6,4 +6,5 @@ export const MESSAGING_ROWS: readonly ConnectorWriteRow[] = [
   row("slack_message_post_dm", "slack.message.post", "mesh", 2),
   row("teams_message_post", "teams.message.post", "mesh", 2),
   row("teams_message_post_chat", "teams.message.postChat", "mesh", 2),
+  row("discord_message_post", "discord.message.post", "mesh", 2),
 ];

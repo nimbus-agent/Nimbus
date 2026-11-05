@@ -26,6 +26,14 @@ export type DeniedClass =
   | "tribal_kb"
   | "chatops_confined"
   | "unroutable"
+  /**
+   * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld until the Phase 9.7
+   * B PR that gives it a typed preview template lands. Unlike `unroutable`, a tool DOES resolve:
+   * the refusal is a review decision, not a routing fact, and moving a type out of this class into
+   * `PROPOSABLE_WRITE_TOOLS` is that later PR's job.
+   */
+  | "not_yet_offered"
   | "gateway_internal";
 
 export type Proposability =
@@ -208,6 +216,24 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "email.draft.send",
       "email.draft.create",
       "calendar.event.create",
+    ]),
+    // @nimbus-dev/connectors 0.4.0's Wave-2 writes: routable, but not offered to MCP clients until
+    // their B PR (B1–B4) adds the preview template.
+    ...denied("not_yet_offered", [
+      "github.issue.comment.create",
+      "github.issue.labels.add",
+      "github.issue.assignees.add",
+      "github.issue.state.set",
+      "gitlab.issue.create",
+      "gitlab.issue.note.create",
+      "gitlab.mr.note.create",
+      "gitlab.issue.labels.add",
+      "gitlab.issue.assignees.add",
+      "gitlab.issue.state.set",
+      "jira.issue.transition",
+      "outlook.draft.create",
+      "discord.message.post",
+      "confluence.page.append",
     ]),
     ...denied("gateway_internal", [
       "data.delete",
