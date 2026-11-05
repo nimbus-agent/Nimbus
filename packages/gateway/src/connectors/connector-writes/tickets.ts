@@ -62,8 +62,30 @@ export function selectLinearIssueIdentity(reply: unknown): readonly BeforeStateF
 }
 
 export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
-  row("jira_issue_create", "jira.issue.create", "mesh", 2),
-  row("jira_issue_update", "jira.issue.update", "mesh", 2),
+  // The connector sends the description as one plain-text ADF paragraph, and defaults the type to
+  // "Task" when none is given.
+  withPreview(row("jira_issue_create", "jira.issue.create", "mesh", 2), {
+    target: "{projectKey}",
+    summary: "Create a Jira issue in project {projectKey}",
+    fields: [
+      textField("summary", "Summary"),
+      textField("description", "Description (sent as plain text)", "(not set: no description)"),
+      textField("issueTypeName", "Type", "Task"),
+    ],
+  }),
+  // The connector sends only the keys given; a description replaces the whole description.
+  withPreview(row("jira_issue_update", "jira.issue.update", "mesh", 2), {
+    target: "{issueKey}",
+    summary: "Update Jira issue {issueKey}",
+    fields: [
+      textField("summary", "New summary", "(not set: unchanged)"),
+      textField(
+        "description",
+        "New description (replaces the whole description; sent as plain text)",
+        "(not set: unchanged)",
+      ),
+    ],
+  }),
   // The connector sends the body as one plain-text ADF paragraph (`plainToAdf`).
   withBefore(
     withPreview(row("jira_comment_add", "jira.comment.add", "mesh", 2), {
@@ -78,9 +100,47 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectJiraIssueIdentity,
     },
   ),
-  row("jira_issue_transition", "jira.issue.transition", "mesh", 2),
-  row("linear_issue_create", "linear.issue.create", "mesh", 2),
-  row("linear_issue_update", "linear.issue.update", "mesh", 2),
+  withPreview(row("jira_issue_transition", "jira.issue.transition", "mesh", 2), {
+    target: "{issueKey}",
+    summary:
+      "Move Jira issue {issueKey} through workflow transition {transitionId}; workflows can be one-way",
+    fields: [textField("transitionId", "Transition id")],
+  }),
+  withPreview(row("linear_issue_create", "linear.issue.create", "mesh", 2), {
+    target: "{teamId}",
+    summary: "Create a Linear issue in team {teamId}",
+    fields: [
+      textField("title", "Title"),
+      textField("description", "Description"),
+      textField("priority", "Priority (0 none, 1 urgent, 2 high, 3 medium, 4 low)"),
+      textField("stateId", "State id"),
+      textField("assigneeId", "Assignee (Linear user id; notifies that user)"),
+    ],
+  }),
+  // Linear has ONE assignee: `assigneeId` replaces it. The connector sends only the keys given.
+  withPreview(row("linear_issue_update", "linear.issue.update", "mesh", 2), {
+    target: "{issueId}",
+    summary: "Update Linear issue {issueId}",
+    fields: [
+      textField("title", "New title", "(not set: unchanged)"),
+      textField(
+        "description",
+        "New description (replaces the whole description)",
+        "(not set: unchanged)",
+      ),
+      textField("stateId", "New state id", "(not set: unchanged)"),
+      textField(
+        "priority",
+        "New priority (0 none, 1 urgent, 2 high, 3 medium, 4 low)",
+        "(not set: unchanged)",
+      ),
+      textField(
+        "assigneeId",
+        "New assignee (Linear user id; replaces the current assignee)",
+        "(not set: unchanged)",
+      ),
+    ],
+  }),
   withBefore(
     withPreview(row("linear_comment_create", "linear.comment.create", "mesh", 2), {
       target: "{issueId}",
@@ -94,7 +154,11 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectLinearIssueIdentity,
     },
   ),
-  row("github_issue_create", "github.issue.create", "mesh", 2),
+  withPreview(row("github_issue_create", "github.issue.create", "mesh", 2), {
+    target: "{owner}/{repo}",
+    summary: "Create a GitHub issue in {owner}/{repo}",
+    fields: [textField("title", "Title"), textField("body", "Body", "(not set: no body)")],
+  }),
   // GitHub treats a pull request as an issue: the same tool comments on a PR's conversation.
   withBefore(
     withPreview(row("github_issue_comment_create", "github.issue.comment.create", "mesh", 2), {
@@ -113,10 +177,40 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectGithubIssueIdentity,
     },
   ),
-  row("github_issue_labels_add", "github.issue.labels.add", "mesh", 2),
-  row("github_issue_assignees_add", "github.issue.assignees.add", "mesh", 2),
-  row("github_issue_state_set", "github.issue.state.set", "mesh", 2),
-  row("gitlab_issue_create", "gitlab.issue.create", "mesh", 2),
+  // The label and assignee writes only add (pinned by add-only.sync.test.ts).
+  withPreview(row("github_issue_labels_add", "github.issue.labels.add", "mesh", 2), {
+    target: "{owner}/{repo}#{issueNumber}",
+    summary:
+      "Add labels to GitHub issue or pull request {owner}/{repo}#{issueNumber} (adds only; removes none)",
+    fields: [
+      textField(
+        "labels",
+        "Labels to add (a label that does not exist is created in the repository)",
+      ),
+    ],
+  }),
+  withPreview(row("github_issue_assignees_add", "github.issue.assignees.add", "mesh", 2), {
+    target: "{owner}/{repo}#{issueNumber}",
+    summary:
+      "Add assignees to GitHub issue or pull request {owner}/{repo}#{issueNumber} (adds only; removes none)",
+    fields: [textField("assignees", "Assignees to add (GitHub usernames; each is notified)")],
+  }),
+  // Given a pull request number, this closes or reopens the pull request.
+  withPreview(row("github_issue_state_set", "github.issue.state.set", "mesh", 2), {
+    target: "{owner}/{repo}#{issueNumber}",
+    summary: "Set GitHub issue or pull request {owner}/{repo}#{issueNumber} to {state}",
+    fields: [textField("state", "New state")],
+  }),
+  withPreview(row("gitlab_issue_create", "gitlab.issue.create", "mesh", 2), {
+    target: "{projectPath}",
+    summary: "Create a GitLab issue in {projectPath}",
+    fields: [
+      textField("title", "Title"),
+      textField("description", "Description", "(not set: no description)"),
+      textField("labels", "Labels", "(not set: none)"),
+      textField("assigneeIds", "Assignees (GitLab user ids; each is notified)", "(not set: none)"),
+    ],
+  }),
   withBefore(
     withPreview(row("gitlab_issue_note_create", "gitlab.issue.note.create", "mesh", 2), {
       target: "{projectPath}#{issueIid}",
@@ -130,7 +224,21 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectGitlabIssueIdentity,
     },
   ),
-  row("gitlab_issue_labels_add", "gitlab.issue.labels.add", "mesh", 2),
-  row("gitlab_issue_assignees_add", "gitlab.issue.assignees.add", "mesh", 2),
-  row("gitlab_issue_state_set", "gitlab.issue.state.set", "mesh", 2),
+  withPreview(row("gitlab_issue_labels_add", "gitlab.issue.labels.add", "mesh", 2), {
+    target: "{projectPath}#{issueIid}",
+    summary: "Add labels to GitLab issue {projectPath}#{issueIid} (adds only; removes none)",
+    fields: [textField("labels", "Labels to add")],
+  }),
+  withPreview(row("gitlab_issue_assignees_add", "gitlab.issue.assignees.add", "mesh", 2), {
+    target: "{projectPath}#{issueIid}",
+    summary: "Add assignees to GitLab issue {projectPath}#{issueIid} (adds only; removes none)",
+    fields: [
+      textField("assigneeUsernames", "Assignees to add (GitLab usernames; each is notified)"),
+    ],
+  }),
+  withPreview(row("gitlab_issue_state_set", "gitlab.issue.state.set", "mesh", 2), {
+    target: "{projectPath}#{issueIid}",
+    summary: "Apply {stateEvent} to GitLab issue {projectPath}#{issueIid}",
+    fields: [textField("stateEvent", "State change")],
+  }),
 ];

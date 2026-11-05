@@ -208,6 +208,20 @@ const B1_OFFERED_0_4_0: readonly string[] = [
   "discord_message_post",
 ];
 
+/** The 0.4.0 writes B2 templates (issue writes). */
+const B2_OFFERED_0_4_0: readonly string[] = [
+  "github_issue_labels_add",
+  "github_issue_assignees_add",
+  "github_issue_state_set",
+  "gitlab_issue_create",
+  "gitlab_issue_labels_add",
+  "gitlab_issue_assignees_add",
+  "gitlab_issue_state_set",
+  "jira_issue_transition",
+];
+
+const OFFERED_0_4_0: readonly string[] = [...B1_OFFERED_0_4_0, ...B2_OFFERED_0_4_0];
+
 describe("connectors 0.4.0 writes (B-X)", () => {
   test("each is a wave-2 mesh row whose action type is its tool id dotted, in the frozen set", () => {
     expect(CONNECTORS_0_4_0_WRITES).toHaveLength(14);
@@ -228,8 +242,9 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     }
   });
 
-  test("the four B1 ones are offered to the model (typed preview, wave 2)", () => {
-    for (const id of B1_OFFERED_0_4_0) {
+  test("the four B1 and eight B2 ones are offered to the model (typed preview, wave 2)", () => {
+    expect(OFFERED_0_4_0).toHaveLength(12);
+    for (const id of OFFERED_0_4_0) {
       const r = connectorWriteRowByToolId(id);
       expect(r?.preview, id).toBeDefined();
       expect(r?.wave, id).toBe(2);
@@ -237,11 +252,11 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     }
   });
 
-  test("the other ten are not: no preview template, no before reader", () => {
+  test("the other two are not: no preview template, no before reader", () => {
     const rows = CONNECTOR_WRITE_ROWS.filter(
-      (r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId) && !B1_OFFERED_0_4_0.includes(r.toolId),
+      (r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId) && !OFFERED_0_4_0.includes(r.toolId),
     );
-    expect(rows).toHaveLength(10);
+    expect(rows.map((r) => r.toolId)).toEqual(["confluence_page_append", "outlook_draft_create"]);
     expect(rows.filter((r) => isModelOfferableRow(r)).map((r) => r.toolId)).toEqual([]);
     expect(rows.filter((r) => r.preview !== undefined || r.before !== undefined)).toEqual([]);
   });
