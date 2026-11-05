@@ -99,6 +99,13 @@ const driftWarned = new Set<string>();
 /** One "enabled but cannot be listed" warning per `<generation>:<service>`, process-wide. */
 const unlistedWarned = new Set<string>();
 
+/**
+ * One "not in its server's listing" warning per `<generation>:<service>:<toolId>`, process-wide
+ * (B3): an Outlook connection authorised without `Mail.ReadWrite` never lists
+ * `outlook_draft_create`, and that is a standing fact of the server, not news every turn.
+ */
+const missingToolWarned = new Set<string>();
+
 function warnUnlistedOnce(source: ConnectorWriteToolSource, service: string): void {
   let generation = -1;
   try {
@@ -333,10 +340,14 @@ function offerService(
     const key = mcpClientToolKey(service, row.toolId);
     const entry = Object.hasOwn(listing, key) ? listing[key] : undefined;
     if (!isPlainObject(entry)) {
-      source.warn(
-        { service, toolId: row.toolId, listedKey: key },
-        "connector write is not in its server's listing; not offered",
-      );
+      const warned = `${String(epoch)}:${service}:${row.toolId}`;
+      if (!missingToolWarned.has(warned)) {
+        missingToolWarned.add(warned);
+        source.warn(
+          { service, toolId: row.toolId, listedKey: key },
+          "connector write is not in its server's listing; not offered",
+        );
+      }
       continue;
     }
     const json = readListedJsonSchema(entry["inputSchema"]);

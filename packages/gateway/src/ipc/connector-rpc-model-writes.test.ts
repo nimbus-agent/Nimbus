@@ -508,4 +508,70 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
       "jira__jira_issue_update",
     ]);
   });
+
+  test("Notion: a B1 opt-in (the comment approved) has the three page writes awaiting approval (B3)", async () => {
+    setModelWriteEnablement(db, "notion", 2, 1, ["notion_comment_create"]);
+    expect(await statusOf("notion")).toMatchObject({ offerable: 1, awaitingApproval: 3 });
+    expect((await doorTools()).filter((n) => n.startsWith("notion__"))).toEqual([
+      "notion__notion_comment_create",
+    ]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "notion", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(seen).toHaveLength(1);
+    expect(statesOf(seen[0])).toEqual({
+      notion_page_create: "newly_offerable",
+      notion_page_update: "newly_offerable",
+      notion_block_append: "newly_offerable",
+      notion_comment_create: "already_approved",
+    });
+    expect(await statusOf("notion")).toMatchObject({ offerable: 4, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("notion__"))).toEqual([
+      "notion__notion_block_append",
+      "notion__notion_comment_create",
+      "notion__notion_page_create",
+      "notion__notion_page_update",
+    ]);
+  });
+
+  test("Confluence: a B1 opt-in (the comment approved) has the three page writes awaiting approval (B3)", async () => {
+    setModelWriteEnablement(db, "confluence", 2, 1, ["confluence_comment_add"]);
+    expect(await statusOf("confluence")).toMatchObject({ offerable: 1, awaitingApproval: 3 });
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "confluence", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(statesOf(seen[0])).toEqual({
+      confluence_page_create: "newly_offerable",
+      confluence_page_update: "newly_offerable",
+      confluence_comment_add: "already_approved",
+      confluence_page_append: "newly_offerable",
+    });
+    expect(await statusOf("confluence")).toMatchObject({ offerable: 4, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("confluence__"))).toEqual([
+      "confluence__confluence_comment_add",
+      "confluence__confluence_page_append",
+      "confluence__confluence_page_create",
+      "confluence__confluence_page_update",
+    ]);
+  });
+
+  test("Gmail, Outlook and Apple enabled before B3: the draft awaits approval, nothing is offered", async () => {
+    for (const service of ["gmail", "outlook", "apple"]) {
+      setModelWriteEnablement(db, service, 2, 1, []);
+      expect(await statusOf(service), service).toMatchObject({
+        offerable: 0,
+        awaitingApproval: 1,
+      });
+      expect(
+        (await doorTools()).filter((n) => n.startsWith(`${service}__`)),
+        service,
+      ).toEqual([]);
+    }
+  });
 });
