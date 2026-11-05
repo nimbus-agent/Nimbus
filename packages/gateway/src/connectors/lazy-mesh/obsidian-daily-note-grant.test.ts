@@ -108,14 +108,15 @@ describe("obsidianDailyNoteGrant: today's note, and nothing else", () => {
     vault(root, "A", { folder: ".obsidian/plugins/x" });
     vault(root, "B", { folder: ".git/hooks" });
     vault(root, "C", { folder: "Notes/.OBSIDIAN" });
+    vault(root, "D", { folder: ".Obsidian/plugins" });
+    vault(root, "E", { folder: "work/.GIT/hooks" });
     const g = obsidianDailyNoteGrant([root], deps(b));
     const reasons = g.skippedNotes.map((s) => s.reason);
-    expect(g.files).toEqual(
-      process.platform === "win32" ? [] : [join(root, "C", "Notes", ".OBSIDIAN", `${DAY}.md`)],
-    );
-    expect(reasons.filter((r) => r === "config-dir").length).toBe(
-      process.platform === "win32" ? 3 : 2,
-    );
+    // Any case, on every OS (APFS and NTFS are case-insensitive): nothing is granted.
+    expect(g.files).toEqual([]);
+    expect(reasons).toEqual(["config-dir", "config-dir", "config-dir", "config-dir", "config-dir"]);
+    expect(dailyNotePattern(join(root, "D"), "linux")).toMatchObject({ reason: "config-dir" });
+    expect(dailyNotePattern(join(root, "E"), "darwin")).toMatchObject({ reason: "config-dir" });
     expect(existsSync(join(root, "A", ".obsidian", "plugins"))).toBe(false);
   });
 

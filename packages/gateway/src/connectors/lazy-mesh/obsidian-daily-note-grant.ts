@@ -105,9 +105,13 @@ export function utcDay(d: Date): string {
 
 const CONFIG_DIRS = [".obsidian", ".git"];
 
-function isConfigDir(platform: NodeJS.Platform, segment: string): boolean {
-  const s = platform === "win32" ? segment.toLowerCase() : segment;
-  return CONFIG_DIRS.includes(s);
+/**
+ * `.obsidian` or `.git` in ANY case, on every OS: NTFS and APFS (macOS's default) are
+ * case-insensitive, so `.Obsidian` IS the config folder there, and on a case-sensitive Linux
+ * filesystem refusing a look-alike costs nothing (re-review finding 3).
+ */
+function isConfigDir(_platform: NodeJS.Platform, segment: string): boolean {
+  return CONFIG_DIRS.includes(segment.toLowerCase());
 }
 
 function errCode(err: unknown): unknown {
