@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793864706048,
+  "lastUpdate": 1793868514487,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0661ae5c2049ce5d54f2f3066efeb9f1bc8f7598",
-          "message": "chore: release main (#1222)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.6</summary>\n\n##\n[2.4.6](https://github.com/nimbus-agent/Nimbus/compare/v2.4.5...v2.4.6)\n(2026-08-16)\n\n\n### Bug Fixes\n\n* **docs:** derive four drifted invariant claims instead of\nhand-maintaining them\n([#1221](https://github.com/nimbus-agent/Nimbus/issues/1221))\n([6fc59e5](https://github.com/nimbus-agent/Nimbus/commit/6fc59e518c1f269701e57f4b5d5af7bb0b1166db))\n* **security:** wire the two I22/I18 defenses that were resolved but\nnever read ([#1220](https://github.com/nimbus-agent/Nimbus/issues/1220))\n([84d3e62](https://github.com/nimbus-agent/Nimbus/commit/84d3e6294a0cf537824410044b93dbe8325a4c13))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-16T10:26:34+03:00",
-          "tree_id": "0c7bb0d6ca710e2e19bbb018853302b7234aff06",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0661ae5c2049ce5d54f2f3066efeb9f1bc8f7598"
-        },
-        "date": 1786865888379,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.9236287999993,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.0586416500049,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 191.0087971499983,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "137e77c70f2c30bb705d5d06423fbf5ef4e45673",
+          "message": "feat(gateway): the model door shows a write's current state before you approve it (#1891)\n\nThis is Phase 9.7 Project B, B0b: a before-state reader for the model's\nconnector-write door (spec § 5.4). A write row may declare a `before`\nreader, which is one of its connector's read tools. When the model door\nis about to ask the owner to approve that write, it first reads the\ncurrent state and shows it next to the new values in the typed preview.\nNo row has a reader yet, so production behaviour does not change. B1–B4\nadd readers.\n\n## How it works\n\n- **Only the model door runs it.** `ToolExecutor` gains an optional\nrunner as constructor argument 8, and only `buildModelWriteExecutor`\npasses it. On every other executor the prompt is byte-identical to\nbefore: the ask executor, the plan path, ChatOps, the MCP sink and\nworkflows.\n- **When it runs.** The read happens after delegation falls back to the\nowner and before the preview is built. It is a `<service>.before.read`\naction through the same executor's `gate()` and then dispatch, so it\ngets its own audit row and its own egress row (I29).\n- **A read never raises a prompt.** This is enforced structurally: a\n`.before.read` type that would require HITL is refused inside `gate()`\nwithout calling consent, and the preview then shows `unavailable (policy\nrequires approval)`.\n- **The dispatcher guard.** A `.before.read` action may only resolve to\na tool on its own service that is read-only (`isReadOnlyToolId`) and is\nnot a write id. Otherwise it throws before the tool is called.\n- **Static rule D40.** It confines the `.before.read` spelling and the\nrunner's construction, and refuses an aliased import of the runner.\n- **The 5-second race.** The read races a 5 s timer. The timer is\ncleared in a `finally`, a late rejection is caught, and a late reply is\ndiscarded. The prompt never waits longer.\n- **Failures.** Any failure shows `unavailable (<fixed reason>)`: one of\ntimeout, failed, not configured, or policy requires approval. No error\ntext is shown.\n- **The reader's arguments.** `args` sees a frozen copy that holds only\nthe template's `argKeys`. A throw from `args` or `select` maps to\n`failed`.\n- **Where the reply goes.**\n- It is sanitised, capped at 20 fields with a `(N more fields not\nshown)` line, and its values are never cut.\n- It appears only in the owner's preview: a `Before:` block in the CLI\nand a text-only block on the desktop.\n- It never reaches the model, the write's audit row, the write's egress\nsummary or any log.\n- **Unlisted reader tool.** A Wave-4 row whose reader tool is missing\nfrom the server's listing is not offered. On a Wave < 4 row the read is\nskipped and shows `unavailable (failed)`.\n\n## Tests and red-proofs\n\nEach red-proof was a temporary mutation, reverted afterwards:\n- removing service containment fails the cross-service test;\n- removing the `gate()` refusal makes the HITL read raise a prompt;\n- dropping the timer clear fails its test;\n- giving the ask executor the runner fails the door-only test;\n- letting the reply reach the tool result fails its test;\n- each D40 clause, including the alias, fails its test.\n\nA security-invariants pin checks that no row has a reader and that the\n`beforeStateRows` test seam is named only in `run-ask.ts`.\n\nLocal results:\n- `preflight:fast` and `typecheck:tests` pass.\n- The gateway suites give 10,362 pass and 0 fail, and the focused re-run\nafter the last fixes gives 1,072 pass.\n- The desktop HITL tests give 99 of 99.\n\n## Docs\n\nThe five core docs: `CLAUDE.md` and `GEMINI.md` (D10–D40), the roadmap,\n`architecture.md`, `docs/README.md` and `cli-reference.md`. Also\n`SECURITY-INVARIANTS.md` (the I53 mechanism, bounds 17 and 18 including\nthe credential difference on `write`-transport rows, and an I29 note),\n`CHANGELOG.md` and two skills.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Connector-write approval previews can now include the target’s current\nstate for configured actions. Reads are limited to the same connector,\ncapped at 5 seconds, and shown as unavailable if they fail or require\nadditional approval. No shipped actions currently provide this preview.\n* **Documentation**\n* Updated product and security documentation to describe before-state\npreviews and the invariant checks covering them.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T08:40:24Z",
+          "tree_id": "54e2fbf9b57a53512c409474d398601d03401019",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/137e77c70f2c30bb705d5d06423fbf5ef4e45673"
+        },
+        "date": 1793868510118,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 228.17518769999606,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 228.2762197500022,
             "unit": "ms"
           }
         ]
