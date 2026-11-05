@@ -424,44 +424,156 @@ function matchingEnd(tokens: readonly MarkupToken[], k: number, set: ReadonlySet
   return -1;
 }
 
-/**
- * The CSS of the `<style>` element opened at `k`: its source text up to the matching end tag
- * (as an HTML parser reads it) and the concatenation of its text and CDATA tokens (as an XML
- * parser reads it). `undefined` when the element is never closed.
- */
-function styleElementCss(
-  tokens: readonly MarkupToken[],
-  text: string,
-  k: number,
-): readonly string[] | undefined {
-  const endIndex = matchingEnd(tokens, k, STYLE);
-  // `refusesCss` refuses an unclosed `<style>` before reading it; kept so this never reads past it.
-  if (endIndex === -1) return undefined;
-  const inside = tokens.slice(k, endIndex + 1);
-  const open = inside[0];
-  const close = inside.at(-1);
-  let xml = "";
-  for (const t of inside) if (t.kind === "text" || t.kind === "cdata") xml += t.text;
-  return [text.slice(open?.end, close?.start), xml];
-}
-
 function localIn(name: string, set: ReadonlySet<string>): boolean {
   return localForms(name).some((l) => set.has(l));
 }
 
-/** R4 step 5: CSS in `style` attributes and `<style>` elements, and unclosed raw-text elements. */
-function refusesCss(tokens: readonly MarkupToken[], text: string, rules: MarkupRules): boolean {
+/** ASCII-only lower-casing: an HTML parser compares tag names this way, with no Unicode folding. */
+function asciiLower(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    out += c >= 0x41 && c <= 0x5a ? String.fromCharCode(c + 0x20) : s.charAt(i);
+  }
+  return out;
+}
+
+function isAsciiLetterCode(c: number): boolean {
+  return (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a);
+}
+
+/** What may follow an HTML raw-text end tag's name: TAB, LF, FF, CR, SPACE, `/` or `>`. */
+function isHtmlEndDelimiter(c: number): boolean {
+  return (
+    c === 0x09 || c === 0x0a || c === 0x0c || c === 0x0d || c === 0x20 || c === 0x2f || c === 0x3e
+  );
+}
+
+/**
+ * Where an HTML parser ends each raw-text element: for every raw-text name, the ascending source
+ * offsets of each `</name` (ASCII case-insensitive, NO folding and NO local part) followed by a
+ * delimiter. So `</style` + VT + `>`, `</style` + U+200B + `>` and `</x:style>` end nothing. One
+ * forward pass over the text.
+ */
+function htmlRawTextClosers(text: string): ReadonlyMap<string, readonly number[]> {
+  const out = new Map<string, number[]>();
+  for (let at = text.indexOf("</"); at !== -1; at = text.indexOf("</", at + 2)) {
+    let j = at + 2;
+    while (j < text.length && isAsciiLetterCode(text.charCodeAt(j))) j++;
+    const name = asciiLower(text.slice(at + 2, j));
+    if (!RAW_TEXT_ELEMENTS.has(name) || !isHtmlEndDelimiter(text.charCodeAt(j))) continue;
+    const list = out.get(name) ?? [];
+    list.push(at);
+    out.set(name, list);
+  }
+  return out;
+}
+
+/** One raw-text element's extent in both parsers' views. */
+interface RawTextSpan {
+  /** The token index of the XML end tag (exact, ASCII lower-cased qualified name). */
+  readonly xmlEnd: number;
+  /** The source offset where HTML ends it, when HTML reads it as raw text. */
+  readonly htmlEnd: number | undefined;
+  /** The later of the two: the union span runs from the start tag's end to here. */
+  readonly unionEnd: number;
+}
+
+/**
+ * The extent of the raw-text element opened at `k`, or `undefined` (refused) when either view
+ * never closes it (Review fix 2) or another raw-text element starts inside it (nesting is never
+ * needed, and refusing it keeps the walk linear). `cursor` holds, per name, the first unused
+ * HTML closer: start tags are visited in source order and spans never overlap, so the whole
+ * walk is O(tokens + text).
+ */
+function rawTextSpan(
+  tokens: readonly MarkupToken[],
+  k: number,
+  open: StartToken,
+  closers: ReadonlyMap<string, readonly number[]>,
+  cursor: Map<string, number>,
+): RawTextSpan | undefined {
+  const qname = asciiLower(open.name);
+  let htmlEnd: number | undefined;
+  if (RAW_TEXT_ELEMENTS.has(qname)) {
+    const list = closers.get(qname) ?? [];
+    let c = cursor.get(qname) ?? 0;
+    while (c < list.length && (list[c] ?? 0) < open.end) c++;
+    cursor.set(qname, c);
+    htmlEnd = list[c];
+    if (htmlEnd === undefined) return undefined;
+  }
+  let xmlEnd = -1;
+  for (let j = k + 1; j < tokens.length && xmlEnd === -1; j++) {
+    const u = tokens[j];
+    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return undefined;
+    if (u?.kind === "end" && asciiLower(u.name) === qname) xmlEnd = j;
+  }
+  const close = tokens[xmlEnd];
+  if (close === undefined) return undefined;
+  const unionEnd = Math.max(close.start, htmlEnd ?? 0);
+  for (let j = xmlEnd + 1; j < tokens.length && (tokens[j]?.start ?? unionEnd) < unionEnd; j++) {
+    const u = tokens[j];
+    if (u?.kind === "start" && localIn(u.name, RAW_TEXT_ELEMENTS)) return undefined;
+  }
+  return { xmlEnd, htmlEnd, unionEnd };
+}
+
+/**
+ * The CSS of a `<style>` element, in every view: the UNION span's source, HTML's span (to the
+ * exact `</style`), XML's span (to its end tag), and XML's text (its text and CDATA tokens).
+ */
+function styleCssViews(
+  tokens: readonly MarkupToken[],
+  text: string,
+  k: number,
+  open: StartToken,
+  span: RawTextSpan,
+): readonly string[] {
+  let xmlText = "";
+  for (let j = k + 1; j < span.xmlEnd; j++) {
+    const t = tokens[j];
+    if (t?.kind === "text" || t?.kind === "cdata") xmlText += t.text;
+  }
+  const xmlClose = tokens[span.xmlEnd]?.start ?? span.unionEnd;
+  const views = [text.slice(open.end, span.unionEnd), text.slice(open.end, xmlClose), xmlText];
+  if (span.htmlEnd !== undefined) views.push(text.slice(open.end, span.htmlEnd));
+  return views;
+}
+
+/**
+ * R4 step 5, raw-text elements: each must close in both views, none may nest, and a `<style>`
+ * element's CSS (every view) must not load. One forward pass.
+ */
+function refusesRawText(tokens: readonly MarkupToken[], text: string, rules: MarkupRules): boolean {
+  const closers = htmlRawTextClosers(text);
+  const cursor = new Map<string, number>();
   const opts = { allowFragmentUrl: rules.allowFragmentUrl };
-  return tokens.some((t, k) => {
-    if (t.kind !== "start") return false;
-    if (refusesStyleAttribute(t, rules.allowFragmentUrl)) return true;
-    if (!localIn(t.name, RAW_TEXT_ELEMENTS)) return false;
-    const rawTextElement = new Set(localForms(t.name).filter((l) => RAW_TEXT_ELEMENTS.has(l)));
-    if (matchingEnd(tokens, k, rawTextElement) === -1) return true;
-    if (!localIn(t.name, STYLE)) return false;
-    const css = styleElementCss(tokens, text, k);
-    return css === undefined || css.some((c) => cssLoadsRemote(c, opts));
-  });
+  let k = 0;
+  while (k < tokens.length) {
+    const t = tokens[k];
+    if (t?.kind !== "start" || !localIn(t.name, RAW_TEXT_ELEMENTS)) {
+      k++;
+      continue;
+    }
+    const span = rawTextSpan(tokens, k, t, closers, cursor);
+    if (span === undefined) return true;
+    if (localIn(t.name, STYLE)) {
+      const views = styleCssViews(tokens, text, k, t, span);
+      if (views.some((css) => cssLoadsRemote(css, opts))) return true;
+    }
+    k = span.xmlEnd + 1;
+    while (k < tokens.length && (tokens[k]?.start ?? span.unionEnd) < span.unionEnd) k++;
+  }
+  return false;
+}
+
+/** R4 step 5: CSS in `style` attributes and in raw-text elements. */
+function refusesCss(tokens: readonly MarkupToken[], text: string, rules: MarkupRules): boolean {
+  if (tokens.some((t) => t.kind === "start" && refusesStyleAttribute(t, rules.allowFragmentUrl))) {
+    return true;
+  }
+  return refusesRawText(tokens, text, rules);
 }
 
 // ---------------------------------------------------------------------------------------------

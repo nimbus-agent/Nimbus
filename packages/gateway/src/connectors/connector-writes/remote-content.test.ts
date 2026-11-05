@@ -630,9 +630,48 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     expect(cssLoadsRemote("color:red\\")).toBe(false);
   });
 
-  test("a nested style element is matched to its own end tag", () => {
-    expectAllowed("outlook-html", "<style><style>p{}</style></style>");
-    expectRefused("outlook-html", "<style><style>p{}</style>p{background:url(x)}</style>", true);
+  test("a raw-text element nested in another is refused (never needed; keeps the walk linear)", () => {
+    expectRefused("outlook-html", "<style><style>p{}</style></style>", true);
+    expectRefused("outlook-html", "<title><style>p{}</style></title>", true);
+    expectAllowed("outlook-html", "<style>p{}</style>");
+    expectAllowed("outlook-html", "<style>p{}</style><style>q{}</style>");
+    expectAllowed("outlook-html", "<title>a</title><textarea>b</textarea>");
+  });
+
+  test("a fake </style> closer does not end the CSS scan (adversarial review)", () => {
+    const VTAB = String.fromCodePoint(0x0b);
+    const escapedUrl = String.raw`p{background:u\72l(//h)}`;
+    const escapedImport = String.raw`p{background:@\69mport "//h/x.css"}`;
+    for (const format of [
+      "outlook-html",
+      "confluence-storage",
+      "obsidian-markdown",
+      "drive-markup",
+    ] as const) {
+      // Unclosed in HTML's view: refused as an unclosed raw-text element.
+      expectRefused(format, `<style>p{}</style${VTAB}>${escapedUrl}`, true);
+      expectRefused(format, `<style>p{}</style${ZWSP}>${escapedUrl}`, true);
+      expectRefused(format, `<style>p{}</x:style>${escapedImport}`, true);
+      // Closed later: the CSS after the fake closer is scanned (the union span) and refused.
+      expectRefused(format, `<style>p{}</style${VTAB}>${escapedUrl}</style>`, true);
+      expectRefused(format, `<style>p{}</style${ZWSP}>${escapedUrl}</style>`, true);
+      expectRefused(format, `<style>p{}</x:style>${escapedImport}</style>`, true);
+      // HTML ends at a closer inside an attribute; XML reads on to its end tag.
+      expectRefused(format, `<style>p{}<a title="</style>">${escapedUrl}</style>`, true);
+      // CSS that only HTML's source view sees (XML reads an attribute value, not text).
+      expectRefused(format, `<style><a b=x}${escapedUrl}></a></style>`, true);
+      expectAllowed(format, "<style><a b=x}p{color:red}></a></style>");
+      // Twins: the same structure with inert CSS.
+      expectAllowed(format, `<style>p{}</style><p>${escapedUrl.slice(0, 2)}</p>`);
+    }
+    // A real closer, any ASCII case, with a delimiter.
+    expectAllowed("outlook-html", "<style>p{}</STYLE >x");
+    expectAllowed("outlook-html", "<style>p{}</style\n>x");
+  });
+
+  test("the CSS scan decodes CSS escapes before matching function names (structural path)", () => {
+    expectRefused("outlook-html", String.raw`<style>p{background:\75\72\6c(x)}</style>`, true);
+    expectRefused("outlook-html", String.raw`<p style="background:\75 rl(x)">`, true);
   });
 
   test("the nested view is bounded in depth", () => {
@@ -1164,5 +1203,19 @@ describe("linear time on adversarial input", () => {
     const t = bestMs(() => remoteContentIn("drive-markup", text));
     expect(t).toBeLessThan(1000);
     expectLinear("drive-markup", (n) => `url(${" ".repeat(n)}x`, 500_000);
+  });
+
+  test("100,000 nested style elements (start and end tags paired in one pass)", () => {
+    const build = (n: number): string => `${"<style>".repeat(n)}${"</style>".repeat(n)}`;
+    const t = bestMs(() => remoteContentIn("outlook-html", build(100_000)));
+    expect(t).toBeLessThan(1000);
+    expect(remoteContentIn("outlook-html", build(100_000), { tripwire: false })).toBe(true);
+    expectLinear("outlook-html", build, 50_000);
+  });
+
+  test("many disjoint style elements stay linear", () => {
+    const build = (n: number): string => "<style>p{}</style><p>x</p>".repeat(n);
+    expect(remoteContentIn("outlook-html", build(10))).toBe(false);
+    expectLinear("outlook-html", build, 20_000);
   });
 });
