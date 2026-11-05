@@ -399,7 +399,7 @@ describe("modelWriteRefusal = messagingDestinationRefusal, then the KB (OR1/OR2)
     ).toBe(CHATOPS_CHANNEL_REFUSAL);
   });
 
-  test("the KB refusal stays model-door-only: messagingDestinationRefusal never returns it", () => {
+  test("the KB refusal is not part of the messaging check: messagingDestinationRefusal never returns it", () => {
     const input = { pageId: NOTION_ID_CANONICAL, text: "x" };
     expect(modelWriteRefusal("notion_comment_create", input, { chatops: POLICY, kb: KB })).toBe(
       KNOWLEDGE_BASE_REFUSAL,
@@ -533,5 +533,124 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     expect(LINEAR_ASSIGNEE_REFUSAL).toBe(
       "the model can assign a Linear issue only while it is unassigned; ask the owner to reassign it",
     );
+  });
+});
+
+// ---- B3: the KB-target refusal on every page row (plan R5, Review Focus 1) --------------------
+
+const B3_KB: TribalKbConfig = {
+  notion: { databaseId: "0123abcd-0123-abcd-0123-abcd0123abcd" },
+  confluence: { spaceKey: "KB", parentPageId: "4242" },
+};
+const B3_NOTION_KB = "0123abcd0123abcd0123abcd0123abcd";
+const B3_NOTION_OTHER = "ffffffffffffffffffffffffffffffff";
+const NOTION_SPELLINGS: readonly unknown[] = [
+  B3_NOTION_KB,
+  "0123abcd-0123-abcd-0123-abcd0123abcd",
+  B3_NOTION_KB.toUpperCase(),
+  `https://www.notion.so/Team-KB-${B3_NOTION_KB}`,
+  42,
+];
+const CONFLUENCE_SPELLINGS: readonly unknown[] = [
+  "4242",
+  " 4242 ",
+  "04242",
+  4242,
+  "https://acme.atlassian.net/wiki/spaces/KB/pages/4242",
+];
+
+/** The B3 page rows, the key that names their target, and a clean rest of the input. */
+const B3_PAGE_ROWS: ReadonlyArray<readonly [string, string, Record<string, unknown>]> = [
+  ["notion_page_create", "parentPageId", { title: "t" }],
+  ["notion_page_update", "pageId", { propertiesJson: "{}" }],
+  ["notion_block_append", "parentBlockId", { childrenJson: "[]" }],
+  ["confluence_page_create", "parentPageId", { spaceKey: "ENG", title: "t", storageHtml: "x" }],
+  ["confluence_page_update", "pageId", { versionNumber: 1, title: "t", storageHtml: "x" }],
+  ["confluence_page_append", "pageId", { storageHtml: "x" }],
+];
+
+const B3_DRAFT_ROWS: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+  ["gmail_draft_create", { to: "a@x.com", subject: "s", body: "@all <!channel>" }],
+  ["apple_mail_draft_create", { to: "a@x.com", subject: "s", body: "@here" }],
+  [
+    "outlook_draft_create",
+    { to: "a@x.com", subject: "s", body: "<at>x</at>", contentType: "html" },
+  ],
+];
+
+describe("B3: the KB-target refusal covers every page row (plan R5)", () => {
+  const refusal = (toolId: string, input: Record<string, unknown>, cfg = B3_KB) =>
+    modelWriteRefusal(toolId, input, { chatops: NONE, kb: cfg });
+
+  test("every page row naming the KB destination, in every spelling, is refused", () => {
+    for (const [toolId, key, rest] of B3_PAGE_ROWS) {
+      const spellings = toolId.startsWith("notion") ? NOTION_SPELLINGS : CONFLUENCE_SPELLINGS;
+      for (const v of spellings) {
+        expect(refusal(toolId, { ...rest, [key]: v }), `${toolId} ${String(v)}`).toBe(
+          KNOWLEDGE_BASE_REFUSAL,
+        );
+      }
+    }
+  });
+
+  test("another canonical id is allowed; no KB configured refuses nothing", () => {
+    for (const [toolId, key, rest] of B3_PAGE_ROWS) {
+      const other = toolId.startsWith("notion") ? B3_NOTION_OTHER : "12345";
+      expect(refusal(toolId, { ...rest, [key]: other }), toolId).toBeUndefined();
+      const kbValue = toolId.startsWith("notion") ? B3_NOTION_KB : "4242";
+      expect(
+        modelWriteRefusal(toolId, { ...rest, [key]: kbValue }, { chatops: NONE, kb: undefined }),
+        toolId,
+      ).toBeUndefined();
+      expect(refusal(toolId, { ...rest, [key]: kbValue }, {}), toolId).toBeUndefined();
+    }
+  });
+
+  test("stated bound: a Confluence create in the KB space with no parent is not refused", () => {
+    expect(
+      refusal("confluence_page_create", { spaceKey: "KB", title: "t", storageHtml: "x" }),
+    ).toBeUndefined();
+  });
+
+  test("every page row is KB-capable; no draft row is", () => {
+    for (const [toolId] of B3_PAGE_ROWS)
+      expect(isKnowledgeBaseCapableRow(toolId), toolId).toBe(true);
+    for (const [toolId] of B3_DRAFT_ROWS) {
+      expect(isKnowledgeBaseCapableRow(toolId), toolId).toBe(false);
+    }
+  });
+
+  test("the messaging check refuses none of the nine, clean, KB-targeted or with mentions (R6)", () => {
+    const mentions = [
+      "@all @here <p>@channel</p>",
+      '<ac:link><ri:user ri:account-id="5b10ac8d82e05b22cc7d4ef5"/></ac:link>',
+      JSON.stringify([
+        {
+          type: "paragraph",
+          paragraph: {
+            rich_text: [{ type: "mention", mention: { type: "user", user: { id: "u" } } }],
+          },
+        },
+      ]),
+    ];
+    for (const [toolId, key, rest] of B3_PAGE_ROWS) {
+      const kbValue = toolId.startsWith("notion") ? B3_NOTION_KB : "4242";
+      const bodyKey = Object.keys(rest).find((k) => k !== "spaceKey" && k !== "title") ?? "title";
+      for (const input of [
+        { ...rest, [key]: "12345" },
+        { ...rest, [key]: kbValue },
+        ...mentions.map((m) => ({ ...rest, [key]: "12345", [bodyKey]: m })),
+      ]) {
+        expect(
+          messagingDestinationRefusal(toolId, input, { chatops: NONE }),
+          `${toolId} ${JSON.stringify(input)}`,
+        ).toBeUndefined();
+        expect(scannedTextKeys(toolId), toolId).toEqual([]);
+      }
+    }
+    for (const [toolId, input] of B3_DRAFT_ROWS) {
+      expect(messagingDestinationRefusal(toolId, input, { chatops: NONE }), toolId).toBeUndefined();
+      expect(refusal(toolId, input), toolId).toBeUndefined();
+    }
   });
 });

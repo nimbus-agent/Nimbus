@@ -442,6 +442,32 @@ describe("the real messaging rows through the real door (plan Task 3)", () => {
     ).toEqual({ sent: true });
     expect(door.executed).toHaveLength(1);
   });
+
+  test("B3: a page write to the KB destination is refused before anything is executed", async () => {
+    const kbCfg: TribalKbConfig = {
+      notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
+      confluence: { spaceKey: "KB", parentPageId: "4242" },
+    };
+    const door = await realDoor(() => BOUND, kbCfg);
+    const kbRefused = { refused: KNOWLEDGE_BASE_REFUSAL };
+    expect(
+      await door.call("confluence__confluence_page_append", { pageId: "4242", storageHtml: "x" }),
+    ).toEqual(kbRefused);
+    expect(
+      await door.call("notion__notion_block_append", {
+        parentBlockId: "https://www.notion.so/Team-KB-0123abcd0123abcd0123abcd0123abcd",
+        childrenJson: "[]",
+      }),
+    ).toEqual(kbRefused);
+    expect(door.executed).toEqual([]);
+    expect(
+      await door.call("notion__notion_page_update", {
+        pageId: "ffffffffffffffffffffffffffffffff",
+        propertiesJson: "{}",
+      }),
+    ).toEqual({ sent: true });
+    expect(door.executed).toHaveLength(1);
+  });
 });
 
 describe("the broadcast-mention refusal on the real rows through the real door (OR1)", () => {

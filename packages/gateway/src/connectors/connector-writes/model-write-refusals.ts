@@ -9,9 +9,26 @@
 //
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
 // GitLab scoped labels; it covers issue titles, bodies and descriptions too) is the ONE function
-// both the model door and the MCP act door call; the KB refusal is model-door-only
-// (`modelWriteRefusal`), and the act door's Linear reassignment rule is act-door-only
+// both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
+// one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
+// covers every page row: Notion page create, update, block append and comment; Confluence page
+// create, update, append and comment. The act door's Linear reassignment rule is act-door-only
 // (`actDoorRefusal`, which runs the messaging check first).
+//
+// KB-target bounds (stated): a Confluence create in the KB space with no parent is not refused
+// (the parent alone decides); a comment on, or a Notion page created under, a page INSIDE the KB is
+// not refused by this rule (owner ruling OR-B3-3 names updates and appends only, which the KB-child
+// guard covers; a grandchild only where that guard says so).
+//
+// Mentions in page bodies (B3, plan R6): NOT scanned, so `BROADCAST_SCANNED` names no Notion or
+// Confluence row. Neither API has a whole-channel mention form as these connectors call them:
+// Notion rich-text mentions name one user, page, database, date, link preview or template
+// (https://developers.notion.com/reference/rich-text, the mention object; a `people` property
+// names users), and a Confluence storage mention is `<ac:link><ri:user .../></ac:link>`, one user
+// each (https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html). Each named
+// user is notified and is visible verbatim in the preview. Plain `@all` / `@here` text in a page is
+// inert. Also stated: a Confluence create or update notifies the page's and space's watchers as
+// any edit does (the connector sends no `minorEdit`), and Notion notifies a page's followers.
 //
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
@@ -665,8 +682,27 @@ export function actDoorRefusal(
 }
 
 /**
+ * F4 / I25: the KB-target refusal, the ONE implementation both doors call
+ * (`modelWriteRefusal`, `actDoorRefusal`): {@link KNOWLEDGE_BASE_REFUSAL} when a KB-capable key of
+ * `toolId` names (or cannot be proven distinct from) the configured KB destination; `undefined`
+ * when no KB is configured.
+ */
+function knowledgeBaseRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  kb: TribalKbConfig | undefined,
+): string | undefined {
+  if (kb === undefined) return undefined;
+  if (refusesNotion(toolId, input, kb) || refusesConfluence(toolId, input, kb)) {
+    return KNOWLEDGE_BASE_REFUSAL;
+  }
+  return undefined;
+}
+
+/**
  * The fixed refusal for a MODEL write to `toolId` with `input`, or `undefined` to allow it: the
- * messaging check, then the knowledge-base check (model door only).
+ * messaging check, then the knowledge-base target check. (A page update or append under the KB is
+ * refused later, by its reader's KB-child guard, from the page's current parent.)
  */
 export function modelWriteRefusal(
   toolId: string,
@@ -675,9 +711,5 @@ export function modelWriteRefusal(
 ): string | undefined {
   const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
   if (messaging !== undefined) return messaging;
-  if (ctx.kb === undefined) return undefined;
-  if (refusesNotion(toolId, input, ctx.kb) || refusesConfluence(toolId, input, ctx.kb)) {
-    return KNOWLEDGE_BASE_REFUSAL;
-  }
-  return undefined;
+  return knowledgeBaseRefusal(toolId, input, ctx.kb);
 }
