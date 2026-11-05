@@ -216,7 +216,7 @@ export async function main(): Promise<void> {
             toolsEpoch: (service) => platform.connectorMesh.toolsGenerationFor(service),
             warn: (bindings, msg) => connectorWriteLogger.warn(bindings, msg),
             // F4: the knowledge base the model may never write to (the tribal capture gate's).
-            getTribalKbConfig: () => platform.tribalKbConfig?.(),
+            getTribalKbConfig: () => platform.tribalKbConfig(),
           }),
         });
 
@@ -269,7 +269,7 @@ export async function main(): Promise<void> {
       // `cli`/`ui` only); `runAsk` also refuses it on a demo-rooted gateway.
       offerConnectorWriteTools: ctx.offerConnectorWriteTools === true,
       // B3 (R11): the door's KB-child guards read the same live accessor as the model-write source.
-      getTribalKbConfig: () => platform.tribalKbConfig?.(),
+      getTribalKbConfig: () => platform.tribalKbConfig(),
     }),
   );
 
@@ -312,7 +312,7 @@ export async function main(): Promise<void> {
       // Never on a ChatOps turn: a shared room is not the local owner.
       offerConnectorWriteTools: false,
       // Inert here (no model writes on ChatOps), but required so no construction site forgets it.
-      getTribalKbConfig: () => platform.tribalKbConfig?.(),
+      getTribalKbConfig: () => platform.tribalKbConfig(),
     })),
   );
 

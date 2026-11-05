@@ -11237,7 +11237,7 @@ describe("I53 — a first-party connector write reaches the model only through t
 
   test("B3 (R11): gateway-main passes the platform KB accessor to BOTH runAsk construction sites", async () => {
     const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
-    const wiring = /getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\?\.\(\)/;
+    const wiring = /getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\(\)/;
     const invokeAt = src.indexOf("platform.ipc.setAgentInvokeHandler((ctx) =>");
     const chatopsAt = src.indexOf("platform.chatops?.bindAskEngine(");
     expect(invokeAt).toBeGreaterThan(-1);
@@ -11249,6 +11249,10 @@ describe("I53 — a first-party connector write reaches the model only through t
     const chatops = src.slice(chatopsAt, chatopsEnd);
     expect(chatops).toContain("createChatOpsAskEngine((query) => ({");
     expect(chatops).toMatch(wiring);
+    // Fail closed on a missing accessor: no optional call anywhere, and the field is required.
+    expect(src).not.toMatch(/platform\.tribalKbConfig\?\./);
+    const types = stripComments(await read("packages/gateway/src/platform/types.ts"));
+    expect(types).toMatch(/\n {2}tribalKbConfig: \(\) => TribalKbConfig \| undefined;/);
   });
 
   test("the executor is set only on an owner cli/ui, non-demo turn, and cleared otherwise", async () => {
@@ -11399,7 +11403,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     // The production wiring feeds the KB refusal the real [tribal] config (triple rule): the
     // gateway's source passes the platform's live accessor, and assemble fills it.
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
-    expect(main).toMatch(/getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\?\.\(\)/);
+    expect(main).toMatch(/getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\(\)/);
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(/tribalKbConfig\s*[:(]/);
   });

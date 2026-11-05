@@ -95,9 +95,10 @@ export interface PlatformServices {
   /**
    * The `[tribal]` knowledge-base destinations loaded from `nimbus.toml` at boot (whether or not
    * `[tribal].enabled`), for the model connector-write door's KB refusal (Phase 9.7 B, F4).
-   * `undefined` when neither KB is configured.
+   * `undefined` when neither KB is configured. REQUIRED (B3 review): the door's KB guards read it,
+   * and a missing accessor must never read as "no KB", which would switch them off.
    */
-  tribalKbConfig?: () => TribalKbConfig | undefined;
+  tribalKbConfig: () => TribalKbConfig | undefined;
   // ChatOps (Slice 5). Present when [chatops].enabled: src/index.ts late-binds the engine read
   // path (bindAskEngine) once the engine agent exists.
   chatops?: ChatopsBoot;
