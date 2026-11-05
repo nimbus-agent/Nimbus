@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 
 import { MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
-import { beforeReplyJson, presentFields, requiredStringAt, stringAt } from "./before-select.ts";
+import {
+  BEFORE_LIST_MAX_ENTRIES,
+  beforeReplyJson,
+  listAt,
+  presentFields,
+  requiredStringAt,
+  stringAt,
+} from "./before-select.ts";
 
 const mcp = (text: string, extra: Record<string, unknown> = {}) => ({
   content: [{ type: "text", text }],
@@ -87,5 +94,33 @@ describe("stringAt / requiredStringAt / presentFields", () => {
       { label: "A", value: "1" },
       { label: "C", value: "" },
     ]);
+  });
+});
+
+describe("listAt (B2: labels and assignees)", () => {
+  test("strings, or the string at `item` of each object entry, joined with a comma", () => {
+    expect(listAt({ l: ["a", "b"] }, ["l"])).toBe("a, b");
+    expect(listAt({ x: { l: [{ n: "a" }, { n: "b" }] } }, ["x", "l"], "n")).toBe("a, b");
+  });
+
+  test("an entry without a name is skipped; an empty or nameless list reads (none)", () => {
+    expect(listAt({ l: [{ n: "a" }, {}, null, { n: { deep: 1 } }] }, ["l"], "n")).toBe("a");
+    expect(listAt({ l: [] }, ["l"])).toBe("(none)");
+    expect(listAt({ l: [{}] }, ["l"], "n")).toBe("(none)");
+    expect(listAt({ l: [{ n: "a" }] }, ["l"])).toBe("(none)");
+  });
+
+  test("absent, null, an object or a string is undefined (the field is omitted)", () => {
+    for (const v of [{}, { l: null }, { l: {} }, { l: "a,b" }, null, "x"]) {
+      expect(listAt(v, ["l"]), JSON.stringify(v)).toBeUndefined();
+    }
+    expect(listAt(Object.create({ l: ["a"] }), ["l"])).toBeUndefined();
+  });
+
+  test("at most 50 entries, the rest counted", () => {
+    expect(BEFORE_LIST_MAX_ENTRIES).toBe(50);
+    const fifty = Array.from({ length: 50 }, (_, i) => `n${String(i)}`);
+    expect(listAt({ l: fifty }, ["l"])).toBe(fifty.join(", "));
+    expect(listAt({ l: [...fifty, "x", "y"] }, ["l"])).toBe(`${fifty.join(", ")} (+2 more)`);
   });
 });

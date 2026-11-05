@@ -21,6 +21,13 @@ export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
 export const BROADCAST_MENTION_REFUSAL =
   "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
+/**
+ * OR-B2-3: a Linear `assigneeId` on update replaces the one assignee, so the model may set it only
+ * while the issue is unassigned. The model door enforces it with the `linear_issue_update` row's
+ * before-state guard (`tickets.ts`, proven unassigned at call time); fixed, echoes nothing.
+ */
+export const LINEAR_ASSIGNEE_REFUSAL =
+  "the model can assign a Linear issue only while it is unassigned; ask the owner to reassign it";
 export const GITLAB_QUICK_ACTION_REFUSAL =
   "GitLab quick actions (lines starting with /) are not allowed in a model-written note; rephrase without them";
 

@@ -22,17 +22,23 @@ export function beforeReplyJson(reply: unknown): unknown {
   return parsed;
 }
 
+/** The value at `path` (own properties only, through plain objects); `undefined` when absent. */
+function valueAt(v: unknown, path: readonly string[]): unknown {
+  let cur: unknown = v;
+  for (const key of path) {
+    if (!isRecord(cur) || !Object.hasOwn(cur, key)) return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
 /**
  * The value at `path` (own properties only, through plain objects), as a string: a string as is,
  * a finite number in its `String` form; anything else (absent, inherited, an object, a boolean,
  * NaN) is `undefined`.
  */
 export function stringAt(v: unknown, path: readonly string[]): string | undefined {
-  let cur: unknown = v;
-  for (const key of path) {
-    if (!isRecord(cur) || !Object.hasOwn(cur, key)) return undefined;
-    cur = cur[key];
-  }
+  const cur = valueAt(v, path);
   if (typeof cur === "string") return cur;
   if (typeof cur === "number" && Number.isFinite(cur)) return String(cur);
   return undefined;
@@ -54,4 +60,28 @@ export function presentFields(
     if (value !== undefined) out.push({ label, value });
   }
   return out;
+}
+
+/** A list value shows at most this many entries; the rest are counted. */
+export const BEFORE_LIST_MAX_ENTRIES = 50;
+
+/**
+ * The list at `path`, joined for a before-state field: each entry a string (`item` absent) or the
+ * string at `item` inside an object entry; an entry without one is skipped. At most
+ * {@link BEFORE_LIST_MAX_ENTRIES} are joined with `, ` and the rest appended as `(+N more)`; an
+ * empty list reads `(none)`. `undefined` when the value is absent or not an array (the field is
+ * then omitted, never shown as empty).
+ */
+export function listAt(v: unknown, path: readonly string[], item?: string): string | undefined {
+  const list = valueAt(v, path);
+  if (!Array.isArray(list)) return undefined;
+  const names: string[] = [];
+  for (const entry of list as unknown[]) {
+    const name = item === undefined ? stringAt(entry, []) : stringAt(entry, [item]);
+    if (name !== undefined) names.push(name);
+  }
+  if (names.length === 0) return "(none)";
+  const shown = names.slice(0, BEFORE_LIST_MAX_ENTRIES).join(", ");
+  const more = names.length - BEFORE_LIST_MAX_ENTRIES;
+  return more > 0 ? `${shown} (+${String(more)} more)` : shown;
 }

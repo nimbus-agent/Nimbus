@@ -12,6 +12,7 @@ import {
 } from "./before-reader.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { buildConnectorWritePreviewFrom, renderConnectorWritePreviewLines } from "./preview.ts";
+import { linearAssigneeProvenNull } from "./tickets.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
   type BeforeStateRead,
@@ -164,12 +165,31 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the seven B1 comment rows, and every reader passes", () => {
+  test("the rows with readers are exactly the sixteen (seven B1 comments, nine B2 issue writes), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
-    expect(withReader).toEqual(Object.keys(READERS).sort((a, b) => a.localeCompare(b)));
-    expect(withReader).toHaveLength(7);
+    expect(withReader).toEqual(
+      [
+        "confluence_comment_add",
+        "github_issue_assignees_add",
+        "github_issue_comment_create",
+        "github_issue_labels_add",
+        "github_issue_state_set",
+        "gitlab_issue_assignees_add",
+        "gitlab_issue_labels_add",
+        "gitlab_issue_note_create",
+        "gitlab_issue_state_set",
+        "gitlab_mr_note_create",
+        "jira_comment_add",
+        "jira_issue_transition",
+        "jira_issue_update",
+        "linear_comment_create",
+        "linear_issue_update",
+        "notion_comment_create",
+      ].sort((a, b) => a.localeCompare(b)),
+    );
+    expect(withReader).toHaveLength(16);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -653,10 +673,408 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("no production row uses a second read or a guard yet (B2a ships the mechanism only)", () => {
-    for (const r of CONNECTOR_WRITE_ROWS) {
-      expect(r.before?.also, r.toolId).toBeUndefined();
-      expect(r.before?.guard, r.toolId).toBeUndefined();
+  test("in production only the Jira transition takes a second read and only the Linear update has a guard (B2)", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
+    ).toEqual(["jira_issue_transition"]);
+    expect(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined).map((r) => r.toolId),
+    ).toEqual(["linear_issue_update"]);
+  });
+});
+
+// ---- B2: the issue writes' readers (plan R3), the transition's two reads, the Linear guard ------
+
+const GH_STATE = {
+  title: "Login fails",
+  state: "open",
+  body: "BODY-MUST-NOT-SHOW",
+  labels: [{ name: "bug" }, { name: "ui" }],
+  assignees: [{ login: "alice" }],
+};
+const GL_STATE = {
+  title: "Broken",
+  state: "opened",
+  description: "DESCRIPTION-MUST-NOT-SHOW",
+  labels: ["bug"],
+  assignees: [{ username: "bob" }],
+};
+const LINEAR_ISSUE_ID = "8f2b0a1c-0000-4000-8000-000000000001";
+const linearIssue = (assignee: unknown) => ({
+  issue: {
+    id: LINEAR_ISSUE_ID,
+    identifier: "ENG-12",
+    title: "Flaky test",
+    description: "DESCRIPTION-MUST-NOT-SHOW",
+    priority: 2,
+    state: { id: "s", name: "Todo", type: "unstarted" },
+    assignee,
+  },
+});
+const TRANSITIONS = {
+  expand: "transitions",
+  transitions: [
+    { id: "21", name: "Start", to: { name: "In Progress" } },
+    { id: "31", name: "Done", to: { name: "Done" }, fields: {} },
+  ],
+};
+
+const GH_ARGS = { owner: "o", repo: "r", issueNumber: 42 };
+const GL_ARGS = { projectPath: "g/r", issueIid: 7 };
+
+interface B2ReaderCase {
+  readonly tool: string;
+  readonly input: Record<string, unknown>;
+  readonly args: Record<string, unknown>;
+  readonly reply: Record<string, unknown>;
+  readonly fields: ReadonlyArray<{ label: string; value: string }>;
+  /** `reply` without its identity field. */
+  readonly withoutIdentity: Record<string, unknown>;
+}
+
+const GH_FIELDS = [
+  { label: "Title", value: "Login fails" },
+  { label: "State", value: "open" },
+  { label: "Kind", value: "issue" },
+  { label: "Labels", value: "bug, ui" },
+  { label: "Assignees", value: "alice" },
+];
+const GL_FIELDS = [
+  { label: "Title", value: "Broken" },
+  { label: "State", value: "opened" },
+  { label: "Labels", value: "bug" },
+  { label: "Assignees", value: "bob" },
+];
+
+const ghCase = (input: Record<string, unknown>): B2ReaderCase => ({
+  tool: "github_issue_get",
+  input: { ...GH_ARGS, ...input },
+  args: GH_ARGS,
+  reply: GH_STATE,
+  fields: GH_FIELDS,
+  withoutIdentity: without(GH_STATE, "title"),
+});
+const glCase = (input: Record<string, unknown>): B2ReaderCase => ({
+  tool: "gitlab_issue_get",
+  input: { ...GL_ARGS, ...input },
+  args: GL_ARGS,
+  reply: GL_STATE,
+  fields: GL_FIELDS,
+  withoutIdentity: without(GL_STATE, "title"),
+});
+
+/** The eight one-read B2 readers (the transition's two reads are tested on their own below). */
+const B2_READERS: Readonly<Record<string, B2ReaderCase>> = {
+  github_issue_labels_add: ghCase({ labels: ["x"] }),
+  github_issue_assignees_add: ghCase({ assignees: ["x"] }),
+  github_issue_state_set: ghCase({ state: "closed" }),
+  gitlab_issue_labels_add: glCase({ labels: ["x"] }),
+  gitlab_issue_assignees_add: glCase({ assigneeUsernames: ["x"] }),
+  gitlab_issue_state_set: glCase({ stateEvent: "close" }),
+  jira_issue_update: {
+    tool: "jira_issue_get",
+    input: { issueKey: "NIM-1", description: "new" },
+    args: { issueKey: "NIM-1" },
+    reply: JIRA,
+    fields: [
+      { label: "Summary", value: "Fix login" },
+      { label: "Status", value: "In Progress" },
+      { label: "Type", value: "Bug" },
+    ],
+    withoutIdentity: { ...JIRA, fields: without(JIRA.fields, "summary") },
+  },
+  linear_issue_update: {
+    tool: "linear_issue_get",
+    input: { issueId: LINEAR_ISSUE_ID, title: "new" },
+    args: { issueId: LINEAR_ISSUE_ID },
+    reply: linearIssue({ id: "u", name: "carol", displayName: "Carol" }),
+    fields: [
+      { label: "Issue", value: "ENG-12" },
+      { label: "Title", value: "Flaky test" },
+      { label: "State", value: "Todo" },
+      { label: "Priority", value: "2" },
+      { label: "Assignee", value: "Carol" },
+    ],
+    withoutIdentity: { issue: without(linearIssue(null).issue, "title") },
+  },
+};
+
+/** A reader's `select` with the pick of `input` (the runner's own pick shape). */
+function selectWith(toolId: string, input: Record<string, unknown> = {}) {
+  const before = realRow(toolId).before;
+  if (before === undefined) throw new Error(`no reader on ${toolId}`);
+  return (reply: unknown, alsoReply?: unknown) =>
+    before.select(reply, pickBeforeReaderArgs(beforeReaderArgKeys(before), input), alsoReply);
+}
+
+/** Runs the real runner over the real row; dispatch answers by read tool key. */
+async function runByTool(
+  toolId: string,
+  input: Record<string, unknown>,
+  by: Record<string, unknown>,
+) {
+  const seen: PlannedAction[] = [];
+  const out = await createBeforeStateRunner().read(writeAction(realRow(toolId), input), {
+    gate: async () => "proceed",
+    dispatch: async (a) => {
+      seen.push(a);
+      const answer = by[String(a.payload?.["mcpToolId"])];
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+  });
+  return { out, seen };
+}
+
+describe("the B2 issue-write before-readers (plan R3)", () => {
+  for (const [toolId, c] of Object.entries(B2_READERS)) {
+    describe(toolId, () => {
+      test("reads its connector's read tool with the target keys only", async () => {
+        const r = realRow(toolId);
+        expect(r.before?.tool).toBe(c.tool);
+        const { seen } = await runReal(toolId, c.input, mcp(c.reply));
+        expect(seen).toEqual([
+          {
+            type: `${serviceOf(r.actionType)}.before.read`,
+            payload: {
+              mcpToolId: mcpClientToolKey(serviceOf(r.actionType), c.tool),
+              input: c.args,
+            },
+          },
+        ]);
+      });
+
+      test("a realistic MCP reply gives exactly the state fields (never a body)", async () => {
+        const { out } = await runReal(toolId, c.input, mcp(c.reply));
+        expect(out).toEqual({ status: "ok", fields: [...c.fields] });
+        expect(JSON.stringify(out)).not.toContain("MUST-NOT-SHOW");
+      });
+
+      test("without the identity field the before is unavailable (failed)", async () => {
+        const { out } = await runReal(toolId, c.input, mcp(c.withoutIdentity));
+        expect(out).toEqual({ status: "unavailable", reason: "failed" });
+      });
+
+      test("an isError reply is unavailable (failed)", async () => {
+        const { out } = await runReal(toolId, c.input, { ...mcp(c.reply), isError: true });
+        expect(out).toEqual({ status: "unavailable", reason: "failed" });
+      });
+    });
+  }
+
+  test("GitHub: pull_request present is a pull request; empty lists read (none); absent or null lists are omitted", () => {
+    const sel = selectWith("github_issue_state_set");
+    expect(sel(mcp({ ...GH_STATE, pull_request: { url: "u" } }))).toContainEqual({
+      label: "Kind",
+      value: "pull request",
+    });
+    expect(sel(mcp({ ...GH_STATE, labels: [], assignees: [] }))).toEqual([
+      { label: "Title", value: "Login fails" },
+      { label: "State", value: "open" },
+      { label: "Kind", value: "issue" },
+      { label: "Labels", value: "(none)" },
+      { label: "Assignees", value: "(none)" },
+    ]);
+    expect(sel(mcp({ title: "t", assignees: null }))).toEqual([
+      { label: "Title", value: "t" },
+      { label: "Kind", value: "issue" },
+    ]);
+  });
+
+  test("500 labels: 50 names and (+450 more), in one field", async () => {
+    const labels = Array.from({ length: 500 }, (_, i) => ({ name: `l${String(i)}` }));
+    const { out } = await runReal(
+      "github_issue_labels_add",
+      B2_READERS["github_issue_labels_add"]?.input ?? {},
+      mcp({ ...GH_STATE, labels }),
+    );
+    if (out?.status !== "ok") throw new Error("expected ok");
+    const names = Array.from({ length: 50 }, (_, i) => `l${String(i)}`).join(", ");
+    expect(out.fields.find((f) => f.label === "Labels")?.value).toBe(`${names} (+450 more)`);
+    expect(out.fields).toHaveLength(5);
+  });
+
+  test("GitLab: labels are strings (an object label is not read as one)", () => {
+    const sel = selectWith("gitlab_issue_labels_add");
+    expect(sel(mcp({ title: "t", labels: [{ name: "bug" }], assignees: [] }))).toEqual([
+      { label: "Title", value: "t" },
+      { label: "Labels", value: "(none)" },
+      { label: "Assignees", value: "(none)" },
+    ]);
+  });
+
+  test("a hostile label or username comes out of the runner sanitised", async () => {
+    const cases: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+      ["github_issue_labels_add", { ...GH_STATE, labels: [{ name: HOSTILE }] }],
+      ["gitlab_issue_assignees_add", { ...GL_STATE, assignees: [{ username: HOSTILE }] }],
+    ];
+    for (const [toolId, reply] of cases) {
+      const input = B2_READERS[toolId]?.input ?? {};
+      const { out } = await runReal(toolId, input, mcp(reply));
+      if (out?.status !== "ok") throw new Error("expected ok");
+      const json = JSON.stringify(out);
+      expect(json, toolId).not.toContain(RLO);
+      expect(json, toolId).not.toContain(ESC);
+      const lines = renderConnectorWritePreviewLines({ ...previewFor(toolId, input), before: out });
+      expect(
+        lines.some((l) => l.startsWith("Approved")),
+        toolId,
+      ).toBe(false);
+      for (const l of lines) expect(l.includes("\n"), l).toBe(false);
     }
+  });
+
+  test("Linear: a null assignee reads (none); a name falls back to name; nothing to name is omitted", () => {
+    const sel = selectWith("linear_issue_update");
+    expect(sel(mcp(linearIssue(null)))).toContainEqual({ label: "Assignee", value: "(none)" });
+    expect(sel(mcp(linearIssue({ id: "u", name: "carol" })))).toContainEqual({
+      label: "Assignee",
+      value: "carol",
+    });
+    expect(sel(mcp(linearIssue({ id: "u" }))).some((f) => f.label === "Assignee")).toBe(false);
+    const noKey = without(linearIssue(null).issue, "assignee");
+    expect(sel(mcp({ issue: noKey })).some((f) => f.label === "Assignee")).toBe(false);
+  });
+
+  test("a 1 MB Linear description never reaches the fields", async () => {
+    const big = linearIssue(null);
+    big.issue.description = "d".repeat(1024 * 1024);
+    const { out } = await runReal(
+      "linear_issue_update",
+      { issueId: LINEAR_ISSUE_ID, title: "x" },
+      mcp(big),
+    );
+    if (out?.status !== "ok") throw new Error("expected ok");
+    expect(JSON.stringify(out).length).toBeLessThan(400);
+  });
+});
+
+describe("the Jira transition's two reads (OR-B2-1)", () => {
+  const input = { issueKey: "NIM-1", transitionId: "31" };
+  const READS: Record<string, unknown> = {
+    jira_jira_issue_transitions_list: mcp(TRANSITIONS),
+    jira_jira_issue_get: mcp(JIRA),
+  };
+  const DONE = [
+    { label: "From", value: "In Progress" },
+    { label: "Transition", value: "Done" },
+    { label: "To", value: "Done" },
+  ];
+
+  test("the list, then the issue, each with the issue key only", async () => {
+    const { seen } = await runByTool("jira_issue_transition", input, READS);
+    expect(seen).toEqual([
+      {
+        type: "jira.before.read",
+        payload: { mcpToolId: "jira_jira_issue_transitions_list", input: { issueKey: "NIM-1" } },
+      },
+      {
+        type: "jira.before.read",
+        payload: { mcpToolId: "jira_jira_issue_get", input: { issueKey: "NIM-1" } },
+      },
+    ]);
+  });
+
+  test("From the issue's status; Transition and To from the entry the write names (string or number)", async () => {
+    for (const transitionId of ["31", 31]) {
+      const { out } = await runByTool("jira_issue_transition", { ...input, transitionId }, READS);
+      expect(out, String(transitionId)).toEqual({ status: "ok", fields: DONE });
+    }
+  });
+
+  test("a transition the issue does not offer now: To says so", async () => {
+    for (const transitionId of ["99", undefined, true]) {
+      const { out } = await runByTool("jira_issue_transition", { ...input, transitionId }, READS);
+      expect(out, String(transitionId)).toEqual({
+        status: "ok",
+        fields: [
+          { label: "From", value: "In Progress" },
+          { label: "To", value: "not available for this issue now" },
+        ],
+      });
+    }
+  });
+
+  test("a list without transitions, or an issue without a status: unavailable (failed)", async () => {
+    const cases: Record<string, unknown>[] = [
+      { ...READS, jira_jira_issue_transitions_list: mcp({ expand: "x" }) },
+      { ...READS, jira_jira_issue_transitions_list: mcp({ transitions: {} }) },
+      { ...READS, jira_jira_issue_get: mcp({ fields: { summary: "s" } }) },
+    ];
+    for (const by of cases) {
+      const { out } = await runByTool("jira_issue_transition", input, by);
+      expect(out).toEqual({ status: "unavailable", reason: "failed" });
+    }
+  });
+
+  test("the list succeeds and the issue read fails: the whole before is unavailable", async () => {
+    const { out, seen } = await runByTool("jira_issue_transition", input, {
+      ...READS,
+      jira_jira_issue_get: new Error("boom"),
+    });
+    expect(seen).toHaveLength(2);
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+  });
+
+  test("a status or transition name with bidi, ESC or a newline is sanitised", async () => {
+    const { out } = await runByTool("jira_issue_transition", input, {
+      jira_jira_issue_transitions_list: mcp({
+        transitions: [{ id: "31", name: HOSTILE, to: { name: HOSTILE } }],
+      }),
+      jira_jira_issue_get: mcp({ fields: { status: { name: HOSTILE } } }),
+    });
+    if (out?.status !== "ok") throw new Error("expected ok");
+    const json = JSON.stringify(out);
+    expect(json).not.toContain(RLO);
+    expect(json).not.toContain(ESC);
+    expect(out.fields.map((f) => f.label)).toEqual(["From", "Transition", "To"]);
+    const lines = renderConnectorWritePreviewLines({
+      ...previewFor("jira_issue_transition", input),
+      before: out,
+    });
+    expect(lines.some((l) => l.startsWith("Approved"))).toBe(false);
+    for (const l of lines) expect(l.includes("\n"), l).toBe(false);
+  });
+
+  test("a 1 MB fields expansion in the list never reaches the fields", async () => {
+    const big = {
+      transitions: [
+        { id: "31", name: "Done", to: { name: "Done" }, fields: { x: "f".repeat(1 << 20) } },
+      ],
+    };
+    const { out } = await runByTool("jira_issue_transition", input, {
+      ...READS,
+      jira_jira_issue_transitions_list: mcp(big),
+    });
+    expect(out).toEqual({ status: "ok", fields: DONE });
+  });
+
+  test("the selection unwraps BOTH MCP replies", () => {
+    expect(selectWith("jira_issue_transition", input)(mcp(TRANSITIONS), mcp(JIRA))).toEqual(DONE);
+  });
+});
+
+describe("linearAssigneeProvenNull (the Linear guard's allows, OR-B2-3)", () => {
+  test("true only for an own issue.assignee === null (MCP reply or plain object)", () => {
+    expect(linearAssigneeProvenNull(mcp(linearIssue(null)))).toBe(true);
+    expect(linearAssigneeProvenNull(linearIssue(null))).toBe(true);
+  });
+
+  test("false for an assignee, a missing key, an inherited one, issue null, {} and junk", () => {
+    const noKey = without(linearIssue(null).issue, "assignee");
+    const inherited = { issue: Object.assign(Object.create({ assignee: null }), noKey) };
+    const cases: ReadonlyArray<readonly [string, unknown]> = [
+      ["assigned", mcp(linearIssue({ id: "u", name: "carol" }))],
+      ["missing key", mcp({ issue: noKey })],
+      ["inherited", inherited],
+      ["issue null", mcp({ issue: null })],
+      ["assignee {}", mcp(linearIssue({}))],
+      ["no issue", mcp({})],
+      ["issue array", mcp({ issue: [] })],
+      ["isError", { ...mcp(linearIssue(null)), isError: true }],
+      ["not json", { content: [{ type: "text", text: "nope" }] }],
+      ["undefined", undefined],
+    ];
+    for (const [name, reply] of cases) expect(linearAssigneeProvenNull(reply), name).toBe(false);
   });
 });
