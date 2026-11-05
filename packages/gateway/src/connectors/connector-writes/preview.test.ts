@@ -373,6 +373,14 @@ describe("renderConnectorWritePreviewLines: the before-state block (spec § 5.4)
     ]);
   });
 
+  test("an empty label reads as (empty label), as on the desktop", () => {
+    const p: ConnectorWritePreview = {
+      ...base(),
+      before: { status: "ok", fields: [{ label: "", value: "v" }] },
+    };
+    expect(renderConnectorWritePreviewLines(p).slice(-1)).toEqual(["  (empty label): v"]);
+  });
+
   test("ok with no fields says so", () => {
     const p: ConnectorWritePreview = { ...base(), before: { status: "ok", fields: [] } };
     expect(renderConnectorWritePreviewLines(p).slice(-1)).toEqual(["Before: (no fields)"]);

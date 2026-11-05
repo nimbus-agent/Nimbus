@@ -93,7 +93,10 @@ export type RunAskParams = {
   policyHitl?: ExecutorPolicyDep;
   /** Names the credential kind in a connector write's consent preview (config-derived). */
   previewCredentialFor?: PreviewCredentialResolver;
-  /** Test seam: the rows the door executor's before-state runner reads. Production: the table. */
+  /**
+   * Test seam ONLY (pinned by the I53 block): the rows the door executor previews and reads with.
+   * Production never sets it, so the runner uses the write table.
+   */
   beforeStateRows?: readonly ConnectorWriteRow[];
   /**
    * `nimbus explain last` (spec §4). Absent means "no recorder wired" — a test double or a

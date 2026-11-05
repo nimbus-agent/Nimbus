@@ -25,7 +25,6 @@ import {
   BEFORE_STATE_TIMEOUT_MS,
   type BeforeReadOps,
   type BeforeStateRunnerOptions,
-  beforeReadActionType,
   classifyBeforeStateError,
   createBeforeStateRunner,
   isBeforeReadActionType,
@@ -98,8 +97,7 @@ function opsReturning(reply: unknown, seen: PlannedAction[] = []): BeforeReadOps
 }
 
 describe("before-state runner", () => {
-  test("the read type is <service>.before.read and is recognised", () => {
-    expect(beforeReadActionType("jira")).toBe("jira.before.read");
+  test("a before-read type is recognised (the runner's own type is asserted below)", () => {
     expect(isBeforeReadActionType("jira.before.read")).toBe(true);
     expect(isBeforeReadActionType("jira.issue.update")).toBe(false);
     expect(BEFORE_STATE_TIMEOUT_MS).toBe(5000);

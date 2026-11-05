@@ -126,6 +126,16 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     );
   });
 
+  test("a non-Error throw from args is reported by its string form", () => {
+    const throwsString: BeforeStateReader = {
+      ...READER,
+      args: () => {
+        throw "plain string";
+      },
+    };
+    expect(beforeReaderArgsProblem(throwsString)).toContain("plain string");
+  });
+
   test("args that throws on the probe is a problem, not a crash", () => {
     const throwing: BeforeStateReader = {
       ...READER,

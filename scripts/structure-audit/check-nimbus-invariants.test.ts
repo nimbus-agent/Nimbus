@@ -4168,6 +4168,17 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
     ).toEqual(["before-state-runner-confined"]);
   });
 
+  test("(b) FAILS on an `as` alias of the runner import, even in run-ask.ts", () => {
+    expect(
+      rules(
+        replace(
+          RUN_ASK,
+          'import { createBeforeStateRunner as mk } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, mk());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, mk());\n}\n',
+        ),
+      ),
+    ).toEqual(["before-state-runner-confined"]);
+  });
+
   test("(c) FAILS when the gate refusal or the dispatch guard stops naming the predicate", () => {
     expect(rules(replace(EXECUTOR, "if (requiresHITL) {}"))).toEqual(["before-read-guard-present"]);
     expect(rules(replace(REGISTRY, "// no guard here"))).toEqual(["before-read-guard-present"]);

@@ -91,7 +91,8 @@ export function pickBeforeReaderArgs(
   return Object.freeze(out);
 }
 
-const TEMPLATE_PLACEHOLDER = /\{(\w+)\}/g;
+/** A `{key}` placeholder in a preview template's target or summary (global: use with matchAll/replace). */
+export const TEMPLATE_PLACEHOLDER = /\{(\w+)\}/g;
 
 /**
  * Every input key a template names: each `fields[].key` (including fields that carry `whenUnset`)
@@ -169,7 +170,7 @@ export function withPreview(
 ): ConnectorWriteRow {
   const secrets = new Set(preview.fields.filter((f) => f.kind === "secret").map((f) => f.key));
   for (const text of [preview.target, preview.summary]) {
-    for (const m of text.matchAll(/\{(\w+)\}/g)) {
+    for (const m of text.matchAll(TEMPLATE_PLACEHOLDER)) {
       if (m[1] !== undefined && secrets.has(m[1])) {
         throw new Error(
           `connector write preview: placeholder {${m[1]}} names a secret field (row ${r.toolId})`,

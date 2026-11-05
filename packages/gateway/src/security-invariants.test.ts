@@ -11350,6 +11350,15 @@ describe("I53 — a first-party connector write reaches the model only through t
     }
   });
 
+  test("the beforeStateRows test seam is named by no non-test gateway file but run-ask.ts", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const naming = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\bbeforeStateRows\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel.split("\\").join("/"));
+    expect(naming).toEqual(["engine/run-ask.ts"]);
+  });
+
   test("no production row has a before reader yet (B1-B4 add them; a wave-4 one becomes offerable)", () => {
     expect(CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)).toEqual([]);
   });

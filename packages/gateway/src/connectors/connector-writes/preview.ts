@@ -14,6 +14,7 @@ import {
   type PreviewCredentialResolver,
   type PreviewFieldKind,
   previewTemplateKeys,
+  TEMPLATE_PLACEHOLDER,
 } from "./types.ts";
 
 /** The desktop collapses a value longer than this behind "Show full"; nothing is ever cut. */
@@ -92,7 +93,6 @@ export function sanitisePreviewText(s: string): string {
 }
 
 const NOT_SET = "(not set)";
-const PLACEHOLDER = /\{(\w+)\}/g;
 
 /** A plain object (prototype `Object.prototype` or `null`): not an array, class instance or box. */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -134,7 +134,7 @@ function isUnset(input: Record<string, unknown>, key: string): boolean {
 
 function interpolate(text: string, input: Record<string, unknown>): string {
   return sanitisePreviewText(
-    text.replace(PLACEHOLDER, (_m, key: string) =>
+    text.replace(TEMPLATE_PLACEHOLDER, (_m, key: string) =>
       isUnset(input, key) ? NOT_SET : renderValue(input[key]),
     ),
   );
@@ -273,7 +273,12 @@ function beforeLines(b: ConnectorWriteBeforeState): string[] {
   if (b.status === "unavailable") return [`Before: unavailable (${b.reason})`];
   const notShown = b.notShown ?? 0;
   if (b.fields.length === 0 && notShown === 0) return ["Before: (no fields)"];
-  const out = ["Before:", ...b.fields.map((f) => `  ${oneLine(f.label)}: ${oneLine(f.value)}`)];
+  const out = [
+    "Before:",
+    ...b.fields.map(
+      (f) => `  ${f.label === "" ? "(empty label)" : oneLine(f.label)}: ${oneLine(f.value)}`,
+    ),
+  ];
   if (notShown > 0) {
     out.push(`  (${notShown} more ${notShown === 1 ? "field" : "fields"} not shown)`);
   }

@@ -49,7 +49,7 @@ const BEFORE_READ_SUFFIX = ".before.read";
 export const BEFORE_READ_HITL_REFUSAL = "policy requires approval";
 
 /** `<service>.before.read`: the read's action type, so `serviceOf` names the connector (I29). */
-export function beforeReadActionType(service: string): string {
+function beforeReadActionType(service: string): string {
   return `${service}${BEFORE_READ_SUFFIX}`;
 }
 

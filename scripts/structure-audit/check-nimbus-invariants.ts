@@ -2321,10 +2321,13 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 // the write's own connector, on the model door's executor only:
 // (a) the `.before.read` action-type literal appears (in code or in a string, comments stripped)
 //     only in `engine/before-state.ts`, which builds the type, and `connectors/registry.ts`, the
-//     dispatcher guard — so no other module can mint a read action that skips the approval;
+//     dispatcher guard. This confines the SPELLING, not the capability: a dynamically composed
+//     type evades it, and what stops such an action is the gate refusal and the dispatcher guard;
 // (b) `createBeforeStateRunner` is named only by `engine/before-state.ts` (its definition) and
 //     `engine/run-ask.ts`, and inside run-ask.ts only on an import line or within the body of
-//     `buildModelWriteExecutor` — so no executor but the door's carries a runner;
+//     `buildModelWriteExecutor`, and it is never imported under an `as` alias (an alias would let
+//     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
+//     literal, a re-export under another name in another module) is outside a text scan;
 // (c) `engine/executor.ts` (the structural refusal in `gate()`) and `connectors/registry.ts` (the
 //     dispatch guard) each name `isBeforeReadActionType`; a guard that disappears is a violation.
 // Test files and anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c):
@@ -2336,6 +2339,7 @@ const D40_LITERAL_ALLOWED: readonly string[] = [
   "packages/gateway/src/connectors/registry.ts",
 ];
 const D40_RUNNER_RE = /\bcreateBeforeStateRunner\b/g;
+const D40_RUNNER_ALIAS_RE = /\bcreateBeforeStateRunner\s+as\b/g;
 const D40_RUNNER_DEF = "packages/gateway/src/engine/before-state.ts";
 const D40_RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
 const D40_GUARD_RE = /\bisBeforeReadActionType\b/;
@@ -2384,6 +2388,9 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
         const allowed =
           f.relPath === D40_RUN_ASK && (inDoorBuilder || d40InImportStatement(code, i));
         if (!allowed) push("before-state-runner-confined", code, i);
+      }
+      for (const m of code.matchAll(D40_RUNNER_ALIAS_RE)) {
+        push("before-state-runner-confined", code, m.index);
       }
     }
     if (D40_GUARD_SITES.includes(f.relPath) && D40_GUARD_RE.test(code)) guardsSeen.add(f.relPath);
