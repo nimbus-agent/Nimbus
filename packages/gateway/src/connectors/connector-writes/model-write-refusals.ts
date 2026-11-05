@@ -29,6 +29,9 @@ const CHATOPS_POST_ROWS: Readonly<Record<string, { platform: Platform; key: stri
   teams_message_post_chat: { platform: "teams", key: "chatId" },
 };
 
+/** The Slack DM row: its destination is `user_ids`, never a channel (see `refusesSlackDm`). */
+const SLACK_DM_ROW = "slack_message_post_dm";
+
 /** Which input keys of each Notion / Confluence row can name a KB page or database. */
 const NOTION_KB_KEYS: Readonly<Record<string, readonly string[]>> = {
   notion_page_create: ["parentPageId"],
@@ -104,16 +107,20 @@ function chatopsEntries(chatops: ChatopsPolicy): string[] {
  * call (a Slack channel NAME, an undecodable value, a non-string), or an entry is a name that a
  * Slack id might resolve to.
  */
+/** The configured ChatOps entries that may belong to `platform` (its own, or shape-unknown). */
+function entriesFor(chatops: ChatopsPolicy, platform: Platform): string[] {
+  return chatopsEntries(chatops).filter((e) => {
+    const p = platformOf(e);
+    return p === undefined || p === platform;
+  });
+}
+
 function refusesChatopsPost(
   chatops: ChatopsPolicy,
   platform: Platform,
   rawDestination: unknown,
 ): boolean {
-  const entries = chatopsEntries(chatops);
-  const relevant = entries.filter((e) => {
-    const p = platformOf(e);
-    return p === undefined || p === platform;
-  });
+  const relevant = entriesFor(chatops, platform);
   if (relevant.length === 0) return false;
   if (typeof rawDestination !== "string") return true;
   const dest = canonicalDestination(rawDestination);
@@ -129,6 +136,16 @@ function refusesChatopsPost(
   };
   if (relevant.some(unmappable)) return true;
   return platform === "slack" ? !isSlackId(dest) : !isTeamsThreadId(dest);
+}
+
+/**
+ * F3 (Slack DM): a DM to the ChatOps bot is a ChatOps destination. Telling the bot apart from the
+ * `user_ids` would need the bot's own user id, which this gateway learns only from Slack (no
+ * ChatOps config or boot state holds it offline), so EVERY model DM is refused while ChatOps has a
+ * Slack entry (or one whose platform its shape cannot tell). Without one, the DM is allowed.
+ */
+function refusesSlackDm(chatops: ChatopsPolicy): boolean {
+  return entriesFor(chatops, "slack").length > 0;
 }
 
 /** Notion ids compare lower-case without hyphens; a value CONTAINING the id (a URL) matches too. */
@@ -183,6 +200,10 @@ export function modelWriteRefusal(
   input: Record<string, unknown>,
   ctx: RefusalContext,
 ): string | undefined {
+  if (toolId === SLACK_DM_ROW) {
+    if (ctx.chatops === undefined) return CHATOPS_CHANNEL_REFUSAL;
+    return refusesSlackDm(ctx.chatops) ? CHATOPS_CHANNEL_REFUSAL : undefined;
+  }
   const post = ownLookup(CHATOPS_POST_ROWS, toolId);
   if (post !== undefined) {
     // No readable policy: the ChatOps channels cannot be ruled out.

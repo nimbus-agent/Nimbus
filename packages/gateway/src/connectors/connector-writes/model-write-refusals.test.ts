@@ -40,6 +40,44 @@ const teamsChat = (chatId: unknown, policy: ChatopsPolicy | undefined = TEAMS_ON
     { chatops: policy, kb: undefined },
   );
 
+describe("F3: a Slack DM to the ChatOps bot", () => {
+  const dm = (user_ids: unknown, policy: ChatopsPolicy | undefined) =>
+    modelWriteRefusal(
+      "slack_message_post_dm",
+      { user_ids, text: "hi" },
+      { chatops: policy, kb: undefined },
+    );
+
+  test("no Slack ChatOps entry: a DM is allowed (positive control), Teams-only included", () => {
+    expect(dm("U0123ABCD", NONE)).toBeUndefined();
+    expect(dm("U0123ABCD,U0999ZZZZ", TEAMS_ONLY)).toBeUndefined();
+  });
+
+  test("Slack ChatOps configured: the bot's user id is not knowable offline, so EVERY DM is refused", () => {
+    for (const ids of ["U0123ABCD", " u0123abcd , U0999ZZZZ ", "", 7, undefined]) {
+      expect(dm(ids, SLACK_ONLY), String(ids)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    }
+    // An entry whose platform its shape cannot tell counts as possibly Slack.
+    expect(dm("U0123ABCD", chatops({ general: [] }))).toBe(CHATOPS_CHANNEL_REFUSAL);
+  });
+
+  test("an unreadable policy refuses a DM", () => {
+    expect(dm("U0123ABCD", undefined)).toBe(CHATOPS_CHANNEL_REFUSAL);
+  });
+});
+
+describe("F3: a Teams 1:1 chat with the ChatOps bot", () => {
+  test("a bound personal (a:) conversation refuses every Teams chat post, even a different-looking one", () => {
+    const personal = chatops({ "a:1botPERSONALconv": [] });
+    expect(teamsChat("19:abc_def@unq.gbl.spaces", personal)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    expect(teamsChat("19:x@thread.v2", personal)).toBe(CHATOPS_CHANNEL_REFUSAL);
+  });
+
+  test("an unbound 1:1 chat is not a ChatOps destination (ChatOps stays silent on unbound conversations)", () => {
+    expect(teamsChat("19:abc_def@unq.gbl.spaces", TEAMS_ONLY)).toBeUndefined();
+  });
+});
+
 describe("F3: ChatOps channels", () => {
   test("the configured Slack channel is refused however it is spelled", () => {
     for (const c of ["C0123ABCD", " c0123abcd ", "#C0123ABCD", "%23C0123ABCD", "C0123%41BCD"]) {
