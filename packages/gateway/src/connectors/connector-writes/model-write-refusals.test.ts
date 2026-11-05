@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
 
+import { serviceOf } from "../../engine/service-of.ts";
 import type { ChatopsChannelBinding, ChatopsPolicy } from "../../policy/types.ts";
+import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { isModelOfferableRow } from "./model-offerable.ts";
 import {
   CHATOPS_CHANNEL_REFUSAL,
+  isChatopsDestinationRow,
+  isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
   modelWriteRefusal,
   type TribalKbConfig,
@@ -270,5 +275,60 @@ describe("F4: the knowledge base", () => {
       ),
     ).toBeUndefined();
     expect(kb("confluence_comment_add", { pageId: "98765" }, {})).toBeUndefined();
+  });
+});
+
+describe("completeness tripwire (plan R6): every offerable messaging/KB row is covered", () => {
+  const offerable = CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow);
+  const bySvc = (svcs: readonly string[]) =>
+    offerable.filter((r) => svcs.includes(serviceOf(r.actionType)));
+  const BOTH = chatops({ C0123ABCD: [], "19:abc@thread.tacv2": [] });
+
+  test("every model-offerable Slack/Teams row is a ChatOps destination row", () => {
+    const rows = bySvc(["slack", "teams"]);
+    expect(rows.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "slack_message_post",
+      "slack_message_post_dm",
+      "teams_message_post",
+      "teams_message_post_chat",
+    ]);
+    expect(rows.filter((r) => !isChatopsDestinationRow(r.toolId)).map((r) => r.toolId)).toEqual([]);
+  });
+
+  test("every model-offerable Notion/Confluence row is knowledge-base capable", () => {
+    const rows = bySvc(["notion", "confluence"]);
+    expect(rows.length).toBeGreaterThanOrEqual(2);
+    expect(rows.filter((r) => !isKnowledgeBaseCapableRow(r.toolId)).map((r) => r.toolId)).toEqual(
+      [],
+    );
+  });
+
+  test("Discord has no ChatOps transport: never a ChatOps destination, never refused by it", () => {
+    expect(isChatopsDestinationRow("discord_message_post")).toBe(false);
+    expect(
+      modelWriteRefusal(
+        "discord_message_post",
+        { channelId: "123456789012345678", content: "hi @everyone" },
+        { chatops: BOTH, kb: KB },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the GitHub/GitLab/Jira/Linear comment rows are never refused by the ChatOps or KB rule", () => {
+    for (const [toolId, input] of [
+      ["github_issue_comment_create", { owner: "o", repo: "r", issueNumber: 1, body: "C0123ABCD" }],
+      ["gitlab_issue_note_create", { projectPath: "g/r", issueIid: 1, body: "98765" }],
+      ["gitlab_mr_note_create", { projectPath: "g/r", mergeRequestIid: 1, body: "x" }],
+      ["jira_comment_add", { issueKey: "C0123ABCD", body: NOTION_ID_CANONICAL }],
+      ["linear_comment_create", { issueId: NOTION_ID_CANONICAL, body: "98765" }],
+    ] as const) {
+      expect(isChatopsDestinationRow(toolId), toolId).toBe(false);
+      expect(isKnowledgeBaseCapableRow(toolId), toolId).toBe(false);
+      expect(modelWriteRefusal(toolId, input, { chatops: BOTH, kb: KB }), toolId).toBeUndefined();
+      expect(
+        modelWriteRefusal(toolId, input, { chatops: undefined, kb: KB }),
+        toolId,
+      ).toBeUndefined();
+    }
   });
 });

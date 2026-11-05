@@ -204,6 +204,18 @@ export function isChatopsDestinationRow(toolId: string): boolean {
   return toolId === SLACK_DM_ROW || ownLookup(CHATOPS_POST_ROWS, toolId) !== undefined;
 }
 
+/**
+ * Whether `toolId` is a Notion or Confluence row whose input can name a knowledge-base page or
+ * database (it is checked by the F4 refusal). Read-only; the completeness test reads it so a new
+ * model-offerable Notion/Confluence row cannot be offered without coverage.
+ */
+export function isKnowledgeBaseCapableRow(toolId: string): boolean {
+  return (
+    ownLookup(NOTION_KB_KEYS, toolId) !== undefined ||
+    ownLookup(CONFLUENCE_KB_KEYS, toolId) !== undefined
+  );
+}
+
 /** The fixed refusal for a model write to `toolId` with `input`, or `undefined` to allow it. */
 export function modelWriteRefusal(
   toolId: string,

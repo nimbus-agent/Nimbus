@@ -1,16 +1,33 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
+import { toStandardSchema } from "@mastra/core/schema";
+
 import { dbRun } from "../../db/write.ts";
+import { buildConnectorWriteAgentTools } from "../../engine/connector-write-agent-tools.ts";
+import { serviceOf } from "../../engine/service-of.ts";
+import type { ActionResult, PlannedAction } from "../../engine/types.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
-import { removeModelWriteEnablement, setModelWriteEnablement } from "./enablement-store.ts";
+import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
+import {
+  offerableWritesEnabledBy,
+  removeModelWriteEnablement,
+  setModelWriteEnablement,
+} from "./enablement-store.ts";
+import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { isModelOfferableRow } from "./model-offerable.ts";
 import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "./model-write-capability.ts";
+import {
+  CHATOPS_CHANNEL_REFUSAL,
+  KNOWLEDGE_BASE_REFUSAL,
+  type TribalKbConfig,
+} from "./model-write-refusals.ts";
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
-import { row, withPreview } from "./types.ts";
+import { previewTemplateKeys, row, withPreview } from "./types.ts";
 
-// SYNTHETIC templated rows: no real wave-2/3 row has a template yet, so a test over the real
-// table could not show the approved-set filter doing anything.
+// SYNTHETIC templated rows for the offer filters, so the wave and approved-set filters can be shown
+// over rows a test controls. The real B1 rows go through the real door at the end of this file.
 const T = { target: "{name}", summary: "s", fields: [] };
 const SYNC = withPreview(row("argocd_app_sync", "argocd.app.sync", "write", 2), T);
 const ROLLBACK = withPreview(row("argocd_app_rollback", "argocd.app.rollback", "write", 3), T);
@@ -219,5 +236,191 @@ describe("createModelWriteToolSource: the destination refusals (F3/F4)", () => {
       },
     );
     expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x" })).toThrow();
+  });
+});
+
+// ---------- the real B1 rows, through the real door (no `rows` seam) ----------
+
+/** The listing a server would hand over: every templated row's key with its template keys. */
+function realListing(service: string): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const r of CONNECTOR_WRITE_ROWS) {
+    if (serviceOf(r.actionType) !== service || r.preview === undefined) continue;
+    const properties: Record<string, unknown> = {};
+    for (const k of previewTemplateKeys(r.preview)) properties[k] = {};
+    out[mcpClientToolKey(service, r.toolId)] = {
+      description: r.toolId,
+      inputSchema: toStandardSchema({ type: "object", properties } as Parameters<
+        typeof toStandardSchema
+      >[0]),
+    };
+    if (r.before !== undefined) {
+      out[mcpClientToolKey(service, r.before.tool)] = { description: "read", inputSchema: {} };
+    }
+  }
+  return out;
+}
+
+const REAL_SERVICES = [
+  "slack",
+  "teams",
+  "discord",
+  "github",
+  "gitlab",
+  "jira",
+  "linear",
+  "notion",
+  "confluence",
+];
+
+function chatopsPolicy(channels: readonly string[]): EnforcedPolicy {
+  return {
+    capabilitiesDisabled: new Set<string>(),
+    chatops: {
+      channels: new Map(
+        channels.map((c) => [c, { namespace: "ns", unmapped: "refuse", notify: [] }]),
+      ),
+      ownership: new Map(),
+    },
+  } as unknown as EnforcedPolicy;
+}
+
+/** ChatOps bound to Slack C0123ABCD and Teams 19:abc@thread.tacv2. */
+const BOUND = chatopsPolicy(["C0123ABCD", "19:abc@thread.tacv2"]);
+
+interface RealDoor {
+  call(name: string, input: Record<string, unknown>): Promise<unknown>;
+  readonly executed: PlannedAction[];
+  readonly offered: readonly string[];
+}
+
+async function realDoor(
+  policy: () => EnforcedPolicy | undefined,
+  kb?: TribalKbConfig,
+): Promise<RealDoor> {
+  for (const s of REAL_SERVICES) {
+    setModelWriteEnablement(
+      db,
+      s,
+      2,
+      1,
+      offerableWritesEnabledBy(s, 2).map((r) => r.toolId),
+    );
+  }
+  const src = createModelWriteToolSource({
+    db,
+    enforcedPolicy: policy,
+    listServerTools: async (service) => realListing(service),
+    toolsEpoch: () => 0,
+    warn: () => {},
+    getTribalKbConfig: () => kb,
+  });
+  const executed: PlannedAction[] = [];
+  const executor = {
+    execute: async (a: PlannedAction): Promise<ActionResult> => {
+      executed.push(a);
+      return { status: "ok", result: { sent: true } };
+    },
+  };
+  const tools = await buildConnectorWriteAgentTools(
+    src,
+    () => executor,
+    (_s, _t, d) => d,
+    new Set(),
+  );
+  return {
+    executed,
+    offered: Object.keys(tools).sort((a, b) => a.localeCompare(b)),
+    call: async (name, input) => {
+      const t = tools[name] as
+        | { execute?: (i: unknown, c: unknown) => Promise<unknown> }
+        | undefined;
+      if (t?.execute === undefined) throw new Error(`${name} is not offered`);
+      return await t.execute(input, {});
+    },
+  };
+}
+
+describe("the real messaging rows through the real door (plan Task 3)", () => {
+  const chatopsRefused = { refused: CHATOPS_CHANNEL_REFUSAL };
+
+  test("every B1 row is offered on an approved wave-2 opt-in", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(door.offered).toEqual(
+      CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
+        .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
+        .sort((a, b) => a.localeCompare(b)),
+    );
+    expect(door.offered).toHaveLength(12);
+  });
+
+  test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const channel of ["C0123ABCD", "#general", "c0123abcd"]) {
+      expect(
+        await door.call("slack__slack_message_post", { channel, text: "hi" }),
+        channel,
+      ).toEqual(chatopsRefused);
+    }
+    expect(
+      await door.call("slack__slack_message_post_dm", { user_ids: "U0123ABCD", text: "hi" }),
+    ).toEqual(chatopsRefused);
+    expect(door.executed).toEqual([]);
+  });
+
+  test("Teams: the bound thread percent-encoded is refused; another chat thread is sent once", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("teams__teams_message_post", {
+        teamId: "t",
+        channelId: "19%3Aabc%40thread.tacv2",
+        body: "hi",
+      }),
+    ).toEqual(chatopsRefused);
+    expect(door.executed).toEqual([]);
+    expect(
+      await door.call("teams__teams_message_post_chat", {
+        chatId: "19:other@thread.v2",
+        body: "hi",
+      }),
+    ).toEqual({ sent: true });
+    expect(door.executed.map((a) => a.type)).toEqual(["teams.message.postChat"]);
+  });
+
+  test("a policy that turns unreadable after the offer refuses the call; nothing is executed", async () => {
+    let policy: EnforcedPolicy | undefined = BOUND;
+    const door = await realDoor(() => policy);
+    policy = undefined;
+    // The recheck fails first (no readable policy, no model access): nothing is executed.
+    expect(
+      await door.call("teams__teams_message_post_chat", { chatId: "19:x@thread.v2", body: "hi" }),
+    ).toHaveProperty("refused");
+    expect(door.executed).toEqual([]);
+  });
+
+  test("the KB: a Notion comment on the KB database (hyphenated or URL) and a Confluence comment on the KB parent are refused", async () => {
+    const kbCfg: TribalKbConfig = {
+      notion: { databaseId: "1a2b3c4d5e6f7a8b9c0d112233445566" },
+      confluence: { spaceKey: "KB", parentPageId: "98765" },
+    };
+    const door = await realDoor(() => BOUND, kbCfg);
+    const kbRefused = { refused: KNOWLEDGE_BASE_REFUSAL };
+    for (const pageId of [
+      "1a2b3c4d-5e6f-7a8b-9c0d-112233445566",
+      "https://www.notion.so/KB-1a2b3c4d5e6f7a8b9c0d112233445566",
+    ]) {
+      expect(
+        await door.call("notion__notion_comment_create", { pageId, text: "x" }),
+        pageId,
+      ).toEqual(kbRefused);
+    }
+    expect(
+      await door.call("confluence__confluence_comment_add", { pageId: "98765", storageHtml: "x" }),
+    ).toEqual(kbRefused);
+    expect(door.executed).toEqual([]);
+    expect(
+      await door.call("confluence__confluence_comment_add", { pageId: "12345", storageHtml: "x" }),
+    ).toEqual({ sent: true });
+    expect(door.executed).toHaveLength(1);
   });
 });
