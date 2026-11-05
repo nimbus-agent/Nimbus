@@ -3986,12 +3986,59 @@ describe("D39 — the model's connector-write door is the only builder of write 
       "invokeConnectorWrite(a);",
       "withConnectorSession(s);",
       "createConnectorDispatcher(d);",
+      "createConnectorWriteDispatcher(i, d);",
+      "const { dispatch } = connectors;\ndispatch(a);",
       "await connectors.dispatch(a);",
     ]) {
       expect(rules([file(DOOR, `${GOOD_DOOR}\n${bad}`)])).toEqual([
         "connector-write-door-names-transport",
       ]);
     }
+  });
+
+  test("(b) FAILS on a READ and on a WRITE of the request-context field outside its two files", () => {
+    for (const body of [
+      "const ex = agentRequestContext.getStore()?.connectorWriteExecutor;",
+      "agentRequestContext.run({ connectorWriteExecutor: x }, () => 1);",
+      "store.connectorWriteExecutor = x;",
+    ]) {
+      expect(rules([file("packages/gateway/src/engine/rogue.ts", body)])).toEqual([
+        "connector-write-context-field-confined",
+      ]);
+    }
+  });
+
+  test("(b) allows the field in agent-request-context.ts and run-ask.ts", () => {
+    const body = "store.connectorWriteExecutor = x;";
+    expect(
+      checkModelWriteDoor([
+        file("packages/gateway/src/engine/agent-request-context.ts", body),
+        file("packages/gateway/src/engine/run-ask.ts", body),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(e) FAILS on a rogue caller of either builder; allows the named files", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/ipc/rogue.ts",
+          "await buildConnectorWriteAgentTools(s, e, w, t);",
+        ),
+      ]),
+    ).toEqual(["connector-write-builders-confined"]);
+    expect(
+      rules([file("packages/gateway/src/ipc/rogue.ts", "const ex = buildModelWriteExecutor(p);")]),
+    ).toEqual(["connector-write-builders-confined"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/engine/agent.ts",
+          "await buildConnectorWriteAgentTools(s, e, w, t);",
+        ),
+        file("packages/gateway/src/engine/run-ask.ts", "const ex = buildModelWriteExecutor(p);"),
+      ]),
+    ).toEqual([]);
   });
 
   test("(c) does not apply to other files", () => {

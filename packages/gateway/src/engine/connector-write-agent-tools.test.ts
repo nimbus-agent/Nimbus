@@ -254,12 +254,14 @@ describe("buildConnectorWriteAgentTools: what is offered", () => {
     expect(src.listCalls).toEqual(["argocd"]);
   });
 
-  test("a service whose listing is undefined offers nothing, silently; the control is offered", async () => {
+  test("a service whose listing is undefined offers nothing and warns once; the control is offered", async () => {
     const src = fakeSource([REFRESH, SYNC], { tableau: undefined, argocd: argocdListing() });
     const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
     expect(keys(tools)).toEqual([SYNC_NAME]);
     expect(src.listCalls).toEqual(["tableau", "argocd"]);
-    expect(src.warnings).toEqual([]);
+    expect(src.warnings.map((w) => w.msg)).toEqual([
+      "connector writes for tableau are enabled but its tools cannot be listed",
+    ]);
   });
 
   test("two rows of one service, NOT adjacent in the row list: the service is listed once, both offered", async () => {
@@ -562,5 +564,39 @@ describe("execute: per-call checks and results", () => {
     expect(Object.keys(out)).toEqual(["error"]);
     expect(out.error.startsWith(String.raw`bad\u{001B}]0;title\u{0007}e`)).toBe(true);
     expect([...out.error]).toHaveLength(CONNECTOR_WRITE_ERROR_MAX);
+  });
+});
+
+describe("a listing that cannot be produced, and non-standard failures", () => {
+  test("an enabled service whose tools cannot be listed warns ONCE per generation", async () => {
+    const src = fakeSource([SYNC], { argocd: undefined });
+    const ex = fakeExecutor({ status: "ok", result: {} });
+    expect(keys(await syncTools(src, ex))).toEqual([]);
+    expect(keys(await syncTools(src, ex))).toEqual([]);
+    const w = src.warnings.filter((x) => x.msg.includes("enabled but its tools cannot be listed"));
+    expect(w).toHaveLength(1);
+    expect(w[0]?.bindings["service"]).toBe("argocd");
+    // A new generation of the slot warns again.
+    src.generations.set("argocd", src.epoch + 1);
+    await syncTools(src, ex);
+    expect(
+      src.warnings.filter((x) => x.msg.includes("enabled but its tools cannot be listed")),
+    ).toHaveLength(2);
+  });
+
+  test("a non-integer generation (NaN) offers nothing and warns", async () => {
+    const src = fakeSource([SYNC], { argocd: argocdListing() });
+    src.generations.set("argocd", Number.NaN);
+    expect(keys(await syncTools(src, fakeExecutor({ status: "ok", result: {} })))).toEqual([]);
+    expect(src.warnings.some((x) => x.msg.includes("no known slot"))).toBe(true);
+  });
+
+  test("a listing that throws a non-Error value is reported by its text", async () => {
+    const src = fakeSource([SYNC], {});
+    src.listServerTools = async () => {
+      throw "plain string failure"; // NOSONAR: exercises the non-Error arm
+    };
+    expect(keys(await syncTools(src, fakeExecutor({ status: "ok", result: {} })))).toEqual([]);
+    expect(src.warnings.some((x) => x.bindings["err"] === "plain string failure")).toBe(true);
   });
 });

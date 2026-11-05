@@ -11265,6 +11265,8 @@ describe("I53 — a first-party connector write reaches the model only through t
     for (const id of [
       "connector-write-tools-built-outside-door",
       "connector-write-executor-read-confined",
+      "connector-write-context-field-confined",
+      "connector-write-builders-confined",
       "connector-write-door-names-transport",
       "connector-write-door-origin-model",
     ]) {

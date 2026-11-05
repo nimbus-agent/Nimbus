@@ -19,8 +19,9 @@
  * inside `createNimbusEngineAgent` with no injection seam, so the stub calls the offered tool's
  * `execute` after asserting it is offered, which is the same function Mastra would call.
  *
- * Nothing is offerable in production today (the real write rows are wave 4 with no `before`
- * reader), so the fixture row is the real `argocd.app.sync` row with its real preview template,
+ * Nothing is offerable in production today (the 42 wave-4 rows have no `before` reader, the 18
+ * rows that carry a preview template are all wave 4, and the wave 2 and 3 rows have no template),
+ * so the fixture row is the real `argocd.app.sync` row with its real preview template,
  * moved to wave 2. The executor builds its preview from the real table, so the owner sees the
  * template the production row carries.
  */

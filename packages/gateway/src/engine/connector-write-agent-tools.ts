@@ -79,6 +79,25 @@ const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 /** One drift warning per `<generation>:<service>`, process-wide. */
 const driftWarned = new Set<string>();
 
+/** One "enabled but cannot be listed" warning per `<generation>:<service>`, process-wide. */
+const unlistedWarned = new Set<string>();
+
+function warnUnlistedOnce(source: ConnectorWriteToolSource, service: string): void {
+  let generation = -1;
+  try {
+    generation = source.toolsEpoch(service);
+  } catch {
+    // An unreadable generation still warns, once, under -1.
+  }
+  const key = `${String(generation)}:${service}`;
+  if (unlistedWarned.has(key)) return;
+  unlistedWarned.add(key);
+  source.warn(
+    { service, generation },
+    `connector writes for ${service} are enabled but its tools cannot be listed`,
+  );
+}
+
 type Wrap = <T>(service: string, tool: string, def: T) => T;
 
 function errText(err: unknown): string {
@@ -280,7 +299,10 @@ export async function buildConnectorWriteAgentTools(
     try {
       // Sequential on purpose: a listing may spawn a server, and only enabled services list.
       const listing = await source.listServerTools(service); // NOSONAR S9382: a listing may spawn a sandboxed slot
-      if (listing === undefined) continue;
+      if (listing === undefined) {
+        warnUnlistedOnce(source, service);
+        continue;
+      }
       // Read AFTER the listing, once per service: a spawn it caused bumps the generation the
       // tools are listed under.
       const epoch = source.toolsEpoch(service);

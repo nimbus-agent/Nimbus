@@ -2169,9 +2169,13 @@ export function checkEvalConfinement(files: readonly FileEntry[]): Violation[] {
 // (b) `getAgentRequestConnectorWriteExecutor`, the read of the owner-turn executor, is named only by
 //     `engine/agent-request-context.ts` (its definition), `engine/run-ask.ts`, `engine/agent.ts` and
 //     the door;
+//     The request-context FIELD `connectorWriteExecutor` (a read or a write of it) is named only by
+//     `agent-request-context.ts` and `run-ask.ts`;
 // (c) the door file names no transport: `invokeConnectorWrite`, `withConnectorSession`,
-//     `createConnectorDispatcher` or `.dispatch(` — it runs an action through the turn's executor
-//     and nothing else;
+//     `createConnectorDispatcher`, `createConnectorWriteDispatcher` or a `dispatch(` call (a
+//     destructured one included) — it runs an action through the turn's executor and nothing else;
+// (e) `buildConnectorWriteAgentTools` is named only by `engine/agent.ts` and the door, and
+//     `buildModelWriteExecutor` only by `engine/run-ask.ts`;
 // (d) the door file contains `origin: "model"`, the marker `tryDelegatedApproval` refuses to delegate.
 // Comments and string literals are stripped before identifiers are matched (the import clauses read
 // comment-stripped source, a specifier IS a string). Test files and anything outside
@@ -2187,7 +2191,22 @@ const D39_EXECUTOR_READ_ALLOWED: readonly string[] = [
   D39_DOOR,
 ];
 const D39_TRANSPORT_RE =
-  /\b(?:invokeConnectorWrite|withConnectorSession|createConnectorDispatcher)\b|\.\s*dispatch\s*\(/g;
+  /\b(?:invokeConnectorWrite|withConnectorSession|createConnectorDispatcher|createConnectorWriteDispatcher)\b|\bdispatch\s*\(/g;
+const D39_CONTEXT_FIELD_RE = /\bconnectorWriteExecutor\b/g;
+const D39_CONTEXT_FIELD_ALLOWED: readonly string[] = [
+  "packages/gateway/src/engine/agent-request-context.ts",
+  "packages/gateway/src/engine/run-ask.ts",
+];
+const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
+  [
+    /\bbuildConnectorWriteAgentTools\b/g,
+    [
+      "packages/gateway/src/engine/agent.ts",
+      "packages/gateway/src/engine/connector-write-agent-tools.ts",
+    ],
+  ],
+  [/\bbuildModelWriteExecutor\b/g, ["packages/gateway/src/engine/run-ask.ts"]],
+];
 const D39_ORIGIN_RE = /\borigin\s*:\s*["']model["']/;
 const D39_ROWS_SPECIFIER_RE = /connectors\/connector-writes\/|connector-write-registry/;
 // `import <clause> from "x"` (static, comment-stripped); `export … from` re-exports count as values.
@@ -2251,6 +2270,15 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
       for (const m of code.matchAll(D39_EXECUTOR_READ_RE)) {
         push("connector-write-executor-read-confined", code, m.index);
       }
+    }
+    if (!D39_CONTEXT_FIELD_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D39_CONTEXT_FIELD_RE)) {
+        push("connector-write-context-field-confined", code, m.index);
+      }
+    }
+    for (const [re, allowed] of D39_BUILDERS) {
+      if (allowed.includes(f.relPath)) continue;
+      for (const m of code.matchAll(re)) push("connector-write-builders-confined", code, m.index);
     }
     if (isDoor) {
       for (const m of code.matchAll(D39_TRANSPORT_RE)) {
@@ -3669,8 +3697,12 @@ async function run(): Promise<void> {
         "(a) tools built from the connector-write table outside engine/connector-write-agent-tools.ts",
       "connector-write-executor-read-confined":
         "(b) getAgentRequestConnectorWriteExecutor named outside agent-request-context.ts, run-ask.ts, agent.ts and the door",
+      "connector-write-context-field-confined":
+        "(b) the request-context field connectorWriteExecutor named outside agent-request-context.ts and run-ask.ts",
+      "connector-write-builders-confined":
+        "(e) buildConnectorWriteAgentTools named outside agent.ts and the door, or buildModelWriteExecutor outside run-ask.ts",
       "connector-write-door-names-transport":
-        "(c) the door names a connector transport (invokeConnectorWrite, withConnectorSession, createConnectorDispatcher or .dispatch())",
+        "(c) the door names a connector transport (invokeConnectorWrite, withConnectorSession, createConnectorDispatcher, createConnectorWriteDispatcher or dispatch())",
       "connector-write-door-origin-model": '(d) the door carries no origin: "model"',
     };
     for (const e of v) {
