@@ -17,6 +17,7 @@ import type { WorkflowRunContext } from "../workflow-invoke.ts";
 import type { ClientKind } from "./client-kind.ts";
 import type { ServerCtx } from "./context.ts";
 import {
+  CONNECTOR_WRITE_OFFER_BY_KIND,
   dispatchAgentInvoke,
   dispatchEngineAskStream,
   dispatchWorkflowRunRpc,
@@ -1106,6 +1107,69 @@ describe("offerUserMcpTools crosses both agent entry points from the session's k
     expect(seen).toEqual(["client-42"]);
     expect(captured?.["offerUserMcpTools"]).toBe(false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// The model's connector-write door (Phase 9.7): offered ONLY to `cli` and `ui` — stricter than
+// user-MCP, `unknown` is false (the CLI's ask/repl declare `cli`; the desktop bridge declares `ui`).
+// The kind is self-reported, not an authorization; the owner's HITL prompt guards every call.
+// ---------------------------------------------------------------------------
+
+const EXPECTED_WRITE_OFFER: Record<ClientKind, boolean> = {
+  cli: true,
+  ui: true,
+  unknown: false,
+  mcp: false,
+  http: false,
+  chatops: false,
+  fleet: false,
+  push: false,
+};
+
+describe("CONNECTOR_WRITE_OFFER_BY_KIND — only cli and ui", () => {
+  test("maps every ClientKind to the expected decision (whole object)", () => {
+    expect({ ...CONNECTOR_WRITE_OFFER_BY_KIND }).toEqual(EXPECTED_WRITE_OFFER);
+  });
+
+  test("an undeclared (unknown) client is not offered the door", () => {
+    expect(CONNECTOR_WRITE_OFFER_BY_KIND.unknown).toBe(false);
+  });
+
+  test("the user-MCP map is unchanged by it (unknown stays true there)", () => {
+    expect({ ...USER_MCP_OFFER_BY_KIND }).toEqual(EXPECTED_OFFER);
+  });
+});
+
+describe("offerConnectorWriteTools crosses both agent entry points from the session's kind", () => {
+  for (const kind of Object.keys(EXPECTED_WRITE_OFFER) as ClientKind[]) {
+    test(`agent.invoke, kind ${kind} -> ${String(EXPECTED_WRITE_OFFER[kind])}`, async () => {
+      let captured: Record<string, unknown> | undefined;
+      const handler = async (p: unknown): Promise<{ reply: string }> => {
+        captured = p as Record<string, unknown>;
+        return { reply: "ok" };
+      };
+      const ctx = makeCtx({ agentInvokeHandler: handler, clientKind: kind });
+      const { session } = makeSession();
+      await dispatchAgentInvoke(ctx, session, "c", { input: "x", offerConnectorWriteTools: true });
+      expect(captured?.["offerConnectorWriteTools"]).toBe(EXPECTED_WRITE_OFFER[kind]);
+    });
+
+    test(`engine.askStream, kind ${kind} -> ${String(EXPECTED_WRITE_OFFER[kind])}`, async () => {
+      let resolveCall: ((p: Record<string, unknown>) => void) | undefined;
+      const called = new Promise<Record<string, unknown>>((res) => {
+        resolveCall = res;
+      });
+      const handler = async (p: unknown): Promise<{ reply: string }> => {
+        resolveCall?.(p as Record<string, unknown>);
+        return { reply: "done" };
+      };
+      const ctx = makeCtx({ agentInvokeHandler: handler, clientKind: kind });
+      const { session } = makeSession();
+      await dispatchEngineAskStream(ctx, session, "c", { input: "x" });
+      const captured = await called;
+      expect(captured["offerConnectorWriteTools"]).toBe(EXPECTED_WRITE_OFFER[kind]);
+    });
+  }
 });
 
 describe("agent.gasLimitReached — unicast to the acting session only", () => {

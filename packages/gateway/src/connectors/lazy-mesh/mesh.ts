@@ -106,6 +106,9 @@ const FIRST_PARTY_LISTING_SERVICES: Readonly<Record<string, Phase3ServerAdder>> 
   mlflow: phase3AddMlflowMcp,
 };
 
+/** The one slot that hosts every {@link FIRST_PARTY_LISTING_SERVICES} server. */
+const FIRST_PARTY_LISTING_SLOT = LAZY_MESH.phase3Bundle;
+
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
   private readonly lazySlots = new Map<string, LazyMcpSlot>();
@@ -116,6 +119,13 @@ export class LazyConnectorMesh {
   private readonly logger: MeshLogger | undefined;
   private readonly isConnectorAllowed: (serviceId: string) => boolean;
   private toolsEpoch = 0;
+  /**
+   * Per-SLOT generation: bumped whenever that slot's client is set (spawned) or stopped. Unlike the
+   * global {@link toolsEpoch}, unrelated activity (another slot spawning, idling out, an extension
+   * slot) never changes a slot's generation, so the connector-write door can tell "this server
+   * restarted since its tools were listed" from "something else moved".
+   */
+  private readonly slotGenerations = new Map<string, number>();
   private readonly spawnContext: MeshSpawnContext;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
@@ -230,6 +240,20 @@ export class LazyConnectorMesh {
     this.toolsEpoch += 1;
   }
 
+  private bumpSlotGeneration(key: string): void {
+    this.slotGenerations.set(key, (this.slotGenerations.get(key) ?? 0) + 1);
+  }
+
+  /**
+   * The generation of the slot hosting first-party `service` (the explicit map
+   * {@link listFirstPartyServerTools} uses), or `-1` for a service that map does not name — the
+   * connector-write door treats `-1` as "not offerable". Never `NaN`.
+   */
+  toolsGenerationFor(service: string): number {
+    if (!Object.hasOwn(FIRST_PARTY_LISTING_SERVICES, service)) return -1;
+    return this.slotGenerations.get(FIRST_PARTY_LISTING_SLOT) ?? 0;
+  }
+
   private lazySlot(key: string): LazyMcpSlot {
     let s = this.lazySlots.get(key);
     if (s === undefined) {
@@ -245,6 +269,7 @@ export class LazyConnectorMesh {
 
   private setLazyClient(key: string, client: MCPClient): void {
     this.lazySlot(key).client = client;
+    this.bumpSlotGeneration(key);
   }
 
   private clearLazyIdle(key: string): void {
@@ -282,6 +307,7 @@ export class LazyConnectorMesh {
     let disconnected: Promise<void> | undefined;
     if (c !== undefined) {
       this.bumpToolsEpoch();
+      this.bumpSlotGeneration(key);
       disconnected = c.disconnect().then(
         () => undefined,
         () => undefined,
@@ -630,7 +656,7 @@ export class LazyConnectorMesh {
     await this.filesystemSpawnGate;
     await this.ensurePhase3BundleRunning();
     const all: Readonly<Record<string, unknown>> = await listLazyMeshClientTools(
-      this.getLazyClient(LAZY_MESH.phase3Bundle),
+      this.getLazyClient(FIRST_PARTY_LISTING_SLOT),
     );
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(all)) {

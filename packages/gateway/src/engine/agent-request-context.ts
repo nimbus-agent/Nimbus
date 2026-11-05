@@ -32,6 +32,14 @@ export type AgentRequestContext = {
    * user-MCP agent tool refuses and calls nothing (`engine/user-mcp-agent-tools.ts`).
    */
   userMcpExecutor?: ToolExecutor;
+  /**
+   * The DISPATCHING executor the model's connector-write door (`engine/connector-write-agent-tools.ts`)
+   * runs every call through. Built WITHOUT delegation, so only the local owner is ever asked. Present
+   * ONLY on the local owner's non-demo `cli`/`ui` turn — set by `runAsk` from an explicit flag decided
+   * at the IPC entry (`CONNECTOR_WRITE_OFFER_BY_KIND`). Absent, no door tool is listed and a stale
+   * call is refused.
+   */
+  connectorWriteExecutor?: ToolExecutor;
 };
 
 export const agentRequestContext = new AsyncLocalStorage<AgentRequestContext>();
@@ -43,6 +51,11 @@ export function getAgentRequestSessionId(): string | undefined {
 /** This turn's user-MCP executor, or `undefined` outside a turn / for a non-owner caller. */
 export function getAgentRequestUserMcpExecutor(): ToolExecutor | undefined {
   return agentRequestContext.getStore()?.userMcpExecutor;
+}
+
+/** This turn's connector-write door executor, or `undefined` outside an owner `cli`/`ui` turn. */
+export function getAgentRequestConnectorWriteExecutor(): ToolExecutor | undefined {
+  return agentRequestContext.getStore()?.connectorWriteExecutor;
 }
 
 /**

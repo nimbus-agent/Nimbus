@@ -3,6 +3,7 @@ import pino from "pino";
 
 import { runWorkflowExecution } from "./automation/workflow-runner.ts";
 import { createConnectorWriteDispatcher } from "./connectors/connector-write-dispatch.ts";
+import { createModelWriteToolSource } from "./connectors/connector-writes/model-write-source.ts";
 import {
   createConnectorDispatcher,
   type McpToolListingClient,
@@ -162,6 +163,7 @@ export async function main(): Promise<void> {
   // it is wired here once and handed to every runAsk call rather than left to an internal fallback.
   const askEgressSink = makeEgressSink(platform.localIndex.getDatabase());
   const userMcpLogger = pino({ name: "user-mcp-agent-tools" });
+  const connectorWriteLogger = pino({ name: "connector-write-agent-tools" });
   // NO ENABLED VENDOR MEANS NO REMOTE INFERENCE ANYWHERE, including the default `nimbus ask`.
   // The agent is not merely refused, it is NOT CONSTRUCTED: `@mastra/core` resolves a vendor key
   // from the ENVIRONMENT on its own the moment an agent exists, so a constructed-but-refusing
@@ -202,6 +204,18 @@ export async function main(): Promise<void> {
             listTools: (serviceId) => platform.connectorMesh.listOwnerCodeServerTools(serviceId),
             warn: (bindings, msg) => userMcpLogger.warn(bindings, msg),
           },
+          // The model's connector-write door (Phase 9.7, D1): offered only on a turn whose request
+          // context carries the delegation-free connector-write executor (the local owner's
+          // non-demo `cli`/`ui` turn). Enablement, policy (fail-closed) and offerability are read
+          // live, at listing and again on every call; only enabled services are listed (D2).
+          connectorWrites: createModelWriteToolSource({
+            db: platform.localIndex.getDatabase(),
+            enforcedPolicy: platform.enforcedPolicy,
+            listServerTools: (service) => platform.connectorMesh.listFirstPartyServerTools(service),
+            // Per-slot, not the global epoch: unrelated slot activity must not refuse a listed tool.
+            toolsEpoch: (service) => platform.connectorMesh.toolsGenerationFor(service),
+            warn: (bindings, msg) => connectorWriteLogger.warn(bindings, msg),
+          }),
         });
 
   function resolveEngineAgent(name: string | undefined): Agent | undefined {
@@ -249,6 +263,9 @@ export async function main(): Promise<void> {
       // I42 (user-MCP model access): decided at the IPC entry from the live session's kind
       // (`USER_MCP_OFFER_BY_KIND`); only a literal `true` offers.
       offerUserMcpTools: ctx.offerUserMcpTools === true,
+      // The connector-write door: decided at the IPC entry (`CONNECTOR_WRITE_OFFER_BY_KIND`,
+      // `cli`/`ui` only); `runAsk` also refuses it on a demo-rooted gateway.
+      offerConnectorWriteTools: ctx.offerConnectorWriteTools === true,
     }),
   );
 
@@ -288,6 +305,8 @@ export async function main(): Promise<void> {
       // not a registered ClientKind and would read as `unknown` (the plain CLI, an OWNER kind)
       // — which is why the decision is never a kind lookup inside runAsk.
       offerUserMcpTools: false,
+      // Never on a ChatOps turn: a shared room is not the local owner.
+      offerConnectorWriteTools: false,
     })),
   );
 

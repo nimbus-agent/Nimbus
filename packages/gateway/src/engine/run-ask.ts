@@ -116,6 +116,14 @@ export type RunAskParams = {
    */
   offerUserMcpTools?: boolean;
   /**
+   * Offer the model's connector-write door (Phase 9.7) on this turn. Only `=== true` offers, and
+   * never on a demo-rooted gateway: `runAsk` then puts a delegation-free executor into the request
+   * context (`connectorWriteExecutor`), whose PRESENCE `engine/agent.ts` reads as the offer signal.
+   * Decided by the CALLER from the live session's `ClientKind` (`CONNECTOR_WRITE_OFFER_BY_KIND`,
+   * only `cli` / `ui`); ChatOps passes a literal `false`.
+   */
+  offerConnectorWriteTools?: boolean;
+  /**
    * Told when the agent step budget cut this turn short (`engine/step-budget.ts`). Only the IPC
    * entry supplies it, as a UNICAST `agent.gasLimitReached` to the acting session; every other
    * caller (ChatOps, workflow) relies on the deterministic disclosure line in the reply.
@@ -298,6 +306,21 @@ function offerUserMcpExecutorIfOwner(p: RunAskParams): void {
 }
 
 /**
+ * The same, for the connector-write door: set only when the caller decided this is the local
+ * owner's `cli`/`ui` turn (`p.offerConnectorWriteTools === true`) AND the gateway is not
+ * demo-rooted (I41); cleared otherwise, so a reused store never carries it into another turn.
+ */
+function offerConnectorWriteExecutorIfOwner(p: RunAskParams): void {
+  const store = agentRequestContext.getStore();
+  if (store === undefined) return;
+  if (p.offerConnectorWriteTools === true && !isDemo(p)) {
+    store.connectorWriteExecutor = buildModelWriteExecutor(p);
+  } else {
+    delete store.connectorWriteExecutor;
+  }
+}
+
+/**
  * The conversational answer path: prior turns + optional indexed context → the agent/router,
  * then persist the turn.
  *
@@ -310,6 +333,7 @@ async function answerConversationally(
   partial: ExplainPartial,
 ): Promise<{ reply: string; modelMeta?: LlmGenerateResult }> {
   offerUserMcpExecutorIfOwner(p);
+  offerConnectorWriteExecutorIfOwner(p);
   const sessionId = getAgentRequestSessionId();
   const priorTurns = await loadRecentConversationHistory(p.sessionMemoryStore, sessionId);
   partial.stage = "retrieval";
@@ -516,6 +540,18 @@ async function classifyIntentForAskWithLocalFallback(
  * consults it for a user-MCP type (I42).
  */
 function buildAskExecutor(p: RunAskParams): ToolExecutor {
+  return newTurnExecutor(p, p.delegation);
+}
+
+/**
+ * The one place a turn constructs its `ToolExecutor`. Only `delegation` varies between the ask executor
+ * (`p.delegation`) and the connector-write door's (`undefined`); consent, audit, dispatcher,
+ * egress, policy and preview credential are the same arguments for both, so they cannot drift.
+ */
+function newTurnExecutor(
+  p: RunAskParams,
+  delegation: ExecutorDelegationDep | undefined,
+): ToolExecutor {
   const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
   // (append-before-dispatch). A connector tool call (read OR write) is an outbound event and is
@@ -527,11 +563,20 @@ function buildAskExecutor(p: RunAskParams): ToolExecutor {
     consent,
     p.localIndex,
     p.dispatcher,
-    p.delegation,
+    delegation,
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
     p.previewCredentialFor,
   );
+}
+
+/**
+ * The connector-write door's executor: {@link buildAskExecutor}'s shape with NO delegation (I20),
+ * so a model-requested write is only ever approved by the local owner — the first of two layers;
+ * the second is the `origin: "model"` every door action carries.
+ */
+export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
+  return newTurnExecutor(p, undefined);
 }
 
 async function runActionsPlan(

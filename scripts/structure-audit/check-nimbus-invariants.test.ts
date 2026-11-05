@@ -29,6 +29,7 @@ import {
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
+  checkModelWriteDoor,
   checkPackLayerWriters,
   checkPushClientKindConfinement,
   checkRegistryAppenderConfinement,
@@ -3862,5 +3863,247 @@ describe("D36 — only the store and pack-install.ts name the pack-layer writers
       files.push({ relPath: f.relPath, contents: f.contents });
     }
     expect(checkPackLayerWriters(files)).toEqual([]);
+  });
+});
+
+describe("D39 — the model's connector-write door is the only builder of write tools (I53)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const DOOR = "packages/gateway/src/engine/connector-write-agent-tools.ts";
+  const GOOD_DOOR = [
+    'import { createTool } from "@mastra/core/tools";',
+    'import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";',
+    'const t = createTool({ id: "x", execute: () => ex.execute({ type: "a", origin: "model" }) });',
+  ].join("\n");
+  const rules = (files: FileEntry[]): string[] => checkModelWriteDoor(files).map((v) => v.rule);
+
+  test("allows the door, and agent.ts importing the door's builder next to its own tools", () => {
+    expect(
+      checkModelWriteDoor([
+        file(DOOR, GOOD_DOOR),
+        file(
+          "packages/gateway/src/engine/agent.ts",
+          'import { createTool } from "@mastra/core/tools";\nimport { buildConnectorWriteAgentTools } from "./connector-write-agent-tools.ts";\nconst a = createTool({});\nconst e = getAgentRequestConnectorWriteExecutor();',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(a) FAILS on another file that value-imports the write table and calls createTool", () => {
+    const v = checkModelWriteDoor([
+      file(
+        "packages/gateway/src/engine/other-tools.ts",
+        'import { createTool } from "@mastra/core/tools";\nimport { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";\nconst t = createTool({});',
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("connector-write-tools-built-outside-door");
+  });
+
+  test("(a) FAILS on the registry import and on an aliased createTool", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/x.ts",
+          'import { createTool as ct } from "@mastra/core/tools";\nimport { isConnectorWriteToolId } from "./connectors/connector-write-registry.ts";\nconst t = ct({});',
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+  });
+
+  test("(a) FAILS on a namespace import's createTool and on a dynamic import of the rows", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/x.ts",
+          'import * as tools from "@mastra/core/tools";\nimport { rows } from "./connectors/connector-writes/rows.ts";\ntools.createTool({});',
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/y.ts",
+          'import { createTool } from "@mastra/core/tools";\nconst m = await import("./connectors/connector-writes/rows.ts");\ncreateTool({});',
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+  });
+
+  test("(a) does NOT trip on a type-only import, an all-type braces import, or no createTool call", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/a.ts",
+          'import { createTool } from "@mastra/core/tools";\nimport type { ConnectorWriteRow } from "./connectors/connector-writes/types.ts";\ncreateTool({});',
+        ),
+        file(
+          "packages/gateway/src/b.ts",
+          'import { createTool } from "@mastra/core/tools";\nimport { type ConnectorWriteRow } from "./connectors/connector-writes/types.ts";\ncreateTool({});',
+        ),
+        file(
+          "packages/gateway/src/c.ts",
+          'import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";\nconst n = CONNECTOR_WRITE_ROWS.length;',
+        ),
+        file(
+          "packages/gateway/src/d.ts",
+          '// import { x } from "./connectors/connector-writes/rows.ts"\nimport { createTool } from "@mastra/core/tools";\ncreateTool({});',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(a) resolves relative specifiers: both layouts evade a raw-string test, neither evades this", () => {
+    const TOOLS = 'import { createTool } from "@mastra/core/tools";\n';
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          `${TOOLS}import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/connector-writes/rogue.ts",
+          `${TOOLS}import { CONNECTOR_WRITE_ROWS } from "./index.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          `${TOOLS}import { isConnectorWriteToolId } from "./connector-write-registry.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+  });
+
+  test("(a) a relative import that is NOT the table, or a table file that never calls createTool, stays clean", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          'import { createTool } from "@mastra/core/tools";\nimport { x } from "./other.ts";\ncreateTool({});',
+        ),
+        file(
+          "packages/gateway/src/connectors/connector-writes/enable.ts",
+          'import { CONNECTOR_WRITE_ROWS } from "./index.ts";\nconst n = CONNECTOR_WRITE_ROWS.length;',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(b) FAILS when getAgentRequestConnectorWriteExecutor is named elsewhere", () => {
+    const v = checkModelWriteDoor([
+      file(
+        "packages/gateway/src/engine/executor-helpers.ts",
+        "const ex = getAgentRequestConnectorWriteExecutor();",
+      ),
+    ]);
+    expect(v).toHaveLength(1);
+    expect(v[0]?.rule).toBe("connector-write-executor-read-confined");
+  });
+
+  test("(b) allows the four named files and ignores comments, strings and tests", () => {
+    const body = "const ex = getAgentRequestConnectorWriteExecutor();";
+    expect(
+      checkModelWriteDoor([
+        file("packages/gateway/src/engine/agent-request-context.ts", body),
+        file("packages/gateway/src/engine/run-ask.ts", body),
+        file("packages/gateway/src/engine/agent.ts", body),
+        file(DOOR, `${GOOD_DOOR}\n${body}`),
+        file(
+          "packages/gateway/src/z.ts",
+          `// ${body}\nconst s = "getAgentRequestConnectorWriteExecutor";`,
+        ),
+        file("packages/gateway/src/z.test.ts", body),
+        file("scripts/z.ts", body),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(c) FAILS when the door names a transport", () => {
+    for (const bad of [
+      "invokeConnectorWrite(a);",
+      "withConnectorSession(s);",
+      "createConnectorDispatcher(d);",
+      "createConnectorWriteDispatcher(i, d);",
+      "const { dispatch } = connectors;\ndispatch(a);",
+      "await connectors.dispatch(a);",
+    ]) {
+      expect(rules([file(DOOR, `${GOOD_DOOR}\n${bad}`)])).toEqual([
+        "connector-write-door-names-transport",
+      ]);
+    }
+  });
+
+  test("(b) FAILS on a READ and on a WRITE of the request-context field outside its two files", () => {
+    for (const body of [
+      "const ex = agentRequestContext.getStore()?.connectorWriteExecutor;",
+      "agentRequestContext.run({ connectorWriteExecutor: x }, () => 1);",
+      "store.connectorWriteExecutor = x;",
+    ]) {
+      expect(rules([file("packages/gateway/src/engine/rogue.ts", body)])).toEqual([
+        "connector-write-context-field-confined",
+      ]);
+    }
+  });
+
+  test("(b) allows the field in agent-request-context.ts and run-ask.ts", () => {
+    const body = "store.connectorWriteExecutor = x;";
+    expect(
+      checkModelWriteDoor([
+        file("packages/gateway/src/engine/agent-request-context.ts", body),
+        file("packages/gateway/src/engine/run-ask.ts", body),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(e) FAILS on a rogue caller of either builder; allows the named files", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/ipc/rogue.ts",
+          "await buildConnectorWriteAgentTools(s, e, w, t);",
+        ),
+      ]),
+    ).toEqual(["connector-write-builders-confined"]);
+    expect(
+      rules([file("packages/gateway/src/ipc/rogue.ts", "const ex = buildModelWriteExecutor(p);")]),
+    ).toEqual(["connector-write-builders-confined"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/engine/agent.ts",
+          "await buildConnectorWriteAgentTools(s, e, w, t);",
+        ),
+        file("packages/gateway/src/engine/run-ask.ts", "const ex = buildModelWriteExecutor(p);"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(c) does not apply to other files", () => {
+    expect(
+      rules([file("packages/gateway/src/engine/executor.ts", "connectors.dispatch(a);")]),
+    ).toEqual([]);
+  });
+
+  test("(d) FAILS when the door lacks origin: model, including when only a comment or string has it", () => {
+    const noOrigin = 'import { createTool } from "@mastra/core/tools";\ncreateTool({});';
+    expect(rules([file(DOOR, noOrigin)])).toEqual(["connector-write-door-origin-model"]);
+    expect(rules([file(DOOR, `${noOrigin}\n// origin: "model"`)])).toEqual([
+      "connector-write-door-origin-model",
+    ]);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(files.some((f) => f.relPath === DOOR)).toBe(true);
+    expect(checkModelWriteDoor(files)).toEqual([]);
   });
 });

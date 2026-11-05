@@ -33,6 +33,8 @@ export interface ConnectorWritePreview {
   readonly fields: readonly ConnectorWritePreviewField[];
   readonly otherFields: readonly { readonly key: string; readonly value: string }[];
   readonly destination: { readonly service: string; readonly credential?: "personal" | "team" };
+  /** Set by the consent display only, for an `origin: "model"` action (never by the builder). */
+  readonly requestedBy?: "model";
 }
 
 /**
@@ -85,7 +87,8 @@ export function sanitisePreviewText(s: string): string {
 const NOT_SET = "(not set)";
 const PLACEHOLDER = /\{(\w+)\}/g;
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+/** A plain object (prototype `Object.prototype` or `null`): not an array, class instance or box. */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto: unknown = Object.getPrototypeOf(v);
   return proto === Object.prototype || proto === null;
@@ -130,7 +133,12 @@ function interpolate(text: string, input: Record<string, unknown>): string {
   );
 }
 
-function namedKeys(t: ConnectorWritePreviewTemplate): Set<string> {
+/**
+ * Every input key a template names: each `fields[].key` (including fields that carry `whenUnset`)
+ * and each `{key}` placeholder in `target` and `summary`. The connector-write door's drift check
+ * reads the same set, so a key the preview shows is a key the listed schema must declare.
+ */
+export function previewTemplateKeys(t: ConnectorWritePreviewTemplate): Set<string> {
   const named = new Set<string>(t.fields.map((f) => f.key));
   for (const text of [t.target, t.summary]) {
     for (const m of text.matchAll(PLACEHOLDER)) {
@@ -215,7 +223,7 @@ export function buildConnectorWritePreviewFrom(
       destination,
     };
   }
-  const named = namedKeys(template);
+  const named = previewTemplateKeys(template);
   return {
     ...base,
     target: interpolate(template.target, rawInput),

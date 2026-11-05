@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import {
+  buildConnectorWritePreview,
+  type ConnectorWritePreview,
+} from "../connectors/connector-writes/preview.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
-import { formatConsentPrompt, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
+import {
+  consentDisplayPayload,
+  formatConsentPrompt,
+  NO_POLICY_OVERLAY,
+  ToolExecutor,
+} from "./executor.ts";
 import type { PlannedAction } from "./types.ts";
 
 const LINE = "Requested by: the model";
@@ -86,5 +95,102 @@ describe("executor — origin model", () => {
     const h = make(false);
     await h.exec.execute(h.action);
     expect(h.counts()).toEqual({ remote: 1, prompts: 0 });
+  });
+});
+
+describe("consentDisplayPayload — origin model (the desktop's details)", () => {
+  test("a typed preview carries requestedBy: model and stays a preview", () => {
+    const d = consentDisplayPayload({
+      type: "argocd.app.sync",
+      payload: { name: "web" },
+      origin: "model",
+    });
+    expect(d?.["kind"]).toBe("connector-write");
+    expect(d?.["target"]).toBe("web");
+    expect(d?.["requestedBy"]).toBe("model");
+  });
+  test("no origin: the typed preview has no requestedBy", () => {
+    const d = consentDisplayPayload({ type: "argocd.app.sync", payload: { name: "web" } });
+    expect(d?.["kind"]).toBe("connector-write");
+    expect(d !== undefined && Object.hasOwn(d, "requestedBy")).toBe(false);
+  });
+  test("generic details gain requestedBy: model; a payload's own value never wins", () => {
+    const d = consentDisplayPayload({
+      type: "jira.issue.create",
+      payload: { a: 1, requestedBy: "owner" },
+      origin: "model",
+    });
+    expect(d).toEqual({ a: 1, requestedBy: "model" });
+  });
+  test("a payload posing as a preview is still wrapped when the model asked", () => {
+    const d = consentDisplayPayload({
+      type: "jira.issue.create",
+      payload: { kind: "connector-write", actionType: "jira.issue.create" },
+      origin: "model",
+    });
+    expect(d?.["kind"]).toBeUndefined();
+    expect(d?.["requestedBy"]).toBe("model");
+    expect(d?.["payload"]).toEqual({ kind: "connector-write", actionType: "jira.issue.create" });
+  });
+  test("a payload-less model action still says who asked", () => {
+    expect(consentDisplayPayload({ type: "jira.issue.create", origin: "model" })).toEqual({
+      requestedBy: "model",
+    });
+  });
+  test("payload.origin is not an origin: no requestedBy is added", () => {
+    expect(
+      consentDisplayPayload({ type: "jira.issue.create", payload: { origin: "model" } }),
+    ).toEqual({ origin: "model" });
+  });
+  test("the CLI's Details line stays the payload (the Requested by line says it once)", () => {
+    const p = formatConsentPrompt({
+      type: "jira.issue.create",
+      payload: { a: 1 },
+      origin: "model",
+    });
+    expect(p).toContain('Details: {"a":1}');
+  });
+});
+
+describe("one typed preview per gate", () => {
+  test("an already-built preview is used by both display functions", () => {
+    const action: PlannedAction = { type: "argocd.app.sync", payload: { name: "web" } };
+    const built = buildConnectorWritePreview(action);
+    if (built === undefined) throw new Error("argocd.app.sync must have a preview");
+    const preview: ConnectorWritePreview = { ...built, target: "PREBUILT" };
+    expect(formatConsentPrompt(action, undefined, preview)).toContain("Target:  PREBUILT");
+    expect(consentDisplayPayload(action, undefined, preview)?.["target"]).toBe("PREBUILT");
+  });
+  test("the gate builds the preview once: the credential resolver is read once", async () => {
+    let reads = 0;
+    let shown: { prompt: string; details: Record<string, unknown> | undefined } | undefined;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async (prompt, details) => {
+          shown = { prompt, details };
+          return false;
+        },
+      },
+      { recordAudit: () => undefined },
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+      () => {
+        reads += 1;
+        return "personal";
+      },
+    );
+    const r = await exec.execute({
+      type: "argocd.app.sync",
+      payload: { name: "web" },
+      origin: "model",
+    });
+    expect(r.status).toBe("rejected");
+    expect(reads).toBe(1);
+    expect(shown?.prompt).toContain("Credential: personal");
+    expect(shown?.prompt).toContain(LINE);
+    expect(shown?.details?.["destination"]).toEqual({ service: "argocd", credential: "personal" });
+    expect(shown?.details?.["requestedBy"]).toBe("model");
   });
 });

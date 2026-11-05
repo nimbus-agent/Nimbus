@@ -1,5 +1,9 @@
 import { type ReactNode, useState } from "react";
-import { ConnectorWritePreview, isConnectorWriteDetails } from "./ConnectorWritePreview";
+import {
+  ConnectorWritePreview,
+  isConnectorWriteDetails,
+  RequestedByModel,
+} from "./ConnectorWritePreview";
 
 interface Props {
   readonly details?: Record<string, unknown> | undefined;
@@ -784,5 +788,20 @@ export function StructuredPreview({ details, action }: Props): ReactNode {
   if (action === "extension.downgrade") {
     return <AutoUpdatePreview payload={readAutoUpdatePayload(details)} direction="downgrade" />;
   }
-  return <PreviewRows record={details} depth={0} />;
+  return <GenericPreview details={details} />;
+}
+
+/**
+ * Every field as a row. `requestedBy: "model"` is drawn as the origin line instead of a raw row;
+ * any other value of that key is an ordinary field and stays a row, so nothing is hidden.
+ */
+function GenericPreview({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  if (details["requestedBy"] !== "model") return <PreviewRows record={details} depth={0} />;
+  const { requestedBy: _origin, ...rest } = details;
+  return (
+    <div className="flex flex-col gap-3">
+      <RequestedByModel details={details} />
+      <PreviewRows record={rest} depth={0} />
+    </div>
+  );
 }

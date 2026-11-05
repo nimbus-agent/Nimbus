@@ -93,15 +93,22 @@ function describeFor(serviceId: string, serverDescription: string): string {
  */
 const readListingVerbatim = (): undefined => undefined;
 
-function offeredInputSchema(listed: unknown): StandardSchemaWithJSON {
-  let json: unknown;
-  if (isStandardSchemaWithJSON(listed)) {
-    try {
-      json = standardSchemaToJSONSchema(listed, { io: "input", override: readListingVerbatim });
-    } catch {
-      json = undefined;
-    }
+/**
+ * A listed `inputSchema`'s JSON Schema, read back verbatim, or `undefined` for an unrecognised shape
+ * or a wrapper whose conversion throws. Shared with the connector-write door's drift check, so the
+ * keys it checks are the keys {@link offeredInputSchema} rebuilds from.
+ */
+export function readListedJsonSchema(listed: unknown): unknown {
+  if (!isStandardSchemaWithJSON(listed)) return undefined;
+  try {
+    return standardSchemaToJSONSchema(listed, { io: "input", override: readListingVerbatim });
+  } catch {
+    return undefined;
   }
+}
+
+export function offeredInputSchema(listed: unknown): StandardSchemaWithJSON {
+  const json = readListedJsonSchema(listed);
   const sanitised =
     json === undefined ? { ...PERMISSIVE_USER_MCP_INPUT_SCHEMA } : sanitiseUserMcpInputSchema(json);
   return toStandardSchema(sanitised);

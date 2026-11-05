@@ -74,7 +74,7 @@ describe("runAsk — happy paths", () => {
     await runAsk(["hello", "world"]);
     expect(stdoutChunks.join("")).toContain("No connectors are registered");
     expect(stdoutChunks.join("")).toContain("nimbus connector auth github");
-    expect(calls.map((c) => c.method)).toEqual(["connector.listStatus"]);
+    expect(calls.map((c) => c.method)).toEqual(["session.declareKind", "connector.listStatus"]);
   });
 
   it("prints onboarding hint when listStatus returns a non-array", async () => {
@@ -94,7 +94,7 @@ describe("runAsk — happy paths", () => {
     });
     await runAsk(["hello"]);
     expect(stdoutChunks.join("")).toContain("No connectors are registered");
-    expect(calls.map((c) => c.method)).toEqual(["connector.listStatus"]);
+    expect(calls.map((c) => c.method)).toEqual(["session.declareKind", "connector.listStatus"]);
   });
 
   it("happy path: invokes agent.invoke with input + stream=true and no session.append", async () => {
@@ -114,8 +114,12 @@ describe("runAsk — happy paths", () => {
       },
     });
     await runAsk(["summarize", "my", "week"]);
-    expect(calls.map((c) => c.method)).toEqual(["connector.listStatus", "agent.invoke"]);
-    expect(calls[1]?.params).toMatchObject({
+    expect(calls.map((c) => c.method)).toEqual([
+      "session.declareKind",
+      "connector.listStatus",
+      "agent.invoke",
+    ]);
+    expect(calls[2]?.params).toMatchObject({
       input: "summarize my week",
       stream: true,
     });
@@ -305,7 +309,7 @@ describe("runAsk — demo root: skips the connector-registered pre-check", () =>
       },
     });
     await runAsk(["what", "is", "going", "on"]);
-    expect(calls.map((c) => c.method)).toEqual(["agent.invoke"]);
+    expect(calls.map((c) => c.method)).toEqual(["session.declareKind", "agent.invoke"]);
     const out = stdoutChunks.join("");
     expect(out).not.toContain("No connectors are registered");
     expect(out).not.toContain("nimbus connector auth github");
@@ -425,5 +429,62 @@ describe("runAsk — no LLM configured, demo root (fix round 2)", () => {
     await runAsk(["what", "is", "going", "on"]);
     expect(stderrChunks.join("")).toBe(`${gatewayDemoMessage}\n`);
     expect(process.exitCode).toBe(1);
+  });
+});
+
+describe("runAsk — declares the connection as the owner's CLI", () => {
+  beforeEach(() => {
+    stdoutChunks.length = 0;
+    installStreamCapture();
+  });
+  afterEach(() => {
+    clearFixture();
+    restoreStreams();
+  });
+
+  it("sends session.declareKind { kind: cli } as the first frame after connect", async () => {
+    const order: string[] = [];
+    const calls: Array<{ method: string; params: unknown }> = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string, params: unknown) => {
+          order.push(method);
+          calls.push({ method, params });
+          if (method === "connector.listStatus") return [{ serviceId: "github" }];
+          if (method === "agent.invoke") return { reply: "" };
+          return undefined;
+        },
+        connect: async () => {
+          order.push("connect");
+        },
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["hello"]);
+    expect(order.slice(0, 2)).toEqual(["connect", "session.declareKind"]);
+    expect(calls[0]).toEqual({ method: "session.declareKind", params: { kind: "cli" } });
+  });
+
+  it("a failing declaration (older gateway) does not break the ask", async () => {
+    const calls: string[] = [];
+    setFixture({
+      gatewayState: { socketPath: FAKE_SOCKET_PATH },
+      ipcClient: {
+        call: async (method: string) => {
+          calls.push(method);
+          if (method === "session.declareKind") throw new Error("Method not found");
+          if (method === "connector.listStatus") return [{ serviceId: "github" }];
+          if (method === "agent.invoke") return { reply: "answered" };
+          return undefined;
+        },
+        connect: async () => {},
+        disconnect: async () => {},
+        onNotification: () => {},
+      },
+    });
+    await runAsk(["hello"]);
+    expect(calls).toEqual(["session.declareKind", "connector.listStatus", "agent.invoke"]);
   });
 });

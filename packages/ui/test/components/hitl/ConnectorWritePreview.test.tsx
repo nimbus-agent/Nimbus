@@ -164,3 +164,28 @@ describe("StructuredPreview: connector-write dispatch", () => {
     expect(screen.queryByTestId("connector-write-preview")).toBeNull();
   });
 });
+
+describe("ConnectorWritePreview — who asked", () => {
+  it("says the model asked when the gateway says so", () => {
+    render(<ConnectorWritePreview details={details({ requestedBy: "model" })} />);
+    expect(screen.getByTestId("hitl-requested-by")).toHaveTextContent("Requested by: the model");
+  });
+
+  it("says nothing about who asked otherwise", () => {
+    render(<ConnectorWritePreview details={details({ requestedBy: "someone" })} />);
+    expect(screen.queryByTestId("hitl-requested-by")).toBeNull();
+    expect(screen.queryByText(/Requested by/)).toBeNull();
+  });
+
+  it("is shown through StructuredPreview for the typed preview", () => {
+    render(
+      <StructuredPreview
+        details={details({ requestedBy: "model" })}
+        action="github.issue.create"
+      />,
+    );
+    expect(screen.getByTestId("connector-write-preview")).toHaveTextContent(
+      "Requested by: the model",
+    );
+  });
+});

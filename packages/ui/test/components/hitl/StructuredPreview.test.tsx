@@ -553,3 +553,21 @@ describe("StructuredPreview: extension.migrate shows fields it does not know", (
     expect(root).not.toHaveTextContent("migrationId");
   });
 });
+
+describe("StructuredPreview — who asked (generic details)", () => {
+  it("states 'Requested by: the model' once, not as a raw row", () => {
+    render(
+      <StructuredPreview details={{ a: "x", requestedBy: "model" }} action="jira.issue.create" />,
+    );
+    expect(screen.getByTestId("hitl-requested-by")).toHaveTextContent("Requested by: the model");
+    expect(screen.queryByText("requestedBy")).toBeNull();
+    expect(screen.getByText("x")).toBeInTheDocument();
+  });
+
+  it("any other requestedBy value is shown as a plain row, never as the origin line", () => {
+    render(<StructuredPreview details={{ requestedBy: "owner" }} action="jira.issue.create" />);
+    expect(screen.queryByTestId("hitl-requested-by")).toBeNull();
+    expect(screen.getByText("requestedBy")).toBeInTheDocument();
+    expect(screen.getByText("owner")).toBeInTheDocument();
+  });
+});
