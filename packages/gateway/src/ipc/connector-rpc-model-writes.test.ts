@@ -622,6 +622,34 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
       "google_drive__gdrive_file_create",
     ]);
   });
+
+  test("B4b: an obsidian opt-in from before B4b offers nothing and grants no write; a REAL approved enable turns both on", async () => {
+    setModelWriteEnablement(db, "obsidian", 2, 1, []);
+    expect(await statusOf("obsidian")).toMatchObject({ offerable: 0, awaitingApproval: 1 });
+    expect((await doorTools()).filter((n) => n.startsWith("obsidian__"))).toEqual([]);
+    expect(isObsidianWriteGrantApproved(db)).toBe(false);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    // The real handler over the real rows (no `rows` seam): the approval the owner gives.
+    await call(
+      "connector.writesEnable",
+      { service: "obsidian", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(statesOf(seen[0])).toEqual({ obsidian_append_to_daily_note: "newly_offerable" });
+    expect(await statusOf("obsidian")).toMatchObject({ offerable: 1, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("obsidian__"))).toEqual([
+      "obsidian__obsidian_append_to_daily_note",
+    ]);
+    // Review finding 7: the accessor the Obsidian spawn reads is now true...
+    expect(isObsidianWriteGrantApproved(db)).toBe(true);
+    // ...and a declined re-enable cannot turn it off by accident, while a disable does.
+    await refusal(
+      call("connector.writesEnable", { service: "obsidian", wave: 2 }, { exec: executor(false) }),
+    );
+    expect(isObsidianWriteGrantApproved(db)).toBe(true);
+    await call("connector.writesDisable", { service: "obsidian" });
+    expect(isObsidianWriteGrantApproved(db)).toBe(false);
+  });
 });
 
 describe("the Obsidian opt-in restarts the Obsidian connector (B4b, I15)", () => {
