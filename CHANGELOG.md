@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.27.0](https://github.com/nimbus-agent/Nimbus/compare/v10.26.0...v10.27.0) (2026-11-05)
+
+
+### Features
+
+* **gateway:** the model can propose calendar invites and Drive files, each behind your approval ([#1906](https://github.com/nimbus-agent/Nimbus/issues/1906)) ([c536c08](https://github.com/nimbus-agent/Nimbus/commit/c536c0849e7ddffd1ce094f0518c4ee082b95577))
+
 ## [10.26.0](https://github.com/nimbus-agent/Nimbus/compare/v10.25.0...v10.26.0) (2026-11-05)
 
 
