@@ -11167,13 +11167,32 @@ describe("I53 — a first-party connector write reaches the model only through t
     });
   });
 
-  test("the CLI's ask and repl declare cli before they talk", async () => {
-    for (const rel of ["packages/cli/src/commands/ask.ts", "packages/cli/src/commands/repl.ts"]) {
-      expect(await read(rel)).toContain("declareCliClientKind");
-    }
+  // The CALL, not the import: a leftover import must not satisfy the pin.
+  const ASK_CALLS_DECLARE = /\bawait\s+declareCliClientKind\s*\(\s*client\s*\)/;
+  const REPL_WIRES_DECLARE = /\bdeclareKind\s*:\s*declareCliClientKind\b/;
+  const REPL_CORE_CALLS_DECLARE = /\bawait\s+deps\.declareKind\s*\(\s*client\s*\)/;
+
+  test("the CLI's ask calls the declaration, repl wires it into its core, which calls it", async () => {
+    const ask = stripComments(await read("packages/cli/src/commands/ask.ts"));
+    const repl = stripComments(await read("packages/cli/src/commands/repl.ts"));
+    const core = stripComments(await read("packages/cli/src/commands/repl-core.ts"));
+    expect(ASK_CALLS_DECLARE.test(ask)).toBe(true);
+    expect(REPL_WIRES_DECLARE.test(repl)).toBe(true);
+    expect(REPL_CORE_CALLS_DECLARE.test(core)).toBe(true);
     expect(await read("packages/cli/src/lib/declare-client-kind.ts")).toContain('kind: "cli"');
   });
 
+  test("red-proof: an import with the call deleted, or an unwired repl, fails the pins", () => {
+    const importOnly = 'import { declareCliClientKind } from "../lib/declare-client-kind.ts";\n';
+    expect(ASK_CALLS_DECLARE.test(importOnly)).toBe(false);
+    expect(
+      ASK_CALLS_DECLARE.test(stripComments(`${importOnly}// await declareCliClientKind(client);`)),
+    ).toBe(false);
+    expect(REPL_WIRES_DECLARE.test(importOnly)).toBe(false);
+    expect(REPL_WIRES_DECLARE.test(`${importOnly}export const d = { declareKind: noop };`)).toBe(
+      false,
+    );
+  });
   async function door(opts: { recheck: boolean | "throws"; executor: boolean }) {
     const { buildConnectorWriteAgentTools } = await import(
       "./engine/connector-write-agent-tools.ts"

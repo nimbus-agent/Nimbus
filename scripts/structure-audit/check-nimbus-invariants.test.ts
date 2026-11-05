@@ -3952,6 +3952,49 @@ describe("D39 — the model's connector-write door is the only builder of write 
     ).toEqual([]);
   });
 
+  test("(a) resolves relative specifiers: both layouts evade a raw-string test, neither evades this", () => {
+    const TOOLS = 'import { createTool } from "@mastra/core/tools";\n';
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          `${TOOLS}import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/connector-writes/rogue.ts",
+          `${TOOLS}import { CONNECTOR_WRITE_ROWS } from "./index.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          `${TOOLS}import { isConnectorWriteToolId } from "./connector-write-registry.ts";\ncreateTool({});`,
+        ),
+      ]),
+    ).toEqual(["connector-write-tools-built-outside-door"]);
+  });
+
+  test("(a) a relative import that is NOT the table, or a table file that never calls createTool, stays clean", () => {
+    expect(
+      rules([
+        file(
+          "packages/gateway/src/connectors/foo.ts",
+          'import { createTool } from "@mastra/core/tools";\nimport { x } from "./other.ts";\ncreateTool({});',
+        ),
+        file(
+          "packages/gateway/src/connectors/connector-writes/enable.ts",
+          'import { CONNECTOR_WRITE_ROWS } from "./index.ts";\nconst n = CONNECTOR_WRITE_ROWS.length;',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
   test("(b) FAILS when getAgentRequestConnectorWriteExecutor is named elsewhere", () => {
     const v = checkModelWriteDoor([
       file(

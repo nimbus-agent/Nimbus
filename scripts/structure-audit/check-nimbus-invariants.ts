@@ -1,5 +1,6 @@
 #!/usr/bin/env bun
 
+import { posix } from "node:path";
 import { CONNECTOR_VAULT_SECRET_KEYS } from "../../packages/gateway/src/connectors/connector-secrets-manifest.ts";
 import { CONNECTOR_WRITE_ROWS } from "../../packages/gateway/src/connectors/connector-writes/index.ts";
 import { CO_OWNED_ENTITY_TYPES } from "../../packages/gateway/src/graph/relationship-graph.ts";
@@ -2209,6 +2210,24 @@ const D39_BUILDERS: ReadonlyArray<readonly [RegExp, readonly string[]]> = [
 ];
 const D39_ORIGIN_RE = /\borigin\s*:\s*["']model["']/;
 const D39_ROWS_SPECIFIER_RE = /connectors\/connector-writes\/|connector-write-registry/;
+const D39_ROWS_DIR = "packages/gateway/src/connectors/connector-writes";
+
+/**
+ * Whether `spec`, imported from `importerRel`, names the write table or the registry. A relative
+ * specifier is resolved against the importer's directory first, so `./connector-writes/index.ts`
+ * from `connectors/` and `./index.ts` from inside `connector-writes/` both land in the table.
+ */
+function specifierNamesWriteTable(importerRel: string, spec: string): boolean {
+  if (spec.startsWith(".")) {
+    const resolved = posix.normalize(posix.join(posix.dirname(importerRel), spec));
+    return (
+      resolved === D39_ROWS_DIR ||
+      resolved.startsWith(`${D39_ROWS_DIR}/`) ||
+      /(?:^|\/)connector-write-registry(?:\.ts)?$/.test(resolved)
+    );
+  }
+  return D39_ROWS_SPECIFIER_RE.test(spec);
+}
 // `import <clause> from "x"` (static, comment-stripped); `export … from` re-exports count as values.
 const D39_STATIC_IMPORT_RE =
   /^[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
@@ -2221,13 +2240,13 @@ function clauseHasValue(typeOnly: boolean, clause: string): boolean {
   return /[A-Za-z_$*]/.test(withoutTypes);
 }
 
-function importsWriteTableAsValue(commentFree: string): boolean {
+function importsWriteTableAsValue(importerRel: string, commentFree: string): boolean {
   for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
-    if (!D39_ROWS_SPECIFIER_RE.test(m[3] ?? "")) continue;
+    if (!specifierNamesWriteTable(importerRel, m[3] ?? "")) continue;
     if (clauseHasValue(m[1] !== undefined, m[2] ?? "")) return true;
   }
   for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE)) {
-    if (D39_ROWS_SPECIFIER_RE.test(m[1] ?? "")) return true;
+    if (specifierNamesWriteTable(importerRel, m[1] ?? "")) return true;
   }
   return false;
 }
@@ -2262,7 +2281,7 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
       out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
     };
     const isDoor = f.relPath === D39_DOOR;
-    if (!isDoor && importsWriteTableAsValue(commentFree)) {
+    if (!isDoor && importsWriteTableAsValue(f.relPath, commentFree)) {
       const m = createToolCallRe(commentFree).exec(code);
       if (m !== null) push("connector-write-tools-built-outside-door", code, m.index);
     }
