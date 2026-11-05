@@ -5,6 +5,7 @@ import { resolvePersona } from "../config/persona.ts";
 import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
+  TribalKbConfig,
 } from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
@@ -98,6 +99,12 @@ export type RunAskParams = {
    * Production never sets it, so the runner uses the write table.
    */
   beforeStateRows?: readonly ConnectorWriteRow[];
+  /**
+   * The tribal knowledge-base destinations, read live (B3, R11): the door runner's KB-child guards
+   * read them through a frozen per-read snapshot. REQUIRED, so a construction site cannot forget
+   * it; ChatOps never offers model writes, so its value there is inert.
+   */
+  getTribalKbConfig: () => TribalKbConfig | undefined;
   /**
    * `nimbus explain last` (spec §4). Absent means "no recorder wired" — a test double or a
    * gate-only caller that has no use for it — in which case `runAsk` records nothing rather than
@@ -592,7 +599,11 @@ export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
   return newTurnExecutor(
     p,
     undefined,
-    createBeforeStateRunner(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+    createBeforeStateRunner({
+      ...(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+      // B3 (R11): the KB-child guards read the tribal KB destinations, snapshotted per read.
+      guardContext: () => ({ kb: p.getTribalKbConfig() }),
+    }),
   );
 }
 

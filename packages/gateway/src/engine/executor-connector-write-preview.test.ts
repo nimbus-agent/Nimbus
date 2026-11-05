@@ -69,11 +69,12 @@ describe("the executor shows a connector write's typed preview", () => {
   test("an untemplated write keeps today's prompt byte for byte", async () => {
     const h = harness(true);
     await h.exec.execute({
-      type: "notion.page.create",
-      payload: { mcpToolId: "notion_page_create", input: { title: "x" } },
+      // Since B3 notion.page.create is templated; a wave-3 send has no template yet.
+      type: "gmail.message.send",
+      payload: { mcpToolId: "gmail_message_send", input: { to: "x" } },
     });
     expect(h.prompts[0]).toBe(
-      'Action requires your approval\n\nType: notion.page.create\n\nDetails: {"mcpToolId":"notion_page_create","input":{"title":"x"}}',
+      'Action requires your approval\n\nType: gmail.message.send\n\nDetails: {"mcpToolId":"gmail_message_send","input":{"to":"x"}}',
     );
   });
 

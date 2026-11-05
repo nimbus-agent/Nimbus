@@ -17,8 +17,9 @@ import {
   withPreview,
 } from "./types.ts";
 
-// Before-state selects (spec 5.4): identity and state fields (title, state, status, kind, labels,
-// assignees, priority, the transition), never a body, description or comment list. The identity
+// Before-state selects for the issue rows (spec 5.4): identity and state fields (title, state,
+// status, kind, labels, assignees, priority, the transition), never a body, description or comment
+// list (the B3 page readers in `knowledge.ts` show a capped excerpt instead). The identity
 // field is required: without it `select` throws and the prompt reads `Before: unavailable
 // (failed)` rather than an empty block. A list (labels, assignees) shows at most 50 entries and
 // counts the rest (`listAt`); an empty one reads `(none)`.

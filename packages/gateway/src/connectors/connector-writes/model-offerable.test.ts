@@ -30,14 +30,18 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 25 B1 and B2 rows (posts, comments, issue writes) are offerable", () => {
+  test("exactly the 34 B1, B2 and B3 rows (posts, comments, issue writes, drafts, pages) are offerable", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(
       [
+        "apple_mail_draft_create",
         "confluence_comment_add",
+        "confluence_page_append",
+        "confluence_page_create",
+        "confluence_page_update",
         "discord_message_post",
         "github_issue_assignees_add",
         "github_issue_comment_create",
@@ -50,6 +54,7 @@ describe("isModelOfferableRow (M1)", () => {
         "gitlab_issue_note_create",
         "gitlab_issue_state_set",
         "gitlab_mr_note_create",
+        "gmail_draft_create",
         "jira_comment_add",
         "jira_issue_create",
         "jira_issue_transition",
@@ -57,7 +62,11 @@ describe("isModelOfferableRow (M1)", () => {
         "linear_comment_create",
         "linear_issue_create",
         "linear_issue_update",
+        "notion_block_append",
         "notion_comment_create",
+        "notion_page_create",
+        "notion_page_update",
+        "outlook_draft_create",
         "slack_message_post",
         "slack_message_post_dm",
         "teams_message_post",
@@ -72,5 +81,10 @@ describe("isModelOfferableRow (M1)", () => {
     expect(offerableWritesEnabledBy("gitlab", 2)).toHaveLength(6);
     expect(offerableWritesEnabledBy("jira", 2)).toHaveLength(4);
     expect(offerableWritesEnabledBy("linear", 2)).toHaveLength(3);
+    expect(offerableWritesEnabledBy("notion", 2)).toHaveLength(4);
+    expect(offerableWritesEnabledBy("confluence", 2)).toHaveLength(4);
+    expect(offerableWritesEnabledBy("gmail", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("outlook", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("apple", 2)).toHaveLength(1);
   });
 });

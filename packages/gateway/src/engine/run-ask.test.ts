@@ -125,6 +125,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
     });
     expect(out.reply).toContain("No data indexed yet");
@@ -145,6 +146,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
     });
     expect(out.reply).toContain("No data indexed yet");
@@ -173,6 +175,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("ok, draft created"),
         sessionMemoryStore: store,
@@ -218,6 +221,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("ok, draft created"),
       sessionMemoryStore: store,
@@ -277,6 +281,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         llmRouter: fakeLocalRouter(prompts, "Answered from the local index.", true, true),
       });
@@ -311,6 +316,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "Use the GitHub issue context."),
       classify: async () => {
@@ -360,6 +366,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts),
       classify: async () => {
@@ -405,6 +412,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "found local issues"),
       classify: async () => ({
@@ -447,6 +455,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("remote agent answer"),
       llmRouter: fakeLocalRouter(routerPrompts, "local answer", false),
@@ -488,6 +497,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -532,6 +542,7 @@ describe("runAsk", () => {
       // were reintroduced, this test would keep passing but would no longer be PROVING anything —
       // which is why the companion source-shape test below asserts the fallback text is absent.
       egressSink: makeEgressSink(db),
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -618,6 +629,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_organize",
@@ -652,6 +664,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: (t) => chunks.push(t),
     });
 
@@ -676,6 +689,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("blank-input reply"),
       classify: async () => ({
@@ -710,6 +724,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         classify: async () => {
           throw new GatewayAgentUnavailableError({ reason: "insufficient_quota" });
@@ -740,6 +755,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         classify: async () => {
           throw new Error("unexpected network blip");
@@ -770,6 +786,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         classify: async () => {
           throw new GatewayAgentUnavailableError({ reason: "no_api_key" });
@@ -801,6 +818,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         llmRouter: fakeLocalRouter(calls, "local answer", true),
         classify: async () => {
@@ -831,6 +849,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local fallback reply", true),
       classify: async () => {
@@ -861,6 +880,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_organize",
@@ -890,6 +910,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
     });
 
@@ -910,6 +931,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
     });
 
@@ -946,6 +968,7 @@ describe("runAsk", () => {
       localIndex: partialIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("no-db reply"),
       classify: async () => ({
@@ -986,6 +1009,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -1028,6 +1052,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       classify: async () => ({
         intent: "file_search",
@@ -1077,6 +1102,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local answer for blank", true),
       classify: async () => {
@@ -1122,6 +1148,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "no context found", true),
       classify: async () => {
@@ -1162,6 +1189,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "searched", true),
       classify: async () => {
@@ -1195,6 +1223,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "ok", true),
       classify: async () => {
@@ -1227,6 +1256,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "ok", true),
       classify: async () => {
@@ -1261,6 +1291,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "found bare issue", true),
       classify: async () => {
@@ -1291,6 +1322,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "found full issue", true),
       classify: async () => {
@@ -1325,6 +1357,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "clipped", true),
       classify: async () => {
@@ -1361,6 +1394,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: (t) => chunks.push(t),
       classify: async () => ({
         intent: "file_search",
@@ -1404,6 +1438,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("reply"),
         sessionMemoryStore: store,
@@ -1446,6 +1481,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("fallback reply"),
         sessionMemoryStore: store,
@@ -1489,6 +1525,7 @@ describe("runAsk", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         conversationalAgent: fakeConversationalAgent("persisted reply"),
         sessionMemoryStore: store,
@@ -1529,6 +1566,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "dedup ok", true),
       classify: async () => {
@@ -1567,6 +1605,7 @@ describe("runAsk", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(calls, "local context answer", true),
       classify: async () => ({
@@ -1607,6 +1646,7 @@ describe("devil's-advocate mode routing", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("here is why that is a bad idea"),
       devil: true,
@@ -1648,6 +1688,7 @@ describe("devil's-advocate mode routing", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         devil: true,
         classify: async () => ({
@@ -1685,6 +1726,7 @@ describe("devil's-advocate mode routing", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       conversationalAgent: fakeConversationalAgent("should not be used"),
       classify: async () => {
@@ -1747,6 +1789,7 @@ describe("persona (A2) is resolved from disk by runAsk itself", () => {
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         llmRouter: fakeLocalRouter(prompts, "answer", true),
         classify: async () => ({
@@ -1845,6 +1888,7 @@ describe("buildLocalIndexedContext never fabricates relevance (F1)", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "I have no indexed context for that."),
       classify: async () => {
@@ -1877,6 +1921,7 @@ describe("buildLocalIndexedContext never fabricates relevance (F1)", () => {
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "It maps EgressRow to SidebarItem."),
       classify: async () => {
@@ -1921,6 +1966,7 @@ describe("context is shared across services and carries no internal fields (F12)
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "ok"),
       classify: async () => {
@@ -1951,6 +1997,7 @@ describe("context is shared across services and carries no internal fields (F12)
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "ok"),
       classify: async () => {
@@ -1993,6 +2040,7 @@ describe("a count question is answered from the index, not the model (F23)", () 
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "There are 2.2 PRs in the index."),
       classify: async () => {
@@ -2018,6 +2066,7 @@ describe("a count question is answered from the index, not the model (F23)", () 
       localIndex,
       dispatcher: stubDispatcher,
       egressSink: NULL_EGRESS_SINK,
+      getTribalKbConfig: () => undefined,
       sendChunk: () => {},
       llmRouter: fakeLocalRouter(prompts, "Some things changed."),
       classify: async () => {
@@ -2105,6 +2154,7 @@ describe("the demo no-LLM guidance comes from runAsk, for every client (I41)", (
         localIndex,
         dispatcher: stubDispatcher,
         egressSink: NULL_EGRESS_SINK,
+        getTribalKbConfig: () => undefined,
         sendChunk: () => {},
         classify: async () => ({
           intent: "unknown",

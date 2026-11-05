@@ -1,9 +1,11 @@
 /**
  * Child-process half of `test/integration/connectors/connector-write-comments.integration.test.ts`
- * (suite `comments`, the default) and `connector-write-issues.integration.test.ts` (suite `issues`).
+ * (suite `comments`, the default), `connector-write-issues.integration.test.ts` (suite `issues`)
+ * and `connector-write-pages.integration.test.ts` (suite `pages`).
  *
  * Runs the suite's writes (B1: the comment writes for Jira, Confluence, GitLab issue and MR notes
- * and GitHub; B2: the issue writes for Jira, GitLab and GitHub) through
+ * and GitHub; B2: the issue writes for Jira, GitLab and GitHub; B3: the Confluence page writes,
+ * with a Confluence KB destination configured for the KB-child guard) through
  * REAL connector processes (`connectorSpawn`, a real `@mastra/mcp` `MCPClient`), the production
  * mesh dispatcher (`createConnectorDispatcher`), a real `LocalIndex` with its egress ledger, and a
  * `ToolExecutor` shaped like the model door's (no delegate, the before-state runner as argument 8).
@@ -14,13 +16,14 @@
  * A SEPARATE PROCESS on purpose: other test files `mock.module("@mastra/mcp")`, and a module mock
  * is process-global in the one-process whole-repo run.
  *
- * argv[2]: a throwaway directory for the index database. argv[3]: the suite, `comments` (default)
- * or `issues`.
+ * argv[2]: a throwaway directory for the index database. argv[3]: the suite, `comments` (default),
+ * `issues` or `pages`.
  */
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
 
 import { MCPClient } from "@mastra/mcp";
+import type { TribalKbConfig } from "../../src/connectors/connector-writes/types.ts";
 import { connectorSpawn } from "../../src/connectors/lazy-mesh/keys.ts";
 import { listLazyMeshClientTools } from "../../src/connectors/lazy-mesh/tool-map.ts";
 import { createConnectorDispatcher } from "../../src/connectors/registry.ts";
@@ -152,28 +155,77 @@ const ISSUES: readonly ProbeWrite[] = [
   },
 ];
 
+/**
+ * B3: the Confluence page writes (Confluence is the only B3 connector whose host is configurable).
+ * The permitted update and appends target space ENG, NOT the KB's space (review fix 4: 0.4.0 reads
+ * no `ancestors`, so any page in the KB space is refused); page 124's first PUT is answered 409;
+ * page 777 is in the KB space and must be refused by the KB-child guard before any write.
+ */
+const PAGES: readonly ProbeWrite[] = [
+  {
+    server: "confluence",
+    tool: "confluence_page_create",
+    type: "confluence.page.create",
+    input: { spaceKey: "ENG", title: "New page", storageHtml: "<p>new</p>", parentPageId: "55" },
+  },
+  {
+    server: "confluence",
+    tool: "confluence_page_update",
+    type: "confluence.page.update",
+    input: { pageId: "123", versionNumber: 7, title: "Runbook v2", storageHtml: "<p>replaced</p>" },
+  },
+  {
+    server: "confluence",
+    tool: "confluence_page_append",
+    type: "confluence.page.append",
+    input: { pageId: "123", storageHtml: "<p>appended</p>" },
+  },
+  {
+    server: "confluence",
+    tool: "confluence_page_append",
+    type: "confluence.page.append",
+    input: { pageId: "124", storageHtml: "<p>more</p>" },
+  },
+  {
+    server: "confluence",
+    tool: "confluence_page_append",
+    type: "confluence.page.append",
+    input: { pageId: "777", storageHtml: "<p>into the KB space</p>" },
+  },
+];
+
+/** The KB destination the pages suite configures (the door passes the real one). */
+const PAGES_KB: TribalKbConfig = { confluence: { spaceKey: "KB", parentPageId: "4242" } };
+
 const suite = process.argv[3] ?? "comments";
-if (suite !== "comments" && suite !== "issues") throw new Error(`unknown suite ${suite}`);
-const WRITES = suite === "comments" ? COMMENTS : ISSUES;
+const SUITES: Readonly<Record<string, readonly ProbeWrite[]>> = {
+  comments: COMMENTS,
+  issues: ISSUES,
+  pages: PAGES,
+};
+const WRITES = Object.hasOwn(SUITES, suite) ? SUITES[suite] : undefined;
+if (WRITES === undefined) throw new Error(`unknown suite ${suite}`);
+const kb: TribalKbConfig | undefined = suite === "pages" ? PAGES_KB : undefined;
+const SERVERS = suite === "pages" ? ["confluence"] : ["jira", "confluence", "gitlab", "github"];
 
 const db = new Database(join(dir, "index.db"));
 LocalIndex.ensureSchema(db);
 const index = new LocalIndex(db);
 const client = new MCPClient({
   id: "connector-write-probe",
-  servers: {
-    jira: { ...connectorSpawn("jira"), env },
-    confluence: { ...connectorSpawn("confluence"), env },
-    gitlab: { ...connectorSpawn("gitlab"), env },
-    github: { ...connectorSpawn("github"), env },
-  },
+  servers: Object.fromEntries(SERVERS.map((id) => [id, { ...connectorSpawn(id), env }])),
   timeout: 60_000,
 });
 
 let approve = true;
 const consents: Array<{ type: string | undefined; details: Record<string, unknown> | undefined }> =
   [];
-const runs: Array<{ type: string; approved: boolean; status: ActionResult["status"] }> = [];
+const runs: Array<{
+  type: string;
+  approved: boolean;
+  status: ActionResult["status"];
+  reason?: string;
+}> = [];
 try {
   const dispatcher = createConnectorDispatcher({
     listTools: () => listLazyMeshClientTools(client),
@@ -193,7 +245,7 @@ try {
     NO_POLICY_OVERLAY,
     () => "personal",
     // The door executor's shape, with a cap generous enough for a slow CI runner.
-    createBeforeStateRunner({ timeoutMs: 30_000 }),
+    createBeforeStateRunner({ timeoutMs: 30_000, guardContext: () => ({ kb }) }),
   );
   for (const approved of [true, false]) {
     approve = approved;
@@ -204,7 +256,12 @@ try {
         payload: { mcpToolId: `${w.server}_${w.tool}`, input: w.input },
       };
       const out = await executor.execute(action); // NOSONAR S9382: one write at a time, so the parent can assert the request order
-      runs.push({ type: w.type, approved, status: out.status });
+      runs.push({
+        type: w.type,
+        approved,
+        status: out.status,
+        ...(out.status === "rejected" && suite === "pages" ? { reason: out.reason } : {}),
+      });
     }
   }
   // Pin the real shape a before-read reply has (plan R4): the dispatcher hands back the tool's

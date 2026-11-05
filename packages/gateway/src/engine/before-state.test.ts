@@ -7,8 +7,12 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
-import { LINEAR_ASSIGNEE_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
+  KNOWLEDGE_BASE_CHILD_REFUSAL,
+  LINEAR_ASSIGNEE_REFUSAL,
+} from "../connectors/connector-writes/model-write-refusals.ts";
+import {
+  type BeforeGuardContext,
   type BeforeStateGuard,
   type BeforeStateReader,
   type ConnectorWriteRow,
@@ -1330,4 +1334,460 @@ describe("the real jira_issue_transition reader (OR-B2-1)", () => {
       ],
     });
   });
+});
+
+// ---- B3: the real confluence_page_append reader (plan R3, Task 2) -------------------------------
+
+function confluenceAppend(): PlannedAction {
+  return {
+    type: "confluence.page.append",
+    origin: "model",
+    payload: {
+      mcpToolId: "confluence_confluence_page_append",
+      input: { pageId: "123", storageHtml: "<p>new</p>" },
+    },
+  };
+}
+
+const CONFLUENCE_PAGE = {
+  title: "Runbook",
+  space: { key: "ENG" },
+  version: { number: 7 },
+  body: { storage: { value: "<p>old</p>" } },
+};
+
+describe("the real confluence_page_append reader (B3)", () => {
+  // No KB configured, so the KB-child guard does not apply here (its own block is below).
+  const NO_KB = () => ({ kb: undefined });
+  const runner = () => createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS, guardContext: NO_KB });
+
+  test("one confluence.before.read gated, keyed confluence_confluence_page_get, with the page id only", async () => {
+    const gated: PlannedAction[] = [];
+    const out = await runner().read(
+      confluenceAppend(),
+      opsByTool({ confluence_confluence_page_get: mcpReply(CONFLUENCE_PAGE) }, gated),
+    );
+    expect(gated).toEqual([
+      {
+        type: "confluence.before.read",
+        payload: { mcpToolId: "confluence_confluence_page_get", input: { pageId: "123" } },
+      },
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Title", value: "Runbook" },
+        { label: "Space", value: "ENG" },
+        { label: "Version", value: "7" },
+        { label: "Current length", value: "10 characters (kept)" },
+        { label: "Current body (end)", value: "<p>old</p>" },
+      ],
+    });
+  });
+
+  test("a read slower than the budget is unavailable (timeout)", async () => {
+    const clock = fakeClock();
+    const slow = deferred<unknown>();
+    const timed = createBeforeStateRunner({
+      rows: CONNECTOR_WRITE_ROWS,
+      timers: clock.timers,
+      guardContext: NO_KB,
+    });
+    const pending = timed.read(confluenceAppend(), {
+      gate: async () => "proceed",
+      dispatch: () => slow.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(6000);
+    expect(await pending).toEqual({ status: "unavailable", reason: "timeout" });
+    slow.resolve(mcpReply(CONFLUENCE_PAGE));
+  });
+
+  test("a 5 MB reply (over the 4 MiB cap) is unavailable (failed)", async () => {
+    const huge = mcpReply({
+      ...CONFLUENCE_PAGE,
+      body: { storage: { value: "a".repeat(5 * 1024 * 1024) } },
+    });
+    const out = await runner().read(
+      confluenceAppend(),
+      opsByTool({ confluence_confluence_page_get: huge }),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+  });
+});
+
+// ---- B3: the guard context (R11) ---------------------------------------------------------------
+
+const KB_CTX = {
+  kb: {
+    notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
+    confluence: { spaceKey: "KB", parentPageId: "4242" },
+  },
+};
+
+describe("the guard context snapshot (B3, R11)", () => {
+  /** A guarded fixture row that records the context each function receives. */
+  function recording() {
+    const applied: Array<BeforeGuardContext | undefined> = [];
+    const allowed: Array<BeforeGuardContext | undefined> = [];
+    const r = guarded(
+      (_reply, _picked, _also, ctx) => {
+        allowed.push(ctx);
+        return true;
+      },
+      {},
+      (_picked, ctx) => {
+        applied.push(ctx);
+        return true;
+      },
+    );
+    return { r, applied, allowed };
+  }
+
+  test("the accessor is called once per read; appliesTo and allows get the SAME frozen snapshot", async () => {
+    const h = recording();
+    let calls = 0;
+    const runner = createBeforeStateRunner({
+      rows: [h.r],
+      guardContext: () => {
+        calls += 1;
+        return structuredClone(KB_CTX);
+      },
+    });
+    expect((await runner.read(TRANSITION, opsByTool(READS_OK)))?.status).toBe("ok");
+    expect(calls).toBe(1);
+    expect(h.applied).toHaveLength(1);
+    expect(h.allowed).toHaveLength(1);
+    const ctx = h.applied[0];
+    expect(h.allowed[0]).toBe(ctx);
+    expect(ctx).toEqual(KB_CTX);
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(Object.isFrozen(ctx?.kb)).toBe(true);
+    expect(Object.isFrozen(ctx?.kb?.notion)).toBe(true);
+    expect(Object.isFrozen(ctx?.kb?.confluence)).toBe(true);
+    await runner.read(TRANSITION, opsByTool(READS_OK));
+    expect(calls).toBe(2);
+  });
+
+  test("mutating the accessor's object after the snapshot changes nothing allows sees", async () => {
+    const source = structuredClone(KB_CTX);
+    const h = recording();
+    const runner = createBeforeStateRunner({ rows: [h.r], guardContext: () => source });
+    const ops = opsByTool(READS_OK);
+    const mutatingOps: BeforeReadOps = {
+      gate: ops.gate,
+      dispatch: async (a) => {
+        // The config changes while the read is in flight, between appliesTo and allows.
+        source.kb.notion.databaseId = "changed";
+        source.kb = { notion: { databaseId: "other" }, confluence: source.kb.confluence };
+        return ops.dispatch(a);
+      },
+    };
+    await runner.read(TRANSITION, mutatingOps);
+    expect(h.allowed[0]).toEqual(KB_CTX);
+    expect(h.allowed[0]).not.toBe(source);
+  });
+
+  test("an accessor that throws, returns null or a non-object, cannot be copied, or is absent: undefined", async () => {
+    const accessors: Array<(() => BeforeGuardContext) | undefined> = [
+      () => {
+        throw new Error("config");
+      },
+      () => null as unknown as BeforeGuardContext,
+      () => "kb" as unknown as BeforeGuardContext,
+      // A `kb` that is present but not a plain object: unreadable too, so the guard applies.
+      () => ({ kb: null }) as unknown as BeforeGuardContext,
+      () => ({ kb: "x" }) as unknown as BeforeGuardContext,
+      () => ({ kb: [] }) as unknown as BeforeGuardContext,
+      // A value that cannot be copied (a function inside): unreadable, never passed through.
+      () => ({ kb: { notion: { databaseId: (() => "x") as unknown as string } } }),
+      undefined,
+    ];
+    for (const guardContext of accessors) {
+      const h = recording();
+      const runner = createBeforeStateRunner(
+        guardContext === undefined ? { rows: [h.r] } : { rows: [h.r], guardContext },
+      );
+      await runner.read(TRANSITION, opsByTool(READS_OK));
+      expect(h.applied).toEqual([undefined]);
+      expect(h.allowed).toEqual([undefined]);
+    }
+  });
+
+  test("a cyclic config is copied and frozen without hanging", async () => {
+    const h = recording();
+    const kb: Record<string, unknown> = { notion: { databaseId: "d" } };
+    kb["self"] = kb;
+    const runner = createBeforeStateRunner({
+      rows: [h.r],
+      guardContext: () => ({ kb }) as unknown as BeforeGuardContext,
+    });
+    await runner.read(TRANSITION, opsByTool(READS_OK));
+    const seen = h.applied[0]?.kb as Record<string, unknown> | undefined;
+    expect(Object.isFrozen(seen)).toBe(true);
+    expect(seen?.["self"]).toBe(seen);
+  });
+
+  test("a row without a guard never calls the accessor", async () => {
+    let calls = 0;
+    const runner = createBeforeStateRunner({
+      rows: [rowWith(READER)],
+      guardContext: () => {
+        calls += 1;
+        return KB_CTX;
+      },
+    });
+    await runner.read(WRITE, opsReturning({ summary: "s" }));
+    expect(calls).toBe(0);
+  });
+
+  test("B2's Linear guard ignores the context: refused when assigned, allowed when not, whatever the KB", async () => {
+    for (const guardContext of [() => KB_CTX, () => ({ kb: undefined }), undefined]) {
+      const runner = createBeforeStateRunner(
+        guardContext === undefined
+          ? { rows: CONNECTOR_WRITE_ROWS }
+          : { rows: CONNECTOR_WRITE_ROWS, guardContext },
+      );
+      expect(
+        await runner.read(
+          linearUpdate({ assigneeId: "user-1" }),
+          opsByTool({ linear_linear_issue_get: linearGet({ id: "u", displayName: "C" }) }),
+        ),
+      ).toEqual(LINEAR_REFUSED);
+      const unassigned = await runner.read(
+        linearUpdate({ assigneeId: "user-1" }),
+        opsByTool({ linear_linear_issue_get: linearGet(null) }),
+      );
+      expect(unassigned?.status).toBe("ok");
+    }
+  });
+});
+
+// ---- B3: the KB-child guard on the real rows (OR-B3-3, R11) -----------------------------------
+
+const KB_CHILD_REFUSED = { status: "refused", reason: KNOWLEDGE_BASE_CHILD_REFUSAL } as const;
+const KB_DB = "0123abcd0123abcd0123abcd0123abcd";
+
+function notionWrite(toolId: "notion_page_update" | "notion_block_append"): PlannedAction {
+  const input =
+    toolId === "notion_page_update"
+      ? { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" }
+      : { parentBlockId: "ffffffffffffffffffffffffffffffff", childrenJson: "[]" };
+  return {
+    type: toolId === "notion_page_update" ? "notion.page.update" : "notion.block.append",
+    origin: "model",
+    payload: { mcpToolId: `notion_${toolId}`, input },
+  };
+}
+
+function confluenceWrite(
+  toolId: "confluence_page_update" | "confluence_page_append",
+): PlannedAction {
+  const input =
+    toolId === "confluence_page_update"
+      ? { pageId: "123", versionNumber: 7, title: "t", storageHtml: "<p>x</p>" }
+      : { pageId: "123", storageHtml: "<p>x</p>" };
+  return {
+    type: toolId === "confluence_page_update" ? "confluence.page.update" : "confluence.page.append",
+    origin: "model",
+    payload: { mcpToolId: `confluence_${toolId}`, input },
+  };
+}
+
+const notionPage = (parent: unknown) =>
+  mcpReply({
+    page: {
+      ...(parent === undefined ? {} : { parent }),
+      properties: { Name: { type: "title", title: [{ plain_text: "Runbook" }] } },
+    },
+    blockChildren: { results: [], has_more: false },
+  });
+
+const confluencePage = (space: unknown, ancestors?: unknown) =>
+  mcpReply({
+    title: "Runbook",
+    ...(space === undefined ? {} : { space }),
+    version: { number: 7 },
+    body: { storage: { value: "<p>old</p>" } },
+    ...(ancestors === undefined ? {} : { ancestors }),
+  });
+
+const UNAVAILABLE = { status: "unavailable", reason: "failed" } as const;
+
+describe("the KB-child guard on the real page rows (OR-B3-3)", () => {
+  const runner = (guardContext?: () => BeforeGuardContext) =>
+    createBeforeStateRunner(
+      guardContext === undefined
+        ? { rows: CONNECTOR_WRITE_ROWS }
+        : { rows: CONNECTOR_WRITE_ROWS, guardContext },
+    );
+
+  for (const toolId of ["notion_page_update", "notion_block_append"] as const) {
+    describe(toolId, () => {
+      const read = (reply: unknown, guardContext: () => BeforeGuardContext = () => KB_CTX) =>
+        runner(guardContext).read(
+          notionWrite(toolId),
+          opsByTool({ notion_notion_page_get: reply }),
+        );
+
+      test("a page in the KB database (hyphenated, upper-case) is refused before any prompt", async () => {
+        for (const id of [
+          "0123abcd-0123-abcd-0123-abcd0123abcd",
+          "0123ABCD0123ABCD0123ABCD0123ABCD",
+          KB_DB,
+        ]) {
+          expect(await read(notionPage({ type: "database_id", database_id: id })), id).toEqual(
+            KB_CHILD_REFUSED,
+          );
+        }
+      });
+
+      test("another database, a page or a workspace parent: the before fields", async () => {
+        for (const parent of [
+          { type: "database_id", database_id: "ffffffffffffffffffffffffffffffff" },
+          { type: "page_id", page_id: "p" },
+          { type: "workspace", workspace: true },
+        ]) {
+          expect((await read(notionPage(parent)))?.status, JSON.stringify(parent)).toBe("ok");
+        }
+      });
+
+      test("no parent, page null, a database parent without an id, a failed or isError read: refused", async () => {
+        for (const reply of [
+          notionPage(undefined),
+          mcpReply({ page: null, blockChildren: { results: [] } }),
+          notionPage({ type: "database_id" }),
+          { ...notionPage({ type: "page_id" }), isError: true },
+          notionPage({ type: "data_source_id", data_source_id: KB_DB }),
+          notionPage({
+            type: "data_source_id",
+            data_source_id: "ffffffffffffffffffffffffffffffff",
+          }),
+          throwing("boom"),
+          throwing("Tool not found"),
+        ]) {
+          expect(await read(reply)).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("an unlisted, policy-refused or slow read: refused", async () => {
+        const reply = notionPage({ type: "page_id" });
+        expect(
+          await runner(() => KB_CTX).read(
+            notionWrite(toolId),
+            opsByTool({ notion_notion_page_get: reply }),
+            { readerUnlisted: true },
+          ),
+        ).toEqual(KB_CHILD_REFUSED);
+        expect(
+          await runner(() => KB_CTX).read(
+            notionWrite(toolId),
+            opsByTool({ notion_notion_page_get: reply }, [], () => ({
+              status: "rejected",
+              reason: BEFORE_READ_HITL_REFUSAL,
+            })),
+          ),
+        ).toEqual(KB_CHILD_REFUSED);
+        const clock = fakeClock();
+        const slow = deferred<unknown>();
+        const pending = createBeforeStateRunner({
+          rows: CONNECTOR_WRITE_ROWS,
+          timers: clock.timers,
+          guardContext: () => KB_CTX,
+        }).read(notionWrite(toolId), { gate: async () => "proceed", dispatch: () => slow.promise });
+        await Bun.sleep(0);
+        clock.advance(BEFORE_STATE_TIMEOUT_MS);
+        expect(await pending).toEqual(KB_CHILD_REFUSED);
+        slow.resolve(reply);
+      });
+
+      test("a throwing or absent guardContext, or a malformed kb, applies the guard and refuses", async () => {
+        const ok = notionPage({ type: "page_id" });
+        for (const bad of [null, "x", []]) {
+          expect(
+            await read(ok, () => ({ kb: bad }) as unknown as BeforeGuardContext),
+            JSON.stringify(bad),
+          ).toEqual(KB_CHILD_REFUSED);
+        }
+        expect(
+          await read(ok, () => {
+            throw new Error("config");
+          }),
+        ).toEqual(KB_CHILD_REFUSED);
+        expect(
+          await runner().read(notionWrite(toolId), opsByTool({ notion_notion_page_get: ok })),
+        ).toEqual(KB_CHILD_REFUSED);
+      });
+
+      test("no Notion KB: the guard does not apply, even when the read fails", async () => {
+        const noNotion = () => ({ kb: { confluence: KB_CTX.kb.confluence } });
+        expect(await read(throwing("boom"), noNotion)).toEqual(UNAVAILABLE);
+        expect(await read(throwing("boom"), () => ({ kb: undefined }))).toEqual(UNAVAILABLE);
+        const inDb = notionPage({ type: "database_id", database_id: KB_DB });
+        expect((await read(inDb, noNotion))?.status).toBe("ok");
+      });
+    });
+  }
+
+  for (const toolId of ["confluence_page_update", "confluence_page_append"] as const) {
+    describe(toolId, () => {
+      const read = (reply: unknown, guardContext: () => BeforeGuardContext = () => KB_CTX) =>
+        runner(guardContext).read(
+          confluenceWrite(toolId),
+          opsByTool({ confluence_confluence_page_get: reply }),
+        );
+
+      test("in the KB space without ancestors (the 0.4.0 shape): refused, kb vs KB too", async () => {
+        for (const key of ["KB", "kb", " KB "]) {
+          expect(await read(confluencePage({ key })), key).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("in the KB space with the KB parent first, last, in the middle, or as a number: refused", async () => {
+        for (const ancestors of [
+          [{ id: "4242" }, { id: "1" }],
+          [{ id: "1" }, { id: "4242" }],
+          [{ id: "1" }, { id: " 4242 " }, { id: "2" }],
+          [{ id: 4242 }],
+        ]) {
+          expect(
+            await read(confluencePage({ key: "KB" }, ancestors)),
+            JSON.stringify(ancestors),
+          ).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("in the KB space with other ancestors, or in another space: the before fields", async () => {
+        const others = confluencePage({ key: "KB" }, [{ id: "1" }, "junk", null, { id: "2" }]);
+        expect((await read(others))?.status).toBe("ok");
+        expect((await read(confluencePage({ key: "ENG" })))?.status).toBe("ok");
+      });
+
+      test("space missing or not a string, ancestors not an array, a failed read: refused", async () => {
+        for (const reply of [
+          confluencePage(undefined),
+          confluencePage({ key: 7 }),
+          confluencePage({ key: "KB" }, { id: "1" }),
+          throwing("boom"),
+        ]) {
+          expect(await read(reply)).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("no Confluence KB: the guard does not apply, even when the read fails", async () => {
+        const noConfluence = () => ({ kb: { notion: KB_CTX.kb.notion } });
+        expect(await read(throwing("boom"), noConfluence)).toEqual(UNAVAILABLE);
+        expect((await read(confluencePage({ key: "KB" }), noConfluence))?.status).toBe("ok");
+      });
+
+      test("an absent guardContext applies the guard and refuses", async () => {
+        expect(
+          await runner().read(
+            confluenceWrite(toolId),
+            opsByTool({ confluence_confluence_page_get: confluencePage({ key: "ENG" }) }),
+          ),
+        ).toEqual(KB_CHILD_REFUSED);
+      });
+    });
+  }
 });

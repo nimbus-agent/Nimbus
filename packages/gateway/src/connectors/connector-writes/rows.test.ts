@@ -220,7 +220,14 @@ const B2_OFFERED_0_4_0: readonly string[] = [
   "jira_issue_transition",
 ];
 
-const OFFERED_0_4_0: readonly string[] = [...B1_OFFERED_0_4_0, ...B2_OFFERED_0_4_0];
+/** The 0.4.0 writes B3 templates (the Outlook draft and the Confluence append). */
+const B3_OFFERED_0_4_0: readonly string[] = ["outlook_draft_create", "confluence_page_append"];
+
+const OFFERED_0_4_0: readonly string[] = [
+  ...B1_OFFERED_0_4_0,
+  ...B2_OFFERED_0_4_0,
+  ...B3_OFFERED_0_4_0,
+];
 
 describe("connectors 0.4.0 writes (B-X)", () => {
   test("each is a wave-2 mesh row whose action type is its tool id dotted, in the frozen set", () => {
@@ -242,8 +249,11 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     }
   });
 
-  test("the four B1 and eight B2 ones are offered to the model (typed preview, wave 2)", () => {
-    expect(OFFERED_0_4_0).toHaveLength(12);
+  test("all fourteen are offered to the model (typed preview, wave 2): four B1, eight B2, two B3", () => {
+    expect(OFFERED_0_4_0).toHaveLength(14);
+    expect([...OFFERED_0_4_0].sort((x, y) => x.localeCompare(y))).toEqual(
+      [...CONNECTORS_0_4_0_WRITES].sort((x, y) => x.localeCompare(y)),
+    );
     for (const id of OFFERED_0_4_0) {
       const r = connectorWriteRowByToolId(id);
       expect(r?.preview, id).toBeDefined();
@@ -252,17 +262,15 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     }
   });
 
-  test("the other two are not: no preview template, no before reader", () => {
+  test("no 0.4.0 write is left untemplated", () => {
     const rows = CONNECTOR_WRITE_ROWS.filter(
-      (r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId) && !OFFERED_0_4_0.includes(r.toolId),
+      (r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId) && r.preview === undefined,
     );
-    expect(rows.map((r) => r.toolId)).toEqual(["confluence_page_append", "outlook_draft_create"]);
-    expect(rows.filter((r) => isModelOfferableRow(r)).map((r) => r.toolId)).toEqual([]);
-    expect(rows.filter((r) => r.preview !== undefined || r.before !== undefined)).toEqual([]);
+    expect(rows.map((r) => r.toolId)).toEqual([]);
   });
 
-  test("eleven are proposable over MCP; the Jira transition, the draft and the append stay not_yet_offered", () => {
-    const withheld = ["jira_issue_transition", "outlook_draft_create", "confluence_page_append"];
+  test("thirteen are proposable over MCP; only the Jira transition stays not_yet_offered", () => {
+    const withheld = ["jira_issue_transition"];
     for (const id of CONNECTORS_0_4_0_WRITES) {
       expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual(
         withheld.includes(id)
@@ -270,7 +278,7 @@ describe("connectors 0.4.0 writes (B-X)", () => {
           : { kind: "proposable" },
       );
     }
-    expect(CONNECTORS_0_4_0_WRITES.filter((id) => !withheld.includes(id))).toHaveLength(11);
+    expect(CONNECTORS_0_4_0_WRITES.filter((id) => !withheld.includes(id))).toHaveLength(13);
   });
 
   test("the new read jira_issue_transitions_list is not a write and is read-only", () => {

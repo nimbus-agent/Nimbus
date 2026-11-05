@@ -3421,26 +3421,55 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       expect(src.includes("messagingDestinationRefusal"), f).toBe(false);
     }
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
-    expect(rpc).toContain(
-      'import { actDoorRefusal } from "../connectors/connector-writes/model-write-refusals.ts";',
+    expect(rpc).toMatch(
+      /import \{\s*actDoorRefusal,[^}]*\} from "\.\.\/connectors\/connector-writes\/model-write-refusals\.ts";/,
     );
     const helper = rpc.slice(rpc.indexOf("export function createActionDestinationRefusal("));
-    expect(helper.slice(0, helper.indexOf("\n}\n"))).toContain(
-      "return actDoorRefusal(tool, input, { chatops });",
+    const helperBody = helper.slice(0, helper.indexOf("\n}\n"));
+    // B3 (OR-B3-1): the KB destinations reach the ONE act-door function, read per call.
+    expect(helperBody).toContain(
+      "return actDoorRefusal(tool, input, { chatops, kb, kbUnreadable });",
     );
-    // ONE function on that path: it CALLS the messaging check first, then the Linear rule.
+    expect(helperBody).toMatch(
+      /try \{\s*kb = tribalKbConfig\(\);\s*\} catch \{\s*kbUnreadable = true;/,
+    );
+    // ONE function on that path, in order: messaging, the Linear rule, the KB target, the KB child.
     const refusals = stripComments(
       await read("packages/gateway/src/connectors/connector-writes/model-write-refusals.ts"),
     );
     const actDoor = refusals.slice(refusals.indexOf("export function actDoorRefusal("));
     const actBody = actDoor.slice(0, actDoor.indexOf("\n}\n"));
-    const first = actBody.indexOf("= messagingDestinationRefusal(toolId, input, ctx);");
+    const first = actBody.indexOf(
+      "= messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });",
+    );
     expect(first).toBeGreaterThan(0);
-    expect(actBody.indexOf("LINEAR_ASSIGNEE_REFUSAL")).toBeGreaterThan(first);
+    const linear = actBody.indexOf("= linearAssigneeRefusal(toolId, input);");
+    const kbTarget = actBody.indexOf("knowledgeBaseRefusal(toolId, input, ctx.kb)");
+    const kbChild = actBody.indexOf("actDoorKbChildRefusal(toolId, ctx.kb)");
+    expect(linear).toBeGreaterThan(first);
+    expect(kbTarget).toBeGreaterThan(linear);
+    expect(kbChild).toBeGreaterThan(kbTarget);
+    // The model door calls the SAME KB-target implementation.
+    const model = refusals.slice(refusals.indexOf("export function modelWriteRefusal("));
+    expect(model.slice(0, model.indexOf("\n}\n"))).toContain(
+      "return knowledgeBaseRefusal(toolId, input, ctx.kb);",
+    );
+  });
+
+  test("B3 (OR-B3-1, review fix 2): assemble wires the act door with TWO accessors, the KB one the same as platform.tribalKbConfig, loaded before the capture gate", async () => {
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(
-      /actionDestinationRefusal: createActionDestinationRefusal\(\(\) => policyGate\.enforced\(\)\)/,
+      /actionDestinationRefusal: createActionDestinationRefusal\(\s*\(\) => policyGate\.enforced\(\),\s*\(\) => tribalKbConfigOf\(tribalCfg\),\s*\)/,
     );
+    expect(assemble).toMatch(/tribalKbConfig: \(\) => tribalKbConfigOf\(tribalCfg\),/);
+    const load = assemble.indexOf(
+      "const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);",
+    );
+    const gate = assemble.indexOf("const captureGate: CaptureGateDeps = {");
+    expect(load).toBeGreaterThan(0);
+    expect(gate).toBeGreaterThan(load);
+    // Loaded once: the act door and the platform accessor read the same value.
+    expect(assemble.split("loadNimbusTribalFromConfigDir(paths.configDir)").length).toBe(2);
   });
 
   test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {
@@ -11193,6 +11222,39 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(body).not.toContain("delegation");
   });
 
+  test("B3 (R11): the door's runner is built WITH the KB config accessor, which run-ask requires", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = src.indexOf("export function buildModelWriteExecutor(");
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    // The CALL's argument text, not the bare name: `guardContext` must be a property of the
+    // object passed to `createBeforeStateRunner(`, fed by the run-ask parameter.
+    const call = body.slice(body.indexOf("createBeforeStateRunner("));
+    const arg = call.slice(0, call.indexOf("\n    }),"));
+    expect(arg).toMatch(/guardContext:\s*\(\)\s*=>\s*\(\{\s*kb:\s*p\.getTribalKbConfig\(\)\s*\}\)/);
+    // A required parameter: a construction site that forgets it fails typecheck.
+    expect(src).toMatch(/\n {2}getTribalKbConfig: \(\) => TribalKbConfig \| undefined;\n/);
+  });
+
+  test("B3 (R11): gateway-main passes the platform KB accessor to BOTH runAsk construction sites", async () => {
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const wiring = /getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\(\)/;
+    const invokeAt = src.indexOf("platform.ipc.setAgentInvokeHandler((ctx) =>");
+    const chatopsAt = src.indexOf("platform.chatops?.bindAskEngine(");
+    expect(invokeAt).toBeGreaterThan(-1);
+    expect(chatopsAt).toBeGreaterThan(invokeAt);
+    const invoke = src.slice(invokeAt, chatopsAt);
+    expect(invoke).toContain("runAsk({");
+    expect(invoke).toMatch(wiring);
+    const chatopsEnd = src.indexOf("\n  );\n", chatopsAt);
+    const chatops = src.slice(chatopsAt, chatopsEnd);
+    expect(chatops).toContain("createChatOpsAskEngine((query) => ({");
+    expect(chatops).toMatch(wiring);
+    // Fail closed on a missing accessor: no optional call anywhere, and the field is required.
+    expect(src).not.toMatch(/platform\.tribalKbConfig\?\./);
+    const types = stripComments(await read("packages/gateway/src/platform/types.ts"));
+    expect(types).toMatch(/\n {2}tribalKbConfig: \(\) => TribalKbConfig \| undefined;/);
+  });
+
   test("the executor is set only on an owner cli/ui, non-demo turn, and cleared otherwise", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
     const at = src.indexOf("function offerConnectorWriteExecutorIfOwner(");
@@ -11341,7 +11403,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     // The production wiring feeds the KB refusal the real [tribal] config (triple rule): the
     // gateway's source passes the platform's live accessor, and assemble fills it.
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
-    expect(main).toMatch(/getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\?\.\(\)/);
+    expect(main).toMatch(/getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\(\)/);
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(/tribalKbConfig\s*[:(]/);
   });
@@ -11403,10 +11465,12 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows and B2's nine issue writes, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes and B3's five page writes, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
+      "confluence_page_append",
+      "confluence_page_update",
       "github_issue_assignees_add",
       "github_issue_comment_create",
       "github_issue_labels_add",
@@ -11421,7 +11485,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       "jira_issue_update",
       "linear_comment_create",
       "linear_issue_update",
+      "notion_block_append",
       "notion_comment_create",
+      "notion_page_create",
+      "notion_page_update",
     ]);
     expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
   });

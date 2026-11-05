@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { standardSchemaToJSONSchema, toStandardSchema } from "@mastra/core/schema";
 
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
@@ -823,5 +824,48 @@ describe("a two-read reader at offer time, and a guard refusal at call time (B2a
     expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
       declined: DECLINED_RESULT_TEXT,
     });
+  });
+});
+
+// ---------- B3: the Outlook draft is offered only when the server lists it (Mail.ReadWrite) ----------
+
+describe("B3: the real Outlook draft row and the door's listing check (plan R7)", () => {
+  const draftRow = (): ConnectorWriteRow => {
+    const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === "outlook_draft_create");
+    if (r === undefined) throw new Error("no outlook_draft_create row");
+    return r;
+  };
+  const draftSchema = schema({
+    to: {},
+    cc: {},
+    bcc: {},
+    subject: {},
+    body: {},
+    contentType: {},
+  });
+
+  test("a listing without outlook_draft_create (no Mail.ReadWrite): not offered, one warning per server generation", async () => {
+    const src = fakeSource([draftRow()], {
+      outlook: { outlook_outlook_mail_send: entry("send", schema({ to: {} })) },
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([]);
+    expect(src.warnings.map((w) => w.bindings["toolId"])).toEqual(["outlook_draft_create"]);
+    // The same generation again: no second warning.
+    await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(src.warnings).toHaveLength(1);
+    // A restarted server (a new generation) is checked and warned again.
+    src.epoch = nextEpoch++;
+    await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(src.warnings).toHaveLength(2);
+  });
+
+  test("with the tool listed (Mail.ReadWrite granted): offered as outlook__outlook_draft_create", async () => {
+    const src = fakeSource([draftRow()], {
+      outlook: { outlook_outlook_draft_create: entry("draft", draftSchema) },
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual(["outlook__outlook_draft_create"]);
+    expect(src.warnings).toEqual([]);
   });
 });

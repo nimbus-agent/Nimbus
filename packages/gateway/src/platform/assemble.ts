@@ -2357,7 +2357,7 @@ function wireUpdaterIntoIpc(
  * (Phase 9.7 B, F4), from the loaded config whether or not `[tribal].enabled`: a configured KB is
  * the capture gate's destination either way. `undefined` when neither is configured.
  */
-function tribalKbConfigOf(cfg: NimbusTribalToml): TribalKbConfig | undefined {
+export function tribalKbConfigOf(cfg: NimbusTribalToml): TribalKbConfig | undefined {
   if (cfg.notion === undefined && cfg.confluence === undefined) return undefined;
   return {
     ...(cfg.notion === undefined ? {} : { notion: { databaseId: cfg.notion.databaseId } }),
@@ -3851,6 +3851,10 @@ export async function assemblePlatformServices(
     isUserMcpRegistered: (id) => getUserMcpConnector(db, id) !== null,
     meshOnly: { obsidian: () => obsidianCanSpawn },
   });
+  // Loaded BEFORE the capture gate (B3, review fix 2): the act door's KB refusals read the same
+  // value `platform.tribalKbConfig` returns below. A pure config read; nothing between here and its
+  // other uses writes the `[tribal]` section.
+  const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
   const captureGate: CaptureGateDeps = {
     db,
     store: captureStore,
@@ -3863,8 +3867,12 @@ export async function assemblePlatformServices(
     isServiceConfigured,
     listProposableActionTypes: () =>
       listProposableActionTypes({ ...actClassifyCtx, isServiceConfigured }),
-    // OR1/OR2: the model door's messaging check, on the act door too, over the LIVE policy.
-    actionDestinationRefusal: createActionDestinationRefusal(() => policyGate.enforced()),
+    // OR1/OR2: the model door's messaging check, on the act door too, over the LIVE policy; and
+    // (B3, OR-B3-1/OR-B3-3) the KB refusals, from the same accessor as `platform.tribalKbConfig`.
+    actionDestinationRefusal: createActionDestinationRefusal(
+      () => policyGate.enforced(),
+      () => tribalKbConfigOf(tribalCfg),
+    ),
     ...(scheduleItemEmbedding === undefined
       ? {}
       : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),
@@ -4307,7 +4315,6 @@ export async function assemblePlatformServices(
 
   const chatopsCfg = loadNimbusChatopsFromConfigDir(paths.configDir);
 
-  const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);
   // The chatops↔tribal cycle's late-bound `send` seam: `buildTribalBoot`'s `send` closure reads
   // `tribalSendHolder.current` at post time; it's rebound to chatopsBoot.replyTo below once
   // chatops boots. Without chatops it stays the no-op (detection still records clusters; CLI

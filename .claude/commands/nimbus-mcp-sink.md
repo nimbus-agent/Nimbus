@@ -108,12 +108,16 @@ Rules that follow from it:
 4. Re-classify (`classifyActionType`) and re-check configured-ness — a `--model` revoke or policy
    tightening since submit takes effect here. 4b (Phase 9.7 B1): the destination again,
    `actionDestinationVerdict` over the injected `actionDestinationRefusal` (`actDoorRefusal`: the
-   model door's `messagingDestinationRefusal`, then, since B2, the act-door-only Linear rule; built
-   in `ipc/capture-rpc.ts` `createActionDestinationRefusal` and wired in `platform/assemble.ts`): a
-   ChatOps binding added since submit, a broadcast mention, a GitLab quick action or scoped label,
-   or a `linear.issue.update` that sets `assigneeId` (the act door has no before-read, so it cannot
-   prove the issue unassigned) → `ERR_CAPTURE_ACTION_REFUSED`, the row stays proposed. The KB
-   refusal is model-door-only.
+   model door's `messagingDestinationRefusal`, then, since B2, the act-door-only Linear rule, then,
+   since B3, the model door's `knowledgeBaseRefusal` and the act-door KB-child rule; built in
+   `ipc/capture-rpc.ts` `createActionDestinationRefusal(enforcedPolicy, tribalKbConfig)`, both
+   accessors read per call, and wired in `platform/assemble.ts` with
+   `() => tribalKbConfigOf(tribalCfg)`): a ChatOps binding added since submit, a broadcast mention,
+   a GitLab quick action or scoped label, a `linear.issue.update` that sets `assigneeId` (the act
+   door has no before-read, so it cannot prove the issue unassigned), a page write to the tribal KB
+   destination, or, while a KB destination is configured for that service, a Notion/Confluence
+   page update or append (the act door cannot tell whether the page is in the KB; an unreadable KB
+   config refuses every KB-capable row) → `ERR_CAPTURE_ACTION_REFUSED`, the row stays proposed.
 5. Atomic claim (CAS incl. the expiry predicate) → `executing`.
 6. Rebuild the action from the stored row.
 7. Execute via `ActDeps.execute`, built per accept by `buildActDeps` in `ipc/capture-rpc.ts`: a
@@ -144,14 +148,14 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B2: 160 HITL types, **41 proposable / 119 denied**,
-3 of them `not_yet_offered` — `jira.issue.transition` (owner ruling OR-B2-4: the act door has no
-before-read to show its From and To), `outlook.draft.create`, `confluence.page.append` — 0
-unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
+`ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B3: 160 HITL types, **43 proposable / 117 denied**,
+1 of them `not_yet_offered` — `jira.issue.transition` (owner ruling OR-B2-4: the act door has no
+before-read to show its From and To); B3 offered `outlook.draft.create` and `confluence.page.append`
+— 0 unclassified; the KB refusals above are config-conditional and do not change these counts). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
 `cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
 `chatops_confined` (I23/D17), `unroutable`, `not_yet_offered` (a routable connector write
-whose proposal waits for its B PR's preview template, or, for `jira.issue.transition`, is
-withheld because the act door cannot show its before-state), `gateway_internal`.
+withheld from MCP; since B3 only `jira.issue.transition`, because the act door cannot show its
+before-state), `gateway_internal`.
 
 **Mesh-only servers:** `obsidian.note.append` is proposable although `obsidian` is not a catalog
 connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — the catalog rule

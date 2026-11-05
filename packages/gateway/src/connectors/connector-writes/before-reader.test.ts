@@ -165,13 +165,15 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the sixteen (seven B1 comments, nine B2 issue writes), and every reader passes", () => {
+  test("the rows with readers are exactly the twenty-one (seven B1 comments, nine B2 issue writes, five B3 page writes), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
     expect(withReader).toEqual(
       [
         "confluence_comment_add",
+        "confluence_page_append",
+        "confluence_page_update",
         "github_issue_assignees_add",
         "github_issue_comment_create",
         "github_issue_labels_add",
@@ -186,10 +188,13 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "jira_issue_update",
         "linear_comment_create",
         "linear_issue_update",
+        "notion_block_append",
         "notion_comment_create",
+        "notion_page_create",
+        "notion_page_update",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(16);
+    expect(withReader).toHaveLength(21);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -673,13 +678,23 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition takes a second read and only the Linear update has a guard (B2)", () => {
+  test("in production only the Jira transition takes a second read, and the rows with a guard are exactly five (B2, B3)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition"]);
-    expect(
-      CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined).map((r) => r.toolId),
-    ).toEqual(["linear_issue_update"]);
+    const guarded = CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined);
+    expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "confluence_page_append",
+      "confluence_page_update",
+      "linear_issue_update",
+      "notion_block_append",
+      "notion_page_update",
+    ]);
+    for (const r of guarded) {
+      const reason = r.before?.guard?.reason ?? "";
+      expect(reason.trim(), r.toolId).not.toBe("");
+      expect(/\{\w+\}/.test(reason), r.toolId).toBe(false);
+    }
   });
 });
 

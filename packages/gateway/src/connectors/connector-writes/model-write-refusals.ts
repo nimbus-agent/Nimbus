@@ -9,19 +9,44 @@
 //
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
 // GitLab scoped labels; it covers issue titles, bodies and descriptions too) is the ONE function
-// both the model door and the MCP act door call; the KB refusal is model-door-only
-// (`modelWriteRefusal`), and the act door's Linear reassignment rule is act-door-only
+// both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
+// one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
+// covers every page row: Notion page create, update, block append and comment; Confluence page
+// create, update, append and comment. The act door's Linear reassignment rule is act-door-only
 // (`actDoorRefusal`, which runs the messaging check first).
+//
+// KB-target bounds (stated): a Confluence create in the KB space with no parent is not refused
+// (the parent alone decides); a comment on, or a Notion page created under, a page INSIDE the KB is
+// not refused by this rule (owner ruling OR-B3-3 names updates and appends only, which the KB-child
+// guard covers; a grandchild only where that guard says so).
+//
+// Mentions in page bodies (B3, plan R6): NOT scanned, so `BROADCAST_SCANNED` names no Notion or
+// Confluence row. Neither API has a whole-channel mention form as these connectors call them:
+// Notion rich-text mentions name one user, page, database, date, link preview or template
+// (https://developers.notion.com/reference/rich-text, the mention object; a `people` property
+// names users), and a Confluence storage mention is `<ac:link><ri:user .../></ac:link>`, one user
+// each (https://confluence.atlassian.com/doc/confluence-storage-format-790796544.html). Each named
+// user is notified and is visible verbatim in the preview. Plain `@all` / `@here` text in a page is
+// inert. Also stated: a Confluence create or update notifies the page's and space's watchers as
+// any edit does (the connector sends no `minorEdit`), and Notion notifies a page's followers.
 //
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { FORMAT_INVISIBLE_RANGES } from "../../util/invisible-text.ts";
+import type { TribalKbConfig } from "./types.ts";
 
 export const CHATOPS_CHANNEL_REFUSAL =
   "the model cannot post to a channel Nimbus ChatOps listens on";
 export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
+/**
+ * OR-B3-3 (R11): an update or append to a page whose parent is the KB destination. The model door
+ * enforces it with the four page readers' KB-child guard (`knowledge.ts`), from the page's
+ * current parent read at call time; fixed, echoes nothing.
+ */
+export const KNOWLEDGE_BASE_CHILD_REFUSAL =
+  "the model cannot change a page in the Nimbus knowledge base; use the capture flow";
 export const BROADCAST_MENTION_REFUSAL =
   "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
 /**
@@ -36,11 +61,9 @@ export const GITLAB_QUICK_ACTION_REFUSAL =
 export const GITLAB_SCOPED_LABEL_REFUSAL =
   "the model cannot add a GitLab scoped label (key::value): it replaces the label with the same key; ask the owner to add it";
 
-/** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
-export interface TribalKbConfig {
-  readonly notion?: { readonly databaseId: string };
-  readonly confluence?: { readonly spaceKey: string; readonly parentPageId: string };
-}
+// `TribalKbConfig` lives in `./types.ts` (a before-state guard reads it, B3); re-exported here so
+// existing importers are unchanged.
+export type { TribalKbConfig } from "./types.ts";
 
 type Platform = "slack" | "teams";
 
@@ -68,6 +91,7 @@ const CONFLUENCE_KB_KEYS: Readonly<Record<string, readonly string[]>> = {
   confluence_page_create: ["parentPageId"],
   confluence_page_update: ["pageId"],
   confluence_comment_add: ["pageId"],
+  confluence_page_append: ["pageId"],
 };
 
 function ownLookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
@@ -192,7 +216,7 @@ function refusesSlackDm(chatops: ChatopsPolicy): boolean {
 }
 
 /** Notion ids compare lower-case without hyphens; a value CONTAINING the id (a URL) matches too. */
-function canonicalNotionId(s: string): string {
+export function canonicalNotionId(s: string): string {
   return s.trim().toLowerCase().replaceAll("-", "");
 }
 
@@ -645,27 +669,94 @@ export function messagingDestinationRefusal(
 }
 
 /**
- * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`): the
- * messaging check, then the Linear reassignment rule (OR-B2-3). The act door runs no before-read
- * (B0b), so it cannot prove a Linear issue unassigned: a `linear_issue_update` proposal that sets
- * `assigneeId` (anything but `undefined`; `null` would unassign) is refused, fail closed. The model door does
- * NOT call this: there the `linear_issue_update` reader's guard decides from the current state.
+ * OR-B3-3 on the act door (R12): it runs no before-read, so it cannot tell a KB child from any
+ * other page; while a KB destination is configured for that service (or the config is
+ * unreadable), these update and append rows are refused over MCP (fail closed). Fixed text.
  */
-export function actDoorRefusal(
+export const ACT_DOOR_KB_CHILD_REFUSAL =
+  "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it";
+
+/** The page update/append rows the act door refuses while their service's KB is configured. */
+const NOTION_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
+  "notion_page_update",
+  "notion_block_append",
+]);
+const CONFLUENCE_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
+  "confluence_page_update",
+  "confluence_page_append",
+]);
+
+/** What the act door's refusal reads: the ChatOps bindings and the KB destinations. */
+export interface ActDoorRefusalContext {
+  readonly chatops: ChatopsPolicy | undefined;
+  readonly kb: TribalKbConfig | undefined;
+  /** The KB config could not be read: every KB-capable row is refused (fail closed). */
+  readonly kbUnreadable: boolean;
+}
+
+/** OR-B2-3 on the act door: a Linear update that sets `assigneeId` (anything but `undefined`). */
+function linearAssigneeRefusal(
   toolId: string,
   input: Readonly<Record<string, unknown>>,
-  ctx: { readonly chatops: ChatopsPolicy | undefined },
 ): string | undefined {
-  const messaging = messagingDestinationRefusal(toolId, input, ctx);
-  if (messaging !== undefined) return messaging;
   if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
   const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
   return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
 }
 
+/** R12: a page update or append while its service's KB destination is configured. */
+function actDoorKbChildRefusal(toolId: string, kb: TribalKbConfig | undefined): string | undefined {
+  const notion = NOTION_KB_CHILD_ROWS.has(toolId) && kb?.notion !== undefined;
+  const confluence = CONFLUENCE_KB_CHILD_ROWS.has(toolId) && kb?.confluence !== undefined;
+  return notion || confluence ? ACT_DOOR_KB_CHILD_REFUSAL : undefined;
+}
+
+/**
+ * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`), in
+ * order: the messaging check; the Linear reassignment rule (OR-B2-3: the act door runs no
+ * before-read (B0b), so it cannot prove a Linear issue unassigned, and a `linear_issue_update`
+ * that sets `assigneeId`, `null` included, is refused); the KB-target check the model door also
+ * runs (OR-B3-1; an unreadable KB config refuses every KB-capable row); then the KB-child rule
+ * (R12). The model door does NOT call this: there the readers' guards decide from the current
+ * state.
+ */
+export function actDoorRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: ActDoorRefusalContext,
+): string | undefined {
+  const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
+  if (messaging !== undefined) return messaging;
+  const linear = linearAssigneeRefusal(toolId, input);
+  if (linear !== undefined) return linear;
+  if (ctx.kbUnreadable) {
+    return isKnowledgeBaseCapableRow(toolId) ? KNOWLEDGE_BASE_REFUSAL : undefined;
+  }
+  return knowledgeBaseRefusal(toolId, input, ctx.kb) ?? actDoorKbChildRefusal(toolId, ctx.kb);
+}
+
+/**
+ * F4 / I25: the KB-target refusal, the ONE implementation both doors call
+ * (`modelWriteRefusal`, `actDoorRefusal`): {@link KNOWLEDGE_BASE_REFUSAL} when a KB-capable key of
+ * `toolId` names (or cannot be proven distinct from) the configured KB destination; `undefined`
+ * when no KB is configured.
+ */
+function knowledgeBaseRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  kb: TribalKbConfig | undefined,
+): string | undefined {
+  if (kb === undefined) return undefined;
+  if (refusesNotion(toolId, input, kb) || refusesConfluence(toolId, input, kb)) {
+    return KNOWLEDGE_BASE_REFUSAL;
+  }
+  return undefined;
+}
+
 /**
  * The fixed refusal for a MODEL write to `toolId` with `input`, or `undefined` to allow it: the
- * messaging check, then the knowledge-base check (model door only).
+ * messaging check, then the knowledge-base target check. (A page update or append under the KB is
+ * refused later, by its reader's KB-child guard, from the page's current parent.)
  */
 export function modelWriteRefusal(
   toolId: string,
@@ -674,9 +765,5 @@ export function modelWriteRefusal(
 ): string | undefined {
   const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
   if (messaging !== undefined) return messaging;
-  if (ctx.kb === undefined) return undefined;
-  if (refusesNotion(toolId, input, ctx.kb) || refusesConfluence(toolId, input, ctx.kb)) {
-    return KNOWLEDGE_BASE_REFUSAL;
-  }
-  return undefined;
+  return knowledgeBaseRefusal(toolId, input, ctx.kb);
 }

@@ -73,15 +73,40 @@ function schemaConstBase(statement: string): { readonly base?: string } | undefi
   return m?.[1] === undefined ? undefined : { base: m[1] };
 }
 
+/** The shared mail kit, whose `emailToolSchemas` the draft and send tools pass by member (B3). */
+const SHARED_EMAIL_KIT = "shared/imap-tool-kit.ts";
+
+/**
+ * An argument `emailToolSchemas.<member>`: the declaration of `<member>` in the shared mail kit,
+ * when that file's `emailToolSchemas` const names it. Only that one shared object is followed.
+ */
+function sharedEmailSchemaDeclaration(arg: string): string | undefined {
+  const m = /^emailToolSchemas\.([A-Za-z_$][\w$]*)$/.exec(arg);
+  const member = m?.[1];
+  if (member === undefined) return undefined;
+  const kit = stripComments(sources.find((s) => s.rel === SHARED_EMAIL_KIT)?.text ?? "");
+  const table = constStatement(kit, "emailToolSchemas") ?? "";
+  if (!new RegExp(String.raw`\b${member}\b`).test(table)) return undefined;
+  const statement = constStatement(kit, member);
+  return statement !== undefined && schemaConstBase(statement) !== undefined
+    ? statement
+    : undefined;
+}
+
 /**
  * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
- * `schema.extend({...})`) and that const's `.extend(` base chain. Nothing else the call names is
- * followed: a key that appears only in some other local const is not the tool's input.
+ * `schema.extend({...})`) and that const's `.extend(` base chain, plus one shared-kit exception:
+ * an argument `emailToolSchemas.<member>` is followed into `shared/imap-tool-kit.ts`
+ * ({@link sharedEmailSchemaDeclaration}), where the mail draft and send tools declare their input.
+ * Nothing else the call names is followed: a key that appears only in some other local const is
+ * not the tool's input.
  */
 function withSchemaArgumentDeclarations(code: string, call: string): string {
   const parts = [call];
   const seen = new Set<string>();
   for (const arg of topLevelArgs(call)) {
+    const shared = sharedEmailSchemaDeclaration(arg);
+    if (shared !== undefined) parts.push(shared);
     let name = SCHEMA_REF.exec(arg)?.[1];
     while (name !== undefined && !seen.has(name) && seen.size < 20) {
       seen.add(name);
