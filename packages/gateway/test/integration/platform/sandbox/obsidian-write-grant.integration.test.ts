@@ -10,6 +10,7 @@ import {
   realpathSync,
   rmdirSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -389,11 +390,16 @@ describe("the Obsidian write grant under the real sandbox", () => {
             return [process.execPath, script];
           })();
       await runSandboxed(obsidianPolicy(true), argv);
-      if (IS_WIN && existsSync(link)) {
+      // A real hard link shares the source's inode. A write that only CREATED a new file at the
+      // link path is not one (measured on Linux: link() is EXDEV across the two bind mounts, then
+      // the append makes a plain file in the vault, which the grant allows).
+      const isHardLink = (): boolean =>
+        existsSync(link) && statSync(link).ino === statSync(source).ino;
+      if (IS_WIN && isHardLink()) {
         // mklink only links; a second confined run tries the write through it.
         await runSandboxed(obsidianPolicy(true), probeArgv([link]));
       }
-      const madeLink = existsSync(link);
+      const madeLink = isHardLink();
       console.log(
         `[obsidian-write-grant] ${process.platform}: child-made hard link in the vault: ${madeLink ? "CREATED" : "refused"}`,
       );
