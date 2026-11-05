@@ -13,7 +13,8 @@
  * offerable now) AND the generation of the slot hosting THIS service still equals the one read
  * right after its listing — a restarted server must be re-listed and re-drift-checked, while
  * unrelated mesh activity changes nothing — else a fixed refusal and nothing dispatched; (3) the
- * input is a plain object. Only then the executor runs it.
+ * input is a plain object; (4) the source's `refusal` hook (a ChatOps channel, the knowledge base)
+ * returns nothing, else its fixed text (a throw: a generic one). Only then the executor runs it.
  *
  * Offer-time checks: the name fits `[A-Za-z0-9_-]{1,64}` (never truncated) and is not taken; the
  * listing carries the row's own key `mcpClientToolKey(service, toolId)`, which becomes
@@ -62,6 +63,12 @@ export interface ConnectorWriteToolSource {
   toolsEpoch(service: string): number;
   /** Per-call: enablement row with `row.wave <= maxWave`, policy allows, row offerable now. */
   recheck(row: ConnectorWriteRow): boolean;
+  /**
+   * Per-call, after the plain-object input check and before the executor: a fixed refusal text for
+   * a destination the model may never write to (a ChatOps channel, the knowledge base), or
+   * `undefined` to allow. Synchronous; a throw counts as a refusal.
+   */
+  refusal?(row: ConnectorWriteRow, input: Record<string, unknown>): string | undefined;
   warn(bindings: Record<string, unknown>, msg: string): void;
 }
 
@@ -73,6 +80,7 @@ export const NOT_OWNER_REFUSAL = "connector writes are only callable by the loca
 export const NO_LONGER_ENABLED_REFUSAL = "this connector write is no longer enabled; ask again";
 export const DECLINED_RESULT_TEXT = "the owner declined this write; nothing was sent";
 const NON_OBJECT_INPUT_REFUSAL = "input must be an object";
+export const DESTINATION_REFUSAL = "this connector write was refused";
 
 const MODEL_TOOL_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -153,6 +161,20 @@ function stillEnabled(
   }
 }
 
+/** Per-call (4): the source's destination refusal; a throw refuses with the generic text. */
+function destinationRefusal(
+  source: ConnectorWriteToolSource,
+  row: ConnectorWriteRow,
+  input: Record<string, unknown>,
+): string | undefined {
+  if (source.refusal === undefined) return undefined;
+  try {
+    return source.refusal(row, input);
+  } catch {
+    return DESTINATION_REFUSAL;
+  }
+}
+
 function errorResult(err: unknown): { error: string } {
   return {
     error: [...sanitisePreviewText(errText(err))].slice(0, CONNECTOR_WRITE_ERROR_MAX).join(""),
@@ -184,6 +206,10 @@ function buildDoorTool(
       }
       // (3) Never substitute: the owner approves exactly the input the model sent.
       if (!isPlainObject(input)) return { refused: NON_OBJECT_INPUT_REFUSAL };
+      // (4) A destination the model may never write to: a fixed text, nothing dispatched, and no
+      // value from the input echoed.
+      const refused = destinationRefusal(source, row, input);
+      if (refused !== undefined) return { refused };
       let result: ActionResult;
       try {
         result = await ex.execute({

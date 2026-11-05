@@ -2,11 +2,13 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
+import { row, textField, withPreview } from "../connectors/connector-writes/types.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
+import { formatActionConsent } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
@@ -273,6 +275,95 @@ describe("buildActDeps (act door)", () => {
     await expect(act.execute("github.pr.merge", {}, PROV)).rejects.toThrow("Tool not found");
     expect(d).toEqual([]);
     expect(prompts).toEqual([]);
+  });
+});
+
+describe("buildActDeps: the typed preview for a templated proposable row (F5)", () => {
+  // SYNTHETIC: no real proposable row carries a template in B0a, so a loop over the real table
+  // would assert nothing. The type and tool are the real routing pair.
+  const JIRA = withPreview(row("jira_issue_create", "jira.issue.create", "mesh", 2), {
+    target: "{projectKey}",
+    summary: "Create issue {summary}",
+    fields: [textField("description", "Description", "(none)")],
+  });
+  const PROV = {
+    captureId: "cap_9",
+    clientLabel: `agent${String.fromCodePoint(0x202e)}evil`,
+    createdAt: 0,
+    expiresAt: 60_000,
+    summary: "Summary: totally safe",
+  };
+
+  function wiring(dispatched: PlannedAction[], rows = [JIRA]) {
+    const prompts: Array<{ prompt: string; details: Record<string, unknown> }> = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
+        prompts.push({ prompt: req.prompt, details: req.details ?? {} });
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const w: CaptureActWiring = {
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({ key: "ENG-1" });
+        },
+      },
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl: NO_POLICY_OVERLAY,
+      previewCredentialFor: () => "team",
+      previewRows: rows,
+    };
+    return { act: buildActDeps(w, coord, "c-cli"), prompts };
+  }
+
+  test("the prompt is the provenance header, then the gateway-built preview; ONE approval, ONE dispatch", async () => {
+    const d: PlannedAction[] = [];
+    const { act, prompts } = wiring(d);
+    const input = { projectKey: "ENG", summary: "Fix login" };
+    expect(await act.execute("jira.issue.create", input, PROV)).toEqual({
+      status: "ok",
+      result: { key: "ENG-1" },
+    });
+    expect(prompts).toHaveLength(1);
+    const lines = (prompts[0]?.prompt ?? "").split("\n");
+    expect(lines[0]).toBe("Agent-proposed action — requires your approval");
+    expect(lines[2]).toBe("Agent's summary (unverified): Summary: totally safe");
+    expect(lines.slice(3, 8)).toEqual([
+      "",
+      "Service: jira",
+      "Credential: team",
+      "Target:  ENG",
+      "Create issue Fix login",
+    ]);
+    expect(d).toEqual([
+      { type: "jira.issue.create", payload: { mcpToolId: "jira_issue_create", input } },
+    ]);
+  });
+
+  test("details are the preview with the proposer ONLY under proposedBy; the template's summary is kept", async () => {
+    const { act, prompts } = wiring([]);
+    await act.execute("jira.issue.create", { projectKey: "ENG", summary: "Fix login" }, PROV);
+    const details = prompts[0]?.details ?? {};
+    expect(details["kind"]).toBe("connector-write");
+    expect(details["actionType"]).toBe("jira.issue.create");
+    expect(details["summary"]).toBe("Create issue Fix login");
+    expect(details["proposedBy"]).toEqual({
+      clientLabel: String.raw`agent\u{202E}evil`,
+      unverifiedSummary: "Summary: totally safe",
+      createdAt: 0,
+      expiresAt: 60_000,
+    });
+    expect(details["destination"]).toEqual({ service: "jira", credential: "team" });
+  });
+
+  test("no template: today's verbatim prompt and { actionType, input } details, exactly", async () => {
+    const { act, prompts } = wiring([], []);
+    const input = { projectKey: "ENG", summary: "Fix login" };
+    await act.execute("jira.issue.create", input, PROV);
+    expect(prompts[0]?.details).toEqual({ actionType: "jira.issue.create", input });
+    expect(prompts[0]?.prompt).toBe(formatActionConsent(PROV, "jira.issue.create", input));
   });
 });
 

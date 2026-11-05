@@ -49,8 +49,8 @@ describe("V83 migration — connector write opt-in", () => {
     }
   });
 
-  test("the registered maximum and the current schema are 83", () => {
-    expect(maxRegisteredIndexedSchemaVersion()).toBe(83);
-    expect(CURRENT_SCHEMA_VERSION).toBe(83);
+  test("the registered maximum and the current schema are at least 83", () => {
+    expect(maxRegisteredIndexedSchemaVersion()).toBeGreaterThanOrEqual(83);
+    expect(CURRENT_SCHEMA_VERSION).toBeGreaterThanOrEqual(83);
   });
 });

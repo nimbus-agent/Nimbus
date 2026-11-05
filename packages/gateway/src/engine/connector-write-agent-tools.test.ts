@@ -15,6 +15,7 @@ import {
   CONNECTOR_WRITE_TOOL_NAME_MAX,
   type ConnectorWriteToolSource,
   connectorWriteModelToolName,
+  DESTINATION_REFUSAL,
   templateKeysInSchema,
 } from "./connector-write-agent-tools.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -545,6 +546,57 @@ describe("execute: per-call checks and results", () => {
     // Positive control: an object input does reach the executor.
     expect(await call(tools, "argocd__argocd_app_ping", {})).toBe("SENT");
     expect(ex.actions).toHaveLength(1);
+  });
+
+  test("a destination refusal: its fixed text, nothing dispatched, never the input echoed (control: allowed)", async () => {
+    const src = fakeSource([SYNC], { argocd: argocdListing() });
+    const seen: Array<{ row: ConnectorWriteRow; input: Record<string, unknown> }> = [];
+    src.refusal = (r, input) => {
+      seen.push({ row: r, input });
+      return input["name"] === "kb-root" ? "the fixed refusal" : undefined;
+    };
+    const ex = fakeExecutor({ status: "ok", result: "SENT" });
+    const tools = await syncTools(src, ex);
+    const out = await call(tools, SYNC_NAME, { name: "kb-root" });
+    expect(out).toEqual({ refused: "the fixed refusal" });
+    expect(JSON.stringify(out)).not.toContain("kb-root");
+    expect(ex.actions).toEqual([]);
+    expect(seen).toEqual([{ row: SYNC, input: { name: "kb-root" } }]);
+    // Positive control: another destination reaches the executor.
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toBe("SENT");
+    expect(ex.actions).toHaveLength(1);
+  });
+
+  test("a throwing refusal hook refuses with the generic text and dispatches nothing", async () => {
+    const src = fakeSource([SYNC], { argocd: argocdListing() });
+    src.refusal = () => {
+      throw new Error("config unreadable: SECRET");
+    };
+    const ex = fakeExecutor({ status: "ok", result: "SENT" });
+    const tools = await syncTools(src, ex);
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      refused: DESTINATION_REFUSAL,
+    });
+    expect(ex.actions).toEqual([]);
+  });
+
+  test("the refusal hook runs AFTER the executor check, the recheck and the object check", async () => {
+    let hookCalls = 0;
+    const counting = (src: FakeSource) => {
+      src.refusal = () => {
+        hookCalls += 1;
+        return undefined;
+      };
+    };
+    const noOwner = fakeSource([SYNC], { argocd: argocdListing() });
+    counting(noOwner);
+    await call(await syncTools(noOwner, undefined), SYNC_NAME, { name: "web" });
+    const stale = fakeSource([SYNC], { argocd: argocdListing() });
+    counting(stale);
+    const staleTools = await syncTools(stale, fakeExecutor({ status: "ok", result: "SENT" }));
+    stale.recheckResult = false;
+    await call(staleTools, SYNC_NAME, { name: "web" });
+    expect(hookCalls).toBe(0);
   });
 
   test("rejected: the fixed declined object, never the reason or the payload", async () => {

@@ -70,6 +70,7 @@ import {
   phase3AddSnowflakeMcp,
   phase3AddTableauMcp,
 } from "./phase3-config.ts";
+import { isServiceCredentialConfigured } from "./service-credential.ts";
 import type { LazyMcpSlot, MeshLogger, MeshSpawnContext, ServerSpec } from "./slot.ts";
 import {
   type LazyMeshToolMap,
@@ -89,12 +90,10 @@ type Phase3ServerAdder = (
 ) => Promise<void>;
 
 /**
- * The first-party services whose raw tool listing {@link LazyConnectorMesh.listFirstPartyServerTools}
- * can serve, each with the SPAWNER's own credential check (the `phase3Add*` function registers the
- * server only when the service's own vault secrets are present) and the slot that runs it. A service
- * this map does not name is refused: there is no fallthrough that could start an unrelated slot.
+ * The phase-3 bundle services, each with the SPAWNER's own credential check: the `phase3Add*`
+ * function registers the server only when the service's own vault secrets are present.
  */
-const FIRST_PARTY_LISTING_SERVICES: Readonly<Record<string, Phase3ServerAdder>> = {
+const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   snowflake: phase3AddSnowflakeMcp,
   tableau: phase3AddTableauMcp,
   looker: phase3AddLookerMcp,
@@ -106,8 +105,39 @@ const FIRST_PARTY_LISTING_SERVICES: Readonly<Record<string, Phase3ServerAdder>> 
   mlflow: phase3AddMlflowMcp,
 };
 
-/** The one slot that hosts every {@link FIRST_PARTY_LISTING_SERVICES} server. */
-const FIRST_PARTY_LISTING_SLOT = LAZY_MESH.phase3Bundle;
+/**
+ * The wave-2 services: the slot each one's server runs in and the mesh method that ensures exactly
+ * that slot, in ONE row so the two cannot drift. Their credential check is
+ * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
+ * bundles host siblings).
+ */
+const WAVE2_LISTING: Readonly<
+  Record<string, { readonly slot: string; readonly ensure: keyof LazyConnectorMesh }>
+> = {
+  gmail: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
+  google_drive: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
+  outlook: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  teams: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  github: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
+  gitlab: { slot: LAZY_MESH.gitlab, ensure: "ensureGitlabRunning" },
+  slack: { slot: LAZY_MESH.slack, ensure: "ensureSlackRunning" },
+  linear: { slot: LAZY_MESH.linear, ensure: "ensureLinearRunning" },
+  jira: { slot: LAZY_MESH.jira, ensure: "ensureJiraRunning" },
+  notion: { slot: LAZY_MESH.notion, ensure: "ensureNotionRunning" },
+  confluence: { slot: LAZY_MESH.confluence, ensure: "ensureConfluenceRunning" },
+  discord: { slot: LAZY_MESH.discord, ensure: "ensureDiscordRunning" },
+  apple: { slot: LAZY_MESH.apple, ensure: "ensureAppleRunning" },
+  obsidian: { slot: LAZY_MESH.obsidian, ensure: "ensureObsidianRunning" },
+};
+
+/** One {@link LazyConnectorMesh.listFirstPartyServerTools} entry: its slot, credential and ensure. */
+interface FirstPartyListingEntry {
+  readonly slot: string;
+  /** The SERVICE's own credential is stored. Reads the Vault/context only: no refresh, no network. */
+  configured(): Promise<boolean>;
+  /** Ensures exactly {@link slot}; never another slot. */
+  ensure(): Promise<void>;
+}
 
 export class LazyConnectorMesh {
   private readonly filesystem: MCPClient;
@@ -126,6 +156,13 @@ export class LazyConnectorMesh {
    * restarted since its tools were listed" from "something else moved".
    */
   private readonly slotGenerations = new Map<string, number>();
+  /**
+   * The first-party services the LATEST {@link listFirstPartyServerTools} call for them confirmed
+   * mapped, configured and present in their slot's listing. {@link toolsGenerationFor} is
+   * synchronous and must not read the Vault, so it answers `-1` for a service outside this set.
+   */
+  private readonly listedFirstParty = new Set<string>();
+  private readonly firstPartyListing: Readonly<Record<string, FirstPartyListingEntry>>;
   private readonly spawnContext: MeshSpawnContext;
   private readonly paths: PlatformPaths;
   private readonly removeSandboxDir: (dir: string) => void;
@@ -214,6 +251,7 @@ export class LazyConnectorMesh {
       bumpToolsEpoch: () => this.bumpToolsEpoch(),
       scheduleLazyDisconnect: (k) => this.scheduleLazyDisconnect(k),
     };
+    this.firstPartyListing = this.buildFirstPartyListing();
     this.extensionSlots = new ExtensionSlots(
       {
         getLazyClient: (k) => this.getLazyClient(k),
@@ -245,13 +283,51 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The generation of the slot hosting first-party `service` (the explicit map
-   * {@link listFirstPartyServerTools} uses), or `-1` for a service that map does not name — the
-   * connector-write door treats `-1` as "not offerable". Never `NaN`.
+   * The explicit listing map: the 9 phase-3 services on the phase-3 bundle (today's spawner probe)
+   * and each wave-2 service on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
+   * method at call time (a test seam), and names exactly that service's slot.
+   */
+  private buildFirstPartyListing(): Readonly<Record<string, FirstPartyListingEntry>> {
+    const out: Record<string, FirstPartyListingEntry> = {};
+    for (const [service, adder] of Object.entries(PHASE3_LISTING_ADDERS)) {
+      out[service] = {
+        slot: LAZY_MESH.phase3Bundle,
+        configured: async () => {
+          const probe: Record<string, ServerSpec> = {};
+          await adder(this.vault, probe, this.spawnContext.sandboxCwd);
+          return Object.hasOwn(probe, service);
+        },
+        ensure: () => this.ensurePhase3BundleRunning(),
+      };
+    }
+    for (const [service, row] of Object.entries(WAVE2_LISTING)) {
+      out[service] = {
+        slot: row.slot,
+        configured: () => isServiceCredentialConfigured(this.vault, service, this.spawnContext),
+        // Looked up at call time (a test seam), not captured.
+        ensure: () => (this[row.ensure] as () => Promise<void>)(),
+      };
+    }
+    return out;
+  }
+
+  private firstPartyListingEntry(service: string): FirstPartyListingEntry | undefined {
+    return Object.hasOwn(this.firstPartyListing, service)
+      ? this.firstPartyListing[service]
+      : undefined;
+  }
+
+  /**
+   * The generation of the slot hosting first-party `service`, or `-1` unless the service is in the
+   * explicit listing map AND the latest {@link listFirstPartyServerTools} call for it found its own
+   * credential configured and its server in that slot's listing — so a bundle running for a
+   * configured sibling never gives an unconfigured service a generation. The connector-write door
+   * treats `-1` as "not offerable". Never `NaN`.
    */
   toolsGenerationFor(service: string): number {
-    if (!Object.hasOwn(FIRST_PARTY_LISTING_SERVICES, service)) return -1;
-    return this.slotGenerations.get(FIRST_PARTY_LISTING_SLOT) ?? 0;
+    const entry = this.firstPartyListingEntry(service);
+    if (entry === undefined || !this.listedFirstParty.has(service)) return -1;
+    return this.slotGenerations.get(entry.slot) ?? 0;
   }
 
   private lazySlot(key: string): LazyMcpSlot {
@@ -633,40 +709,55 @@ export class LazyConnectorMesh {
    * connector-write door. Order is the security property; every check precedes any slot touch:
    *  1. the service has rows in the write table (so never `mcp_*` / `ext_*`);
    *  2. org policy allows it (I22): a blocked service spawns nothing;
-   *  3. the SERVICE's own credential is configured (the spawner's own check), not merely "its
-   *     slot is running" — a bundle already up for a sibling does not make this service usable;
-   *  4. only then its slot is ensured, through an explicit map (unmapped: fail closed);
-   *  5. the listing is filtered to keys this server owns. No other slot is ever spawned.
+   *  3. it is in the explicit listing map (unmapped: fail closed) and the SERVICE's own credential
+   *     is configured — read from the Vault/context only, never a token refresh or any network
+   *     call — not merely "its slot is running": a bundle already up for a sibling does not make
+   *     this service usable;
+   *  4. only then THAT service's slot is ensured;
+   *  5. the listing is filtered to keys this server owns; none ⇒ `undefined`, not `{}`. No other
+   *     slot is ever spawned.
    * Each entry keeps ONLY `description` and `inputSchema`: the listed `execute` closure would
    * dispatch straight to the server, outside the executor's HITL and egress chokepoint, so it is
-   * never handed out from here.
+   * never handed out from here. The outcome also decides whether {@link toolsGenerationFor} gives
+   * the service a generation (only after a defined listing).
    */
   async listFirstPartyServerTools(
     service: string,
   ): Promise<Readonly<Record<string, unknown>> | undefined> {
+    let out: Readonly<Record<string, unknown>> | undefined;
+    try {
+      out = await this.listFirstPartyServerToolsChecked(service);
+    } finally {
+      // Decided at the END, so a concurrent call keeps the previous answer meanwhile; a throw
+      // leaves `out` undefined and clears it (fail closed).
+      if (out === undefined) this.listedFirstParty.delete(service);
+      else this.listedFirstParty.add(service);
+    }
+    return out;
+  }
+
+  private async listFirstPartyServerToolsChecked(
+    service: string,
+  ): Promise<Readonly<Record<string, unknown>> | undefined> {
     if (!CONNECTOR_WRITE_ROWS.some((r) => serviceOf(r.actionType) === service)) return undefined;
     if (!this.isConnectorAllowed(service)) return undefined;
-    const adder = Object.hasOwn(FIRST_PARTY_LISTING_SERVICES, service)
-      ? FIRST_PARTY_LISTING_SERVICES[service]
-      : undefined;
-    if (adder === undefined) return undefined;
-    const probe: Record<string, ServerSpec> = {};
-    await adder(this.vault, probe, this.spawnContext.sandboxCwd);
-    if (!Object.hasOwn(probe, service)) return undefined;
+    const entry = this.firstPartyListingEntry(service);
+    if (entry === undefined) return undefined;
+    if (!(await entry.configured())) return undefined;
     await this.filesystemSpawnGate;
-    await this.ensurePhase3BundleRunning();
+    await entry.ensure();
     const all: Readonly<Record<string, unknown>> = await listLazyMeshClientTools(
-      this.getLazyClient(FIRST_PARTY_LISTING_SLOT),
+      this.getLazyClient(entry.slot),
     );
     const out: Record<string, unknown> = {};
     for (const key of Object.keys(all)) {
       if (meshServerForToolKey(key) !== service) continue;
-      const entry = all[key];
+      const listed = all[key];
       const rec =
-        typeof entry === "object" && entry !== null ? (entry as Record<string, unknown>) : {};
+        typeof listed === "object" && listed !== null ? (listed as Record<string, unknown>) : {};
       out[key] = { description: rec["description"], inputSchema: rec["inputSchema"] };
     }
-    return out;
+    return Object.keys(out).length === 0 ? undefined : out;
   }
 
   async ensurePhase3BundleRunning(): Promise<void> {

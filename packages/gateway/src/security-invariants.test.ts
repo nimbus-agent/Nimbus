@@ -2664,9 +2664,10 @@ code_execution=true
       /\n\s*connectorWriteDeps,\n/,
     );
     // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
-    // services literal, and — the fourth — the I28 act door's dispatcher inside the
-    // `captureRpcCtx.act` wiring, whose exact shape is pinned just below: four.
-    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(4);
+    // services literal, the I28 act door's dispatcher inside the `captureRpcCtx.act` wiring, and —
+    // the fifth — that wiring's typed-preview credential READ (`.credentialFor(s).credential`, no
+    // copy of the context), both pinned exactly just below: five.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(5);
     const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
     expect(captureAt).toBeGreaterThan(-1);
     const captureCtx = assembly.slice(captureAt, assembly.indexOf("\n  };", captureAt));
@@ -2675,7 +2676,10 @@ code_execution=true
     expect(captureCtx.slice(actAt)).toMatch(
       /^act: \{\s*dispatcher: createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\),/,
     );
-    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(1);
+    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
+    expect(captureCtx).toContain(
+      "previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,",
+    );
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,
@@ -11270,13 +11274,30 @@ describe("I53 — a first-party connector write reaches the model only through t
     }
   });
 
-  test("the production source stays gated: enablement, policy and offerability", async () => {
+  test("the production source stays gated: enablement, policy, offerability and the approved set", async () => {
     const src = stripComments(
       await read("packages/gateway/src/connectors/connector-writes/model-write-source.ts"),
     );
     expect(src).toContain("isModelOfferableRow");
     expect(src).toContain("isConnectorWriteModelAccessEnabled");
     expect(src).toContain("getModelWriteEnablement");
+    // F3/F4: the destination refusals read the live policy's ChatOps bindings and the KB config.
+    expect(src).toContain("modelWriteRefusal(row.toolId, input,");
+    const door = stripComments(
+      await read("packages/gateway/src/engine/connector-write-agent-tools.ts"),
+    );
+    const refusalAt = door.indexOf("destinationRefusal(source, row, input)");
+    expect(refusalAt).toBeGreaterThan(door.indexOf("if (!isPlainObject(input))"));
+    expect(refusalAt).toBeLessThan(door.indexOf("ex.execute("));
+    // V84 re-consent: the listing and the per-call recheck share ONE predicate that reads it.
+    expect(src).toContain("approvedToolIds.has(row.toolId)");
+    expect(src.match(/offeredUnder\(/g)?.length).toBe(3);
+    // The production wiring feeds the KB refusal the real [tribal] config (triple rule): the
+    // gateway's source passes the platform's live accessor, and assemble fills it.
+    const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    expect(main).toMatch(/getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\?\.\(\)/);
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(assemble).toMatch(/tribalKbConfig\s*[:(]/);
   });
 
   test("D39 exists with all four clauses, run() calls it, and the door is an anchor", async () => {

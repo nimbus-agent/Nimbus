@@ -125,6 +125,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
@@ -2348,6 +2349,26 @@ function wireUpdaterIntoIpc(
         );
     }
   }
+}
+
+/**
+ * The `[tribal]` knowledge-base destinations for the model connector-write door's KB refusal
+ * (Phase 9.7 B, F4), from the loaded config whether or not `[tribal].enabled`: a configured KB is
+ * the capture gate's destination either way. `undefined` when neither is configured.
+ */
+function tribalKbConfigOf(cfg: NimbusTribalToml): TribalKbConfig | undefined {
+  if (cfg.notion === undefined && cfg.confluence === undefined) return undefined;
+  return {
+    ...(cfg.notion === undefined ? {} : { notion: { databaseId: cfg.notion.databaseId } }),
+    ...(cfg.confluence === undefined
+      ? {}
+      : {
+          confluence: {
+            spaceKey: cfg.confluence.spaceKey,
+            parentPageId: cfg.confluence.parentPageId,
+          },
+        }),
+  };
 }
 
 // Tribal-knowledge watcher boot (Phase 6 Slice 6c), extracted verbatim from
@@ -4647,6 +4668,8 @@ export async function assemblePlatformServices(
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl,
+      // The typed preview's `Credential:` line reads the same pin the write itself uses (as runAsk).
+      previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,
     },
   };
 
@@ -5062,6 +5085,7 @@ export async function assemblePlatformServices(
     // (`policyGate.applyVerified`) must reach the user-MCP model tool source (I42's
     // `user_mcp_model_access` lock-off) on the next turn, not the next restart.
     enforcedPolicy: () => policyGate.enforced(),
+    tribalKbConfig: () => tribalKbConfigOf(tribalCfg),
     disposeSidecars(): void {
       for (const s of sidecarStops) {
         try {

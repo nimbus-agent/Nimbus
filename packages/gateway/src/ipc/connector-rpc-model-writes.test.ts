@@ -5,13 +5,21 @@ import { join } from "node:path";
 
 import {
   getModelWriteEnablement,
+  setModelWriteEnablement,
   writesEnabledBy,
 } from "../connectors/connector-writes/enablement-store.ts";
+import { row, withPreview } from "../connectors/connector-writes/types.ts";
+import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
 import { LocalIndex } from "../index/local-index.ts";
 import { createMockVault } from "../vault/mock.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "./connector-rpc.ts";
+import {
+  handleConnectorWritesEnable,
+  handleConnectorWritesStatus,
+  type ModelWritesDeps,
+} from "./connector-rpc-handlers/model-writes.ts";
 
 let db: Database;
 let localIndex: LocalIndex;
@@ -214,6 +222,79 @@ describe("connector.writesDisable and writesStatus", () => {
       policyAllows: boolean;
     };
     expect(locked.policyAllows).toBe(false);
+  });
+});
+
+describe("the approved set (V84): synthetic templated rows through the handlers' rows seam", () => {
+  // No real wave-2/3 row has a template yet, so only synthetic rows can be offerable here.
+  const T = { target: "{name}", summary: "s", fields: [] };
+  const SYNC = withPreview(row("argocd_app_sync", "argocd.app.sync", "write", 2), T);
+  const ROLLBACK = withPreview(row("argocd_app_rollback", "argocd.app.rollback", "write", 3), T);
+  const BARE = row("argocd_app_delete", "argocd.app.delete", "write", 2);
+  const ROWS = [SYNC, ROLLBACK, BARE];
+
+  function deps(exec?: ToolExecutor): ModelWritesDeps {
+    return {
+      db,
+      toolExecutor: exec,
+      getEnforcedPolicy: () => OPEN,
+      now: () => 5,
+      rows: ROWS,
+    };
+  }
+
+  type Status = {
+    services: Array<{ service: string; offerable: number; awaitingApproval: number }>;
+  };
+
+  test("a pre-V84 opt-in offers nothing; status names the writes awaiting approval", () => {
+    dbRun(
+      db,
+      "INSERT INTO connector_write_enablement (service, max_wave, enabled_at) VALUES ('argocd', 3, 1)",
+    );
+    const s = handleConnectorWritesStatus(deps()) as Status;
+    expect(s.services.find((x) => x.service === "argocd")).toMatchObject({
+      offerable: 0,
+      awaitingApproval: 2,
+    });
+  });
+
+  test("enable marks each write by state and stores exactly the offerable ids it listed", async () => {
+    // An earlier opt-in approved only the sync.
+    setModelWriteEnablement(db, "argocd", 2, 1, ["argocd_app_sync"]);
+    const prompts: string[] = [];
+    await handleConnectorWritesEnable(
+      { service: "argocd", wave: 3 },
+      deps(executor(true, prompts)),
+    );
+    const p = prompts[0] ?? "";
+    expect(p).toContain("argocd_app_sync  argocd.app.sync  wave 2  (offered to the model)");
+    expect(p).toContain(
+      "argocd_app_rollback  argocd.app.rollback  wave 3  (new: offered after you approve)",
+    );
+    expect(p).toContain("argocd_app_delete  argocd.app.delete  wave 2  (not offered yet)");
+    expect(getModelWriteEnablement(db, "argocd")?.approvedToolIds).toEqual(
+      new Set(["argocd_app_rollback", "argocd_app_sync"]),
+    );
+    // Stored sorted.
+    expect(db.query("SELECT approved_tool_ids FROM connector_write_enablement").get()).toEqual({
+      approved_tool_ids: '["argocd_app_rollback","argocd_app_sync"]',
+    });
+    const s = handleConnectorWritesStatus(deps()) as Status;
+    expect(s.services.find((x) => x.service === "argocd")).toMatchObject({
+      offerable: 2,
+      awaitingApproval: 0,
+    });
+  });
+
+  test("a declined re-enable leaves the earlier approved set untouched", async () => {
+    setModelWriteEnablement(db, "argocd", 2, 1, ["argocd_app_sync"]);
+    await refusal(
+      handleConnectorWritesEnable({ service: "argocd", wave: 3 }, deps(executor(false))),
+    );
+    expect([...(getModelWriteEnablement(db, "argocd")?.approvedToolIds ?? [])]).toEqual([
+      "argocd_app_sync",
+    ]);
   });
 });
 

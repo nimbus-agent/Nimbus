@@ -1,5 +1,6 @@
 import type { ChatopsBoot } from "../chatops/chatops-boot.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import type { LazyConnectorMesh } from "../connectors/lazy-mesh/index.ts";
 import type { EmbeddingReadiness } from "../embedding/embedding-readiness.ts";
 import type { AskExplainRecorder } from "../engine/ask-explain-recorder.ts";
@@ -91,6 +92,12 @@ export interface PlatformServices {
    * `gateway-main.ts`'s user-MCP model tool source (`user_mcp_model_access`, I42).
    */
   enforcedPolicy?: () => EnforcedPolicy;
+  /**
+   * The `[tribal]` knowledge-base destinations loaded from `nimbus.toml` at boot (whether or not
+   * `[tribal].enabled`), for the model connector-write door's KB refusal (Phase 9.7 B, F4).
+   * `undefined` when neither KB is configured.
+   */
+  tribalKbConfig?: () => TribalKbConfig | undefined;
   // ChatOps (Slice 5). Present when [chatops].enabled: src/index.ts late-binds the engine read
   // path (bindAskEngine) once the engine agent exists.
   chatops?: ChatopsBoot;

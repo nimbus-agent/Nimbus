@@ -3,25 +3,40 @@ import { describe, expect, test } from "bun:test";
 import { enableWritesPromptLines } from "./enable-prompt.ts";
 
 describe("enableWritesPromptLines", () => {
-  test("a well-formed payload lists the service, the wave, every write and the fixed sentence", () => {
+  test("a well-formed payload lists the service, the wave, every write by state, and the fixed sentence", () => {
     expect(
       enableWritesPromptLines({
         service: "github",
-        maxWave: 2,
+        maxWave: 3,
         writes: [
           {
             toolId: "github_issue_create",
             actionType: "github.issue.create",
             wave: 2,
             offerable: true,
+            state: "already_approved",
           },
-          { toolId: "github_pr_merge", actionType: "github.pr.merge", wave: 3, offerable: false },
+          {
+            toolId: "github_issue_update",
+            actionType: "github.issue.update",
+            wave: 2,
+            offerable: true,
+            state: "newly_offerable",
+          },
+          {
+            toolId: "github_pr_merge",
+            actionType: "github.pr.merge",
+            wave: 3,
+            offerable: false,
+            state: "not_offerable",
+          },
         ],
       }),
     ).toEqual([
       "Service: github",
-      "Up to wave: 2",
+      "Up to wave: 3",
       "  github_issue_create  github.issue.create  wave 2  (offered to the model)",
+      "  github_issue_update  github.issue.update  wave 2  (new: offered after you approve)",
       "  github_pr_merge  github.pr.merge  wave 3  (not offered yet)",
       "",
       "Each call will still ask you before it runs.",
@@ -38,7 +53,9 @@ describe("enableWritesPromptLines", () => {
       enableWritesPromptLines({
         service: "github",
         maxWave: 2,
-        writes: [{ actionType: "github.issue.create", wave: 2, offerable: true }],
+        writes: [
+          { actionType: "github.issue.create", wave: 2, offerable: true, state: "newly_offerable" },
+        ],
       }),
     ).toBeUndefined();
   });
@@ -48,9 +65,32 @@ describe("enableWritesPromptLines", () => {
       enableWritesPromptLines({
         service: "github",
         maxWave: 2,
-        writes: [{ toolId: "github_issue_create", actionType: "github.issue.create", wave: 2 }],
+        writes: [
+          {
+            toolId: "github_issue_create",
+            actionType: "github.issue.create",
+            wave: 2,
+            state: "not_offerable",
+          },
+        ],
       }),
     ).toBeUndefined();
+  });
+
+  test("a missing, unknown, inherited or contradictory state is malformed", () => {
+    const base = { toolId: "github_issue_create", actionType: "github.issue.create", wave: 2 };
+    for (const w of [
+      { ...base, offerable: true },
+      { ...base, offerable: true, state: "approved" },
+      { ...base, offerable: true, state: "toString" },
+      { ...base, offerable: false, state: "already_approved" },
+      { ...base, offerable: false, state: "newly_offerable" },
+      { ...base, offerable: true, state: "not_offerable" },
+    ]) {
+      expect(
+        enableWritesPromptLines({ service: "github", maxWave: 2, writes: [w] }),
+      ).toBeUndefined();
+    }
   });
 
   test("a control character in a value is shown as a visible escape", () => {

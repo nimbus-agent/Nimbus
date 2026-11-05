@@ -126,24 +126,37 @@ export function outcomeRefOf(result: unknown): string | undefined {
   return undefined;
 }
 
+const visible = (s: string): string => s.replace(INVISIBLE_RE, escapeCodePoint);
+
+// A one-line field must not start a new prompt line either: LF is escaped here too. `\` and `"`
+// are escaped FIRST (before `visible` adds its own backslashes), so a quoted label cannot close
+// its quotes and fake the provenance text that follows it.
+const visibleLine = (s: string): string =>
+  visible(s.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`)).replaceAll(
+    "\n",
+    String.raw`\u000a`,
+  );
+
+/**
+ * The provenance header of an act-door prompt: who proposed the action, when, and the agent's
+ * UNVERIFIED summary. Shared by the verbatim prompt below and the typed-preview prompt
+ * (`ipc/capture-rpc.ts`), so the two can never disagree about who asked.
+ */
+export function formatActionProvenanceLines(p: ActionProvenance): string[] {
+  return [
+    "Agent-proposed action — requires your approval",
+    `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
+    `Agent's summary (unverified): ${visibleLine(p.summary)}`,
+  ];
+}
+
 export function formatActionConsent(
   p: ActionProvenance,
   actionType: string,
   input: Readonly<Record<string, unknown>>,
 ): string {
-  const visible = (s: string): string => s.replace(INVISIBLE_RE, escapeCodePoint);
-  // A one-line field must not start a new prompt line either: LF is escaped here too. `\` and `"`
-  // are escaped FIRST (before `visible` adds its own backslashes), so a quoted label cannot close
-  // its quotes and fake the provenance text that follows it.
-  const visibleLine = (s: string): string =>
-    visible(s.replaceAll("\\", String.raw`\\`).replaceAll('"', String.raw`\"`)).replaceAll(
-      "\n",
-      String.raw`\u000a`,
-    );
   return [
-    "Agent-proposed action — requires your approval",
-    `Proposed by MCP client "${visibleLine(p.clientLabel ?? "unlabelled")}" at ${new Date(p.createdAt).toISOString()}, expires ${new Date(p.expiresAt).toISOString()}`,
-    `Agent's summary (unverified): ${visibleLine(p.summary)}`,
+    ...formatActionProvenanceLines(p),
     `Type: ${visibleLine(actionType)}`,
     "Input (verbatim, exactly what will be sent):",
     visible(JSON.stringify(input, null, 2)),

@@ -7,6 +7,7 @@ import {
   sharedOAuthKey,
 } from "../connector-vault.ts";
 import * as defaultSpawners from "./connector-spawns.ts";
+import { isServiceCredentialConfigured } from "./service-credential.ts";
 import type { MeshSpawnContext } from "./slot.ts";
 
 export type CredentialSpawners = {
@@ -86,38 +87,17 @@ async function ensureBitbucketIfVaultCreds(
   }
 }
 
-async function ensureJiraIfVaultCreds(
+/**
+ * Runs `run` when `service`'s own credential is stored: the same no-network predicate the
+ * connector-write listing asks before it ensures a slot ({@link isServiceCredentialConfigured}).
+ */
+async function ensureIfServiceConfigured(
   ctx: MeshSpawnContext,
-  spawners: CredentialSpawners,
+  service: string,
+  run: () => Promise<void>,
 ): Promise<void> {
-  const jt = await readConnectorSecret(ctx.vault, "jira", "api_token");
-  const je = await readConnectorSecret(ctx.vault, "jira", "email");
-  const jb = await readConnectorSecret(ctx.vault, "jira", "base_url");
-  if (jt !== null && jt !== "" && je !== null && je !== "" && jb !== null && jb !== "") {
-    await spawners.ensureJiraMcp(ctx);
-  }
-}
-
-async function ensureConfluenceIfVaultCreds(
-  ctx: MeshSpawnContext,
-  spawners: CredentialSpawners,
-): Promise<void> {
-  const ct = await readConnectorSecret(ctx.vault, "confluence", "api_token");
-  const ce = await readConnectorSecret(ctx.vault, "confluence", "email");
-  const cb = await readConnectorSecret(ctx.vault, "confluence", "base_url");
-  if (ct !== null && ct !== "" && ce !== null && ce !== "" && cb !== null && cb !== "") {
-    await spawners.ensureConfluenceMcp(ctx);
-  }
-}
-
-async function ensureDiscordIfOptIn(
-  ctx: MeshSpawnContext,
-  spawners: CredentialSpawners,
-): Promise<void> {
-  const en = await readConnectorSecret(ctx.vault, "discord", "enabled");
-  const tok = await readConnectorSecret(ctx.vault, "discord", "bot_token");
-  if (en === "1" && tok !== null && tok !== "") {
-    await spawners.ensureDiscordMcp(ctx);
+  if (await isServiceCredentialConfigured(ctx.vault, service, ctx)) {
+    await run();
   }
 }
 
@@ -189,13 +169,13 @@ export async function ensureCredentialConnectorsRunning(
 ): Promise<void> {
   await ensureIfGoogleOAuthPresent(ctx, spawners);
   await ensureIfProviderOAuthSet(ctx, "microsoft", () => spawners.ensureMicrosoftBundleMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "github", "pat", () => spawners.ensureGithubMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "gitlab", "pat", () => spawners.ensureGitlabMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "github", () => spawners.ensureGithubMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "gitlab", () => spawners.ensureGitlabMcp(ctx));
   await ensureBitbucketIfVaultCreds(ctx, spawners);
-  await ensureIfConnectorSecretSet(ctx, "slack", "oauth", () => spawners.ensureSlackMcp(ctx));
-  await ensureIfConnectorSecretSet(ctx, "linear", "api_key", () => spawners.ensureLinearMcp(ctx));
-  await ensureJiraIfVaultCreds(ctx, spawners);
-  await ensureIfConnectorSecretSet(ctx, "notion", "oauth", () => spawners.ensureNotionMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "slack", () => spawners.ensureSlackMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "linear", () => spawners.ensureLinearMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "jira", () => spawners.ensureJiraMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "notion", () => spawners.ensureNotionMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "mendeley", "oauth", () => spawners.ensureMendeleyMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "workday", "oauth", () => spawners.ensureWorkdayMcp(ctx));
   await ensureIfConnectorSecretSet(ctx, "apple", "icloud_app_password", () =>
@@ -209,8 +189,8 @@ export async function ensureCredentialConnectorsRunning(
   await ensureIfConnectorSecretSet(ctx, "salesforce", "oauth", () =>
     spawners.ensureSalesforceMcp(ctx),
   );
-  await ensureConfluenceIfVaultCreds(ctx, spawners);
-  await ensureDiscordIfOptIn(ctx, spawners);
+  await ensureIfServiceConfigured(ctx, "confluence", () => spawners.ensureConfluenceMcp(ctx));
+  await ensureIfServiceConfigured(ctx, "discord", () => spawners.ensureDiscordMcp(ctx));
   await ensureJenkinsIfVaultCreds(ctx, spawners);
   await ensureCircleciIfVaultCreds(ctx, spawners);
   await ensurePagerdutyIfVaultCreds(ctx, spawners);

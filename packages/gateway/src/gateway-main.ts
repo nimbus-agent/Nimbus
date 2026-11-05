@@ -215,6 +215,8 @@ export async function main(): Promise<void> {
             // Per-slot, not the global epoch: unrelated slot activity must not refuse a listed tool.
             toolsEpoch: (service) => platform.connectorMesh.toolsGenerationFor(service),
             warn: (bindings, msg) => connectorWriteLogger.warn(bindings, msg),
+            // F4: the knowledge base the model may never write to (the tribal capture gate's).
+            getTribalKbConfig: () => platform.tribalKbConfig?.(),
           }),
         });
 
