@@ -165,7 +165,7 @@ function realRow(toolId: string): ConnectorWriteRow {
 
 /** A server listing for the real row: its key, with an input schema naming its template keys. */
 function realRowListing(r: ConnectorWriteRow): Record<string, unknown> {
-  const properties: Record<string, unknown> = {};
+  const properties: Record<string, Record<string, never>> = {};
   for (const k of previewTemplateKeys(r.preview ?? { target: "", summary: "", fields: [] })) {
     properties[k] = {};
   }
