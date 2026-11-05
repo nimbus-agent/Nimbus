@@ -75,4 +75,4 @@ bec23fb33d83e2478adbd8874242fd49bd83fbf0:packages/gateway/src/security-invariant
 # Phase 9.7 B0b (2026-11-05): a before-state test fixture named its reply marker `SECRET_MARK`
 # ("BEFORE-REPLY-MARKER-7f3a", a plain test string, never a credential); renamed REPLY_MARK in HEAD,
 # but the branch commit that introduced it keeps the old name, which trips `generic-api-key`.
-199f189b177dc5103e783dfdb5161052cd8f1a93:packages/gateway/src/engine/before-state.test.ts:generic-api-key:35
+199f189b177dc5103e783dfdb5161052cd8f1a93:packages/gateway/src/engine/before-state.test.ts:generic-api-key:36
