@@ -462,10 +462,24 @@ describe("the B1 before-readers (plan R3)", () => {
     ).toThrow();
     expect(() => sel(mcp({ blockChildren: {} }))).toThrow();
     expect(() => sel(mcp({ page: { properties: { Name: "x" } } }))).toThrow();
-    // A part without plain_text contributes nothing; an empty title is still a title.
+    // A part without plain_text contributes nothing.
     expect(sel(mcp(notionPage([{ text: {} }, { plain_text: "A" }])))).toEqual([
       { label: "Title", value: "A" },
     ]);
+  });
+
+  test("Notion: an empty joined title throws, so the prompt reads unavailable (failed)", async () => {
+    const sel = realRow("notion_comment_create").before?.select;
+    if (sel === undefined) throw new Error("no reader");
+    for (const parts of [[], [{ plain_text: "" }], [{ text: {} }]]) {
+      expect(() => sel(mcp(notionPage(parts))), JSON.stringify(parts)).toThrow();
+    }
+    const { out } = await runReal(
+      "notion_comment_create",
+      { pageId: "1a2b", text: "x" },
+      mcp(notionPage([{ plain_text: "" }])),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
   });
 
   test("a Jira reply with a 1 MB description yields only the three fields", async () => {

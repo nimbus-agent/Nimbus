@@ -32,7 +32,10 @@ function notionPageTitle(j: unknown): string {
     const parts: unknown =
       prop !== undefined && Object.hasOwn(prop, "title") ? prop["title"] : undefined;
     if (!Array.isArray(parts)) break;
-    return parts.map((p: unknown) => stringAt(p, ["plain_text"]) ?? "").join("");
+    const title = parts.map((p: unknown) => stringAt(p, ["plain_text"]) ?? "").join("");
+    // An empty title names nothing: the prompt reads `unavailable (failed)`, not `Title: ""`.
+    if (title !== "") return title;
+    break;
   }
   throw new Error("before reply: no Notion page title");
 }
