@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createBeforeStateRunner } from "../../engine/before-state.ts";
 import { serviceOf } from "../../engine/service-of.ts";
 import type { PlannedAction } from "../../engine/types.ts";
+import { isReadOnlyToolId } from "../../share/read-tool-registry.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
   beforeReaderArgsProblem,
@@ -10,6 +11,8 @@ import {
   beforeReaderSelectionProblems,
   pickBeforeReaderArgs,
 } from "./before-reader.ts";
+import { BEFORE_EXCERPT_MAX_CHARS, codePointLength } from "./before-select.ts";
+import { DRIVE_FOLDER_MIME, selectDriveParentFolder } from "./files.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { buildConnectorWritePreviewFrom, renderConnectorWritePreviewLines } from "./preview.ts";
 import { linearAssigneeProvenNull, selectJiraTransition } from "./tickets.ts";
@@ -165,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the twenty-one (seven B1 comments, nine B2 issue writes, five B3 page writes), and every reader passes", () => {
+  test("the rows with readers are exactly the twenty-two (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -174,6 +177,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "confluence_comment_add",
         "confluence_page_append",
         "confluence_page_update",
+        "gdrive_file_create",
         "github_issue_assignees_add",
         "github_issue_comment_create",
         "github_issue_labels_add",
@@ -194,7 +198,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "notion_page_update",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(21);
+    expect(withReader).toHaveLength(22);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -1148,5 +1152,175 @@ describe("linearAssigneeProvenNull (the Linear guard's allows, OR-B2-3)", () => 
       ["undefined", undefined],
     ];
     for (const [name, reply] of cases) expect(linearAssigneeProvenNull(reply), name).toBe(false);
+  });
+});
+
+// ---- B4a: the Drive folder reader (plan R3, Review Focus 3) -----------------------------------
+
+const DRIVE_FOLDER = {
+  id: "F1",
+  name: "Team notes",
+  mimeType: DRIVE_FOLDER_MIME,
+  trashed: false,
+  shared: false,
+  owners: [{ displayName: "Alice", emailAddress: "alice@example.com" }],
+  description: "DESCRIPTION-MUST-NOT-SHOW",
+};
+const MY_DRIVE = {
+  id: "0AAroot",
+  name: "My Drive",
+  mimeType: DRIVE_FOLDER_MIME,
+  shared: false,
+  owners: [{ emailAddress: "me@example.com" }],
+};
+const driveInput = (parentId?: unknown): Record<string, unknown> =>
+  parentId === undefined
+    ? { name: "notes.md", content: "# Notes" }
+    : { name: "notes.md", content: "# Notes", parentId };
+
+describe("the B4a Drive folder reader (plan R3)", () => {
+  const select = (reply: unknown) => selectDriveParentFolder(reply);
+  const field = (fields: readonly { label: string; value: string }[], label: string) =>
+    fields.find((f) => f.label === label)?.value;
+
+  test("its read tool is gdrive_file_metadata, a read (the metadata verb), never a write", () => {
+    expect(realRow("gdrive_file_create").before?.tool).toBe("gdrive_file_metadata");
+    expect(realRow("gdrive_file_create").before?.argKeys).toEqual(["parentId"]);
+    expect(isReadOnlyToolId("gdrive_file_metadata")).toBe(true);
+    expect(beforeReaderProblems(realRow("gdrive_file_create"))).toEqual([]);
+  });
+
+  test("parentId unset: the read is { fileId: root } and the before names My Drive", async () => {
+    const { out, seen } = await runReal("gdrive_file_create", driveInput(), mcp(MY_DRIVE));
+    expect(seen).toEqual([
+      {
+        type: "google_drive.before.read",
+        payload: { mcpToolId: "google_drive_gdrive_file_metadata", input: { fileId: "root" } },
+      },
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Folder", value: "My Drive" },
+        { label: "Folder type", value: "folder" },
+        { label: "Shared", value: "no" },
+        { label: "Owner", value: "me@example.com" },
+      ],
+    });
+  });
+
+  test("parentId F1: the read is { fileId: F1 }; no In trash line when trashed is false", async () => {
+    const { out, seen } = await runReal("gdrive_file_create", driveInput("F1"), mcp(DRIVE_FOLDER));
+    expect(seen.map((a) => a.payload?.["input"])).toEqual([{ fileId: "F1" }]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Folder", value: "Team notes" },
+        { label: "Folder type", value: "folder" },
+        { label: "Shared", value: "no" },
+        { label: "Owner", value: "alice@example.com" },
+      ],
+    });
+    expect(JSON.stringify(out)).not.toContain("MUST-NOT-SHOW");
+  });
+
+  test("a parentId that is not a non-empty string reads nothing: unavailable (failed), never My Drive", async () => {
+    for (const bad of [42, null, "", true, { id: "F1" }, ["F1"]]) {
+      const { out, seen } = await runReal("gdrive_file_create", driveInput(bad), mcp(MY_DRIVE));
+      expect(seen, JSON.stringify(bad)).toEqual([]);
+      expect(out, JSON.stringify(bad)).toEqual({ status: "unavailable", reason: "failed" });
+    }
+  });
+
+  test("a file, not a folder: Folder type says Drive will refuse the create", () => {
+    expect(
+      field(select(mcp({ ...DRIVE_FOLDER, mimeType: "application/pdf" })), "Folder type"),
+    ).toBe("not a folder (application/pdf): Drive will refuse the create");
+    expect(field(select(mcp({ name: "x" })), "Folder type")).toBe(
+      "not a folder (unknown type): Drive will refuse the create",
+    );
+  });
+
+  test("shared: true is the warning line; anything else is no", () => {
+    expect(field(select(mcp({ ...DRIVE_FOLDER, shared: true })), "Shared")).toBe(
+      "yes: the new file is visible to everyone this folder is shared with",
+    );
+    for (const shared of [false, "true", 1, null, undefined]) {
+      expect(field(select(mcp({ ...DRIVE_FOLDER, shared })), "Shared")).toBe("no");
+    }
+  });
+
+  test("owners: the first address (or name), the rest counted; none readable is omitted", () => {
+    const three = [
+      { emailAddress: "a@x" },
+      { emailAddress: "b@x" },
+      { displayName: "C", emailAddress: "c@x" },
+    ];
+    expect(field(select(mcp({ ...DRIVE_FOLDER, owners: three })), "Owner")).toBe("a@x and 2 more");
+    expect(field(select(mcp({ ...DRIVE_FOLDER, owners: [{ displayName: "Bob" }] })), "Owner")).toBe(
+      "Bob",
+    );
+    for (const owners of [[], [{}], "a@x", undefined]) {
+      expect(field(select(mcp({ ...DRIVE_FOLDER, owners })), "Owner")).toBeUndefined();
+    }
+  });
+
+  test("a trashed folder gets In trash: yes; only trashed === true does", () => {
+    expect(field(select(mcp({ ...DRIVE_FOLDER, trashed: true })), "In trash")).toBe("yes");
+    for (const trashed of [false, "true", undefined]) {
+      expect(field(select(mcp({ ...DRIVE_FOLDER, trashed })), "In trash")).toBeUndefined();
+    }
+  });
+
+  test("a reply without name, an isError reply or a 5 MB reply: unavailable (failed)", async () => {
+    const noName: Record<string, unknown> = { ...DRIVE_FOLDER };
+    delete noName["name"];
+    const huge = mcp({ ...DRIVE_FOLDER, description: "a".repeat(5 * 1024 * 1024) });
+    for (const reply of [mcp(noName), { ...mcp(DRIVE_FOLDER), isError: true }, huge]) {
+      const { out } = await runReal("gdrive_file_create", driveInput("F1"), reply);
+      expect(out).toEqual({ status: "unavailable", reason: "failed" });
+    }
+  });
+
+  test("a folder name with ESC, RLO and LF is sanitised", async () => {
+    const { out } = await runReal(
+      "gdrive_file_create",
+      driveInput("F1"),
+      mcp({ ...DRIVE_FOLDER, name: HOSTILE }),
+    );
+    if (out?.status !== "ok") throw new Error("expected ok");
+    const json = JSON.stringify(out);
+    expect(json).not.toContain(RLO);
+    expect(json).not.toContain(ESC);
+    const lines = renderConnectorWritePreviewLines({
+      ...previewFor("gdrive_file_create", driveInput("F1")),
+      before: out,
+    });
+    expect(lines.some((l) => l.startsWith("Approved"))).toBe(false);
+    for (const l of lines) expect(l.includes("\n"), l).toBe(false);
+  });
+
+  test("every value is at most 1,000 code points plus the marker, over every case", () => {
+    const long = "n".repeat(5000);
+    const cases = [
+      DRIVE_FOLDER,
+      MY_DRIVE,
+      { ...DRIVE_FOLDER, name: long },
+      { ...DRIVE_FOLDER, mimeType: long },
+      { ...DRIVE_FOLDER, owners: [{ emailAddress: long }, { emailAddress: "b" }] },
+      { ...DRIVE_FOLDER, shared: true, trashed: true },
+    ];
+    const markerMax = codePointLength(" (99999 more characters not shown)");
+    for (const c of cases) {
+      for (const f of select(mcp(c))) {
+        expect(codePointLength(f.value), f.label).toBeLessThanOrEqual(
+          BEFORE_EXCERPT_MAX_CHARS + markerMax,
+        );
+      }
+    }
+  });
+
+  test("a plain-object reply works too (no MCP envelope)", () => {
+    expect(field(select(DRIVE_FOLDER), "Folder")).toBe("Team notes");
   });
 });

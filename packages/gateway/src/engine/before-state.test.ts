@@ -1416,6 +1416,76 @@ describe("the real confluence_page_append reader (B3)", () => {
   });
 });
 
+// ---- B4a: the real gdrive_file_create reader (plan R3, Task A2) ---------------------------------
+
+function driveCreate(input: Record<string, unknown>): PlannedAction {
+  return {
+    type: "google_drive.file.create",
+    origin: "model",
+    payload: { mcpToolId: "google_drive_gdrive_file_create", input },
+  };
+}
+
+const DRIVE_PARENT = {
+  name: "Team notes",
+  mimeType: "application/vnd.google-apps.folder",
+  shared: true,
+  owners: [{ emailAddress: "alice@example.com" }],
+};
+
+describe("the real gdrive_file_create reader (B4a)", () => {
+  const runner = () => createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS });
+
+  test("parentId unset: one google_drive.before.read gated, keyed google_drive_gdrive_file_metadata, { fileId: root }", async () => {
+    const gated: PlannedAction[] = [];
+    const out = await runner().read(
+      driveCreate({ name: "n.txt", content: "x" }),
+      opsByTool({ google_drive_gdrive_file_metadata: mcpReply(DRIVE_PARENT) }, gated),
+    );
+    expect(gated).toEqual([
+      {
+        type: "google_drive.before.read",
+        payload: { mcpToolId: "google_drive_gdrive_file_metadata", input: { fileId: "root" } },
+      },
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Folder", value: "Team notes" },
+        { label: "Folder type", value: "folder" },
+        {
+          label: "Shared",
+          value: "yes: the new file is visible to everyone this folder is shared with",
+        },
+        { label: "Owner", value: "alice@example.com" },
+      ],
+    });
+  });
+
+  test("parentId F1: the read names F1 only", async () => {
+    const gated: PlannedAction[] = [];
+    await runner().read(
+      driveCreate({ name: "n.txt", parentId: "F1", content: "CONTENT-NOT-READ" }),
+      opsByTool({ google_drive_gdrive_file_metadata: mcpReply(DRIVE_PARENT) }, gated),
+    );
+    expect(gated.map((a) => a.payload?.["input"])).toEqual([{ fileId: "F1" }]);
+  });
+
+  test("a read slower than the budget is unavailable (timeout)", async () => {
+    const clock = fakeClock();
+    const slow = deferred<unknown>();
+    const timed = createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS, timers: clock.timers });
+    const pending = timed.read(driveCreate({ name: "n.txt", parentId: "F1" }), {
+      gate: async () => "proceed",
+      dispatch: () => slow.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(6000);
+    expect(await pending).toEqual({ status: "unavailable", reason: "timeout" });
+    slow.resolve(mcpReply(DRIVE_PARENT));
+  });
+});
+
 // ---- B3: the guard context (R11) ---------------------------------------------------------------
 
 const KB_CTX = {
