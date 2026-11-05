@@ -40,6 +40,17 @@ describe("isReadOnlyToolId — positive read-only allowlist", () => {
     expect(isReadOnlyToolId("gdrive_file_metadata")).toBe(true);
   });
 
+  // connectors 0.5.0 added `obsidian_daily_note_get` as a READ (registered with `reg`, no HITL);
+  // the append it reads for stays a write row.
+  test("connectors 0.5.0: the Obsidian daily-note read is read-only and not a write row", () => {
+    expect(isReadOnlyToolId("obsidian_daily_note_get")).toBe(true);
+    expect(isReadOnlyToolId("obsidian__obsidian_daily_note_get")).toBe(true);
+    const ids = CONNECTOR_WRITE_ROWS.map((r) => r.toolId);
+    expect(ids).not.toContain("obsidian_daily_note_get");
+    expect(ids).toContain("obsidian_append_to_daily_note");
+    expect(isReadOnlyToolId("obsidian_append_to_daily_note")).toBe(false);
+  });
+
   // SECURITY-LOAD-BEARING: `preview` reads as a read verb and is not one. `iac_pulumi_preview`
   // runs `pulumi preview --cwd <caller-supplied directory>`, and `pulumi preview` EVALUATES the
   // stack program in that directory — so admitting the verb let an untrusted share file reach
