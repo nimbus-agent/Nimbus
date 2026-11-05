@@ -166,7 +166,7 @@ connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — t
 while the I22 policy filter keeps using `serviceIdForToolKey`, so obsidian stays outside the org
 connector allowlist. The act door's configured-ness comes from
 `packages/gateway/src/connectors/proposable-service-configured.ts` (obsidian = boot-time
-`[[filesystem.roots]]` non-empty; it has no Vault keys, so the manifest check would say yes vacuously).
+`[[filesystem.roots]]` non-empty; it has no Vault keys, so the manifest check would say yes vacuously). An accepted `obsidian.note.append` still writes only while the owner's `connector writes enable obsidian` approval includes the append, because that approval is the Obsidian sandbox's write grant (I15, Phase 9.7 B4b); without it the sandbox refuses the write.
 
 ## Surfaces
 

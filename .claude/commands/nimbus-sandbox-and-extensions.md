@@ -65,6 +65,8 @@ Full rationale: `docs/SECURITY-INVARIANTS.md` (I1, I15, I16, I42, I43, I44). Ope
 
 **Working directory.** Every spawn runs in `<sandboxDir>/<leaf>` (`platform/sandbox/sandbox-cwd.ts`'s `sandboxCwdFor`), never `dataDir`/`configDir`. The filesystem MCP's explicit `dataDir` grant is the one stated exception (a grant, not its cwd). `PlatformPaths.sandboxDir` defaults outside data and config, but an override can nest them and nothing refuses that.
 
+**First-party write grants.** Every `FIRST_PARTY_MANIFESTS` entry is `write: []`; the only spawn-time write additions under `connectors/lazy-mesh/` are the filesystem MCP's `dataDir` and the Obsidian vaults (Phase 9.7 B4b, I15): `obsidian-write-grant.ts` `obsidianWriteGrantPaths` over `obsidian-discovery.ts` `discoverVaultsForWriteGrant`, only while `isObsidianWriteGrantApproved(db)`; `restartObsidian` detaches the slot at once on enable/disable; the manifest's `canonicalWritePaths` make `sandbox-wrapper.ts` refuse a vault swapped for a link. A pin test lists the write additions exactly.
+
 **Windows host state.** Distinct SIDs each leave an ACE that outlives the profile. Bounded by release-on-exit (`platform/sandbox/win32-release.ts`) and the boot reap + `--sweep-orphaned-aces` (`platform/sandbox/win32-reap.ts`'s `reapAppContainersAtBoot`); the one-time legacy data-dir revoke writes `SANDBOX_CWD_MIGRATION_MARKER`.
 
 **I1 — child env.** Every `env:` under `connectors/lazy-mesh/` must resolve to `extensionProcessEnv(...)` (`extensions/spawn-env.ts`), directly or via a local bound to it. The regression form is `{ ...process.env, EXTRA }` — never spread `process.env` into a child env.
@@ -163,6 +165,7 @@ Flow: `nimbus scaffold extension <name> [--publisher <id>]` (a publishable templ
 ## 4. Platform Traps (learned the hard way)
 
 - **Windows: Bun's module loader opens every module file asking for `FILE_WRITE_ATTRIBUTES`.** A read-only AppContainer grant gives `EPERM reading "<file>"` on `import()` while `readFileSync` of the same file works; a file entry point fails as `CouldntReadCurrentDirectory`. Code a confined Bun child must load has to live in a dir it holds read-write — never "fix" it by granting an install tree write.
+- **Windows: an ACE outlives its child and `GRANT_ACCESS` MERGES rights.** A spawn that should hold less than an earlier one of the same profile (a write grant withdrawn) keeps the earlier write unless it is revoked first. Revoke before granting, fail closed (`platform/sandbox/win32-grant-revoke.ts` `revokeAppContainerGrants`, never the best-effort `releaseGrantsFor`), from a persisted ledger (`obsidian-grant-ledger.ts`, under `configDir`: `dataDir` is writable by the filesystem MCP), so a restart cannot forget a grant. Measured by `test/integration/platform/sandbox/obsidian-write-grant.integration.test.ts` (the Windows-only "WITHOUT the revoke" case). The helper serialises DACL rewrites behind `Local\nimbus-sandbox-helper-dacl` (`win32-dacl-lock.test.ts`).
 - **Windows: two sandbox-spawning processes at once collide** (helper exit `65`, `hr=0x800703fa`, a profile deleted under another). Never run sandbox tests beside a background `bun run preflight`.
 - **Windows: a stray `nimbus-sandbox-helper.exe` next to `process.execPath` changes test outcomes.** `bun run <script>` repoints `execPath` at a Bun shim temp dir; a helper there flips `degradedReason()` tests. When a failure tracks the COMMAND (`bun test` vs `bun run test:coverage:sandbox` over the same files), check `dirname(process.execPath)` before blaming mocks or order.
 - **Windows: a huge ACE count on a granted dir makes every confined spawn fail** (`SetEntriesInAclW` error `87`). Check the DACL size of the runtime bin dir; the boot sweep and release-on-exit now bound it. `test/integration/platform/sandbox/win32-ace-release.test.ts` must wait for the profile delete too.
@@ -183,6 +186,9 @@ Flow: `nimbus scaffold extension <name> [--publisher <id>]` (a publishable templ
 | `packages/gateway/src/platform/sandbox/sandbox-policy.ts` | `SandboxPolicy`, `policyFromManifest`, env names |
 | `packages/gateway/src/platform/sandbox/sandbox-cwd.ts` | per-policy leaf + `ext-stage` root |
 | `packages/gateway/src/platform/sandbox/{win32-reap,win32-release,orphan-reap}.ts` | Windows profile/ACE lifecycle |
+| `packages/gateway/src/platform/sandbox/win32-grant-revoke.ts` | fail-closed pre-spawn revoke (Obsidian) |
+| `packages/gateway/src/connectors/lazy-mesh/{obsidian-write-grant,obsidian-grant-ledger}.ts` · `connectors/obsidian-discovery.ts` | the Obsidian write grant, its Windows ledger, the vault walk |
+| `packages/gateway/test/integration/platform/sandbox/{obsidian-write-grant.integration,win32-dacl-lock}.test.ts` | the Obsidian grant under each OS's real sandbox; the helper's DACL lock |
 | `packages/gateway/src-native/sandbox-helper/` · `packages/gateway/src-native/sandbox-helper-win32/README.md` | native helpers (Linux C, Windows contract + exit codes `65`–`68`) |
 | `packages/gateway/src/connectors/lazy-mesh/wrap-server-spec.ts` | `wrapServerSpec`, `wrapServerSpecInCwd` |
 | `packages/gateway/src/connectors/lazy-mesh/{mesh,user-mcp,extension-slot,extension-slot-source}.ts` | mesh, user-MCP spawn, `mesh:ext:` slot |
