@@ -32,6 +32,7 @@ import {
   CALENDAR_TEXT_REFUSAL,
   CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
+  DRIVE_PARENT_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
   KNOWLEDGE_BASE_CHILD_REFUSAL,
@@ -633,6 +634,18 @@ describe("B4a: the calendar refusals on the real rows through the real door (pla
       "outlook.calendar.create",
       "apple.calendar.event.create",
     ]);
+  });
+
+  test("a Drive create with parentId null is refused, nothing executed; omitted is executed once", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("google_drive__gdrive_file_create", { name: "n.txt", parentId: null }),
+    ).toEqual({ refused: DRIVE_PARENT_REFUSAL });
+    expect(door.executed).toEqual([]);
+    expect(await door.call("google_drive__gdrive_file_create", { name: "n.txt" })).toEqual({
+      sent: true,
+    });
+    expect(door.executed.map((a) => a.type)).toEqual(["google_drive.file.create"]);
   });
 });
 

@@ -780,6 +780,17 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     }
   });
 
+  test("B4a: a Drive proposal with parentId null is refused at submit; nothing queued", async () => {
+    policy = boundPolicy([]);
+    const c = actCtx([]);
+    expect(
+      await refusedCode(
+        submit(c, "google_drive.file.create", { name: "n.txt", parentId: null, content: "x" }),
+      ),
+    ).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+  });
+
   test("B4a: a calendar proposal queued before the refusal existed is refused at accept; nothing dispatched", async () => {
     policy = boundPolicy([]);
     const d: PlannedAction[] = [];

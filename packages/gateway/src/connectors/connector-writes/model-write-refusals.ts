@@ -743,6 +743,25 @@ function calendarRefusal(
   return undefined;
 }
 
+// Drive file create (B4a, coordinator ruling 2026-11-05): a `parentId` that is present but `null`
+// is refused on both doors. The preview shows `null` as unset (`(not set: the root of My Drive)`)
+// while the connector's schema rejects it, and a preview must never claim what will not happen.
+// Any other value is shown as given (a non-string is shown as JSON and fails upstream).
+export const DRIVE_PARENT_REFUSAL = "a Drive file's parent folder must be a folder id or omitted";
+
+const DRIVE_FILE_CREATE_ROW = "gdrive_file_create";
+
+/** The Drive parent check (`undefined` for every other row, or when allowed). */
+function driveParentRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (toolId !== DRIVE_FILE_CREATE_ROW) return undefined;
+  return Object.hasOwn(input, "parentId") && input["parentId"] === null
+    ? DRIVE_PARENT_REFUSAL
+    : undefined;
+}
+
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
 function chatopsRefusal(
   toolId: string,
@@ -765,7 +784,7 @@ function chatopsRefusal(
  * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
  * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
  * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label,
- * then (B4a) the calendar checks (time before text). It covers message and comment text, (B2)
+ * then (B4a) the calendar checks (time before text) and the Drive null-parent check. It covers message and comment text, (B2)
  * issue titles, bodies and descriptions, and (B4a) calendar event times, iCloud event text and
  * attendees. A fixed text that echoes nothing of the input, or `undefined`.
  */
@@ -779,7 +798,7 @@ export function messagingDestinationRefusal(
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
   if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
   if (refusesGitlabScopedLabel(toolId, input)) return GITLAB_SCOPED_LABEL_REFUSAL;
-  return calendarRefusal(toolId, input);
+  return calendarRefusal(toolId, input) ?? driveParentRefusal(toolId, input);
 }
 
 /**

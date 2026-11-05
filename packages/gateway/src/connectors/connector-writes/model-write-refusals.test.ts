@@ -12,6 +12,7 @@ import {
   CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   calendarTimeIsExplicit,
+  DRIVE_PARENT_REFUSAL,
   isChatopsDestinationRow,
   isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
@@ -937,5 +938,49 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
     expect(calendarTimeIsExplicit(APPLE, "endDateTime", "20261105T100000Z")).toBe(false);
     expect(calendarTimeIsExplicit("slack_message_post", "start", "20261105T100000Z")).toBe(false);
     expect(calendarTimeIsExplicit("toString", "start", "20261105T100000Z")).toBe(false);
+  });
+});
+
+describe("B4a: a Drive create with a null parentId (coordinator ruling, both doors)", () => {
+  const DRIVE = "gdrive_file_create";
+  const ACT_CTX = { chatops: NONE, kb: undefined, kbUnreadable: false };
+  const all = (input: Record<string, unknown>): Array<string | undefined> => [
+    messagingDestinationRefusal(DRIVE, input, { chatops: NONE }),
+    modelWriteRefusal(DRIVE, input, { chatops: NONE, kb: undefined }),
+    actDoorRefusal(DRIVE, input, ACT_CTX),
+  ];
+
+  test("the text is fixed", () => {
+    expect(DRIVE_PARENT_REFUSAL).toBe(
+      "a Drive file's parent folder must be a folder id or omitted",
+    );
+  });
+
+  test("parentId: null is refused on every entry point", () => {
+    expect(all({ name: "n.txt", parentId: null })).toEqual([
+      DRIVE_PARENT_REFUSAL,
+      DRIVE_PARENT_REFUSAL,
+      DRIVE_PARENT_REFUSAL,
+    ]);
+  });
+
+  test("omitted, undefined or a folder id is allowed", () => {
+    for (const input of [
+      { name: "n" },
+      { name: "n", parentId: undefined },
+      { name: "n", parentId: "F1" },
+    ]) {
+      expect(all(input), JSON.stringify(input)).toEqual([undefined, undefined, undefined]);
+    }
+  });
+
+  test("row-scoped: another row with parentId: null is not refused by it", () => {
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      if (r.toolId === DRIVE) continue;
+      expect(
+        messagingDestinationRefusal(r.toolId, { parentId: null }, { chatops: NONE }),
+        r.toolId,
+      ).not.toBe(DRIVE_PARENT_REFUSAL);
+    }
   });
 });
