@@ -16,6 +16,7 @@ import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
+  BeforeStateRefusedError,
   type BeforeStateRunner,
   isBeforeReadActionType,
 } from "./before-state.ts";
@@ -672,8 +673,10 @@ export class ToolExecutor {
   /**
    * The typed preview for the owner's prompt. Without a before-state runner it is exactly the
    * builder's. With one (the door executor), it is built over the runner's rows (production: the
-   * same table) and, when the row has a `before` reader, carries the read's outcome; the read goes
-   * through THIS executor's gate and dispatcher, so it is audited and ledgered (I29).
+   * same table) and, when the row has a `before` reader, carries the reads' outcome; each read goes
+   * through THIS executor's gate and dispatcher, so it is audited and ledgered (I29). A reader's
+   * guard that refused (B2a) throws {@link BeforeStateRefusedError}, which `gate()` turns into a
+   * rejection before any prompt.
    */
   private async previewFor(
     action: PlannedAction,
@@ -688,7 +691,9 @@ export class ToolExecutor {
       { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
       opts?.beforeReaderUnlisted === true ? { readerUnlisted: true } : {},
     );
-    return before === undefined ? preview : { ...preview, before };
+    if (before === undefined) return preview;
+    if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);
+    return { ...preview, before };
   }
 
   async gate(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult | "proceed"> {
@@ -704,9 +709,9 @@ export class ToolExecutor {
       this.requiredByPolicy(action.type);
 
     let hitlStatus: "approved" | "rejected" | "not_required";
-    // Reason for the rejected path. Defaults to the user-declined message (the only other
-    // rejection source — a consent disconnect — overwrites it below), so it is always a defined
-    // string by the time the rejected branch returns it (no nullish fallback needed).
+    // Reason for the rejected path. Defaults to the user-declined message (the other rejection
+    // sources — a consent disconnect, a before-state guard — overwrite it below), so it is always a
+    // defined string by the time the rejected branch returns it (no nullish fallback needed).
     let rejectReason = "User declined consent gate.";
     let auditExtras: { hitlRejectReason?: string } | undefined;
 
@@ -729,6 +734,12 @@ export class ToolExecutor {
         hitlStatus = "rejected";
         rejectReason = e.message;
         auditExtras = { hitlRejectReason: e.hitlAuditReason };
+      } else if (e instanceof BeforeStateRefusedError) {
+        // B2a: a before-state guard refused the write while its prompt was being built. No prompt
+        // was shown; the write is audited rejected and ledgered blocked below, never dispatched.
+        hitlStatus = "rejected";
+        rejectReason = e.reason;
+        auditExtras = { hitlRejectReason: e.reason };
       } else {
         throw e;
       }

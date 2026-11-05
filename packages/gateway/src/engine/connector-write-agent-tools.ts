@@ -23,9 +23,14 @@
  * `connectors/connector-write-dispatch.ts`); and every input key the typed preview names is a
  * top-level property of the listed schema (drift: otherwise not offered, one warning per
  * `<generation>:<service>`). A service whose generation is negative (no known slot) offers nothing.
- * A row with a `before` reader (spec § 5.4) whose read tool the listing does not carry is not
- * offered at wave 4 (the current state is mandatory there); below wave 4 it is offered and the
- * executor is told, so the prompt shows `before: unavailable (failed)` without running a read.
+ * A row with a `before` reader (spec § 5.4) whose read tool (the first or its `also`) the listing
+ * does not carry is not offered at wave 4 (the current state is mandatory there); below wave 4 it
+ * is offered and the executor is told, so the prompt shows `before: unavailable (failed)` without
+ * running a read (or, when the reader's guard applies, the write is refused before the prompt).
+ *
+ * Results: an `ok` result is the write's reply; a rejection whose reason is THIS row's before-state
+ * guard reason (B2a, a fixed text) is `{ refused: <that reason> }`; every other rejection is
+ * `{ declined: DECLINED_RESULT_TEXT }`, never the reason or the payload.
  *
  * Drift is checked against the LISTED schema, while the model is shown (and validated against) the
  * SANITISED one (`offeredInputSchema` → `sanitiseUserMcpInputSchema`), which may drop a property
@@ -210,6 +215,8 @@ function buildDoorTool(
     ? { beforeReaderUnlisted: true }
     : undefined;
   const listedDescription = typeof entry["description"] === "string" ? entry["description"] : "";
+  // The only rejection reason passed back verbatim: this row's guard's fixed text, if it has one.
+  const guardReason = row.before?.guard?.reason;
   return createTool({
     id: name,
     description: describeFor(row, service, listedDescription),
@@ -243,8 +250,12 @@ function buildDoorTool(
         // `wrapToolForLlm` logs and RE-THROWS, which would abort the model's step.
         return errorResult(err);
       }
-      // A denial never carries the reason or the payload back to the model.
-      return result.status === "ok" ? result.result : { declined: DECLINED_RESULT_TEXT };
+      if (result.status === "ok") return result.result;
+      // A guard refusal (B2a) is the row's own fixed reason; any other denial never carries the
+      // reason or the payload back to the model.
+      return result.reason === guardReason
+        ? { refused: guardReason }
+        : { declined: DECLINED_RESULT_TEXT };
     },
   });
 }
@@ -276,15 +287,19 @@ function warnDriftOnce(
   );
 }
 
-/** Whether `row` has a `before` reader whose tool its server's listing does not carry. */
+/** Whether `row` has a `before` reader one of whose tools (the first, `also`) its listing lacks. */
 function beforeReaderMissing(
   row: ConnectorWriteRow,
   service: string,
   listing: Readonly<Record<string, unknown>>,
 ): boolean {
-  if (row.before === undefined) return false;
-  const key = mcpClientToolKey(service, row.before.tool);
-  return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
+  const reader = row.before;
+  if (reader === undefined) return false;
+  const tools = reader.also === undefined ? [reader.tool] : [reader.tool, reader.also.tool];
+  return tools.some((tool) => {
+    const key = mcpClientToolKey(service, tool);
+    return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
+  });
 }
 
 /** The offered tools for ONE service's rows, given its listing. */

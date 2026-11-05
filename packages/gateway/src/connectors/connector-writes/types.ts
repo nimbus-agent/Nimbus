@@ -24,7 +24,8 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since B1 the seven comment rows have one.
+   * values on the model door's prompt only. Set with {@link withBefore}. Since B1 the seven comment rows have one
+   * (each one read, no guard).
    */
   readonly before?: BeforeStateReader;
 }
@@ -58,21 +59,60 @@ export type ConnectorWriteBeforeState =
   | { readonly status: "unavailable"; readonly reason: BeforeStateUnavailableReason };
 
 /**
- * How a write row reads its target's current state: one READ tool of the row's own connector
- * (never a write id; `connectors/connector-writes/before-reader.ts` validates it), called with
- * `args` built from the write input's `argKeys` only (the runner hands `args` nothing else), and a
- * `select` that turns the reply into labelled values. The reply never reaches the model or the
- * write's audit row; only the selected, sanitised values reach the owner's prompt.
+ * One READ of a before-state reader: a READ tool of the row's own connector (never a write id;
+ * `connectors/connector-writes/before-reader.ts` validates it), called with `args` built from the
+ * write input's `argKeys` only (the runner hands `args` nothing else).
  */
-export interface BeforeStateReader {
+export interface BeforeStateRead {
   /** The bare MCP tool id of a read on the same connector, e.g. `jira_issue_get`. */
   readonly tool: string;
-  /** The write-input keys the read depends on; each must be a key the preview template names. */
+  /**
+   * The write-input keys the read or the selection depends on; each must be a key the preview
+   * template names.
+   */
   readonly argKeys: readonly string[];
   /** The read's input from those keys, or `undefined` when they cannot name a target. */
   args(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
-  /** The labelled current values from the read's reply. */
-  select(reply: unknown): readonly BeforeStateField[];
+}
+
+/**
+ * A before-state guard (B2a): when `appliesTo` holds for the write's input, the runner REFUSES the
+ * write before the owner's prompt unless every read succeeded and `allows` returns exactly `true`.
+ * Fail closed: a throw, a failed, slow, unlisted or policy-refused read, or anything but `true`
+ * refuses. `reason` is a fixed, non-empty text with no `{placeholder}`; it is what the model and
+ * the write's audit row get.
+ */
+export interface BeforeStateGuard {
+  readonly reason: string;
+  /** Reads the union pick of the write's input only (never a reply); anything but `false` applies. */
+  appliesTo(picked: Readonly<Record<string, unknown>>): boolean;
+  allows(reply: unknown, picked: Readonly<Record<string, unknown>>, alsoReply: unknown): boolean;
+}
+
+/**
+ * How a write row reads its target's current state: one READ (the fields of
+ * {@link BeforeStateRead}), optionally a second one (`also`, run after the first, under the same
+ * budget), and a `select` that turns the replies into labelled values. `picked` is the frozen,
+ * null-prototype pick of the write input over the union of both reads' `argKeys`; `alsoReply` is
+ * `undefined` exactly when `also` is absent. The replies never reach the model or the write's
+ * audit row; only the selected, sanitised values reach the owner's prompt.
+ */
+export interface BeforeStateReader extends BeforeStateRead {
+  /** A second read of the same connector; at most two reads, by type. */
+  readonly also?: BeforeStateRead;
+  /** Refuses the write before the prompt unless the reads prove it allowed (B2a). */
+  readonly guard?: BeforeStateGuard;
+  /** The labelled current values from the replies. */
+  select(
+    reply: unknown,
+    picked: Readonly<Record<string, unknown>>,
+    alsoReply: unknown,
+  ): readonly BeforeStateField[];
+}
+
+/** The union of a reader's reads' `argKeys`, first read first, without repeats. */
+export function beforeReaderArgKeys(reader: BeforeStateReader): readonly string[] {
+  return [...new Set([...reader.argKeys, ...(reader.also?.argKeys ?? [])])];
 }
 
 /**
@@ -110,28 +150,60 @@ export function previewTemplateKeys(t: ConnectorWritePreviewTemplate): Set<strin
 }
 
 /**
+ * The structural problems with one read's `argKeys` (empty when none): at least one, no duplicate,
+ * each a key the template names. `withBefore` throws on the first; `beforeReaderProblems` lists all.
+ */
+export function beforeReadArgKeyProblems(
+  read: BeforeStateRead,
+  named: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  if (read.argKeys.length === 0) out.push("needs at least one argKey");
+  if (new Set(read.argKeys).size !== read.argKeys.length) out.push("has a duplicate argKey");
+  for (const k of read.argKeys) {
+    if (!named.has(k)) out.push(`argKey ${k} is not a key the preview names`);
+  }
+  return out;
+}
+
+/** The problem with a guard's fixed reason, if any: empty, or carrying a `{placeholder}`. */
+export function beforeGuardReasonProblem(guard: BeforeStateGuard): string | undefined {
+  if (typeof guard.reason !== "string" || guard.reason.trim() === "") {
+    return "guard reason must be a non-empty fixed text";
+  }
+  if (/\{\w+\}/.test(guard.reason)) return "guard reason must not carry a {placeholder}";
+  return undefined;
+}
+
+/**
  * A frozen copy of `r` carrying `before`. Structural checks only (no import of the read/write
- * classifiers, which import this table): the row has a typed preview, at least one argKey, no
- * duplicate, and every argKey is a key the template names. The read-tool checks are
- * `beforeReaderProblems`, run over every row by its test.
+ * classifiers, which import this table): the row has a typed preview, and each read (the first and
+ * `also`) has at least one argKey, no duplicate, and every argKey is a key the template names; a
+ * guard's reason is fixed text. The read-tool checks are `beforeReaderProblems`, run over every
+ * row by its test.
  */
 export function withBefore(r: ConnectorWriteRow, before: BeforeStateReader): ConnectorWriteRow {
   if (r.preview === undefined) {
     throw new Error(`connector write before reader: row ${r.toolId} needs a typed preview`);
   }
-  if (before.argKeys.length === 0) {
-    throw new Error(`connector write before reader: row ${r.toolId} needs at least one argKey`);
-  }
-  if (new Set(before.argKeys).size !== before.argKeys.length) {
-    throw new Error(`connector write before reader: row ${r.toolId} has a duplicate argKey`);
-  }
   const named = previewTemplateKeys(r.preview);
-  for (const k of before.argKeys) {
-    if (!named.has(k)) {
-      throw new Error(
-        `connector write before reader: argKey ${k} is not a key the preview of ${r.toolId} names`,
-      );
+  const reads: ReadonlyArray<readonly [string, BeforeStateRead]> =
+    before.also === undefined
+      ? [["read", before]]
+      : [
+          ["read", before],
+          ["also read", before.also],
+        ];
+  for (const [which, read] of reads) {
+    const problem = beforeReadArgKeyProblems(read, named)[0];
+    if (problem !== undefined) {
+      throw new Error(`connector write before reader: row ${r.toolId} ${which} ${problem}`);
     }
+  }
+  const guardProblem =
+    before.guard === undefined ? undefined : beforeGuardReasonProblem(before.guard);
+  if (guardProblem !== undefined) {
+    throw new Error(`connector write before reader: row ${r.toolId} ${guardProblem}`);
   }
   return Object.freeze({ ...r, before });
 }
