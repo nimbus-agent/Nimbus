@@ -24,7 +24,7 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. No row has one in B0b.
+   * values on the model door's prompt only. Set with {@link withBefore}. Since B1 the seven comment rows have one.
    */
   readonly before?: BeforeStateReader;
 }
