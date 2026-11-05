@@ -4,6 +4,7 @@ import { captureOutput } from "../../test/helpers/cli-output.ts";
 import { type CallRecord, createMockIpcClient } from "../../test/helpers/mock-ipc-client.ts";
 import { createStreamCapture } from "../../test/helpers/stream-capture.ts";
 import type { IPCClient } from "../ipc-client/index.ts";
+import { declareCliClientKind } from "../lib/declare-client-kind.ts";
 import type { CliPlatformPaths } from "../paths.ts";
 import {
   loadReplPreconditions,
@@ -304,11 +305,15 @@ describe("runRepl — declares the connection as the owner's CLI", () => {
   });
 
   it("production wiring declares kind cli, best-effort", async () => {
-    const { productionReplDeps } = await import("./repl.ts");
+    // Not via `import("./repl.ts")`: tui.test.tsx mock.module()s that module without
+    // `productionReplDeps`, and on the Linux `--no-isolate` leg the mock leaks into this file.
+    // So: pin the wiring in repl.ts's source, and exercise the wired function itself.
+    const src = await Bun.file(new URL("./repl.ts", import.meta.url)).text();
+    expect(src).toMatch(/\bdeclareKind:\s*declareCliClientKind\b/);
     const ok = createMockIpcClient([{ kind: "cli" }]);
-    await productionReplDeps.declareKind(ok.client);
+    await declareCliClientKind(ok.client);
     expect(ok.calls).toEqual([{ method: "session.declareKind", params: { kind: "cli" } }]);
     const old = createMockIpcClient([new Error("Method not found")]);
-    await expect(productionReplDeps.declareKind(old.client)).resolves.toBeUndefined();
+    await expect(declareCliClientKind(old.client)).resolves.toBeUndefined();
   });
 });
