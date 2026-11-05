@@ -648,7 +648,7 @@ export function messagingDestinationRefusal(
  * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`): the
  * messaging check, then the Linear reassignment rule (OR-B2-3). The act door runs no before-read
  * (B0b), so it cannot prove a Linear issue unassigned: a `linear_issue_update` proposal that sets
- * `assigneeId` (anything but `undefined` or `null`) is refused, fail closed. The model door does
+ * `assigneeId` (anything but `undefined`; `null` would unassign) is refused, fail closed. The model door does
  * NOT call this: there the `linear_issue_update` reader's guard decides from the current state.
  */
 export function actDoorRefusal(
@@ -660,7 +660,7 @@ export function actDoorRefusal(
   if (messaging !== undefined) return messaging;
   if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
   const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
-  return assignee === undefined || assignee === null ? undefined : LINEAR_ASSIGNEE_REFUSAL;
+  return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
 }
 
 /**

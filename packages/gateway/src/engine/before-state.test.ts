@@ -1255,8 +1255,32 @@ describe("the real linear_issue_update guard (OR-B2-3, plan R5)", () => {
     slow.resolve(linearGet(null));
   });
 
-  test("no assigneeId, or assigneeId null: never refused by the guard, even when assigned or failing", async () => {
-    for (const input of [{ title: "x" }, { title: "x", assigneeId: null }]) {
+  test("assigneeId null applies the guard: refused when assigned or unreadable, allowed when unassigned", async () => {
+    const input = { title: "x", assigneeId: null };
+    expect(
+      await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: linearGet({ id: "u", displayName: "Carol" }) }),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    expect(
+      await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: throwing("boom") }),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    expect(
+      (
+        await runner().read(
+          linearUpdate(input),
+          opsByTool({ linear_linear_issue_get: linearGet(null) }),
+        )
+      )?.status,
+    ).toBe("ok");
+  });
+
+  test("no assigneeId: never refused by the guard, even when assigned or failing", async () => {
+    for (const input of [{ title: "x" }]) {
       const assigned = await runner().read(
         linearUpdate(input),
         opsByTool({ linear_linear_issue_get: linearGet({ id: "u", displayName: "Carol" }) }),

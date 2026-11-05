@@ -892,6 +892,8 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
     // The act door has no before-read: ANY assigneeId on a Linear update is refused.
     ["linear.issue.update", { issueId: "i", assigneeId: "user-1" }],
     ["linear.issue.update", { issueId: "i", title: "x", assigneeId: "" }],
+    // An explicit null would unassign the current assignee.
+    ["linear.issue.update", { issueId: "i", assigneeId: null }],
   ];
 
   test("each is refused at submit with ERR_CAPTURE_ACTION_REFUSED; nothing is queued", async () => {
@@ -905,13 +907,7 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
   });
 
   // One test each: the pending-action queue is bounded, and each test gets a fresh store.
-  for (const [type, input] of [
-    ...B2_PROPOSABLE,
-    ["linear.issue.update", { issueId: "i", assigneeId: null }] as [
-      string,
-      Record<string, unknown>,
-    ],
-  ]) {
+  for (const [type, input] of [...B2_PROPOSABLE]) {
     test(`a clean ${type} ${JSON.stringify(input)} is queued`, async () => {
       const c = actCtx([]);
       expect(await outcome(submit(c, type, input))).toBe("queued");

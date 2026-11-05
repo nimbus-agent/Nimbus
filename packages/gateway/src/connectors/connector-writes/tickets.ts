@@ -323,7 +323,8 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectLinearIssueState,
       guard: {
         reason: LINEAR_ASSIGNEE_REFUSAL,
-        appliesTo: (picked) => picked["assigneeId"] !== undefined && picked["assigneeId"] !== null,
+        // An explicit null also applies: it would UNASSIGN an assigned issue (CodeRabbit, #1901).
+        appliesTo: (picked) => picked["assigneeId"] !== undefined,
         allows: (reply) => linearAssigneeProvenNull(reply),
       },
     },
