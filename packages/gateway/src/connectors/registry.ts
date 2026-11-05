@@ -1,13 +1,16 @@
 import pino from "pino";
 
+import { isBeforeReadActionType } from "../engine/before-state.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
 import type { PlatformPaths } from "../platform/paths.ts";
+import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
+import { isConnectorWriteToolId } from "./connector-write-registry.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
-import { mcpClientToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
+import { mcpClientToolKey, meshServerForToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
 import {
   isOwnerCodeServerToolKey,
   ownerCodeServerToolKeyForActionType,
@@ -144,10 +147,11 @@ export function createConnectorDispatcher(
         );
         throw new Error("Tool not found");
       }
-      assertUserMcpKeyMatchesActionType(
-        action.type,
-        Object.hasOwn(map, toolId) ? toolId : mcpClientToolKey(serviceOf(action.type), toolId),
-      );
+      const resolvedKey = Object.hasOwn(map, toolId)
+        ? toolId
+        : mcpClientToolKey(serviceOf(action.type), toolId);
+      assertUserMcpKeyMatchesActionType(action.type, resolvedKey);
+      assertBeforeReadIsOwnRead(action.type, resolvedKey);
       const execute = tool.execute;
       if (execute === undefined) {
         throw new Error(`MCP tool "${toolId}" has no execute implementation`);
@@ -175,6 +179,25 @@ export function createConnectorDispatcher(
       return result;
     },
   };
+}
+
+/**
+ * Spec § 5.4 at the dispatcher: a before-state read (`<service>.before.read`, built only by
+ * `engine/before-state.ts` on the model door's executor) runs no approval of its own, so the key it
+ * resolves to must be a READ of that SAME service: a tool key `meshServerForToolKey` attributes to
+ * `serviceOf(type)` (so it can never call another connector or misattribute its I29 egress row),
+ * that `isReadOnlyToolId` accepts and `isConnectorWriteToolId` rejects. Checked on the key the
+ * dispatcher actually resolved, before the tool is called; any other type is untouched.
+ */
+function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): void {
+  if (!isBeforeReadActionType(actionType)) return;
+  const shown = `action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`;
+  if (meshServerForToolKey(resolvedKey) !== serviceOf(actionType)) {
+    throw new Error(`ERR_BEFORE_READ_SERVICE_MISMATCH: ${shown}`);
+  }
+  if (!isReadOnlyToolId(resolvedKey) || isConnectorWriteToolId(resolvedKey)) {
+    throw new Error(`ERR_BEFORE_READ_NOT_A_READ: ${shown}`);
+  }
 }
 
 /**

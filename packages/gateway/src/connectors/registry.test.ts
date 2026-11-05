@@ -397,3 +397,69 @@ describe("meshDispatcherClient", () => {
     expect(seen).toEqual(["whole", "one:mcp_a"]);
   });
 });
+
+describe("createConnectorDispatcher — a before-state read dispatches only a read of its own service (spec § 5.4)", () => {
+  /** Every tool a test map holds, each recording that it ran. */
+  function mapOf(keys: readonly string[]) {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { from: k };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client), ran };
+  }
+  const read = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: { issueKey: "NIM-1" } },
+  });
+
+  test("the control: a read tool of its own service dispatches", async () => {
+    const { d, ran } = mapOf(["jira_jira_issue_get"]);
+    await expect(d.dispatch(read("jira.before.read", "jira_jira_issue_get"))).resolves.toEqual({
+      from: "jira_jira_issue_get",
+    });
+    expect(ran).toEqual(["jira_jira_issue_get"]);
+  });
+
+  test("a write key under a before-read type throws and runs nothing", async () => {
+    const { d, ran } = mapOf(["jira_jira_issue_update", "jira_jira_comment_add"]);
+    for (const key of ["jira_jira_issue_update", "jira_jira_comment_add"]) {
+      await expect(d.dispatch(read("jira.before.read", key))).rejects.toThrow(
+        `ERR_BEFORE_READ_NOT_A_READ: action type "jira.before.read" may not dispatch tool "${key}"`,
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a non-read verb (and the bare-id spelling) is refused too", async () => {
+    const { d, ran } = mapOf(["jira_jira_issue_frobnicate"]);
+    await expect(d.dispatch(read("jira.before.read", "jira_issue_frobnicate"))).rejects.toThrow(
+      "ERR_BEFORE_READ_NOT_A_READ",
+    );
+    expect(ran).toEqual([]);
+  });
+
+  test("a read of ANOTHER connector is refused: ERR_BEFORE_READ_SERVICE_MISMATCH", async () => {
+    const { d, ran } = mapOf(["github_github_issue_get", "github_actions_gha_run_get"]);
+    await expect(d.dispatch(read("jira.before.read", "github_github_issue_get"))).rejects.toThrow(
+      `ERR_BEFORE_READ_SERVICE_MISMATCH: action type "jira.before.read" may not dispatch tool "github_github_issue_get"`,
+    );
+    // A sibling server whose name extends the service's is another service.
+    await expect(
+      d.dispatch(read("github.before.read", "github_actions_gha_run_get")),
+    ).rejects.toThrow("ERR_BEFORE_READ_SERVICE_MISMATCH");
+    expect(ran).toEqual([]);
+  });
+
+  test("the same keys under an ordinary type are untouched by the guard", async () => {
+    const { d, ran } = mapOf(["jira_jira_issue_update"]);
+    await d.dispatch(read("jira.issue.update", "jira_jira_issue_update"));
+    expect(ran).toEqual(["jira_jira_issue_update"]);
+  });
+});

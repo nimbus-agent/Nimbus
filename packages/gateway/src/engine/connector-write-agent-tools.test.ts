@@ -6,6 +6,7 @@ import {
   type ConnectorWriteRow,
   row,
   textField,
+  withBefore,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
 import {
@@ -650,5 +651,71 @@ describe("a listing that cannot be produced, and non-standard failures", () => {
     };
     expect(keys(await syncTools(src, fakeExecutor({ status: "ok", result: {} })))).toEqual([]);
     expect(src.warnings.some((x) => x.bindings["err"] === "plain string failure")).toBe(true);
+  });
+});
+
+// ---------- the before-state reader at offer time (spec § 5.4) ----------
+
+describe("a row's before reader at offer time", () => {
+  const READ_KEY = "argocd_argocd_app_get";
+  const reader = {
+    tool: "argocd_app_get",
+    argKeys: ["name"],
+    args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    select: () => [],
+  };
+  const withReader = (wave: 2 | 3 | 4): ConnectorWriteRow =>
+    withBefore(
+      withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
+      reader,
+    );
+  type OptsExecutor = FakeExecutor & { opts: unknown[] };
+  function optsExecutor(): OptsExecutor {
+    const ex: OptsExecutor = {
+      actions: [],
+      opts: [],
+      execute: async (action: PlannedAction, ...rest: unknown[]) => {
+        ex.actions.push(action);
+        ex.opts.push(rest);
+        return { status: "ok", result: "done" };
+      },
+    };
+    return ex;
+  }
+
+  test("wave 4 with its read tool listed is offered, and execute gets no option", async () => {
+    const src = fakeSource([withReader(4)], {
+      argocd: argocdListing({ [READ_KEY]: entry("Get an app") }),
+    });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[]]);
+  });
+
+  test("wave 4 whose read tool is missing from the listing is NOT offered (one warning)", async () => {
+    const src = fakeSource([withReader(4)], { argocd: argocdListing() });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([]);
+    expect(src.warnings.map((w) => w.msg)).toEqual([
+      "connector write before-state reader is not in its server's listing; not offered",
+    ]);
+  });
+
+  test("wave 2 whose read tool is missing is offered, and the executor is told (before: failed)", async () => {
+    const src = fakeSource([withReader(2)], { argocd: argocdListing() });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[{ beforeReaderUnlisted: true }]]);
+    expect(ex.actions[0]?.origin).toBe("model");
+  });
+
+  test("a listed key that is not a plain object counts as missing", async () => {
+    const src = fakeSource([withReader(4)], { argocd: argocdListing({ [READ_KEY]: "nope" }) });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([]);
   });
 });

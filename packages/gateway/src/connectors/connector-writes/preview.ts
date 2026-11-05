@@ -7,11 +7,14 @@ import { serviceOf } from "../../engine/service-of.ts";
 import { extractToolInput } from "../../engine/tool-input.ts";
 import type { PlannedAction } from "../../engine/types.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
-import type {
-  ConnectorWritePreviewTemplate,
-  ConnectorWriteRow,
-  PreviewCredentialResolver,
-  PreviewFieldKind,
+import {
+  type ConnectorWriteBeforeState,
+  type ConnectorWritePreviewTemplate,
+  type ConnectorWriteRow,
+  type PreviewCredentialResolver,
+  type PreviewFieldKind,
+  previewTemplateKeys,
+  TEMPLATE_PLACEHOLDER,
 } from "./types.ts";
 
 /** The desktop collapses a value longer than this behind "Show full"; nothing is ever cut. */
@@ -35,6 +38,11 @@ export interface ConnectorWritePreview {
   readonly destination: { readonly service: string; readonly credential?: "personal" | "team" };
   /** Set by the consent display only, for an `origin: "model"` action (never by the builder). */
   readonly requestedBy?: "model";
+  /**
+   * The target's current state (spec § 5.4), set only by the model door's executor
+   * (`engine/before-state.ts`), never by the builder.
+   */
+  readonly before?: ConnectorWriteBeforeState;
 }
 
 /**
@@ -85,7 +93,6 @@ export function sanitisePreviewText(s: string): string {
 }
 
 const NOT_SET = "(not set)";
-const PLACEHOLDER = /\{(\w+)\}/g;
 
 /** A plain object (prototype `Object.prototype` or `null`): not an array, class instance or box. */
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -127,26 +134,14 @@ function isUnset(input: Record<string, unknown>, key: string): boolean {
 
 function interpolate(text: string, input: Record<string, unknown>): string {
   return sanitisePreviewText(
-    text.replace(PLACEHOLDER, (_m, key: string) =>
+    text.replace(TEMPLATE_PLACEHOLDER, (_m, key: string) =>
       isUnset(input, key) ? NOT_SET : renderValue(input[key]),
     ),
   );
 }
 
-/**
- * Every input key a template names: each `fields[].key` (including fields that carry `whenUnset`)
- * and each `{key}` placeholder in `target` and `summary`. The connector-write door's drift check
- * reads the same set, so a key the preview shows is a key the listed schema must declare.
- */
-export function previewTemplateKeys(t: ConnectorWritePreviewTemplate): Set<string> {
-  const named = new Set<string>(t.fields.map((f) => f.key));
-  for (const text of [t.target, t.summary]) {
-    for (const m of text.matchAll(PLACEHOLDER)) {
-      if (m[1] !== undefined) named.add(m[1]);
-    }
-  }
-  return named;
-}
+/** Lives in `./types.ts` (the before-reader check needs it without importing the rows). */
+export { previewTemplateKeys } from "./types.ts";
 
 function renderField(
   f: ConnectorWritePreviewTemplate["fields"][number],
@@ -162,7 +157,8 @@ function renderField(
   return renderQuoted(raw);
 }
 
-function findRow(
+/** The row whose preview (and before reader) this action is shown with, or undefined. */
+export function findConnectorWriteRow(
   action: PlannedAction,
   rows: readonly ConnectorWriteRow[],
 ): ConnectorWriteRow | undefined {
@@ -200,7 +196,7 @@ export function buildConnectorWritePreviewFrom(
   rows: readonly ConnectorWriteRow[],
   credentialFor?: PreviewCredentialResolver,
 ): ConnectorWritePreview | undefined {
-  const row = findRow(action, rows);
+  const row = findConnectorWriteRow(action, rows);
   const template = row?.preview;
   if (row === undefined || template === undefined) return undefined;
   const service = serviceOf(row.actionType);
@@ -265,5 +261,26 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
     lines.push("Other fields:");
     for (const f of p.otherFields) lines.push(`  ${oneLine(f.key)}: ${oneLine(f.value)}`);
   }
+  if (p.before !== undefined) lines.push("", ...beforeLines(p.before));
   return lines;
+}
+
+/**
+ * The target's current state, after the new values (spec § 5.4). Labels and values were sanitised
+ * by the runner and are never cut; a dropped field is counted on a final line.
+ */
+function beforeLines(b: ConnectorWriteBeforeState): string[] {
+  if (b.status === "unavailable") return [`Before: unavailable (${b.reason})`];
+  const notShown = b.notShown ?? 0;
+  if (b.fields.length === 0 && notShown === 0) return ["Before: (no fields)"];
+  const out = [
+    "Before:",
+    ...b.fields.map(
+      (f) => `  ${f.label === "" ? "(empty label)" : oneLine(f.label)}: ${oneLine(f.value)}`,
+    ),
+  ];
+  if (notShown > 0) {
+    out.push(`  (${notShown} more ${notShown === 1 ? "field" : "fields"} not shown)`);
+  }
+  return out;
 }

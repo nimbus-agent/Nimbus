@@ -23,11 +23,13 @@ import { createTool } from "@mastra/core/tools";
 import { parseRolePackManifestValue, publisherKeyFingerprint } from "@nimbus-dev/registry-format";
 import {
   checkAgentEmitterImportConfinement,
+  checkBeforeStateRead,
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
   checkModelWriteDoor,
   checkWrapServerSpecInvariant,
+  RULE_ANCHORS,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
 import type { ExpertBrief } from "./agents/_lib/findings.ts";
@@ -11143,7 +11145,8 @@ describe("I53 — a first-party connector write reaches the model only through t
     const at = src.indexOf("export function buildModelWriteExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
-    expect(body).toContain("newTurnExecutor(p, undefined)");
+    // Delegation is argument 2 (`undefined`); argument 3 is the before-state runner (spec § 5.4).
+    expect(body).toMatch(/newTurnExecutor\(\s*p,\s*undefined,\s*createBeforeStateRunner\(/);
     expect(body).not.toContain("delegation");
   });
 
@@ -11336,5 +11339,77 @@ describe("I53 — a first-party connector write reaches the model only through t
     }));
     expect(files.some((f) => f.relPath === DOOR_PATH)).toBe(true);
     expect(checkModelWriteDoor(files)).toEqual([]);
+  });
+  // ---- spec § 5.4: the door's before-state read ----------------------------------------------
+
+  test("no before-state read type is in the frozen HITL set (a read never raises a prompt)", async () => {
+    const { HITL_REQUIRED } = await import("./engine/executor.ts");
+    for (const t of HITL_REQUIRED) expect(t.endsWith(".before.read")).toBe(false);
+    // Every service a write row names: its read type is outside the set.
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      expect(HITL_REQUIRED.has(`${r.actionType.split(".")[0] ?? ""}.before.read`)).toBe(false);
+    }
+  });
+
+  test("the beforeStateRows test seam is named by no non-test gateway file but run-ask.ts", async () => {
+    const files = await readDirFiles("packages/gateway/src");
+    const naming = files
+      .filter((f) => !f.rel.endsWith(".test.ts"))
+      .filter((f) => /\bbeforeStateRows\b/.test(stripComments(f.contents)))
+      .map((f) => f.rel.split("\\").join("/"));
+    expect(naming).toEqual(["engine/run-ask.ts"]);
+  });
+
+  test("no production row has a before reader yet (B1-B4 add them; a wave-4 one becomes offerable)", () => {
+    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)).toEqual([]);
+  });
+
+  test("the door executor alone carries the before-state runner, as argument 8", async () => {
+    const runAsk = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const askAt = runAsk.indexOf("function buildAskExecutor(");
+    const askBody = runAsk.slice(askAt, runAsk.indexOf("\n}\n", askAt));
+    expect(askBody).toContain("newTurnExecutor(p, p.delegation)");
+    expect(askBody).not.toContain("createBeforeStateRunner");
+    const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    expect(exec).toMatch(
+      /private readonly previewCredentialFor\?: PreviewCredentialResolver,\s*private readonly beforeState\?: BeforeStateRunner,\s*\)/,
+    );
+  });
+
+  test("D40 exists with its three clauses, run() calls it, and its files are anchors", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    for (const id of [
+      "before-read-literal-confined",
+      "before-state-runner-confined",
+      "before-read-guard-present",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkBeforeStateRead(files)");
+    for (const anchor of [
+      "packages/gateway/src/engine/before-state.ts",
+      "packages/gateway/src/connectors/registry.ts",
+    ]) {
+      expect(RULE_ANCHORS).toContain(anchor);
+    }
+  });
+
+  test("the production tree has no violation of D40, and D40 rejects a rogue read type", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkBeforeStateRead(files)).toEqual([]);
+    const rogue = [
+      ...files,
+      {
+        relPath: "packages/gateway/src/engine/rogue.ts",
+        contents: 'const t = "jira.before.read";',
+      },
+    ];
+    expect(checkBeforeStateRead(rogue).map((v) => v.rule)).toEqual([
+      "before-read-literal-confined",
+    ]);
   });
 });

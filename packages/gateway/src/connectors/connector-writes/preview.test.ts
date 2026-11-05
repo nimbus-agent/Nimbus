@@ -323,3 +323,85 @@ describe("buildConnectorWritePreview — credential resolver", () => {
     ]);
   });
 });
+
+describe("renderConnectorWritePreviewLines: the before-state block (spec § 5.4)", () => {
+  const base = (): ConnectorWritePreview => build({ name: "web", revision: "abc" });
+
+  test("no before: the lines are exactly today's (no Before block)", () => {
+    expect(renderConnectorWritePreviewLines(base()).join("\n")).not.toContain("Before");
+  });
+
+  test("ok: a Before: block of label: value lines after the new values, one physical line each", () => {
+    const p: ConnectorWritePreview = {
+      ...base(),
+      before: {
+        status: "ok",
+        fields: [
+          { label: "Revision", value: "old\nline" },
+          { label: "Status", value: "Synced" },
+        ],
+      },
+    };
+    const lines = renderConnectorWritePreviewLines(p);
+    expect(lines.slice(-4)).toEqual([
+      "",
+      "Before:",
+      String.raw`  Revision: old\nline`,
+      "  Status: Synced",
+    ]);
+    for (const l of lines) expect(l).not.toContain("\n");
+  });
+
+  test("ok with fields past the cap: a final count line, values whole", () => {
+    const long = "x".repeat(3000);
+    const p: ConnectorWritePreview = {
+      ...base(),
+      before: { status: "ok", fields: [{ label: "Body", value: long }], notShown: 4 },
+    };
+    expect(renderConnectorWritePreviewLines(p).slice(-3)).toEqual([
+      "Before:",
+      `  Body: ${long}`,
+      "  (4 more fields not shown)",
+    ]);
+    const one: ConnectorWritePreview = {
+      ...base(),
+      before: { status: "ok", fields: [], notShown: 1 },
+    };
+    expect(renderConnectorWritePreviewLines(one).slice(-2)).toEqual([
+      "Before:",
+      "  (1 more field not shown)",
+    ]);
+  });
+
+  test("an empty label reads as (empty label), as on the desktop", () => {
+    const p: ConnectorWritePreview = {
+      ...base(),
+      before: { status: "ok", fields: [{ label: "", value: "v" }] },
+    };
+    expect(renderConnectorWritePreviewLines(p).slice(-1)).toEqual(["  (empty label): v"]);
+  });
+
+  test("ok with no fields says so", () => {
+    const p: ConnectorWritePreview = { ...base(), before: { status: "ok", fields: [] } };
+    expect(renderConnectorWritePreviewLines(p).slice(-1)).toEqual(["Before: (no fields)"]);
+  });
+
+  test("unavailable: one fixed line naming the reason", () => {
+    for (const reason of [
+      "timeout",
+      "failed",
+      "not configured",
+      "policy requires approval",
+    ] as const) {
+      const p: ConnectorWritePreview = { ...base(), before: { status: "unavailable", reason } };
+      expect(renderConnectorWritePreviewLines(p).slice(-2)).toEqual([
+        "",
+        `Before: unavailable (${reason})`,
+      ]);
+    }
+  });
+
+  test("the builder never sets before", () => {
+    expect(base().before).toBeUndefined();
+  });
+});

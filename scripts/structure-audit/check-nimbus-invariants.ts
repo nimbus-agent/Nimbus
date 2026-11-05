@@ -2316,6 +2316,98 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
+// ---- D40 (the door's before-state read, I53 / spec § 5.4) ---------------------------------------
+// A before-state read runs with no approval of its own, so three confinements keep it a read of
+// the write's own connector, on the model door's executor only:
+// (a) the `.before.read` action-type literal appears (in code or in a string, comments stripped)
+//     only in `engine/before-state.ts`, which builds the type, and `connectors/registry.ts`, the
+//     dispatcher guard. This confines the SPELLING, not the capability: a dynamically composed
+//     type evades it, and what stops such an action is the gate refusal and the dispatcher guard;
+// (b) `createBeforeStateRunner` is named only by `engine/before-state.ts` (its definition) and
+//     `engine/run-ask.ts`, and inside run-ask.ts only on an import line or within the body of
+//     `buildModelWriteExecutor`, and it is never imported under an `as` alias (an alias would let
+//     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
+//     literal, a re-export under another name in another module) is outside a text scan;
+// (c) `engine/executor.ts` (the structural refusal in `gate()`) and `connectors/registry.ts` (the
+//     dispatch guard) each call `isBeforeReadActionType(`; a guard that disappears is a violation.
+// Test files and anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c):
+// a dynamically composed type (`".before" + ".read"`) evades a text scan; the guard and the gate
+// refusal are pinned behaviourally (`connectors/registry.test.ts`, `engine/before-state.test.ts`).
+const D40_LITERAL_RE = /\.before\.read\b/g;
+const D40_LITERAL_ALLOWED: readonly string[] = [
+  "packages/gateway/src/engine/before-state.ts",
+  "packages/gateway/src/connectors/registry.ts",
+];
+const D40_RUNNER_RE = /\bcreateBeforeStateRunner\b/g;
+const D40_RUNNER_ALIAS_RE = /\bcreateBeforeStateRunner\s+as\b/g;
+const D40_RUNNER_DEF = "packages/gateway/src/engine/before-state.ts";
+const D40_RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
+const D40_GUARD_RE = /\bisBeforeReadActionType\s*\(/;
+const D40_GUARD_SITES: readonly string[] = [
+  "packages/gateway/src/engine/executor.ts",
+  "packages/gateway/src/connectors/registry.ts",
+];
+
+/** `[start, end)` of `function buildModelWriteExecutor(`'s body in `code`, or undefined. */
+function d40DoorBuilderSpan(code: string): readonly [number, number] | undefined {
+  const at = code.search(/\bfunction\s+buildModelWriteExecutor\s*\(/);
+  if (at === -1) return undefined;
+  const end = code.indexOf("\n}\n", at);
+  return [at, end === -1 ? code.length : end];
+}
+
+/** Whether `index` sits inside an `import … from` statement (single- or multi-line). */
+function d40InImportStatement(code: string, index: number): boolean {
+  const statementStart = code.lastIndexOf(";", index - 1) + 1;
+  return /^\s*import\b[^;]*$/.test(code.slice(statementStart, index));
+}
+
+export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const guardsSeen = new Set<string>();
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    const push = (rule: string, src: string, index: number | undefined): void => {
+      const line = src.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    if (!D40_LITERAL_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D40_LITERAL_RE)) {
+        push("before-read-literal-confined", commentFree, m.index);
+      }
+    }
+    if (f.relPath !== D40_RUNNER_DEF) {
+      const span = f.relPath === D40_RUN_ASK ? d40DoorBuilderSpan(code) : undefined;
+      for (const m of code.matchAll(D40_RUNNER_RE)) {
+        const i = m.index;
+        const inDoorBuilder = span !== undefined && i >= span[0] && i < span[1];
+        const allowed =
+          f.relPath === D40_RUN_ASK && (inDoorBuilder || d40InImportStatement(code, i));
+        if (!allowed) push("before-state-runner-confined", code, i);
+      }
+      for (const m of code.matchAll(D40_RUNNER_ALIAS_RE)) {
+        push("before-state-runner-confined", code, m.index);
+      }
+    }
+    if (D40_GUARD_SITES.includes(f.relPath) && D40_GUARD_RE.test(code)) guardsSeen.add(f.relPath);
+  }
+  for (const site of D40_GUARD_SITES) {
+    if (!guardsSeen.has(site)) {
+      out.push({
+        rule: "before-read-guard-present",
+        file: site,
+        line: 1,
+        snippet: "isBeforeReadActionType is not called here",
+      });
+    }
+  }
+  return out;
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -3355,6 +3447,10 @@ export const RULE_ANCHORS: readonly string[] = [
   // D39 — the door itself: clauses (c) and (d) read ONLY this file, so a rule that cannot find it
   // would report clean while checking neither.
   "packages/gateway/src/engine/connector-write-agent-tools.ts",
+  // D40 — the before-state module defines the literal and the runner, and (c) reads
+  // connectors/registry.ts by name (engine/executor.ts is anchored above, for D22).
+  "packages/gateway/src/engine/before-state.ts",
+  "packages/gateway/src/connectors/registry.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3727,6 +3823,23 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D39${D39_CLAUSE[e.rule] ?? ""} — the model could reach a connector write outside the owner-turn door, or without the no-delegation marker (I53): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkBeforeStateRead(files);
+    const D40_CLAUSE: Readonly<Record<string, string>> = {
+      "before-read-literal-confined":
+        "(a) the .before.read action-type literal outside engine/before-state.ts and connectors/registry.ts",
+      "before-state-runner-confined":
+        "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor",
+      "before-read-guard-present":
+        "(c) isBeforeReadActionType no longer called by engine/executor.ts or connectors/registry.ts",
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D40${D40_CLAUSE[e.rule] ?? ""} — a before-state read could skip its guard or run on an executor other than the model door's (I53): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
