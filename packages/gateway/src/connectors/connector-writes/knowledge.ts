@@ -286,6 +286,46 @@ export function selectConfluenceAppendTail(reply: unknown): readonly BeforeState
 }
 
 // ---------------------------------------------------------------------------------------------
+// The Obsidian daily-note append (B4b, plan R2/R3). The before reads the note the append will
+// write, through the connector's own read `obsidian_daily_note_get` (`@nimbus-dev/connectors`
+// 0.5.0): it resolves the path with the SAME resolver the append uses and returns at most the last
+// 16 KiB, cut on a character boundary; the selection caps it again with `excerptTail`. Stated
+// bounds: the note can change between the read and the write, and with `date_iso` unset the read
+// and the write can straddle UTC midnight and name different notes (the before then shows the
+// wrong note; the write is still the approved input). The append runs only while the Obsidian
+// opt-in approved it, because that approval is also its sandbox write grant (I15, OR-B4-1).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Obsidian `obsidian_daily_note_get` (before-state), for a daily-note append: `Vault` (its folder
+ * name; absent: throws, so the prompt reads `unavailable (failed)`), `Daily note` (vault-relative
+ * path), `Exists`, `Current length` and `Current end` (the tail, `excerptTail`).
+ */
+export function selectObsidianDailyNote(reply: unknown): readonly BeforeStateField[] {
+  const j = beforeReplyJson(reply);
+  const vault = requiredStringAt(j, ["vault_name"]);
+  const path = requiredStringAt(j, ["path"]);
+  const own = (key: string): unknown =>
+    typeof j === "object" && j !== null && Object.hasOwn(j, key)
+      ? (j as Record<string, unknown>)[key]
+      : undefined;
+  const exists = own("exists");
+  if (typeof exists !== "boolean") throw new Error("obsidian daily note: no exists flag");
+  const size = own("size_bytes");
+  const tail = stringAt(j, ["tail"]) ?? "";
+  const out: BeforeStateField[] = [
+    { label: "Vault", value: excerptHead(vault) },
+    { label: "Daily note", value: excerptHead(path) },
+    { label: "Exists", value: exists ? "yes" : "no: the append creates it (and its folder)" },
+  ];
+  if (typeof size === "number" && Number.isSafeInteger(size) && size >= 0) {
+    out.push({ label: "Current length", value: `${String(size)} bytes (kept)` });
+  }
+  out.push({ label: "Current end", value: tail === "" ? "(empty)" : excerptTail(tail) });
+  return out;
+}
+
+// ---------------------------------------------------------------------------------------------
 // The KB-child guard (owner ruling OR-B3-3, plan R11): the model may not update or append to a page
 // whose parent is the Nimbus knowledge-base destination (the tribal capture gate is its only
 // writer, I25). The page's current parent is read at call time by the row's own before read, and
@@ -574,5 +614,26 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       guard: CONFLUENCE_KB_CHILD_GUARD,
     },
   ),
-  row("obsidian_append_to_daily_note", "obsidian.note.append", "mesh", 2),
+  withBefore(
+    withPreview(row("obsidian_append_to_daily_note", "obsidian.note.append", "mesh", 2), {
+      target: "{vault_id}",
+      summary:
+        "Append to the daily note in Obsidian vault {vault_id}; nothing already in the note is changed",
+      fields: [
+        textField("vault_id", "Vault (id or folder)"),
+        textField("date_iso", "Daily note date", "(not set: today's date in UTC)"),
+        textField("content", "Text appended (Markdown, sent as is)"),
+      ],
+    }),
+    {
+      tool: "obsidian_daily_note_get",
+      argKeys: ["vault_id", "date_iso"],
+      args: (input) => {
+        const out: Record<string, unknown> = { vault_id: input["vault_id"] };
+        if (typeof input["date_iso"] === "string") out["date_iso"] = input["date_iso"];
+        return out;
+      },
+      select: selectObsidianDailyNote,
+    },
+  ),
 ];

@@ -11613,7 +11613,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes and B4a's Drive create, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create and B4b's Obsidian append, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
@@ -11638,6 +11638,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       "notion_comment_create",
       "notion_page_create",
       "notion_page_update",
+      "obsidian_append_to_daily_note",
     ]);
     expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
   });

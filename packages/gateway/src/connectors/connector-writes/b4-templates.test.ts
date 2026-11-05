@@ -23,8 +23,8 @@ const B4A_ROWS = [
 ] as const;
 type B4aRow = (typeof B4A_ROWS)[number];
 
-/** The one wave-2 row still without a template: the Obsidian append (B4b). */
-const UNTEMPLATED_WAVE_2 = ["obsidian_append_to_daily_note"];
+/** Since B4b no wave-2 row is left without a template (the Obsidian append's is in b4b-obsidian.test.ts). */
+const UNTEMPLATED_WAVE_2: string[] = [];
 
 /** The 0.4.0 input-schema keys of each row, spelled out from the connector source (sorted). */
 const SCHEMA_KEYS: Readonly<Record<B4aRow, readonly string[]>> = {
@@ -154,7 +154,7 @@ describe("B4a typed previews (plan R2)", () => {
       expect(r.preview, id).toBeDefined();
       expect(isModelOfferableRow(r), id).toBe(true);
     }
-    // The wave-2 rows still without a template are then exactly the Obsidian append (B4b).
+    // No wave-2 row is left without a template (the Obsidian append's landed in B4b).
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 2 && r.preview === undefined)
         .map((r) => r.toolId)

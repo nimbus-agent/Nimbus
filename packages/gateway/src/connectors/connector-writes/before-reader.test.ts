@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the twenty-two (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create), and every reader passes", () => {
+  test("the rows with readers are exactly the twenty-three (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -196,9 +196,10 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "notion_comment_create",
         "notion_page_create",
         "notion_page_update",
+        "obsidian_append_to_daily_note",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(22);
+    expect(withReader).toHaveLength(23);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -281,7 +282,31 @@ const without = (o: Record<string, unknown>, k: string): Record<string, unknown>
   return c;
 };
 
+const OBSIDIAN_NOTE = {
+  vault_id: "0123456789ab",
+  vault_name: "Work",
+  path: "Daily/2026-11-05.md",
+  exists: true,
+  size_bytes: 12,
+  tail: "- [ ] ship\n",
+};
+
 const READERS: Readonly<Record<string, ReaderCase>> = {
+  obsidian_append_to_daily_note: {
+    tool: "obsidian_daily_note_get",
+    input: { vault_id: "Work", date_iso: "2026-11-05", content: "new" },
+    args: { vault_id: "Work", date_iso: "2026-11-05" },
+    reply: OBSIDIAN_NOTE,
+    fields: [
+      { label: "Vault", value: "Work" },
+      { label: "Daily note", value: "Daily/2026-11-05.md" },
+      { label: "Exists", value: "yes" },
+      { label: "Current length", value: "12 bytes (kept)" },
+      { label: "Current end", value: "- [ ] ship\n" },
+    ],
+    withoutIdentity: without(OBSIDIAN_NOTE, "vault_name"),
+    withIdentity: (v) => ({ ...OBSIDIAN_NOTE, vault_name: v }),
+  },
   github_issue_comment_create: {
     tool: "github_issue_get",
     input: { owner: "o", repo: "r", issueNumber: 42, body: "new" },
