@@ -998,6 +998,102 @@ describe("B3 act door: every draft and page write shows its typed preview, with 
   }
 });
 
+// ---- B4a: the calendar and Drive creates on the act door (plan Task A4) ----------------------
+
+/** The three B4a types, with clean input (times in the stated forms, R6). */
+const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
+  [
+    "outlook.calendar.create",
+    {
+      subject: "Review",
+      startDateTime: "2026-11-05T10:00:00",
+      endDateTime: "2026-11-05T11:00:00",
+      timeZone: "Europe/Paris",
+      attendees: "a@x.com, b@y.com",
+    },
+  ],
+  [
+    "apple.calendar.event.create",
+    {
+      summary: "Review",
+      start: "20261105T100000Z",
+      end: "20261105T110000Z",
+      attendees: ["a@x.com", "b@y.com"],
+    },
+  ],
+  ["google_drive.file.create", { name: "notes.md", parentId: "F1", content: "# Notes" }],
+];
+
+describe("B4a act door: the calendar and Drive creates show their typed preview, with no before", () => {
+  const PROV = {
+    captureId: "cap_b4a",
+    clientLabel: "agent",
+    createdAt: 0,
+    expiresAt: 1,
+    summary: "why",
+  };
+
+  function wiring(dispatched: PlannedAction[]) {
+    const prompts: Array<{ prompt: string; details: Record<string, unknown> }> = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
+        prompts.push({ prompt: req.prompt, details: req.details ?? {} });
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const w: CaptureActWiring = {
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({});
+        },
+      },
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl: NO_POLICY_OVERLAY,
+    };
+    return { act: buildActDeps(w, coord, "c-cli"), prompts };
+  }
+
+  test("the three are proposable", () => {
+    expect(B4A_PROPOSABLE).toHaveLength(3);
+    for (const [t] of B4A_PROPOSABLE) {
+      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    }
+  });
+
+  for (const [type, input] of B4A_PROPOSABLE) {
+    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+      const d: PlannedAction[] = [];
+      const { act, prompts } = wiring(d);
+      await act.execute(type, input, PROV);
+      const toolId = proposableWriteTool(type);
+      if (toolId === undefined) throw new Error(type);
+      const preview = buildConnectorWritePreviewFrom(
+        { type, payload: { mcpToolId: toolId, input } },
+        CONNECTOR_WRITE_ROWS,
+      );
+      if (preview === undefined) throw new Error(`no preview for ${type}`);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.prompt).toBe(
+        [
+          ...formatActionProvenanceLines(PROV),
+          "",
+          ...renderConnectorWritePreviewLines(preview),
+        ].join("\n"),
+      );
+      expect(prompts[0]?.prompt).toContain(
+        type === "google_drive.file.create" ? "Folder id" : "Attendees",
+      );
+      expect(prompts[0]?.details["kind"]).toBe("connector-write");
+      // Before-reads run on the model door only (B0b): the Drive folder is not read here.
+      expect(prompts[0]?.details["before"]).toBeUndefined();
+      expect(prompts[0]?.prompt).not.toContain("Before:");
+      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+    });
+  }
+});
+
 describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)", () => {
   const MCP = { clientId: "m", kind: "mcp" as const };
   const OWNER = { clientId: "o", kind: "cli" as const };

@@ -287,3 +287,25 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     expect(connectorWriteRowByToolId("jira_issue_transitions_list")).toBeUndefined();
   });
 });
+
+describe("the B4a rows on the act door (plan Task A4)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall still 43 proposable, 117 denied (1 not_yet_offered)", () => {
+    for (const id of [
+      "outlook_calendar_create",
+      "apple_calendar_event_create",
+      "gdrive_file_create",
+    ]) {
+      const r = connectorWriteRowByToolId(id);
+      expect(r?.preview, id).toBeDefined();
+      expect(r === undefined ? undefined : ACTION_PROPOSABILITY[r.actionType], id).toEqual({
+        kind: "proposable",
+      });
+    }
+    const entries = Object.values(ACTION_PROPOSABILITY);
+    expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(43);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(117);
+    expect(
+      entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
+    ).toHaveLength(1);
+  });
+});
