@@ -8,6 +8,15 @@ no privilege step is added by
 installing Nimbus on Windows. `--check-caps` accordingly probes that AppContainer
 profile creation **works** on this machine, not that a capability is **held**.
 
+## The DACL lock
+
+Every DACL read-modify-write the helper does (a spawn's grants, `--revoke-grants`, and the
+sweep's revokes) runs under one per-session named mutex, `Local\nimbus-sandbox-helper-dacl`, held
+only from `GetNamedSecurityInfoW` to `SetNamedSecurityInfoW`. Two helpers rewriting the same DACL
+therefore never both read the old one: a grant cannot write back a DACL it read before a concurrent
+revoke. A wait longer than 120 s fails the operation (grant exit `66`, revoke exit `1`); an abandoned
+mutex is taken over. Proven by `test/integration/platform/sandbox/win32-dacl-lock.test.ts`.
+
 ## Modes
 
 - `nimbus-sandbox-helper.exe --check-caps` — create a throwaway

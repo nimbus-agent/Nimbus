@@ -139,6 +139,47 @@ static int mode_delete_profile(const wchar_t *name) {
 }
 
 /*
+ * One lock around every DACL read-modify-write this helper does (grant, revoke, and the sweep's
+ * revoke), shared by every helper process in the session. Without it two helpers rewriting the
+ * same DACL (a spawn granting a path while another process revokes on it) each read the old DACL
+ * and the last writer wins: a revoke could be undone by a grant that read the pre-revoke DACL, or
+ * a grant lost under a revoke. Held only for the GetNamedSecurityInfoW -> SetNamedSecurityInfoW
+ * window, never while a child runs. A wait that times out FAILS the operation (fail closed); an
+ * abandoned mutex (a helper killed mid-rewrite) is taken over, since that DACL write either landed
+ * whole or not at all.
+ */
+#define DACL_MUTEX_NAME L"Local\\nimbus-sandbox-helper-dacl"
+#define DACL_MUTEX_WAIT_MS 120000
+
+static HANDLE dacl_lock(void) {
+    HANDLE m = CreateMutexW(NULL, FALSE, DACL_MUTEX_NAME);
+    if (m == NULL) { err(L"CreateMutexW(%s): %lu", DACL_MUTEX_NAME, GetLastError()); return NULL; }
+    DWORD w = WaitForSingleObject(m, DACL_MUTEX_WAIT_MS);
+    if (w != WAIT_OBJECT_0 && w != WAIT_ABANDONED) {
+        err(L"waiting for the DACL lock %s: %lu", DACL_MUTEX_NAME, w == WAIT_TIMEOUT ? WAIT_TIMEOUT : GetLastError());
+        CloseHandle(m);
+        return NULL;
+    }
+    return m;
+}
+
+static void dacl_unlock(HANDLE m) {
+    ReleaseMutex(m);
+    CloseHandle(m);
+}
+
+static int grant_path_locked(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit);
+
+/* grant_path_locked under the session DACL lock; 66 when the lock cannot be taken. */
+static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
+    HANDLE lock = dacl_lock();
+    if (lock == NULL) return 66;
+    int rc = grant_path_locked(path, sid, rights, inherit);
+    dacl_unlock(lock);
+    return rc;
+}
+
+/*
  * Grant `sid` the requested rights on `path`. Returns 0, or 66 on failure — which is also what a
  * non-ACL filesystem (FAT32/exFAT, some network shares) produces, since SetNamedSecurityInfoW
  * cannot write a DACL there. The caller must not fall back to spawning unconfined: a policy path
@@ -155,7 +196,7 @@ static int mode_delete_profile(const wchar_t *name) {
  * sibling subtree: its `outside` directory sits next to the granted cwd, so a widened inheritance
  * on the wrong path makes that test fail. Do not widen a grant to make it pass.
  */
-static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
+static int grant_path_locked(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
     PACL old_acl = NULL;
     PACL new_acl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
@@ -453,9 +494,21 @@ static BOOL path_is_gone(DWORD rc) {
     return rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
 }
 
+static int revoke_sids_on_path_locked(const wchar_t *path, PSID *sids, ULONG nsids);
+
+/* revoke_sids_on_path_locked under the session DACL lock; 1 when the lock cannot be taken. */
+static int revoke_sids_on_path(const wchar_t *path, PSID *sids, ULONG nsids) {
+    if (nsids == 0) return 0;
+    HANDLE lock = dacl_lock();
+    if (lock == NULL) return 1;
+    int rc = revoke_sids_on_path_locked(path, sids, nsids);
+    dacl_unlock(lock);
+    return rc;
+}
+
 /* Remove every explicit ACE held by each of `sids` from `path`'s DACL in ONE rewrite. Returns 0 on
  * success (including a path that no longer exists), 1 on failure with the reason on stderr. */
-static int revoke_sids_on_path(const wchar_t *path, PSID *sids, ULONG nsids) {
+static int revoke_sids_on_path_locked(const wchar_t *path, PSID *sids, ULONG nsids) {
     if (nsids == 0) return 0;
     PACL old_acl = NULL;
     PACL new_acl = NULL;
