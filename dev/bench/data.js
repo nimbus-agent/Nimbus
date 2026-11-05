@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793890008621,
+  "lastUpdate": 1793891215117,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "9f75fa3fe8c75a740ff86dbea09b8d80cca427b3",
-          "message": "feat(clips): related answers about the resolved item, and its snippets come from the body (#1232)\n\nThree changes to `POST /v1/clips/related`, driven by the browser\nclipper's Related panel. Two of them are defects that shipped, not gaps.\n\n## The snippet has always been an extract of the title\n\n`snippet()`'s second argument is an FTS5 **column index**, and V48\nre-pointed `item_fts` from `(title, body_preview)` to `(title, body)` —\nso index `0` is the title. The browser panel renders that snippet\ndirectly beneath the same title, which is why the lane reads thin: its\nsecond line was its first line again.\n\nNow index `1`, with a 24-token budget. `COALESCE(..., '')` is\nload-bearing: `snippet()` over a NULL body returns SQL `NULL`, and the\nclient's guard requires a string — a null would drop the whole hit from\nthe panel rather than blank a line.\n\nA negative index was considered and rejected: it auto-selects the\nbest-matching column, which for the title-driven query below re-selects\nthe title. Verified empirically against SQLite on Bun 1.3.14.\n\n## `type` and `modified_at` are projected\n\nBoth are indexed columns on the table the query already reads. Purely\nadditive; named as `GET /v1/items/resolve` names them (`type` plain,\n`modified_at` snake_case, epoch ms) so one client-side boundary parser\nserves both routes.\n\n## `itemId` makes relatedness about the item, not the page title\n\nThe client resolves the page to an indexed item and could only send\n`document.title` — which on a pull request is mostly chrome, and on\nJenkins is `build #42 [Jenkins]`. `RelatedInput.itemId` now takes that\nitem's **title** as the query and drops the item from its own results.\n\nIts title, never its body: `ftsMatchQuery` AND-joins every token, so a\n16 KiB body becomes thousands of required terms and matches nothing.\n\nTwo rules are deliberately **independent**: query-text precedence is\n`selection` → `itemId` → `title`, while self-exclusion fires whenever\n`itemId` is *present and resolves* — not when it wins. Otherwise\nselecting a phrase on PR #482 would return PR #482 as its own top hit.\nAn unknown id falls through to the title path rather than erroring,\nsince the row may have been deleted between resolve and related.\n\n## Notes\n\n- The host-exclusion rule is untouched. The client stops sending\n`canonicalUrl` once it can name the item, so the filter simply stops\nfiring on work surfaces — no contract semantics changed.\n- `glossary-project.ts` had a comment claiming `item_fts` indexes\n`body_preview`; V48 made that untrue. Comment-only fix.\n\nTests: 316 pass across clips + glossary. Typecheck and Biome clean.\n\nBrowser-client half: `nimbus-web-clipper` `feat/richer-related-lane`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Related clip results now include each item’s type and last-modified\ntimestamp.\n* Related searches can resolve items by ID, use their title, and exclude\nthe selected item from results.\n* Search snippets are generated from full body content with improved\ncontext.\n\n* **Bug Fixes**\n* Added fallback behavior for unknown item IDs and empty snippets when\ncontent is unavailable.\n* Improved filtering to prevent duplicate results from the selected item\nor its canonical host.\n\n* **Documentation**\n* Updated indexing documentation to reflect that titles and body content\nare searchable.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T16:31:07Z",
-          "tree_id": "054e3c0a588a00b1f953b64ca4ab41804ae929dc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/9f75fa3fe8c75a740ff86dbea09b8d80cca427b3"
-        },
-        "date": 1786898559179,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 354.0614825999961,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 356.1915991499889,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 186.37644915000018,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "22dd4715eb63b46679132aa4e9e19a0cf4566365",
+          "message": "chore: release main (#1902)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.25.0</summary>\n\n##\n[10.25.0](https://github.com/nimbus-agent/Nimbus/compare/v10.24.0...v10.25.0)\n(2026-11-05)\n\n\n### Features\n\n* **gateway:** the model can propose issue writes, each behind your\napproval ([#1901](https://github.com/nimbus-agent/Nimbus/issues/1901))\n([c5835c4](https://github.com/nimbus-agent/Nimbus/commit/c5835c41555cc8a819f1ded8e4fba9c22aa882c8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-05T16:50:23+02:00",
+          "tree_id": "8e148f29b260ca778e6c24b397246d7d5ec403c5",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/22dd4715eb63b46679132aa4e9e19a0cf4566365"
+        },
+        "date": 1793891210995,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 223.80342280000076,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 230.0264629499954,
             "unit": "ms"
           }
         ]
