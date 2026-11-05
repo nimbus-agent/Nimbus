@@ -2329,7 +2329,7 @@ export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
 //     run-ask.ts call it outside that body unseen); a runner handed around as a value (an object
 //     literal, a re-export under another name in another module) is outside a text scan;
 // (c) `engine/executor.ts` (the structural refusal in `gate()`) and `connectors/registry.ts` (the
-//     dispatch guard) each name `isBeforeReadActionType`; a guard that disappears is a violation.
+//     dispatch guard) each call `isBeforeReadActionType(`; a guard that disappears is a violation.
 // Test files and anything outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c):
 // a dynamically composed type (`".before" + ".read"`) evades a text scan; the guard and the gate
 // refusal are pinned behaviourally (`connectors/registry.test.ts`, `engine/before-state.test.ts`).
@@ -2342,7 +2342,7 @@ const D40_RUNNER_RE = /\bcreateBeforeStateRunner\b/g;
 const D40_RUNNER_ALIAS_RE = /\bcreateBeforeStateRunner\s+as\b/g;
 const D40_RUNNER_DEF = "packages/gateway/src/engine/before-state.ts";
 const D40_RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
-const D40_GUARD_RE = /\bisBeforeReadActionType\b/;
+const D40_GUARD_RE = /\bisBeforeReadActionType\s*\(/;
 const D40_GUARD_SITES: readonly string[] = [
   "packages/gateway/src/engine/executor.ts",
   "packages/gateway/src/connectors/registry.ts",
@@ -2401,7 +2401,7 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
         rule: "before-read-guard-present",
         file: site,
         line: 1,
-        snippet: "isBeforeReadActionType is not named here",
+        snippet: "isBeforeReadActionType is not called here",
       });
     }
   }
@@ -3835,7 +3835,7 @@ async function run(): Promise<void> {
       "before-state-runner-confined":
         "(b) createBeforeStateRunner named outside engine/before-state.ts and run-ask.ts's buildModelWriteExecutor",
       "before-read-guard-present":
-        "(c) isBeforeReadActionType no longer named by engine/executor.ts or connectors/registry.ts",
+        "(c) isBeforeReadActionType no longer called by engine/executor.ts or connectors/registry.ts",
     };
     for (const e of v) {
       console.error(

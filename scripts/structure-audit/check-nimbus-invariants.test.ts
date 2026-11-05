@@ -4179,8 +4179,17 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
     ).toEqual(["before-state-runner-confined"]);
   });
 
-  test("(c) FAILS when the gate refusal or the dispatch guard stops naming the predicate", () => {
+  test("(c) FAILS when the gate refusal or the dispatch guard stops calling the predicate", () => {
     expect(rules(replace(EXECUTOR, "if (requiresHITL) {}"))).toEqual(["before-read-guard-present"]);
+    // A leftover import names the predicate but calls nothing.
+    expect(
+      rules(
+        replace(
+          EXECUTOR,
+          'import { isBeforeReadActionType } from "./before-state.ts";\nif (requiresHITL) {}\n',
+        ),
+      ),
+    ).toEqual(["before-read-guard-present"]);
     expect(rules(replace(REGISTRY, "// no guard here"))).toEqual(["before-read-guard-present"]);
     expect(rules(GOOD.filter((f) => f.relPath !== REGISTRY))).toEqual([
       "before-read-guard-present",

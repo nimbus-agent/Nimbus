@@ -29,6 +29,7 @@ import {
   checkEvalConfinement,
   checkModelWriteDoor,
   checkWrapServerSpecInvariant,
+  RULE_ANCHORS,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
 import type { ExpertBrief } from "./agents/_lib/findings.ts";
@@ -11386,9 +11387,12 @@ describe("I53 — a first-party connector write reaches the model only through t
     }
     const runAt = audit.indexOf("async function run(");
     expect(audit.slice(runAt)).toContain("checkBeforeStateRead(files)");
-    expect(audit).toContain(
-      '"packages/gateway/src/engine/before-state.ts",\n  "packages/gateway/src/connectors/registry.ts"',
-    );
+    for (const anchor of [
+      "packages/gateway/src/engine/before-state.ts",
+      "packages/gateway/src/connectors/registry.ts",
+    ]) {
+      expect(RULE_ANCHORS).toContain(anchor);
+    }
   });
 
   test("the production tree has no violation of D40, and D40 rejects a rogue read type", async () => {
