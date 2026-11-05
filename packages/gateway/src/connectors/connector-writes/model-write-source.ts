@@ -18,6 +18,7 @@ import { isModelOfferableRow } from "./model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts";
 import {
   CHATOPS_CHANNEL_REFUSAL,
+  isChatopsDestinationRow,
   modelWriteRefusal,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
@@ -87,8 +88,11 @@ export function createModelWriteToolSource(deps: ModelWriteSourceDeps): Connecto
       let chatops: EnforcedPolicy["chatops"] | undefined;
       try {
         chatops = deps.enforcedPolicy?.()?.chatops;
-      } catch {
-        return CHATOPS_CHANNEL_REFUSAL;
+      } catch (err) {
+        // Only a ChatOps-platform row gets the ChatOps text; any other row's throw propagates and
+        // the door answers with its generic destination refusal.
+        if (isChatopsDestinationRow(row.toolId)) return CHATOPS_CHANNEL_REFUSAL;
+        throw err;
       }
       return modelWriteRefusal(row.toolId, input, { chatops, kb: deps.getTribalKbConfig?.() });
     },

@@ -218,6 +218,34 @@ describe("F4: the knowledge base", () => {
     ).toBeUndefined();
   });
 
+  test("Confluence: a non-canonical page id cannot be proven distinct and is refused (positive control: canonical other id)", () => {
+    for (const v of ["098765", "0", "", "98765 ", " 98765", "9876x", "https://x/98765"]) {
+      expect(kb("confluence_comment_add", { pageId: v }), v).toBe(KNOWLEDGE_BASE_REFUSAL);
+    }
+    expect(kb("confluence_comment_add", { pageId: "12345" })).toBeUndefined();
+    expect(kb("confluence_page_create", { parentPageId: "012345" })).toBe(KNOWLEDGE_BASE_REFUSAL);
+  });
+
+  test("an empty configured Notion database id or Confluence parent refuses nothing", () => {
+    expect(
+      kb("notion_block_append", { parentBlockId: "x" }, { notion: { databaseId: " - " } }),
+    ).toBeUndefined();
+    expect(
+      kb(
+        "confluence_comment_add",
+        { pageId: "0" },
+        { confluence: { spaceKey: "K", parentPageId: " " } },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("a configured ChatOps entry that does not canonicalise is still compared raw", () => {
+    const odd = chatops({ "%E0%A4%A": [] });
+    expect(slack("%E0%A4%A", odd)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    // A shape-unknown entry may belong to any platform: no Slack id can be proven distinct.
+    expect(slack("C9999ZZZZ", odd)).toBe(CHATOPS_CHANNEL_REFUSAL);
+  });
+
   test("Confluence: overwriting or commenting on the KB parent page is refused", () => {
     expect(
       kb("confluence_page_update", {

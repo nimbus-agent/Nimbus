@@ -288,7 +288,7 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
   });
   const PROV = {
     captureId: "cap_9",
-    clientLabel: "agent‮evil",
+    clientLabel: `agent${String.fromCodePoint(0x202e)}evil`,
     createdAt: 0,
     expiresAt: 60_000,
     summary: "Summary: totally safe",

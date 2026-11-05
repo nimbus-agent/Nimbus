@@ -194,6 +194,13 @@ describe("createModelWriteToolSource: the destination refusals (F3/F4)", () => {
     ).toBe("the model cannot post to a channel Nimbus ChatOps listens on");
   });
 
+  test("a throwing policy on a non-ChatOps row propagates (the door answers generically), not the ChatOps text", () => {
+    const throwing = refusingSource(() => {
+      throw new Error("x");
+    });
+    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x" })).toThrow("x");
+  });
+
   test("the KB config is read per call; a throw propagates (the door refuses it)", () => {
     let kbId: string | undefined = "aaaa-bbbb";
     const src = refusingSource(

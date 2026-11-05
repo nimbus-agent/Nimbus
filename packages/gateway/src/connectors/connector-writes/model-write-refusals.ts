@@ -171,6 +171,8 @@ function refusesNotion(
   });
 }
 
+const CANONICAL_PAGE_ID = /^[1-9][0-9]*$/;
+
 /** F4 (Confluence): a KB-capable key naming the KB parent page, compared as trimmed strings. */
 function refusesConfluence(
   toolId: string,
@@ -184,7 +186,10 @@ function refusesConfluence(
     const v = input[k];
     if (v === undefined) return false;
     // A page create in the KB space under the KB parent is covered: the parent alone decides.
-    return typeof v !== "string" || v.trim() === parent;
+    // A value that is not a canonical page id ("0"+id, a URL) cannot be proven distinct: refused.
+    if (typeof v !== "string") return true;
+    const t = v.trim();
+    return !CANONICAL_PAGE_ID.test(t) || t === parent;
   });
 }
 
@@ -192,6 +197,11 @@ export interface RefusalContext {
   /** The ChatOps bindings of the LIVE enforced policy; `undefined` means "cannot tell". */
   readonly chatops: ChatopsPolicy | undefined;
   readonly kb: TribalKbConfig | undefined;
+}
+
+/** Whether `toolId` is a ChatOps-platform post row (its refusal text is the ChatOps one). */
+export function isChatopsDestinationRow(toolId: string): boolean {
+  return toolId === SLACK_DM_ROW || ownLookup(CHATOPS_POST_ROWS, toolId) !== undefined;
 }
 
 /** The fixed refusal for a model write to `toolId` with `input`, or `undefined` to allow it. */

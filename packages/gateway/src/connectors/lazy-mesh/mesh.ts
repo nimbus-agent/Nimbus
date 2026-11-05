@@ -106,25 +106,28 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
 };
 
 /**
- * The wave-2 services and the slot each one's server runs in. Their credential check is
+ * The wave-2 services: the slot each one's server runs in and the mesh method that ensures exactly
+ * that slot, in ONE row so the two cannot drift. Their credential check is
  * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
  * bundles host siblings).
  */
-const WAVE2_LISTING_SLOTS: Readonly<Record<string, string>> = {
-  gmail: LAZY_MESH.googleBundle,
-  google_drive: LAZY_MESH.googleBundle,
-  outlook: LAZY_MESH.microsoftBundle,
-  teams: LAZY_MESH.microsoftBundle,
-  github: LAZY_MESH.github,
-  gitlab: LAZY_MESH.gitlab,
-  slack: LAZY_MESH.slack,
-  linear: LAZY_MESH.linear,
-  jira: LAZY_MESH.jira,
-  notion: LAZY_MESH.notion,
-  confluence: LAZY_MESH.confluence,
-  discord: LAZY_MESH.discord,
-  apple: LAZY_MESH.apple,
-  obsidian: LAZY_MESH.obsidian,
+const WAVE2_LISTING: Readonly<
+  Record<string, { readonly slot: string; readonly ensure: keyof LazyConnectorMesh }>
+> = {
+  gmail: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
+  google_drive: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
+  outlook: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  teams: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  github: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
+  gitlab: { slot: LAZY_MESH.gitlab, ensure: "ensureGitlabRunning" },
+  slack: { slot: LAZY_MESH.slack, ensure: "ensureSlackRunning" },
+  linear: { slot: LAZY_MESH.linear, ensure: "ensureLinearRunning" },
+  jira: { slot: LAZY_MESH.jira, ensure: "ensureJiraRunning" },
+  notion: { slot: LAZY_MESH.notion, ensure: "ensureNotionRunning" },
+  confluence: { slot: LAZY_MESH.confluence, ensure: "ensureConfluenceRunning" },
+  discord: { slot: LAZY_MESH.discord, ensure: "ensureDiscordRunning" },
+  apple: { slot: LAZY_MESH.apple, ensure: "ensureAppleRunning" },
+  obsidian: { slot: LAZY_MESH.obsidian, ensure: "ensureObsidianRunning" },
 };
 
 /** One {@link LazyConnectorMesh.listFirstPartyServerTools} entry: its slot, credential and ensure. */
@@ -285,22 +288,6 @@ export class LazyConnectorMesh {
    * method at call time (a test seam), and names exactly that service's slot.
    */
   private buildFirstPartyListing(): Readonly<Record<string, FirstPartyListingEntry>> {
-    const ensures: Readonly<Record<string, () => Promise<void>>> = {
-      gmail: () => this.ensureGoogleDriveRunning(),
-      google_drive: () => this.ensureGoogleDriveRunning(),
-      outlook: () => this.ensureMicrosoftBundleRunning(),
-      teams: () => this.ensureMicrosoftBundleRunning(),
-      github: () => this.ensureGithubRunning(),
-      gitlab: () => this.ensureGitlabRunning(),
-      slack: () => this.ensureSlackRunning(),
-      linear: () => this.ensureLinearRunning(),
-      jira: () => this.ensureJiraRunning(),
-      notion: () => this.ensureNotionRunning(),
-      confluence: () => this.ensureConfluenceRunning(),
-      discord: () => this.ensureDiscordRunning(),
-      apple: () => this.ensureAppleRunning(),
-      obsidian: () => this.ensureObsidianRunning(),
-    };
     const out: Record<string, FirstPartyListingEntry> = {};
     for (const [service, adder] of Object.entries(PHASE3_LISTING_ADDERS)) {
       out[service] = {
@@ -313,13 +300,12 @@ export class LazyConnectorMesh {
         ensure: () => this.ensurePhase3BundleRunning(),
       };
     }
-    for (const [service, slot] of Object.entries(WAVE2_LISTING_SLOTS)) {
-      const ensure = ensures[service];
-      if (ensure === undefined) continue;
+    for (const [service, row] of Object.entries(WAVE2_LISTING)) {
       out[service] = {
-        slot,
+        slot: row.slot,
         configured: () => isServiceCredentialConfigured(this.vault, service, this.spawnContext),
-        ensure,
+        // Looked up at call time (a test seam), not captured.
+        ensure: () => (this[row.ensure] as () => Promise<void>)(),
       };
     }
     return out;
