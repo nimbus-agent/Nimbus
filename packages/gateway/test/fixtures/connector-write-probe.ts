@@ -1,7 +1,9 @@
 /**
- * Child-process half of `test/integration/connectors/connector-write-comments.integration.test.ts`.
+ * Child-process half of `test/integration/connectors/connector-write-comments.integration.test.ts`
+ * (suite `comments`, the default) and `connector-write-issues.integration.test.ts` (suite `issues`).
  *
- * Runs the B1 comment writes for Jira, Confluence, GitLab (issue and MR notes) and GitHub through
+ * Runs the suite's writes (B1: the comment writes for Jira, Confluence, GitLab issue and MR notes
+ * and GitHub; B2: the issue writes for Jira, GitLab and GitHub) through
  * REAL connector processes (`connectorSpawn`, a real `@mastra/mcp` `MCPClient`), the production
  * mesh dispatcher (`createConnectorDispatcher`), a real `LocalIndex` with its egress ledger, and a
  * `ToolExecutor` shaped like the model door's (no delegate, the before-state runner as argument 8).
@@ -12,7 +14,8 @@
  * A SEPARATE PROCESS on purpose: other test files `mock.module("@mastra/mcp")`, and a module mock
  * is process-global in the one-process whole-repo run.
  *
- * argv[2]: a throwaway directory for the index database.
+ * argv[2]: a throwaway directory for the index database. argv[3]: the suite, `comments` (default)
+ * or `issues`.
  */
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -33,13 +36,15 @@ if (dir === undefined || dir === "") throw new Error("usage: connector-write-pro
 const env: Record<string, string> = {};
 for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v;
 
-/** The five writes: server key, tool, action type and input. */
-const WRITES: ReadonlyArray<{
-  server: string;
-  tool: string;
-  type: string;
-  input: Record<string, unknown>;
-}> = [
+interface ProbeWrite {
+  readonly server: string;
+  readonly tool: string;
+  readonly type: string;
+  readonly input: Record<string, unknown>;
+}
+
+/** B1: the five comment writes. */
+const COMMENTS: readonly ProbeWrite[] = [
   {
     server: "jira",
     tool: "jira_comment_add",
@@ -71,6 +76,85 @@ const WRITES: ReadonlyArray<{
     input: { owner: "o", repo: "r", issueNumber: 42, body: "Looks good" },
   },
 ];
+
+/** B2: the eleven issue writes whose connector host is configurable (Linear's is not). */
+const ISSUES: readonly ProbeWrite[] = [
+  {
+    server: "jira",
+    tool: "jira_issue_create",
+    type: "jira.issue.create",
+    input: { projectKey: "NIM", summary: "Login fails", description: "Steps" },
+  },
+  {
+    server: "jira",
+    tool: "jira_issue_update",
+    type: "jira.issue.update",
+    input: { issueKey: "NIM-1", summary: "Login fails on Safari" },
+  },
+  {
+    server: "jira",
+    tool: "jira_issue_transition",
+    type: "jira.issue.transition",
+    input: { issueKey: "NIM-1", transitionId: "31" },
+  },
+  {
+    server: "gitlab",
+    tool: "gitlab_issue_create",
+    type: "gitlab.issue.create",
+    input: {
+      projectPath: "group/repo",
+      title: "Broken",
+      labels: ["bug", "ui"],
+      assigneeIds: [12],
+    },
+  },
+  {
+    server: "gitlab",
+    tool: "gitlab_issue_labels_add",
+    type: "gitlab.issue.labels.add",
+    input: { projectPath: "group/repo", issueIid: 7, labels: ["bug"] },
+  },
+  {
+    server: "gitlab",
+    tool: "gitlab_issue_assignees_add",
+    type: "gitlab.issue.assignees.add",
+    input: { projectPath: "group/repo", issueIid: 7, assigneeUsernames: ["alice"] },
+  },
+  {
+    server: "gitlab",
+    tool: "gitlab_issue_state_set",
+    type: "gitlab.issue.state.set",
+    input: { projectPath: "group/repo", issueIid: 7, stateEvent: "close" },
+  },
+  {
+    server: "github",
+    tool: "github_issue_create",
+    type: "github.issue.create",
+    input: { owner: "o", repo: "r", title: "Login fails", body: "Steps" },
+  },
+  {
+    server: "github",
+    tool: "github_issue_labels_add",
+    type: "github.issue.labels.add",
+    input: { owner: "o", repo: "r", issueNumber: 42, labels: ["bug"] },
+  },
+  {
+    server: "github",
+    tool: "github_issue_assignees_add",
+    type: "github.issue.assignees.add",
+    input: { owner: "o", repo: "r", issueNumber: 42, assignees: ["alice"] },
+  },
+  {
+    server: "github",
+    tool: "github_issue_state_set",
+    type: "github.issue.state.set",
+    input: { owner: "o", repo: "r", issueNumber: 42, state: "closed" },
+  },
+];
+
+const suite = process.argv[3] ?? "comments";
+if (suite !== "comments" && suite !== "issues") throw new Error(`unknown suite ${suite}`);
+const WRITES = suite === "comments" ? COMMENTS : ISSUES;
 
 const db = new Database(join(dir, "index.db"));
 LocalIndex.ensureSchema(db);
@@ -124,14 +208,19 @@ try {
     }
   }
   // Pin the real shape a before-read reply has (plan R4): the dispatcher hands back the tool's
-  // MCP CallToolResult as is.
-  const raw = (await dispatcher.dispatch({
-    type: "github.before.read",
-    payload: {
-      mcpToolId: "github_github_issue_get",
-      input: { owner: "o", repo: "r", issueNumber: 42 },
-    },
-  })) as { content?: Array<{ type?: unknown; text?: unknown }>; isError?: unknown };
+  // MCP CallToolResult as is. The comments suite only (its parent asserts this read).
+  const raw = (
+    suite !== "comments"
+      ? {}
+      : await dispatcher.dispatch({
+          type: "github.before.read",
+          payload: {
+            mcpToolId: "github_github_issue_get",
+            input: { owner: "o", repo: "r", issueNumber: 42 },
+          },
+        })
+  ) as { content?: Array<{ type?: unknown; text?: unknown }>; isError?: unknown };
+
   /** The first text part parsed as JSON, or a marker saying why it could not be. */
   const parseFirstText = (): unknown => {
     const text = raw.content?.[0]?.text;

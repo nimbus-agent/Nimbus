@@ -7,8 +7,11 @@
 // are passed in, and nothing here reaches the network, so a destination that cannot be PROVEN
 // distinct from a configured one is refused (fail closed).
 //
-// `messagingDestinationRefusal` (ChatOps + broadcast) is the ONE function both the model door and
-// the MCP act door call; the KB refusal is model-door-only (`modelWriteRefusal`).
+// `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
+// GitLab scoped labels; it covers issue titles, bodies and descriptions too) is the ONE function
+// both the model door and the MCP act door call; the KB refusal is model-door-only
+// (`modelWriteRefusal`), and the act door's Linear reassignment rule is act-door-only
+// (`actDoorRefusal`, which runs the messaging check first).
 //
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
@@ -21,8 +24,17 @@ export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
 export const BROADCAST_MENTION_REFUSAL =
   "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
+/**
+ * OR-B2-3: a Linear `assigneeId` on update replaces the one assignee, so the model may set it only
+ * while the issue is unassigned. The model door enforces it with the `linear_issue_update` row's
+ * before-state guard (`tickets.ts`, proven unassigned at call time); fixed, echoes nothing.
+ */
+export const LINEAR_ASSIGNEE_REFUSAL =
+  "the model can assign a Linear issue only while it is unassigned; ask the owner to reassign it";
 export const GITLAB_QUICK_ACTION_REFUSAL =
-  "GitLab quick actions (lines starting with /) are not allowed in a model-written note; rephrase without them";
+  "GitLab quick actions (lines starting with /) are not allowed in model-written GitLab text; rephrase without them";
+export const GITLAB_SCOPED_LABEL_REFUSAL =
+  "the model cannot add a GitLab scoped label (key::value): it replaces the label with the same key; ask the owner to add it";
 
 /** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
 export interface TribalKbConfig {
@@ -38,6 +50,9 @@ const CHATOPS_POST_ROWS: Readonly<Record<string, { platform: Platform; key: stri
   teams_message_post: { platform: "teams", key: "channelId" },
   teams_message_post_chat: { platform: "teams", key: "chatId" },
 };
+
+/** The Linear update row: on the act door its `assigneeId` is refused (`actDoorRefusal`). */
+const LINEAR_ISSUE_UPDATE_ROW = "linear_issue_update";
 
 /** The Slack DM row: its destination is `user_ids`, never a channel (see `refusesSlackDm`). */
 const SLACK_DM_ROW = "slack_message_post_dm";
@@ -268,12 +283,16 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 //    `@here`, `@everyone` (the connector sends no `link_names`, so plain words should not notify;
 //    refusing them costs nothing and does not depend on a Slack default). Allowed: `<@U123>`,
 //    `<#C123>`, `@alice`.
-//  - GitHub `body`: a team, `@org/team`. Bound: a bare `@name` is a user or an organisation and is
-//    not caught (an organisation mention notifies no members); a team can only be named in the
-//    slash form.
-//  - GitLab `body`: `@all`, and any slash path `@group/sub[/...]` (a subgroup or project, never a
-//    user). Bound: `@<top-level-group>` notifies every member but cannot be told from
-//    `@<username>` without a lookup (they share one namespace), so it is NOT caught.
+//  - GitHub: a team, `@org/team`, in a comment `body` and (B2) an issue create's `title` and
+//    optional `body`. Bound: a bare `@name` is a user or an organisation and is not caught (an
+//    organisation mention notifies no members); a team can only be named in the slash form.
+//  - GitLab: `@all`, and any slash path `@group/sub[/...]` (a subgroup or project, never a user),
+//    in a note `body` and (B2) an issue create's `title` and optional `description`. Bound:
+//    `@<top-level-group>` notifies every member but cannot be told from `@<username>` without a
+//    lookup (they share one namespace), so it is NOT caught.
+//  - Titles are scanned although a platform may not notify from a title (fail closed; a refused
+//    model can rephrase). A required key absent or non-string is refused; an OPTIONAL key absent,
+//    `undefined` or `null` is skipped, and present but non-string is refused.
 //  - Teams `body`: any `<at` tag (`<at>`, `<at id=...>`, `<at/>`), plus the plain words
 //    `@channel`, `@team`, `@everyone`. The 0.4.0 tool takes no `mentions` array, and Graph
 //    notifies only for an `<at id>` that has a `mentions` entry, so no Teams broadcast is
@@ -284,8 +303,18 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 //    but telling code apart needs a markdown parser, and a refused model can rephrase.
 // Not scanned: Discord (the connector sends `allowed_mentions: { parse: ["users"] }`, pinned by
 // `discord-mentions.sync.test.ts`), Jira (plain text in one ADF text node: no mention node can
-// exist), Linear, Notion and Confluence (no broadcast mention form in their comment APIs as this
-// connector calls them).
+// exist; B2's issue create and update send their description the same way), Linear (comments and,
+// B2, issue create/update: user mentions only), Notion and Confluence (no broadcast mention form
+// in their comment APIs as this connector calls them), and every label, assignee, state and
+// transition field (no free text a platform parses for mentions).
+//
+// Notification bounds of the B2 issue writes (stated, not refused): an assignee add notifies each
+// named user, at most 10 per GitHub call and 20 per GitLab call (usernames, or on create user
+// ids), one on Linear; GitHub and GitLab accept only users as assignees, so a group or team cannot
+// be assigned; each is named in the preview. A GitLab label can have subscribers, who are notified
+// when it is applied; who subscribes cannot be known without a lookup, so it is not refused, and
+// the preview names each label. GitHub has no label subscription; a GitHub label that does not
+// exist is created in the repository (the preview's field label says so).
 // ---------------------------------------------------------------------------------------------
 
 export type BroadcastService = "slack" | "teams" | "github" | "gitlab";
@@ -421,10 +450,35 @@ export function broadcastMentionIn(
   return forms.some((f) => rules.some((re) => re.test(f)));
 }
 
+/** One scanned input key; `required: false` skips it when absent, `undefined` or `null`. */
+interface ScannedKey {
+  readonly key: string;
+  readonly required: boolean;
+}
+
+const REQUIRED = (key: string): ScannedKey => ({ key, required: true });
+const OPTIONAL = (key: string): ScannedKey => ({ key, required: false });
+
+/**
+ * Whether any of `keys` must be refused: a string value `refuses` matches, a required key that is
+ * missing or not a string, or an optional key present with a non-string value.
+ */
+function refusesKeys(
+  input: Readonly<Record<string, unknown>>,
+  keys: readonly ScannedKey[],
+  refuses: (text: string) => boolean,
+): boolean {
+  return keys.some((k) => {
+    const v = Object.hasOwn(input, k.key) ? input[k.key] : undefined;
+    if (typeof v === "string") return refuses(v);
+    return k.required || (v !== undefined && v !== null);
+  });
+}
+
 interface BroadcastScan {
   readonly service: BroadcastService;
-  /** The input key holding the message or comment text. */
-  readonly key: string;
+  /** The input keys holding the message, comment or issue text. */
+  readonly keys: readonly ScannedKey[];
   /** Whether the input marks the text as HTML. */
   readonly htmlWhen?: (input: Readonly<Record<string, unknown>>) => boolean;
 }
@@ -432,33 +486,47 @@ interface BroadcastScan {
 const teamsHtml = (input: Readonly<Record<string, unknown>>): boolean =>
   input["contentType"] === "html";
 
-/** The rows whose text the broadcast rule scans, and which field. */
+/** The rows whose text the broadcast rule scans, and which fields. */
 const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
-  slack_message_post: { service: "slack", key: "text" },
-  slack_message_post_dm: { service: "slack", key: "text" },
-  teams_message_post: { service: "teams", key: "body", htmlWhen: teamsHtml },
-  teams_message_post_chat: { service: "teams", key: "body", htmlWhen: teamsHtml },
-  github_issue_comment_create: { service: "github", key: "body" },
-  gitlab_issue_note_create: { service: "gitlab", key: "body" },
-  gitlab_mr_note_create: { service: "gitlab", key: "body" },
+  slack_message_post: { service: "slack", keys: [REQUIRED("text")] },
+  slack_message_post_dm: { service: "slack", keys: [REQUIRED("text")] },
+  teams_message_post: { service: "teams", keys: [REQUIRED("body")], htmlWhen: teamsHtml },
+  teams_message_post_chat: { service: "teams", keys: [REQUIRED("body")], htmlWhen: teamsHtml },
+  github_issue_comment_create: { service: "github", keys: [REQUIRED("body")] },
+  gitlab_issue_note_create: { service: "gitlab", keys: [REQUIRED("body")] },
+  gitlab_mr_note_create: { service: "gitlab", keys: [REQUIRED("body")] },
+  // B2: the issue creates (title always, the body or description when set).
+  github_issue_create: { service: "github", keys: [REQUIRED("title"), OPTIONAL("body")] },
+  gitlab_issue_create: { service: "gitlab", keys: [REQUIRED("title"), OPTIONAL("description")] },
 };
 
-/** OR1 for one row: its scanned field carries a broadcast mention (a non-string one is refused). */
+/**
+ * The input keys the broadcast rule scans for `toolId` (empty for a row it does not scan).
+ * Read-only; the completeness tripwire reads it so a new GitHub or GitLab text field cannot be
+ * offered unscanned.
+ */
+export function scannedTextKeys(toolId: string): readonly string[] {
+  return ownLookup(BROADCAST_SCANNED, toolId)?.keys.map((k) => k.key) ?? [];
+}
+
+/** OR1 for one row: a scanned field carries a broadcast mention (a non-string one is refused). */
 function refusesBroadcast(toolId: string, input: Readonly<Record<string, unknown>>): boolean {
   const scan = ownLookup(BROADCAST_SCANNED, toolId);
   if (scan === undefined) return false;
-  const text = Object.hasOwn(input, scan.key) ? input[scan.key] : undefined;
-  if (typeof text !== "string") return true;
-  return broadcastMentionIn(scan.service, text, { html: scan.htmlWhen?.(input) ?? false });
+  const html = scan.htmlWhen?.(input) ?? false;
+  return refusesKeys(input, scan.keys, (text) => broadcastMentionIn(scan.service, text, { html }));
 }
 
 // ---------------------------------------------------------------------------------------------
 // GitLab quick actions (coordinator ruling 2026-11-05, recorded for the owner): GitLab runs
-// `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body, so a model-written
-// note could change the issue or merge request's state. A GitLab note is refused when any line of
-// its body, normalised as for broadcast mentions but keeping its line breaks (both the deleted and
-// the spaced form), begins with optional whitespace, then `/`, then a letter. A fenced code block
-// does NOT exempt it (fail closed). `and/or` or a URL mid-line is not a quick action.
+// `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body and from an issue's
+// description at create, so model-written GitLab text could change the issue or merge request's
+// state. Scanned (ruling R-QA, 2026-11-05): a note `body` and an issue create's `description`, the
+// fields GitLab parses for quick actions; NOT the title, which GitLab does not parse (a title such
+// as `/api is down` is allowed). A scanned field is refused when any line of it, normalised as for
+// broadcast mentions but keeping its line breaks (both the deleted and the spaced form), begins
+// with optional whitespace, then `/`, then a letter. A fenced code block does NOT exempt it (fail
+// closed). `and/or` or a URL mid-line is not a quick action.
 // ---------------------------------------------------------------------------------------------
 
 const QUICK_ACTION_LINE = /^\s*\/[a-z]/;
@@ -473,21 +541,70 @@ export function gitlabQuickActionIn(text: string): boolean {
   return false;
 }
 
-/** The GitLab note rows and the input key holding the note body. */
-const GITLAB_NOTE_ROWS: Readonly<Record<string, string>> = {
-  gitlab_issue_note_create: "body",
-  gitlab_mr_note_create: "body",
+/** The GitLab rows whose text GitLab parses for quick actions, and which fields. */
+const GITLAB_QUICK_ACTION_ROWS: Readonly<Record<string, readonly ScannedKey[]>> = {
+  gitlab_issue_note_create: [REQUIRED("body")],
+  gitlab_mr_note_create: [REQUIRED("body")],
+  gitlab_issue_create: [OPTIONAL("description")],
 };
 
-/** A GitLab note whose body runs a quick action (a non-string body is refused). */
+/** The input keys the quick-action rule scans for `toolId` (read-only, for its tripwire). */
+export function quickActionTextKeys(toolId: string): readonly string[] {
+  return ownLookup(GITLAB_QUICK_ACTION_ROWS, toolId)?.map((k) => k.key) ?? [];
+}
+
+/** GitLab text that runs a quick action (a non-string scanned value is refused). */
 function refusesGitlabQuickAction(
   toolId: string,
   input: Readonly<Record<string, unknown>>,
 ): boolean {
-  const key = ownLookup(GITLAB_NOTE_ROWS, toolId);
-  if (key === undefined) return false;
-  const body = Object.hasOwn(input, key) ? input[key] : undefined;
-  return typeof body !== "string" || gitlabQuickActionIn(body);
+  const keys = ownLookup(GITLAB_QUICK_ACTION_ROWS, toolId);
+  if (keys === undefined) return false;
+  return refusesKeys(input, keys, gitlabQuickActionIn);
+}
+
+// ---------------------------------------------------------------------------------------------
+// GitLab scoped labels (owner ruling OR-B2-2): applying `key::value` REMOVES the issue's existing
+// label with the same key, so "add" would not be add-only. A label is refused when its text,
+// normalised as for broadcast mentions (NFKC folds the fullwidth colon U+FF1A to `:`; both the
+// deleted and the spaced invisible forms), contains `::`. Checked on `gitlab_issue_labels_add` and
+// `gitlab_issue_create` `labels`; a present value that is not an array of strings is refused, an
+// unset optional one skipped. Both doors (it runs inside `messagingDestinationRefusal`).
+// ---------------------------------------------------------------------------------------------
+
+/** Whether one GitLab label is (or normalises to) a scoped label, or does not settle. */
+export function gitlabScopedLabelIn(label: string): boolean {
+  if (label.includes("::")) return true;
+  for (const invisible of ["", " "]) {
+    const settled = settle(label, invisible);
+    if (settled === undefined || settled.includes("::")) return true;
+  }
+  return false;
+}
+
+/** The GitLab rows whose `labels` the scoped-label rule checks. */
+const GITLAB_LABEL_ROWS: Readonly<Record<string, ScannedKey>> = {
+  gitlab_issue_labels_add: REQUIRED("labels"),
+  gitlab_issue_create: OPTIONAL("labels"),
+};
+
+/** The input key the scoped-label rule checks for `toolId` (read-only, for its tripwire). */
+export function scopedLabelKeys(toolId: string): readonly string[] {
+  const k = ownLookup(GITLAB_LABEL_ROWS, toolId);
+  return k === undefined ? [] : [k.key];
+}
+
+/** A GitLab label list carrying a scoped label, or one that is not an array of strings. */
+function refusesGitlabScopedLabel(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): boolean {
+  const k = ownLookup(GITLAB_LABEL_ROWS, toolId);
+  if (k === undefined) return false;
+  const v = Object.hasOwn(input, k.key) ? input[k.key] : undefined;
+  if (!k.required && (v === undefined || v === null)) return false;
+  if (!Array.isArray(v)) return true;
+  return (v as unknown[]).some((l) => typeof l !== "string" || gitlabScopedLabelIn(l));
 }
 
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
@@ -509,10 +626,11 @@ function chatopsRefusal(
 }
 
 /**
- * The ONE messaging-destination check both doors call (OR1 + OR2): the ChatOps channel first
- * (so a post to a ChatOps channel that also carries a mention reports the ChatOps reason), then
- * the broadcast mention, then a GitLab quick action. A fixed text that echoes nothing of the
- * input, or `undefined`.
+ * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
+ * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
+ * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label. It
+ * covers message and comment text and (B2) issue titles, bodies and descriptions. A fixed text
+ * that echoes nothing of the input, or `undefined`.
  */
 export function messagingDestinationRefusal(
   toolId: string,
@@ -522,7 +640,27 @@ export function messagingDestinationRefusal(
   const chatops = chatopsRefusal(toolId, input, ctx.chatops);
   if (chatops !== undefined) return chatops;
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
-  return refusesGitlabQuickAction(toolId, input) ? GITLAB_QUICK_ACTION_REFUSAL : undefined;
+  if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
+  return refusesGitlabScopedLabel(toolId, input) ? GITLAB_SCOPED_LABEL_REFUSAL : undefined;
+}
+
+/**
+ * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`): the
+ * messaging check, then the Linear reassignment rule (OR-B2-3). The act door runs no before-read
+ * (B0b), so it cannot prove a Linear issue unassigned: a `linear_issue_update` proposal that sets
+ * `assigneeId` (anything but `undefined`; `null` would unassign) is refused, fail closed. The model door does
+ * NOT call this: there the `linear_issue_update` reader's guard decides from the current state.
+ */
+export function actDoorRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: { readonly chatops: ChatopsPolicy | undefined },
+): string | undefined {
+  const messaging = messagingDestinationRefusal(toolId, input, ctx);
+  if (messaging !== undefined) return messaging;
+  if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
+  const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
+  return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
 }
 
 /**

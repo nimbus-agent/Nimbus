@@ -24,8 +24,9 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since B1 the seven comment rows have one
-   * (each one read, no guard).
+   * values on the model door's prompt only. Set with {@link withBefore}. Since B2 sixteen rows have
+   * one: the seven comment rows (B1) and nine issue writes; the Jira transition takes two reads and
+   * the Linear update carries a guard.
    */
   readonly before?: BeforeStateReader;
 }

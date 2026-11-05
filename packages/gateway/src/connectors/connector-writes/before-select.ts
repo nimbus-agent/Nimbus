@@ -22,17 +22,23 @@ export function beforeReplyJson(reply: unknown): unknown {
   return parsed;
 }
 
+/** The value at `path` (own properties only, through plain objects); `undefined` when absent. */
+function valueAt(v: unknown, path: readonly string[]): unknown {
+  let cur: unknown = v;
+  for (const key of path) {
+    if (!isRecord(cur) || !Object.hasOwn(cur, key)) return undefined;
+    cur = cur[key];
+  }
+  return cur;
+}
+
 /**
  * The value at `path` (own properties only, through plain objects), as a string: a string as is,
  * a finite number in its `String` form; anything else (absent, inherited, an object, a boolean,
  * NaN) is `undefined`.
  */
 export function stringAt(v: unknown, path: readonly string[]): string | undefined {
-  let cur: unknown = v;
-  for (const key of path) {
-    if (!isRecord(cur) || !Object.hasOwn(cur, key)) return undefined;
-    cur = cur[key];
-  }
+  const cur = valueAt(v, path);
   if (typeof cur === "string") return cur;
   if (typeof cur === "number" && Number.isFinite(cur)) return String(cur);
   return undefined;
@@ -54,4 +60,40 @@ export function presentFields(
     if (value !== undefined) out.push({ label, value });
   }
   return out;
+}
+
+/** A list value shows at most this many entries; the rest are counted. */
+export const BEFORE_LIST_MAX_ENTRIES = 50;
+
+/**
+ * The list at `path`, joined for a before-state field: each entry a string (`item` absent) or the
+ * string at `item` inside an object entry. At most {@link BEFORE_LIST_MAX_ENTRIES} readable names
+ * are joined with `, `; every other entry is counted, never silently dropped: `(+N more)` for
+ * readable names past the cap, `(+N unreadable)` for entries with no readable name, or
+ * `(+N more, M of them unreadable)` for both. Only an EMPTY list reads `(none)`; a non-empty list
+ * with no readable entry reads `(N entries, unreadable)` (`(1 entry, unreadable)`). `undefined` when the value is absent or
+ * not an array (the field is then omitted, never shown as empty).
+ */
+export function listAt(v: unknown, path: readonly string[], item?: string): string | undefined {
+  const list = valueAt(v, path);
+  if (!Array.isArray(list)) return undefined;
+  const entries = list as unknown[];
+  if (entries.length === 0) return "(none)";
+  const names: string[] = [];
+  for (const entry of entries) {
+    const name = item === undefined ? stringAt(entry, []) : stringAt(entry, [item]);
+    if (name !== undefined) names.push(name);
+  }
+  const unreadable = entries.length - names.length;
+  if (names.length === 0) {
+    return `(${String(entries.length)} ${entries.length === 1 ? "entry" : "entries"}, unreadable)`;
+  }
+  const shown = names.slice(0, BEFORE_LIST_MAX_ENTRIES);
+  const hidden = entries.length - shown.length;
+  if (hidden === 0) return shown.join(", ");
+  let suffix: string;
+  if (unreadable === 0) suffix = `+${String(hidden)} more`;
+  else if (unreadable === hidden) suffix = `+${String(unreadable)} unreadable`;
+  else suffix = `+${String(hidden)} more, ${String(unreadable)} of them unreadable`;
+  return `${shown.join(", ")} (${suffix})`;
 }

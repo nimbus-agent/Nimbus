@@ -1,11 +1,13 @@
 /**
- * The before-state reader (spec § 5.4) on its own and through the real `ToolExecutor`. Every row
- * here is SYNTHETIC: no production row uses a second read (`also`) or a guard (B2a ships the
- * mechanism only); the B1 production readers are tested in `before-reader.test.ts`.
+ * The before-state reader (spec § 5.4) on its own and through the real `ToolExecutor`. The rows
+ * are SYNTHETIC except the last two blocks, which run B2's real `linear_issue_update` guard and
+ * `jira_issue_transition` two-read reader; the production selectors are tested in
+ * `before-reader.test.ts`.
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { LINEAR_ASSIGNEE_REFUSAL } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
   type BeforeStateGuard,
   type BeforeStateReader,
@@ -1130,5 +1132,202 @@ describe("a read whose gate resolves after the budget ran out is never dispatche
     );
     expect(out).toEqual(REFUSED);
     expect(dispatched).toEqual([]);
+  });
+});
+
+// ---- B2: the real rows (the Linear assignee guard, the Jira transition's two reads) ----------
+
+const mcpReply = (data: unknown) => ({ content: [{ type: "text", text: JSON.stringify(data) }] });
+
+const LINEAR_ID = "8f2b0a1c-0000-4000-8000-000000000001";
+
+function linearGet(assignee: unknown, over: Record<string, unknown> = {}) {
+  return mcpReply({
+    issue: {
+      id: LINEAR_ID,
+      identifier: "ENG-12",
+      title: "Flaky test",
+      state: { name: "Todo" },
+      priority: 2,
+      assignee,
+      ...over,
+    },
+  });
+}
+
+function linearUpdate(input: Record<string, unknown>): PlannedAction {
+  return {
+    type: "linear.issue.update",
+    origin: "model",
+    payload: { mcpToolId: "linear_linear_issue_update", input: { issueId: LINEAR_ID, ...input } },
+  };
+}
+
+const LINEAR_REFUSED = { status: "refused", reason: LINEAR_ASSIGNEE_REFUSAL } as const;
+
+describe("the real linear_issue_update guard (OR-B2-3, plan R5)", () => {
+  const runner = () => createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS });
+
+  test("assigneeId while the read proves the issue unassigned: the normal before", async () => {
+    const gated: PlannedAction[] = [];
+    const out = await runner().read(
+      linearUpdate({ assigneeId: "user-1" }),
+      opsByTool({ linear_linear_issue_get: linearGet(null) }, gated),
+    );
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Issue", value: "ENG-12" },
+        { label: "Title", value: "Flaky test" },
+        { label: "State", value: "Todo" },
+        { label: "Priority", value: "2" },
+        { label: "Assignee", value: "(none)" },
+      ],
+    });
+    // The read is the issue id only: the write's assigneeId is never sent to it.
+    expect(gated).toEqual([
+      {
+        type: "linear.before.read",
+        payload: { mcpToolId: "linear_linear_issue_get", input: { issueId: LINEAR_ID } },
+      },
+    ]);
+  });
+
+  test("assigneeId with anything but a proven null: refused with the fixed reason", async () => {
+    const cases: Array<readonly [string, unknown]> = [
+      ["assigned", linearGet({ id: "u", displayName: "Carol" })],
+      ["assignee {}", linearGet({})],
+      ["assignee omitted", mcpReply({ issue: { id: LINEAR_ID, title: "t" } })],
+      ["issue null", mcpReply({ issue: null })],
+      ["isError", { ...linearGet(null), isError: true }],
+      // Proven null but the selection fails (no title): fail closed, refused.
+      ["select throws", linearGet(null, { title: undefined })],
+    ];
+    for (const [name, reply] of cases) {
+      const out = await runner().read(
+        linearUpdate({ assigneeId: "user-1" }),
+        opsByTool({ linear_linear_issue_get: reply }),
+      );
+      expect(out, name).toEqual(LINEAR_REFUSED);
+    }
+  });
+
+  test("assigneeId with a failed, unlisted, policy-refused or slow read: refused", async () => {
+    const write = linearUpdate({ assigneeId: "user-1" });
+    expect(
+      await runner().read(write, opsByTool({ linear_linear_issue_get: throwing("boom") })),
+    ).toEqual(LINEAR_REFUSED);
+    expect(
+      await runner().read(
+        write,
+        opsByTool({ linear_linear_issue_get: throwing("Tool not found") }),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    const unlistedGated: PlannedAction[] = [];
+    expect(
+      await runner().read(
+        write,
+        opsByTool({ linear_linear_issue_get: linearGet(null) }, unlistedGated),
+        { readerUnlisted: true },
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    expect(unlistedGated).toEqual([]);
+    expect(
+      await runner().read(
+        write,
+        opsByTool({ linear_linear_issue_get: linearGet(null) }, [], () => ({
+          status: "rejected",
+          reason: BEFORE_READ_HITL_REFUSAL,
+        })),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+
+    const clock = fakeClock();
+    const slow = deferred<unknown>();
+    const timed = createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS, timers: clock.timers });
+    const pending = timed.read(write, {
+      gate: async () => "proceed",
+      dispatch: () => slow.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(BEFORE_STATE_TIMEOUT_MS);
+    expect(await pending).toEqual(LINEAR_REFUSED);
+    slow.resolve(linearGet(null));
+  });
+
+  test("assigneeId null applies the guard: refused when assigned or unreadable, allowed when unassigned", async () => {
+    const input = { title: "x", assigneeId: null };
+    expect(
+      await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: linearGet({ id: "u", displayName: "Carol" }) }),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    expect(
+      await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: throwing("boom") }),
+      ),
+    ).toEqual(LINEAR_REFUSED);
+    expect(
+      (
+        await runner().read(
+          linearUpdate(input),
+          opsByTool({ linear_linear_issue_get: linearGet(null) }),
+        )
+      )?.status,
+    ).toBe("ok");
+  });
+
+  test("no assigneeId: never refused by the guard, even when assigned or failing", async () => {
+    for (const input of [{ title: "x" }]) {
+      const assigned = await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: linearGet({ id: "u", displayName: "Carol" }) }),
+      );
+      expect(assigned?.status, JSON.stringify(input)).toBe("ok");
+      const failed = await runner().read(
+        linearUpdate(input),
+        opsByTool({ linear_linear_issue_get: throwing("boom") }),
+      );
+      expect(failed, JSON.stringify(input)).toEqual({ status: "unavailable", reason: "failed" });
+    }
+  });
+});
+
+describe("the real jira_issue_transition reader (OR-B2-1)", () => {
+  test("two jira.before.read actions gated in order: the transitions list, then the issue", async () => {
+    const gated: PlannedAction[] = [];
+    const out = await createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS }).read(
+      {
+        type: "jira.issue.transition",
+        origin: "model",
+        payload: {
+          mcpToolId: "jira_jira_issue_transition",
+          input: { issueKey: "NIM-1", transitionId: "31" },
+        },
+      },
+      opsByTool(
+        {
+          jira_jira_issue_transitions_list: mcpReply({
+            transitions: [{ id: "31", name: "Done", to: { name: "Done" } }],
+          }),
+          jira_jira_issue_get: mcpReply({ fields: { status: { name: "In Progress" } } }),
+        },
+        gated,
+      ),
+    );
+    expect(gated.map((a) => [a.type, a.payload?.["mcpToolId"]])).toEqual([
+      ["jira.before.read", "jira_jira_issue_transitions_list"],
+      ["jira.before.read", "jira_jira_issue_get"],
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "From", value: "In Progress" },
+        { label: "Transition", value: "Done" },
+        { label: "To", value: "Done" },
+      ],
+    });
   });
 });

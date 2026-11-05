@@ -104,13 +104,17 @@ describe("connector.writesEnable", () => {
     const p = prompts[0] ?? "";
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 3");
-    // B1 templates the comment write: it is the one row the owner approves now.
+    // B1 templates the comment write and B2 the four issue writes: the owner approves all five.
     for (const r of expected) {
       const tag = isModelOfferableRow(r) ? "(new: offered after you approve)" : "(not offered yet)";
       expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  ${tag}`);
     }
     expect(expected.filter(isModelOfferableRow).map((r) => r.toolId)).toEqual([
+      "github_issue_create",
       "github_issue_comment_create",
+      "github_issue_labels_add",
+      "github_issue_assignees_add",
+      "github_issue_state_set",
     ]);
     expect(p).toContain("Each call will still ask you before it runs.");
   });
@@ -231,9 +235,9 @@ describe("connector.writesDisable and writesStatus", () => {
       writes: 2,
       offerable: 0,
     });
-    // The approved enable covered the one offerable github write (B1's comment row).
+    // The approved enable covered the five offerable github writes (B1's comment, B2's issues).
     expect(s.services.find((x) => x.service === "github")).toMatchObject({
-      offerable: 1,
+      offerable: 5,
       awaitingApproval: 0,
     });
     const locked = (await call("connector.writesStatus", {}, { policy: () => undefined })) as {
@@ -336,7 +340,7 @@ describe("wiring", () => {
   });
 });
 
-describe("re-consent on the real B1 rows (V84, Task 5)", () => {
+describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => {
   type Status = {
     services: Array<{ service: string; offerable: number; awaitingApproval: number }>;
   };
@@ -421,9 +425,9 @@ describe("re-consent on the real B1 rows (V84, Task 5)", () => {
     ]);
   });
 
-  test("GitHub: one write awaits approval (the comment); its other wave-2 rows are not offerable", async () => {
+  test("GitHub: an opt-in from before B1 offers nothing until the owner re-approves all five writes", async () => {
     setModelWriteEnablement(db, "github", 2, 1, []);
-    expect(await statusOf("github")).toMatchObject({ offerable: 0, awaitingApproval: 1 });
+    expect(await statusOf("github")).toMatchObject({ offerable: 0, awaitingApproval: 5 });
     expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([]);
     const seen: Array<Record<string, unknown> | undefined> = [];
     await call(
@@ -432,15 +436,76 @@ describe("re-consent on the real B1 rows (V84, Task 5)", () => {
       { exec: recordingExecutor(seen) },
     );
     expect(statesOf(seen[0])).toEqual({
-      github_issue_create: "not_offerable",
+      github_issue_create: "newly_offerable",
       github_issue_comment_create: "newly_offerable",
-      github_issue_labels_add: "not_offerable",
-      github_issue_assignees_add: "not_offerable",
-      github_issue_state_set: "not_offerable",
+      github_issue_labels_add: "newly_offerable",
+      github_issue_assignees_add: "newly_offerable",
+      github_issue_state_set: "newly_offerable",
     });
-    expect(await statusOf("github")).toMatchObject({ offerable: 1, awaitingApproval: 0 });
+    expect(await statusOf("github")).toMatchObject({ offerable: 5, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([
+      "github__github_issue_assignees_add",
+      "github__github_issue_comment_create",
+      "github__github_issue_create",
+      "github__github_issue_labels_add",
+      "github__github_issue_state_set",
+    ]);
+  });
+
+  test("GitHub: a B1 opt-in (the comment approved) keeps the comment and offers none of the four issue writes until re-approved (B2)", async () => {
+    setModelWriteEnablement(db, "github", 2, 1, ["github_issue_comment_create"]);
+    expect(await statusOf("github")).toMatchObject({ offerable: 1, awaitingApproval: 4 });
     expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([
       "github__github_issue_comment_create",
+    ]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "github", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(seen).toHaveLength(1);
+    expect(statesOf(seen[0])).toEqual({
+      github_issue_create: "newly_offerable",
+      github_issue_comment_create: "already_approved",
+      github_issue_labels_add: "newly_offerable",
+      github_issue_assignees_add: "newly_offerable",
+      github_issue_state_set: "newly_offerable",
+    });
+    expect(await statusOf("github")).toMatchObject({ offerable: 5, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([
+      "github__github_issue_assignees_add",
+      "github__github_issue_comment_create",
+      "github__github_issue_create",
+      "github__github_issue_labels_add",
+      "github__github_issue_state_set",
+    ]);
+  });
+
+  test("Jira: a B1 opt-in (the comment approved) has three issue writes awaiting approval (B2)", async () => {
+    setModelWriteEnablement(db, "jira", 2, 1, ["jira_comment_add"]);
+    expect(await statusOf("jira")).toMatchObject({ offerable: 1, awaitingApproval: 3 });
+    expect((await doorTools()).filter((n) => n.startsWith("jira__"))).toEqual([
+      "jira__jira_comment_add",
+    ]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "jira", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(statesOf(seen[0])).toEqual({
+      jira_issue_create: "newly_offerable",
+      jira_issue_update: "newly_offerable",
+      jira_comment_add: "already_approved",
+      jira_issue_transition: "newly_offerable",
+    });
+    expect(await statusOf("jira")).toMatchObject({ offerable: 4, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("jira__"))).toEqual([
+      "jira__jira_comment_add",
+      "jira__jira_issue_create",
+      "jira__jira_issue_transition",
+      "jira__jira_issue_update",
     ]);
   });
 });

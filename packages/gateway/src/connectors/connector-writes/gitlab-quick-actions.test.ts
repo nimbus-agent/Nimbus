@@ -94,7 +94,7 @@ describe("the quick-action refusal on the rows", () => {
       GITLAB_QUICK_ACTION_REFUSAL,
     );
     expect(GITLAB_QUICK_ACTION_REFUSAL).toBe(
-      "GitLab quick actions (lines starting with /) are not allowed in a model-written note; rephrase without them",
+      "GitLab quick actions (lines starting with /) are not allowed in model-written GitLab text; rephrase without them",
     );
   });
 
@@ -135,5 +135,43 @@ describe("the quick-action refusal on the rows", () => {
     ] as const) {
       expect(messagingDestinationRefusal(toolId, input, NO_CHATOPS), toolId).toBeUndefined();
     }
+  });
+});
+
+describe("B2: quick actions in a GitLab issue create's description (ruling R-QA)", () => {
+  const NO_CHATOPS = { chatops: undefined } as const;
+  const create = (over: Record<string, unknown>) =>
+    messagingDestinationRefusal(
+      "gitlab_issue_create",
+      { projectPath: "g/r", title: "Bug", ...over },
+      NO_CHATOPS,
+    );
+  const LS = cp(0x2028);
+
+  test("a quick-action line in the description is refused, however it is hidden", () => {
+    for (const description of [
+      "fix\n/close",
+      `fix${LS}/close`,
+      `/clo${ZWSP}se`,
+      "&#47;close",
+      `${FW_SLASH}assign @me`,
+      `steps${LS}/assign @me`,
+    ]) {
+      expect(create({ description }), JSON.stringify(description)).toBe(
+        GITLAB_QUICK_ACTION_REFUSAL,
+      );
+    }
+  });
+
+  test("the title is not scanned for quick actions: /api is down is allowed", () => {
+    expect(create({ title: "/api is down" })).toBeUndefined();
+    expect(create({ title: "/close" })).toBeUndefined();
+  });
+
+  test("and/or mid-line is allowed; an absent or null description is allowed; a number is refused", () => {
+    expect(create({ description: "use and/or" })).toBeUndefined();
+    expect(create({})).toBeUndefined();
+    expect(create({ description: null })).toBeUndefined();
+    expect(create({ description: 42 })).toBe(BROADCAST_MENTION_REFUSAL);
   });
 });

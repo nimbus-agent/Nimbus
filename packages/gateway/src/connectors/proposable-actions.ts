@@ -28,10 +28,11 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld until the Phase 9.7
-   * B PR that gives it a typed preview template lands. Unlike `unroutable`, a tool DOES resolve:
-   * the refusal is a review decision, not a routing fact, and moving a type out of this class into
-   * `PROPOSABLE_WRITE_TOOLS` is that later PR's job.
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld: until the Phase 9.7
+   * B PR that gives it a typed preview template lands, or (`jira.issue.transition`, owner ruling
+   * OR-B2-4) because the act door runs no before-read and so could not show what the write changes.
+   * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
+   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job.
    */
   | "not_yet_offered"
   | "gateway_internal";
@@ -89,6 +90,15 @@ export const PROPOSABLE_WRITE_TOOLS: Readonly<Record<string, string>> = Object.f
   "gitlab.issue.note.create": "gitlab_issue_note_create",
   "gitlab.mr.note.create": "gitlab_mr_note_create",
   "discord.message.post": "discord_message_post",
+  // Phase 9.7 B2: the issue writes, each with a typed preview template (labels and assignees add
+  // only; a GitLab scoped label and a Linear reassignment are refused by `actDoorRefusal`).
+  "github.issue.labels.add": "github_issue_labels_add",
+  "github.issue.assignees.add": "github_issue_assignees_add",
+  "github.issue.state.set": "github_issue_state_set",
+  "gitlab.issue.create": "gitlab_issue_create",
+  "gitlab.issue.labels.add": "gitlab_issue_labels_add",
+  "gitlab.issue.assignees.add": "gitlab_issue_assignees_add",
+  "gitlab.issue.state.set": "gitlab_issue_state_set",
   "notion.page.create": "notion_page_create",
   "notion.page.update": "notion_page_update",
   "notion.block.append": "notion_block_append",
@@ -222,16 +232,12 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "email.draft.create",
       "calendar.event.create",
     ]),
-    // @nimbus-dev/connectors 0.4.0's Wave-2 writes: routable, but not offered to MCP clients until
-    // their B PR (B1–B4) adds the preview template.
+    // @nimbus-dev/connectors 0.4.0's Wave-2 writes that are routable but not offered to MCP clients:
+    // the draft and page append wait for their B PR's preview template (B3/B4).
+    // `jira.issue.transition` is withheld by owner ruling OR-B2-4: before-reads run on the model
+    // door only (B0b), so an MCP proposal would ask the owner to approve a bare numeric transition
+    // id, with no From or To, on a write that can be one-way.
     ...denied("not_yet_offered", [
-      "github.issue.labels.add",
-      "github.issue.assignees.add",
-      "github.issue.state.set",
-      "gitlab.issue.create",
-      "gitlab.issue.labels.add",
-      "gitlab.issue.assignees.add",
-      "gitlab.issue.state.set",
       "jira.issue.transition",
       "outlook.draft.create",
       "confluence.page.append",

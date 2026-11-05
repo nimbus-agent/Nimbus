@@ -69,11 +69,11 @@ describe("the executor shows a connector write's typed preview", () => {
   test("an untemplated write keeps today's prompt byte for byte", async () => {
     const h = harness(true);
     await h.exec.execute({
-      type: "jira.issue.create",
-      payload: { mcpToolId: "jira_issue_create", input: { summary: "x" } },
+      type: "notion.page.create",
+      payload: { mcpToolId: "notion_page_create", input: { title: "x" } },
     });
     expect(h.prompts[0]).toBe(
-      'Action requires your approval\n\nType: jira.issue.create\n\nDetails: {"mcpToolId":"jira_issue_create","input":{"summary":"x"}}',
+      'Action requires your approval\n\nType: notion.page.create\n\nDetails: {"mcpToolId":"notion_page_create","input":{"title":"x"}}',
     );
   });
 
