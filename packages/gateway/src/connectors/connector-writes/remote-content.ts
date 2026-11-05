@@ -217,6 +217,7 @@ const URL_ATTRIBUTES: ReadonlySet<string> = new Set([
   "icon",
 ]);
 const HREF: ReadonlySet<string> = new Set(["href"]);
+const BASE_ATTRIBUTE: ReadonlySet<string> = new Set(["base"]);
 const LINK_ELEMENTS: ReadonlySet<string> = new Set(["a", "area"]);
 /** URL lists (and `srcset` candidate lists): refused when non-empty, whatever the URLs. */
 const URL_LIST_ATTRIBUTES: ReadonlySet<string> = new Set([
@@ -241,6 +242,9 @@ function refusesAttributes(t: StartToken, rules: MarkupRules): boolean {
   const opts = { allowCid: rules.allowCid };
   return t.attrs.some((a) => {
     if (isEventHandler(a.name)) return true;
+    // `xml:base` (any attribute whose local name is `base`) re-roots every relative URL in its
+    // subtree, so a relative `src` would load from it: refused when non-empty (adversarial review).
+    if (localIn(a.name, BASE_ATTRIBUTE)) return rawUrlForm(a.value) !== "";
     if (nameIn(a.name, URL_LIST_ATTRIBUTES)) return rawUrlForm(a.value) !== "";
     if (nameIn(a.name, URL_ATTRIBUTES) && urlIsExternal(a.value, opts)) return true;
     return !link && nameIn(a.name, HREF) && urlIsExternal(a.value, opts);

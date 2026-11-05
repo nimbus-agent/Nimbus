@@ -844,6 +844,22 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     }
   });
 
+  test("a non-empty xml:base (any *:base attribute) is refused (adversarial review)", () => {
+    const all = [
+      "outlook-html",
+      "confluence-storage",
+      "obsidian-markdown",
+      "drive-markup",
+    ] as const;
+    for (const format of all) {
+      expectRefused(format, `<svg xml:base="https://h/"><image href="x.png"/></svg>`, true);
+      expectRefused(format, `<p xml:base="/">x</p>`, true);
+      expectRefused(format, `<p BASE="a">x</p>`, true);
+      expectAllowed(format, `<svg xml:base=""><image href="x.png"/></svg>`);
+      expectAllowed(format, `<svg xml:lang="en"><image href="x.png"/></svg>`);
+    }
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });
