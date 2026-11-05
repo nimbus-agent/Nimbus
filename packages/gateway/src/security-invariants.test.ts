@@ -11456,4 +11456,93 @@ describe("I53 — a first-party connector write reaches the model only through t
       "before-read-literal-confined",
     ]);
   });
+
+  test("B2a: a before-state guard refusal is produced only in before-state.ts and consumed only by executor.ts", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).filter(
+      (f) => !f.rel.endsWith(".test.ts"),
+    );
+    const naming = (re: RegExp): string[] =>
+      files
+        .filter((f) => re.test(stripComments(f.contents)))
+        .map((f) => f.rel.split("\\").join("/"))
+        .sort((a, b) => a.localeCompare(b));
+    // The refusal value's type and the error are named by these two files only.
+    expect(naming(/\bBeforeStateRefusal\b/)).toEqual(["engine/before-state.ts"]);
+    expect(naming(/\bBeforeStateRefusedError\b/)).toEqual([
+      "engine/before-state.ts",
+      "engine/executor.ts",
+    ]);
+    const runner = stripComments(await read("packages/gateway/src/engine/before-state.ts"));
+    // The ONE construction of the refusal, from the reader's own guard reason.
+    expect(runner.match(/status: "refused"/g)).toHaveLength(2); // the type's field, and the value
+    expect(runner).toContain(
+      'const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };',
+    );
+    const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const previewAt = exec.indexOf("private async previewFor(");
+    const previewBody = exec.slice(previewAt, exec.indexOf("\n  }\n", previewAt));
+    expect(previewBody).toContain(
+      'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
+    );
+    expect(exec.match(/new BeforeStateRefusedError\(/g)).toHaveLength(1);
+    const gateAt = exec.indexOf("async gate(action: PlannedAction");
+    const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
+    expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);
+    expect(gateBody).toMatch(
+      /else if \(e instanceof BeforeStateRefusedError\) \{\s*hitlStatus = "rejected";\s*rejectReason = e\.reason;\s*auditExtras = \{ hitlRejectReason: e\.reason \};/,
+    );
+  });
+
+  test("B2a: a guard refusal reaches no consent prompt and dispatches no write (behaviour)", async () => {
+    const { ToolExecutor, NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { createBeforeStateRunner } = await import("./engine/before-state.ts");
+    const { row, withBefore, withPreview } = await import("./connectors/connector-writes/types.ts");
+    const reason = "the model cannot do this; ask the owner";
+    const guardedRow = withBefore(
+      withPreview(row("jira_issue_update", "jira.issue.update", "mesh", 2), {
+        target: "{issueKey}",
+        summary: "Update {issueKey}",
+        fields: [],
+      }),
+      {
+        tool: "jira_issue_get",
+        argKeys: ["issueKey"],
+        args: (input) => ({ issueKey: input["issueKey"] }),
+        select: () => [],
+        guard: { reason, appliesTo: () => true, allows: () => false },
+      },
+    );
+    let prompts = 0;
+    const dispatched: string[] = [];
+    const egress: string[] = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          prompts += 1;
+          return true;
+        },
+      },
+      { recordAudit: () => {} },
+      {
+        dispatch: async (a) => {
+          dispatched.push(a.type);
+          return {};
+        },
+      },
+      undefined,
+      { append: (e) => void egress.push(`${e.method}:${e.resultStatus}`) },
+      NO_POLICY_OVERLAY,
+      undefined,
+      createBeforeStateRunner({ rows: [guardedRow] }),
+    );
+    const out = await exec.execute({
+      type: "jira.issue.update",
+      origin: "model",
+      payload: { mcpToolId: "jira_jira_issue_update", input: { issueKey: "NIM-1" } },
+    });
+    expect(out).toEqual({ status: "rejected", reason });
+    expect(prompts).toBe(0);
+    expect(dispatched).toEqual(["jira.before.read"]);
+    expect(egress).toEqual(["jira.before.read:authorized", "jira.issue.update:blocked"]);
+  });
 });

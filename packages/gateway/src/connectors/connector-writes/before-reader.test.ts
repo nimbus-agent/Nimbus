@@ -7,13 +7,16 @@ import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
   beforeReaderArgsProblem,
   beforeReaderProblems,
+  beforeReaderSelectionProblems,
   pickBeforeReaderArgs,
 } from "./before-reader.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { buildConnectorWritePreviewFrom, renderConnectorWritePreviewLines } from "./preview.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
+  type BeforeStateRead,
   type BeforeStateReader,
+  beforeReaderArgKeys,
   type ConnectorWriteRow,
   row,
   withBefore,
@@ -344,6 +347,13 @@ function realRow(toolId: string): ConnectorWriteRow {
   return r;
 }
 
+/** A B1 reader's `select` over the reply alone (one read: no pick it uses, no second reply). */
+function selectOf(toolId: string): (reply: unknown) => readonly { label: string; value: string }[] {
+  const before = realRow(toolId).before;
+  if (before === undefined) throw new Error(`no reader on ${toolId}`);
+  return (reply) => before.select(reply, Object.freeze(Object.create(null)), undefined);
+}
+
 function writeAction(r: ConnectorWriteRow, input: Record<string, unknown>): PlannedAction {
   return {
     type: r.actionType,
@@ -389,11 +399,11 @@ describe("the B1 before-readers (plan R3)", () => {
       });
 
       test("a plain-object reply works too", () => {
-        expect(realRow(toolId).before?.select(c.reply)).toEqual([...c.fields]);
+        expect(selectOf(toolId)(c.reply)).toEqual([...c.fields]);
       });
 
       test("without the identity field select throws: the prompt reads unavailable (failed)", async () => {
-        expect(() => realRow(toolId).before?.select(mcp(c.withoutIdentity))).toThrow();
+        expect(() => selectOf(toolId)(mcp(c.withoutIdentity))).toThrow();
         const { out } = await runReal(toolId, c.input, mcp(c.withoutIdentity));
         expect(out).toEqual({ status: "unavailable", reason: "failed" });
       });
@@ -420,8 +430,7 @@ describe("the B1 before-readers (plan R3)", () => {
   }
 
   test("GitHub: a reply carrying pull_request is a pull request; a null one is an issue", () => {
-    const select = realRow("github_issue_comment_create").before?.select;
-    if (select === undefined) throw new Error("no reader");
+    const select = selectOf("github_issue_comment_create");
     expect(select(mcp({ ...GH_ISSUE, pull_request: { url: "u" } }))).toContainEqual({
       label: "Kind",
       value: "pull request",
@@ -434,7 +443,7 @@ describe("the B1 before-readers (plan R3)", () => {
   });
 
   test("optional fields that are absent are omitted, not blank", () => {
-    const sel = (id: string, reply: unknown) => realRow(id).before?.select(mcp(reply));
+    const sel = (id: string, reply: unknown) => selectOf(id)(mcp(reply));
     expect(sel("github_issue_comment_create", { title: "t" })).toEqual([
       { label: "Title", value: "t" },
       { label: "Kind", value: "issue" },
@@ -455,8 +464,7 @@ describe("the B1 before-readers (plan R3)", () => {
   });
 
   test("Notion: a title property whose title is not a list, or no page, throws", () => {
-    const sel = realRow("notion_comment_create").before?.select;
-    if (sel === undefined) throw new Error("no reader");
+    const sel = selectOf("notion_comment_create");
     expect(() =>
       sel(mcp({ page: { properties: { Name: { type: "title", title: "x" } } } })),
     ).toThrow();
@@ -469,8 +477,7 @@ describe("the B1 before-readers (plan R3)", () => {
   });
 
   test("Notion: an empty joined title throws, so the prompt reads unavailable (failed)", async () => {
-    const sel = realRow("notion_comment_create").before?.select;
-    if (sel === undefined) throw new Error("no reader");
+    const sel = selectOf("notion_comment_create");
     for (const parts of [[], [{ plain_text: "" }], [{ text: {} }]]) {
       expect(() => sel(mcp(notionPage(parts))), JSON.stringify(parts)).toThrow();
     }
@@ -499,3 +506,157 @@ function previewFor(toolId: string, input: Record<string, unknown>) {
   if (p === undefined) throw new Error(`no preview for ${toolId}`);
   return p;
 }
+
+// ---- B2a: a second read, and the selection's and the guard's inputs ----------------------------
+
+const TWO_PREVIEWED = withPreview(
+  row("jira_issue_transition", "jira.issue.transition", "mesh", 2),
+  {
+    target: "{issueKey}",
+    summary: "Move {issueKey} through {transitionId}",
+    fields: [{ key: "transitionId", label: "Transition id", kind: "text" }],
+  },
+);
+
+const TWO_READER: BeforeStateReader = {
+  tool: "jira_issue_transitions_list",
+  argKeys: ["issueKey", "transitionId"],
+  args: (input) => ({ issueKey: input["issueKey"] }),
+  also: {
+    tool: "jira_issue_get",
+    argKeys: ["issueKey"],
+    args: (input) => ({ issueKey: input["issueKey"] }),
+  },
+  select: (_reply, picked) => [{ label: "To", value: String(picked["transitionId"]) }],
+};
+
+const GUARD = {
+  reason: "the model cannot do this; ask the owner",
+  appliesTo: (picked: Readonly<Record<string, unknown>>) => picked["transitionId"] !== undefined,
+  allows: () => true,
+};
+
+describe("a second read (`also`) and the guard (B2a)", () => {
+  test("a valid two-read reader with a guard passes both checks", () => {
+    const r = withBefore(TWO_PREVIEWED, { ...TWO_READER, guard: GUARD });
+    expect(beforeReaderProblems(r)).toEqual([]);
+  });
+
+  test("also with a write tool, a write id, or a non-read verb: a problem each", () => {
+    for (const tool of ["jira_issue_update", "jira_comment_add", "jira_issue_frobnicate"]) {
+      const p = beforeReaderProblems(
+        synthetic(
+          { ...TWO_READER, also: { ...(TWO_READER.also as BeforeStateRead), tool } },
+          TWO_PREVIEWED,
+        ),
+      );
+      expect(
+        p.some((x) => x.includes("also ") && x.includes("not a read")),
+        tool,
+      ).toBe(true);
+    }
+  });
+
+  test("also with an undeclared argKey, a duplicate, or none: a problem each, and withBefore throws", () => {
+    const base = TWO_READER.also as BeforeStateRead;
+    const cases: ReadonlyArray<readonly [readonly string[], RegExp]> = [
+      [["issueKey", "summary"], /summary/],
+      [["issueKey", "issueKey"], /duplicate/],
+      [[], /at least one/],
+    ];
+    for (const [argKeys, re] of cases) {
+      const reader = { ...TWO_READER, also: { ...base, argKeys } };
+      expect(beforeReaderProblems(synthetic(reader, TWO_PREVIEWED)).join("\n")).toMatch(re);
+      expect(() => withBefore(TWO_PREVIEWED, reader)).toThrow(re);
+    }
+  });
+
+  test("also.args reading a key outside ITS OWN argKeys is a problem (even one the first read declares)", () => {
+    const reader: BeforeStateReader = {
+      ...TWO_READER,
+      also: {
+        tool: "jira_issue_get",
+        argKeys: ["issueKey"],
+        args: (input) => ({ issueKey: input["issueKey"], t: input["transitionId"] }),
+      },
+    };
+    const p = beforeReaderProblems(synthetic(reader, TWO_PREVIEWED)).join("\n");
+    expect(p).toContain("also before reader args reads transitionId");
+  });
+
+  test("select reading an undeclared key of the pick is a problem; the declared union is not", () => {
+    const sneaky: BeforeStateReader = {
+      ...TWO_READER,
+      select: (_r, picked) => [{ label: "x", value: String(picked["body"]) }],
+    };
+    expect(beforeReaderSelectionProblems(sneaky)).toEqual([
+      "before reader select reads body, which is not an argKey",
+    ]);
+    expect(beforeReaderProblems(synthetic(sneaky, TWO_PREVIEWED)).join("\n")).toContain(
+      "select reads body",
+    );
+    // `issueKey` is declared only by `also`, `transitionId` only by the first read: both are in the union.
+    const union: BeforeStateReader = {
+      ...TWO_READER,
+      select: (_r, picked) => [
+        { label: "x", value: `${String(picked["issueKey"])}${String(picked["transitionId"])}` },
+      ],
+    };
+    expect(beforeReaderSelectionProblems(union)).toEqual([]);
+    // A one-read reader's select may read only its own argKeys.
+    const one: BeforeStateReader = {
+      ...READER,
+      select: (_r, picked) => [{ label: "x", value: String(picked["summary"]) }],
+    };
+    expect(beforeReaderProblems(synthetic(one)).join("\n")).toContain("select reads summary");
+  });
+
+  test("a guard reading an undeclared key (appliesTo or allows) is a problem", () => {
+    const applies = {
+      ...GUARD,
+      appliesTo: (picked: Readonly<Record<string, unknown>>) => picked["assigneeId"] !== undefined,
+    };
+    const allows = {
+      ...GUARD,
+      allows: (_r: unknown, picked: Readonly<Record<string, unknown>>) =>
+        picked["body"] === undefined,
+    };
+    expect(beforeReaderSelectionProblems({ ...TWO_READER, guard: applies })).toEqual([
+      "before reader guard appliesTo reads assigneeId, which is not an argKey",
+    ]);
+    expect(beforeReaderSelectionProblems({ ...TWO_READER, guard: allows })).toEqual([
+      "before reader guard allows reads body, which is not an argKey",
+    ]);
+  });
+
+  test("a guard reason must be fixed, non-empty text: withBefore throws and the check reports it", () => {
+    for (const [reason, re] of [
+      ["", /non-empty/],
+      ["   ", /non-empty/],
+      ["refused {issueKey}", /placeholder/],
+    ] as const) {
+      const reader = { ...TWO_READER, guard: { ...GUARD, reason } };
+      expect(beforeReaderProblems(synthetic(reader, TWO_PREVIEWED)).join("\n")).toMatch(re);
+      expect(() => withBefore(TWO_PREVIEWED, reader)).toThrow(re);
+    }
+  });
+
+  test("beforeReaderArgKeys is the union of both reads' argKeys, first read first", () => {
+    expect(beforeReaderArgKeys(TWO_READER)).toEqual(["issueKey", "transitionId"]);
+    expect(
+      beforeReaderArgKeys({
+        ...TWO_READER,
+        argKeys: ["transitionId"],
+        also: { ...(TWO_READER.also as BeforeStateRead), argKeys: ["issueKey"] },
+      }),
+    ).toEqual(["transitionId", "issueKey"]);
+    expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
+  });
+
+  test("no production row uses a second read or a guard yet (B2a ships the mechanism only)", () => {
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      expect(r.before?.also, r.toolId).toBeUndefined();
+      expect(r.before?.guard, r.toolId).toBeUndefined();
+    }
+  });
+});
