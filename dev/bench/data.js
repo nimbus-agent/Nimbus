@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793881527824,
+  "lastUpdate": 1793883514183,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b2d9d1ab608780b9600977131f19a4a9cb67505f",
-          "message": "docs(changelog): record seven user-facing commits the generated changelog dropped (#1229)\n\nDocs only. The loose thread from #1227: I said the 400-commit sample\nsuggested more than two dropped commits and hadn't checked. I have now,\nacross all of history, and it is **seven** — the oldest from April.\n\n## Method\n\nRan release-please's own parser over all 2,698 commits on `main`. 594 do\nnot parse, but 587 of those are `chore` / `test` / `ci` / `docs` or\npre-Conventional subjects that were never changelog-eligible, so no\nentry was ever owed. Seven are `feat` or `fix` **and** absent from\n`CHANGELOG.md`.\n\nThe absences were then verified by hand rather than trusted to my\nmatcher, including a positive control: `#1225`, which is present,\nmatches — so the search works.\n\n| commit | release | subject |\n| --- | --- | --- |\n| `f409dec1` | 2026-04-19, direct commit | `fix(llm): restore\nglobalThis.fetch correctly after each test` |\n| `14c7ae4a` | `v0.5.0` | `feat: nimbus security scan v2` |\n| `0d2d006f` | `v1.7.0` | `feat(audit): gate the workflow_run\npwn-request premise` |\n| `63c23afc` | `v1.9.0` | `fix(quality): clear all 171 SonarCloud\nissues` |\n| `dd98484b` | `v1.21.0` | `feat(index): enforce connector depth, index\nreal Gmail and Outlook bodies` |\n| `828090ca` | `v2.4.6` | `fix(security): widen D12 and D22d past their\nblind spots` |\n| `b59ccacf` | `v2.4.7` | `fix(release): make the drop-guard ask whether\nthe release PR is complete` |\n\nThree are features, one of those security tooling. **None of the four\nolder ones appears in `docs/CHANGELOG.md` either**, so until now the\nonly record of them was the git log.\n\n## Why this is docs-only\n\nTags are immutable and the published notes cannot be corrected, so the\nrecord goes where the #1218 record already went: `docs/CHANGELOG.md`,\nthe canonical dated log. Nothing in the product changes.\n\nI deliberately did **not** edit the historical GitHub Release bodies.\nThat is possible — the text is mutable even though the tag is not — but\nit rewrites published artifacts and is your call, not mine.\n\n## All seven would be blocked today\n\nEach was reconstructed as the PR that produced it and run through the\ngate added in #1227. Every one exits 1:\n\n```\nb59ccacf  v2.4.7    WOULD BLOCK  at 17:15\n828090ca  v2.4.6    WOULD BLOCK  at 103:15\ndd98484b  v1.21.0   WOULD BLOCK  at 155:42\n63c23afc  v1.9.0    WOULD BLOCK  at 33:31\n0d2d006f  v1.7.0    WOULD BLOCK  at 142:17\n14c7ae4a  v0.5.0    WOULD BLOCK  at 13:51\nf409dec1  direct    WOULD BLOCK  at 3:11\n```\n\nThat is the useful result, and it is why this is worth writing down: the\ngate is not tuned to the two incidents that prompted it. It catches a\nfour-month pattern nobody had noticed, and the rate — seven user-facing\ndrops across 2,698 commits — is what the release notes were quietly\nlosing before.\n\n`preflight:fast` 29 of 29, including `audit:doc-refs` and\n`lint:markdown`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added automated validation to catch malformed pull request release\nmessages before merging.\n* Added checks to ensure release pull requests include complete\nchangelog information.\n* Improved release verification when an explicit pull request is\nprovided.\n\n* **Bug Fixes**\n* Prevented release notes from being omitted when pull request messages\ncannot be parsed.\n\n* **Documentation**\n* Updated the changelog with previously missing user-facing release\nentries.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T14:41:52+03:00",
-          "tree_id": "04348d3b961274ab20f73ff92bbb4c9146453de4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b2d9d1ab608780b9600977131f19a4a9cb67505f"
-        },
-        "date": 1786881204028,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.0554351500028,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.72897165000177,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 302.1161698500011,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f718759b2d9f8a896102cf4bab3dd30298e3893b",
+          "message": "feat(engine): a before-state can read twice and refuse a write before the prompt (#1899)\n\nPhase 9.7 Project B, PR B2a. B2 (issue writes) depends on two additions\nto the model door's before-state framework. This PR adds them; no\nproduction row uses either one yet, and B2 is the first to.\n\n**A second read.** A `BeforeStateReader` can carry `also: { tool,\nargKeys, args }`, which gives at most two reads (the type allows no\nmore). B2 uses it so a Jira transition prompt can show \"from <current\nstatus> to <target>\". The owner ruled this on 2026-11-05.\n- Each read is its own `<service>.before.read` action, gated in turn by\nthe same executor's `gate()`, with its own audit and I29 egress rows.\n- Both reads share one 5 s timer. `also` is never gated if the first\nread failed or the budget is spent, and a read whose gate resolves after\nthe budget has run out is never dispatched.\n- The before-state is all or nothing: if the second read fails, none of\nthe first read's fields are shown.\n- `select(reply, picked, alsoReply)` gets the frozen pick of both reads'\n`argKeys`. The `beforeReaderProblems` probes check, per read, that the\ntool is a read and not a write, and that `args`, `select` and the guard\ntouch only declared keys.\n- The listing check now covers `also.tool` as well.\n- The seven B1 readers are byte-identical.\n\n**A guard that refuses before the prompt.** A reader can carry `guard: {\nreason, appliesTo, allows }`. B2 uses it for the owner's ruling that a\nLinear assignee may be set only while the issue is unassigned.\n- `appliesTo` is decided first, from the write's input alone. A throw, a\nnon-object input, or anything other than exactly `false` counts as\napplying, so it fails closed.\n- When the guard applies, every path that is not a successful read\nrefuses: an unlisted reader, `args` failing, a timeout, a failed or\npolicy-refused read, a failing `select`, and `allows` returning anything\nbut exactly `true`.\n- A refusal means no consent prompt and no dispatch. The audit row is\n`rejected` with the fixed reason, and the egress row is `blocked`. The\nmodel gets `{ refused: <that row's own fixed reason> }`; every other\nrejection is still `{ declined }`.\n- A delegated approval cannot skip the guard, because an `origin:\n\"model\"` action always falls back to the owner before the preview is\nbuilt. The MCP act door's executor has no runner.\n\n**Stated bound (I29, I53).** A before-read whose gate resolves after the\nbudget has run out still has its gate's audit and egress rows\n(`authorized`) but is never dispatched. The ledger can therefore\nover-report one read, but it never under-reports an outbound request.\n\n**Coverage.**\n- `engine/before-state.ts`: 83/83 branches.\n- `engine/executor.ts`: 139/141 with the instrumented `src/engine` and\nsecurity-invariants run. Both uncovered branches predate this PR: the\n`connector.writes.enable` prompt lines and the delegation `||`. Tests\noutside `src/engine` cover them in the full run, and CI's\n`audit:coverage-floor` is the authoritative 100% check. Every new branch\nis covered.\n\n**Not breaking.** No production row uses `also` or `guard`.\n\n**Docs.**\n- Updated: SECURITY-INVARIANTS (the I53 mechanism (7) and (8), the I53\nbounds, the I29 bound, and the `{refused}` exception in (4) and in the\nanti-patterns), architecture, CLAUDE.md and GEMINI.md, the roadmap, and\nthe CHANGELOG.\n- Unchanged: README and cli-reference, because there is no user-visible\nsurface.\n\n**Verification.**\n- `preflight:fast` passes. `typecheck:tests` passes with 0 new errors.\n`audit:doc-refs` and `audit:status-drift` pass.\n- The engine, connector-writes, mcp-sink, security-invariants and\nstructure-audit suites pass.\n- Every new security test was red-proved by reverting its change.\n- An independent review passed, and its four findings are fixed: the\nlate-gate dispatch, a misnamed test, the `{declined}` restatements, and\nthe coverage note above.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Before-state checks can now use up to two sequential reads from the\nsame connector under one shared five-second limit. If either read fails\nor times out, no partial results are returned.\n* Optional fail-closed guards can block a write before the consent\nprompt when checks fail or do not allow it. Guard refusals show a fixed\nreason; other denials remain declines.\n* **Documentation**\n* Updated security, architecture, roadmap, and changelog notes to\ndescribe the new read and guard behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T12:51:37Z",
+          "tree_id": "9251b9c7789e93a1f445c21c807b1ef2341e4fe3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/f718759b2d9f8a896102cf4bab3dd30298e3893b"
+        },
+        "date": 1793883511375,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 194.5942393499983,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 191.71669114999858,
             "unit": "ms"
           }
         ]
