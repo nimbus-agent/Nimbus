@@ -102,16 +102,38 @@ function localPart(name: string): string {
   return colon === -1 ? name : name.slice(colon + 1);
 }
 
+interface NameFormSet {
+  /** Lower-cased, folded, and the local part of each. */
+  readonly all: readonly string[];
+  /** The local parts only. */
+  readonly local: readonly string[];
+}
+
+/**
+ * The forms of each name, computed once per name per `remoteContentIn` call (adversarial review:
+ * a name is compared many times). Cleared when the call returns, so nothing outlives a scan.
+ */
+const nameFormCache = new Map<string, NameFormSet>();
+
+function formsOf(name: string): NameFormSet {
+  const cached = nameFormCache.get(name);
+  if (cached !== undefined) return cached;
+  const lower = name.toLowerCase();
+  const folded = foldAndStrip(name).toLowerCase();
+  const local = [localPart(lower), localPart(folded)];
+  const forms: NameFormSet = { all: [lower, folded, ...local], local };
+  nameFormCache.set(name, forms);
+  return forms;
+}
+
 /** The local parts of a name: of its lower-cased form and of its folded lower-cased form. */
 function localForms(name: string): readonly string[] {
-  return [localPart(name.toLowerCase()), localPart(foldAndStrip(name).toLowerCase())];
+  return formsOf(name).local;
 }
 
 /** Every form a name is compared in (lower-cased, folded, and the local part of each). */
 function nameForms(name: string): readonly string[] {
-  const lower = name.toLowerCase();
-  const folded = foldAndStrip(name).toLowerCase();
-  return [lower, folded, localPart(lower), localPart(folded)];
+  return formsOf(name).all;
 }
 
 function nameIn(name: string, set: ReadonlySet<string>): boolean {
@@ -410,20 +432,6 @@ const RAW_TEXT_ELEMENTS: ReadonlySet<string> = new Set([
   "noscript",
 ]);
 
-/** The index of the end tag closing the element opened at `k` (nesting counted), or -1. */
-function matchingEnd(tokens: readonly MarkupToken[], k: number, set: ReadonlySet<string>): number {
-  let depth = 0;
-  for (let j = k + 1; j < tokens.length; j++) {
-    const t = tokens[j];
-    if (t === undefined || (t.kind !== "start" && t.kind !== "end")) continue;
-    if (!localForms(t.name).some((l) => set.has(l))) continue;
-    if (t.kind === "start") depth++;
-    else if (depth === 0) return j;
-    else depth--;
-  }
-  return -1;
-}
-
 function localIn(name: string, set: ReadonlySet<string>): boolean {
   return localForms(name).some((l) => set.has(l));
 }
@@ -628,6 +636,22 @@ function tripwire(text: string, kind: TripwireKind): boolean {
 
 /** Deeper nested views than this are refused. */
 const NESTED_VIEW_MAX_DEPTH = 4;
+/** A tag whose source holds more `<` + letter than this is refused (adversarial review). */
+const NESTED_VIEW_MAX_OPENERS = 16;
+
+/** The characters all nested views of one scan may re-tokenize, in total; past it, refused. */
+interface NestedBudget {
+  remaining: number;
+}
+
+/** The offsets of each `<` + ASCII letter inside a tag's source (after its own `<`). */
+function nestedOpeners(source: string): number[] {
+  const out: number[] = [];
+  for (let at = source.indexOf("<", 1); at !== -1; at = source.indexOf("<", at + 1)) {
+    if (isAsciiLetterCode(source.charCodeAt(at + 1))) out.push(at);
+  }
+  return out;
+}
 
 /**
  * The nested view (a tokenizer differential, Review Focus 1): a `<` + ASCII letter INSIDE a tag's
@@ -635,22 +659,27 @@ const NESTED_VIEW_MAX_DEPTH = 4;
  * where a lenient parser may start a tag this tokenizer does not. From each such `<` to the end of
  * the enclosing tag, the text is tokenized again and its start tags checked by steps 2-3 and their
  * `style` attributes. A view that does not tokenize starts no complete tag and refuses nothing.
+ * Bounded (adversarial review): more than {@link NESTED_VIEW_MAX_OPENERS} openers in one tag,
+ * nesting past {@link NESTED_VIEW_MAX_DEPTH}, or more than {@link REMOTE_SCAN_MAX_CHARS}
+ * re-tokenized characters in one scan refuses.
  */
 function refusesNestedView(
   t: Extract<MarkupToken, { kind: "start" | "end" }>,
   text: string,
   rules: MarkupRules,
   depth: number,
+  budget: NestedBudget,
 ): boolean {
   const source = text.slice(t.start, t.end);
-  for (let at = source.indexOf("<", 1); at !== -1; at = source.indexOf("<", at + 1)) {
-    const next = source.charCodeAt(at + 1);
-    const letter = (next >= 0x41 && next <= 0x5a) || (next >= 0x61 && next <= 0x7a);
-    if (!letter) continue;
-    if (depth >= NESTED_VIEW_MAX_DEPTH) return true;
+  const openers = nestedOpeners(source);
+  if (openers.length === 0) return false;
+  if (openers.length > NESTED_VIEW_MAX_OPENERS || depth >= NESTED_VIEW_MAX_DEPTH) return true;
+  for (const at of openers) {
     const view = source.slice(at);
+    budget.remaining -= view.length;
+    if (budget.remaining < 0) return true;
     const inner = tokenizeMarkup(view);
-    if (inner !== undefined && refusesTagsAt(inner, view, rules, depth + 1)) return true;
+    if (inner !== undefined && refusesTagsAt(inner, view, rules, depth + 1, budget)) return true;
   }
   return false;
 }
@@ -666,10 +695,11 @@ function refusesTagsAt(
   text: string,
   rules: MarkupRules,
   depth: number,
+  budget: NestedBudget,
 ): boolean {
   return tokens.some((t) => {
     if (t.kind !== "start" && t.kind !== "end") return false;
-    if (refusesNestedView(t, text, rules, depth)) return true;
+    if (refusesNestedView(t, text, rules, depth, budget)) return true;
     if (t.kind !== "start") return false;
     if (refusesElement(t, rules) || refusesAttributes(t, rules)) return true;
     return depth > 0 && refusesStyleAttribute(t, rules.allowFragmentUrl);
@@ -678,7 +708,7 @@ function refusesTagsAt(
 
 /** R4 steps 2-4 (and the nested view) over one token stream. */
 function refusesTags(tokens: readonly MarkupToken[], text: string, rules: MarkupRules): boolean {
-  return refusesTagsAt(tokens, text, rules, 0);
+  return refusesTagsAt(tokens, text, rules, 0, { remaining: REMOTE_SCAN_MAX_CHARS });
 }
 
 /** Options of a detector; `tripwire: false` is the test seam that isolates the structural rules. */
@@ -832,22 +862,6 @@ function exemptCodeBodies(tokens: readonly MarkupToken[]): ReadonlySet<MarkupTok
   return out;
 }
 
-/** An `ac:parameter` opened at `k`: its names and its text (text and CDATA up to its end tag). */
-function parameterAt(
-  tokens: readonly MarkupToken[],
-  open: StartToken,
-  k: number,
-): { readonly names: readonly string[]; readonly text: string } | undefined {
-  const names = elementNames(open);
-  const endIndex = matchingEnd(tokens, k, PARAMETER);
-  if (names === undefined || endIndex === -1) return undefined;
-  let text = "";
-  for (const t of tokens.slice(k + 1, endIndex)) {
-    if (t.kind === "text" || t.kind === "cdata") text += t.text;
-  }
-  return { names, text };
-}
-
 /**
  * The schemes that make an `ac:parameter` text a URL without a following `//` (coordinator
  * ruling on B3r concern 6, 2026-11-05). Any other scheme counts only when `//` follows it.
@@ -892,18 +906,44 @@ function parameterIsUrl(text: string): boolean {
   return parameterFormIsUrl(settled) || UNRESOLVED_REFERENCE.test(settled);
 }
 
-/** R5 for one parameter: a URL value, or a non-empty `jira` URL parameter. */
-function refusesParameter(
-  tokens: readonly MarkupToken[],
-  open: StartToken,
-  k: number,
-  walk: MacroWalk,
-): boolean {
-  const p = parameterAt(tokens, open, k);
-  if (p === undefined) return true;
+/** An open `ac:parameter`: its names, whether it sits in a `jira` macro, and its text so far. */
+interface OpenParameter {
+  readonly names: readonly string[];
+  readonly inJira: boolean;
+  text: string;
+}
+
+/** R5 for one closed parameter: a URL value, or a non-empty `jira` URL parameter. */
+function refusesParameter(p: OpenParameter): boolean {
   if (parameterIsUrl(p.text)) return true;
-  const inJira = walk.stack.at(-1)?.includes("jira") ?? false;
-  return inJira && p.names.some((n) => JIRA_URL_PARAMETERS.has(n)) && rawUrlForm(p.text) !== "";
+  return p.inJira && p.names.some((n) => JIRA_URL_PARAMETERS.has(n)) && rawUrlForm(p.text) !== "";
+}
+
+/**
+ * One step of the parameter walk (a single forward pass: adversarial review). A parameter's text
+ * is the concatenation of its text and CDATA tokens up to its end tag. A parameter that opens
+ * inside another, or whose names do not settle, is refused. Returns the open parameter after `t`,
+ * or `"refused"`.
+ */
+function stepParameter(
+  open: OpenParameter | undefined,
+  t: MarkupToken,
+  walk: MacroWalk,
+): OpenParameter | undefined | "refused" {
+  if (t.kind === "start" && localIn(t.name, PARAMETER)) {
+    const names = elementNames(t);
+    if (open !== undefined || names === undefined) return "refused";
+    const inJira = walk.stack.at(-1)?.includes("jira") ?? false;
+    const p: OpenParameter = { names, inJira, text: "" };
+    if (!t.selfClosing) return p;
+    return refusesParameter(p) ? "refused" : undefined;
+  }
+  if (open === undefined) return undefined;
+  if (t.kind === "text" || t.kind === "cdata") open.text += t.text;
+  if (t.kind === "end" && localIn(t.name, PARAMETER)) {
+    return refusesParameter(open) ? "refused" : undefined;
+  }
+  return open;
 }
 
 const URL_ELEMENT: ReadonlySet<string> = new Set(["url"]);
@@ -924,15 +964,17 @@ function refusesStorage(
   depth: number,
 ): boolean {
   const walk: MacroWalk = { stack: [] };
-  const refused = tokens.some((t, k) => {
+  let parameter: OpenParameter | undefined;
+  const refused = tokens.some((t) => {
     if (!stepMacros(walk, t)) return true;
     if (t.kind === "start" && refusesStorageElement(t)) return true;
-    if (t.kind === "start" && localIn(t.name, PARAMETER)) {
-      return refusesParameter(tokens, t, k, walk);
-    }
+    const next = stepParameter(parameter, t, walk);
+    if (next === "refused") return true;
+    parameter = next;
     return t.kind === "cdata" && !exempt.has(t) && refusesStorageCdata(t.text, depth);
   });
-  return refused || walk.stack.length > 0;
+  // A macro or a parameter left open is refused.
+  return refused || walk.stack.length > 0 || parameter !== undefined;
 }
 
 /** R5 CDATA: its content tokenized and scanned as storage, one level deeper. */
@@ -1290,5 +1332,7 @@ export function remoteContentIn(
     }
   } catch {
     return true;
+  } finally {
+    nameFormCache.clear();
   }
 }

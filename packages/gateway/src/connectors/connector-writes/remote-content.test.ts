@@ -753,6 +753,19 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     expectAllowed("confluence-storage", macro("panel", param("title", value)));
   });
 
+  test("storage: a parameter that opens inside another is refused; a self-closing one is checked", () => {
+    expectRefused(
+      "confluence-storage",
+      macro(
+        "panel",
+        `<ac:parameter ac:name="x"><ac:parameter ac:name="y">a</ac:parameter></ac:parameter>`,
+      ),
+      true,
+    );
+    expectAllowed("confluence-storage", macro("panel", `<ac:parameter ac:name="x"/>`));
+    expectAllowed("confluence-storage", macro("jira", `<ac:parameter ac:name="url"/>`));
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });
@@ -1211,6 +1224,34 @@ describe("linear time on adversarial input", () => {
     expect(t).toBeLessThan(1000);
     expect(remoteContentIn("outlook-html", build(100_000), { tripwire: false })).toBe(true);
     expectLinear("outlook-html", build, 50_000);
+  });
+
+  test("330,000 openers inside one attribute value (the nested-view opener cap)", () => {
+    const text = `<a title="${"<b>".repeat(330_000)}">`;
+    const t = bestMs(() => remoteContentIn("outlook-html", text));
+    expect(t).toBeLessThan(1000);
+    expect(remoteContentIn("outlook-html", text, { tripwire: false })).toBe(true);
+    expectLinear("outlook-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
+  });
+
+  test("the nested view: 16 openers in one tag pass, 17 do not; the character budget refuses", () => {
+    expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}">`);
+    expectRefused("outlook-html", `<a title="${"<b>".repeat(17)}">`, true);
+    // 16 views of a 200,000-character tag re-tokenize over REMOTE_SCAN_MAX_CHARS.
+    expectRefused("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(200_000)}">`, true);
+    expectAllowed("outlook-html", `<a title="${"<b>".repeat(16)}${"x".repeat(1_000)}">`);
+  });
+
+  test("many Confluence parameters stay linear (one pass, no per-parameter search)", () => {
+    const build = (n: number): string =>
+      `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">blue</ac:parameter>'.repeat(n)}</ac:structured-macro>`;
+    expect(remoteContentIn("confluence-storage", build(3))).toBe(false);
+    expectLinear("confluence-storage", build, 10_000);
+    // Opened and never closed, 100,000 deep: refused at once.
+    const nested = `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">'.repeat(100_000)}`;
+    const t = bestMs(() => remoteContentIn("confluence-storage", nested));
+    expect(t).toBeLessThan(1000);
+    expect(remoteContentIn("confluence-storage", nested, { tripwire: false })).toBe(true);
   });
 
   test("many disjoint style elements stay linear", () => {
