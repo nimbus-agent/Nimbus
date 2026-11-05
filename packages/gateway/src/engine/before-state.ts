@@ -13,7 +13,8 @@
  *    never raises a second prompt; the connector dispatcher lets the type resolve only to a read
  *    tool of its own service (`connectors/registry.ts`);
  *  - runs in order (the first, then `also`); `also` is never gated when the first failed or the
- *    budget is already spent, so the ledger order is deterministic;
+ *    budget is already spent, so the ledger order is deterministic, and a read whose gate resolves
+ *    after the budget ran out is never dispatched;
  *  - never blocks the prompt: ONE timer of {@link BEFORE_STATE_TIMEOUT_MS} covers both reads, after
  *    which the prompt shows `unavailable (timeout)` and a late reply is dropped; every failure is
  *    one of four fixed reasons, never error text, and it is all or nothing: a failed second read
@@ -218,22 +219,35 @@ function guardAllows(reader: BeforeStateReader, replies: Replies): boolean {
   }
 }
 
-type GatedRead = { readonly kind: "refused" } | { readonly kind: "reply"; readonly reply: unknown };
+type GatedRead =
+  | { readonly kind: "refused" }
+  | { readonly kind: "spent" }
+  | { readonly kind: "reply"; readonly reply: unknown };
 
 type ReadsOutcome =
   | { readonly kind: "refused" }
   | { readonly kind: "spent" }
   | { readonly kind: "replies"; readonly reply: unknown; readonly alsoReply: unknown };
 
-async function gateThenDispatch(readAction: PlannedAction, ops: BeforeReadOps): Promise<GatedRead> {
+/**
+ * One read: its gate, then its dispatch. A read whose budget ran out while its gate was pending is
+ * never dispatched (the gate's own audit and egress rows stand; nothing reaches the connector).
+ */
+async function gateThenDispatch(
+  readAction: PlannedAction,
+  ops: BeforeReadOps,
+  spent: () => boolean,
+): Promise<GatedRead> {
   const gated = await ops.gate(readAction);
   if (gated !== "proceed") return { kind: "refused" };
+  if (spent()) return { kind: "spent" };
   return { kind: "reply", reply: await ops.dispatch(readAction) };
 }
 
 /**
  * The reads in order: the first, then `also`. `also` is never gated when the first was refused or
- * threw (the throw propagates), or when the budget was spent while the first was in flight.
+ * threw (the throw propagates), or when the budget was spent while the first was in flight; and
+ * neither read is dispatched when the budget ran out while its gate was pending.
  */
 async function readInOrder(
   first: PlannedAction,
@@ -241,12 +255,12 @@ async function readInOrder(
   ops: BeforeReadOps,
   spent: () => boolean,
 ): Promise<ReadsOutcome> {
-  const a = await gateThenDispatch(first, ops);
-  if (a.kind === "refused") return a;
+  const a = await gateThenDispatch(first, ops, spent);
+  if (a.kind !== "reply") return a;
   if (second === undefined) return { kind: "replies", reply: a.reply, alsoReply: undefined };
   if (spent()) return { kind: "spent" };
-  const b = await gateThenDispatch(second, ops);
-  if (b.kind === "refused") return b;
+  const b = await gateThenDispatch(second, ops, spent);
+  if (b.kind !== "reply") return b;
   return { kind: "replies", reply: a.reply, alsoReply: b.reply };
 }
 

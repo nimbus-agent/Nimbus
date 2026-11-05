@@ -1069,3 +1069,66 @@ describe("the before-state guard (B2a)", () => {
     expect(await runner.read(WRITE, opsReturning({ summary: "old" }))).toEqual(REFUSED);
   });
 });
+
+describe("a read whose gate resolves after the budget ran out is never dispatched (B2a review)", () => {
+  async function expireDuringGate(
+    rowToUse: ConnectorWriteRow,
+    action: PlannedAction,
+    pendingGateIndex: number,
+  ) {
+    const clock = fakeClock();
+    const gateDone = deferred<GateAnswer>();
+    const gated: PlannedAction[] = [];
+    const dispatched: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [rowToUse], timers: clock.timers });
+    const pending = runner.read(action, {
+      gate: (a) => {
+        gated.push(a);
+        return gated.length - 1 === pendingGateIndex
+          ? gateDone.promise
+          : Promise.resolve("proceed" as const);
+      },
+      dispatch: async (a) => {
+        dispatched.push(a);
+        return READS_OK[String(a.payload?.["mcpToolId"])] ?? { summary: "old" };
+      },
+    });
+    await Bun.sleep(0);
+    clock.advance(BEFORE_STATE_TIMEOUT_MS);
+    const out = await pending;
+    // The gate now resolves "proceed", after the cap: the read must not reach the connector.
+    gateDone.resolve("proceed");
+    await Bun.sleep(5);
+    return { out, gated, dispatched };
+  }
+
+  test("one read: the gate pending past the cap -> unavailable (timeout), no dispatch", async () => {
+    const { out, gated, dispatched } = await expireDuringGate(rowWith(READER), WRITE, 0);
+    expect(out).toEqual({ status: "unavailable", reason: "timeout" });
+    expect(gated).toHaveLength(1);
+    expect(dispatched).toEqual([]);
+  });
+
+  test("the second read's gate pending past the cap -> timeout; only the first read was dispatched", async () => {
+    const { out, gated, dispatched } = await expireDuringGate(
+      transitionRow(twoReadReader(newSeen())),
+      TRANSITION,
+      1,
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "timeout" });
+    expect(gated).toHaveLength(2);
+    expect(dispatched.map((a) => a.payload?.["mcpToolId"])).toEqual([
+      "jira_jira_issue_transitions_list",
+    ]);
+  });
+
+  test("under an applicable guard the same expiry refuses, and nothing more is dispatched", async () => {
+    const { out, dispatched } = await expireDuringGate(
+      guarded(() => true),
+      TRANSITION,
+      0,
+    );
+    expect(out).toEqual(REFUSED);
+    expect(dispatched).toEqual([]);
+  });
+});
