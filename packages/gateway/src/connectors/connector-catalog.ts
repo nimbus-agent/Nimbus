@@ -414,8 +414,13 @@ export function oauthProfileForService(serviceId: ConnectorServiceId): Connector
     case "outlook":
       return {
         provider: "microsoft",
+        // `Mail.ReadWrite` backs `outlook_draft_create` (connectors 0.4.0). Only a fresh
+        // `nimbus connector auth outlook` requests it: a refresh sends no `scope` field
+        // (`auth/oauth-registry.ts` `refreshViaRegistry`), so an existing connection keeps the
+        // scopes it was granted, and the connector hides the draft tool while it lacks the scope.
         defaultScopes: [
           "Mail.Read",
+          "Mail.ReadWrite",
           "Mail.Send",
           "Calendars.Read",
           "Calendars.ReadWrite",
