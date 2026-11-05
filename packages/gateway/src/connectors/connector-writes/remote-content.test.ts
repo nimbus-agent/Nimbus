@@ -860,6 +860,35 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     }
   });
 
+  test("Obsidian: a mermaid fence holding a URL is refused (coordinator ruling)", () => {
+    const BT = "\x60\x60\x60";
+    const fence = (open: string, body: string, close = open.slice(0, 3)): string =>
+      `# Note${LF}${open}${LF}${body}${LF}${close}${LF}after`;
+    const refused = [
+      fence(`${BT}mermaid`, `graph TD${LF}A-->B${LF}click A "https://h/x"`),
+      fence(`${BT}MERMAID`, 'graph TD; A-->B; click A href "//h"'),
+      fence("~~~mermaid", 'graph TD; A[x]; click A "javascript:alert(1)"'),
+      fence(`${BT}  Mermaid`, "graph TD; A[<img src='x.png'>]; B[\"data:x\"]"),
+      fence(`> ${BT}mermaid`, `> click A "http://h"`, `> ${BT}`),
+      // Unclosed: the body runs to the end of the note.
+      `${BT}mermaid${LF}graph TD; click A "https://h"`,
+      // Fullwidth spelling of the info string folds.
+      fence(`${BT}${String.fromCodePoint(0xff4d)}ermaid`, 'click A "https://h"'),
+      // A longer fence is closed only by a run at least as long.
+      `${BT}${"\x60"}mermaid${LF}a${LF}${BT}${LF}click A "https://h"${LF}${BT}${"\x60"}`,
+    ];
+    for (const text of refused) expectRefused("obsidian-markdown", text, true);
+    const allowed = [
+      fence(`${BT}mermaid`, `graph TD${LF}A-->B${LF}B-->C: label`),
+      fence(`${BT}mermaid`, `sequenceDiagram${LF}Alice->>Bob: Hello`),
+      // A non-mermaid fence with a URL (a link-like string is not an image).
+      fence(`${BT}js`, 'const u = "https://h";'),
+      // The URL is after the mermaid fence closes.
+      `${fence(`${BT}mermaid`, "graph TD; A-->B")}${LF}[link](https://h)`,
+    ];
+    for (const text of allowed) expectAllowed("obsidian-markdown", text);
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });

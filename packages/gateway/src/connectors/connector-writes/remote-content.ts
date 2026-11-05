@@ -1182,6 +1182,72 @@ function markdownImageRemote(text: string): boolean {
   });
 }
 
+/** A fence line: its character (backtick or tilde), its run length, and the text after it. */
+interface Fence {
+  readonly ch: string;
+  readonly len: number;
+  readonly info: string;
+}
+
+/**
+ * The fence a line opens or closes, or `undefined`. Leading spaces, TABs and blockquote `>` are
+ * skipped whatever their count (an over-approximation: Obsidian renders a mermaid fence inside a
+ * quote too, and a 4-space-indented "fence" is read as one, fail closed).
+ */
+function fenceOf(line: string): Fence | undefined {
+  let i = 0;
+  while (i < line.length && (line[i] === " " || line[i] === "\t" || line[i] === ">")) i++;
+  const ch = line.charAt(i);
+  if (ch !== "\x60" && ch !== "~") return undefined;
+  let j = i;
+  while (line.charAt(j) === ch) j++;
+  return j - i < 3 ? undefined : { ch, len: j - i, info: line.slice(j) };
+}
+
+/** A URL in a mermaid body: `//` anywhere, or one of the real URL schemes (`click A "https:..."`). */
+const MERMAID_URL_SCHEME =
+  /\b(?:javascript|data|vbscript|file|mailto|tel|blob|filesystem|about|ws|wss|ftp|http|https):/;
+
+function mermaidBodyLoads(body: string): boolean {
+  const deleted = settle(body, "");
+  const spaced = settle(body, " ");
+  if (deleted === undefined || spaced === undefined) return true;
+  return [body.toLowerCase(), deleted, spaced].some(
+    (f) => f.includes("//") || MERMAID_URL_SCHEME.test(f),
+  );
+}
+
+/**
+ * Coordinator ruling (adversarial review): a `mermaid` fence (backtick or tilde, the info string
+ * naming `mermaid` in any case, after NFKC folding) whose body holds `//` or a real URL scheme is
+ * refused: Obsidian renders mermaid, and a `click` link, an image label or an HTML label can load
+ * or reach a URL. An unclosed fence runs to the end of the note. One pass over the lines.
+ */
+function mermaidLoadsRemote(text: string): boolean {
+  const lines = text.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const open = fenceOf(lines[i] ?? "");
+    if (open === undefined) continue;
+    const mermaid = foldAndStrip(open.info).toLowerCase().includes("mermaid");
+    let body = "";
+    let j = i + 1;
+    for (; j < lines.length; j++) {
+      const close = fenceOf(lines[j] ?? "");
+      if (
+        close !== undefined &&
+        close.ch === open.ch &&
+        close.len >= open.len &&
+        close.info.trim() === ""
+      )
+        break;
+      body += `${lines[j] ?? ""}\n`;
+    }
+    if (mermaid && mermaidBodyLoads(body)) return true;
+    i = j;
+  }
+  return false;
+}
+
 /** R9: an Obsidian note, (a) then (b) then (c). */
 function obsidianRemote(text: string, opts: DetectOptions): boolean {
   const rules: MarkupRules = { allowCid: false, confluence: false, allowFragmentUrl: false };
@@ -1195,6 +1261,7 @@ function obsidianRemote(text: string, opts: DetectOptions): boolean {
     refusesMarkupInDeclarations(tokens) || // (a) step 6
     hasCdata(tokens) || // (a) step 7
     markdownImageRemote(text) || // (b)
+    mermaidLoadsRemote(text) || // mermaid fences (coordinator ruling)
     (opts.tripwire && tripwire(text, "default")) // (c)
   );
 }
