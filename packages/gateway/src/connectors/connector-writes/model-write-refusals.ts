@@ -8,8 +8,9 @@
 // distinct from a configured one is refused (fail closed).
 //
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
-// GitLab scoped labels; it covers issue titles, bodies and descriptions too; since B4a also the
-// calendar event-time and iCloud event-text checks) is the ONE function
+// GitLab scoped labels; it covers issue titles, bodies and descriptions too; since B3r remote
+// content in drafts, pages, notes and Drive markup files; since B4a also the calendar event-time
+// and iCloud event-text checks) is the ONE function
 // both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
 // one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
 // covers every page row: Notion page create, update, block append and comment; Confluence page
@@ -34,6 +35,7 @@
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
+import { driveContentFormat, type RemoteContentFormat, remoteContentIn } from "./remote-content.ts";
 import { foldAndStrip, settle } from "./text-normalise.ts";
 import type { TribalKbConfig } from "./types.ts";
 
@@ -725,6 +727,115 @@ function nullOptionalFieldCheck(
   return key === undefined ? undefined : nullOptionalFieldRefusal(key);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Remote content in drafts, pages, notes and markup files (Phase 9.7 PR B3r; owner rulings
+// OR-B3-2 and OR-B3r-1..4, and the coordinator's rulings on the B3r reviews). A body that would
+// load remote content when someone opens it (an external image, embed, frame, stylesheet,
+// refresh or base URL) is refused on both doors with one fixed text that echoes nothing. Plain
+// links stay allowed and are shown verbatim. The detectors are structural scans
+// (`remote-content.ts`: a markup tokenizer, `JSON.parse` and a walk, a fixed `![` rule); they
+// never strip or rewrite. Anything that does not tokenize, parse or settle is refused, and a
+// throw inside the rule refuses too (fail closed, on the act door as well).
+//
+// Scanned rows and fields (derived from the 0.5.0 connector source; pinned by
+// `remote-content.sync.test.ts`):
+//  - `outlook_draft_create` `body`, as Outlook HTML when `contentType` is present and not exactly
+//    `"text"` (the connector sends `HTML` only for `"html"`; anything else present scans, fail
+//    closed);
+//  - `confluence_page_create`, `_update`, `_append` and `confluence_comment_add` `storageHtml`;
+//  - `notion_block_append` `childrenJson` and `notion_page_update` `propertiesJson`;
+//  - `obsidian_append_to_daily_note` `content` (Markdown, Mermaid fences included);
+//  - `gdrive_file_create` `content` (OPTIONAL: unset or `""` makes an empty file and is not
+//    scanned), when its `mimeType` is markup or its `name` ends in a markup extension
+//    (`driveContentFormat`), or as Markdown for a `.md` name.
+// Not scanned: plain-text bodies (Gmail and iCloud drafts, an Outlook draft sent as Text, every
+// calendar body), titles and recipients, the Notion page create and comment text, a Drive file of a
+// clean non-markup type and name, the B1/B2 message, comment and issue rows and `outlook_mail_send`
+// (the follow-up B3w), and before-state replies (never sent). The owner's own doors (ChatOps,
+// tribal, workflows, `nimbus connector call`) do not run this rule (stated: OR-B3-2 names
+// model-written content).
+// ---------------------------------------------------------------------------------------------
+
+export const REMOTE_CONTENT_REFUSAL =
+  "the model cannot write a draft, page, note or file that loads remote content (an external image, embed, frame or stylesheet) when it is opened; use a plain link instead";
+
+/** One scanned row: the field holding the body, and the format it is read as (or not scanned). */
+interface RemoteContentScan {
+  readonly key: ScannedKey;
+  readonly format: (input: Readonly<Record<string, unknown>>) => RemoteContentFormat | undefined;
+}
+
+function own(input: Readonly<Record<string, unknown>>, key: string): unknown {
+  return Object.hasOwn(input, key) ? input[key] : undefined;
+}
+
+/** Row 1: Outlook HTML unless `contentType` is absent or exactly `"text"` (fail closed). */
+function outlookDraftFormat(
+  input: Readonly<Record<string, unknown>>,
+): RemoteContentFormat | undefined {
+  const contentType = own(input, "contentType");
+  return contentType === undefined || contentType === "text" ? undefined : "outlook-html";
+}
+
+/** Row 9: the Drive create, by `mimeType` (R11) or `name` extension (coordinator ruling). */
+export function driveMarkupFormat(
+  input: Readonly<Record<string, unknown>>,
+): RemoteContentFormat | undefined {
+  return driveContentFormat(own(input, "mimeType"), own(input, "name"));
+}
+
+const always = (format: RemoteContentFormat) => (): RemoteContentFormat => format;
+
+/** The rows whose body the remote-content rule scans, the field and its format. */
+const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
+  outlook_draft_create: { key: REQUIRED("body"), format: outlookDraftFormat },
+  confluence_page_create: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
+  confluence_page_update: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
+  confluence_page_append: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
+  confluence_comment_add: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
+  notion_block_append: { key: REQUIRED("childrenJson"), format: always("notion-blocks") },
+  notion_page_update: { key: REQUIRED("propertiesJson"), format: always("notion-properties") },
+  obsidian_append_to_daily_note: { key: REQUIRED("content"), format: always("obsidian-markdown") },
+  gdrive_file_create: { key: OPTIONAL("content"), format: driveMarkupFormat },
+};
+
+/** The rows the remote-content rule scans (read-only, for its completeness tripwire). */
+export function remoteContentScannedRows(): readonly string[] {
+  return Object.keys(REMOTE_CONTENT_SCANNED);
+}
+
+/** The input key the remote-content rule scans for `toolId` (read-only, for its tripwire). */
+export function remoteContentScannedKeys(toolId: string): readonly string[] {
+  const scan = ownLookup(REMOTE_CONTENT_SCANNED, toolId);
+  return scan === undefined ? [] : [scan.key.key];
+}
+
+/**
+ * The remote-content check for one row: {@link REMOTE_CONTENT_REFUSAL} or `undefined`. A required
+ * key absent or not a string is refused; an optional key absent, `undefined` or `null` is skipped
+ * (`null` is then refused by the null-field check) and `""` is skipped (an empty file). Any throw
+ * (a hostile getter, a detector bug) refuses.
+ */
+function remoteContentRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const scan = ownLookup(REMOTE_CONTENT_SCANNED, toolId);
+  if (scan === undefined) return undefined;
+  try {
+    const format = scan.format(input);
+    if (format === undefined) return undefined;
+    const refused = refusesKeys(
+      input,
+      [scan.key],
+      (text) => !(text === "" && !scan.key.required) && remoteContentIn(format, text),
+    );
+    return refused ? REMOTE_CONTENT_REFUSAL : undefined;
+  } catch {
+    return REMOTE_CONTENT_REFUSAL;
+  }
+}
+
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
 function chatopsRefusal(
   toolId: string,
@@ -747,10 +858,12 @@ function chatopsRefusal(
  * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
  * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
  * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label,
- * then (B4a) the null optional-field check of the calendar and Drive creates, then the calendar
- * checks (time before text). It covers message and comment text, (B2) issue titles, bodies and
- * descriptions, and (B4a) calendar event times, iCloud event text and attendees, and null
- * optional fields. A fixed text that echoes nothing of the input, or `undefined`.
+ * then (B3r) remote content in a draft, page, note or markup file, then (B4a) the null
+ * optional-field check of the calendar and Drive creates, then the calendar checks (time before
+ * text). It covers message and comment text, (B2) issue titles, bodies and descriptions, (B3r)
+ * the bodies of drafts, pages, notes and Drive markup files, and (B4a) calendar event times,
+ * iCloud event text and attendees, and null optional fields. A fixed text that echoes nothing of
+ * the input, or `undefined`.
  */
 export function messagingDestinationRefusal(
   toolId: string,
@@ -762,6 +875,8 @@ export function messagingDestinationRefusal(
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
   if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
   if (refusesGitlabScopedLabel(toolId, input)) return GITLAB_SCOPED_LABEL_REFUSAL;
+  const remote = remoteContentRefusal(toolId, input);
+  if (remote !== undefined) return remote;
   return nullOptionalFieldCheck(toolId, input) ?? calendarRefusal(toolId, input);
 }
 

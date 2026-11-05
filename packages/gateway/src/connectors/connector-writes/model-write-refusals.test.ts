@@ -184,11 +184,27 @@ const KB: TribalKbConfig = {
   notion: { databaseId: "1A2B3C4D-5E6F-7a8b-9c0d-112233445566" },
   confluence: { spaceKey: "KB", parentPageId: "98765" },
 };
+/**
+ * Clean bodies for the page rows B3r scans: their real schemas require the body, and these KB
+ * tests are about targets, so a missing body (which the remote-content rule refuses) is filled.
+ */
+const CLEAN_BODY: Readonly<Record<string, Record<string, unknown>>> = {
+  notion_page_update: { propertiesJson: "{}" },
+  notion_block_append: { childrenJson: "[]" },
+  confluence_page_create: { storageHtml: "<p>x</p>" },
+  confluence_page_update: { storageHtml: "<p>x</p>" },
+  confluence_page_append: { storageHtml: "<p>x</p>" },
+  confluence_comment_add: { storageHtml: "<p>x</p>" },
+};
+function withCleanBody(toolId: string, input: Record<string, unknown>): Record<string, unknown> {
+  return { ...(CLEAN_BODY[toolId] ?? {}), ...input };
+}
+
 const kb = (
   toolId: string,
   input: Record<string, unknown>,
   config: TribalKbConfig | undefined = KB,
-) => modelWriteRefusal(toolId, input, { chatops: NONE, kb: config });
+) => modelWriteRefusal(toolId, withCleanBody(toolId, input), { chatops: NONE, kb: config });
 const NOTION_ID_CANONICAL = "1a2b3c4d5e6f7a8b9c0d112233445566";
 
 describe("F4: the knowledge base", () => {
@@ -640,13 +656,18 @@ describe("B3: the KB-target refusal covers every page row (plan R5)", () => {
         },
       ]),
     ];
+    const mentionsFor = (toolId: string): readonly string[] => {
+      if (toolId === "notion_page_update") return [];
+      return toolId === "notion_block_append" ? mentions.slice(2) : mentions;
+    };
     for (const [toolId, key, rest] of B3_PAGE_ROWS) {
       const kbValue = toolId.startsWith("notion") ? B3_NOTION_KB : "4242";
       const bodyKey = Object.keys(rest).find((k) => k !== "spaceKey" && k !== "title") ?? "title";
       for (const input of [
         { ...rest, [key]: "12345" },
         { ...rest, [key]: kbValue },
-        ...mentions.map((m) => ({ ...rest, [key]: "12345", [bodyKey]: m })),
+        // Notion bodies are JSON (B3r refuses one that does not parse), so only the JSON mention.
+        ...mentionsFor(toolId).map((m) => ({ ...rest, [key]: "12345", [bodyKey]: m })),
       ]) {
         expect(
           messagingDestinationRefusal(toolId, input, { chatops: NONE }),
@@ -712,29 +733,38 @@ describe("B3: actDoorRefusal's KB rules (plan R5, R12)", () => {
 
   test("the KB-target cases refuse with KNOWLEDGE_BASE_REFUSAL, before the KB-child rule", () => {
     for (const [toolId, target] of PAGE_ROWS) {
-      expect(actDoorRefusal(toolId, target, ctxWith(KB)), toolId).toBe(KNOWLEDGE_BASE_REFUSAL);
+      expect(actDoorRefusal(toolId, withCleanBody(toolId, target), ctxWith(KB)), toolId).toBe(
+        KNOWLEDGE_BASE_REFUSAL,
+      );
     }
   });
 
   test("R12: the four update/append rows refuse while their service's KB is configured, not otherwise", () => {
     for (const [toolId, , other] of PAGE_ROWS) {
       const child = KB_CHILD_ROWS.includes(toolId);
-      expect(actDoorRefusal(toolId, other, ctxWith(KB)), toolId).toBe(
+      expect(actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(KB)), toolId).toBe(
         child ? ACT_DOOR_KB_CHILD_REFUSAL : undefined,
       );
-      expect(actDoorRefusal(toolId, other, ctxWith(undefined)), toolId).toBeUndefined();
+      expect(
+        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(undefined)),
+        toolId,
+      ).toBeUndefined();
       const otherService = toolId.startsWith("notion")
         ? { confluence: KB.confluence }
         : { notion: KB.notion };
-      expect(actDoorRefusal(toolId, other, ctxWith(otherService)), toolId).toBeUndefined();
+      expect(
+        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(otherService)),
+        toolId,
+      ).toBeUndefined();
     }
   });
 
   test("an unreadable KB config refuses every KB-capable row with KNOWLEDGE_BASE_REFUSAL", () => {
     for (const [toolId, , other] of PAGE_ROWS) {
-      expect(actDoorRefusal(toolId, other, ctxWith(undefined, true)), toolId).toBe(
-        KNOWLEDGE_BASE_REFUSAL,
-      );
+      expect(
+        actDoorRefusal(toolId, withCleanBody(toolId, other), ctxWith(undefined, true)),
+        toolId,
+      ).toBe(KNOWLEDGE_BASE_REFUSAL);
     }
   });
 
@@ -744,9 +774,13 @@ describe("B3: actDoorRefusal's KB rules (plan R5, R12)", () => {
       actDoorRefusal("linear_issue_update", { issueId: "i", assigneeId: null }, ctxWith(KB, true)),
     ).toBe(LINEAR_ASSIGNEE_REFUSAL);
     // A KB-target append reports the KB-target reason, not the KB-child one.
-    expect(actDoorRefusal("confluence_page_append", { pageId: "4242" }, ctxWith(KB))).toBe(
-      KNOWLEDGE_BASE_REFUSAL,
-    );
+    expect(
+      actDoorRefusal(
+        "confluence_page_append",
+        withCleanBody("confluence_page_append", { pageId: "4242" }),
+        ctxWith(KB),
+      ),
+    ).toBe(KNOWLEDGE_BASE_REFUSAL);
     expect(ACT_DOOR_KB_CHILD_REFUSAL).toBe(
       "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it",
     );

