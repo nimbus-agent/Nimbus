@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793883514183,
+  "lastUpdate": 1793884274517,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "326493d950392b38e38b2ed5d70410693d3b976a",
-          "message": "fix(coverage): gate four runtime-bearing types files and give the sandbox harness a way to run (#1230)\n\nFindings from a coverage audit across all six repos, scored against the\nmerged lcov from CI run `31945036362` using the repo's own `parseLcov` /\n`isExempt` / `checkScopes`. Only the cheap, verified items are acted on\nhere; the rest are listed at the end for you to triage.\n\nHeadline for context, since it frames what is and isn't worth doing:\nNimbus is at **97.46% lines / 92.73% branches** over 1,000 non-exempt\nfiles, all 24 scope gates pass with 7–27 points of slack, and the\nratchet baseline carries **zero** debt entries. There is no coverage\nproblem. There are exemption-hygiene problems, which is a different\nthing.\n\n## 1. Four files were inheriting a name-pattern exemption they don't\nqualify for\n\n`exclusions.ts` exempts `types.ts` / `-types.ts` by basename, and the\ncomment on that regex is explicit about the deal:\n\n> read them as \"matched by name, not verified\" — a new `types.ts` that\ngrows runtime logic must be added to `NEVER_EXEMPT`, not left to inherit\nan exemption it does not deserve.\n\nAuditing the 28 name-matched files found four that had grown exactly\nthat, and none were listed:\n\n| File | What it actually carries |\n| --- | --- |\n| `decisions/decision-source-types.ts` | `DECISION_SOURCE_TYPES` +\n`decisionSourceFilter()` — **builds SQL** (`{ sql, params }`) |\n| `glossary/glossary-source-types.ts` | same shape, same SQL-building |\n| `extensions/auto-update-types.ts` | `ACTION_TYPE_AUTO_UPDATE` /\n`ACTION_TYPE_DOWNGRADE` — the action-type strings `auto-update-rpc.ts`\nputs on the action it sends to the consent gate, i.e. what I2/I3 match\non |\n| `perf/types.ts` | `S8_LENGTHS` / `S8_BATCHES`, iterated to derive\nbenchmark surface ids |\n\n**All four measure 100 line / 100 branch on the CI lcov** (real records:\nLF=5, 5, 2, 2), so this buys no debt at all — it buys the regression\nguard they were silently outside of. Verified with `isExempt` before and\nafter: the four now gate, and an arbitrary `some/other-types.ts` still\ninherits the exemption, so the general rule is intact.\n\n## 2. A harness cited as a coverage layer, which had no way to run\n\n`sonar-project.properties` justified excluding every connector's\n`src/server.ts` partly like this:\n\n> only the sandbox harness (gated on `NIMBUS_TEST_HARNESS`) can run it\n\n`NIMBUS_TEST_HARNESS` is read in **79** places — one `describe.skipIf`\nper connector — and was set in **none**. No workflow, no script, no\ndocumented command. A plain `bun test` reported all 79 as skipped, and\nalways had.\n\n**My first read of this was wrong and worth recording**, because the\ncorrection is the useful part. I assumed the fix was to enable them in\nCI, and started down that road. Running all 79 locally gives 78 pass / 1\nfail, and chasing the failure is what showed why that would have been a\nbad change: `runSandboxContractTests` forks a probe that opens a **real\nnetwork connection** to the connector's first declared\n`permissions.network` host. The one failure is `wiz`, and it is\nenvironmental — `api.app.wiz.io` does not resolve from here (`curl` exit\n6) while `api.github.com` returns 200. The manifest is fine.\n\nSo gating these off by default is **correct**, not an oversight: they\nare live outbound traffic to ~79 vendor endpoints. What was missing was\nany way to run them at all, and a Sonar note that claimed they were\ndoing work they were not.\n\nAdded `bun run test:sandbox`, which sets the variable and discovers the\nset (so it does not carry a list that goes stale as connectors are\nadded), and accepts a path to scope to one connector. Env passthrough is\nexplicit because `NIMBUS_TEST_HARNESS=1 bun test …` is a POSIX-shell\nidiom and a parse error in PowerShell (Non-Negotiable 5).\n\n**Red-proved** — the same file, two ways:\n\n```\nplain bun test  ->  0 pass  1 skip  0 fail\nbun run test:sandbox  ->  1 pass  0 fail\n```\n\nThat difference is the entire claim, so it is the thing I checked. The\nSonar note now says what is true, including that a non-resolving host is\nan environment result rather than a manifest defect.\n\n## 3. A CI step label that misstates the gate it runs\n\n`_test-suite.yml` named the step **\"Coverage floor — per-file 80%\ngate\"**. It has been `FLOOR_PCT = 85` line / `BRANCH_FLOOR_PCT = 80`\nbranch since those constants landed. The label is what people read in\nthe checks list when deciding whether a red gate applies to them.\n\n## Verification\n\n`preflight:fast` — 29 of 29, exit 0, run again after rebasing onto\n`main` at 2.4.8. `audit:exclusion-parity` green (it is the gate that\nwould catch a Sonar/registry mismatch from §1 and §2). New discovery\nhelper has four tests, including that it matches `sandbox.test.ts` but\nnot `sandbox-helpers.test.ts`, and returns forward slashes on every\nplatform.\n\n## Not done — findings that need a decision, not a drive-by\n\n- **The `Vault ≥90%` scope gate is close to vacuous.** It is computed\nover **4 files / 31 executable lines** — `darwin-keychain-status.ts`\n(11), `index.ts` (0), `key-format.ts` (8), `mock.ts` (12) — and one of\nthe four is a test double. The vault directory is 887 lines.\n`vault/win32.ts`, which carries **I12**, has **no lcov record at all**,\nand `check-scopes.ts` already says so in a comment. Reaching 100% there\nproves very little. Worth reshaping, but that is a real piece of work\nand it changes what a headline number in `CLAUDE.md` means.\n- **`expectNoRejectedDiagnostics`** is published from\n`@nimbus-dev/sdk/testing`, documented, exported and untested — but has\n**zero** consumers anywhere in `packages/`, so it is an unused published\nAPI rather than a live risk. (An earlier draft of this audit called it\n\"the mechanism every connector uses to fail its own suite\". It is not;\nthat claim was checked against the consumers and dropped.)\n- **Four satellite repos guard their Sonar step with `if:\nenv.SONAR_TOKEN != ''`**, which makes the workflow green while analysing\nnothing. `create-nimbus-connector` deliberately refuses that guard and\ndocuments why, skipping only on fork PRs where GitHub withholds secrets.\nThat is the pattern the other four should copy — the fix already exists\nin the fleet.\n- **86 connector shell files / ~11,189 lines carry no lcov data**, which\nis the intended consequence of the `server.ts` + `tools.ts` exclusions,\nnot a regression.\n- **Nimbus is the only repo in the fleet with a per-file branch floor.**\n`create-nimbus-connector` gates lines+functions, the three vitest repos\ngate nothing per-file, and Sonar's gate is new-code only.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-16T13:27:39Z",
-          "tree_id": "17072f776410b83f3f6502ca315d75f0838bc896",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/326493d950392b38e38b2ed5d70410693d3b976a"
-        },
-        "date": 1786887544529,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 317.3529438500009,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.5396430999899,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 191.71669114999858,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1e0f0d78dc926a1fddd336e590f72b8a2cdf4e72",
+          "message": "chore: release main (#1900)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.24.0</summary>\n\n##\n[10.24.0](https://github.com/nimbus-agent/Nimbus/compare/v10.23.0...v10.24.0)\n(2026-11-05)\n\n\n### Features\n\n* **engine:** a before-state can read twice and refuse a write before\nthe prompt ([#1899](https://github.com/nimbus-agent/Nimbus/issues/1899))\n([f718759](https://github.com/nimbus-agent/Nimbus/commit/f718759b2d9f8a896102cf4bab3dd30298e3893b))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-05T15:00:24+02:00",
+          "tree_id": "031a08907ac86c1d829b25948478d294e6c16189",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/1e0f0d78dc926a1fddd336e590f72b8a2cdf4e72"
+        },
+        "date": 1793884270485,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 299.50062049999434,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 304.84929545000375,
             "unit": "ms"
           }
         ]
