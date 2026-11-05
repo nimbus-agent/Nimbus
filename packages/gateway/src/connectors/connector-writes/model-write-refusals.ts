@@ -34,11 +34,19 @@
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
 import { FORMAT_INVISIBLE_RANGES } from "../../util/invisible-text.ts";
+import type { TribalKbConfig } from "./types.ts";
 
 export const CHATOPS_CHANNEL_REFUSAL =
   "the model cannot post to a channel Nimbus ChatOps listens on";
 export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
+/**
+ * OR-B3-3 (R11): an update or append to a page whose parent is the KB destination. The model door
+ * enforces it with the four page readers' KB-child guard (`knowledge.ts`), from the page's
+ * current parent read at call time; fixed, echoes nothing.
+ */
+export const KNOWLEDGE_BASE_CHILD_REFUSAL =
+  "the model cannot change a page in the Nimbus knowledge base; use the capture flow";
 export const BROADCAST_MENTION_REFUSAL =
   "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
 /**
@@ -53,11 +61,9 @@ export const GITLAB_QUICK_ACTION_REFUSAL =
 export const GITLAB_SCOPED_LABEL_REFUSAL =
   "the model cannot add a GitLab scoped label (key::value): it replaces the label with the same key; ask the owner to add it";
 
-/** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
-export interface TribalKbConfig {
-  readonly notion?: { readonly databaseId: string };
-  readonly confluence?: { readonly spaceKey: string; readonly parentPageId: string };
-}
+// `TribalKbConfig` lives in `./types.ts` (a before-state guard reads it, B3); re-exported here so
+// existing importers are unchanged.
+export type { TribalKbConfig } from "./types.ts";
 
 type Platform = "slack" | "teams";
 
@@ -210,7 +216,7 @@ function refusesSlackDm(chatops: ChatopsPolicy): boolean {
 }
 
 /** Notion ids compare lower-case without hyphens; a value CONTAINING the id (a URL) matches too. */
-function canonicalNotionId(s: string): string {
+export function canonicalNotionId(s: string): string {
   return s.trim().toLowerCase().replaceAll("-", "");
 }
 

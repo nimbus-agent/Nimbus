@@ -44,6 +44,7 @@ function baseParams(
     // fallback inside run-ask.ts). This mock-heavy e2e-style test isn't exercising the real
     // egress ledger, so it states that choice explicitly rather than inheriting a silent default.
     egressSink: NULL_EGRESS_SINK,
+    getTribalKbConfig: () => undefined,
     sendChunk,
   };
 }

@@ -11193,6 +11193,35 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(body).not.toContain("delegation");
   });
 
+  test("B3 (R11): the door's runner is built WITH the KB config accessor, which run-ask requires", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = src.indexOf("export function buildModelWriteExecutor(");
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    // The CALL's argument text, not the bare name: `guardContext` must be a property of the
+    // object passed to `createBeforeStateRunner(`, fed by the run-ask parameter.
+    const call = body.slice(body.indexOf("createBeforeStateRunner("));
+    const arg = call.slice(0, call.indexOf("\n    }),"));
+    expect(arg).toMatch(/guardContext:\s*\(\)\s*=>\s*\(\{\s*kb:\s*p\.getTribalKbConfig\(\)\s*\}\)/);
+    // A required parameter: a construction site that forgets it fails typecheck.
+    expect(src).toMatch(/\n {2}getTribalKbConfig: \(\) => TribalKbConfig \| undefined;\n/);
+  });
+
+  test("B3 (R11): gateway-main passes the platform KB accessor to BOTH runAsk construction sites", async () => {
+    const src = stripComments(await read("packages/gateway/src/gateway-main.ts"));
+    const wiring = /getTribalKbConfig:\s*\(\)\s*=>\s*platform\.tribalKbConfig\?\.\(\)/;
+    const invokeAt = src.indexOf("platform.ipc.setAgentInvokeHandler((ctx) =>");
+    const chatopsAt = src.indexOf("platform.chatops?.bindAskEngine(");
+    expect(invokeAt).toBeGreaterThan(-1);
+    expect(chatopsAt).toBeGreaterThan(invokeAt);
+    const invoke = src.slice(invokeAt, chatopsAt);
+    expect(invoke).toContain("runAsk({");
+    expect(invoke).toMatch(wiring);
+    const chatopsEnd = src.indexOf("\n  );\n", chatopsAt);
+    const chatops = src.slice(chatopsAt, chatopsEnd);
+    expect(chatops).toContain("createChatOpsAskEngine((query) => ({");
+    expect(chatops).toMatch(wiring);
+  });
+
   test("the executor is set only on an owner cli/ui, non-demo turn, and cleared otherwise", async () => {
     const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
     const at = src.indexOf("function offerConnectorWriteExecutorIfOwner(");
@@ -11403,10 +11432,12 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows and B2's nine issue writes, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes and B3's five page writes, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
+      "confluence_page_append",
+      "confluence_page_update",
       "github_issue_assignees_add",
       "github_issue_comment_create",
       "github_issue_labels_add",
@@ -11421,7 +11452,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       "jira_issue_update",
       "linear_comment_create",
       "linear_issue_update",
+      "notion_block_append",
       "notion_comment_create",
+      "notion_page_create",
+      "notion_page_update",
     ]);
     expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
   });

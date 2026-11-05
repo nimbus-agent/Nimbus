@@ -87,6 +87,7 @@ function harness(over: Partial<RunAskParams> = {}): Harness {
     localIndex,
     dispatcher,
     egressSink: { append: (e) => egress.push(e) },
+    getTribalKbConfig: () => undefined,
     sendChunk: () => {},
     conversationalAgent: agent,
     classify: async () => ({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0 }),

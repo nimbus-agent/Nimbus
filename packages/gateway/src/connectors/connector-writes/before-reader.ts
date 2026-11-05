@@ -6,6 +6,7 @@
 import { isReadOnlyToolId } from "../../share/read-tool-registry.ts";
 import { isConnectorWriteToolId } from "../connector-write-registry.ts";
 import {
+  type BeforeGuardContext,
   type BeforeStateRead,
   type BeforeStateReader,
   beforeGuardReasonProblem,
@@ -16,6 +17,14 @@ import {
 } from "./types.ts";
 
 export { pickBeforeReaderArgs } from "./types.ts";
+
+/** The guard context the selection probe hands a guard: both KB destinations configured. */
+const PROBE_GUARD_CONTEXT: BeforeGuardContext = Object.freeze({
+  kb: Object.freeze({
+    notion: Object.freeze({ databaseId: "probe-notion-db" }),
+    confluence: Object.freeze({ spaceKey: "PROBE", parentPageId: "1" }),
+  }),
+});
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -80,8 +89,12 @@ export function beforeReaderSelectionProblems(reader: BeforeStateReader): string
   const probes: Probe[] = [["select", (pick) => reader.select(undefined, pick, undefined)]];
   const guard = reader.guard;
   if (guard !== undefined) {
-    probes.push(["guard appliesTo", (pick) => guard.appliesTo(pick)]);
-    probes.push(["guard allows", (pick) => guard.allows(undefined, pick, undefined)]);
+    // With a context naming both KB destinations (so a context-reading guard runs past its
+    // `appliesTo`), and with none (the unreadable-config path).
+    for (const ctx of [PROBE_GUARD_CONTEXT, undefined]) {
+      probes.push(["guard appliesTo", (pick) => guard.appliesTo(pick, ctx)]);
+      probes.push(["guard allows", (pick) => guard.allows(undefined, pick, undefined, ctx)]);
+    }
   }
   for (const [name, call] of probes) {
     const probe = strictPick(keys);
@@ -91,10 +104,12 @@ export function beforeReaderSelectionProblems(reader: BeforeStateReader): string
       // A throw on the probe reply is expected; only a stray key is a problem.
     }
     const stray = probe.stray();
-    if (stray !== undefined)
+    if (stray !== undefined) {
       out.push(`before reader ${name} reads ${stray}, which is not an argKey`);
+    }
   }
-  return out;
+  // A guard is probed twice (with and without a context): report each problem once.
+  return [...new Set(out)];
 }
 
 /** Test seam: the write-id set `isReadOnlyToolId` consults. */

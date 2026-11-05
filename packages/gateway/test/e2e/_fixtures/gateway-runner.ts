@@ -256,6 +256,7 @@ services.ipc.setAgentInvokeHandler((ctx) =>
     localIndex: services.localIndex,
     dispatcher: stubAgentDispatcher,
     egressSink: makeEgressSink(services.localIndex.getDatabase()),
+    getTribalKbConfig: () => undefined,
     explainRecorder: services.askExplainRecorder,
   }),
 );

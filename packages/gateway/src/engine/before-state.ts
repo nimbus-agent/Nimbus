@@ -29,6 +29,14 @@
  * reaches a preview: `ToolExecutor.previewFor` turns it into a thrown
  * {@link BeforeStateRefusedError}, which `gate()` records as a rejection with the guard's fixed
  * reason, before any prompt.
+ *
+ * A guard may also read the gateway config (B3, R11): the runner's `guardContext` accessor is
+ * called ONCE per `read()` of a guarded row, before `appliesTo`, and its result is deep-copied and
+ * frozen, so `appliesTo` and `allows` see the same snapshot and config cannot change between them.
+ * An accessor that is absent, throws or returns a non-object gives the guard `undefined` (the
+ * config could not be read), and a guard must then apply and refuse: fail closed. The door's
+ * runner (`engine/run-ask.ts`) passes the tribal KB config; a runner built without it applies the
+ * KB-child guards and refuses.
  */
 
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
@@ -39,6 +47,7 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
+  type BeforeGuardContext,
   type BeforeStateField,
   type BeforeStateRead,
   type BeforeStateReader,
@@ -120,9 +129,14 @@ export interface BeforeStateRunner {
   ): Promise<BeforeStateOutcome | undefined>;
 }
 
-/** Test seams: the rows, the cap and the timer. Production passes none. */
+/** Test seams: the rows, the cap and the timer; and the config a guard may read. */
 export interface BeforeStateRunnerOptions {
   readonly rows?: readonly ConnectorWriteRow[];
+  /**
+   * The config a guard may read (the door passes the tribal KB destinations). Called once per
+   * `read()` of a guarded row; absent, throwing or non-object: the guard gets `undefined`.
+   */
+  readonly guardContext?: () => BeforeGuardContext;
   readonly timeoutMs?: number;
   readonly timers?: {
     set(fn: () => void, ms: number): unknown;
@@ -192,6 +206,33 @@ function readArgs(
   }
 }
 
+/** `v` and everything reachable from it frozen (a value already frozen is not walked again). */
+function deepFreeze<T>(v: T): T {
+  if (typeof v === "object" && v !== null && !Object.isFrozen(v)) {
+    Object.freeze(v);
+    for (const inner of Object.values(v)) deepFreeze(inner);
+  }
+  return v;
+}
+
+/**
+ * ONE snapshot of the guard context: the accessor's `kb`, deep-copied and frozen. `undefined`
+ * (the config could not be read) when there is no accessor, it throws, it returns a non-object,
+ * or the copy fails.
+ */
+function snapshotGuardContext(
+  accessor: (() => BeforeGuardContext) | undefined,
+): BeforeGuardContext | undefined {
+  if (accessor === undefined) return undefined;
+  try {
+    const raw: unknown = accessor();
+    if (!isPlainObject(raw)) return undefined;
+    return deepFreeze(structuredClone({ kb: raw["kb"] }) as BeforeGuardContext);
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Whether the reader's guard applies to this write. Fail closed: a non-object input (nothing to
  * pick) or a throwing `appliesTo` applies; only an exact `false` does not.
@@ -199,21 +240,26 @@ function readArgs(
 function guardApplies(
   reader: BeforeStateReader,
   picked: Readonly<Record<string, unknown>> | undefined,
+  ctx: BeforeGuardContext | undefined,
 ): boolean {
   const guard = reader.guard;
   if (guard === undefined) return false;
   if (picked === undefined) return true;
   try {
-    return guard.appliesTo(picked) !== false;
+    return guard.appliesTo(picked, ctx) !== false;
   } catch {
     return true;
   }
 }
 
 /** Whether the guard allows the write over these replies: exactly `true`, never a throw. */
-function guardAllows(reader: BeforeStateReader, replies: Replies): boolean {
+function guardAllows(
+  reader: BeforeStateReader,
+  replies: Replies,
+  ctx: BeforeGuardContext | undefined,
+): boolean {
   try {
-    return reader.guard?.allows(replies.reply, replies.picked, replies.alsoReply) === true;
+    return reader.guard?.allows(replies.reply, replies.picked, replies.alsoReply, ctx) === true;
   } catch {
     return false;
   }
@@ -338,9 +384,12 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       const picked = isPlainObject(input)
         ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)
         : undefined;
-      // Whether the guard applies is decided FIRST, from the write's input alone, so every early
-      // exit and every failure below refuses instead of showing `unavailable`.
-      const guarded = guardApplies(reader, picked);
+      // Whether the guard applies is decided FIRST, from the write's input and ONE config
+      // snapshot (the same one `allows` gets), so every early exit and every failure below
+      // refuses instead of showing `unavailable`.
+      const ctx =
+        reader.guard === undefined ? undefined : snapshotGuardContext(options.guardContext);
+      const guarded = guardApplies(reader, picked, ctx);
       const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };
       const fail = (reason: BeforeStateUnavailableReason): BeforeStateOutcome =>
         guarded ? refusal : unavailable(reason);
@@ -362,7 +411,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       const outcome = await race((spent) => readInOrder(first, second, ops, spent));
       if (outcome.kind === "unavailable") return fail(outcome.reason);
       const replies: Replies = { reply: outcome.reply, alsoReply: outcome.alsoReply, picked };
-      if (guarded && !guardAllows(reader, replies)) return refusal;
+      if (guarded && !guardAllows(reader, replies, ctx)) return refusal;
       return selectFields(reader, replies) ?? fail("failed");
     },
   };

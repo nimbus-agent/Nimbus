@@ -101,6 +101,7 @@ function harness() {
     localIndex,
     dispatcher,
     egressSink: { append: () => {} },
+    getTribalKbConfig: () => undefined,
     sendChunk: () => {},
     conversationalAgent: agent,
     classify: async () => ({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0 }),

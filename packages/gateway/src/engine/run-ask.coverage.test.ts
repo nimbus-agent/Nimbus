@@ -83,6 +83,7 @@ function baseParams(over: Partial<RunAskParams> & Pick<RunAskParams, "localIndex
     consentCoordinator: stubConsent,
     dispatcher: nullDispatcher,
     egressSink: NULL_EGRESS_SINK,
+    getTribalKbConfig: () => undefined,
     sendChunk: () => {},
     ...over,
   };

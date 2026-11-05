@@ -32,6 +32,7 @@ import {
   CHATOPS_CHANNEL_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
+  KNOWLEDGE_BASE_CHILD_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
   type TribalKbConfig,
@@ -669,6 +670,99 @@ describe("B2: the Linear assignee guard through the production door executor (OR
     expect(
       await door.call("linear__linear_issue_update", { issueId: LINEAR_ID, title: "x" }),
     ).toEqual({ updated: true });
+    expect(h.prompts).toHaveLength(1);
+  });
+});
+
+describe("B3: the KB-child guard through the production door executor (OR-B3-3)", () => {
+  const KB_CFG: TribalKbConfig = {
+    notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
+    confluence: { spaceKey: "KB", parentPageId: "4242" },
+  };
+  const pageReply = (parent: unknown) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          page: { parent, properties: { Name: { type: "title", title: [{ plain_text: "Doc" }] } } },
+          blockChildren: { results: [], has_more: false },
+        }),
+      },
+    ],
+  });
+
+  /** The door's real executor: the production rows, the runner fed the KB config. */
+  function doorExecutor(readReply: unknown, kb: TribalKbConfig | undefined) {
+    const prompts: string[] = [];
+    const dispatched: PlannedAction[] = [];
+    const consent: ConsentChannel = {
+      requestApproval: async (prompt) => {
+        prompts.push(prompt);
+        return true;
+      },
+    };
+    const audit: AuditSink = { recordAudit: () => {} };
+    const connectors: ConnectorDispatcher = {
+      dispatch: async (a) => {
+        dispatched.push(a);
+        return isBeforeReadActionType(a.type) ? readReply : { updated: true };
+      },
+    };
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      undefined,
+      makeEgressSink(db),
+      NO_POLICY_OVERLAY,
+      undefined,
+      createBeforeStateRunner({ guardContext: () => ({ kb }) }),
+    );
+    const egress = () =>
+      (
+        db.query("SELECT method, result_status FROM egress_ledger ORDER BY id").all() as Array<{
+          method: string;
+          result_status: string;
+        }>
+      ).map((r) => [r.method, r.result_status]);
+    return { exec, prompts, dispatched, egress };
+  }
+
+  const write = { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" };
+
+  test("a page in the KB database: refused with the fixed text, no prompt, no write, the write's egress row blocked", async () => {
+    const h = doorExecutor(
+      pageReply({ type: "database_id", database_id: "0123ABCD-0123-abcd-0123-abcd0123abcd" }),
+      KB_CFG,
+    );
+    const door = await realDoor(() => BOUND, KB_CFG, h.exec);
+    expect(await door.call("notion__notion_page_update", write)).toEqual({
+      refused: KNOWLEDGE_BASE_CHILD_REFUSAL,
+    });
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched.map((a) => a.type)).toEqual(["notion.before.read"]);
+    expect(h.egress()).toEqual([
+      ["notion.before.read", "authorized"],
+      ["notion.page.update", "blocked"],
+    ]);
+  });
+
+  test("a page outside the KB: the prompt, and on approval one write dispatch", async () => {
+    const h = doorExecutor(pageReply({ type: "page_id", page_id: "p" }), KB_CFG);
+    const door = await realDoor(() => BOUND, KB_CFG, h.exec);
+    expect(await door.call("notion__notion_page_update", write)).toEqual({ updated: true });
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]).toContain("Title: Doc");
+    expect(h.dispatched.map((a) => a.type)).toEqual(["notion.before.read", "notion.page.update"]);
+  });
+
+  test("no Notion KB: never refused by the guard, even for a page in a database", async () => {
+    const h = doorExecutor(
+      pageReply({ type: "database_id", database_id: "0123abcd0123abcd0123abcd0123abcd" }),
+      undefined,
+    );
+    const door = await realDoor(() => BOUND, undefined, h.exec);
+    expect(await door.call("notion__notion_page_update", write)).toEqual({ updated: true });
     expect(h.prompts).toHaveLength(1);
   });
 });

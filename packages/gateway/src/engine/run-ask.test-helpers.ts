@@ -275,6 +275,7 @@ export function makeRunAskParams(opts: MakeRunAskParamsOptions): RunAskParams {
         ? stubDispatcher
         : makeStubDispatcher({ throws: opts.dispatcherThrows }),
     egressSink: NULL_EGRESS_SINK,
+    getTribalKbConfig: () => undefined,
     sendChunk: () => {},
     ...(classify === undefined ? {} : { classify }),
     ...(opts.omitConversationalAgent === true

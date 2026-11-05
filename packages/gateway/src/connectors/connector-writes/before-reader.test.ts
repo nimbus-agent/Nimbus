@@ -678,13 +678,23 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition takes a second read and only the Linear update has a guard (B2)", () => {
+  test("in production only the Jira transition takes a second read, and the rows with a guard are exactly five (B2, B3)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition"]);
-    expect(
-      CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined).map((r) => r.toolId),
-    ).toEqual(["linear_issue_update"]);
+    const guarded = CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined);
+    expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "confluence_page_append",
+      "confluence_page_update",
+      "linear_issue_update",
+      "notion_block_append",
+      "notion_page_update",
+    ]);
+    for (const r of guarded) {
+      const reason = r.before?.guard?.reason ?? "";
+      expect(reason.trim(), r.toolId).not.toBe("");
+      expect(/\{\w+\}/.test(reason), r.toolId).toBe(false);
+    }
   });
 });
 

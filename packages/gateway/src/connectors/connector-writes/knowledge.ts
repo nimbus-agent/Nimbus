@@ -8,10 +8,14 @@ import {
   requiredStringAt,
   stringAt,
 } from "./before-select.ts";
+import { canonicalNotionId, KNOWLEDGE_BASE_CHILD_REFUSAL } from "./model-write-refusals.ts";
 import {
+  type BeforeGuardContext,
   type BeforeStateField,
+  type BeforeStateGuard,
   type ConnectorWriteRow,
   row,
+  type TribalKbConfig,
   textField,
   withBefore,
   withPreview,
@@ -281,6 +285,92 @@ export function selectConfluenceAppendTail(reply: unknown): readonly BeforeState
   ];
 }
 
+// ---------------------------------------------------------------------------------------------
+// The KB-child guard (owner ruling OR-B3-3, plan R11): the model may not update or append to a page
+// whose parent is the Nimbus knowledge-base destination (the tribal capture gate is its only
+// writer, I25). The page's current parent is read at call time by the row's own before read, and
+// the KB destination comes from the runner's frozen config snapshot. It APPLIES whenever that
+// service's KB destination is configured, or the config cannot be read (any page could be in the
+// KB, so the input alone can never rule it out); with no KB of that service it does not apply.
+// When it applies, anything but a proof that the page is outside the KB refuses (fail closed).
+// Stated bounds: the parent can change between the read and the write; the KB page itself is
+// caught earlier by the exact-id rule (`modelWriteRefusal`); a comment on a KB page, and a page
+// created under one, is not guarded (OR-B3-3 names updates and appends).
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * The Notion guard's `allows`: true only when the reply's own `page.parent` is a plain object that
+ * is not a `database_id` parent, or is one whose canonical id differs from the KB database's.
+ * No Notion KB in `kb`, a missing `page` or `parent`, a database parent without an id, an
+ * unparseable or error reply: false. (For a block append the read is `notion_page_get` on
+ * `parentBlockId`, so with a Notion KB configured the model can append only to PAGES: a block id
+ * fails the page GET and is refused.)
+ */
+export function notionKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefined): boolean {
+  const db = kb?.notion?.databaseId;
+  if (typeof db !== "string") return false;
+  try {
+    const parent = ownRecord(ownRecord(beforeReplyJson(reply), "page"), "parent");
+    if (parent === undefined) return false;
+    if (parent["type"] !== "database_id") return true;
+    const id = parent["database_id"];
+    return typeof id === "string" && canonicalNotionId(id) !== canonicalNotionId(db);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The Confluence guard's `allows`: true only when the reply's own `space.key` is a string naming
+ * another space than the KB's (trimmed, case-insensitive), or, in the KB space, when the reply's
+ * own `ancestors` array has no entry whose `String(id).trim()` is the KB parent page (any depth,
+ * any order: stricter than a direct parent). No Confluence KB in `kb`, no space key, `ancestors`
+ * absent or not an array, an unparseable or error reply: false. Bound: 0.4.0's
+ * `confluence_page_get` does not expand `ancestors`, so every update or append of a page IN the KB
+ * space is refused until nimbus-mcp-servers adds it (then this narrows with no gateway change).
+ */
+export function confluenceKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefined): boolean {
+  const c = kb?.confluence;
+  if (c === undefined) return false;
+  try {
+    const j = beforeReplyJson(reply);
+    const space = ownRecord(j, "space")?.["key"];
+    if (typeof space !== "string") return false;
+    if (space.trim().toLowerCase() !== c.spaceKey.trim().toLowerCase()) return true;
+    const ancestors =
+      typeof j === "object" && j !== null && Object.hasOwn(j, "ancestors")
+        ? (j as Record<string, unknown>)["ancestors"]
+        : undefined;
+    if (!Array.isArray(ancestors)) return false;
+    const parent = c.parentPageId.trim();
+    return !(ancestors as unknown[]).some(
+      (a) =>
+        typeof a === "object" &&
+        a !== null &&
+        Object.hasOwn(a, "id") &&
+        String((a as Record<string, unknown>)["id"]).trim() === parent,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** The KB-child guard for a Notion page update or block append. */
+const NOTION_KB_CHILD_GUARD: BeforeStateGuard = {
+  reason: KNOWLEDGE_BASE_CHILD_REFUSAL,
+  appliesTo: (_picked, ctx: BeforeGuardContext | undefined) =>
+    ctx === undefined || ctx.kb?.notion !== undefined,
+  allows: (reply, _picked, _alsoReply, ctx) => notionKbChildAllowed(reply, ctx?.kb),
+};
+
+/** The KB-child guard for a Confluence page update or append. */
+const CONFLUENCE_KB_CHILD_GUARD: BeforeStateGuard = {
+  reason: KNOWLEDGE_BASE_CHILD_REFUSAL,
+  appliesTo: (_picked, ctx: BeforeGuardContext | undefined) =>
+    ctx === undefined || ctx.kb?.confluence !== undefined,
+  allows: (reply, _picked, _alsoReply, ctx) => confluenceKbChildAllowed(reply, ctx?.kb),
+};
+
 export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
   // The connector sends the title only (no body), under `titlePropertyName` (default "title").
   // The before names the parent page (its title).
@@ -319,6 +409,7 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       argKeys: ["pageId", "propertiesJson"],
       args: (input) => ({ pageId: input["pageId"] }),
       select: selectNotionNamedProperties,
+      guard: NOTION_KB_CHILD_GUARD,
     },
   ),
   // The blocks are appended after the last child; the JSON is sent as is.
@@ -335,6 +426,7 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       argKeys: ["parentBlockId"],
       args: (input) => ({ pageId: input["parentBlockId"] }),
       select: selectNotionFirstBlocks,
+      guard: NOTION_KB_CHILD_GUARD,
     },
   ),
   // The connector keeps only `text.slice(0, 2000)`; the label says so (the preview shows it all).
@@ -382,6 +474,7 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       argKeys: ["pageId", "versionNumber"],
       args: (input) => ({ pageId: input["pageId"] }),
       select: selectConfluenceReplaceHead,
+      guard: CONFLUENCE_KB_CHILD_GUARD,
     },
   ),
   withBefore(
@@ -410,6 +503,7 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       argKeys: ["pageId"],
       args: (input) => ({ pageId: input["pageId"] }),
       select: selectConfluenceAppendTail,
+      guard: CONFLUENCE_KB_CHILD_GUARD,
     },
   ),
   row("obsidian_append_to_daily_note", "obsidian.note.append", "mesh", 2),

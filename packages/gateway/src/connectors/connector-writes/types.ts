@@ -24,9 +24,10 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since B2 sixteen rows have
-   * one: the seven comment rows (B1) and nine issue writes; the Jira transition takes two reads and
-   * the Linear update carries a guard.
+   * values on the model door's prompt only. Set with {@link withBefore}. Since B3 twenty-one rows
+   * have one: the seven comment rows (B1), nine issue writes (B2) and five page writes (B3); the
+   * Jira transition takes two reads, and five rows carry a guard (the Linear update, and the four
+   * Notion/Confluence page updates and appends with the KB-child guard).
    */
   readonly before?: BeforeStateReader;
 }
@@ -76,18 +77,46 @@ export interface BeforeStateRead {
   args(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
 }
 
+/** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
+export interface TribalKbConfig {
+  readonly notion?: { readonly databaseId: string };
+  readonly confluence?: { readonly spaceKey: string; readonly parentPageId: string };
+}
+
+/**
+ * What a guard may read besides the write's input and the replies (B3, R11): a frozen snapshot of
+ * the gateway config, taken ONCE per `read()` (the runner's `guardContext` accessor, deep-copied
+ * and frozen), so `appliesTo` and `allows` see the same values. A guard receives `undefined` when
+ * the config could not be read (no accessor, a throw, a non-object): it must then fail closed.
+ */
+export interface BeforeGuardContext {
+  readonly kb: TribalKbConfig | undefined;
+}
+
 /**
  * A before-state guard (B2a): when `appliesTo` holds for the write's input, the runner REFUSES the
  * write before the owner's prompt unless every read succeeded and `allows` returns exactly `true`.
  * Fail closed: a throw, a failed, slow, unlisted or policy-refused read, or anything but `true`
  * refuses. `reason` is a fixed, non-empty text with no `{placeholder}`; it is what the model and
- * the write's audit row get.
+ * the write's audit row get. Both functions get the same {@link BeforeGuardContext} snapshot
+ * (`undefined`: the config could not be read).
  */
 export interface BeforeStateGuard {
   readonly reason: string;
-  /** Reads the union pick of the write's input only (never a reply); anything but `false` applies. */
-  appliesTo(picked: Readonly<Record<string, unknown>>): boolean;
-  allows(reply: unknown, picked: Readonly<Record<string, unknown>>, alsoReply: unknown): boolean;
+  /**
+   * Reads the union pick of the write's input and the context only (never a reply); anything but
+   * `false` applies.
+   */
+  appliesTo(
+    picked: Readonly<Record<string, unknown>>,
+    ctx: BeforeGuardContext | undefined,
+  ): boolean;
+  allows(
+    reply: unknown,
+    picked: Readonly<Record<string, unknown>>,
+    alsoReply: unknown,
+    ctx: BeforeGuardContext | undefined,
+  ): boolean;
 }
 
 /**

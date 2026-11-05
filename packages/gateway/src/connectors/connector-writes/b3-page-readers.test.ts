@@ -12,8 +12,10 @@ import { beforeReaderProblems } from "./before-reader.ts";
 import { BEFORE_EXCERPT_MAX_CHARS } from "./before-select.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import {
+  confluenceKbChildAllowed,
   NOTION_BEFORE_BLOCKS_MAX,
   NOTION_BEFORE_PROPERTIES_MAX,
+  notionKbChildAllowed,
   selectConfluenceAppendTail,
   selectConfluenceReplaceHead,
   selectNotionFirstBlocks,
@@ -89,13 +91,17 @@ function writeAction(toolId: string, input: Record<string, unknown>): PlannedAct
 
 async function runReal(toolId: string, input: Record<string, unknown>, reply: unknown) {
   const seen: PlannedAction[] = [];
-  const out = await createBeforeStateRunner().read(writeAction(toolId, input), {
-    gate: async () => "proceed",
-    dispatch: async (a) => {
-      seen.push(a);
-      return reply;
+  // No KB configured: the KB-child guard does not apply (its own tests are below).
+  const out = await createBeforeStateRunner({ guardContext: () => ({ kb: undefined }) }).read(
+    writeAction(toolId, input),
+    {
+      gate: async () => "proceed",
+      dispatch: async (a) => {
+        seen.push(a);
+        return reply;
+      },
     },
-  });
+  );
   return { out, seen };
 }
 
@@ -522,5 +528,68 @@ describe("the B3 page before-readers (plan R3)", () => {
     ]) {
       expect(fields.length).toBeLessThan(BEFORE_STATE_MAX_FIELDS);
     }
+  });
+});
+
+describe("the KB-child allows functions over the MCP reply shape (OR-B3-3, R11)", () => {
+  const KB = {
+    notion: { databaseId: "0123abcd-0123-abcd-0123-abcd0123abcd" },
+    confluence: { spaceKey: "KB", parentPageId: "4242" },
+  };
+  const page = (parent: unknown) => mcp({ page: { parent }, blockChildren: { results: [] } });
+  const conf = (o: Record<string, unknown>) => mcp({ title: "t", ...o });
+
+  test("Notion: true only for a parent proven outside the KB database", () => {
+    const cases: ReadonlyArray<readonly [unknown, boolean]> = [
+      [page({ type: "page_id", page_id: "p" }), true],
+      [page({ type: "block_id", block_id: "b" }), true],
+      [page({ type: "workspace", workspace: true }), true],
+      [page({ type: "database_id", database_id: "ffffffffffffffffffffffffffffffff" }), true],
+      [page({ type: "database_id", database_id: "0123ABCD0123ABCD0123ABCD0123ABCD" }), false],
+      [page({ type: "database_id", database_id: 7 }), false],
+      [page(null), false],
+      [page([]), false],
+      [mcp({ page: null }), false],
+      [mcp({}), false],
+      [{ ...page({ type: "page_id" }), isError: true }, false],
+      ["junk", false],
+      // A bare object (no `content`) is read as is, like every selector.
+      [{ page: { parent: { type: "page_id" } } }, true],
+    ];
+    for (const [reply, want] of cases) {
+      expect(notionKbChildAllowed(reply, KB), JSON.stringify(reply)).toBe(want);
+    }
+  });
+
+  test("Notion: no Notion KB in the config cannot prove anything: false", () => {
+    const ok = page({ type: "page_id" });
+    expect(notionKbChildAllowed(ok, undefined)).toBe(false);
+    expect(notionKbChildAllowed(ok, { confluence: KB.confluence })).toBe(false);
+  });
+
+  test("Confluence: both reply shapes (0.4.0 without ancestors, and with them)", () => {
+    const cases: ReadonlyArray<readonly [unknown, boolean]> = [
+      [conf({ space: { key: "ENG" } }), true],
+      [conf({ space: { key: "KB" } }), false],
+      [conf({ space: { key: "kb" } }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, { id: "2" }] }), true],
+      [conf({ space: { key: "KB" }, ancestors: [] }), true],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "4242" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, { id: "4242" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: 4242 }, { id: "9" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: "4242" }), false],
+      [conf({ space: { key: 1 } }), false],
+      [conf({}), false],
+      [{ ...conf({ space: { key: "ENG" } }), isError: true }, false],
+    ];
+    for (const [reply, want] of cases) {
+      expect(confluenceKbChildAllowed(reply, KB), JSON.stringify(reply)).toBe(want);
+    }
+  });
+
+  test("Confluence: no Confluence KB in the config: false", () => {
+    const ok = conf({ space: { key: "ENG" } });
+    expect(confluenceKbChildAllowed(ok, undefined)).toBe(false);
+    expect(confluenceKbChildAllowed(ok, { notion: KB.notion })).toBe(false);
   });
 });
