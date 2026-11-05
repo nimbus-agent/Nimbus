@@ -24,8 +24,11 @@ export function buildHelperArgv(policy: SandboxPolicy, opts: { cwd: string }): s
   for (const p of policy.permissions.filesystem.read) {
     argv.push("--grant-read", p);
   }
+  // A path the gateway declared a FILE is passed as one (`--grant-write-file`): the helper grants that
+  // file only, with no inheritance, and refuses if it is not a regular file. Never guessed from disk.
+  const files = new Set(policy.canonicalWriteFiles ?? []);
   for (const p of policy.permissions.filesystem.write) {
-    argv.push("--grant-write", p);
+    argv.push(files.has(p) ? "--grant-write-file" : "--grant-write", p);
   }
   argv.push("--");
   return argv;

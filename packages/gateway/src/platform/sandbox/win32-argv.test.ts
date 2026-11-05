@@ -63,3 +63,23 @@ describe("buildHelperArgv", () => {
     expect(buildHelperArgv(policy(), { cwd: "C:\\d" }).at(-1)).toBe("--");
   });
 });
+
+describe("buildHelperArgv: a declared file is --grant-write-file (re-review finding 2)", () => {
+  it("each canonicalWriteFiles entry is passed as a file; every other write stays --grant-write", () => {
+    const argv = buildHelperArgv(
+      {
+        id: "com.nimbus.obsidian",
+        permissions: {
+          network: [],
+          filesystem: { read: [], write: ["C:\\n\\v\\2026-11-05.md", "C:\\data"] },
+        },
+        canonicalWriteFiles: ["C:\\n\\v\\2026-11-05.md"],
+      },
+      { cwd: "C:\\cwd" },
+    );
+    expect(argv).toContain("--grant-write-file");
+    expect(argv[argv.indexOf("--grant-write-file") + 1]).toBe("C:\\n\\v\\2026-11-05.md");
+    expect(argv[argv.indexOf("--grant-write") + 1]).toBe("C:\\data");
+    expect(argv.filter((a) => a === "--grant-write")).toHaveLength(1);
+  });
+});

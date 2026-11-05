@@ -276,6 +276,10 @@ typedef struct {
     int nread;
     const wchar_t *writes[MAX_GRANTS];
     int nwrite;
+    /* --grant-write-file: the gateway DECLARES each of these a single regular file (the Obsidian
+     * daily note, I15). Granted on that file only, never inherited; refused unless it IS one. */
+    const wchar_t *write_files[MAX_GRANTS];
+    int nwrite_file;
     int child_argv_start;
 } spawn_opts;
 
@@ -291,6 +295,7 @@ static int parse_spawn_option(int argc, wchar_t **argv, int *i, spawn_opts *o) {
     else if (wcscmp(argv[*i], L"--capability") == 0 && *i + 1 < argc)  { ++(*i); if (wcscmp(argv[*i], L"internetClient") == 0) o->want_net = TRUE; }
     else if (wcscmp(argv[*i], L"--grant-read") == 0 && *i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++(*i)]; }
     else if (wcscmp(argv[*i], L"--grant-write") == 0 && *i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--grant-write-file") == 0 && *i + 1 < argc) { if (o->nwrite_file >= MAX_GRANTS) { err(L"too many --grant-write-file"); return 64; } o->write_files[o->nwrite_file++] = argv[++(*i)]; }
     else { err(L"unexpected arg: %s", argv[*i]); return 64; }
     return 0;
 }
@@ -304,6 +309,7 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
     o->want_net = FALSE;
     o->nread = 0;
     o->nwrite = 0;
+    o->nwrite_file = 0;
 
     int i = 1;
     for (; i < argc; i++) {
@@ -322,15 +328,18 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
 /* Apply the cwd grant and the policy-path grants. Returns 0 or the exit code. Does NOT free
  * `sid` — the caller owns it on every path, which is why this returns a code rather than
  * cleaning up itself. */
-/* A FILE has no children, so an inheritable ACE on one means nothing but reads as a subtree grant:
- * a file path (the Obsidian daily-note grant, I15) gets an ACE on that file ONLY. A directory, or a
- * path whose attributes cannot be read (it then fails in grant_path), keeps the subtree grant. */
-static DWORD inheritance_for(const wchar_t *path) {
+/* A declared file (--grant-write-file) must be exactly that NOW: it exists, it is not a folder and
+ * it is not a reparse point (a symlink or junction). Anything else refuses the spawn (66): a
+ * folder swapped in at the path would otherwise get the grant. Racy only against a swap between
+ * this check and grant_path's DACL write; the gateway's wrapper checks too, before it calls us. */
+static int require_regular_file(const wchar_t *path) {
     DWORD attrs = GetFileAttributesW(path);
-    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
-        return NO_INHERITANCE;
+    if (attrs == INVALID_FILE_ATTRIBUTES) { err(L"--grant-write-file %s: not found (%lu)", path, GetLastError()); return 66; }
+    if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        err(L"--grant-write-file %s: not a regular file", path);
+        return 66;
     }
-    return SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+    return 0;
 }
 
 static int apply_grants(PSID sid, const spawn_opts *o) {
@@ -351,7 +360,16 @@ static int apply_grants(PSID sid, const spawn_opts *o) {
     for (int k = 0; k < o->nwrite; k++) {
         rc = grant_path(o->writes[k], sid,
                         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
-                        inheritance_for(o->writes[k]));
+                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
+        if (rc != 0) return rc;
+    }
+    /* Declared files: the ACE is on the file only (NO_INHERITANCE), and only if it IS a file. */
+    for (int k = 0; k < o->nwrite_file; k++) {
+        rc = require_regular_file(o->write_files[k]);
+        if (rc != 0) return rc;
+        rc = grant_path(o->write_files[k], sid,
+                        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+                        NO_INHERITANCE);
         if (rc != 0) return rc;
     }
     return 0;

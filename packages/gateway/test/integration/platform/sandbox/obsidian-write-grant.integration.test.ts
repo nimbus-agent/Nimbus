@@ -400,6 +400,61 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
     },
   );
 
+  // Re-review finding 2: the file kind is DECLARED by the gateway (canonicalWriteFiles), never
+  // guessed from the disk at spawn. A declared file swapped for a folder, or deleted, after the
+  // gateway prepared it refuses the spawn (the wrapper exits 2 before any runner starts), on every OS.
+  for (const swap of ["a folder", "deleted"] as const) {
+    it.skipIf(!READY)(
+      `today's note ${swap === "deleted" ? "deleted" : "swapped for a folder"} after preparation: the spawn is refused`,
+      async () => {
+        const policy = obsidianPolicy(true); // prepared now: today's note exists as a file
+        expect(policy.canonicalWriteFiles).toEqual([today]);
+        rmSync(today, { force: true });
+        if (swap === "a folder") mkdirSync(today);
+        try {
+          const r = await runSandboxed(
+            policy,
+            probeArgv([join(today, "inside.md"), TARGETS.newFile]),
+          );
+          expect(r.status).toBe(2);
+          expect(r.stderr).toContain("is no longer a single regular file");
+          expect(existsSync(join(today, "inside.md"))).toBe(false);
+          expect(written("newFile")).toBe(false);
+        } finally {
+          rmSync(today, { recursive: true, force: true });
+          writeFileSync(today, "");
+        }
+      },
+    );
+  }
+
+  it.skipIf(!READY || !IS_WIN)(
+    "Windows: the helper itself refuses --grant-write-file on a folder (66)",
+    () => {
+      const folder = join(work, "not-a-file");
+      mkdirSync(folder, { recursive: true });
+      const r = spawnSync(
+        WIN_HELPER,
+        [
+          "--profile",
+          PROFILE,
+          "--cwd",
+          work,
+          "--grant-write-file",
+          folder,
+          "--",
+          "cmd.exe",
+          "/c",
+          "exit 0",
+        ],
+        { encoding: "utf8", windowsHide: true, timeout: SPAWN_MS },
+      );
+      expect(r.status).toBe(66);
+      expect(r.stderr).toContain("not a regular file");
+      expect(appContainerAces(folder).filter((l) => !l.includes("(I)"))).toEqual([]);
+    },
+  );
+
   // Why the revoke exists, measured: without it a grant-on spawn's write ACE on the file outlives
   // its child, and the next grant-off spawn of the same profile still writes it.
   it.skipIf(!READY || !IS_WIN)(

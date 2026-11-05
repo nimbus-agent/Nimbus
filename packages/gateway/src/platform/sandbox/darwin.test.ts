@@ -308,18 +308,24 @@ describe("a file write grant is a literal (the Obsidian daily note, I15)", () =>
     expect(block).not.toContain("2026-11-05.md");
   });
 
-  it("writeFilesOf names exactly the write paths that are regular files now", () => {
+  it("writeFilesOf is exactly the DECLARED files in the write list, never guessed from disk", () => {
+    // A declared file that is now a folder, or deleted, is still a file grant here (the wrapper
+    // refuses that spawn first); an undeclared path that is a file on disk is still a subpath.
     const dir = mkdtempSync(join(tmpdir(), "nimbus-darwin-files-"));
-    const file = join(dir, "note.md");
-    writeFileSync(file, "");
+    const onDisk = join(dir, "on-disk.md");
+    writeFileSync(onDisk, "");
     const set = writeFilesOf({
       id: "x",
       permissions: {
         network: [],
-        filesystem: { read: [], write: [file, dir, join(dir, "absent")] },
+        filesystem: {
+          read: [],
+          write: [onDisk, join(dir, "declared-folder"), "/declared/gone.md"],
+        },
       },
+      canonicalWriteFiles: [join(dir, "declared-folder"), "/declared/gone.md", "/not/in/write.md"],
     });
-    expect([...set]).toEqual([file]);
+    expect([...set]).toEqual([join(dir, "declared-folder"), "/declared/gone.md"]);
     rmSync(dir, { recursive: true, force: true });
   });
 });

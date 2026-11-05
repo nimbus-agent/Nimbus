@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { lstatSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -19,17 +19,14 @@ interface SbplOpts {
   writeFiles?: ReadonlySet<string>;
 }
 
-/** The write paths of `policy` that exist as regular files now (a missing path is not one). */
+/**
+ * The write paths the gateway DECLARED single files (`canonicalWriteFiles`), and only those: the kind
+ * is never guessed from what is on disk at spawn, where a folder or a deleted file would turn a file
+ * grant into a `subpath` one. A declared path that is not in the write list is not granted at all.
+ */
 export function writeFilesOf(policy: SandboxPolicy): ReadonlySet<string> {
-  const out = new Set<string>();
-  for (const p of policy.permissions.filesystem.write) {
-    try {
-      if (lstatSync(p).isFile()) out.add(p);
-    } catch {
-      // absent: granted as a subpath, as before
-    }
-  }
-  return out;
+  const write = new Set(policy.permissions.filesystem.write);
+  return new Set((policy.canonicalWriteFiles ?? []).filter((p) => write.has(p)));
 }
 
 /**

@@ -1518,15 +1518,29 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(mesh).toMatch(
         /appContainerGrantRevokerFor\(platform, manifestForFirstParty\("obsidian"\)\.id\)/,
       );
-      // A file write path is a literal on macOS and gets a non-inheritable ACE on Windows.
+      // A declared file is `file-write-data` on a literal on macOS (never file-write*), and a
+      // non-inheritable ACE on Windows; macOS reads the declared kind, never the disk.
       const darwin = stripComments(await read("packages/gateway/src/platform/sandbox/darwin.ts"));
-      expect(darwin).toMatch(
-        /opts\.writeFiles\?\.has\(p\) === true \? ` {2}\(literal "\$\{p\}"\)`/,
-      );
+      expect(darwin).toMatch(/\.map\(\(p\) => `\(allow file-write-data \(literal "\$\{p\}"\)\)`\)/);
       expect(darwin).toMatch(/writeFiles: writeFilesOf\(policy\)/);
+      expect(darwin).toMatch(/policy\.canonicalWriteFiles \?\? \[\]/);
+      expect(darwin).not.toMatch(/lstatSync|statSync/);
       const helper = await read("packages/gateway/src-native/sandbox-helper-win32/main.c");
-      expect(helper).toMatch(/inheritance_for\(o->writes\[k\]\)/);
-      expect(helper).toMatch(/return NO_INHERITANCE;/);
+      // The kind is DECLARED, never probed: win32-argv passes --grant-write-file for each
+      // canonicalWriteFiles entry; the helper refuses one that is not a regular file and grants
+      // it with NO_INHERITANCE.
+      const argv = stripComments(await read("packages/gateway/src/platform/sandbox/win32-argv.ts"));
+      expect(argv).toMatch(/files\.has\(p\) \? "--grant-write-file" : "--grant-write"/);
+      expect(helper).toMatch(/rc = require_regular_file\(o->write_files\[k\]\);/);
+      expect(helper).toMatch(/grant_path\(o->write_files\[k\], sid,[\s\S]{0,120}NO_INHERITANCE\)/);
+      expect(helper).not.toMatch(/inheritance_for/);
+      const wrapper = stripComments(
+        await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts"),
+      );
+      expect(wrapper.indexOf("writeFileDrift(policy,")).toBeGreaterThan(0);
+      expect(wrapper.indexOf("writeFileDrift(policy,")).toBeLessThan(
+        wrapper.indexOf("createSandboxRunner("),
+      );
       // The pre-spawn hook awaits the revoke-then-record step; the ledger is saved only AFTER the
       // revoke resolved (an entry leaves the ledger only once revoked), and before the spawn.
       expect(mesh).toMatch(/await this\.revokeObsidianGrants\(plan\.writePaths\);/);

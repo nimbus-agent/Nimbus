@@ -49,6 +49,13 @@ export type ExtensionManifest = RegistryExtensionManifest & {
    * provenance rule: set only by gateway code, never read from a manifest file.
    */
   canonicalWritePaths?: readonly string[];
+  /**
+   * The write paths the gateway DECLARES single regular files (the Obsidian daily notes, I15). Each
+   * is granted as that file only (macOS `file-write-data` on a literal, Windows `--grant-write-file`)
+   * and the sandbox wrapper refuses the spawn unless each still `lstat`s as a regular file with one
+   * name. Same provenance rule: set only by gateway code, never read from a manifest file.
+   */
+  canonicalWriteFiles?: readonly string[];
 };
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";

@@ -851,7 +851,9 @@ export function obsidianSpawnManifest(
       },
     },
     // Only with a grant, so a spawn without one is exactly the read-only spawn it always was.
-    ...(writePaths.length === 0 ? {} : { canonicalWritePaths: [...writePaths] }),
+    ...(writePaths.length === 0
+      ? {}
+      : { canonicalWritePaths: [...writePaths], canonicalWriteFiles: [...writePaths] }),
   };
 }
 

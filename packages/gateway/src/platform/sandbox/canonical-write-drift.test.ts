@@ -4,7 +4,16 @@
  * Real links on every OS (junctions on win32 need no privilege).
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
+import {
+  linkSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -14,6 +23,7 @@ import {
   parseSandboxPolicy,
   policyFromManifest,
   type SandboxPolicy,
+  writeFileDrift,
 } from "./sandbox-policy.ts";
 
 const temps: string[] = [];
@@ -71,5 +81,74 @@ describe("canonicalWriteDrift", () => {
     expect(() => parseSandboxPolicy(JSON.stringify({ ...p, canonicalWritePaths: [7] }))).toThrow();
     const { canonicalWritePaths: _c, ...without } = p;
     expect(parseSandboxPolicy(JSON.stringify(without)).canonicalWritePaths).toBeUndefined();
+  });
+});
+
+describe("writeFileDrift: a declared file must still be one regular file (re-review finding 2)", () => {
+  function filePolicy(write: readonly string[], files: readonly string[]): SandboxPolicy {
+    return {
+      id: "com.nimbus.obsidian",
+      permissions: { network: [], filesystem: { read: [], write: [...write] } },
+      canonicalWriteFiles: files,
+    };
+  }
+
+  test("a regular file with one name passes", () => {
+    const f = join(base(), "note.md");
+    writeFileSync(f, "");
+    expect(writeFileDrift(filePolicy([f], [f]), (p) => lstatSync(p))).toBeUndefined();
+  });
+
+  test("a folder, a missing path, a symlink or a second name at a declared file's path refuses", () => {
+    const b = base();
+    const folder = join(b, "now-a-folder.md");
+    mkdirSync(folder);
+    expect(writeFileDrift(filePolicy([folder], [folder]), (p) => lstatSync(p))).toBe(folder);
+    const gone = join(b, "gone.md");
+    expect(writeFileDrift(filePolicy([gone], [gone]), (p) => lstatSync(p))).toBe(gone);
+    const target = join(b, "target.md");
+    writeFileSync(target, "");
+    const hard = join(b, "hard.md");
+    linkSync(target, hard);
+    expect(writeFileDrift(filePolicy([hard], [hard]), (p) => lstatSync(p))).toBe(hard);
+    const sym = join(b, "sym.md");
+    try {
+      symlinkSync(target, sym, "file");
+    } catch {
+      return; // Windows without the privilege: the other three cases stand
+    }
+    expect(writeFileDrift(filePolicy([sym], [sym]), (p) => lstatSync(p))).toBe(sym);
+  });
+
+  test("a declared file that is not in the write list refuses; no declaration, no check", () => {
+    expect(
+      writeFileDrift(filePolicy([], ["/x.md"]), () => ({
+        isFile: () => true,
+        isSymbolicLink: () => false,
+        nlink: 1,
+      })),
+    ).toBe("/x.md");
+    expect(
+      writeFileDrift(
+        { id: "x", permissions: { network: [], filesystem: { read: [], write: ["/d"] } } },
+        () => {
+          throw new Error("never called");
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the field crosses the wire", () => {
+    const p = filePolicy(["/n.md"], ["/n.md"]);
+    expect(parseSandboxPolicy(JSON.stringify(p)).canonicalWriteFiles).toEqual(["/n.md"]);
+    expect(() => parseSandboxPolicy(JSON.stringify({ ...p, canonicalWriteFiles: [1] }))).toThrow();
+    expect(
+      policyFromManifest({
+        id: "com.nimbus.obsidian",
+        version: "1.0.0",
+        permissions: { network: [], filesystem: { read: [], write: ["/n.md"] } },
+        canonicalWriteFiles: ["/n.md"],
+      } as unknown as Parameters<typeof policyFromManifest>[0]).canonicalWriteFiles,
+    ).toEqual(["/n.md"]);
   });
 });
