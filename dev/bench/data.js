@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793891215117,
+  "lastUpdate": 1793898248200,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "8a64e4f8f3c4dcb83e9278e0e33317be87ba7020",
-          "message": "chore: release main (#1233)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.5.0</summary>\n\n##\n[2.5.0](https://github.com/nimbus-agent/Nimbus/compare/v2.4.9...v2.5.0)\n(2026-08-16)\n\n\n### Features\n\n* **clips:** related answers about the resolved item, and its snippets\ncome from the body\n([#1232](https://github.com/nimbus-agent/Nimbus/issues/1232))\n([9f75fa3](https://github.com/nimbus-agent/Nimbus/commit/9f75fa3fe8c75a740ff86dbea09b8d80cca427b3))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-16T16:44:38Z",
-          "tree_id": "12e5b217c539d8e274fc2a9536ec055dca3c9079",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/8a64e4f8f3c4dcb83e9278e0e33317be87ba7020"
-        },
-        "date": 1786899381279,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 328.84185955000174,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.8910753000011,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 230.0264629499954,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c14431b00706b23a086f8cc6941914debc4c9d06",
+          "message": "feat(gateway): the model can propose email drafts and page writes, each behind your approval (#1903)\n\nPhase 9.7 Project B, PR B3: the model can now propose email drafts and\nNotion/Confluence page writes. Each one is HITL-gated, shows a typed\npreview with the target's current state, and is offered only after the\nowner re-approves the new list with `nimbus connector writes enable`.\n\n**Nine rows the model can now propose (each still prompts the owner\nevery time):**\n- **Drafts:** Gmail, Apple Mail and Outlook draft create.\n- **Pages:** Notion page create, page update and block append;\nConfluence page create, page update and page append.\n\nA draft sends nothing. Its preview lists every recipient on its own line\n(To, Cc, and Bcc marked as hidden).\n\n**Before-state:**\n- **Readers:** five readers show the target's title and version, plus a\ncapped excerpt. Notion shows at most 5 blocks, and a page with no text\nshows `(no text)`. A Confluence update shows the head of the current\nbody, and an append shows its tail.\n- **Excerpts:** values are capped and cut on code points. Excerpts go\nonly into the owner's prompt, never to the model or the write's audit\nrow.\n\n**Knowledge-base rulings (owner, 2026-11-05):**\n- **Exact-id refusal (OR-B3-1).** A write whose target is the configured\ntribal KB destination is refused on BOTH doors through one shared\nhelper. `confluence_page_append` is added to the Confluence KB keys.\n- **Pages directly under the KB (OR-B3-3).** This is a before-state\nguard that reads a frozen KB-config snapshot, taken once per call.\n- Notion: a page whose parent is the KB database is refused before the\nprompt. Only known non-database parent types are allowed.\n  - Confluence: a page under the KB parent is refused.\n- Fail-closed cases: an unreadable or malformed config, a failed read,\nor a block id given where a page id is expected all refuse.\n- Act door (it cannot read): a page update or append for a service is\nrefused while that service has a KB configured.\n- **Stated limit (controller ruling).** `confluence_page_get` in\nconnectors 0.4.0 returns no `ancestors`. Until a connector release adds\nthem, the model door refuses EVERY update or append to a page in the KB\nspace, not only pages under the KB parent. This fails closed, and a\nnimbus-mcp-servers follow-up will narrow it.\n- **Remote images and embeds (OR-B3-2).** B3 shows them verbatim in the\npreview. Follow-up PR B3r adds the refusal.\n\n**Wiring:**\n- `RunAskParams.getTribalKbConfig` is required, and both `runAsk` sites\nsupply it.\n- `PlatformServices.tribalKbConfig` is now required, so a missing\naccessor can never read as \"no KB\".\n- The `[tribal]` config load in `assemble.ts` moves above the MCP\ncapture gate, so both doors read the same value. A boot test checks\nthis.\n\n**MCP act door.** The Outlook draft and the Confluence append become\nproposable. The counts are now 43 proposable, 117 denied and 1\n`not_yet_offered` (`jira.issue.transition`).\n\n**Totals.** 34 rows are offered to the model, 52 are templated, and 21\nhave a before reader.\n\n**Tests:**\n- A real Confluence connector against a fake upstream.\n- Re-consent and injection fixtures on the real rows.\n- Every new rule red-proved by reverting it.\n- `engine/before-state.ts` at 98/98 branches; `engine/executor.ts` is\nuntouched.\n\n**Not breaking.** Nothing is offered until the owner re-runs `enable`\nand approves, and every write still prompts. The new act-door KB\nrefusals tighten behaviour; they do not break anything.\n\n**Docs.** Updated the five core docs (CLAUDE.md and GEMINI.md, roadmap,\narchitecture, README, cli-reference), SECURITY-INVARIANTS (the I28 order\nand statement, plus the I53 bounds including the `ancestors` limit), the\n`nimbus-mcp-sink` skill and the CHANGELOG.\n\n**Verification:**\n- `preflight:fast` and `typecheck:tests` are clean, with 0 new errors.\n- `audit:doc-refs`, `audit:status-drift` and `audit:platform-test-gaps`\nare clean.\n- `verify:docker --changed` in the CI Linux image: 1223 pass, 0 fail.\n- Two task reviews and a whole-branch review all came back SHIP, with\ntheir findings fixed.\n- The local whole-repo `--parallel` failures are all outside this diff:\nthe toolgen sandbox helper is not built in a fresh worktree, pwsh is\nmissing, and some tests time out under load.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added email draft creation for Gmail, Apple Mail, and Outlook, plus\nNotion and Confluence page creation, updates, and appends. Drafts are\nsaved without being sent.\n* Write previews now show relevant recipients and page details,\nincluding capped excerpts of existing page content where available.\n* Outlook draft creation and Confluence page appends are now available\nthrough MCP proposals.\n* **Safety**\n* Writes to configured knowledge-base destinations, and updates or\nappends to pages within them, are refused. Unreadable knowledge-base\nsettings also block affected actions.\n* Previously enabled writes may require renewed consent; older Outlook\nconnections may need reauthorization to create drafts.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T16:53:08Z",
+          "tree_id": "8f86c3832fff2043dfb7c020185e8c3b82856871",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c14431b00706b23a086f8cc6941914debc4c9d06"
+        },
+        "date": 1793898243533,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 303.8647630500036,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 298.3570666999993,
             "unit": "ms"
           }
         ]
