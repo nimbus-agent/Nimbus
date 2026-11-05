@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793869210138,
+  "lastUpdate": 1793871165240,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "f7d8c75cdd893a0cabd596f3792fc5aa05c43d05",
-          "message": "fix(security): three allowlisted methods had no reachable handler; add the test I7 promised (#1225)\n\nI7 clause (a) says *\"Every entry must have a gateway handler\"*, and its\nHow-to-comply tells authors to *\"update the allowlist test that asserts\nevery entry resolves to a real handler.\"* **That test does not exist.**\nThree of 106 entries had nothing reachable behind them.\n\nI went looking because `connector.list` was the last open item from the\nI1–I30 audit and I wanted the fact that decides it: is it the only one?\nIt is not.\n\n## The three\n\n**`connector.list`** — no handler anywhere. `dispatchConnectorRpc`'s\nswitch has no case, so it falls to `default: return { kind: \"miss\" }`,\nthrough the rest of the chain, and out as -32601. Dead since the day it\nwas added. `Connect.tsx:63` polls it every 2s inside a bare `catch {}`\ncommented `// transient; keep polling` — a permanent structural error\nclassified as transient, so desktop onboarding step 2 can never reach\nits `navigate`.\n\n**`audit.export`** and **`audit.getSummary`** — a different and more\ninteresting failure. Both handlers exist and are registered. An arm\nguard strands them:\n\n```ts\nif (method !== \"audit.verify\" && method !== \"audit.exportAll\") return phase4RpcSkipped;\n```\n\nThe guard names two methods; the leaf map serves five.\n`handleAuditExport` was aliased to `audit.export` alongside\n`audit.exportAll` **leaf-side, and the guard was never mirrored** — two\nplaces, one updated. `audit.getSummary` and `audit.toolCalls` were\nstranded the same way.\n\nUser-visible: the audit panel's summary tile silently never populates,\nand export fails loudly with \"Method not found\" *after* the user has\nalready picked a save path.\n\nThe fix is a namespace check, so the leaf map is the single source of\ntruth for which audit methods are served and there is no second place to\nforget.\n\n## Retiring `connector.list` rather than adding a handler\n\nChecked before deciding, because if a published package exposed it,\nremoval would be breaking:\n\n- **`@nimbus-dev/client` has never had it.** `git grep -F\n'connector.list' $(git rev-list --all)` is empty across every ref — not\njust the working tree. The interface has `connectorListStatus`, not\n`connectorList`.\n- **The VS Code extension doesn't call it** — verified against the\nextracted `nimbus-vscode-0.17.0.vsix`, not just source:\n`connector.listStatus` ×2, bare ×0.\n- **`listStatus` is the established pattern** — every live consumer uses\nit.\n- **The desktop has never shipped.** No `desktop*` tag, `build-ui`\nrelease job still unchecked, no `tauri` reference in any release\nworkflow.\n\nSo: entry removed, Rust assertion and count 106 → 105, and `Connect.tsx`\nrepointed at `connector.listStatus`. The two health vocabularies are\n**identical** — gateway `ConnectorHealthState` and UI `ConnectorHealth`\nhave the same six members, and `SyncStatus.healthState` is populated\nstraight from `health.state` — so this is a rename, not a semantic\nremap.\n\n## The test\n\nA **live probe**, not a source scan. Dispatch here is not uniform:\nterminal switch, namespace-prefix sub-dispatcher, handler map behind\n`dispatchByMethod`, direct-index map, inline handler, alias — and two\narms claim every method with no prefix check, so prefix reasoning alone\nmarks `team.auditMerged` and `scim.*` unresolved. A static model of\neleven shapes is a second implementation of the router that goes stale\nthe first time someone adds a twelfth.\n\nIt boots a real `createIpcServer`, calls all 105 over the socket, and\nasserts none returns -32601. The load-bearing trick is **throwing\nstubs** for every gating ctx option: many arms skip when their option is\n`undefined`, and a skip is indistinguishable from a structural miss at\nthe wire. Wiring them with stubs that throw means *reaching* one proves\nresolution. Without that the test reports ~37 false positives.\n\n## Red-prove\n\n| Mutation | Result |\n| --- | --- |\n| Restore the two-name audit guard | fails, naming **both**\n`audit.export` and `audit.getSummary` |\n| Put `connector.list` back on the allowlist | fails, naming it |\n| Add a brand-new entry with nothing behind it | fails, naming it |\n\nPlus a control — an unallowlisted method must still 404, or a probe that\nnever returns -32601 would pass while proving nothing.\n\nOne correction worth recording: the third case initially reported \"not\ncaught\". The test was fine; **my probe's anchor string didn't exist**,\nso the insertion silently no-op'd and only the count bump landed. Re-run\nagainst a real anchor, it fails correctly.\n\n## Two tests were holding the bug in place\n\n`OnboardingConnect.test.tsx` had four arms fabricating `connector.list`\nresponses, and the one at `:86` asserted the broken path **succeeds**\noff `[{ name: \"GitHub\", state: \"healthy\" }]` — a shape the gateway can\nnever produce. Repointed at the real method and the real wire shape.\n\n`dispatchers.test.ts:765`, titled *\"connector.list dispatches when\nlocalIndex available\"*, asserted `expect(out).toBeDefined()`. The arm\nreturns the `connectorRpcSkipped` **symbol** on a miss, which is defined\n— so it passed *because of* the miss. It now names a served method and\nasserts a dispatch rather than definedness.\n\n## Also\n\nDoc drift in four files, including two skills that used a dead method as\nthe **exemplar of correct naming** (`nimbus-ipc.md:39`) and as a worked\nTauri-allowlist test example (`nimbus-testing.md:147-149`).\n\n**Found but deliberately not fixed:** the UI's `ConnectorStatus` type\ndeclares `{ name, health }` while `connector.listStatus` sends `{\nserviceId, healthState }`, with no mapper anywhere — so\n`ConnectorGrid.tsx:31` reads `undefined`. Same class, different\nmechanism, and out of scope here. `Connect.tsx` is therefore typed\nagainst the wire shape rather than inheriting the wrong type to look\nconsistent.\n\n`preflight:fast` 29/29 · `bun test packages/gateway/src/ipc` 1,721 pass\n· UI 515 pass · `cargo test allowlist` 26 pass.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n- **Bug Fixes**\n- Improved onboarding connection detection by using current connector\nstatus and synchronization information.\n  - Ensured audit-related gateway actions dispatch consistently.\n- Removed an outdated connector method from the supported gateway\ninterface.\n\n- **Documentation**\n- Updated security, CLI, IPC, and testing documentation to reflect the\ncurrent connector status method and corrected allowlist count.\n\n- **Tests**\n- Added comprehensive coverage for gateway method allowlisting and\nhandler resolution.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T09:11:41Z",
-          "tree_id": "4487507842876f7bb331f796c9054d3b68a451e4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/f7d8c75cdd893a0cabd596f3792fc5aa05c43d05"
-        },
-        "date": 1786872189468,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 339.0577187999952,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 336.22321279999016,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 287.03247674999875,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e2e45e936296c67a800f19d4ddd6787d9bc282f8",
+          "message": "feat(gateway): connectors 0.4.0 — classify its new Wave-2 writes (#1895)\n\nPhase 9.7 Project B, PR B-X. `@nimbus-dev/connectors` 0.4.0 is on npm,\nand until the gateway pins it, `audit:connector-version-skew` reds every\ngateway PR. This moves the pin and classifies everything the new version\nadds.\n\n**What changes**\n\n- **The pin.** `packages/gateway` now depends on\n`@nimbus-dev/connectors` `^0.4.0`, with `bun.lock` and the generated\nwrite manifest updated to match. The manifest grows from 87 writes\nacross 36 connectors to 101 across 37. Discord is the new connector.\n- **14 new write rows** (all mesh transport, Wave 2), placed in the\nexisting group files:\n  - GitHub issues: comment, labels add, assignees add, state set.\n- GitLab: issue create, issue note, MR note, labels add, assignees add,\nstate set.\n- Jira transition, Outlook draft create, Discord message post,\nConfluence page append.\n- **Counts after the change.** The table has 102 rows, 38 of them Wave\n2. The I2 frozen set is 160 types. All of it was re-derived from code.\n- **Each new type** is in `HITL_REQUIRED_BACKING`. D20 refuses it over\nfederation, because the regex is derived from the table.\n- **A new denied class, `not_yet_offered`.** It covers a routable write\nwhose MCP proposal waits for the B PR that adds its typed preview\ntemplate. `unroutable` would be false here, since a tool does resolve.\nThe refusal message in `mcp-sink/capture-gate.ts` handles it, with a\ntest.\n- **Nothing new is offered to the model.** None of the 14 is\nmodel-offerable or MCP-proposable, and a test asserts both. B1 to B4 add\nthe templates and before-readers.\n- **The new read.** `jira_issue_transitions_list` is classified\nread-only.\n- **Outlook `Mail.ReadWrite`.** The Outlook default scopes now include\nit, per the owner's ruling. It is safe for existing connections because\na token refresh sends no `scope` field (`auth/oauth-registry.ts`\n`refreshViaRegistry`). Microsoft therefore keeps issuing tokens for the\nscopes already granted, so only a fresh `nimbus connector auth outlook`\nasks for the new one. A test pins that a refresh body carries no\n`scope`. Stated bound: an enterprise tenant may require admin consent\nfor `Mail.ReadWrite`.\n\n**Not breaking.** Existing Outlook users keep working unchanged. They\nre-authorise only to gain the draft tool.\n\n**Discord.** Discord now has a write row, so `nimbus connector writes\nenable discord` is accepted and listed by `status`. No Discord write is\noffered to the model yet.\n\n**Docs.** Updated: SECURITY-INVARIANTS (the I2 count and the I26 counts\nand lists), architecture, roadmap, README, cli-reference (the Outlook\nre-auth and admin-consent note), CHANGELOG, and the `nimbus-mcp-sink`\nskill. CLAUDE.md and GEMINI.md are unchanged because neither carries a\nrow, frozen-set or class count.\n\n**Verification**\n\n- `preflight:fast` passes. `typecheck:tests` passes with 0 new errors.\n- The scoped suites pass: connectors, mcp-sink, engine, auth, ipc,\nsecurity-invariants and structure-audit, 7801 pass and 0 fail.\n- The version-skew, doc-refs and status-drift audits are clean.\n- Three tests were red-proven by reverting their production change: the\nnew class, a deleted row, and adding `scope` to the refresh.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added write support for actions across GitHub, GitLab, Jira, Outlook,\nDiscord, and Confluence.\n  * Added a Jira issue transitions lookup.\n* Outlook draft creation is available after granting the\n`Mail.ReadWrite` permission; existing connections need to reauthorize to\ngain it.\n\n* **Security**\n* New write actions require human approval and are not yet available for\nMCP proposals.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T09:26:34Z",
+          "tree_id": "cd2e30a34a6a8ba06f354d36be4f928840dd891f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e2e45e936296c67a800f19d4ddd6787d9bc282f8"
+        },
+        "date": 1793871161871,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 186.76677840000048,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 190.20416514999485,
             "unit": "ms"
           }
         ]
