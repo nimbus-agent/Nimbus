@@ -1374,11 +1374,15 @@ describe("Drive SVG and XHTML (plan R12)", () => {
 });
 
 // ---------------------------------------------------------------------------------------------
-// Linear time (adversarial review). Bounds are generous: CI runners are slow. Each input is run
-// at N and 2N; the best of three runs at 2N must stay under 4x the best at N (with a 10 ms floor,
-// so timer noise on a fast machine cannot fail it). A quadratic scan doubles to ~4x and a
-// catastrophic regex does not finish at all.
+// Linear time (adversarial review). Each input is run at N and 2N; the best of three runs at 2N
+// must stay under 4x the best at N (with a 10 ms floor, so timer noise on a fast machine cannot
+// fail it). That RATIO is the quadratic detector: a quadratic scan doubles to ~4x and a
+// catastrophic regex does not finish at all. The absolute bound is a loose 3 s (final review item
+// 6), only a backstop, because CI runners are slow and contended.
 // ---------------------------------------------------------------------------------------------
+
+/** The absolute backstop for one scan of the largest input (the ratio is the real check). */
+const ABSOLUTE_BOUND_MS = 3000;
 
 /** Generous: only the asserted bounds decide; a slow runner must not trip the default 5 s. */
 const TIMING_TEST_TIMEOUT_MS = 30_000;
@@ -1393,13 +1397,22 @@ function bestMs(run: () => void): number {
   return best;
 }
 
+/**
+ * N/2, N and 2N: 2N must stay under 4x N (the stated check), and 2N under 8x N/2. The second is
+ * the sharper quadratic detector: a fourfold input costs 4x when linear and 16x when quadratic,
+ * where the first compares 2x against 4x and a quadratic term diluted by linear work can slip
+ * under it. Floors of 10 ms keep timer noise on a fast machine from failing either.
+ */
 function expectLinear(format: RemoteContentFormat, build: (n: number) => string, n: number): void {
+  const quarter = build(Math.floor(n / 2));
   const small = build(n);
   const large = build(2 * n);
+  const tQuarter = bestMs(() => remoteContentIn(format, quarter));
   const tSmall = bestMs(() => remoteContentIn(format, small));
   const tLarge = bestMs(() => remoteContentIn(format, large));
-  expect(tLarge).toBeLessThan(1000);
+  expect(tLarge).toBeLessThan(ABSOLUTE_BOUND_MS);
   expect(tLarge).toBeLessThan(4 * Math.max(tSmall, 10));
+  expect(tLarge).toBeLessThan(8 * Math.max(tQuarter, 10));
 }
 
 describe("linear time on adversarial input", () => {
@@ -1408,7 +1421,7 @@ describe("linear time on adversarial input", () => {
     () => {
       const text = `src=${" ".repeat(1_000_000)}x`;
       const t = bestMs(() => remoteContentIn("outlook-html", text));
-      expect(t).toBeLessThan(1000);
+      expect(t).toBeLessThan(ABSOLUTE_BOUND_MS);
       expectLinear("outlook-html", (n) => `src=${" ".repeat(n)}x`, 500_000);
       expectLinear("confluence-storage", (n) => `src=${" ".repeat(n)}x`, 500_000);
     },
@@ -1420,7 +1433,7 @@ describe("linear time on adversarial input", () => {
     () => {
       const text = `url(${" ".repeat(1_000_000)}x`;
       const t = bestMs(() => remoteContentIn("drive-markup", text));
-      expect(t).toBeLessThan(1000);
+      expect(t).toBeLessThan(ABSOLUTE_BOUND_MS);
       expectLinear("drive-markup", (n) => `url(${" ".repeat(n)}x`, 500_000);
     },
     TIMING_TEST_TIMEOUT_MS,
@@ -1431,7 +1444,7 @@ describe("linear time on adversarial input", () => {
     () => {
       const build = (n: number): string => `${"<style>".repeat(n)}${"</style>".repeat(n)}`;
       const t = bestMs(() => remoteContentIn("outlook-html", build(100_000)));
-      expect(t).toBeLessThan(1000);
+      expect(t).toBeLessThan(ABSOLUTE_BOUND_MS);
       expect(remoteContentIn("outlook-html", build(100_000), { tripwire: false })).toBe(true);
       expectLinear("outlook-html", build, 50_000);
     },
@@ -1443,7 +1456,7 @@ describe("linear time on adversarial input", () => {
     () => {
       const text = `<a title="${"<b>".repeat(330_000)}">`;
       const t = bestMs(() => remoteContentIn("outlook-html", text));
-      expect(t).toBeLessThan(1000);
+      expect(t).toBeLessThan(ABSOLUTE_BOUND_MS);
       expect(remoteContentIn("outlook-html", text, { tripwire: false })).toBe(true);
       expectLinear("outlook-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
     },
@@ -1472,7 +1485,7 @@ describe("linear time on adversarial input", () => {
       // Opened and never closed, 100,000 deep: refused at once.
       const nested = `<ac:structured-macro ac:name="panel">${'<ac:parameter ac:name="x">'.repeat(100_000)}`;
       const t = bestMs(() => remoteContentIn("confluence-storage", nested));
-      expect(t).toBeLessThan(1000);
+      expect(t).toBeLessThan(ABSOLUTE_BOUND_MS);
       expect(remoteContentIn("confluence-storage", nested, { tripwire: false })).toBe(true);
     },
     TIMING_TEST_TIMEOUT_MS,
