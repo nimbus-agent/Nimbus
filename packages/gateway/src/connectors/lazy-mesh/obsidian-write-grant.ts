@@ -3,9 +3,6 @@
 // (I15, Phase 9.7 B4b). Pure: every filesystem fact arrives through `deps`.
 import { findProtectedOverlap, isSameOrInside, pathApiFor } from "../../util/path-overlap.ts";
 
-/** The tool whose approval turns the grant on (OR-B4-1). */
-export const OBSIDIAN_APPEND_TOOL_ID = "obsidian_append_to_daily_note";
-
 /**
  * Why a discovered vault is not granted:
  *  - `outside-roots`: not inside any configured root, by its spelling or by its real path;

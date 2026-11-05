@@ -29,7 +29,16 @@ export interface ModelWritesDeps {
   readonly now: () => number;
   /** Test seam; production uses the write table. */
   readonly rows?: readonly ConnectorWriteRow[];
+  /**
+   * Called after the `obsidian` opt-in changes (an approved enable, any disable): the mesh stops the
+   * Obsidian slot so its next spawn reads the new grant, and on Windows revokes its ACEs. Must
+   * never reject (`LazyConnectorMesh.restartObsidian`). Absent: nothing restarts.
+   */
+  readonly onObsidianGrantChanged?: () => Promise<void>;
 }
+
+/** The service whose opt-in also decides a sandbox write grant (I15, OR-B4-1). */
+const OBSIDIAN_SERVICE = "obsidian";
 
 /**
  * How the enable prompt marks one write (F7): offered under the CURRENT opt-in, offerable now but
@@ -102,15 +111,20 @@ export async function handleConnectorWritesEnable(
   // The approved set is exactly the offerable-now writes the owner just saw listed (V84).
   const approved = writes.filter((w) => w.offerable).map((w) => w.toolId);
   setModelWriteEnablement(deps.db, service, maxWave, deps.now(), approved);
+  // After the row: the restart's next spawn reads the grant from it.
+  if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { service, maxWave, writes: writes.length };
 }
 
-/** Narrowing needs no approval; idempotent. */
-export function handleConnectorWritesDisable(
+/** Narrowing needs no approval; idempotent. Disabling `obsidian` also withdraws its write grant now. */
+export async function handleConnectorWritesDisable(
   rec: Record<string, unknown> | undefined,
   deps: ModelWritesDeps,
-): { removed: boolean } {
-  return { removed: removeModelWriteEnablement(deps.db, parseServiceForDisable(rec?.["service"])) };
+): Promise<{ removed: boolean }> {
+  const service = parseServiceForDisable(rec?.["service"]);
+  const removed = removeModelWriteEnablement(deps.db, service);
+  if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
+  return { removed };
 }
 
 /**

@@ -1397,6 +1397,154 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
 
     expect(checkWrapServerSpecInvariant(entries)).toEqual([]);
   });
+
+  describe("the Obsidian write grant (Phase 9.7 B4b)", () => {
+    /** The text of `function <name>(` up to the next top-level declaration, comments stripped. */
+    function fnBody(src: string, name: string): string {
+      const code = stripComments(src);
+      const at = code.search(new RegExp(String.raw`(async\s+)?function ${name}\(`));
+      expect(at).toBeGreaterThanOrEqual(0);
+      const next = code.slice(at + 1).search(/\n(export\s+)?(async\s+)?function\s/);
+      return next < 0 ? code.slice(at) : code.slice(at, at + 1 + next);
+    }
+
+    test("the write list is obsidianWriteGrantPaths behind the live approval, or nothing", async () => {
+      const src = await read("packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts");
+      const decide = fnBody(src, "obsidianWritePathsFor");
+      // The approval is consulted first; without it the list is the empty literal.
+      expect(decide).toMatch(
+        /if \(deps === undefined \|\| !obsidianWriteGrantApproved\(ctx\)\) return \[\];/,
+      );
+      expect(decide).toMatch(/return obsidianWriteGrantPaths\(roots, deps\)\.paths;/);
+      const approved = fnBody(src, "obsidianWriteGrantApproved");
+      expect(approved).toMatch(/ctx\.obsidianWriteGrantEnabled/);
+      const start = fnBody(src, "startObsidianMcp");
+      expect(start).toMatch(/const writePaths = obsidianWritePathsFor\(ctx, vaultPaths\);/);
+      expect(start).toMatch(/obsidianSpawnManifest\(vaultPaths, writePaths\)/);
+      // The pre-spawn hook (the Windows revoke) is awaited BEFORE the client is created.
+      expect(start.indexOf("await ctx.obsidianPreSpawn(")).toBeGreaterThan(0);
+      expect(start.indexOf("await ctx.obsidianPreSpawn(")).toBeLessThan(
+        start.indexOf("ctx.setLazyClient("),
+      );
+      const manifest = fnBody(src, "obsidianSpawnManifest");
+      expect(manifest).toMatch(
+        /write: \[\.\.\.obsidianBase\.permissions\.filesystem\.write, \.\.\.writePaths\]/,
+      );
+      expect(manifest).toMatch(
+        /read: \[\.\.\.obsidianBase\.permissions\.filesystem\.read, \.\.\.roots\]/,
+      );
+    });
+
+    test("every first-party manifest declares write: [] (derived from the table)", async () => {
+      const { FIRST_PARTY_MANIFESTS } = await import(
+        "./connectors/lazy-mesh/first-party-manifests.ts"
+      );
+      const entries = Object.entries(FIRST_PARTY_MANIFESTS);
+      expect(entries.length).toBeGreaterThanOrEqual(50);
+      expect(entries.filter(([, m]) => m.permissions.filesystem.write.length > 0)).toEqual([]);
+    });
+
+    test("the only spawn-time write additions under lazy-mesh are the filesystem dataDir and the Obsidian vaults", async () => {
+      const dir = resolve(REPO_ROOT, "packages/gateway/src/connectors/lazy-mesh");
+      const files = (await readdir(dir, { recursive: true })).filter(
+        (f) => f.endsWith(".ts") && !f.endsWith(".test.ts"),
+      );
+      const additions: string[] = [];
+      let literals = 0;
+      for (const f of files) {
+        const code = stripComments(await readFile(resolve(dir, f), "utf8"));
+        // A write list that is not a literal would evade the element scan: refuse it outright.
+        expect(code).not.toMatch(/\bwrite:\s*(?!\[)[\w.]/);
+        for (const m of code.matchAll(/\bwrite:\s*\[([^\]]*)\]/g)) {
+          literals += 1;
+          for (const el of (m[1] ?? "").split(",").map((e) => e.trim())) {
+            if (el === "" || /^\.\.\.[\w.]*permissions\.filesystem\.write$/.test(el)) continue;
+            additions.push(`${f.replaceAll("\\", "/")}: ${el}`);
+          }
+        }
+      }
+      expect(literals).toBeGreaterThanOrEqual(50);
+      expect(additions.sort()).toEqual([
+        "connector-spawns.ts: ...writePaths",
+        "mesh.ts: paths.dataDir",
+      ]);
+    });
+
+    test("assemble wires the live approval; the connector RPC wires the restart to the mesh", async () => {
+      const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+      expect(assemble).toMatch(
+        /obsidianWriteGrantEnabled: \(\) => isObsidianWriteGrantApproved\(db\)/,
+      );
+      const rpc = stripComments(await read("packages/gateway/src/ipc/connector-rpc.ts"));
+      expect(rpc).toMatch(/onObsidianGrantChanged: \(\) => connectorMesh\.restartObsidian\(\)/);
+      const handler = stripComments(
+        await read("packages/gateway/src/ipc/connector-rpc-handlers/model-writes.ts"),
+      );
+      expect(handler.match(/await deps\.onObsidianGrantChanged\?\.\(\)/g) ?? []).toHaveLength(2);
+      const store = stripComments(
+        await read("packages/gateway/src/connectors/connector-writes/enablement-store.ts"),
+      );
+      expect(store).toMatch(
+        /getModelWriteEnablement\(db, "obsidian"\)\?\.approvedToolIds\.has\(OBSIDIAN_APPEND_TOOL_ID\) === true/,
+      );
+    });
+
+    test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
+      const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
+      expect(mesh).toMatch(
+        /appContainerGrantRevokerFor\(platform, manifestForFirstParty\("obsidian"\)\.id\)/,
+      );
+      expect(mesh).toMatch(
+        /await this\.obsidianRevoker\.revoke\(this\.obsidianRevokePaths\(plan\.writePaths\)\);/,
+      );
+      expect(mesh).not.toMatch(/releaseGrantsFor/);
+      const revoke = stripComments(
+        await read("packages/gateway/src/platform/sandbox/win32-grant-revoke.ts"),
+      );
+      expect(revoke).toMatch(/buildRevokeGrantsArgv\(policy, \{ cwd: first \}\)/);
+      expect(revoke).toMatch(/if \(code !== 0\) \{\s*throw new Error\(/);
+      expect(revoke).not.toMatch(/releaseGrantsFor|catch \{/);
+    });
+
+    test("behavioural: a Windows revoke that fails refuses the Obsidian spawn", async () => {
+      const { mkdirSync, mkdtempSync, realpathSync, rmSync } = await import("node:fs");
+      const { LazyConnectorMesh } = await import("./connectors/lazy-mesh/mesh.ts");
+      const { LAZY_MESH } = await import("./connectors/lazy-mesh/keys.ts");
+      const { createMockVault } = await import("./vault/mock.ts");
+      const base = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-i15-obs-")));
+      try {
+        const root = join(base, "notes");
+        mkdirSync(join(root, "v", ".obsidian"), { recursive: true });
+        const n = (p: string) => join(base, "nimbus", p);
+        const m = new LazyConnectorMesh(
+          {
+            configDir: n("config"),
+            dataDir: n("data"),
+            logDir: n("log"),
+            socketPath: n("sock"),
+            extensionsDir: n("ext"),
+            tempDir: n("tmp"),
+            sandboxDir: n("sandbox"),
+          },
+          createMockVault(),
+          {
+            obsidianVaultPaths: [root],
+            obsidianWriteGrantEnabled: () => true,
+            obsidianGrantRevoker: {
+              active: true,
+              revoke: () => Promise.reject(new Error("helper exit 1")),
+            },
+          },
+        );
+        await m.ensureObsidianRunning();
+        const slots = (m as unknown as { lazySlots: Map<string, { client: unknown }> }).lazySlots;
+        expect(slots.get(LAZY_MESH.obsidian)?.client).toBeUndefined();
+        await m.disconnect();
+      } finally {
+        rmSync(base, { recursive: true, force: true });
+      }
+    });
+  });
 });
 
 describe("I16 — Verified-publisher invariant", () => {

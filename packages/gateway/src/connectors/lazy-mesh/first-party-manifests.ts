@@ -501,6 +501,10 @@ export const FIRST_PARTY_MANIFESTS: Record<string, ExtensionManifest> = {
     filesystem: { read: [], write: [] },
   }),
 
+  // The static base stays read-nothing, write-nothing. `startObsidianMcp` (connector-spawns.ts)
+  // adds the configured roots to filesystem.read at spawn, and, only while the owner's Obsidian
+  // opt-in approved the daily-note append, the vaults `obsidianWriteGrantPaths` keeps to
+  // filesystem.write (I15, Phase 9.7 B4b).
   obsidian: baseManifest("com.nimbus.obsidian", {
     network: [],
     filesystem: { read: [], write: [] },

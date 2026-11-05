@@ -341,6 +341,25 @@ The comments at `ipc/server/options.ts:78,84` document the two database handles 
 
 **Working directory:** the spawn’s cwd is a per-policy leaf `<sandboxDir>/<leaf>` (`platform/sandbox/sandbox-cwd.ts`, wired in `sandbox-wrapper.ts`), never `dataDir` or `configDir`; the filesystem MCP’s deliberate data-directory grant is the one stated exception. The source guard is spelling-based, so an alias for those directories would evade it; capability (the runner is handed a policy whose cwd comes from `sandboxDir`) is the real defense. See `docs/sandbox.md` § Per-policy working directories.
 
+**First-party write grants (Phase 9.7 B4b, 2026-11-05).** Every `FIRST_PARTY_MANIFESTS` entry declares `write: []`. Two spawns add a write path at spawn time, and no other: the filesystem MCP's `dataDir` (`mesh.ts`), and the Obsidian connector's vaults (`connector-spawns.ts` `startObsidianMcp`). The Obsidian write list is built only by `connectors/lazy-mesh/obsidian-write-grant.ts` `obsidianWriteGrantPaths`, and only while the owner's `connector.writes.enable obsidian` approval includes `obsidian_append_to_daily_note` (`connector-writes/enablement-store.ts` `isObsidianWriteGrantApproved`, read live at every spawn; OR-B4-1). Otherwise the list is empty, and the spawn is the read-only one it was before. The list holds each vault that `connectors/obsidian-discovery.ts` `discoverVaultsForWriteGrant` finds under the configured `[[filesystem.roots]]`, kept only when all of the following hold:
+
+- its real path (`realpathSync.native`) is inside a root's real path, and it is inside that root by spelling;
+- it reached its real path through no link (a link out of the roots and a link inside them are both refused);
+- it is not a filesystem root, the home directory or an ancestor of the home directory;
+- it overlaps no Nimbus data, config, sandbox or extensions directory;
+- it is not nested in another kept vault.
+
+The roots themselves stay read-only unless a root is itself a vault. Enabling or disabling `obsidian` stops the `mesh:obsidian` slot (`LazyConnectorMesh.restartObsidian`), so the change takes effect at the next call. On Windows an AppContainer ACE outlives its child, and `GRANT_ACCESS` merges rights into an existing ACE. So before every Obsidian spawn, and after a restart, the mesh revokes the Obsidian profile's explicit ACEs on the canonical roots, on every vault the grant would keep now, and on the last spawn's write list. It uses `platform/sandbox/win32-grant-revoke.ts` `revokeAppContainerGrants`, which is fail-closed: a non-zero helper exit throws, and the spawn is refused. The best-effort `releaseGrantsFor` is not used. Spawn decisions and restarts run one at a time (`obsidianSerial`). Off Windows nothing persists to revoke.
+
+Stated bounds (accepted, OR-B4-5):
+
+- The Windows grant (`FILE_GENERIC_WRITE`) carries no `DELETE`, while a Linux `--bind` and a macOS `file-write*` also allow unlink and rename.
+- A vault's `.obsidian` folder, including the `daily-notes.json` that decides where the append lands, stays writable on all three OSes.
+- A vault deeper than 12 levels, or past the walk's 20,000-directory budget, is never granted.
+- The live opt-in is the only trigger; the `connector_write_model_access` policy lockoff does not remove the grant.
+
+Pinned by `security-invariants.test.ts` (`I15`: the Obsidian write grant).
+
 **Linux network (2026-10-31).** On Linux the network half of the runner is I50: a child with a declared network goes through the local forwarder, and the wrapper enforces each declared `host:port` outside the sandbox. Until then a network-declaring child got `--share-net`, which is the whole internet, on every released package, because none carried the helper; that fallback now applies only where no helper is found. See I50 and `docs/sandbox.md` § Linux.
 
 **Anti-pattern:** constructing an MCPClient `ServerSpec` literal under `connectors/lazy-mesh/` without routing it through `wrapServerSpec(...)`. Bypassing the wrapper means the child process is spawned with the raw command/args and **no sandbox is applied** — landlock/seccomp on Linux, seatbelt on macOS, Job Objects on Windows are all skipped. Caught by both the runtime I15 test in `security-invariants.test.ts` and the static `D10-wrap-spec` rule in `scripts/structure-audit/check-nimbus-invariants.ts`, which since 2026-08-16 check this **per site**: every `...connectorSpawn(` literal must be lexically enclosed by a `wrap(` / `wrapServerSpec(` call. Both used to be per-FILE presence checks — one `wrapServerSpec(` token anywhere in the file satisfied them — and `connector-spawns.ts` funnels 26 MCPClient spawns through a single `wrap` helper, so its token survived any single-site removal. Unwrapping one connector left the file matching, the static rule matching, and that connector's own spawner test green (only 6 of the file's spawner describes assert `.command`), while its child ran with a live OAuth token and no sandbox profile.

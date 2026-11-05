@@ -125,6 +125,7 @@ import {
 } from "../connectors/connector-vault.ts";
 import { createConnectorWriteDispatcher } from "../connectors/connector-write-dispatch.ts";
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
+import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
@@ -1055,6 +1056,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // Obsidian vault semantics are opt-in via [[filesystem.roots]] only — CLI-registered blame
     // roots must not be silently treated as note vaults.
     obsidianVaultPaths: tomlRoots.map((r) => r.path),
+    // I15 (B4b): the Obsidian sandbox may write inside the vaults under those roots only while the
+    // owner's `connector writes enable obsidian` approval includes the append, read LIVE per spawn.
+    obsidianWriteGrantEnabled: () => isObsidianWriteGrantApproved(db),
     isConnectorAllowed,
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),

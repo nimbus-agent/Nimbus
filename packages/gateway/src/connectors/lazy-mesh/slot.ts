@@ -5,6 +5,7 @@ import type { MCPClient } from "@mastra/mcp";
 
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import type { LazyDrainTracker } from "./drain.ts";
+import type { ObsidianWriteGrantDeps } from "./obsidian-write-grant.ts";
 
 export type LazyMcpSlot = {
   client: MCPClient | undefined;
@@ -27,6 +28,29 @@ export interface MeshSpawnContext {
   readonly logger?: MeshLogger | undefined;
   readonly healthDb?: import("bun:sqlite").Database | undefined;
   readonly obsidianVaultPaths?: readonly string[] | undefined;
+  /**
+   * True while the owner's `connector.writes.enable obsidian` approval includes the daily-note
+   * append (OR-B4-1). Absent, `false` or throwing: the Obsidian spawn gets NO write grant.
+   */
+  readonly obsidianWriteGrantEnabled?: (() => boolean) | undefined;
+  /** The facts `obsidianWriteGrantPaths` reads. Absent: no write grant (fail closed). */
+  readonly obsidianWriteGrantDeps?: ObsidianWriteGrantDeps | undefined;
+  /**
+   * Awaited before the Obsidian client is created, with the read roots and the write list this
+   * spawn will be granted. On Windows it revokes the profile's earlier ACEs (they outlive the
+   * child and a grant only merges rights); a rejection refuses the spawn.
+   */
+  readonly obsidianPreSpawn?:
+    | ((plan: {
+        readonly roots: readonly string[];
+        readonly writePaths: readonly string[];
+      }) => Promise<void>)
+    | undefined;
+  /**
+   * Runs the Obsidian spawn decision (and the mesh's restart) one at a time, so a grant read before
+   * a disable can never create a client after the disable's stop. Absent: runs inline.
+   */
+  readonly obsidianSerial?: (<T>(fn: () => Promise<T>) => Promise<T>) | undefined;
   /** The sandbox ROOT (`PlatformPaths.sandboxDir`). Despite the name, not a cwd: `wrapServerSpec` derives each spawn's own leaf under it. */
   readonly sandboxCwd: string;
   clearLazyIdle(key: string): void;

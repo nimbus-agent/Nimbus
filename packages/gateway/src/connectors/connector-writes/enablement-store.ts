@@ -101,6 +101,20 @@ export function getModelWriteEnablement(
   return r === null ? undefined : fromDb(r);
 }
 
+/** The write whose approval turns the Obsidian sandbox write grant on (OR-B4-1, I15). */
+export const OBSIDIAN_APPEND_TOOL_ID = "obsidian_append_to_daily_note";
+
+/**
+ * The Obsidian sandbox write-grant trigger (OR-B4-1, I15): the owner's `obsidian` opt-in exists AND
+ * approved the daily-note append by name. Read LIVE at every Obsidian spawn. Nothing else (no
+ * config, no policy lockoff) turns the grant on.
+ */
+export function isObsidianWriteGrantApproved(db: Database): boolean {
+  return (
+    getModelWriteEnablement(db, "obsidian")?.approvedToolIds.has(OBSIDIAN_APPEND_TOOL_ID) === true
+  );
+}
+
 export function listModelWriteEnablement(db: Database): readonly ModelWriteEnablement[] {
   const rows = db
     .query(`SELECT ${SELECT_COLUMNS} FROM connector_write_enablement`)

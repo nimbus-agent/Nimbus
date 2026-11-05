@@ -1,4 +1,5 @@
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, realpathSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
 
 import { MCPClient } from "@mastra/mcp";
 import { writeToolCallLog } from "../../db/tool-call-log.ts";
@@ -8,11 +9,17 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
+import { canonicalPath } from "../../platform/sandbox/canonical-path.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
+import {
+  type AppContainerGrantRevoker,
+  appContainerGrantRevokerFor,
+} from "../../platform/sandbox/win32-grant-revoke.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
+import { discoverVaultsForWriteGrant } from "../obsidian-discovery.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
   ensureAppleMcp,
@@ -59,6 +66,11 @@ import {
   USER_MESH_PREFIX,
   userMcpMeshKey,
 } from "./keys.ts";
+import {
+  type ObsidianWriteGrant,
+  type ObsidianWriteGrantDeps,
+  obsidianWriteGrantPaths,
+} from "./obsidian-write-grant.ts";
 import {
   phase3AddArgocdMcp,
   phase3AddBigeyeMcp,
@@ -169,6 +181,16 @@ export class LazyConnectorMesh {
   private readonly sandboxDirExists: (dir: string) => boolean;
   private readonly filesystemSpawnGate: Promise<void> | undefined;
   private readonly extensionSlots: ExtensionSlots;
+  /** The configured `[[filesystem.roots]]` the Obsidian connector reads (its vaults it may write). */
+  private readonly obsidianRoots: readonly string[];
+  private readonly obsidianGrantDeps: ObsidianWriteGrantDeps;
+  /** Windows only: the fail-closed revoke of the Obsidian profile's ACEs before each grant. */
+  private readonly obsidianRevoker: AppContainerGrantRevoker;
+  /** The write list the last Obsidian spawn was handed (canonical); revoked again before the next. */
+  private lastObsidianWrite: readonly string[] = [];
+  private obsidianRevokeFailing = false;
+  /** Tail of the Obsidian spawn/restart queue (see {@link runObsidianSerial}). */
+  private obsidianTail: Promise<void> = Promise.resolve();
 
   constructor(
     paths: PlatformPaths,
@@ -198,6 +220,17 @@ export class LazyConnectorMesh {
       extensionSpawnGate?: Promise<void>;
       /** Test seam: builds an extension slot's client. Production: `new MCPClient(...)`. */
       createExtensionClient?: CreateExtensionClient;
+      /**
+       * LIVE: the owner's `connector.writes.enable obsidian` approval includes the daily-note
+       * append (OR-B4-1). Absent means never: the Obsidian sandbox gets no write grant.
+       */
+      obsidianWriteGrantEnabled?: () => boolean;
+      /** Test seam: the host OS for the Obsidian revoke. Production: `process.platform`. */
+      platform?: NodeJS.Platform;
+      /** Test seam: the Obsidian pre-spawn revoker. Production: `appContainerGrantRevokerFor`. */
+      obsidianGrantRevoker?: AppContainerGrantRevoker;
+      /** Test seam: the facts the Obsidian grant reads. Production: real discovery and realpath. */
+      obsidianWriteGrantDeps?: ObsidianWriteGrantDeps;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -239,11 +272,28 @@ export class LazyConnectorMesh {
         ),
       },
     });
+    const platform = options?.platform ?? process.platform;
+    this.obsidianRoots = options?.obsidianVaultPaths ?? [];
+    this.obsidianGrantDeps = options?.obsidianWriteGrantDeps ?? {
+      discoverVaults: (roots) => discoverVaultsForWriteGrant(roots),
+      realpath: (p) => realpathSync.native(p),
+      homeDir: homedir(),
+      // The extension-grant rule: Nimbus's data, config and sandbox dirs plus the extensions dir.
+      protectedRoots: [...userMcpProtectedRootsFor(paths), paths.extensionsDir],
+      platform,
+    };
+    this.obsidianRevoker =
+      options?.obsidianGrantRevoker ??
+      appContainerGrantRevokerFor(platform, manifestForFirstParty("obsidian").id);
     this.spawnContext = {
       vault: this.vault,
       logger: this.logger,
       healthDb: this.healthDb,
       obsidianVaultPaths: options?.obsidianVaultPaths,
+      obsidianWriteGrantEnabled: options?.obsidianWriteGrantEnabled,
+      obsidianWriteGrantDeps: this.obsidianGrantDeps,
+      obsidianPreSpawn: (plan) => this.obsidianPreSpawn(plan),
+      obsidianSerial: <T>(fn: () => Promise<T>) => this.runObsidianSerial(fn),
       sandboxCwd: paths.sandboxDir,
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
@@ -820,6 +870,95 @@ export class LazyConnectorMesh {
     return ensureObsidianMcp(this.spawnContext);
   }
 
+  /**
+   * One at a time: every Obsidian spawn decision and every {@link restartObsidian}. A grant read
+   * inside one step therefore never produces a client after a later restart's stop.
+   */
+  private runObsidianSerial<T>(fn: () => Promise<T>): Promise<T> {
+    const result = this.obsidianTail.then(fn);
+    this.obsidianTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /**
+   * Every path the Obsidian profile may hold an ACE on: the canonical roots (the read grant), each
+   * vault the grant would keep NOW (whatever the approval says), the last spawn's write list and
+   * `extra`. Deduplicated, in that order.
+   */
+  private obsidianRevokePaths(extra: readonly string[]): readonly string[] {
+    const kept = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps).paths;
+    const all = [
+      ...this.obsidianRoots.map(canonicalPath),
+      ...kept,
+      ...this.lastObsidianWrite,
+      ...extra,
+    ];
+    return [...new Set(all)];
+  }
+
+  /**
+   * The Obsidian pre-spawn hook. On Windows an ACE outlives its child and a grant merges rights, so
+   * a spawn after a disable would keep writing: every earlier ACE is revoked first, and a failed
+   * revoke refuses the spawn, and is logged once per failing streak. Elsewhere it only records the list.
+   */
+  private async obsidianPreSpawn(plan: {
+    readonly roots: readonly string[];
+    readonly writePaths: readonly string[];
+  }): Promise<void> {
+    if (this.obsidianRevoker.active) {
+      try {
+        await this.obsidianRevoker.revoke(this.obsidianRevokePaths(plan.writePaths));
+      } catch (err) {
+        if (!this.obsidianRevokeFailing) {
+          this.logger?.warn(
+            { err },
+            "obsidian sandbox grants could not be revoked; the Obsidian connector is not started",
+          );
+        }
+        this.obsidianRevokeFailing = true;
+        throw err;
+      }
+      this.obsidianRevokeFailing = false;
+    }
+    this.lastObsidianWrite = plan.writePaths;
+  }
+
+  /**
+   * Called after the owner's Obsidian opt-in changes (enable approved, or disable): stops the
+   * `mesh:obsidian` slot so the next call spawns under the new grant, and on Windows revokes the
+   * profile's ACEs. Never rejects; a failed revoke is logged and the next spawn revokes again.
+   */
+  async restartObsidian(): Promise<void> {
+    try {
+      await this.runObsidianSerial(async () => {
+        await this.stopLazyClient(LAZY_MESH.obsidian);
+        if (this.obsidianRevoker.active) {
+          await this.obsidianRevoker.revoke(this.obsidianRevokePaths([]));
+        }
+        this.lastObsidianWrite = [];
+      });
+    } catch (err) {
+      this.logger?.warn({ err }, "obsidian sandbox grants not revoked after the opt-in changed");
+    }
+  }
+
+  /**
+   * What approving the Obsidian append would let its sandbox write NOW: the configured roots (as
+   * configured), the vaults the grant keeps, and each skipped vault with its reason. For the
+   * `connector.writes.enable obsidian` prompt; reads the filesystem, grants nothing.
+   */
+  obsidianWriteScope(): {
+    readonly roots: readonly string[];
+    readonly vaults: readonly string[];
+    readonly skipped: ObsidianWriteGrant["skipped"];
+  } {
+    const g = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps);
+    return { roots: [...this.obsidianRoots], vaults: g.paths, skipped: g.skipped };
+  }
+
   async ensureConfluenceRunning(): Promise<void> {
     return ensureConfluenceMcp(this.spawnContext);
   }
@@ -891,6 +1030,9 @@ export class LazyConnectorMesh {
       { map: await list(LAZY_MESH.mendeley), name: "mendeley" },
       { map: await list(LAZY_MESH.workday), name: "workday" },
       { map: await list(LAZY_MESH.apple), name: "apple" },
+      // Spawned by `ensureCredentialConnectorsRunning` from the configured roots; listed here so the
+      // dispatcher (and so the act door) can resolve its tools. Behind the same gate as the rest.
+      { map: await list(LAZY_MESH.obsidian), name: "obsidian" },
       { map: await list(LAZY_MESH.confluence), name: "confluence" },
       { map: await list(LAZY_MESH.discord), name: "discord" },
       { map: await list(LAZY_MESH.jenkins), name: "jenkins" },
@@ -1110,6 +1252,7 @@ export function createLazyConnectorMesh(
     auditDb?: import("bun:sqlite").Database;
     logger?: MeshLogger;
     obsidianVaultPaths?: readonly string[];
+    obsidianWriteGrantEnabled?: () => boolean;
     isConnectorAllowed?: (serviceId: string) => boolean;
     removeSandboxDir?: (dir: string) => void;
     filesystemSpawnGate?: Promise<void>;

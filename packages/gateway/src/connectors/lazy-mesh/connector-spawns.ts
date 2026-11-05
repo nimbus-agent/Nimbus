@@ -39,6 +39,7 @@ import {
   storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
+import { obsidianWriteGrantPaths } from "./obsidian-write-grant.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
 import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -828,7 +829,57 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
-function startObsidianMcp(ctx: MeshSpawnContext): void {
+/**
+ * The Obsidian spawn's manifest: the static base (`write: []`) plus the configured roots as READ
+ * paths and `writePaths` as WRITE paths. `writePaths` is either nothing or exactly what
+ * `obsidianWriteGrantPaths` kept (I15, B4b); exported so the real-sandbox integration test confines
+ * its probe with this same builder.
+ */
+export function obsidianSpawnManifest(
+  roots: readonly string[],
+  writePaths: readonly string[],
+): ExtensionManifest {
+  const obsidianBase = manifestForFirstParty("obsidian");
+  return {
+    ...obsidianBase,
+    permissions: {
+      ...obsidianBase.permissions,
+      filesystem: {
+        read: [...obsidianBase.permissions.filesystem.read, ...roots],
+        write: [...obsidianBase.permissions.filesystem.write, ...writePaths],
+      },
+    },
+  };
+}
+
+/** The owner's approval covers the append right now. Absent or throwing: no (fail closed, logged). */
+function obsidianWriteGrantApproved(ctx: MeshSpawnContext): boolean {
+  const approved = ctx.obsidianWriteGrantEnabled;
+  if (approved === undefined) return false;
+  try {
+    return approved() === true;
+  } catch (err) {
+    ctx.logger?.warn({ err }, "obsidian write grant: the approval could not be read; no write");
+    return false;
+  }
+}
+
+/**
+ * The vaults this spawn may write: `obsidianWriteGrantPaths` behind the owner's approval, else
+ * nothing. With no approval nothing is discovered, so the spawn is exactly the read-only one.
+ */
+function obsidianWritePathsFor(ctx: MeshSpawnContext, roots: readonly string[]): readonly string[] {
+  const deps = ctx.obsidianWriteGrantDeps;
+  if (deps === undefined || !obsidianWriteGrantApproved(ctx)) return [];
+  try {
+    return obsidianWriteGrantPaths(roots, deps).paths;
+  } catch (err) {
+    ctx.logger?.warn({ err }, "obsidian write grant: the vaults could not be computed; no write");
+    return [];
+  }
+}
+
+async function startObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.obsidian;
   ctx.clearLazyIdle(slotKey);
   if (ctx.getLazyClient(slotKey) !== undefined) {
@@ -839,17 +890,20 @@ function startObsidianMcp(ctx: MeshSpawnContext): void {
   if (vaultPaths.length === 0) {
     return;
   }
-  const obsidianBase = manifestForFirstParty("obsidian");
-  const obsidianManifest = {
-    ...obsidianBase,
-    permissions: {
-      ...obsidianBase.permissions,
-      filesystem: {
-        read: [...obsidianBase.permissions.filesystem.read, ...vaultPaths],
-        write: [...obsidianBase.permissions.filesystem.write],
-      },
-    },
-  };
+  const writePaths = obsidianWritePathsFor(ctx, vaultPaths);
+  if (ctx.obsidianPreSpawn !== undefined) {
+    try {
+      // Windows: the profile's earlier ACEs are revoked BEFORE this spawn grants (fail closed).
+      await ctx.obsidianPreSpawn({ roots: vaultPaths, writePaths });
+    } catch {
+      return; // the hook logs; no client means no spawn
+    }
+    if (ctx.getLazyClient(slotKey) !== undefined) {
+      ctx.scheduleLazyDisconnect(slotKey);
+      return;
+    }
+  }
+  const obsidianManifest = obsidianSpawnManifest(vaultPaths, writePaths);
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -871,14 +925,15 @@ function startObsidianMcp(ctx: MeshSpawnContext): void {
 }
 
 /**
- * Starts the Obsidian MCP when vault paths are configured. Nothing here awaits — the paths
- * arrive on the context rather than from the Vault — but it keeps the Promise-returning
- * `CredentialSpawners` contract its siblings share. `Promise.try` runs the body immediately and
- * turns any throw from it into a rejection, exactly as the former `async` declaration did, so
- * callers still see one failure channel.
+ * Starts the Obsidian MCP when vault paths are configured, through the context's
+ * `obsidianSerial` when it has one (so a restart's stop and revoke never interleave with a spawn
+ * decision). `Promise.try` runs the body immediately and turns any throw from it into a rejection,
+ * so callers still see one failure channel.
  */
 export function ensureObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
-  return Promise.try(() => startObsidianMcp(ctx));
+  const serial = ctx.obsidianSerial;
+  if (serial === undefined) return Promise.try(() => startObsidianMcp(ctx));
+  return serial(() => startObsidianMcp(ctx));
 }
 
 /**

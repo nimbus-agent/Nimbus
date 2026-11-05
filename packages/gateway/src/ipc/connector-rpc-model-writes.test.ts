@@ -7,6 +7,7 @@ import { toStandardSchema } from "@mastra/core/schema";
 
 import {
   getModelWriteEnablement,
+  isObsidianWriteGrantApproved,
   setModelWriteEnablement,
   writesEnabledBy,
 } from "../connectors/connector-writes/enablement-store.ts";
@@ -14,6 +15,7 @@ import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import { createModelWriteToolSource } from "../connectors/connector-writes/model-write-source.ts";
 import { previewTemplateKeys, row, withPreview } from "../connectors/connector-writes/types.ts";
+import type { LazyConnectorMesh } from "../connectors/lazy-mesh/mesh.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
@@ -25,6 +27,7 @@ import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "./connector-rpc.ts";
 import {
+  handleConnectorWritesDisable,
   handleConnectorWritesEnable,
   handleConnectorWritesStatus,
   type ModelWritesDeps,
@@ -618,5 +621,95 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
     expect((await doorTools()).filter((n) => n.startsWith("google_drive__"))).toEqual([
       "google_drive__gdrive_file_create",
     ]);
+  });
+});
+
+describe("the Obsidian opt-in restarts the Obsidian connector (B4b, I15)", () => {
+  function obsidianDeps(
+    exec: ToolExecutor | undefined,
+    seen: Array<boolean | undefined>,
+  ): ModelWritesDeps {
+    return {
+      db,
+      toolExecutor: exec,
+      getEnforcedPolicy: () => OPEN,
+      now: () => 9,
+      // Records whether the opt-in row existed at the moment of the restart.
+      onObsidianGrantChanged: () => {
+        seen.push(getModelWriteEnablement(db, "obsidian") !== undefined);
+        return Promise.resolve();
+      },
+    };
+  }
+
+  test("an approved enable obsidian restarts once, AFTER the row is written", async () => {
+    const seen: Array<boolean | undefined> = [];
+    await handleConnectorWritesEnable(
+      { service: "obsidian", wave: 2 },
+      obsidianDeps(executor(true), seen),
+    );
+    expect(seen).toEqual([true]);
+  });
+
+  test("a declined enable restarts nothing", async () => {
+    const seen: Array<boolean | undefined> = [];
+    await refusal(
+      handleConnectorWritesEnable({ service: "obsidian" }, obsidianDeps(executor(false), seen)),
+    );
+    expect(seen).toEqual([]);
+  });
+
+  test("disable obsidian restarts after the row is gone, even when there was none", async () => {
+    const seen: Array<boolean | undefined> = [];
+    setModelWriteEnablement(db, "obsidian", 2, 1, ["obsidian_append_to_daily_note"]);
+    expect(
+      await handleConnectorWritesDisable({ service: "obsidian" }, obsidianDeps(undefined, seen)),
+    ).toEqual({ removed: true });
+    expect(
+      await handleConnectorWritesDisable({ service: "obsidian" }, obsidianDeps(undefined, seen)),
+    ).toEqual({ removed: false });
+    expect(seen).toEqual([false, false]);
+  });
+
+  test("enabling or disabling another service restarts nothing", async () => {
+    const seen: Array<boolean | undefined> = [];
+    await handleConnectorWritesEnable({ service: "github" }, obsidianDeps(executor(true), seen));
+    await handleConnectorWritesDisable({ service: "github" }, obsidianDeps(undefined, seen));
+    expect(seen).toEqual([]);
+  });
+
+  test("dispatchConnectorRpc wires the restart to the mesh's restartObsidian", async () => {
+    let restarts = 0;
+    const connectorMesh = {
+      restartObsidian: () => {
+        restarts += 1;
+        return Promise.resolve();
+      },
+    } as unknown as LazyConnectorMesh;
+    const run = (method: string, exec?: ToolExecutor) =>
+      dispatchConnectorRpc({
+        method,
+        params: { service: "obsidian" },
+        vault: createMockVault(),
+        localIndex,
+        openUrl: async () => {},
+        syncScheduler: undefined,
+        connectorMesh,
+        getEnforcedPolicy: () => OPEN,
+        ...(exec === undefined ? {} : { toolExecutor: exec }),
+      });
+    await run("connector.writesEnable", executor(true));
+    await run("connector.writesDisable");
+    expect(restarts).toBe(2);
+  });
+
+  test("isObsidianWriteGrantApproved: only an obsidian opt-in that approved the append", () => {
+    expect(isObsidianWriteGrantApproved(db)).toBe(false);
+    setModelWriteEnablement(db, "obsidian", 2, 1, []);
+    expect(isObsidianWriteGrantApproved(db)).toBe(false);
+    setModelWriteEnablement(db, "github", 2, 1, ["obsidian_append_to_daily_note"]);
+    expect(isObsidianWriteGrantApproved(db)).toBe(false);
+    setModelWriteEnablement(db, "obsidian", 2, 1, ["obsidian_append_to_daily_note"]);
+    expect(isObsidianWriteGrantApproved(db)).toBe(true);
   });
 });
