@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793898248200,
+  "lastUpdate": 1793898628134,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "077bfc7e343249c98429c86acfc0bb3152a96015",
-          "message": "feat(agents): make built-in brief synthesis executable (#1234)\n\nBuilt-in agent brief synthesis has existed since 2026-05-09\n(`agents/_lib/synthesize.ts`) but had\nnever actually run in production: `AgentsRpcContext.runner` was\n`undefined` at both production\ndispatchers (`ipc/server/dispatchers.ts`'s socket path and\n`agent-runs/agent-http-invoke.ts`'s HTTP\npath), so every built-in brief took the deterministic, non-LLM render\npath regardless of `[llm]`\nsettings. This PR wires that seam through to production.\n\n**User-visible behaviour change: with Ollama running, this is on by\ndefault.** `[agents] synthesis`\ndefaults to `\"local\"`, not `\"off\"` — so on any machine where a local\n`LlmProvider` (Ollama or\nllama.cpp) answers, the prose of all fourteen built-in briefs (catchup,\nconflicts, expert, ghost,\nhuddle, impact, janitor, preflight, why, glossary, decisions, ownership,\npremortem, negotiate) is\nnow model-rewritten instead of deterministically rendered. And on a\nmachine where Ollama answers\nbut the configured `[llm] local_model` is not pulled, every brief now\ngains a\n\"_Rendered deterministically — a synthesis was attempted and discarded\n(...)_\" footer where it\npreviously had a clean deterministic render with no such note — the\nrender itself is unchanged,\nbut a rewrite was attempted and failed first. Set `[agents] synthesis =\n\"off\"` to opt out entirely\nand return to the pre-this-PR behaviour.\n\n### What changed\n\n- New `[agents] synthesis` config: `\"off\" | \"local\" | \"allow-remote\"`\n(default `\"local\"`).\n`\"off\"` never attempts a rewrite. `\"local\"` attempts synthesis whenever\na runner is invoked, but\na resolved provider that turns out to be non-local (not\n`ollama`/`llamacpp`) is refused as\n`no_eligible_provider` rather than used — so \"a local provider answers\"\nis necessary but not\nsufficient; the mode can still refuse even when Ollama is healthy, if\nthe registered Ollama model\nfalls below `[llm].min_reasoning_params` (the reasoning capability floor\n`selectProvider`\nenforces for every task, `resolveForSynthesis` included) and a remote\nprovider is registered to\nfall through to. `\"allow-remote\"` additionally permits a non-local\nprovider — see below for what\n  \"prefers\" means under that mode.\n- Per-invocation provider resolution (`agents/_lib/synthesis-llm.ts`) —\nnever cached, since a local\nprovider such as Ollama can start or stop under a long-lived Gateway\nprocess.\n- A `requiredPhrases` honesty guard (`agents/_lib/brief-contract.ts`)\nthat discards a synthesized\nrewrite if it drops a section's contractually-required disclaimer text,\nchecked against a\nnormalized, per-heading-scoped section body so a model that re-formats\nor reorders text isn't\n  mistaken for one that deleted the disclaimer.\n- A new `model`-class egress-ledger row (I29, raised from `none`\ncoverage to `per-call`) appended by\n`egress/synthesis-egress.ts`'s `recordSynthesisEgress` before any REMOTE\ngenerate call. The\nlocal/remote split is enforced inside the appender via a required\n`remote` argument, not left to\nthe caller: a local-provider generation appends nothing, not even a\nblocked row.\n- Rejection provenance (`timeout` / `contract_violation` /\n`provider_error` /\n`egress_append_failed` / `empty_result`) carried on the `briefReady`\nnotification's new\n`synthesis` field (`.synthesis.attempted` / `.synthesis.reason`), and on\nthe HTTP\n`GET /v1/agents/runs/{id}` response, so \"why is this brief still\ndeterministic?\" is answerable\n  without a debug build.\n- `nimbus prove`'s `COVERAGE_CLASS_LABELS` gains a `model` entry\n(\"remotely-synthesized agent\nbriefs\") so the scope line never falls through to a bare, unlabeled key.\n- `LlmRouter.resolveForSynthesis()` now accepts an explicit\n`preferLocal` argument (default\n`config.preferLocal`, so every other caller is unaffected) instead of\nalways reading\n`config.preferLocal` implicitly. Agent brief synthesis passes the\nliteral `true`: **under BOTH\n`\"local\"` and `\"allow-remote\"`, brief synthesis prefers a local provider\nregardless of\n`[llm] prefer_local`, falling back to remote only when no local provider\nanswers (or a resolved\nlocal provider is skipped by the reasoning capability floor above).**\nThis only reorders\npriority — `firstAvailable` still walks the whole provider list, so a\nregistered remote provider\nstays reachable under `\"allow-remote\"` exactly as before; it changes\ntie-breaking, not\npermission, and only in the less-egress direction. Without this, `[llm]\nprefer_local = false`\nwith a remote provider registered would make priority remote-first, so\n`\"local\"` mode could\n  refuse a synthesis attempt even with a healthy local Ollama.\nPrecedent, stated accurately: `briefs/brief-llm-adapter.ts`'s\n`createBriefLlm(router,\nbriefsToml.preferLocal)` passes a **configurable** `[briefs]\nprefer_local` key\n(`nimbus-toml.ts`, default `true`) — that precedent establishes \"a\nsurface may override\n`[llm].prefer_local` with its own knob,\" not \"a surface may hardcode\nit.\" This PR hardcodes the\nliteral `true` rather than adding a matching `[agents]\nsynthesis_prefer_local` key; an\noperator-configurable equivalent, if ever wanted, is a natural\nfollow-up, not something today's\n  config already provides.\n\n### Honest limits — please read before merging\n\n- **The `requiredPhrases` guard covers only `negotiate` today.** All\nseven of `negotiate`'s\nnull-lane disclaimers (\"could not be computed\") are enforced. Every\nother brief kind — including\n`decisions`'s and `premortem`'s 0.86 confidence ceiling, and the\n`body_complete = 0` truncation\ncounts `glossary`/`decisions`/`premortem` each render — returns an empty\n`requiredPhrases` set\n(`brief-contract.ts`'s explicit switch, not a fallthrough, so a\nfifteenth brief kind is a compile\nerror rather than a silent gap). A synthesized rewrite of those kinds\ncould silently drop either\ndisclosure today; widening the guard is a follow-up, not a hidden\nomission.\n- **`\"allow-remote\"` is presently unreachable in production.**\n`packages/gateway/src/llm/` ships\nexactly two `LlmProvider` implementations, `OllamaProvider` and\n`LlamaCppProvider` — both local —\nand `platform/assemble.ts` registers only those two. No remote provider\nexists anywhere in the\ntree, so `recordSynthesisEgress` cannot be called with `remote: true`\ntoday. The `model` egress\nclass is wired end-to-end and raised to `per-call` coverage, but appends\nzero rows in production\n  until a remote provider ships.\n- **The default mode is `\"local\"`, so a stock install cannot egress a\nbrief.** `\"allow-remote\"` is\nopt-in for exactly that reason — it is the first path by which indexed\ncontent could leave the\nmachine without a connector involved, once a remote provider exists to\nreach it.\n- **A timed-out generation is abandoned, not cancelled.**\n`LlmGenerateOptions` carries no\n`AbortSignal`, so `synthesisTimeoutMs` (default 20000ms) bounds how long\nthe caller waits, not how\n  long the underlying provider call keeps running.\n\n### Follow-up needed in a satellite repo\n\n`nimbus-agent/nimbus-client` carries a fixture generated from this\nrepo's `briefReady` shape\n(mirrored here at `scripts/agent-brief-shape.snapshot.json`). This PR\nadds a new `synthesis` field\nto that shape, but it is a three-arm union (`SynthesisProvenance`,\n`packages/gateway/src/agents/_lib/synthesize.ts:47-61`), not a fixed\n`{attempted, reason}` pair:\n- `{ attempted: false; reason: \"disabled\" | \"no_eligible_provider\" }`\n- `{ attempted: true; used: true; model: string; remote: boolean }` —\nthe success arm, which has\n  **no `reason` field at all**.\n- `{ attempted: true; used: false; reason: SynthesisDiscardReason;\nviolations?: string[]; detail?: string }`\n\nA client fixture that requires `.synthesis.reason:string`\nunconditionally would reject every\nsuccessfully-synthesized brief. The checked-in snapshot\n(`scripts/agent-brief-shape.snapshot.json`) only covers the first arm\ntoday — it was generated with\nno runner wired, so every kind it captures shows `{attempted: false,\nreason: \"disabled\"}` — and only\nfor nine of the fourteen brief kinds (catchup, conflicts, expert, ghost,\nhuddle, impact, janitor,\npreflight, why); it does not yet capture the other five kinds (glossary,\ndecisions, ownership,\npremortem, negotiate), nor either of the `attempted: true` arms for any\nkind. The client-side\nfixture needs regenerating against the full union, including the success\nand discard arms, once\nthis PR lands and a runner is actually exercised to produce them.\n\n### Verification\n\nNo DB migration, no new security invariant (I29's existing coverage\nvector gains a fifth class,\n`model`; no new invariant number), no Tauri allowlist change\n(`packages/ui/src-tauri/src/gateway_bridge.rs` untouched), no new\n`WRITE_ROUTE_ALLOWLIST` entry —\nthe one `ipc/http-server.ts` change is a new optional field on an\nexisting read response\n(`GET /v1/agents/runs/{id}`).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n## Summary by CodeRabbit\n\n- **New Features**\n- Built-in agent briefs can be enhanced with local or permitted remote\nmodel synthesis.\n- Added configurable synthesis modes and timeouts, with local synthesis\nenabled by default.\n- Briefs and run responses now include synthesis provenance, model\ndetails, status, and fallback information.\n- Remote synthesis activity is recorded in the egress ledger and\nincluded in `prove` model coverage.\n\n- **Bug Fixes**\n- Failed, unavailable, timed-out, or invalid synthesis safely falls back\nto deterministic briefs.\n  - Required negotiation disclosures are preserved through validation.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-17T17:02:31Z",
-          "tree_id": "4052c4f0394c596415d0b1c97db41f8e9c6c9cf8",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/077bfc7e343249c98429c86acfc0bb3152a96015"
-        },
-        "date": 1786986661692,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 242.2510399999981,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 241.96612794999018,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 298.3570666999993,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "28bd0bffeef3a316bf7627714612395d2a43c362",
+          "message": "chore: release main (#1904)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.26.0</summary>\n\n##\n[10.26.0](https://github.com/nimbus-agent/Nimbus/compare/v10.25.0...v10.26.0)\n(2026-11-05)\n\n\n### Features\n\n* **gateway:** the model can propose email drafts and page writes, each\nbehind your approval\n([#1903](https://github.com/nimbus-agent/Nimbus/issues/1903))\n([c14431b](https://github.com/nimbus-agent/Nimbus/commit/c14431b00706b23a086f8cc6941914debc4c9d06))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-05T19:01:42+02:00",
+          "tree_id": "e15db747e509541658d07292359316fecb7beaa6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/28bd0bffeef3a316bf7627714612395d2a43c362"
+        },
+        "date": 1793898624004,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 195.45512800000142,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 192.15267684999418,
             "unit": "ms"
           }
         ]
