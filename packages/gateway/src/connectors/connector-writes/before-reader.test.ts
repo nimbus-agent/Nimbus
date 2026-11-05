@@ -100,6 +100,32 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(beforeReaderArgsProblem(READER)).toBeUndefined();
   });
 
+  test("an `in` test counts like a read: an argKey passes, any other key is a problem", () => {
+    const tests: BeforeStateReader = {
+      ...READER,
+      args: (input) => ("issueKey" in input ? { issueKey: input["issueKey"] } : undefined),
+    };
+    expect(beforeReaderArgsProblem(tests)).toBeUndefined();
+    const stray: BeforeStateReader = {
+      ...READER,
+      args: (input) => ("summary" in input ? {} : { issueKey: input["issueKey"] }),
+    };
+    expect(beforeReaderArgsProblem(stray)).toContain("summary");
+  });
+
+  test("beforeReaderProblems also reports a missing preview, no argKeys and a duplicate", () => {
+    const noPreview = {
+      ...row("jira_issue_update", "jira.issue.update", "mesh", 2),
+      before: READER,
+    };
+    const problems = (r: ConnectorWriteRow): string => beforeReaderProblems(r).join(" | ");
+    expect(problems(noPreview)).toContain("needs a typed preview");
+    expect(problems(synthetic({ ...READER, argKeys: [] }))).toContain("at least one argKey");
+    expect(problems(synthetic({ ...READER, argKeys: ["issueKey", "issueKey"] }))).toContain(
+      "duplicate argKey",
+    );
+  });
+
   test("args that throws on the probe is a problem, not a crash", () => {
     const throwing: BeforeStateReader = {
       ...READER,
