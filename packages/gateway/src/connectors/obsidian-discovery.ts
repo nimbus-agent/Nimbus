@@ -57,7 +57,11 @@ function walkForVaults(dir: string, out: string[]): void {
     const sub = join(dir, e);
     let isDir = false;
     try {
-      const st = statSync(sub);
+      // lstat, not stat: stat follows a link, so its isSymbolicLink() was always false and the
+      // indexing walk reached vaults through a symlink or junction out of the roots. Every link
+      // below a root is skipped (as the connector's 0.5.0 walk does); a root that is a link is
+      // still followed above.
+      const st = lstatSync(sub);
       isDir = st.isDirectory() && !st.isSymbolicLink();
     } catch {
       continue;
@@ -78,7 +82,8 @@ type EntryKind = "dir" | "file" | "skip";
 
 function classifyEntry(full: string): EntryKind {
   try {
-    const st = statSync(full);
+    // lstat for the same reason: a linked folder or note inside a vault could lead out of it.
+    const st = lstatSync(full);
     if (st.isSymbolicLink()) {
       return "skip";
     }
