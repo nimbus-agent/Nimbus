@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.28.0](https://github.com/nimbus-agent/Nimbus/compare/v10.27.0...v10.28.0) (2026-11-05)
+
+
+### Features
+
+* **gateway:** connectors 0.5.0 — the Confluence knowledge-base guard reads page ancestors ([#1908](https://github.com/nimbus-agent/Nimbus/issues/1908)) ([936f3d8](https://github.com/nimbus-agent/Nimbus/commit/936f3d8ce15419cf4eddd2859ec11d64066b59df))
+
 ## [10.27.0](https://github.com/nimbus-agent/Nimbus/compare/v10.26.0...v10.27.0) (2026-11-05)
 
 
