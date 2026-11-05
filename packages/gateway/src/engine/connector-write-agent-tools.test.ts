@@ -869,3 +869,44 @@ describe("B3: the real Outlook draft row and the door's listing check (plan R7)"
     expect(src.warnings).toEqual([]);
   });
 });
+
+// ---------- B4a: the Outlook calendar create is offered only when listed (Calendars.ReadWrite) ----------
+
+describe("B4a: the real Outlook calendar row and the door's listing check (plan Task A5)", () => {
+  const calendarRow = (): ConnectorWriteRow => {
+    const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === "outlook_calendar_create");
+    if (r === undefined) throw new Error("no outlook_calendar_create row");
+    return r;
+  };
+  const calendarSchema = schema({
+    subject: {},
+    startDateTime: {},
+    endDateTime: {},
+    timeZone: {},
+    body: {},
+    attendees: {},
+  });
+
+  test("a listing without outlook_calendar_create (no Calendars.ReadWrite): not offered, one warning per server generation", async () => {
+    const src = fakeSource([calendarRow()], {
+      outlook: { outlook_outlook_mail_send: entry("send", schema({ to: {} })) },
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([]);
+    expect(src.warnings.map((w) => w.bindings["toolId"])).toEqual(["outlook_calendar_create"]);
+    await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(src.warnings).toHaveLength(1);
+    src.epoch = nextEpoch++;
+    await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(src.warnings).toHaveLength(2);
+  });
+
+  test("with the tool listed (Calendars.ReadWrite granted): offered as outlook__outlook_calendar_create", async () => {
+    const src = fakeSource([calendarRow()], {
+      outlook: { outlook_outlook_calendar_create: entry("calendar", calendarSchema) },
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual(["outlook__outlook_calendar_create"]);
+    expect(src.warnings).toEqual([]);
+  });
+});
