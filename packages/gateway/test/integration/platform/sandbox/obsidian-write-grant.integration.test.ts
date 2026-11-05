@@ -360,7 +360,10 @@ describe("the Obsidian write grant under the real sandbox", () => {
     console.log(
       `[obsidian-write-grant] ${process.platform}: write through a planted hard link: ${wroteThrough ? "ALLOWED" : "refused"}`,
     );
-    expect(wroteThrough).toBe(HARD_LINK_WRITE_EXPECTED[process.platform] ?? false);
+    // Measured on win32 and linux; on darwin it is RECORDED (the log line above), not asserted:
+    // nobody has measured it there yet (finding 5).
+    const expected = HARD_LINK_WRITE_EXPECTED[process.platform];
+    if (expected !== undefined) expect(wroteThrough).toBe(expected);
   });
 
   // Review finding 6, the sharper half: can the CHILD itself make a hard link in the vault to a
@@ -471,7 +474,7 @@ describe("the Obsidian write grant under the real sandbox", () => {
  * Linux the vault and the root are different bind mounts (EXDEV).
  */
 const HARD_LINK_WRITE_EXPECTED: Readonly<Partial<Record<NodeJS.Platform, boolean>>> = {
-  win32: true,
-  linux: true,
-  darwin: true,
+  win32: true, // measured 2026-11-05 on Windows 11
+  linux: true, // measured 2026-11-05 under bwrap (WSL)
+  // darwin: unmeasured; the macOS leg records the outcome in its log.
 };
