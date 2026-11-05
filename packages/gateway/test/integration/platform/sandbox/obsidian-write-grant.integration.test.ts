@@ -1,15 +1,18 @@
 import { afterAll, beforeEach, describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  closeSync,
   existsSync,
+  constants as fsConstants,
+  fstatSync,
+  ftruncateSync,
   linkSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
   realpathSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -143,18 +146,66 @@ const NOT_TODAY: readonly Target[] = (Object.keys(TARGETS) as Target[]).filter(
   (t) => t !== "today",
 );
 
+/**
+ * The text of `p`, or `undefined` when it cannot be read: one read, never an exists-then-read pair
+ * (CodeQL js/file-system-race). A path that is gone, or is a folder, reads as `undefined`.
+ */
+function readIfPresent(p: string): string | undefined {
+  try {
+    return readFileSync(p, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * ONE open of `p`, and everything asserted about it from that descriptor: whether it is a regular
+ * file, its inode and its text. Off win32 the open does not follow a final symlink (`O_NOFOLLOW`),
+ * so a note swapped for a symlink reads as `undefined`, as `lstat` would have refused it. A folder
+ * opens on POSIX (then `isFile` is false) and does not on Windows (`undefined`).
+ */
+function openedFile(p: string): { isFile: boolean; ino: number; text: string } | undefined {
+  let fd: number;
+  try {
+    fd = openSync(p, IS_WIN ? fsConstants.O_RDONLY : fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  } catch {
+    return undefined;
+  }
+  try {
+    const st = fstatSync(fd);
+    return { isFile: st.isFile(), ino: st.ino, text: st.isFile() ? readFileSync(fd, "utf8") : "" };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Truncate `p` IN PLACE through its own descriptor when it can be opened (it keeps its ACE). */
+function truncateIfPresent(p: string): void {
+  let fd: number;
+  try {
+    fd = openSync(p, "r+");
+  } catch {
+    return;
+  }
+  try {
+    ftruncateSync(fd, 0);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 function resetTargets(): void {
   // Today's note is TRUNCATED in place, never recreated: a new file would drop any ACE the last
   // spawn left on it, and the revoke cases below are about exactly that ACE.
   for (const [t, p] of Object.entries(LANDS)) if (t !== "today") rmSync(p, { force: true });
-  if (existsSync(today)) writeFileSync(today, "");
+  truncateIfPresent(today);
   writeFileSync(TARGETS.communityPlugins, "[]");
   writeFileSync(TARGETS.otherNote, "# another note\n");
 }
 
 function written(t: Target): boolean {
   const p = LANDS[t];
-  return existsSync(p) && readFileSync(p, "utf8").includes(MARK);
+  return readIfPresent(p)?.includes(MARK) === true;
 }
 
 /** A PowerShell single-quoted literal (embedded apostrophes doubled). */
@@ -365,7 +416,8 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
     async () => {
       const pluginMain = TARGETS.pluginMain;
       writeFileSync(pluginMain, "plugin code");
-      const before = statSync(today).ino;
+      const before = openedFile(today)?.ino;
+      expect(before).toBeDefined();
       const script = join(work, "swap.js");
       const j = JSON.stringify;
       writeFileSync(
@@ -389,13 +441,14 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
       );
       const r = await runSandboxed(obsidianPolicy(true), [process.execPath, script]);
       expect(r.status).toBe(0);
+      // Everything about today's note from ONE open of it (no symlink followed off win32).
+      const note = openedFile(today);
       // The probe ran: its allowed append landed.
-      expect(readFileSync(today, "utf8")).toContain(MARK);
+      expect(note?.text).toContain(MARK);
       // No write reached the plugin, and today's note is still the same regular file.
       expect(readFileSync(pluginMain, "utf8")).toBe("plugin code");
-      const st = lstatSync(today);
-      expect(st.isFile()).toBe(true);
-      expect(st.ino).toBe(before);
+      expect(note?.isFile).toBe(true);
+      expect(note?.ino).toBe(before);
       // A "HACKED" append may land in today's note ITSELF (measured on Linux: the unlink is EBUSY,
       // so the link fails and the next append writes the still-granted note): that is the one file
       // the child may write. What must never change is any other file, above all the plugin.
@@ -420,7 +473,7 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
           );
           expect(r.status).toBe(2);
           expect(r.stderr).toContain("is no longer a single regular file");
-          expect(existsSync(join(today, "inside.md"))).toBe(false);
+          expect(readIfPresent(join(today, "inside.md"))).toBeUndefined();
           expect(written("newFile")).toBe(false);
         } finally {
           rmSync(today, { recursive: true, force: true });
@@ -512,23 +565,26 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
         windowsHide: true,
       });
       expect(control.status).toBe(0);
-      expect(existsSync(TARGETS.otherNote)).toBe(false);
-      expect(!existsSync(today) || readFileSync(today, "utf8").includes("REPLACED")).toBe(true);
+      expect(readIfPresent(TARGETS.otherNote)).toBeUndefined();
+      const afterControl = readIfPresent(today);
+      expect(afterControl === undefined || afterControl.includes("REPLACED")).toBe(true);
       // Restore the fixtures, and prepare the grant afresh for the confined run.
       rmSync(today, { force: true });
       writeFileSync(TARGETS.otherNote, "# another note\n");
       writeFileSync(replacement, "REPLACED");
       const policy = obsidianPolicy(true);
-      const inode = statSync(today).ino;
+      const inode = openedFile(today)?.ino;
+      expect(inode).toBeDefined();
       const r = await runSandboxed(policy, argv);
       expect(r.status).toBe(0);
+      // Everything about today's note from ONE open of it.
+      const note = openedFile(today);
       // The probe ran: its allowed append landed.
-      expect(readFileSync(today, "utf8")).toContain(MARK);
+      expect(note?.text).toContain(MARK);
       // Today's note is the same regular file, not replaced and not deleted.
-      const st = lstatSync(today);
-      expect(st.isFile()).toBe(true);
-      expect(st.ino).toBe(inode);
-      expect(readFileSync(today, "utf8")).not.toContain("REPLACED");
+      expect(note?.isFile).toBe(true);
+      expect(note?.ino).toBe(inode);
+      expect(note?.text).not.toContain("REPLACED");
       // The sibling note was not deleted.
       expect(readFileSync(TARGETS.otherNote, "utf8")).toBe("# another note\n");
     },
