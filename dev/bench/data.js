@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793871869767,
+  "lastUpdate": 1793880721149,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "074daab8d22b28212b4a8fd467d3783b76678e35",
-          "message": "fix(release): gate the release PR at PR time, and reject a body release-please cannot parse (#1227)\n\nTwo gaps from the `v2.4.7` postmortem, both of which let a release ship\nwithout a changelog entry.\n\n## The second incident\n\n`v2.4.6` lost #1218 because its PR body held code spans with unbalanced\nparentheses; release-please threw `unexpected token` and dropped the\ncommit. **`v2.4.7` then lost #1224 — the PR that fixed the fallout — the\nsame way**, because its body quoted those same strings while explaining\nthem. Tags are immutable, so neither can be corrected after the fact.\n\nSo the postmortem repeated itself verbatim, one release later, and the\nguard I added in #1224 caught it and still could not stop it. Both\nhalves are addressed here.\n\n## (1) The completeness guard now gates the release PR\n\nIt ran only on push-to-main, where it goes red **after** release-please\nhas already opened the release PR — and it is not one of that PR's\nchecks. On `v2.4.7` it caught the omission and went red within minutes\nof the merge, while the release PR showed CLEAN and merged anyway. A\nfinding that arrives somewhere nobody is looking at merge time does not\nstop anything.\n\nThe script now takes an explicit `PR_NUMBER` and runs as a check **on**\nthe release PR, in addition to the push-to-main run.\n`resolveReleasePrNumbers` is extracted and tested: an explicit number\nwins, blank falls back to the label search — blank matters because\nActions passes an unset input as the empty string, and treating that as\npinned would check PR `\"\"`.\n\n## (2) The PR body must produce a parseable commit\n\n`pr-title-lint.yml` already guards the title, for exactly this reason.\nThe body is parsed too and nothing guarded it.\n\n**This uses release-please's own parser rather than a heuristic, and\nthat choice was measured.** I first modelled it as unbalanced parens,\nthen as nesting depth, and checked each against 400 commits on `main`:\nthe first flagged 17 where only 2 had actually failed; the second\nflagged 148, including a commit that parsed fine; and neither explained\nthe reported error positions. A gate that noisy gets switched off.\n\n`@conventional-commits/parser` is release-please's own dependency,\npinned at the same `^0.4.1`. Dependency pre-flight via `bun run\ncheck-package`: published 2020-12-28, author Ben Coe, maintainers\n`oss-bot` and `bcoe` — the conventional-commits reference\nimplementation, two transitive deps.\n\nIt reproduces both historical failures at the **exact** line and column\nCI reported:\n\n| commit | CI reported | parser locally |\n| --- | --- | --- |\n| `828090ca` (#1218) | `103:15` | `103:15` |\n| `b59ccacf` (#1224) | `17:15` | `17:15` |\n\n## Wiring\n\nA new `pr-quality-release-safety` job, added to `pr-quality-required`'s\n`needs` list with `EXPECTED` bumped 6 to 7 — so it actually blocks,\nwithout touching the ruleset. The completeness step is conditional on\nthe head branch being release-please's, since the question is only\nmeaningful about a release PR.\n\n## Red-prove\n\nDriving the real CLIs the way CI does, on real historical inputs:\n\n```\nparse check, the two commits release-please really rejected\n  828090ca (#1218): exit=1 at=103:15  BLOCKED\n  b59ccacf (#1224): exit=1 at=17:15   BLOCKED\n\ncontrol: healthy commits must NOT be blocked\n  f7d8c75c (#1225): exit=0  allowed\n  6fc59e51 (#1221): exit=0  allowed\n  84d3e629 (#1220): exit=0  allowed\n  4e773395 (#1217): exit=0  allowed\n\nempty title: exit=1  refuses  (no clean report on no input)\n```\n\nThe controls matter as much as the catches: `4e773395` has unbalanced\nparens and parses fine, which is precisely why the heuristics were\nunshippable.\n\n**One correction to my own method.** My first retrospective check of the\ncompleteness mode reported \"nothing dropped\" for `#1226` and `#1222`,\nwhich I knew had omitted commits. That was the probe, not the check:\n`v2.4.7` is now tagged, so the comparison baseline had moved and the\nrange was legitimately empty. The third probe artifact of this session —\nI now print the derived inputs before believing a negative result.\n\n`preflight:fast` 29 of 29. `bun test scripts/release` — 301 pass, 4\nfail, all four the pre-existing Windows GPG `nimbus-verify.ps1` failures\nthat are identical on `main`.\n\n## Note\n\nThis PR is its own first test: the parse check runs on this body.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Improved release validation for pull requests by detecting malformed\nsquash-merge messages and highlighting the affected lines.\n* Added clearer validation for release pull request changelog\ncompleteness.\n  * Improved handling of explicitly identified release pull requests.\n\n* **Tests**\n* Added coverage for message formatting, parser errors, line excerpts,\nand historical failure scenarios.\n  * Expanded release completeness validation coverage.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T10:36:08Z",
-          "tree_id": "0d4f4a5daee578b34ff7cbc12dff715ed9df7a75",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/074daab8d22b28212b4a8fd467d3783b76678e35"
-        },
-        "date": 1786877237459,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.0737410500016,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.8458455000011,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 237.6557733499998,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2e9bf379e2ed85bd3dce74f7d87917df76751d20",
+          "message": "feat(gateway): the model can propose messages and comments, each behind your approval (#1897)\n\nPhase 9.7 Project B, PR B1: the model's first connector writes, messages\nand comments. Each write is HITL-gated, shows a typed preview, and is\noffered only after the owner re-approves the new list with `nimbus\nconnector writes enable`.\n\n**What the model can now propose (12 rows, each still prompting the\nowner every time):**\n- **Messages:** Slack post and DM, Teams channel and chat post, Discord\npost (as the bot).\n- **Comments:** GitHub issue/PR comment, GitLab issue note and MR note,\nJira comment, Linear comment, Notion comment, Confluence comment.\n\n**How each write is shown and guarded:**\n- **Typed preview templates** on all 12 rows, with field names matched\nto the 0.4.0 tool schemas.\n- **Before-state** on the seven comment rows. Each read is same-service\nand read-only, and it shows only the target's identity (title, state,\nkind). The reply goes to the owner's prompt and never to the model.\n- **Model-door refusals:**\n  - A Slack/Teams post to a channel or DM that ChatOps listens on.\n- A broadcast mention: Slack `<!channel>`, `<!here>`, `<!everyone>` and\nuser groups; GitHub `@org/team`; GitLab `@all` and `@group/sub`.\n  - A GitLab note containing a quick-action line.\n  - A write to the tribal knowledge base.\n\nThe text is normalised before matching: NFKC, invisible and control\ncharacters stripped, and HTML entities decoded, repeated until stable\nand capped at 4 rounds. Text that is still changing after the cap is\nrefused.\n- **The MCP act door** applies the same messaging refusals through one\nshared function, `messagingDestinationRefusal`. It checks at submit and\nagain at accept, and refuses with `ERR_CAPTURE_ACTION_REFUSED`. A\nrefusal at accept leaves the proposal pending. Four more types are\nproposable over MCP: GitHub issue comment, GitLab issue note, GitLab MR\nnote and Discord post. That makes 34 proposable, 126 denied and 10\n`not_yet_offered`.\n\n**Rulings:**\n- The owner's two rulings of 2026-11-05: refuse broadcast mentions at\nthe door, and the act door also refuses ChatOps channels.\n- Discord mentions are neutralised by the connector (`allowed_mentions:\nusers`), and a test pins that line in the installed package.\n- The GitLab quick-action refusal is a ruling made during the build,\nwhich the owner may override. GitLab runs `/close`, `/merge` and\n`/approve` from a note body, so a model-written \"comment\" could change\nstate.\n\n**Stated bounds:**\n- A top-level GitLab `@group` is not caught, because without a lookup it\ncannot be told apart from a username.\n- The Teams tool takes no mentions input. Any `<at` tag is refused\nanyway.\n- A line starting with `/` and a letter, such as `/etc/hosts`, is\nrefused in a GitLab note. The model can rephrase.\n- Notion keeps only the first 2,000 characters of a comment, and the\nfield label says so.\n\n**Tests:**\n- Real connectors against fake upstreams for Jira, Confluence, GitLab\n(issue and MR notes) and GitHub, in `test/integration`.\n- Injection fixtures on the real rows.\n- Re-consent on the real rows.\n- Every security test was red-proved by reverting its production change.\n\n**Not breaking.** Nothing is offered until the owner re-runs `enable`\nand approves, and every write still prompts.\n\n**Docs:**\n- The five core docs: CLAUDE.md and GEMINI.md, roadmap, architecture,\nREADME, cli-reference.\n- SECURITY-INVARIANTS: the I28 order with the destination steps, and the\nI53 bounds.\n- The `nimbus-mcp-sink` skill and the CHANGELOG.\n\n**Verification:**\n- Clean: `preflight:fast`, `typecheck:tests`, `audit:doc-refs`,\n`audit:status-drift` and `audit:platform-test-gaps`.\n- `verify:docker --changed` in the CI Linux image: 1060 pass, 0 fail.\n- Locally, the whole-repo `--parallel` run has 22 failures, all outside\nthis diff: `pwsh` is missing on the dev box, the known TUI Yoga errors,\nand load timeouts.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added message and comment actions across supported chat, code-hosting,\nissue-tracking, and knowledge-base services, with previews showing the\ndestination and relevant existing content.\n* Added four MCP-proposable actions for Discord messages and GitHub and\nGitLab comments.\n* **Safety**\n* Added destination checks when actions are submitted and accepted.\nRestricted destinations, broadcast mentions, and GitLab quick actions\nare refused; refused actions remain unexecuted.\n* Existing connector opt-ins must be enabled again before newly offered\nwrites are available.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T12:05:43Z",
+          "tree_id": "81c574086d6a7b7d086ea1850bd4607f6958f4e7",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/2e9bf379e2ed85bd3dce74f7d87917df76751d20"
+        },
+        "date": 1793880717573,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 193.44251054999876,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 182.61426500000417,
             "unit": "ms"
           }
         ]
