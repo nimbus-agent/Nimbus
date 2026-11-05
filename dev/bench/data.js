@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793884274517,
+  "lastUpdate": 1793890008621,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b0fbe14a6379cb46d8e5edaddf503c54fb7dc0aa",
-          "message": "chore: release main (#1231)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.4.9</summary>\n\n##\n[2.4.9](https://github.com/nimbus-agent/Nimbus/compare/v2.4.8...v2.4.9)\n(2026-08-16)\n\n\n### Bug Fixes\n\n* **coverage:** gate four runtime-bearing types files and give the\nsandbox harness a way to run\n([#1230](https://github.com/nimbus-agent/Nimbus/issues/1230))\n([326493d](https://github.com/nimbus-agent/Nimbus/commit/326493d950392b38e38b2ed5d70410693d3b976a))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-16T13:41:25Z",
-          "tree_id": "3178e0e1d31e81bafa79f4193d7e11ffb2feda87",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b0fbe14a6379cb46d8e5edaddf503c54fb7dc0aa"
-        },
-        "date": 1786888378833,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.8411837000018,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 314.27836789999094,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 304.84929545000375,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "c5835c41555cc8a819f1ded8e4fba9c22aa882c8",
+          "message": "feat(gateway): the model can propose issue writes, each behind your approval (#1901)\n\nPhase 9.7 Project B, PR B2: the model can propose issue writes. Each one\nis HITL-gated, shows a typed preview with the issue's current state, and\nis offered only after the owner re-approves the new list with `nimbus\nconnector writes enable`. B2a (#1899) built the framework this PR needs:\na two-read before-state and the guard that refuses a write before the\nprompt.\n\n**13 rows the model can now propose.** Each still prompts the owner\nevery time.\n- **GitHub:** issue create, labels add, assignees add, state set.\n- **GitLab:** issue create, labels add, assignees add, state set.\n- **Jira:** issue create, issue update, transition.\n- **Linear:** issue create, issue update.\n\n**What the owner sees:**\n- **Typed previews on all 13 rows.** Field names were checked against\nthe 0.4.0 tool schemas. The Jira update field says it replaces the\ncurrent description, which is not shown.\n- **Before-state on every update, state, label, assign and transition\nrow**, showing the current labels, assignees, state or status. A list\nwhose entries cannot be read is counted as unreadable, never shown as\n\"(none)\".\n- **Jira transitions show From, Transition and To.** This uses two\nreads: `jira_issue_transitions_list`, then `jira_issue_get` (owner\nruling 2026-11-05).\n\n**Owner rulings, 2026-11-05:**\n- **Labels and assignees are add-only.** A test checks this against the\ninstalled connector source.\n- **GitLab scoped labels (`key::value`) are refused on both doors**,\nbecause they replace an existing label. The check runs after\nnormalisation.\n- **A Linear `assigneeId` on update is allowed only when the issue is\nunassigned.**\n- On the model door, the B2a guard reads the current assignee through\nthe gate. Anything other than a proven `assignee: null` refuses before\nthe prompt, including a failed or slow read.\n- On the MCP act door, which runs no before-read, any `assigneeId` is\nrefused at submit and again at accept.\n- **`jira.issue.transition` stays withheld from MCP proposals** until\nbefore-state reaches the act door.\n\n**Refusals on issue text:**\n- **Broadcast mentions** are scanned in the GitHub and GitLab\nissue-create title and body or description.\n- **GitLab quick actions** are scanned in the issue-create description\nand in note bodies. They are not scanned in the title, because GitLab\ndoes not run them there, so a title like `/api is down` is allowed. This\nis controller ruling R-QA, which the owner may override.\n- **Out of scope, as stated bounds:** Jira and Linear text, and label,\nassignee, state and transition fields.\n\n**MCP act door.** It now calls one function, `actDoorRefusal`: the\nshared messaging check, then the Linear rule. Seven more types become\nproposable, bringing the counts to 41 proposable, 119 denied and 3\n`not_yet_offered`.\n\n**Counts:** 25 rows are offered to the model, 43 have a typed preview,\nand 16 have a before-reader.\n\n**Tests:**\n- Real connectors against fake upstreams: Jira create, update and\ntransition (two reads), GitLab issue create and labels, and GitHub.\n- Re-consent and injection fixtures on the real rows.\n- Every new rule was red-proved by reverting it.\n\n**Not breaking.** Nothing is offered until the owner re-runs `enable`\nand approves, and every write still prompts. Over MCP, a Linear update\ncarrying `assigneeId` is now refused; such a proposal was accepted\nbefore.\n\n**Docs.** The five core docs (CLAUDE.md, GEMINI.md, roadmap,\narchitecture, README and cli-reference), SECURITY-INVARIANTS (I28, the\nI53 bounds and the counts), the `nimbus-mcp-sink` skill and the\nCHANGELOG. The whole-branch review's stale restatements are fixed.\n\n**Verification:**\n- `preflight:fast`, `typecheck:tests`, `audit:doc-refs`,\n`audit:status-drift` and `audit:platform-test-gaps` are clean.\n- `verify:docker --changed` in the CI Linux image: 1052 pass, 0 fail.\n- Locally, the whole-repo `--parallel` failures are all outside this\ndiff: the toolgen sandbox helper is not built in a fresh worktree, pwsh\nis missing on the dev box, the known TUI Yoga errors, and load timeouts.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added 13 issue actions across GitHub, GitLab, Jira, and Linear,\nincluding creating and updating issues, changing labels or assignees,\nand changing state.\n* Issue actions now show previews with relevant current-state details\nbefore approval. Some actions require renewed connector approval.\n* GitHub and GitLab issue actions can now be proposed through the MCP\naction flow.\n\n* **Safety**\n* Writes are refused for GitLab scoped labels, GitLab quick actions,\nbroadcast mentions, and Linear reassignment when the issue already has\nan assignee.\n* Jira issue transitions remain unavailable through the MCP action flow.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T14:40:35Z",
+          "tree_id": "e1ab732e31128948452f8912ecf23cb79b399da4",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/c5835c41555cc8a819f1ded8e4fba9c22aa882c8"
+        },
+        "date": 1793890005043,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 185.93175724999801,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 186.37644915000018,
             "unit": "ms"
           }
         ]
