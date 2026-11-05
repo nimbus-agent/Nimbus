@@ -218,7 +218,7 @@ function deepFreeze<T>(v: T): T {
 /**
  * ONE snapshot of the guard context: the accessor's `kb`, deep-copied and frozen. `undefined`
  * (the config could not be read) when there is no accessor, it throws, it returns a non-object,
- * or the copy fails.
+ * its `kb` is present but not a plain object (`null`, a string, an array), or the copy fails.
  */
 function snapshotGuardContext(
   accessor: (() => BeforeGuardContext) | undefined,
@@ -227,7 +227,9 @@ function snapshotGuardContext(
   try {
     const raw: unknown = accessor();
     if (!isPlainObject(raw)) return undefined;
-    return deepFreeze(structuredClone({ kb: raw["kb"] }) as BeforeGuardContext);
+    const kb = raw["kb"];
+    if (kb !== undefined && !isPlainObject(kb)) return undefined;
+    return deepFreeze(structuredClone({ kb }) as BeforeGuardContext);
   } catch {
     return undefined;
   }

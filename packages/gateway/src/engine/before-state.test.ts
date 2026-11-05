@@ -1495,6 +1495,10 @@ describe("the guard context snapshot (B3, R11)", () => {
       },
       () => null as unknown as BeforeGuardContext,
       () => "kb" as unknown as BeforeGuardContext,
+      // A `kb` that is present but not a plain object: unreadable too, so the guard applies.
+      () => ({ kb: null }) as unknown as BeforeGuardContext,
+      () => ({ kb: "x" }) as unknown as BeforeGuardContext,
+      () => ({ kb: [] }) as unknown as BeforeGuardContext,
       // A value that cannot be copied (a function inside): unreadable, never passed through.
       () => ({ kb: { notion: { databaseId: (() => "x") as unknown as string } } }),
       undefined,
@@ -1697,8 +1701,14 @@ describe("the KB-child guard on the real page rows (OR-B3-3)", () => {
         slow.resolve(reply);
       });
 
-      test("a throwing or absent guardContext applies the guard and refuses", async () => {
+      test("a throwing or absent guardContext, or a malformed kb, applies the guard and refuses", async () => {
         const ok = notionPage({ type: "page_id" });
+        for (const bad of [null, "x", []]) {
+          expect(
+            await read(ok, () => ({ kb: bad }) as unknown as BeforeGuardContext),
+            JSON.stringify(bad),
+          ).toEqual(KB_CHILD_REFUSED);
+        }
         expect(
           await read(ok, () => {
             throw new Error("config");
