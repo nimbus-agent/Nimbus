@@ -4,9 +4,18 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { toStandardSchema } from "@mastra/core/schema";
 
 import { dbRun } from "../../db/write.ts";
+import { makeEgressSink } from "../../egress/egress-ledger.ts";
+import { createBeforeStateRunner, isBeforeReadActionType } from "../../engine/before-state.ts";
 import { buildConnectorWriteAgentTools } from "../../engine/connector-write-agent-tools.ts";
+import { NO_POLICY_OVERLAY, ToolExecutor } from "../../engine/executor.ts";
 import { serviceOf } from "../../engine/service-of.ts";
-import type { ActionResult, PlannedAction } from "../../engine/types.ts";
+import type {
+  ActionResult,
+  AuditSink,
+  ConnectorDispatcher,
+  ConsentChannel,
+  PlannedAction,
+} from "../../engine/types.ts";
 import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
@@ -22,7 +31,9 @@ import {
   BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
+  GITLAB_SCOPED_LABEL_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
+  LINEAR_ASSIGNEE_REFUSAL,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
@@ -256,8 +267,10 @@ function realListing(service: string): Record<string, unknown> {
         typeof toStandardSchema
       >[0]),
     };
-    if (r.before !== undefined) {
-      out[mcpClientToolKey(service, r.before.tool)] = { description: "read", inputSchema: {} };
+    for (const tool of [r.before?.tool, r.before?.also?.tool]) {
+      if (tool !== undefined) {
+        out[mcpClientToolKey(service, tool)] = { description: "read", inputSchema: {} };
+      }
     }
   }
   return out;
@@ -299,6 +312,7 @@ interface RealDoor {
 async function realDoor(
   policy: () => EnforcedPolicy | undefined,
   kb?: TribalKbConfig,
+  realExecutor?: Pick<ToolExecutor, "execute">,
 ): Promise<RealDoor> {
   for (const s of REAL_SERVICES) {
     setModelWriteEnablement(
@@ -326,7 +340,7 @@ async function realDoor(
   };
   const tools = await buildConnectorWriteAgentTools(
     src,
-    () => executor,
+    () => realExecutor ?? executor,
     (_s, _t, d) => d,
     new Set(),
   );
@@ -490,5 +504,142 @@ describe("GitLab quick actions on the real rows through the real door", () => {
       }),
     ).toEqual({ sent: true });
     expect(door.executed).toHaveLength(1);
+  });
+});
+
+describe("B2: the issue-write refusals on the real rows through the real door (plan Task 4)", () => {
+  test("a quick action, a team mention and a scoped label are refused before anything is executed", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("gitlab__gitlab_issue_create", {
+        projectPath: "g/r",
+        title: "Bug",
+        description: "fix\n/close",
+      }),
+    ).toEqual({ refused: GITLAB_QUICK_ACTION_REFUSAL });
+    expect(
+      await door.call("github__github_issue_create", {
+        owner: "o",
+        repo: "r",
+        title: "ping @org/core",
+      }),
+    ).toEqual({ refused: BROADCAST_MENTION_REFUSAL });
+    expect(
+      await door.call("gitlab__gitlab_issue_labels_add", {
+        projectPath: "g/r",
+        issueIid: 7,
+        labels: ["prio::high"],
+      }),
+    ).toEqual({ refused: GITLAB_SCOPED_LABEL_REFUSAL });
+    expect(door.executed).toEqual([]);
+  });
+
+  test("the clean inputs are executed once each", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const [name, input] of [
+      [
+        "gitlab__gitlab_issue_create",
+        { projectPath: "g/r", title: "/api is down", labels: ["a:b"] },
+      ],
+      ["github__github_issue_create", { owner: "o", repo: "r", title: "thanks @alice" }],
+      [
+        "gitlab__gitlab_issue_labels_add",
+        { projectPath: "g/r", issueIid: 7, labels: ["prio:high"] },
+      ],
+    ] as const) {
+      expect(await door.call(name, input), name).toEqual({ sent: true });
+    }
+    expect(door.executed.map((a) => a.type)).toEqual([
+      "gitlab.issue.create",
+      "github.issue.create",
+      "gitlab.issue.labels.add",
+    ]);
+  });
+});
+
+describe("B2: the Linear assignee guard through the production door executor (OR-B2-3)", () => {
+  const LINEAR_ID = "8f2b0a1c-0000-4000-8000-000000000001";
+  const reply = (assignee: unknown) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ issue: { id: LINEAR_ID, title: "Flaky test", assignee } }),
+      },
+    ],
+  });
+
+  /** The door's real executor shape: a before-state runner over the production rows. */
+  function doorExecutor(readReply: unknown, approve: boolean) {
+    const prompts: string[] = [];
+    const dispatched: PlannedAction[] = [];
+    const consent: ConsentChannel = {
+      requestApproval: async (prompt) => {
+        prompts.push(prompt);
+        return approve;
+      },
+    };
+    const audit: AuditSink = { recordAudit: () => {} };
+    const connectors: ConnectorDispatcher = {
+      dispatch: async (a) => {
+        dispatched.push(a);
+        return isBeforeReadActionType(a.type) ? readReply : { updated: true };
+      },
+    };
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      undefined,
+      makeEgressSink(db),
+      NO_POLICY_OVERLAY,
+      undefined,
+      createBeforeStateRunner(),
+    );
+    const egress = () =>
+      (
+        db.query("SELECT method, result_status FROM egress_ledger ORDER BY id").all() as Array<{
+          method: string;
+          result_status: string;
+        }>
+      ).map((r) => [r.method, r.result_status]);
+    return { exec, prompts, dispatched, egress };
+  }
+
+  const write = { issueId: LINEAR_ID, assigneeId: "user-1" };
+
+  test("assigned: refused with the fixed text, no prompt, no write dispatched, the write's egress row blocked", async () => {
+    const h = doorExecutor(reply({ id: "u", displayName: "Carol" }), true);
+    const door = await realDoor(() => BOUND, undefined, h.exec);
+    expect(await door.call("linear__linear_issue_update", write)).toEqual({
+      refused: LINEAR_ASSIGNEE_REFUSAL,
+    });
+    expect(h.prompts).toEqual([]);
+    expect(h.dispatched.map((a) => a.type)).toEqual(["linear.before.read"]);
+    expect(h.egress()).toEqual([
+      ["linear.before.read", "authorized"],
+      ["linear.issue.update", "blocked"],
+    ]);
+  });
+
+  test("unassigned (assignee: null): the prompt, and on approval one write dispatch", async () => {
+    const h = doorExecutor(reply(null), true);
+    const door = await realDoor(() => BOUND, undefined, h.exec);
+    expect(await door.call("linear__linear_issue_update", write)).toEqual({ updated: true });
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]).toContain("Assignee: (none)");
+    expect(h.dispatched.map((a) => a.type)).toEqual(["linear.before.read", "linear.issue.update"]);
+    expect(h.egress()).toEqual([
+      ["linear.before.read", "authorized"],
+      ["linear.issue.update", "authorized"],
+    ]);
+  });
+
+  test("an update without assigneeId is never refused by the guard, even on an assigned issue", async () => {
+    const h = doorExecutor(reply({ id: "u", displayName: "Carol" }), true);
+    const door = await realDoor(() => BOUND, undefined, h.exec);
+    expect(
+      await door.call("linear__linear_issue_update", { issueId: LINEAR_ID, title: "x" }),
+    ).toEqual({ updated: true });
+    expect(h.prompts).toHaveLength(1);
   });
 });

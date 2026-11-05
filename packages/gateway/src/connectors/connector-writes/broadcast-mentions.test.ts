@@ -278,3 +278,64 @@ describe("messagingDestinationRefusal: the broadcast rule on the rows (OR1)", ()
     ).toBeUndefined();
   });
 });
+
+describe("B2: the broadcast rule on the issue creates' titles, bodies and descriptions (plan R6)", () => {
+  const NO_CHATOPS = { chatops: undefined } as const;
+  const gh = (over: Record<string, unknown>) =>
+    messagingDestinationRefusal(
+      "github_issue_create",
+      { owner: "o", repo: "r", title: "Bug", ...over },
+      NO_CHATOPS,
+    );
+  const gl = (over: Record<string, unknown>) =>
+    messagingDestinationRefusal(
+      "gitlab_issue_create",
+      { projectPath: "g/r", title: "Bug", ...over },
+      NO_CHATOPS,
+    );
+
+  test("GitHub: a team in the title or the body, fullwidth @ included, is refused", () => {
+    for (const over of [
+      { title: "ping @org/team" },
+      { title: `ping ${FW_AT}nimbus-agent/core` },
+      { body: "cc @nimbus-agent/core" },
+      { body: `cc @org/${ZWSP}team` },
+    ]) {
+      expect(gh(over), JSON.stringify(over)).toBe(BROADCAST_MENTION_REFUSAL);
+    }
+  });
+
+  test("GitLab: @all or a group path in the title or the description is refused (bidi included)", () => {
+    for (const over of [
+      { title: "@all please look" },
+      { description: `@all${RLO} hi` },
+      { description: "cc @group/sub" },
+      { title: `${FW_AT}all` },
+    ]) {
+      expect(gl(over), JSON.stringify(over)).toBe(BROADCAST_MENTION_REFUSAL);
+    }
+  });
+
+  test("a user mention, and/or, or a slash title is allowed", () => {
+    expect(gh({ title: "thanks @alice", body: "and/or" })).toBeUndefined();
+    expect(gl({ title: "/api is down", description: "thanks @alice" })).toBeUndefined();
+  });
+
+  test("an absent or null optional body/description is allowed; a non-string one is refused", () => {
+    expect(gh({})).toBeUndefined();
+    expect(gh({ body: null })).toBeUndefined();
+    expect(gh({ body: undefined })).toBeUndefined();
+    expect(gh({ body: 42 })).toBe(BROADCAST_MENTION_REFUSAL);
+    expect(gl({})).toBeUndefined();
+    expect(gl({ description: null })).toBeUndefined();
+    expect(gl({ description: ["@all"] })).toBe(BROADCAST_MENTION_REFUSAL);
+  });
+
+  test("a missing or non-string title is refused (it is required)", () => {
+    expect(
+      messagingDestinationRefusal("github_issue_create", { owner: "o", repo: "r" }, NO_CHATOPS),
+    ).toBe(BROADCAST_MENTION_REFUSAL);
+    expect(gh({ title: null })).toBe(BROADCAST_MENTION_REFUSAL);
+    expect(gl({ title: 7 })).toBe(BROADCAST_MENTION_REFUSAL);
+  });
+});
