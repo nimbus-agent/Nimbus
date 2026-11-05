@@ -42,6 +42,11 @@ export interface SandboxPolicy {
    * never read from a manifest file.
    */
   readonly firstPartyWildcardHosts?: readonly string[];
+  /**
+   * Write paths the gateway canonicalised when it decided the grant (`ExtensionManifest`'s field of
+   * the same name). Each must also be in `permissions.filesystem.write`. Set only by gateway code.
+   */
+  readonly canonicalWritePaths?: readonly string[];
 }
 
 /** The single manifest -> policy derivation. `wrapServerSpec` is its only production caller. */
@@ -56,7 +61,28 @@ export function policyFromManifest(manifest: ExtensionManifest): SandboxPolicy {
     ...(manifest.firstPartyWildcardHosts === undefined
       ? {}
       : { firstPartyWildcardHosts: manifest.firstPartyWildcardHosts }),
+    ...(manifest.canonicalWritePaths === undefined
+      ? {}
+      : { canonicalWritePaths: manifest.canonicalWritePaths }),
   };
+}
+
+/**
+ * The first `canonicalWritePaths` entry that is not granted write, or that no longer canonicalises
+ * to itself, or `undefined`. The sandbox wrapper refuses the spawn on one: the gateway canonicalised
+ * these paths when it decided the grant, so a different answer now means a link was swapped in (a
+ * vault replaced by a junction or symlink to somewhere else) between that decision and this spawn.
+ * A path that no longer resolves canonicalises to itself; the runner then fails on it.
+ */
+export function canonicalWriteDrift(
+  policy: SandboxPolicy,
+  canonical: (p: string) => string,
+): string | undefined {
+  const write = new Set(policy.permissions.filesystem.write);
+  for (const p of policy.canonicalWritePaths ?? []) {
+    if (!write.has(p) || canonical(p) !== p) return p;
+  }
+  return undefined;
 }
 
 /**
@@ -217,5 +243,8 @@ export function parseSandboxPolicy(json: string): SandboxPolicy {
     ...(o["firstPartyWildcardHosts"] === undefined
       ? {}
       : { firstPartyWildcardHosts: wildcardPatterns(o["firstPartyWildcardHosts"]) }),
+    ...(o["canonicalWritePaths"] === undefined
+      ? {}
+      : { canonicalWritePaths: strings(o["canonicalWritePaths"], "policy.canonicalWritePaths") }),
   };
 }

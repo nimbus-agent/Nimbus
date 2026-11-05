@@ -42,6 +42,13 @@ export type ExtensionManifest = RegistryExtensionManifest & {
    * one (I43).
    */
   firstPartyWildcardHosts?: readonly string[];
+  /**
+   * Write paths the gateway already canonicalised (`realpathSync.native`) when it built the grant:
+   * the Obsidian vaults (I15, B4b). The sandbox wrapper refuses the spawn if any of them no longer
+   * canonicalises to itself (a link swapped in between the grant decision and the spawn). Same
+   * provenance rule: set only by gateway code, never read from a manifest file.
+   */
+  canonicalWritePaths?: readonly string[];
 };
 
 export const EXTENSION_MANIFEST_FILENAME = "nimbus.extension.json";

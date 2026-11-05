@@ -1,6 +1,8 @@
 import type { ChildProcess } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { constants as osConstants } from "node:os";
+
+import { canonicalPath } from "./canonical-path.ts";
 import {
   createNetworkObservationWriter,
   type NetworkObservationWriter,
@@ -10,6 +12,7 @@ import {
 import { type ConnectionPoller, startConnectionPoller } from "./observe/connection-poller.ts";
 import type { ConnectionSource } from "./observe/types.ts";
 import {
+  canonicalWriteDrift,
   isSandboxWrapperOnlyEnv,
   parseSandboxPolicy,
   SANDBOX_CWD_ENV,
@@ -219,6 +222,12 @@ export async function runSandboxWrapper(
     policy = parseSandboxPolicy(policyJson);
   } catch (e) {
     fatal(`invalid ${SANDBOX_POLICY_ENV}: ${(e as Error).message}`);
+  }
+
+  // I15 (B4b): a write path the gateway canonicalised must still canonicalise to itself.
+  const drifted = canonicalWriteDrift(policy, canonicalPath);
+  if (drifted !== undefined) {
+    fatal(`refusing to spawn: the write grant ${drifted} changed since the gateway decided it`);
   }
 
   const childEnv = wrapperChildEnv(process.env);

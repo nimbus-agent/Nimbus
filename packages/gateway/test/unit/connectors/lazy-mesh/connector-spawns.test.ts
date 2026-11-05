@@ -1945,6 +1945,9 @@ describe("ensureObsidianMcp: the write grant (B4b)", () => {
     expect(fsPerm.write).toEqual([VAULT_A, VAULT_B]);
     expect(fsPerm.read).toEqual(ROOTS);
     for (const root of ROOTS) expect(fsPerm.write).not.toContain(root);
+    // The wrapper re-checks each granted vault still canonicalises to itself (review finding 5).
+    const raw = capturedClients[0]?.servers["obsidian"]?.env[SANDBOX_POLICY_ENV] ?? "";
+    expect(parseSandboxPolicy(raw).canonicalWritePaths).toEqual([VAULT_A, VAULT_B]);
   });
 
   test("no accessor, or no grant facts: write is empty (fail closed)", async () => {

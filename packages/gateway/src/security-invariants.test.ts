@@ -1489,6 +1489,16 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       );
     });
 
+    test("the sandbox wrapper refuses a pre-canonicalised write path that changed, BEFORE the runner", async () => {
+      const w = stripComments(
+        await read("packages/gateway/src/platform/sandbox/sandbox-wrapper.ts"),
+      );
+      const check = w.indexOf("canonicalWriteDrift(policy, canonicalPath)");
+      expect(check).toBeGreaterThan(0);
+      expect(check).toBeLessThan(w.indexOf("createSandboxRunner("));
+      expect(w.slice(check, check + 200)).toMatch(/if \(drifted !== undefined\) \{\s*fatal\(/);
+    });
+
     test("the Windows revoke before a grant is the fail-closed one, never the best-effort release", async () => {
       const mesh = stripComments(await read("packages/gateway/src/connectors/lazy-mesh/mesh.ts"));
       expect(mesh).toMatch(
