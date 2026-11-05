@@ -78,10 +78,32 @@ function schemaConstBase(statement: string): { readonly base?: string } | undefi
  * `schema.extend({...})`) and that const's `.extend(` base chain. Nothing else the call names is
  * followed: a key that appears only in some other local const is not the tool's input.
  */
+/** The shared mail kit, whose `emailToolSchemas` the draft and send tools pass by member (B3). */
+const SHARED_EMAIL_KIT = "shared/imap-tool-kit.ts";
+
+/**
+ * An argument `emailToolSchemas.<member>`: the declaration of `<member>` in the shared mail kit,
+ * when that file's `emailToolSchemas` const names it. Only that one shared object is followed.
+ */
+function sharedEmailSchemaDeclaration(arg: string): string | undefined {
+  const m = /^emailToolSchemas\.([A-Za-z_$][\w$]*)$/.exec(arg);
+  const member = m?.[1];
+  if (member === undefined) return undefined;
+  const kit = stripComments(sources.find((s) => s.rel === SHARED_EMAIL_KIT)?.text ?? "");
+  const table = constStatement(kit, "emailToolSchemas") ?? "";
+  if (!new RegExp(String.raw`\b${member}\b`).test(table)) return undefined;
+  const statement = constStatement(kit, member);
+  return statement !== undefined && schemaConstBase(statement) !== undefined
+    ? statement
+    : undefined;
+}
+
 function withSchemaArgumentDeclarations(code: string, call: string): string {
   const parts = [call];
   const seen = new Set<string>();
   for (const arg of topLevelArgs(call)) {
+    const shared = sharedEmailSchemaDeclaration(arg);
+    if (shared !== undefined) parts.push(shared);
     let name = SCHEMA_REF.exec(arg)?.[1];
     while (name !== undefined && !seen.has(name) && seen.size < 20) {
       seen.add(name);

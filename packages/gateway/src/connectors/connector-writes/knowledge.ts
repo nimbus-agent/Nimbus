@@ -58,9 +58,32 @@ export function selectConfluencePageIdentity(reply: unknown): readonly BeforeSta
 }
 
 export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
-  row("notion_page_create", "notion.page.create", "mesh", 2),
-  row("notion_page_update", "notion.page.update", "mesh", 2),
-  row("notion_block_append", "notion.block.append", "mesh", 2),
+  // The connector sends the title only (no body), under `titlePropertyName` (default "title").
+  withPreview(row("notion_page_create", "notion.page.create", "mesh", 2), {
+    target: "{parentPageId}",
+    summary: "Create a Notion page under page {parentPageId}",
+    fields: [
+      textField("title", "Title"),
+      textField("titlePropertyName", "Title property", "title"),
+    ],
+  }),
+  // PATCH replaces each named property; the JSON is sent as is (shown as text, never rendered).
+  withPreview(row("notion_page_update", "notion.page.update", "mesh", 2), {
+    target: "{pageId}",
+    summary: "Update properties of Notion page {pageId}",
+    fields: [
+      textField(
+        "propertiesJson",
+        "Properties to set (Notion property JSON, sent as is; each named property is replaced)",
+      ),
+    ],
+  }),
+  // The blocks are appended after the last child; the JSON is sent as is.
+  withPreview(row("notion_block_append", "notion.block.append", "mesh", 2), {
+    target: "{parentBlockId}",
+    summary: "Append blocks to the end of Notion page or block {parentBlockId}",
+    fields: [textField("childrenJson", "Blocks to append (Notion block JSON, sent as is)")],
+  }),
   // The connector keeps only `text.slice(0, 2000)`; the label says so (the preview shows it all).
   withBefore(
     withPreview(row("notion_comment_create", "notion.comment.create", "mesh", 2), {
@@ -75,8 +98,29 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       select: selectNotionPageIdentity,
     },
   ),
-  row("confluence_page_create", "confluence.page.create", "mesh", 2),
-  row("confluence_page_update", "confluence.page.update", "mesh", 2),
+  // `ancestors` is sent only when a parent is given.
+  withPreview(row("confluence_page_create", "confluence.page.create", "mesh", 2), {
+    target: "{spaceKey}",
+    summary: "Create a Confluence page in space {spaceKey}",
+    fields: [
+      textField("title", "Title"),
+      textField("parentPageId", "Parent page", "(not set: no parent page is sent)"),
+      textField("storageHtml", "Body (Confluence storage HTML, sent as is)"),
+    ],
+  }),
+  // A PUT at version `versionNumber + 1`: replaces the title and the WHOLE body.
+  withPreview(row("confluence_page_update", "confluence.page.update", "mesh", 2), {
+    target: "{pageId}",
+    summary: "Replace the title and the whole body of Confluence page {pageId}",
+    fields: [
+      textField("versionNumber", "Expected current version (the write saves the next one)"),
+      textField("title", "New title"),
+      textField(
+        "storageHtml",
+        "New body (Confluence storage HTML, sent as is; replaces everything on the page)",
+      ),
+    ],
+  }),
   withBefore(
     withPreview(row("confluence_comment_add", "confluence.comment.add", "mesh", 2), {
       target: "{pageId}",
@@ -90,6 +134,11 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
       select: selectConfluencePageIdentity,
     },
   ),
-  row("confluence_page_append", "confluence.page.append", "mesh", 2),
+  // The connector GETs the page and PUTs the old body plus the new (re-reading once on a 409).
+  withPreview(row("confluence_page_append", "confluence.page.append", "mesh", 2), {
+    target: "{pageId}",
+    summary: "Append to the end of Confluence page {pageId}, keeping everything already on it",
+    fields: [textField("storageHtml", "Appended content (Confluence storage HTML, sent as is)")],
+  }),
   row("obsidian_append_to_daily_note", "obsidian.note.append", "mesh", 2),
 ];

@@ -266,14 +266,14 @@ describe("buildActDeps (act door)", () => {
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
   test("the consent prompt is the provenance prompt, with UNREDACTED details", async () => {
-    // An untemplated proposable type (slack.message.post since B1 and github.issue.create since
-    // B2 have a typed preview).
+    // An untemplated proposable type (slack.message.post since B1, github.issue.create since B2
+    // and notion.page.create since B3 have a typed preview; a wave-3 send has none yet).
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
-    await act.execute("notion.page.create", { token_hint: "visible", title: "hi" }, PROV);
+    await act.execute("gmail.message.send", { token_hint: "visible", title: "hi" }, PROV);
     expect(prompts[0]?.prompt).toContain("Agent-proposed action");
     expect(prompts[0]?.details).toEqual({
-      actionType: "notion.page.create",
+      actionType: "gmail.message.send",
       input: { token_hint: "visible", title: "hi" },
     });
   });

@@ -68,6 +68,7 @@ const CONFLUENCE_KB_KEYS: Readonly<Record<string, readonly string[]>> = {
   confluence_page_create: ["parentPageId"],
   confluence_page_update: ["pageId"],
   confluence_comment_add: ["pageId"],
+  confluence_page_append: ["pageId"],
 };
 
 function ownLookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
