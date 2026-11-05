@@ -324,6 +324,8 @@ describe("tokenizeMarkup: does not tokenize (undefined, refused)", () => {
     expect(tokenizeMarkup("<b>x".repeat(100_001))).toBeUndefined();
     // Over the cap through tags alone, too (the in-loop check).
     expect(tokenizeMarkup("<b>".repeat(MARKUP_MAX_TOKENS + 1))).toBeUndefined();
+    // Over the cap only by the trailing text token (the final check).
+    expect(tokenizeMarkup(`${"<b>".repeat(MARKUP_MAX_TOKENS)}x`)).toBeUndefined();
   });
 
   test(`an input longer than REMOTE_SCAN_MAX_CHARS (${REMOTE_SCAN_MAX_CHARS})`, () => {
@@ -339,7 +341,7 @@ describe("tokenizeMarkup: does not tokenize (undefined, refused)", () => {
 // `RegExp(` construction (which could hide a `<` in a string), and no regex literal containing `<`.
 // ---------------------------------------------------------------------------------------------
 
-const PINNED_FILES = ["markup-tokens.ts"] as const;
+const PINNED_FILES: string[] = ["markup-tokens.ts", "remote-content.ts"];
 
 /**
  * Every regex literal of comment-free `code`. A `/` that `stripStringLiterals` blanked is inside a
