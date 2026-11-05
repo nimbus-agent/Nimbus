@@ -188,6 +188,10 @@ describe("tokenizeMarkup: exact tokens (plan R7)", () => {
     expect(shapes("<!--->")).toEqual([{ kind: "comment", text: "" }]);
     expect(shapes("<!---->")).toEqual([{ kind: "comment", text: "" }]);
     expect(shapes("<!-- a --!>")).toEqual([{ kind: "comment", text: " a " }]);
+    // A `--` that closes nothing is skipped; a run of dashes closes at its last two.
+    expect(shapes("<!-- a -- b -- c -->")).toEqual([{ kind: "comment", text: " a -- b -- c " }]);
+    expect(shapes("<!-- a --->")).toEqual([{ kind: "comment", text: " a -" }]);
+    expect(tokenizeMarkup("<!-- a -- b")).toBeUndefined();
     // The first of the two closers ends it.
     expect(shapes("<!-- a --!> b -->")).toEqual([
       { kind: "comment", text: " a " },
