@@ -157,9 +157,10 @@ const ISSUES: readonly ProbeWrite[] = [
 
 /**
  * B3: the Confluence page writes (Confluence is the only B3 connector whose host is configurable).
- * The permitted update and appends target space ENG, NOT the KB's space (review fix 4: 0.4.0 reads
- * no `ancestors`, so any page in the KB space is refused); page 124's first PUT is answered 409;
- * page 777 is in the KB space and must be refused by the KB-child guard before any write.
+ * The permitted update and appends target space ENG (B3's review fix 4, kept); page 124's first PUT
+ * is answered 409; since connectors 0.5.0 the before read carries `ancestors`, so page 778 (KB
+ * space, not under the KB parent) is allowed and page 777 (under the KB parent 4242) must be
+ * refused by the KB-child guard before any write.
  */
 const PAGES: readonly ProbeWrite[] = [
   {
@@ -190,7 +191,13 @@ const PAGES: readonly ProbeWrite[] = [
     server: "confluence",
     tool: "confluence_page_append",
     type: "confluence.page.append",
-    input: { pageId: "777", storageHtml: "<p>into the KB space</p>" },
+    input: { pageId: "778", storageHtml: "<p>team note</p>" },
+  },
+  {
+    server: "confluence",
+    tool: "confluence_page_append",
+    type: "confluence.page.append",
+    input: { pageId: "777", storageHtml: "<p>under the KB parent</p>" },
   },
 ];
 
