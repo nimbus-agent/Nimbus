@@ -1219,9 +1219,7 @@ describe("the real gdrive_file_create row: an injected save to a shared folder s
     if (c === undefined) throw new Error("unreachable");
     expect(c.prompt).toContain(REQUESTED_BY);
     expect(c.prompt).toContain("Create a Google Drive file named notes.txt");
-    expect(c.prompt).toContain(
-      `  Content (sent as is, shown in full): ${JSON.stringify(CONTENT)}`,
-    );
+    expect(c.prompt).toContain(`  Content (sent as is, shown in full): ${JSON.stringify(CONTENT)}`);
     expect(c.prompt).toContain(
       `Before:\n  Folder: Company-wide ${FOLDER_MARKER}\n  Folder type: folder\n  Shared: yes: the new file is visible to everyone this folder is shared with\n  Owner: it@corp.example`,
     );
