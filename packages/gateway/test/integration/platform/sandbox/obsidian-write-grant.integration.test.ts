@@ -3,11 +3,13 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -349,6 +351,52 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
       expect(r.status).toBe(0);
       expect(r.stdout.length).toBe(Object.keys(TARGETS).length);
       for (const t of Object.keys(TARGETS) as Target[]) expect(written(t), t).toBe(false);
+    },
+  );
+
+  // Re-review finding 1: with the file grant, a child must not be able to swap today's note for a
+  // hard link, symlink or folder that leads to another file (a plugin's main.js) and write that.
+  // macOS once granted `file-write*` on the literal (unlink + create): the fix grants only
+  // `file-write-data`. Run with the Bun child on Linux and macOS; on Windows the delete half is the
+  // "delete today's note" case below (no DELETE right). Self-validating: the child's first act is an
+  // allowed append, which the test checks landed, so the attack lines provably ran.
+  it.skipIf(!READY || IS_WIN)(
+    "a child cannot swap today's note for a link or folder to a plugin and write it",
+    async () => {
+      const pluginMain = TARGETS.pluginMain;
+      writeFileSync(pluginMain, "plugin code");
+      const before = statSync(today).ino;
+      const script = join(work, "swap.js");
+      const j = JSON.stringify;
+      writeFileSync(
+        script,
+        [
+          "const fs = require('node:fs')",
+          `fs.appendFileSync(${j(today)}, ${j(MARK)})`,
+          // 1. hard link: unlink the note, link the plugin to its name, write through it
+          `try { fs.unlinkSync(${j(today)}) } catch {}`,
+          `try { fs.linkSync(${j(pluginMain)}, ${j(today)}) } catch {}`,
+          `try { fs.appendFileSync(${j(today)}, 'HACKED') } catch {}`,
+          // 2. symlink to the plugin
+          `try { fs.unlinkSync(${j(today)}) } catch {}`,
+          `try { fs.symlinkSync(${j(pluginMain)}, ${j(today)}) } catch {}`,
+          `try { fs.appendFileSync(${j(today)}, 'HACKED') } catch {}`,
+          // 3. a folder at the note's name
+          `try { fs.unlinkSync(${j(today)}) } catch {}`,
+          `try { fs.mkdirSync(${j(today)}) } catch {}`,
+          `try { fs.writeFileSync(${j(join(today, "x.js"))}, 'HACKED') } catch {}`,
+        ].join(";"),
+      );
+      const r = await runSandboxed(obsidianPolicy(true), [process.execPath, script]);
+      expect(r.status).toBe(0);
+      // The probe ran: its allowed append landed.
+      expect(readFileSync(today, "utf8")).toContain(MARK);
+      // No write reached the plugin, and today's note is still the same regular file.
+      expect(readFileSync(pluginMain, "utf8")).toBe("plugin code");
+      const st = lstatSync(today);
+      expect(st.isFile()).toBe(true);
+      expect(st.ino).toBe(before);
+      expect(readFileSync(today, "utf8")).not.toContain("HACKED");
     },
   );
 

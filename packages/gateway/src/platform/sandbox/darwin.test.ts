@@ -289,17 +289,23 @@ describe("a file write grant is a literal (the Obsidian daily note, I15)", () =>
     },
   };
 
-  it("a write path named in writeFiles is (literal ...), never (subpath ...); others stay subpaths", () => {
+  it("a file in writeFiles gets file-write-DATA on its literal only: no file-write*, so no unlink, create or rename", () => {
     const p = generateSbplProfile({
       cwd: "/s/cwd",
       tmpdir: "/s/tmp",
       policy: filePolicy,
       writeFiles: new Set(["/notes/v/2026-11-05.md"]),
     });
-    const write = p.slice(p.indexOf("(allow file-write*"));
-    expect(write).toContain('  (literal "/notes/v/2026-11-05.md")');
-    expect(write).not.toContain('(subpath "/notes/v/2026-11-05.md")');
-    expect(write).toContain('  (subpath "/data")');
+    const lines = p.split("\n");
+    // The one rule that names the file, and it is data-only.
+    expect(lines.filter((l) => l.includes('"/notes/v/2026-11-05.md"'))).toEqual([
+      '(allow file-write-data (literal "/notes/v/2026-11-05.md"))',
+    ]);
+    // The broad write block names the directory grants only.
+    const start = lines.indexOf("(allow file-write*");
+    const block = lines.slice(start, lines.indexOf(")", start)).join("\n");
+    expect(block).toContain('  (subpath "/data")');
+    expect(block).not.toContain("2026-11-05.md");
   });
 
   it("writeFilesOf names exactly the write paths that are regular files now", () => {

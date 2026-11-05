@@ -175,10 +175,18 @@ export function generateSbplProfile(opts: SbplOpts): string {
     "(allow file-write*",
     `  (subpath "${opts.cwd}")`,
     `  (subpath "${opts.tmpdir}")`,
-    ...fsWrite.map((p) =>
-      opts.writeFiles?.has(p) === true ? `  (literal "${p}")` : `  (subpath "${p}")`,
-    ),
+    ...fsWrite.filter((p) => opts.writeFiles?.has(p) !== true).map((p) => `  (subpath "${p}")`),
     ")",
+    // A FILE grant (the Obsidian daily note, I15) is `file-write-data` on the literal ONLY: the
+    // bytes of that one existing file. Not `file-write*`, which also allows unlink, create and
+    // rename at the path: a child could then unlink the note, hard-link a plugin's `main.js` (it
+    // only needs to read it) to the note's name and write the plugin through it. The gateway
+    // creates the file before the spawn, so an append only OPENS it (`O_CREAT` on an existing file
+    // creates nothing) and writes: no `file-write-create`, `-unlink`, `-mode`, `-times`, `-flags`,
+    // `-owner`, `-setugid` or `-xattr` is needed, and none is granted.
+    ...fsWrite
+      .filter((p) => opts.writeFiles?.has(p) === true)
+      .map((p) => `(allow file-write-data (literal "${p}"))`),
   ];
   // PORTS ONLY: a declared entry opens its TCP port to every host, so here a connector's list limits
   // ports and not hosts. The address in an SBPL `remote` filter is `*` or `localhost` and a port, with
