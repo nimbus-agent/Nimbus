@@ -1494,8 +1494,18 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(mesh).toMatch(
         /appContainerGrantRevokerFor\(platform, manifestForFirstParty\("obsidian"\)\.id\)/,
       );
-      expect(mesh).toMatch(
-        /await this\.obsidianRevoker\.revoke\(this\.obsidianRevokePaths\(plan\.writePaths\)\);/,
+      // The pre-spawn hook awaits the revoke-then-record step; the ledger is saved only AFTER the
+      // revoke resolved (an entry leaves the ledger only once revoked), and before the spawn.
+      expect(mesh).toMatch(/await this\.revokeObsidianGrants\(plan\.writePaths\);/);
+      const step = mesh.slice(mesh.indexOf("private async revokeObsidianGrants("));
+      expect(step.indexOf("await this.obsidianRevoker.revoke(")).toBeGreaterThan(0);
+      expect(step.indexOf("await this.obsidianRevoker.revoke(")).toBeLessThan(
+        step.indexOf("this.obsidianLedger.save(next)"),
+      );
+      // The restart detaches without waiting on the drain, then revokes in the same serial step.
+      const restart = mesh.slice(mesh.indexOf("async restartObsidian()"));
+      expect(restart).toMatch(
+        /void this\.detachLazyClient\(LAZY_MESH\.obsidian\);\s*if \(this\.obsidianRevoker\.active\) await this\.revokeObsidianGrants\(\[\]\);/,
       );
       expect(mesh).not.toMatch(/releaseGrantsFor/);
       const revoke = stripComments(

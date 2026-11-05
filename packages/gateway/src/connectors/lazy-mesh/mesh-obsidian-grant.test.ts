@@ -6,7 +6,7 @@
  * `MCPClient` is real but never connected, so nothing is started.
  */
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,11 @@ import { createMockVault } from "../../vault/mock.ts";
 import { LazyDrainTracker } from "./drain.ts";
 import { LAZY_MESH } from "./keys.ts";
 import { LazyConnectorMesh } from "./mesh.ts";
+import {
+  fileObsidianGrantLedger,
+  type ObsidianGrantLedgerStore,
+  obsidianGrantLedgerFile,
+} from "./obsidian-grant-ledger.ts";
 import type { LazyMcpSlot, MeshLogger } from "./slot.ts";
 
 const temps: string[] = [];
@@ -73,6 +78,20 @@ function fakeRevoker(
   };
 }
 
+/** An in-memory ledger that counts its saves. */
+function memoryLedger(initial: readonly string[]): ObsidianGrantLedgerStore & { saves: number } {
+  let paths = [...initial];
+  const store = {
+    saves: 0,
+    load: () => [...paths],
+    save: (next: readonly string[]) => {
+      store.saves += 1;
+      paths = [...next];
+    },
+  };
+  return store;
+}
+
 function warnings(): { logger: MeshLogger; msgs: string[] } {
   const msgs: string[] = [];
   return { msgs, logger: { warn: (_b, msg) => msgs.push(msg ?? "") } };
@@ -89,39 +108,86 @@ function obsidianClient(m: LazyConnectorMesh): MCPClient | undefined {
   return internals(m).lazySlots.get(LAZY_MESH.obsidian)?.client;
 }
 
-describe("the Obsidian pre-spawn revoke (Windows)", () => {
-  test("revokes the canonical roots and every vault the grant would keep, BEFORE the client exists", async () => {
+describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
+  test("grant off and an empty ledger: no revoke, no helper run, the spawn proceeds", async () => {
     const t = tree();
     const revokes: Revokes = [];
-    let clientAtRevoke: MCPClient | undefined;
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => false,
+      obsidianGrantRevoker: fakeRevoker(true, revokes),
+    });
+    mesh = m;
+    await m.ensureObsidianRunning();
+    expect(revokes).toEqual([]);
+    expect(obsidianClient(m)).toBeDefined();
+  });
+
+  test("grant on: the vaults are revoked and recorded in the ledger BEFORE the client exists", async () => {
+    const t = tree();
+    const paths = makePaths(t.base);
+    const revokes: Revokes = [];
+    let clientAtRevoke: MCPClient | undefined;
+    let ledgerAtRevoke: readonly string[] = ["unset"];
+    const ledger = fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
+    const m = new LazyConnectorMesh(paths, createMockVault(), {
+      obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: {
         active: true,
-        revoke: (paths) => {
+        revoke: (p) => {
           clientAtRevoke = obsidianClient(m);
-          revokes.push([...paths]);
+          ledgerAtRevoke = ledger.load();
+          revokes.push([...p]);
           return Promise.resolve();
         },
       },
     });
     mesh = m;
     await m.ensureObsidianRunning();
-    // The grant is OFF, yet the vault is revoked: a write ACE left by an earlier approval must go.
-    expect(revokes).toEqual([[t.root, t.vault]]);
+    // The root is never revoked as a read root; only the vault it holds.
+    expect(revokes).toEqual([[t.vault]]);
     expect(clientAtRevoke).toBeUndefined();
+    expect(ledgerAtRevoke).toEqual([]);
+    expect(ledger.load()).toEqual([t.vault]);
     expect(obsidianClient(m)).toBeDefined();
   });
 
-  test("a failed revoke refuses the spawn and is logged once per failing streak", async () => {
+  test("the ledger survives a gateway restart: a vault no longer discovered is still revoked", async () => {
+    const t = tree();
+    const paths = makePaths(t.base);
+    const first = new LazyConnectorMesh(paths, createMockVault(), {
+      obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => true,
+      obsidianGrantRevoker: fakeRevoker(true, []),
+    });
+    await first.ensureObsidianRunning();
+    await first.disconnect();
+    // The vault stops being a vault (its .obsidian is gone) while the gateway is down.
+    rmSync(join(t.vault, ".obsidian"), { recursive: true, force: true });
+    const revokes: Revokes = [];
+    const m = new LazyConnectorMesh(paths, createMockVault(), {
+      obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => false,
+      obsidianGrantRevoker: fakeRevoker(true, revokes),
+    });
+    mesh = m;
+    await m.ensureObsidianRunning();
+    expect(revokes).toEqual([[t.vault]]);
+    const ledger = fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
+    expect(ledger.load()).toEqual([]);
+  });
+
+  test("a failed revoke refuses the spawn, keeps the ledger, and is logged once per failing streak", async () => {
     const t = tree();
     const revokes: Revokes = [];
     let fail = true;
     const w = warnings();
+    const store = memoryLedger([join(t.base, "old-vault")]);
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
       obsidianVaultPaths: [t.root],
       logger: w.logger,
+      obsidianGrantLedger: store,
       obsidianGrantRevoker: fakeRevoker(true, revokes, () =>
         fail ? Promise.reject(new Error("helper exit 1")) : Promise.resolve(),
       ),
@@ -131,52 +197,68 @@ describe("the Obsidian pre-spawn revoke (Windows)", () => {
     await m.ensureObsidianRunning();
     expect(obsidianClient(m)).toBeUndefined();
     expect(revokes).toHaveLength(2);
+    expect(store.load()).toEqual([join(t.base, "old-vault")]);
     expect(w.msgs.filter((x) => x.includes("could not be revoked"))).toHaveLength(1);
     fail = false;
     await m.ensureObsidianRunning();
     expect(obsidianClient(m)).toBeDefined();
+    expect(store.load()).toEqual([]);
   });
 
-  test("the last spawn's write list is revoked again before the next spawn", async () => {
+  test("an unreadable ledger refuses the spawn (fail closed)", async () => {
     const t = tree();
+    const paths = makePaths(t.base);
+    const file = obsidianGrantLedgerFile(paths.configDir);
+    mkdirSync(join(paths.configDir, "sandbox-grants"), { recursive: true });
+    writeFileSync(file, "{not json");
     const revokes: Revokes = [];
-    let approved = true;
-    const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+    const m = new LazyConnectorMesh(paths, createMockVault(), {
       obsidianVaultPaths: [t.root],
-      obsidianWriteGrantEnabled: () => approved,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
-      // The vault disappears from discovery after the first spawn: only the memory names it.
+    });
+    mesh = m;
+    await m.ensureObsidianRunning();
+    expect(obsidianClient(m)).toBeUndefined();
+    expect(revokes).toEqual([]);
+  });
+
+  test("a skipped vault is revoked canonicalised; a home-or-root skip never is", async () => {
+    const t = tree();
+    const nested = join(t.vault, "inner");
+    mkdirSync(join(nested, ".obsidian"), { recursive: true });
+    const revokes: Revokes = [];
+    const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      obsidianVaultPaths: [t.root, t.base],
+      obsidianWriteGrantEnabled: () => true,
+      obsidianGrantRevoker: fakeRevoker(true, revokes),
       obsidianWriteGrantDeps: {
-        discoverVaults: () => (revokes.length === 0 ? [t.vault] : []),
+        discoverVaults: () => [t.vault, nested, t.base],
         realpath: (p) => realpathSync.native(p),
-        homeDir: join(t.base, "home"),
+        homeDir: t.base,
         protectedRoots: [],
         platform: process.platform,
       },
     });
     mesh = m;
     await m.ensureObsidianRunning();
-    approved = false;
-    await m.restartObsidian();
-    await m.ensureObsidianRunning();
-    expect(revokes[0]).toEqual([t.root, t.vault]);
-    // The restart's revoke still names the vault the first spawn was granted.
-    expect(revokes[1]).toEqual([t.root, t.vault]);
-    expect(revokes[2]).toEqual([t.root]);
+    expect(revokes).toEqual([[t.vault, nested]]);
   });
 
-  test("off Windows the revoker is inert: never called, and the spawn proceeds", async () => {
+  test("off Windows the revoker is inert: never called, no ledger written, the spawn proceeds", async () => {
     const t = tree();
     const revokes: Revokes = [];
+    const store = memoryLedger([]);
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: fakeRevoker(false, revokes),
+      obsidianGrantLedger: store,
     });
     mesh = m;
     await m.ensureObsidianRunning();
     await m.restartObsidian();
     expect(revokes).toEqual([]);
+    expect(store.saves).toBe(0);
   });
 
   test("the production revoker follows the platform option: inert on linux", async () => {
@@ -192,22 +274,64 @@ describe("the Obsidian pre-spawn revoke (Windows)", () => {
 });
 
 describe("restartObsidian", () => {
-  test("stops the Obsidian slot so the next spawn reads the new grant, then revokes", async () => {
+  test("detaches the slot at once and revokes what the ledger names", async () => {
     const t = tree();
     const revokes: Revokes = [];
+    let approved = true;
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
       obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => approved,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
     });
     mesh = m;
     await m.ensureObsidianRunning();
     const first = obsidianClient(m);
     expect(first).toBeDefined();
+    approved = false;
     await m.restartObsidian();
     expect(obsidianClient(m)).toBeUndefined();
-    expect(revokes).toHaveLength(2);
+    expect(revokes).toEqual([[t.vault], [t.vault]]);
     await m.ensureObsidianRunning();
     expect(obsidianClient(m)).not.toBe(first);
+    // The ledger is empty and the grant off: the respawn ran no helper.
+    expect(revokes).toHaveLength(2);
+  });
+
+  test("an in-flight call does not hold the restart, a listing, or the next spawn; the old client disconnects after it", async () => {
+    const t = tree();
+    const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      obsidianVaultPaths: [t.root],
+      obsidianGrantRevoker: fakeRevoker(true, []),
+    });
+    mesh = m;
+    let disconnected = false;
+    const drain = new LazyDrainTracker();
+    internals(m).lazySlots.set(LAZY_MESH.obsidian, {
+      client: {
+        listTools: () => Promise.resolve({}),
+        disconnect: () => {
+          disconnected = true;
+          return Promise.resolve();
+        },
+      } as unknown as MCPClient,
+      idleTimer: undefined,
+      drain,
+    });
+    drain.bump(); // a call in flight on the old child
+    const epoch = m.getToolsEpoch();
+    const t0 = Date.now();
+    await m.restartObsidian();
+    expect(Date.now() - t0).toBeLessThan(5_000);
+    expect(obsidianClient(m)).toBeUndefined();
+    expect(m.getToolsEpoch()).toBeGreaterThan(epoch);
+    // A new spawn is not blocked by the old drain, and gets a fresh drain tracker.
+    await m.ensureObsidianRunning();
+    expect(obsidianClient(m)).toBeDefined();
+    expect(internals(m).lazySlots.get(LAZY_MESH.obsidian)?.drain).not.toBe(drain);
+    expect(disconnected).toBe(false);
+    drain.drop();
+    for (let i = 0; i < 10 && !disconnected; i++) await Promise.resolve();
+    expect(disconnected).toBe(true);
   });
 
   test("never rejects: a failed revoke is logged", async () => {
@@ -216,6 +340,7 @@ describe("restartObsidian", () => {
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
       obsidianVaultPaths: [t.root],
       logger: w.logger,
+      obsidianGrantLedger: memoryLedger([t.vault]),
       obsidianGrantRevoker: fakeRevoker(true, [], () => Promise.reject(new Error("exit 1"))),
     });
     mesh = m;

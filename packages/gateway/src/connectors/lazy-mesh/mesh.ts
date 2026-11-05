@@ -67,6 +67,11 @@ import {
   userMcpMeshKey,
 } from "./keys.ts";
 import {
+  fileObsidianGrantLedger,
+  type ObsidianGrantLedgerStore,
+  obsidianGrantLedgerFile,
+} from "./obsidian-grant-ledger.ts";
+import {
   type ObsidianWriteGrant,
   type ObsidianWriteGrantDeps,
   obsidianWriteGrantPaths,
@@ -186,8 +191,8 @@ export class LazyConnectorMesh {
   private readonly obsidianGrantDeps: ObsidianWriteGrantDeps;
   /** Windows only: the fail-closed revoke of the Obsidian profile's ACEs before each grant. */
   private readonly obsidianRevoker: AppContainerGrantRevoker;
-  /** The write list the last Obsidian spawn was handed (canonical); revoked again before the next. */
-  private lastObsidianWrite: readonly string[] = [];
+  /** Windows only: every path ever handed a write grant and not yet revoked, persisted. */
+  private readonly obsidianLedger: ObsidianGrantLedgerStore;
   private obsidianRevokeFailing = false;
   /** Tail of the Obsidian spawn/restart queue (see {@link runObsidianSerial}). */
   private obsidianTail: Promise<void> = Promise.resolve();
@@ -231,6 +236,8 @@ export class LazyConnectorMesh {
       obsidianGrantRevoker?: AppContainerGrantRevoker;
       /** Test seam: the facts the Obsidian grant reads. Production: real discovery and realpath. */
       obsidianWriteGrantDeps?: ObsidianWriteGrantDeps;
+      /** Test seam: the Obsidian grant ledger. Production: a file under `configDir`. */
+      obsidianGrantLedger?: ObsidianGrantLedgerStore;
     },
   ) {
     // Only stored here; `collectBuiltInToolMaps` and `listUserMcpTools` await it (undefined means
@@ -285,6 +292,9 @@ export class LazyConnectorMesh {
     this.obsidianRevoker =
       options?.obsidianGrantRevoker ??
       appContainerGrantRevokerFor(platform, manifestForFirstParty("obsidian").id);
+    this.obsidianLedger =
+      options?.obsidianGrantLedger ??
+      fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
     this.spawnContext = {
       vault: this.vault,
       logger: this.logger,
@@ -458,6 +468,36 @@ export class LazyConnectorMesh {
     if (key.startsWith(EXT_MESH_PREFIX)) {
       this.extensionSlots.forgetService(key.slice(EXT_MESH_PREFIX.length));
     }
+  }
+
+  /**
+   * Detach the slot `key` NOW: its client is cleared, the slot generation and the tools epoch are
+   * bumped and the slot record is dropped (a new client gets a fresh drain tracker), so nothing new
+   * reaches the old client. Its in-flight calls drain (at most 10 minutes) and it is disconnected in
+   * the background; the returned promise settles then and never rejects.
+   */
+  private detachLazyClient(key: string): Promise<void> {
+    this.clearLazyIdle(key);
+    const slot = this.lazySlots.get(key);
+    this.lazySlots.delete(key);
+    const c = slot?.client;
+    if (slot === undefined || c === undefined) return Promise.resolve();
+    slot.client = undefined;
+    this.bumpToolsEpoch();
+    this.bumpSlotGeneration(key);
+    const drained =
+      slot.drain.count > 0
+        ? Promise.race([
+            slot.drain.awaitDrain(),
+            new Promise<void>((r) => setTimeout(r, 10 * 60_000)),
+          ])
+        : Promise.resolve();
+    return drained.then(() =>
+      c.disconnect().then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
   }
 
   private async stopUserMcpClient(serviceId: string): Promise<void> {
@@ -884,61 +924,81 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * Every path the Obsidian profile may hold an ACE on: the canonical roots (the read grant), each
-   * vault the grant would keep NOW (whatever the approval says), the last spawn's write list and
-   * `extra`. Deduplicated, in that order.
+   * The paths a Windows revoke must cover: every ledger entry (a path some earlier spawn, in this
+   * process or before a restart, was handed a write grant on), each vault the grant would keep
+   * NOW, each skipped vault canonicalised (a vault that was kept once and is skipped now), and
+   * `extra`. A root is covered only when it was granted as a vault (then it is in the ledger or a
+   * kept vault), never as a read root. Skipped `home-or-root` paths are left out: no grant ever
+   * names one (the grant function refuses it), and a revoke there would rewrite a whole drive's or
+   * home folder's DACL. Deduplicated, in that order.
    */
-  private obsidianRevokePaths(extra: readonly string[]): readonly string[] {
-    const kept = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps).paths;
-    const all = [
-      ...this.obsidianRoots.map(canonicalPath),
-      ...kept,
-      ...this.lastObsidianWrite,
-      ...extra,
-    ];
-    return [...new Set(all)];
+  private obsidianRevokePaths(
+    ledger: readonly string[],
+    extra: readonly string[],
+  ): readonly string[] {
+    const now = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps);
+    const skipped = now.skipped.filter((x) => x.reason !== "home-or-root").map((x) => x.path);
+    return [...new Set([...ledger, ...now.paths, ...skipped.map(canonicalPath), ...extra])];
+  }
+
+  /**
+   * The Windows revoke of everything the ledger and the current tree name, then the ledger
+   * replaced by `next`. Throws on a failed revoke or ledger write, leaving the ledger as it was.
+   * With an empty ledger and nothing to grant it does nothing at all (no discovery, no helper run).
+   */
+  private async revokeObsidianGrants(next: readonly string[]): Promise<void> {
+    const ledger = this.obsidianLedger.load();
+    if (ledger.length === 0 && next.length === 0) return;
+    await this.obsidianRevoker.revoke(this.obsidianRevokePaths(ledger, next));
+    // Written BEFORE the spawn that grants `next`; an old entry leaves only after its revoke.
+    this.obsidianLedger.save(next);
   }
 
   /**
    * The Obsidian pre-spawn hook. On Windows an ACE outlives its child and a grant merges rights, so
-   * a spawn after a disable would keep writing: every earlier ACE is revoked first, and a failed
-   * revoke refuses the spawn, and is logged once per failing streak. Elsewhere it only records the list.
+   * a spawn after a disable would keep writing: every earlier write ACE is revoked first, the new
+   * write list is recorded in the ledger, and any failure refuses the spawn, logged once per failing
+   * streak. Elsewhere a bind or a profile lives only as long as its child: nothing to do.
    */
   private async obsidianPreSpawn(plan: {
     readonly roots: readonly string[];
     readonly writePaths: readonly string[];
   }): Promise<void> {
-    if (this.obsidianRevoker.active) {
-      try {
-        await this.obsidianRevoker.revoke(this.obsidianRevokePaths(plan.writePaths));
-      } catch (err) {
-        if (!this.obsidianRevokeFailing) {
-          this.logger?.warn(
-            { err },
-            "obsidian sandbox grants could not be revoked; the Obsidian connector is not started",
-          );
-        }
-        this.obsidianRevokeFailing = true;
-        throw err;
+    if (!this.obsidianRevoker.active) return;
+    try {
+      await this.revokeObsidianGrants(plan.writePaths);
+    } catch (err) {
+      if (!this.obsidianRevokeFailing) {
+        this.logger?.warn(
+          { err },
+          "obsidian sandbox grants could not be revoked; the Obsidian connector is not started",
+        );
       }
-      this.obsidianRevokeFailing = false;
+      this.obsidianRevokeFailing = true;
+      throw err;
     }
-    this.lastObsidianWrite = plan.writePaths;
+    this.obsidianRevokeFailing = false;
   }
 
   /**
-   * Called after the owner's Obsidian opt-in changes (enable approved, or disable): stops the
-   * `mesh:obsidian` slot so the next call spawns under the new grant, and on Windows revokes the
-   * profile's ACEs. Never rejects; a failed revoke is logged and the next spawn revokes again.
+   * Called after the owner's Obsidian opt-in changes (enable approved, or disable). Returns
+   * promptly, never waiting on an in-flight call:
+   *  1. the `mesh:obsidian` slot is DETACHED at once: its client is cleared and its generation and
+   *     the tools epoch bumped, so no new call reaches the old child and the next call spawns under
+   *     the new grant;
+   *  2. on Windows the profile's write ACEs are revoked NOW, inside the same serial step, so a
+   *     disable withdraws the write from the old child too (every child of the profile shares its
+   *     SID) rather than after its drain;
+   *  3. the old child's in-flight calls drain and it is disconnected in the background.
+   * Never rejects; a failed revoke is logged, the ledger keeps its entries, and the next spawn
+   * revokes again. Stated bound (Linux, macOS): an old child keeps the write it was spawned with
+   * until its in-flight calls finish (at most the 10-minute drain), but no new call reaches it.
    */
   async restartObsidian(): Promise<void> {
     try {
       await this.runObsidianSerial(async () => {
-        await this.stopLazyClient(LAZY_MESH.obsidian);
-        if (this.obsidianRevoker.active) {
-          await this.obsidianRevoker.revoke(this.obsidianRevokePaths([]));
-        }
-        this.lastObsidianWrite = [];
+        void this.detachLazyClient(LAZY_MESH.obsidian);
+        if (this.obsidianRevoker.active) await this.revokeObsidianGrants([]);
       });
     } catch (err) {
       this.logger?.warn({ err }, "obsidian sandbox grants not revoked after the opt-in changed");
