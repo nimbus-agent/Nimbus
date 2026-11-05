@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.29.0](https://github.com/nimbus-agent/Nimbus/compare/v10.28.0...v10.29.0) (2026-11-05)
+
+
+### Features
+
+* **gateway:** the model can propose an Obsidian daily-note append; the sandbox may write only today's note ([#1911](https://github.com/nimbus-agent/Nimbus/issues/1911)) ([babdf72](https://github.com/nimbus-agent/Nimbus/commit/babdf72ad44e58c5ab0b0841d94af1986157b462))
+
 ## [10.28.0](https://github.com/nimbus-agent/Nimbus/compare/v10.27.0...v10.28.0) (2026-11-05)
 
 
