@@ -57,6 +57,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 | `notion_page_create` | Create a page under a parent page. |
 | `notion_page_update` | Update page properties. Pass properties JSON as a string. |
 
+**Remote content in model-written blocks is refused.** For `notion_block_append` and `notion_page_update` written by the model (or proposed by an MCP client), Nimbus parses the JSON and refuses it, before it asks you, if it would load or unfurl remote content at any depth: an `external` file (an image, video, audio, PDF or file block, a callout or page icon, a `files` property entry), an `embed` or `bookmark` block, a `link_preview` or `link_mention`, or a media object with its own `url`. Notion-hosted uploads (`file_upload`), text links, `href` and the `url` property stay allowed. JSON that does not parse, nests deeper than 64 levels or holds more than 100,000 values is refused too.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

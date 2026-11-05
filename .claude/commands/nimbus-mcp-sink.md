@@ -51,7 +51,7 @@ All three doors share this one entry (`capture.submit`). Order is the invariant;
 | 3 | Gateway-wide attempt limit (`CaptureAttemptLimiter`, before any validation) | `ERR_CAPTURE_RATE_LIMITED` | no — counted |
 | 4 | Kind allowed by `[mcp_sink] kinds` and `SUBMITTABLE_KINDS` | `ERR_CAPTURE_KIND_NOT_ALLOWED` | yes |
 | 5 | Whitelist rebuild per kind (`capture-validate.ts`; unknown siblings dropped, caps enforced) | `ERR_CAPTURE_INVALID` | yes |
-| 5a/5b | Action only: proposable now, its destination allowed (`actionDestinationRefusal` = `actDoorRefusal`: a ChatOps channel, a broadcast mention, a GitLab quick action or scoped label, a calendar or Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose time does not show its zone or an iCloud event field or attendee with a line break or control character (since B4a), a Linear update that sets `assigneeId`, or a KB page target is refused), and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_ACTION_REFUSED` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
+| 5a/5b | Action only: proposable now, its destination allowed (`actionDestinationRefusal` = `actDoorRefusal`: a ChatOps channel, a broadcast mention, a GitLab quick action or scoped label, a draft, page, note or markup file that loads remote content (since B3r), a calendar or Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose time does not show its zone or an iCloud event field or attendee with a line break or control character (since B4a), a Linear update that sets `assigneeId`, or a KB page target is refused), and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_ACTION_REFUSED` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
 | 6 | Referenced items exist (a link's endpoints must resolve) | `ERR_CAPTURE_UNKNOWN_ITEM` | yes |
 | 7 | Durable hourly cap, read from the `capture` table (survives restart) | `ERR_CAPTURE_RATE_LIMITED` | yes |
 | 8 | Pending cap, proposals only (`max_pending`; actions `action_max_pending`) | `ERR_CAPTURE_QUEUE_FULL` | yes |
@@ -113,7 +113,9 @@ Rules that follow from it:
    `ipc/capture-rpc.ts` `createActionDestinationRefusal(enforcedPolicy, tribalKbConfig)`, both
    accessors read per call, and wired in `platform/assemble.ts` with
    `() => tribalKbConfigOf(tribalCfg)`): a ChatOps binding added since submit, a broadcast mention,
-   a GitLab quick action or scoped label, (since B4a, inside the messaging check) a calendar or
+   a GitLab quick action or scoped label, (since B3r, inside the messaging check) a draft, page,
+   note or markup file that loads remote content (so such a proposal queued before B3r is refused
+   here), (since B4a, inside the messaging check) a calendar or
    Drive create with an optional field set to `null`, an Outlook or iCloud calendar event whose
    time does not show its zone or an iCloud event field or attendee with a line break or control
    character (so a calendar proposal queued before B4a is refused here), a `linear.issue.update` that sets `assigneeId` (the act
