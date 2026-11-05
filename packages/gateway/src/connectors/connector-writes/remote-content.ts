@@ -1319,6 +1319,57 @@ export function driveMimeTypeScans(mimeType: unknown): boolean {
   return forms.some((f) => essenceScans(mimeEssence(f)));
 }
 
+/** Drive file names that a browser or a desktop app opens as markup (coordinator ruling). */
+const DRIVE_MARKUP_EXTENSIONS: readonly string[] = [
+  ".html",
+  ".htm",
+  ".xhtml",
+  ".svg",
+  ".xml",
+  ".mht",
+  ".mhtml",
+];
+/** Drive file names that a Markdown app (Obsidian syncing a Drive folder) renders. */
+const DRIVE_MARKDOWN_EXTENSIONS: readonly string[] = [".md"];
+
+/** The format a Drive file's content is scanned as, when it is scanned at all. */
+export type DriveContentFormat = "drive-markup" | "obsidian-markdown";
+
+/**
+ * A file name's compared forms: lower-cased, and NFKC-folded with invisible characters deleted
+ * and lower-cased; each with trailing whitespace and dots dropped (Windows drops them on save,
+ * so `x.html.` is saved as `x.html`).
+ */
+function driveNameForms(name: string): readonly string[] {
+  return [name.toLowerCase(), foldAndStrip(name).toLowerCase()].map((f) => {
+    let end = f.length;
+    while (end > 0 && (f.charAt(end - 1) === "." || f.charAt(end - 1).trim() === "")) end--;
+    return f.slice(0, end);
+  });
+}
+
+/**
+ * Coordinator ruling (adversarial review, for Task 5's `driveMarkupFormat`): a
+ * `gdrive_file_create` is scanned when EITHER its `mimeType` scans (R11) OR its `name` ends in a
+ * markup extension (`.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht`, `.mhtml`; case-insensitive,
+ * after normalisation): both as `drive-markup`. Otherwise a name ending in `.md` is scanned as
+ * `obsidian-markdown`. A `name` that is present but not a string scans as `drive-markup` (fail
+ * closed); an absent `name` decides nothing. `undefined`: not scanned.
+ */
+export function driveContentFormat(
+  mimeType: unknown,
+  name: unknown,
+): DriveContentFormat | undefined {
+  if (driveMimeTypeScans(mimeType)) return "drive-markup";
+  if (name === undefined) return undefined;
+  if (typeof name !== "string") return "drive-markup";
+  const forms = driveNameForms(name);
+  const endsIn = (exts: readonly string[]): boolean =>
+    forms.some((f) => exts.some((e) => f.endsWith(e)));
+  if (endsIn(DRIVE_MARKUP_EXTENSIONS)) return "drive-markup";
+  return endsIn(DRIVE_MARKDOWN_EXTENSIONS) ? "obsidian-markdown" : undefined;
+}
+
 // ---------------------------------------------------------------------------------------------
 // R12: SVG, XHTML and the XML forms (`drive-markup` = R4 + R12; no `cid:`). Drive content may be
 // read by an HTML or an XML parser.

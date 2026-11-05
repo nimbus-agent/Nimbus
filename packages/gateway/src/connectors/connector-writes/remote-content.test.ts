@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CONFLUENCE_INERT_MACROS,
   cssLoadsRemote,
+  driveContentFormat,
   driveMimeTypeScans,
   type RemoteContentFormat,
   remoteContentIn,
@@ -887,6 +888,48 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
       `${fence(`${BT}mermaid`, "graph TD; A-->B")}${LF}[link](https://h)`,
     ];
     for (const text of allowed) expectAllowed("obsidian-markdown", text);
+  });
+
+  test("Drive: the file name also decides the scan (coordinator ruling)", () => {
+    const PIXEL = "<img src=//h>";
+    /** How Task 5 composes the Drive row with the name rule. */
+    const refused = (mimeType: unknown, name: unknown, content: string): boolean => {
+      const format = driveContentFormat(mimeType, name);
+      return format !== undefined && remoteContentIn(format, content, { tripwire: false });
+    };
+    for (const name of [
+      "report.html",
+      "report.HTM",
+      "a.xhtml",
+      "logo.SVG",
+      "feed.xml",
+      "page.mht",
+      "page.mhtml",
+      "report.html.",
+      "report.html ",
+      `report.ht${ZWSP}ml`,
+      `report${String.fromCodePoint(0xff0e)}html`,
+    ]) {
+      expect(driveContentFormat("text/plain", name)).toBe("drive-markup");
+      expect(driveContentFormat(undefined, name)).toBe("drive-markup");
+      expect(refused("text/plain", name, PIXEL)).toBe(true);
+    }
+    for (const name of ["notes.md", "NOTES.MD", "notes.md."]) {
+      expect(driveContentFormat(undefined, name)).toBe("obsidian-markdown");
+      expect(refused("text/plain", name, "![x](https://h/p.gif)")).toBe(true);
+      expect(refused("text/plain", name, "[x](https://h)")).toBe(false);
+    }
+    // A markup type wins over a Markdown name.
+    expect(driveContentFormat("text/html", "notes.md")).toBe("drive-markup");
+    // A non-string name scans as markup; an absent one decides nothing.
+    expect(driveContentFormat("text/plain", 42)).toBe("drive-markup");
+    expect(driveContentFormat("text/plain", null)).toBe("drive-markup");
+    expect(driveContentFormat("text/plain", undefined)).toBeUndefined();
+    // Not scanned: clean type and a name with no markup or Markdown extension.
+    for (const name of ["report.txt", "data.csv", "html", "x.html.txt", "md", "x.mdx"]) {
+      expect(driveContentFormat("text/plain", name)).toBeUndefined();
+      expect(refused("text/plain", name, PIXEL)).toBe(false);
+    }
   });
 
   test("storage: input that does not tokenize is refused", () => {
