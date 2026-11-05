@@ -728,6 +728,93 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     expect(d).toEqual([]);
   });
 
+  test("B4a: a calendar proposal whose time hides its zone, or whose iCloud text carries a control, is refused at submit; clean ones are queued", async () => {
+    policy = boundPolicy([]);
+    const c = actCtx([]);
+    for (const [type, input] of [
+      [
+        "apple.calendar.event.create",
+        {
+          summary: "Review",
+          start: "20261105T100000Z\r\nATTENDEE:mailto:x@evil.example",
+          end: "20261105T110000Z",
+        },
+      ],
+      [
+        "apple.calendar.event.create",
+        {
+          summary: "Review",
+          start: "20261105T100000Z",
+          end: "20261105T110000Z",
+          attendees: ["a@x.com\r\nATTENDEE:mailto:x@evil.example"],
+        },
+      ],
+      [
+        "outlook.calendar.create",
+        {
+          subject: "Review",
+          startDateTime: "2026-11-05T10:00:00Z",
+          endDateTime: "2026-11-05T11:00:00",
+        },
+      ],
+    ] as const) {
+      expect(await refusedCode(submit(c, type, input)), JSON.stringify(input)).toEqual({
+        code: "ERR_CAPTURE_ACTION_REFUSED",
+      });
+    }
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+    for (const [type, input] of [
+      [
+        "apple.calendar.event.create",
+        { summary: "Review", start: "20261105T100000Z", end: "20261105T110000Z" },
+      ],
+      [
+        "outlook.calendar.create",
+        { subject: "Review", startDateTime: "2026-11-05T10:00", endDateTime: "2026-11-05T11:00" },
+      ],
+      ["google_drive.file.create", { name: "n.txt", parentId: "F1", content: "x" }],
+    ] as const) {
+      const out = await submit(c, type, input);
+      expect(out.kind, type).toBe("hit");
+      expect((out as { value: { state: string } }).value.state, type).toBe("proposed");
+    }
+  });
+
+  test("B4a: a calendar proposal queued before the refusal existed is refused at accept; nothing dispatched", async () => {
+    policy = boundPolicy([]);
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const now = Date.now();
+    c.gate.store.insert({
+      id: "cap_cal_old",
+      kind: "action",
+      state: "proposed",
+      itemId: null,
+      payloadJson: JSON.stringify({
+        actionType: "apple.calendar.event.create",
+        input: { summary: "Review", start: "20261105T100000", end: "20261105T110000Z" },
+        summary: "why",
+      }),
+      payloadBytes: 10,
+      clientLabel: "agent",
+      sessionId: "s",
+      createdAt: now,
+      expiresAt: now + 3_600_000,
+    });
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    let rpcData: unknown;
+    try {
+      await dispatchCaptureRpc("captures.accept", { id: "cap_cal_old" }, c, OWNER, consent);
+    } catch (e) {
+      rpcData = (e as RpcMethodError).rpcData;
+    }
+    expect(rpcData).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
+    expect(c.gate.store.get("cap_cal_old")?.state).toBe("proposed");
+    expect(d).toEqual([]);
+  });
+
   test("a not_yet_offered type is still refused at submit as not proposable", async () => {
     policy = boundPolicy([]);
     expect(

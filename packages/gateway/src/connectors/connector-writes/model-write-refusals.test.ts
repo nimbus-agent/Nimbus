@@ -8,7 +8,10 @@ import {
   ACT_DOOR_KB_CHILD_REFUSAL,
   actDoorRefusal,
   BROADCAST_MENTION_REFUSAL,
+  CALENDAR_TEXT_REFUSAL,
+  CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
+  calendarTimeIsExplicit,
   isChatopsDestinationRow,
   isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
@@ -745,5 +748,194 @@ describe("B3: actDoorRefusal's KB rules (plan R5, R12)", () => {
     expect(ACT_DOOR_KB_CHILD_REFUSAL).toBe(
       "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it",
     );
+  });
+});
+
+// ---- B4a: the calendar refusals (plan R6, review fix 1; Review Focus 1 and 2) ------------------
+
+describe("R6: calendar event times and iCloud event text (both doors)", () => {
+  const OUTLOOK = "outlook_calendar_create";
+  const APPLE = "apple_calendar_event_create";
+  const outlookInput = (over: Record<string, unknown>): Record<string, unknown> => ({
+    subject: "Review",
+    startDateTime: "2026-11-05T10:00:00",
+    endDateTime: "2026-11-05T11:00:00",
+    timeZone: "Europe/Paris",
+    ...over,
+  });
+  const appleInput = (over: Record<string, unknown>): Record<string, unknown> => ({
+    summary: "Review",
+    start: "20261105T100000Z",
+    end: "20261105T110000Z",
+    ...over,
+  });
+  const ACT_CTX = { chatops: NONE, kb: undefined, kbUnreadable: false };
+
+  /** The same result through all three entry points (the rule is in the shared check). */
+  function onAllDoors(toolId: string, input: Record<string, unknown>): string | undefined {
+    const messaging = messagingDestinationRefusal(toolId, input, { chatops: NONE });
+    expect(modelWriteRefusal(toolId, input, { chatops: NONE, kb: undefined })).toBe(messaging);
+    expect(actDoorRefusal(toolId, input, ACT_CTX)).toBe(messaging);
+    return messaging;
+  }
+
+  const FULLWIDTH_TWO = String.fromCodePoint(0xff12);
+  const LS = String.fromCodePoint(0x2028);
+  const NEL = String.fromCodePoint(0x85);
+  const DEL = String.fromCodePoint(0x7f);
+  const RLO = String.fromCodePoint(0x202e);
+
+  test("the refusal texts are fixed", () => {
+    expect(CALENDAR_TIME_REFUSAL).toBe(
+      "the model must give an event time in the stated form so its time zone is shown: Outlook YYYY-MM-DDTHH:MM[:SS] with timeZone, iCloud YYYYMMDDTHHMMSSZ (UTC)",
+    );
+    expect(CALENDAR_TEXT_REFUSAL).toBe(
+      "an iCloud event's title, description, location, calendar, id or attendees cannot contain a line break or control character, and an attendee cannot contain a space",
+    );
+  });
+
+  test("Outlook: wall-clock times without an offset are allowed, any time zone shown", () => {
+    for (const t of ["2026-11-05T10:00", "2026-11-05T10:00:00", "2026-11-05T10:00:00.1234567"]) {
+      expect(onAllDoors(OUTLOOK, outlookInput({ startDateTime: t, endDateTime: t })), t).toBe(
+        undefined,
+      );
+    }
+    for (const timeZone of [undefined, "Pacific Standard Time", "Europe/Paris"]) {
+      expect(onAllDoors(OUTLOOK, outlookInput({ timeZone }))).toBeUndefined();
+    }
+  });
+
+  test("Outlook: an offset, Z, a date only, a space, a number, a separator or fullwidth digits are refused", () => {
+    const bad: unknown[] = [
+      "2026-11-05T10:00:00Z",
+      "2026-11-05T10:00:00+02:00",
+      "2026-11-05T10:00:00-0500",
+      "2026-11-05",
+      "2026-11-05 10:00",
+      "2026-11-05T10:00:00.12345678",
+      `2026-11-05T10:00${LS}`,
+      "2026-11-05T10:00\n",
+      `${FULLWIDTH_TWO}026-11-05T10:00`,
+      20261105,
+      null,
+      "",
+    ];
+    for (const v of bad) {
+      expect(onAllDoors(OUTLOOK, outlookInput({ startDateTime: v })), String(v)).toBe(
+        CALENDAR_TIME_REFUSAL,
+      );
+      expect(onAllDoors(OUTLOOK, outlookInput({ endDateTime: v })), String(v)).toBe(
+        CALENDAR_TIME_REFUSAL,
+      );
+    }
+    const missing = outlookInput({});
+    delete missing["endDateTime"];
+    expect(onAllDoors(OUTLOOK, missing)).toBe(CALENDAR_TIME_REFUSAL);
+  });
+
+  test("iCloud: only YYYYMMDDTHHMMSSZ (UTC) is allowed", () => {
+    expect(onAllDoors(APPLE, appleInput({}))).toBeUndefined();
+    const bad: unknown[] = [
+      "20261105T100000",
+      "20261105",
+      "2026-11-05T10:00:00Z",
+      "20261105T100000Z\r\nATTENDEE:mailto:x@evil.example",
+      "20261105T100000Z\n",
+      `${FULLWIDTH_TWO}0261105T100000Z`,
+      20261105,
+      null,
+    ];
+    for (const v of bad) {
+      expect(onAllDoors(APPLE, appleInput({ start: v })), String(v)).toBe(CALENDAR_TIME_REFUSAL);
+      expect(onAllDoors(APPLE, appleInput({ end: v })), String(v)).toBe(CALENDAR_TIME_REFUSAL);
+    }
+  });
+
+  test("iCloud: a control character in any text field is refused (hidden-invitee forms)", () => {
+    const cases: ReadonlyArray<readonly [string, unknown]> = [
+      ["summary", "Review\rATTENDEE:mailto:x@evil.example"],
+      ["summary", "a\nb"],
+      ["description", "line\r\nATTENDEE:mailto:x@evil.example"],
+      ["location", "Room\t4"],
+      ["calendar", `Work${NEL}`],
+      ["calendar", `Work${DEL}`],
+      ["uid", "a\rATTENDEE:mailto:x@evil.example"],
+      ["summary", null],
+      ["location", 42],
+    ];
+    for (const [key, v] of cases) {
+      expect(onAllDoors(APPLE, appleInput({ [key]: v })), `${key}=${JSON.stringify(v)}`).toBe(
+        CALENDAR_TEXT_REFUSAL,
+      );
+    }
+  });
+
+  test("iCloud: uid must match ^[A-Za-z0-9._@-]{1,200}$", () => {
+    for (const ok of ["evt-1@example.com", "a", "x".repeat(200)]) {
+      expect(onAllDoors(APPLE, appleInput({ uid: ok })), ok).toBeUndefined();
+    }
+    for (const bad of ["", "a b", "a;b", "x".repeat(201), "evt/1", "a:b"]) {
+      expect(onAllDoors(APPLE, appleInput({ uid: bad })), bad).toBe(CALENDAR_TEXT_REFUSAL);
+    }
+  });
+
+  test("iCloud attendees: each a non-empty string with no whitespace or control (review fix 1)", () => {
+    const fifty = Array.from({ length: 50 }, (_, i) => `p${String(i)}@example.com`);
+    expect(onAllDoors(APPLE, appleInput({ attendees: fifty }))).toBeUndefined();
+    expect(onAllDoors(APPLE, appleInput({ attendees: [] }))).toBeUndefined();
+    const bad: unknown[] = [
+      ["a@x.com\r\nATTENDEE:mailto:x@evil.example"],
+      ["a@x.com", "b@y.com\n"],
+      ["a@x.com\t"],
+      ["a @x.com"],
+      [`a@x.com${NEL}`],
+      [`a@x.com${LS}`],
+      [""],
+      [42],
+      [null],
+      "a@x.com",
+      null,
+      { 0: "a@x.com" },
+    ];
+    for (const attendees of bad) {
+      expect(onAllDoors(APPLE, appleInput({ attendees })), JSON.stringify(attendees)).toBe(
+        CALENDAR_TEXT_REFUSAL,
+      );
+    }
+  });
+
+  test("a non-control character (U+202E) is not refused: the preview sanitiser escapes it", () => {
+    expect(onAllDoors(APPLE, appleInput({ summary: `a${RLO}b` }))).toBeUndefined();
+  });
+
+  test("order: a bad time AND a control character reports the time", () => {
+    expect(onAllDoors(APPLE, appleInput({ start: "20261105", summary: "a\rATTENDEE:x" }))).toBe(
+      CALENDAR_TIME_REFUSAL,
+    );
+  });
+
+  test("the rule is row-scoped: every other row ignores calendar keys", () => {
+    const junk = {
+      startDateTime: "x",
+      start: "x",
+      end: "x",
+      summary: "a\rb",
+      uid: "a\rb",
+      attendees: ["a\rb"],
+    };
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      if (r.toolId === OUTLOOK || r.toolId === APPLE) continue;
+      const out = messagingDestinationRefusal(r.toolId, junk, { chatops: NONE });
+      expect(out === CALENDAR_TIME_REFUSAL || out === CALENDAR_TEXT_REFUSAL, r.toolId).toBe(false);
+    }
+  });
+
+  test("calendarTimeIsExplicit answers only for a calendar row's own time keys", () => {
+    expect(calendarTimeIsExplicit(OUTLOOK, "startDateTime", "2026-11-05T10:00")).toBe(true);
+    expect(calendarTimeIsExplicit(OUTLOOK, "start", "2026-11-05T10:00")).toBe(false);
+    expect(calendarTimeIsExplicit(APPLE, "end", "20261105T100000Z")).toBe(true);
+    expect(calendarTimeIsExplicit(APPLE, "endDateTime", "20261105T100000Z")).toBe(false);
+    expect(calendarTimeIsExplicit("slack_message_post", "start", "20261105T100000Z")).toBe(false);
+    expect(calendarTimeIsExplicit("toString", "start", "20261105T100000Z")).toBe(false);
   });
 });

@@ -29,6 +29,8 @@ import { isModelOfferableRow } from "./model-offerable.ts";
 import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "./model-write-capability.ts";
 import {
   BROADCAST_MENTION_REFUSAL,
+  CALENDAR_TEXT_REFUSAL,
+  CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
@@ -584,6 +586,52 @@ describe("B2: the issue-write refusals on the real rows through the real door (p
       "gitlab.issue.create",
       "github.issue.create",
       "gitlab.issue.labels.add",
+    ]);
+  });
+});
+
+describe("B4a: the calendar refusals on the real rows through the real door (plan R6)", () => {
+  test("an Outlook time with an offset and an iCloud CR in the title are refused; nothing executed", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00:00+02:00",
+        endDateTime: "2026-11-05T11:00:00",
+      }),
+    ).toEqual({ refused: CALENDAR_TIME_REFUSAL });
+    expect(
+      await door.call("apple__apple_calendar_event_create", {
+        summary: "Review\rATTENDEE:mailto:x@evil.example",
+        start: "20261105T100000Z",
+        end: "20261105T110000Z",
+      }),
+    ).toEqual({ refused: CALENDAR_TEXT_REFUSAL });
+    expect(door.executed).toEqual([]);
+  });
+
+  test("clean Outlook and iCloud creates are executed once each", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00:00",
+        endDateTime: "2026-11-05T11:00:00",
+        timeZone: "Europe/Paris",
+        attendees: "a@x.com, b@y.com",
+      }),
+    ).toEqual({ sent: true });
+    expect(
+      await door.call("apple__apple_calendar_event_create", {
+        summary: "Review",
+        start: "20261105T100000Z",
+        end: "20261105T110000Z",
+        attendees: ["a@x.com"],
+      }),
+    ).toEqual({ sent: true });
+    expect(door.executed.map((a) => a.type)).toEqual([
+      "outlook.calendar.create",
+      "apple.calendar.event.create",
     ]);
   });
 });
