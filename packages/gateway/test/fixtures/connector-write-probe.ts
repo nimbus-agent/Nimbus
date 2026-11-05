@@ -132,10 +132,24 @@ try {
       input: { owner: "o", repo: "r", issueNumber: 42 },
     },
   })) as { content?: Array<{ type?: unknown; text?: unknown }>; isError?: unknown };
+  /** The first text part parsed as JSON, or a marker saying why it could not be. */
+  const parseFirstText = (): unknown => {
+    const text = raw.content?.[0]?.text;
+    if (typeof text !== "string") return "(no text part)";
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return "(not JSON)";
+    }
+  };
+  const parsed = parseFirstText();
   const replyShape = {
     keys: Object.keys(raw).sort((a, b) => a.localeCompare(b)),
     contentTypes: (raw.content ?? []).map((c) => c.type),
-    firstTextIsJson: typeof raw.content?.[0]?.text === "string",
+    firstTextTitle:
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as Record<string, unknown>)["title"]
+        : parsed,
   };
   const egress = db
     .query("SELECT method, result_status AS resultStatus FROM egress_ledger ORDER BY id")

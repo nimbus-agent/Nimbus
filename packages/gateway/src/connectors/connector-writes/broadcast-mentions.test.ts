@@ -172,11 +172,9 @@ describe("broadcastMentionIn (OR1)", () => {
   });
 
   test("a 10,000-deep chain is refused and does not hang", () => {
-    const started = performance.now();
     expect(hit("slack", `&${"amp;".repeat(10_000)}lt;!here&gt;`)).toBe(true);
     expect(hit("github", `&${"amp;".repeat(10_000)}x`)).toBe(true);
-    // A generous ceiling (CI runners are an order of magnitude slower): the cap is proven above.
-    expect(performance.now() - started).toBeLessThan(2000);
+    // No wall clock: the cap is proven above, and the test timeout catches a hang.
   });
 
   test("a chain shallow enough to settle decodes and is judged on its content", () => {

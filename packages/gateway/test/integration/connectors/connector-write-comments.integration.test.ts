@@ -120,7 +120,7 @@ interface ProbeOut {
   runs: Array<{ type: string; approved: boolean; status: string }>;
   consents: Array<{ type: string | undefined; details: Record<string, unknown> | undefined }>;
   egress: Array<{ method: string; resultStatus: string }>;
-  replyShape: { keys: string[]; contentTypes: unknown[]; firstTextIsJson: boolean };
+  replyShape: { keys: string[]; contentTypes: unknown[]; firstTextTitle: unknown };
 }
 
 async function runProbe(): Promise<ProbeOut> {
@@ -298,7 +298,8 @@ describe("B1 comment writes against fake upstreams (real connectors)", () => {
     expect(out.replyShape).toEqual({
       keys: ["content"],
       contentTypes: ["text"],
-      firstTextIsJson: true,
+      // The text part parses as JSON and carries the fake upstream's issue.
+      firstTextTitle: "Login fails",
     });
   }, 180_000);
 
