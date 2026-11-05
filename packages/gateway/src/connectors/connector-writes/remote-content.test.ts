@@ -151,6 +151,12 @@ describe("cssLoadsRemote (plan R4 step 5 and Review fix 1)", () => {
     ["an unterminated url", "mask:url(#m"],
     ["an unterminated quoted url", "mask:url('#m)"],
     ["an empty url", "fill:url()"],
+    // CSS bad-url and bad-string rules (final review item 3).
+    ["an unquoted argument followed by another word", "fill:url(#a url(#b))"],
+    ["an unquoted argument holding a quote", "fill:url(#a'x)"],
+    ["an unquoted argument holding `(`", "fill:url(#a(x))"],
+    ["a quoted argument crossing a newline", "fill:url('#a\nb')"],
+    ["a quoted argument with text before `)`", "fill:url('#a' x)"],
     ["@import is never relaxed", "@import url(#x)"],
     ["image() is never relaxed", "fill:image(#x)"],
   ])("Drive markup still refuses: %s", (_label, css) => {
@@ -1482,6 +1488,24 @@ describe("linear time on adversarial input", () => {
       expectLinear("outlook-html", build, 100_000);
       // A comment closed only by `--!>`, many times: the walk still never rescans.
       expectLinear("outlook-html", (n) => "<!-- a --!>".repeat(n), 60_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "Drive: many open `url(` arguments are each read once (final review item 3)",
+    () => {
+      // An attribute and a <style> element whose `url(#a ` arguments never close in time.
+      const attr = (n: number): string => `<rect fill="${"url(#a ".repeat(n)})"/>`;
+      const style = (n: number): string => `<style>p{fill:${"url(#a ".repeat(n)})}</style>`;
+      expectLinear("drive-markup", attr, 60_000);
+      expectLinear("drive-markup", style, 60_000);
+      expect(remoteContentIn("drive-markup", attr(3), { tripwire: false })).toBe(true);
+      expect(remoteContentIn("drive-markup", style(3), { tripwire: false })).toBe(true);
+      // Many closed fragment references stay allowed, and linear.
+      const closed = (n: number): string => `<rect fill="${"url(#a) ".repeat(n)}"/>`;
+      expect(remoteContentIn("drive-markup", closed(3))).toBe(false);
+      expectLinear("drive-markup", closed, 60_000);
     },
     TIMING_TEST_TIMEOUT_MS,
   );

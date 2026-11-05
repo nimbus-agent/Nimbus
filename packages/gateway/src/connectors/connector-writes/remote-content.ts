@@ -375,33 +375,66 @@ function cssForms(css: string): readonly string[] | undefined {
   return out;
 }
 
+/** A `url(` argument and the offset just past its closing `)`. */
+interface UrlArgument {
+  readonly value: string;
+  readonly end: number;
+}
+
 /**
- * The argument of the `url(` whose `(` ends at `open`: whitespace skipped, an optional quote,
- * read to the matching quote or `)`, trimmed. `undefined` when it is unterminated.
+ * The argument of the `url(` whose `(` ends at `open`, read by CSS's own rules (final review item
+ * 3): whitespace skipped; a quoted argument runs to its closing quote and may not cross a newline
+ * (a CSS bad string); an unquoted one ends at the first whitespace, `(`, quote or `)` (a CSS bad
+ * url otherwise). Either must then be followed, after optional whitespace, by `)`. `undefined`
+ * (refused) for anything else. Each call reads its own argument only, so a walk over every `url(`
+ * that resumes at `end` reads the CSS once.
  */
-function urlArgument(css: string, open: number): string | undefined {
+function urlArgument(css: string, open: number): UrlArgument | undefined {
   let i = open;
   while (isCssSpace(css.charAt(i))) i++;
   const q = css.charAt(i);
   const quoted = q === '"' || q === "'";
   const from = quoted ? i + 1 : i;
-  const close = css.indexOf(quoted ? q : ")", from);
-  if (close === -1) return undefined;
-  return css.slice(from, close).trim();
+  let j = from;
+  if (quoted) {
+    while (j < css.length && css.charAt(j) !== q && !isCssNewline(css.charAt(j))) j++;
+    if (css.charAt(j) !== q) return undefined;
+  } else {
+    while (j < css.length && !isUnquotedUrlStop(css.charAt(j))) j++;
+  }
+  const value = css.slice(from, j).trim();
+  let k = quoted ? j + 1 : j;
+  while (isCssSpace(css.charAt(k))) k++;
+  if (css.charAt(k) !== ")") return undefined;
+  return { value, end: k + 1 };
 }
 
-/** Whether a normalised form has a `url(` that loads: any, or (Drive) one not starting with `#`. */
+/** What ends an unquoted `url(` argument: whitespace, `(`, a quote or `)`. */
+function isUnquotedUrlStop(ch: string): boolean {
+  return isCssSpace(ch) || ch === "(" || ch === ")" || ch === '"' || ch === "'";
+}
+
+/**
+ * Whether a normalised form has a `url(` that loads: any, or (Drive) one whose argument does not
+ * start with `#`. The walk resumes after each argument's `)`, never inside it, so it is linear.
+ */
 function cssUrlLoads(
   form: string,
   allowFragmentUrl: boolean,
   pattern: RegExp = CSS_URL_FUNCTION,
 ): boolean {
-  for (const m of form.matchAll(pattern)) {
-    if (!allowFragmentUrl) return true;
-    const arg = urlArgument(form, m.index + m[0].length);
-    if (arg === undefined || !arg.startsWith("#")) return true;
+  pattern.lastIndex = 0;
+  try {
+    for (let m = pattern.exec(form); m !== null; m = pattern.exec(form)) {
+      if (!allowFragmentUrl) return true;
+      const arg = urlArgument(form, m.index + m[0].length);
+      if (arg === undefined || !arg.value.startsWith("#")) return true;
+      pattern.lastIndex = arg.end;
+    }
+    return false;
+  } finally {
+    pattern.lastIndex = 0;
   }
-  return false;
 }
 
 /**
