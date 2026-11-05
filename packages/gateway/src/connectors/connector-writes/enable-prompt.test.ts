@@ -109,7 +109,7 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
     state: "newly_offerable",
   };
   const WIDENING =
-    "Approving also lets the Obsidian connector's sandbox WRITE inside each Obsidian vault found under your [[filesystem.roots]] (it already reads them):";
+    "Approving also lets the Obsidian connector's sandbox WRITE inside each Obsidian vault found under your [[filesystem.roots]], and any vault made there later (it already reads them):";
   const HEAD = [
     "Service: obsidian",
     "Up to wave: 2",

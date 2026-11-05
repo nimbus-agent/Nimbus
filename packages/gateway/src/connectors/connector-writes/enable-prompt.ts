@@ -38,7 +38,7 @@ function stringList(v: unknown): readonly string[] | undefined {
  */
 function obsidianScopeLines(scope: unknown): string[] | undefined {
   const lines = [
-    "Approving also lets the Obsidian connector's sandbox WRITE inside each Obsidian vault found under your [[filesystem.roots]] (it already reads them):",
+    "Approving also lets the Obsidian connector's sandbox WRITE inside each Obsidian vault found under your [[filesystem.roots]], and any vault made there later (it already reads them):",
   ];
   if (scope === undefined) {
     lines.push("  (the folders are not known to this gateway process)");
