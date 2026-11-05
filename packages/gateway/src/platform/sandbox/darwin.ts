@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
+import { canonicalPath, canonicalPolicyPaths, declaredWriteFiles } from "./canonical-path.ts";
 import { declaredNetworkPorts, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
@@ -11,6 +11,22 @@ interface SbplOpts {
   cwd: string;
   tmpdir: string;
   policy: SandboxPolicy;
+  /**
+   * The write paths that are FILES (the Obsidian daily-note grant, I15). Each is granted as
+   * `(literal ...)`, so a file grant can never become a grant on anything beneath its name;
+   * every other write path stays a `(subpath ...)`.
+   */
+  writeFiles?: ReadonlySet<string>;
+}
+
+/**
+ * The write paths the gateway DECLARED single files (`canonicalWriteFiles`), and only those: the kind
+ * is never guessed from what is on disk at spawn, where a folder or a deleted file would turn a file
+ * grant into a `subpath` one. A declared path that is not in the write list is not granted at all.
+ */
+export function writeFilesOf(policy: SandboxPolicy): ReadonlySet<string> {
+  // Fails closed: a declared file missing from the write list refuses the spawn (it throws).
+  return declaredWriteFiles(policy);
 }
 
 /**
@@ -156,8 +172,18 @@ export function generateSbplProfile(opts: SbplOpts): string {
     "(allow file-write*",
     `  (subpath "${opts.cwd}")`,
     `  (subpath "${opts.tmpdir}")`,
-    ...fsWrite.map((p) => `  (subpath "${p}")`),
+    ...fsWrite.filter((p) => opts.writeFiles?.has(p) !== true).map((p) => `  (subpath "${p}")`),
     ")",
+    // A FILE grant (the Obsidian daily note, I15) is `file-write-data` on the literal ONLY: the
+    // bytes of that one existing file. Not `file-write*`, which also allows unlink, create and
+    // rename at the path: a child could then unlink the note, hard-link a plugin's `main.js` (it
+    // only needs to read it) to the note's name and write the plugin through it. The gateway
+    // creates the file before the spawn, so an append only OPENS it (`O_CREAT` on an existing file
+    // creates nothing) and writes: no `file-write-create`, `-unlink`, `-mode`, `-times`, `-flags`,
+    // `-owner`, `-setugid` or `-xattr` is needed, and none is granted.
+    ...fsWrite
+      .filter((p) => opts.writeFiles?.has(p) === true)
+      .map((p) => `(allow file-write-data (literal "${p}"))`),
   ];
   // PORTS ONLY: a declared entry opens its TCP port to every host, so here a connector's list limits
   // ports and not hosts. The address in an SBPL `remote` filter is `*` or `localhost` and a port, with
@@ -195,10 +221,12 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       const sandboxDir = canonicalPath(mkdtempSync(join(tmpdir(), "nimbus-sandbox-")));
       const cwd = canonicalPath(opts.cwd);
       const profilePath = join(sandboxDir, "profile.sb");
+      const policy = canonicalPolicyPaths(opts.policy);
       const profile = generateSbplProfile({
         cwd,
         tmpdir: sandboxDir,
-        policy: canonicalPolicyPaths(opts.policy),
+        policy,
+        writeFiles: writeFilesOf(policy),
       });
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via

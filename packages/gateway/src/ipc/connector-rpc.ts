@@ -187,6 +187,13 @@ export async function dispatchConnectorRpc(options: {
     toolExecutor,
     getEnforcedPolicy,
     now: now ?? Date.now,
+    // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).
+    ...(connectorMesh === undefined
+      ? {}
+      : {
+          onObsidianGrantChanged: () => connectorMesh.restartObsidian(),
+          obsidianWriteScope: () => connectorMesh.obsidianWriteScope(),
+        }),
   });
 
   switch (method) {
@@ -265,7 +272,7 @@ export async function dispatchConnectorRpc(options: {
         value: await handleConnectorWritesEnable(rec, modelWritesDeps()),
       };
     case "connector.writesDisable":
-      return { kind: "hit", value: handleConnectorWritesDisable(rec, modelWritesDeps()) };
+      return { kind: "hit", value: await handleConnectorWritesDisable(rec, modelWritesDeps()) };
     case "connector.writesStatus":
       return { kind: "hit", value: handleConnectorWritesStatus(modelWritesDeps()) };
     default:

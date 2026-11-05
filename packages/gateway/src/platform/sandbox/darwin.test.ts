@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { manifestWithExtraNetworkHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
-import { createDarwinSandboxRunner, generateSbplProfile } from "./darwin.ts";
+import { createDarwinSandboxRunner, generateSbplProfile, writeFilesOf } from "./darwin.ts";
 import { policyFromManifest, type SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd/tmpdir strings (S5443). The
@@ -277,5 +277,67 @@ describe("the macOS runner reports what it enforces", () => {
   it("can confine a policy that names hosts, and one with no network", () => {
     expect(runner.canConfine(policy({ network: ["api.github.com"] }))).toBeNull();
     expect(runner.canConfine(policy())).toBeNull();
+  });
+});
+
+describe("a file write grant is a literal (the Obsidian daily note, I15)", () => {
+  const filePolicy: SandboxPolicy = {
+    id: "com.nimbus.obsidian",
+    permissions: {
+      network: [],
+      filesystem: { read: ["/notes"], write: ["/notes/v/2026-11-05.md", "/data"] },
+    },
+  };
+
+  it("a file in writeFiles gets file-write-DATA on its literal only: no file-write*, so no unlink, create or rename", () => {
+    const p = generateSbplProfile({
+      cwd: "/s/cwd",
+      tmpdir: "/s/tmp",
+      policy: filePolicy,
+      writeFiles: new Set(["/notes/v/2026-11-05.md"]),
+    });
+    const lines = p.split("\n");
+    // The one rule that names the file, and it is data-only.
+    expect(lines.filter((l) => l.includes('"/notes/v/2026-11-05.md"'))).toEqual([
+      '(allow file-write-data (literal "/notes/v/2026-11-05.md"))',
+    ]);
+    // The broad write block names the directory grants only.
+    const start = lines.indexOf("(allow file-write*");
+    const block = lines.slice(start, lines.indexOf(")", start)).join("\n");
+    expect(block).toContain('  (subpath "/data")');
+    expect(block).not.toContain("2026-11-05.md");
+  });
+
+  it("writeFilesOf is exactly the DECLARED files in the write list, never guessed from disk", () => {
+    // A declared file that is now a folder, or deleted, is still a file grant here (the wrapper
+    // refuses that spawn first); an undeclared path that is a file on disk is still a subpath.
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-darwin-files-"));
+    const onDisk = join(dir, "on-disk.md");
+    writeFileSync(onDisk, "");
+    const set = writeFilesOf({
+      id: "x",
+      permissions: {
+        network: [],
+        filesystem: {
+          read: [],
+          write: [onDisk, join(dir, "declared-folder"), "/declared/gone.md"],
+        },
+      },
+      canonicalWriteFiles: [join(dir, "declared-folder"), "/declared/gone.md"],
+    });
+    expect([...set]).toEqual([join(dir, "declared-folder"), "/declared/gone.md"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a declared file that is not in the write list REFUSES the spawn (never a subpath fallback)", () => {
+    expect(() =>
+      writeFilesOf({
+        id: "x",
+        permissions: { network: [], filesystem: { read: [], write: ["/n/other.md"] } },
+        canonicalWriteFiles: ["/n/2026-11-05.md"],
+      }),
+    ).toThrow(
+      "refusing to spawn: the declared file grant /n/2026-11-05.md is not in the write list",
+    );
   });
 });

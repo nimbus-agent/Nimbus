@@ -32,6 +32,11 @@ import { join } from "node:path";
 import { GOOGLE_OAUTH_PARSE_ERRORS } from "../../../../src/auth/google-oauth-parse-errors.ts";
 import { Config } from "../../../../src/config.ts";
 import { getConnectorHealth } from "../../../../src/connectors/health.ts";
+import {
+  type DailyNoteFs,
+  type DailyNoteGrantDeps,
+  obsidianDailyNoteGrant,
+} from "../../../../src/connectors/lazy-mesh/obsidian-daily-note-grant.ts";
 import type { MeshSpawnContext, ServerSpec } from "../../../../src/connectors/lazy-mesh/slot.ts";
 import { LocalIndex } from "../../../../src/index/local-index.ts";
 import {
@@ -292,6 +297,7 @@ const {
   ensureSlackMcp,
   ensureWorkdayMcp,
   ensureZoomMcp,
+  obsidianSpawnManifest,
 } = await import("../../../../src/connectors/lazy-mesh/connector-spawns.ts");
 
 const { LAZY_MESH } = await import("../../../../src/connectors/lazy-mesh/keys.ts");
@@ -1869,5 +1875,248 @@ describe("ensureZoomMcp", () => {
     expect(capturedClients).toHaveLength(0);
     expect(calls.setLazyClient).toHaveLength(0);
     expect(calls.scheduleLazyDisconnect).toEqual([LAZY_MESH.zoom]);
+  });
+});
+
+/**
+ * Phase 9.7 B4b (I15): the Obsidian write grant. The policy is read back exactly as the sandbox
+ * wrapper parses it, so these assert what the child would actually be confined to.
+ */
+describe("ensureObsidianMcp: the write grant (B4b)", () => {
+  const ROOTS = ["/notes", "/work"];
+  const VAULT_A = "/notes/vaultA";
+  const VAULT_B = "/work/vaultB";
+
+  /** Fake grant facts: discovery and realpath are a fixed table, and every discovery is counted. */
+  /** A fake host filesystem: nothing exists until made; every made path is a plain folder or file. */
+  function fakeFs(): DailyNoteFs {
+    const files = new Set<string>();
+    const dirs = new Set<string>();
+    const stat = (file: boolean) => ({
+      isFile: () => file,
+      isDirectory: () => !file,
+      isSymbolicLink: () => false,
+      nlink: 1,
+    });
+    return {
+      lstat: (p) => {
+        if (files.has(p)) return stat(true);
+        if (dirs.has(p)) return stat(false);
+        throw Object.assign(new Error(`ENOENT ${p}`), { code: "ENOENT" });
+      },
+      mkdir: (p) => {
+        dirs.add(p);
+      },
+      createExclusive: (p) => {
+        files.add(p);
+      },
+      realpath: (p) => p,
+    };
+  }
+
+  function grantDeps(): { deps: DailyNoteGrantDeps; discoveries: () => number } {
+    let n = 0;
+    const real: Record<string, string> = {
+      "/notes": "/notes",
+      "/work": "/work",
+      [VAULT_A]: VAULT_A,
+      [VAULT_B]: VAULT_B,
+    };
+    return {
+      discoveries: () => n,
+      deps: {
+        discoverVaults: () => {
+          n += 1;
+          return [VAULT_B, VAULT_A];
+        },
+        realpath: (p) => {
+          const r = real[p];
+          if (r === undefined) throw new Error(`ENOENT ${p}`);
+          return r;
+        },
+        homeDir: "/home/me",
+        protectedRoots: ["/home/me/.local/share/nimbus"],
+        platform: "linux",
+        now: () => new Date(Date.UTC(2026, 10, 5, 12)),
+        fs: fakeFs(),
+      },
+    };
+  }
+
+  // Today's daily note of each vault (the vaults hold no daily-notes config: the default file).
+  const NOTE_A = `${VAULT_A}/2026-11-05.md`;
+  const NOTE_B = `${VAULT_B}/2026-11-05.md`;
+
+  function spawnedFilesystem(): { read: readonly string[]; write: readonly string[] } {
+    const raw = capturedClients[0]?.servers["obsidian"]?.env[SANDBOX_POLICY_ENV];
+    if (raw === undefined) throw new Error("no obsidian spawn");
+    return parseSandboxPolicy(raw).permissions.filesystem;
+  }
+
+  test("grant off: write is empty, read is the roots, and nothing is discovered", async () => {
+    const g = grantDeps();
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => false,
+      obsidianWriteGrantDeps: g.deps,
+    });
+    expect(spawnedFilesystem()).toEqual({ read: ROOTS, write: [] });
+    expect(g.discoveries()).toBe(0);
+  });
+
+  test("grant on: write is exactly today's daily note of each vault, never a vault or a root; read unchanged", async () => {
+    const g = grantDeps();
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => true,
+      obsidianWriteGrantDeps: g.deps,
+    });
+    const fsPerm = spawnedFilesystem();
+    expect(fsPerm.write).toEqual(obsidianDailyNoteGrant(ROOTS, g.deps).files);
+    expect(fsPerm.write).toEqual([NOTE_A, NOTE_B]);
+    expect(fsPerm.write).not.toContain(VAULT_A);
+    expect(fsPerm.read).toEqual(ROOTS);
+    for (const root of ROOTS) expect(fsPerm.write).not.toContain(root);
+    // The wrapper re-checks each granted vault still canonicalises to itself (review finding 5).
+    const raw = capturedClients[0]?.servers["obsidian"]?.env[SANDBOX_POLICY_ENV] ?? "";
+    expect(parseSandboxPolicy(raw).canonicalWritePaths).toEqual([NOTE_A, NOTE_B]);
+  });
+
+  test("no accessor, or no grant facts: write is empty (fail closed)", async () => {
+    const g = grantDeps();
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({ ...ctx, obsidianWriteGrantDeps: g.deps });
+    expect(spawnedFilesystem()).toEqual({ read: ROOTS, write: [] });
+    capturedClients.length = 0;
+    await ensureObsidianMcp({ ...ctx, obsidianWriteGrantEnabled: () => true });
+    expect(spawnedFilesystem()).toEqual({ read: ROOTS, write: [] });
+  });
+
+  test("an accessor that throws, or a grant computation that throws: write is empty, one warning each", async () => {
+    const g = grantDeps();
+    const { ctx, warnings } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => {
+        throw new Error("db closed");
+      },
+      obsidianWriteGrantDeps: g.deps,
+    });
+    expect(spawnedFilesystem()).toEqual({ read: ROOTS, write: [] });
+    expect(warnings).toHaveLength(1);
+    capturedClients.length = 0;
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => true,
+      obsidianWriteGrantDeps: {
+        ...g.deps,
+        discoverVaults: () => {
+          throw new Error("EIO");
+        },
+      },
+    });
+    expect(spawnedFilesystem()).toEqual({ read: ROOTS, write: [] });
+    expect(warnings).toHaveLength(2);
+  });
+
+  test("with no approval the spawn is identical to a context that knows nothing of the grant", async () => {
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp(ctx);
+    const before = capturedClients[0]?.servers["obsidian"];
+    capturedClients.length = 0;
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => false,
+      obsidianWriteGrantDeps: grantDeps().deps,
+      obsidianPreSpawn: () => Promise.resolve(),
+    });
+    expect(before).toBeDefined();
+    expect(capturedClients[0]?.servers["obsidian"]).toEqual(before);
+  });
+
+  test("the pre-spawn hook gets the roots and the write list, and runs BEFORE the client is created", async () => {
+    const order: string[] = [];
+    const g = grantDeps();
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianWriteGrantEnabled: () => true,
+      obsidianWriteGrantDeps: g.deps,
+      obsidianPreSpawn: (plan) => {
+        order.push(
+          `revoke ${plan.roots.join(",")} | ${plan.writePaths.join(",")} | ${plan.day ?? ""}`,
+        );
+        return Promise.resolve();
+      },
+      setLazyClient: () => {
+        order.push("spawn");
+      },
+    });
+    expect(order).toEqual([`revoke /notes,/work | ${NOTE_A},${NOTE_B} | 2026-11-05`, "spawn"]);
+  });
+
+  test("a failing pre-spawn hook (the Windows revoke) refuses the spawn", async () => {
+    const { ctx, calls } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianPreSpawn: () => Promise.reject(new Error("revoke failed")),
+    });
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(capturedClients).toHaveLength(0);
+  });
+
+  test("a client that appeared while the hook ran is reused, not doubled", async () => {
+    let live = false;
+    const { ctx, calls } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      getLazyClient: () => (live ? ({} as never) : undefined),
+      obsidianPreSpawn: () => {
+        live = true;
+        return Promise.resolve();
+      },
+    });
+    expect(calls.setLazyClient).toHaveLength(0);
+    expect(calls.scheduleLazyDisconnect).toEqual([LAZY_MESH.obsidian]);
+  });
+
+  test("the spawn decision runs through the context's serial queue", async () => {
+    let serialRuns = 0;
+    const { ctx } = makeCtx({ obsidianVaultPaths: ROOTS });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianSerial: async <T>(fn: () => Promise<T>): Promise<T> => {
+        serialRuns += 1;
+        return fn();
+      },
+    });
+    expect(serialRuns).toBe(1);
+    expect(capturedClients).toHaveLength(1);
+  });
+
+  test("obsidianSpawnManifest keeps the static base and appends roots to read, vaults to write", () => {
+    const m = obsidianSpawnManifest(["/r"], ["/r/v"]);
+    expect(m.id).toBe("com.nimbus.obsidian");
+    expect(m.permissions.filesystem).toEqual({ read: ["/r"], write: ["/r/v"] });
+    expect(m.permissions.network).toEqual([]);
+  });
+});
+
+describe("ensureObsidianMcp: the daily-note rollover hook", () => {
+  test("the refresh hook runs before the live-client check, on every spawn decision", async () => {
+    const order: string[] = [];
+    const { ctx } = makeCtx({ obsidianVaultPaths: ["/notes"], existingClient: true });
+    await ensureObsidianMcp({
+      ...ctx,
+      obsidianRefreshStale: () => {
+        order.push("refresh");
+      },
+      scheduleLazyDisconnect: () => {
+        order.push("reuse");
+      },
+    });
+    expect(order).toEqual(["refresh", "reuse"]);
   });
 });

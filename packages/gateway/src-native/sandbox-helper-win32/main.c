@@ -139,6 +139,47 @@ static int mode_delete_profile(const wchar_t *name) {
 }
 
 /*
+ * One lock around every DACL read-modify-write this helper does (grant, revoke, and the sweep's
+ * revoke), shared by every helper process in the session. Without it two helpers rewriting the
+ * same DACL (a spawn granting a path while another process revokes on it) each read the old DACL
+ * and the last writer wins: a revoke could be undone by a grant that read the pre-revoke DACL, or
+ * a grant lost under a revoke. Held only for the GetNamedSecurityInfoW -> SetNamedSecurityInfoW
+ * window, never while a child runs. A wait that times out FAILS the operation (fail closed); an
+ * abandoned mutex (a helper killed mid-rewrite) is taken over, since that DACL write either landed
+ * whole or not at all.
+ */
+#define DACL_MUTEX_NAME L"Local\\nimbus-sandbox-helper-dacl"
+#define DACL_MUTEX_WAIT_MS 120000
+
+static HANDLE dacl_lock(void) {
+    HANDLE m = CreateMutexW(NULL, FALSE, DACL_MUTEX_NAME);
+    if (m == NULL) { err(L"CreateMutexW(%s): %lu", DACL_MUTEX_NAME, GetLastError()); return NULL; }
+    DWORD w = WaitForSingleObject(m, DACL_MUTEX_WAIT_MS);
+    if (w != WAIT_OBJECT_0 && w != WAIT_ABANDONED) {
+        err(L"waiting for the DACL lock %s: %lu", DACL_MUTEX_NAME, w == WAIT_TIMEOUT ? WAIT_TIMEOUT : GetLastError());
+        CloseHandle(m);
+        return NULL;
+    }
+    return m;
+}
+
+static void dacl_unlock(HANDLE m) {
+    ReleaseMutex(m);
+    CloseHandle(m);
+}
+
+static int grant_path_locked(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit);
+
+/* grant_path_locked under the session DACL lock; 66 when the lock cannot be taken. */
+static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
+    HANDLE lock = dacl_lock();
+    if (lock == NULL) return 66;
+    int rc = grant_path_locked(path, sid, rights, inherit);
+    dacl_unlock(lock);
+    return rc;
+}
+
+/*
  * Grant `sid` the requested rights on `path`. Returns 0, or 66 on failure — which is also what a
  * non-ACL filesystem (FAT32/exFAT, some network shares) produces, since SetNamedSecurityInfoW
  * cannot write a DACL there. The caller must not fall back to spawning unconfined: a policy path
@@ -155,7 +196,7 @@ static int mode_delete_profile(const wchar_t *name) {
  * sibling subtree: its `outside` directory sits next to the granted cwd, so a widened inheritance
  * on the wrong path makes that test fail. Do not widen a grant to make it pass.
  */
-static int grant_path(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
+static int grant_path_locked(const wchar_t *path, PSID sid, DWORD rights, DWORD inherit) {
     PACL old_acl = NULL;
     PACL new_acl = NULL;
     PSECURITY_DESCRIPTOR sd = NULL;
@@ -235,6 +276,10 @@ typedef struct {
     int nread;
     const wchar_t *writes[MAX_GRANTS];
     int nwrite;
+    /* --grant-write-file: the gateway DECLARES each of these a single regular file (the Obsidian
+     * daily note, I15). Granted on that file only, never inherited; refused unless it IS one. */
+    const wchar_t *write_files[MAX_GRANTS];
+    int nwrite_file;
     int child_argv_start;
 } spawn_opts;
 
@@ -250,6 +295,7 @@ static int parse_spawn_option(int argc, wchar_t **argv, int *i, spawn_opts *o) {
     else if (wcscmp(argv[*i], L"--capability") == 0 && *i + 1 < argc)  { ++(*i); if (wcscmp(argv[*i], L"internetClient") == 0) o->want_net = TRUE; }
     else if (wcscmp(argv[*i], L"--grant-read") == 0 && *i + 1 < argc)  { if (o->nread  >= MAX_GRANTS) { err(L"too many --grant-read");  return 64; } o->reads[o->nread++]   = argv[++(*i)]; }
     else if (wcscmp(argv[*i], L"--grant-write") == 0 && *i + 1 < argc) { if (o->nwrite >= MAX_GRANTS) { err(L"too many --grant-write"); return 64; } o->writes[o->nwrite++] = argv[++(*i)]; }
+    else if (wcscmp(argv[*i], L"--grant-write-file") == 0 && *i + 1 < argc) { if (o->nwrite_file >= MAX_GRANTS) { err(L"too many --grant-write-file"); return 64; } o->write_files[o->nwrite_file++] = argv[++(*i)]; }
     else { err(L"unexpected arg: %s", argv[*i]); return 64; }
     return 0;
 }
@@ -263,6 +309,7 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
     o->want_net = FALSE;
     o->nread = 0;
     o->nwrite = 0;
+    o->nwrite_file = 0;
 
     int i = 1;
     for (; i < argc; i++) {
@@ -281,6 +328,20 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
 /* Apply the cwd grant and the policy-path grants. Returns 0 or the exit code. Does NOT free
  * `sid` — the caller owns it on every path, which is why this returns a code rather than
  * cleaning up itself. */
+/* A declared file (--grant-write-file) must be exactly that NOW: it exists, it is not a folder and
+ * it is not a reparse point (a symlink or junction). Anything else refuses the spawn (66): a
+ * folder swapped in at the path would otherwise get the grant. Racy only against a swap between
+ * this check and grant_path's DACL write; the gateway's wrapper checks too, before it calls us. */
+static int require_regular_file(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs == INVALID_FILE_ATTRIBUTES) { err(L"--grant-write-file %s: not found (%lu)", path, GetLastError()); return 66; }
+    if (attrs & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) {
+        err(L"--grant-write-file %s: not a regular file", path);
+        return 66;
+    }
+    return 0;
+}
+
 static int apply_grants(PSID sid, const spawn_opts *o) {
     /* The working directory: Modify, inheritable — the child works inside it. */
     int rc = grant_path(o->cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
@@ -300,6 +361,15 @@ static int apply_grants(PSID sid, const spawn_opts *o) {
         rc = grant_path(o->writes[k], sid,
                         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
                         SUB_CONTAINERS_AND_OBJECTS_INHERIT);
+        if (rc != 0) return rc;
+    }
+    /* Declared files: the ACE is on the file only (NO_INHERITANCE), and only if it IS a file. */
+    for (int k = 0; k < o->nwrite_file; k++) {
+        rc = require_regular_file(o->write_files[k]);
+        if (rc != 0) return rc;
+        rc = grant_path(o->write_files[k], sid,
+                        FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
+                        NO_INHERITANCE);
         if (rc != 0) return rc;
     }
     return 0;
@@ -453,9 +523,21 @@ static BOOL path_is_gone(DWORD rc) {
     return rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
 }
 
+static int revoke_sids_on_path_locked(const wchar_t *path, PSID *sids, ULONG nsids);
+
+/* revoke_sids_on_path_locked under the session DACL lock; 1 when the lock cannot be taken. */
+static int revoke_sids_on_path(const wchar_t *path, PSID *sids, ULONG nsids) {
+    if (nsids == 0) return 0;
+    HANDLE lock = dacl_lock();
+    if (lock == NULL) return 1;
+    int rc = revoke_sids_on_path_locked(path, sids, nsids);
+    dacl_unlock(lock);
+    return rc;
+}
+
 /* Remove every explicit ACE held by each of `sids` from `path`'s DACL in ONE rewrite. Returns 0 on
  * success (including a path that no longer exists), 1 on failure with the reason on stderr. */
-static int revoke_sids_on_path(const wchar_t *path, PSID *sids, ULONG nsids) {
+static int revoke_sids_on_path_locked(const wchar_t *path, PSID *sids, ULONG nsids) {
     if (nsids == 0) return 0;
     PACL old_acl = NULL;
     PACL new_acl = NULL;

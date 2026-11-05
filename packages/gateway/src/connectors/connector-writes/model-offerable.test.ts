@@ -30,7 +30,7 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 37 B1-B4a rows (posts, comments, issue writes, drafts, pages, calendar events, Drive files) are offerable", () => {
+  test("exactly the 38 B1-B4b rows (posts, comments, issue writes, drafts, pages, calendar events, Drive files, the Obsidian append) are offerable", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -68,6 +68,7 @@ describe("isModelOfferableRow (M1)", () => {
         "notion_comment_create",
         "notion_page_create",
         "notion_page_update",
+        "obsidian_append_to_daily_note",
         "outlook_calendar_create",
         "outlook_draft_create",
         "slack_message_post",
@@ -76,7 +77,7 @@ describe("isModelOfferableRow (M1)", () => {
         "teams_message_post_chat",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(37);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(38);
     // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
@@ -91,6 +92,6 @@ describe("isModelOfferableRow (M1)", () => {
     expect(offerableWritesEnabledBy("outlook", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("apple", 2)).toHaveLength(2);
     expect(offerableWritesEnabledBy("google_drive", 2)).toHaveLength(1);
-    expect(offerableWritesEnabledBy("obsidian", 2)).toEqual([]);
+    expect(offerableWritesEnabledBy("obsidian", 2)).toHaveLength(1);
   });
 });

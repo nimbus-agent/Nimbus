@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { enableWritesPromptLines } from "./enable-prompt.ts";
+import {
+  enableWritesPromptLines,
+  OBSIDIAN_NOTHING_ELSE_LINE,
+  OBSIDIAN_WIDENING_LINES,
+} from "./enable-prompt.ts";
 
 describe("enableWritesPromptLines", () => {
   test("a well-formed payload lists the service, the wave, every write by state, and the fixed sentence", () => {
@@ -97,5 +101,175 @@ describe("enableWritesPromptLines", () => {
     const esc = String.fromCodePoint(0x1b);
     const lines = enableWritesPromptLines({ service: `git${esc}hub`, maxWave: 3, writes: [] });
     expect(lines?.[0]).toBe(String.raw`Service: git\u{001B}hub`);
+  });
+});
+
+describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () => {
+  const APPEND = {
+    toolId: "obsidian_append_to_daily_note",
+    actionType: "obsidian.note.append",
+    wave: 2,
+    offerable: true,
+    state: "newly_offerable",
+  };
+  const HEAD = [
+    "Service: obsidian",
+    "Up to wave: 2",
+    "  obsidian_append_to_daily_note  obsidian.note.append  wave 2  (new: offered after you approve)",
+  ];
+  const TAIL = ["", "Each call will still ask you before it runs."];
+
+  test("the widening is ONE FILE per vault, today's daily note, and nothing else (the owner's ruling)", () => {
+    expect(OBSIDIAN_WIDENING_LINES).toEqual([
+      "Approving also lets the Obsidian connector's sandbox WRITE ONE FILE per vault: today's daily note (the date in UTC), in each Obsidian vault found under your [[filesystem.roots]], and any vault made there later (it already reads them):",
+    ]);
+    expect(OBSIDIAN_NOTHING_ELSE_LINE).toBe(
+      "Nothing else in a vault becomes writable: not .obsidian (plugins, settings), not .git, no other note, no new file.",
+    );
+  });
+
+  test("names each root, each vault's daily-note pattern and each skipped path with its reason", () => {
+    expect(
+      enableWritesPromptLines({
+        service: "obsidian",
+        maxWave: 2,
+        writes: [APPEND],
+        fileWriteScope: {
+          roots: ["/home/me/notes", "/home/me/work"],
+          notes: ["/home/me/notes/vaultA/Daily/YYYY-MM-DD.md"],
+          skipped: [
+            { path: "/home/me/work/.local/share/nimbus", reason: "protected" },
+            { path: "/home/me/notes/B/.obsidian/YYYY-MM-DD.md", reason: "config-dir" },
+          ],
+        },
+      }),
+    ).toEqual([
+      ...HEAD,
+      "",
+      ...OBSIDIAN_WIDENING_LINES,
+      "  /home/me/notes",
+      "  /home/me/work",
+      "Daily notes it may write (one file a day):",
+      "  /home/me/notes/vaultA/Daily/YYYY-MM-DD.md",
+      "  not writable: /home/me/work/.local/share/nimbus (overlaps a Nimbus folder)",
+      "  not writable: /home/me/notes/B/.obsidian/YYYY-MM-DD.md (the daily-note folder is inside .obsidian or .git)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
+      ...TAIL,
+    ]);
+  });
+
+  test("no vault found: (none), and still nothing else", () => {
+    expect(
+      enableWritesPromptLines({
+        service: "obsidian",
+        maxWave: 2,
+        writes: [APPEND],
+        fileWriteScope: { roots: ["/n"], notes: [], skipped: [] },
+      }),
+    ).toEqual([
+      ...HEAD,
+      "",
+      ...OBSIDIAN_WIDENING_LINES,
+      "  /n",
+      "Daily notes it may write (one file a day):",
+      "  (none)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
+      ...TAIL,
+    ]);
+  });
+
+  test("every skip reason has its own wording", () => {
+    const reasons = [
+      "outside-roots",
+      "link",
+      "missing",
+      "home-or-root",
+      "protected",
+      "nested",
+      "config-dir",
+      "outside-vault",
+    ];
+    const lines =
+      enableWritesPromptLines({
+        service: "obsidian",
+        maxWave: 2,
+        writes: [APPEND],
+        fileWriteScope: {
+          roots: [],
+          notes: [],
+          skipped: reasons.map((reason) => ({ path: `/p/${reason}`, reason })),
+        },
+      }) ?? [];
+    const notWritable = lines.filter((l) => l.startsWith("  not writable: "));
+    expect(notWritable).toHaveLength(reasons.length);
+    expect(new Set(notWritable.map((l) => l.slice(l.indexOf("(")))).size).toBe(reasons.length);
+  });
+
+  test("an absent scope still names the widening and its limit, and says the files are not known", () => {
+    expect(enableWritesPromptLines({ service: "obsidian", maxWave: 2, writes: [APPEND] })).toEqual([
+      ...HEAD,
+      "",
+      ...OBSIDIAN_WIDENING_LINES,
+      "  (the files are not known to this gateway process)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
+      ...TAIL,
+    ]);
+  });
+
+  test("a malformed scope is a malformed payload", () => {
+    for (const fileWriteScope of [
+      "x",
+      { roots: [1], notes: [], skipped: [] },
+      { roots: [], notes: "v", skipped: [] },
+      { roots: [], vaults: [], skipped: [] },
+      { roots: [], notes: [], skipped: "s" },
+      { roots: [], notes: [], skipped: [{ path: "/p", reason: "other" }] },
+      { roots: [], notes: [], skipped: [{ path: 7, reason: "link" }] },
+    ]) {
+      expect(
+        enableWritesPromptLines({
+          service: "obsidian",
+          maxWave: 2,
+          writes: [APPEND],
+          fileWriteScope,
+        }),
+      ).toBeUndefined();
+    }
+  });
+
+  test("paths are sanitised, one per line", () => {
+    const esc = String.fromCodePoint(0x1b);
+    const lines =
+      enableWritesPromptLines({
+        service: "obsidian",
+        maxWave: 2,
+        writes: [APPEND],
+        fileWriteScope: { roots: [`/n${esc}[2J`], notes: [`/n/v\nfake line`], skipped: [] },
+      }) ?? [];
+    expect(lines.join("\n")).not.toContain(esc);
+    expect(lines).not.toContain("fake line");
+  });
+
+  test("another service, or obsidian without the append offerable, never shows it", () => {
+    const scope = { roots: ["/n"], notes: ["/n/v/YYYY-MM-DD.md"], skipped: [] };
+    const github = enableWritesPromptLines({
+      service: "github",
+      maxWave: 2,
+      writes: [{ ...APPEND }],
+      fileWriteScope: scope,
+    });
+    expect(github?.join("\n")).not.toContain("sandbox WRITE");
+    const notOffered = enableWritesPromptLines({
+      service: "obsidian",
+      maxWave: 2,
+      writes: [{ ...APPEND, offerable: false, state: "not_offerable" }],
+      fileWriteScope: scope,
+    });
+    expect(notOffered).toEqual([
+      "Service: obsidian",
+      "Up to wave: 2",
+      "  obsidian_append_to_daily_note  obsidian.note.append  wave 2  (not offered yet)",
+      ...TAIL,
+    ]);
   });
 });

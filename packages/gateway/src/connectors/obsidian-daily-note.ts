@@ -64,6 +64,14 @@ function readDailyNotesConfig(vaultRoot: string): {
   }
 }
 
+/**
+ * The vault's daily-notes settings as the resolver reads them (`.obsidian/daily-notes.json`, with
+ * the same defaults): the folder and the file-name format. For the Obsidian write-grant prompt.
+ */
+export function dailyNotesSettings(vaultRoot: string): { folder: string; format: string } {
+  return readDailyNotesConfig(vaultRoot).config;
+}
+
 export function resolveDailyNotePath(vaultRoot: string, date: Date): DailyNotePath {
   const { config, warning } = readDailyNotesConfig(vaultRoot);
   const filename = `${formatDailyNoteFilename(config.format, date)}.md`;

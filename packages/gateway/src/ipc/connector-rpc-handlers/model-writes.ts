@@ -6,6 +6,7 @@ import {
   getModelWriteEnablement,
   listModelWriteEnablement,
   modelWriteServices,
+  OBSIDIAN_APPEND_TOOL_ID,
   offerableWritesEnabledBy,
   removeModelWriteEnablement,
   setModelWriteEnablement,
@@ -29,7 +30,26 @@ export interface ModelWritesDeps {
   readonly now: () => number;
   /** Test seam; production uses the write table. */
   readonly rows?: readonly ConnectorWriteRow[];
+  /**
+   * Called after the `obsidian` opt-in changes (an approved enable, any disable): the mesh stops the
+   * Obsidian slot so its next spawn reads the new grant, and on Windows revokes its ACEs. Must
+   * never reject (`LazyConnectorMesh.restartObsidian`). Absent: nothing restarts.
+   */
+  readonly onObsidianGrantChanged?: () => Promise<void>;
+  /**
+   * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
+   * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
+   */
+  readonly obsidianWriteScope?: () => {
+    readonly roots: readonly string[];
+    /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
+    readonly notes: readonly string[];
+    readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  };
 }
+
+/** The service whose opt-in also decides a sandbox write grant (I15, OR-B4-1). */
+const OBSIDIAN_SERVICE = "obsidian";
 
 /**
  * How the enable prompt marks one write (F7): offered under the CURRENT opt-in, offerable now but
@@ -65,6 +85,21 @@ function parseServiceForDisable(raw: unknown): string {
   return raw;
 }
 
+/** The Obsidian write scope for the prompt, only when approving would grant it; never throws. */
+function obsidianScopeFor(
+  service: string,
+  writes: readonly { readonly toolId: string; readonly offerable: boolean }[],
+  deps: ModelWritesDeps,
+): ReturnType<NonNullable<ModelWritesDeps["obsidianWriteScope"]>> | undefined {
+  if (service !== OBSIDIAN_SERVICE || deps.obsidianWriteScope === undefined) return undefined;
+  if (!writes.some((w) => w.toolId === OBSIDIAN_APPEND_TOOL_ID && w.offerable)) return undefined;
+  try {
+    return deps.obsidianWriteScope();
+  } catch {
+    return undefined; // the prompt then says the folders are not known
+  }
+}
+
 /** In a fixed order: validate, eligible service, LIVE policy, the owner's gate, then the write. */
 export async function handleConnectorWritesEnable(
   rec: Record<string, unknown> | undefined,
@@ -92,25 +127,31 @@ export async function handleConnectorWritesEnable(
     }
     return { toolId: r.toolId, actionType: r.actionType, wave: r.wave, offerable, state };
   });
-  const gate = await deps.toolExecutor.gate({
-    type: "connector.writes.enable",
-    payload: { service, maxWave, writes },
-  });
+  const payload: Record<string, unknown> = { service, maxWave, writes };
+  // The Obsidian widening is named in the prompt the owner approves (I15, OR-B4-1).
+  const scope = obsidianScopeFor(service, writes, deps);
+  if (scope !== undefined) payload["fileWriteScope"] = scope;
+  const gate = await deps.toolExecutor.gate({ type: "connector.writes.enable", payload });
   if (gate !== "proceed") {
     throw new ConnectorRpcError(-32000, "ERR_CONNECTOR_WRITES_DECLINED: nothing was enabled");
   }
   // The approved set is exactly the offerable-now writes the owner just saw listed (V84).
   const approved = writes.filter((w) => w.offerable).map((w) => w.toolId);
   setModelWriteEnablement(deps.db, service, maxWave, deps.now(), approved);
+  // After the row: the restart's next spawn reads the grant from it.
+  if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
   return { service, maxWave, writes: writes.length };
 }
 
-/** Narrowing needs no approval; idempotent. */
-export function handleConnectorWritesDisable(
+/** Narrowing needs no approval; idempotent. Disabling `obsidian` also withdraws its write grant now. */
+export async function handleConnectorWritesDisable(
   rec: Record<string, unknown> | undefined,
   deps: ModelWritesDeps,
-): { removed: boolean } {
-  return { removed: removeModelWriteEnablement(deps.db, parseServiceForDisable(rec?.["service"])) };
+): Promise<{ removed: boolean }> {
+  const service = parseServiceForDisable(rec?.["service"]);
+  const removed = removeModelWriteEnablement(deps.db, service);
+  if (service === OBSIDIAN_SERVICE) await deps.onObsidianGrantChanged?.();
+  return { removed };
 }
 
 /**
