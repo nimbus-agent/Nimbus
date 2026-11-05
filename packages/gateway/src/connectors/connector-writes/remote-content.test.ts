@@ -1092,6 +1092,8 @@ describe("Obsidian Markdown (plan R9)", () => {
     ["a backslash embed target", "![[\\x]]", "![[x]]"],
     ["an unterminated embed", "![[x", "![[x]]"],
     ["an empty embed", "![[]]", "![[x]]"],
+    ["an embed target holding another opener", "![[a![[b]]", "![[a]]![[b]]"],
+    ["an embed target holding `[[`", "![[a [[b]]", "![[a]] [[b]]"],
     ["an embed followed by a destination", "![[x]](https://h)", "![[x]] (see https://h)"],
     ["an embed followed by a reference", "![[x]][r]", "![[x]] [r]"],
     ["an inline img", "<img src=//h>", "<i>x</i>"],
@@ -1480,6 +1482,22 @@ describe("linear time on adversarial input", () => {
       expectLinear("outlook-html", build, 100_000);
       // A comment closed only by `--!>`, many times: the walk still never rescans.
       expectLinear("outlook-html", (n) => "<!-- a --!>".repeat(n), 60_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  test(
+    "Obsidian: many embed openers share one `]]` search (final review item 2)",
+    () => {
+      const openers = (n: number): string => `${"![[x".repeat(n)}]]`;
+      // Timed first, so the cursor is measured even when the nested-opener reject is not there.
+      expectLinear("obsidian-markdown", openers, 150_000);
+      // Each opener's target holds the next opener, so none is an embed (fail closed).
+      expect(remoteContentIn("obsidian-markdown", openers(3), { tripwire: false })).toBe(true);
+      // Many well-formed embeds stay allowed, and linear.
+      const embeds = (n: number): string => "![[x]] ".repeat(n);
+      expect(remoteContentIn("obsidian-markdown", embeds(3))).toBe(false);
+      expectLinear("obsidian-markdown", embeds, 100_000);
     },
     TIMING_TEST_TIMEOUT_MS,
   );

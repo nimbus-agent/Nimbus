@@ -1158,13 +1158,25 @@ function notionRemote(text: string, shape: "blocks" | "properties"): boolean {
 // Fenced code blocks and escaped `\![` are not exempt (stated over-refusal).
 // ---------------------------------------------------------------------------------------------
 
-/** Whether the `![` at `at` begins a well-formed vault embed. */
-function isVaultEmbed(form: string, at: number): boolean {
+/** The first `]]` at or after the last embed opener asked about (`-1`: none). */
+interface CloseCursor {
+  close: number;
+}
+
+/**
+ * Whether the `![` at `at` begins a well-formed vault embed. `cursor` carries the first `]]` found
+ * so far: openers are visited left to right, so it is searched again only once it lies before
+ * this opener's target, and the whole note is scanned once (final review item 2). A target that
+ * itself holds `![` or `[[` is not an embed (fail closed: a nested opener is never well formed).
+ */
+function isVaultEmbed(form: string, at: number, cursor: CloseCursor): boolean {
   if (!form.startsWith("![[", at)) return false;
-  const close = form.indexOf("]]", at + 3);
+  if (cursor.close < at + 3) cursor.close = form.indexOf("]]", at + 3);
+  const close = cursor.close;
   if (close === -1) return false;
   const target = form.slice(at + 3, close);
   if (target === "" || target.includes(":") || isSlash(target[0])) return false;
+  if (target.includes("![") || target.includes("[[")) return false;
   const after = form.charAt(close + 2);
   return after !== "(" && after !== "[";
 }
@@ -1175,8 +1187,9 @@ function markdownImageRemote(text: string): boolean {
   const spaced = settle(text, " ");
   if (deleted === undefined || spaced === undefined) return true;
   return [text, deleted, spaced].some((form) => {
+    const cursor: CloseCursor = { close: -1 };
     for (let at = form.indexOf("!["); at !== -1; at = form.indexOf("![", at + 1)) {
-      if (!isVaultEmbed(form, at)) return true;
+      if (!isVaultEmbed(form, at, cursor)) return true;
     }
     return false;
   });
