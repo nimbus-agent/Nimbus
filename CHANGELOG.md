@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.24.0](https://github.com/nimbus-agent/Nimbus/compare/v10.23.0...v10.24.0) (2026-11-05)
+
+
+### Features
+
+* **engine:** a before-state can read twice and refuse a write before the prompt ([#1899](https://github.com/nimbus-agent/Nimbus/issues/1899)) ([f718759](https://github.com/nimbus-agent/Nimbus/commit/f718759b2d9f8a896102cf4bab3dd30298e3893b))
+
 ## [10.23.0](https://github.com/nimbus-agent/Nimbus/compare/v10.22.0...v10.23.0) (2026-11-05)
 
 
