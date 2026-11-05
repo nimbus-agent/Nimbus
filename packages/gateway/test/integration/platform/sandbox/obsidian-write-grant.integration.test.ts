@@ -455,6 +455,83 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
     },
   );
 
+  // Re-review finding 4, on every OS: the file grant is the note's BYTES only. A rename onto today's
+  // note, a delete of today's note, and a delete of a sibling note are all refused by the sandbox
+  // (Linux: a bind-mounted file is busy and the folder read-only; Windows: no DELETE right, no write
+  // on the folder; macOS: only file-write-data on the literal). Self-validating: the child's first act
+  // is an allowed append, which must land.
+  it.skipIf(!READY)(
+    "the child cannot rename onto, delete, or delete beside today's note",
+    async () => {
+      const replacement = join(work, "replacement.md");
+      writeFileSync(replacement, "REPLACED");
+      const argv = (() => {
+        if (IS_WIN) {
+          const script = join(work, "tamper.ps1");
+          writeFileSync(
+            script,
+            [
+              `[IO.File]::AppendAllText(${psq(today)}, '${MARK}')`,
+              `try { [IO.File]::Delete(${psq(today)}) } catch {}`,
+              `try { [IO.File]::Move(${psq(replacement)}, ${psq(today)}) } catch {}`,
+              `try { [IO.File]::Delete(${psq(TARGETS.otherNote)}) } catch {}`,
+            ].join("; "),
+          );
+          return [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script,
+          ];
+        }
+        const script = join(work, "tamper.js");
+        const j = JSON.stringify;
+        writeFileSync(
+          script,
+          [
+            "const fs = require('node:fs')",
+            `fs.appendFileSync(${j(today)}, ${j(MARK)})`,
+            `try { fs.renameSync(${j(replacement)}, ${j(today)}) } catch {}`,
+            `try { fs.unlinkSync(${j(today)}) } catch {}`,
+            `try { fs.unlinkSync(${j(TARGETS.otherNote)}) } catch {}`,
+          ].join(";"),
+        );
+        return [process.execPath, script];
+      })();
+      // Control: the same script UNSANDBOXED does the damage (today's note replaced or gone, the
+      // sibling deleted), so every refusal below is the sandbox's.
+      const control = spawnSync(argv[0] ?? "", argv.slice(1), {
+        encoding: "utf8",
+        cwd: work,
+        timeout: SPAWN_MS,
+        windowsHide: true,
+      });
+      expect(control.status).toBe(0);
+      expect(existsSync(TARGETS.otherNote)).toBe(false);
+      expect(!existsSync(today) || readFileSync(today, "utf8").includes("REPLACED")).toBe(true);
+      // Restore the fixtures, and prepare the grant afresh for the confined run.
+      rmSync(today, { force: true });
+      writeFileSync(TARGETS.otherNote, "# another note\n");
+      writeFileSync(replacement, "REPLACED");
+      const policy = obsidianPolicy(true);
+      const inode = statSync(today).ino;
+      const r = await runSandboxed(policy, argv);
+      expect(r.status).toBe(0);
+      // The probe ran: its allowed append landed.
+      expect(readFileSync(today, "utf8")).toContain(MARK);
+      // Today's note is the same regular file, not replaced and not deleted.
+      const st = lstatSync(today);
+      expect(st.isFile()).toBe(true);
+      expect(st.ino).toBe(inode);
+      expect(readFileSync(today, "utf8")).not.toContain("REPLACED");
+      // The sibling note was not deleted.
+      expect(readFileSync(TARGETS.otherNote, "utf8")).toBe("# another note\n");
+    },
+  );
+
   // Why the revoke exists, measured: without it a grant-on spawn's write ACE on the file outlives
   // its child, and the next grant-off spawn of the same profile still writes it.
   it.skipIf(!READY || !IS_WIN)(
