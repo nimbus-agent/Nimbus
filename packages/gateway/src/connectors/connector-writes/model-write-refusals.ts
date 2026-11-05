@@ -378,6 +378,22 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
 };
 
 /**
+ * The tag-stripped forms a broadcast scan also matches (never rendered or sent anywhere): each pass
+ * removes the innermost tags, and every intermediate form is kept, so a tag split by another tag
+ * (`<a<b></b>t>`) is seen whole before a later pass removes it too.
+ */
+function tagStrippedForms(text: string): string[] {
+  const out: string[] = [];
+  let prev = text;
+  for (;;) {
+    const next = prev.replaceAll(/<[^<>]*>/g, "");
+    if (next === prev) return out;
+    out.push(next);
+    prev = next;
+  }
+}
+
+/**
  * OR1: whether `text`, posted to `service`, carries a broadcast mention (see the table above).
  * Pure; `true` also when the text does not settle within {@link BROADCAST_MAX_ROUNDS} rounds.
  */
@@ -391,7 +407,7 @@ export function broadcastMentionIn(
     const settled = settle(text, invisible);
     if (settled === undefined) return true;
     forms.push(settled);
-    if (opts.html) forms.push(settled.replaceAll(/<[^>]*>/g, ""));
+    if (opts.html) forms.push(...tagStrippedForms(settled));
   }
   const rules = BROADCAST_RULES[service];
   return forms.some((f) => rules.some((re) => re.test(f)));

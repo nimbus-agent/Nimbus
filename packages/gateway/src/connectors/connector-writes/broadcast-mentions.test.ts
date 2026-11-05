@@ -162,6 +162,14 @@ describe("broadcastMentionIn (OR1)", () => {
     expect(hit("gitlab", "@<b>all</b>", html)).toBe(true);
   });
 
+  test("a tag split by another tag is seen whole before a later pass removes it", () => {
+    // One pass leaves `<at id="0">`; a strip-until-stable that kept only the last form would
+    // lose it, and a single pass would still split `@chan<b></b>nel` in two.
+    expect(hit("teams", '<a<i></i>t id="0">x</at>', text)).toBe(false);
+    expect(hit("teams", '<a<i></i>t id="0">x</at>', html)).toBe(true);
+    expect(hit("teams", "@cha<b><i></i></b>nnel", html)).toBe(true);
+  });
+
   test("the round cap is exactly 4: three decodes settle, a fourth is refused (fail closed)", () => {
     // `&` + `amp;` x n + `x` needs n decoding rounds plus one round that changes nothing.
     const chain = (n: number) => `&${"amp;".repeat(n)}x`;
