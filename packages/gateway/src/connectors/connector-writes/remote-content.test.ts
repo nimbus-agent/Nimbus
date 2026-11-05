@@ -1470,4 +1470,17 @@ describe("linear time on adversarial input", () => {
     },
     TIMING_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "200,000 empty comments (one walk over the `--` runs, final review item 1)",
+    () => {
+      const build = (n: number): string => "<!---->".repeat(n);
+      expect(remoteContentIn("outlook-html", build(3))).toBe(false);
+      // 2N = 200,000 comments, 1.4M characters.
+      expectLinear("outlook-html", build, 100_000);
+      // A comment closed only by `--!>`, many times: the walk still never rescans.
+      expectLinear("outlook-html", (n) => "<!-- a --!>".repeat(n), 60_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
 });

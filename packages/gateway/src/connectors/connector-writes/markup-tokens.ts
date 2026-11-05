@@ -230,21 +230,16 @@ function readComment(src: string, lt: number): Read | undefined {
   if (src.startsWith("->", body)) {
     return { token: { kind: "comment", text: "", start: lt, end: body + 2 }, next: body + 2 };
   }
-  const plain = src.indexOf("-->", body);
-  const bang = src.indexOf("--!>", body);
-  let close: number;
-  let width: number;
-  if (bang !== -1 && (plain === -1 || bang < plain)) {
-    close = bang;
-    width = 4;
-  } else if (plain !== -1) {
-    close = plain;
-    width = 3;
-  } else {
-    return undefined;
+  // One forward walk over the `--` runs: the first `--` followed by `>` or `!>` closes it. (Two
+  // `indexOf` calls, one of them for a closer that may never come, would each scan to the end of
+  // the input for every comment: quadratic over many comments.)
+  for (let at = src.indexOf("--", body); at !== -1; at = src.indexOf("--", at + 1)) {
+    const width = src.startsWith(">", at + 2) ? 3 : src.startsWith("!>", at + 2) ? 4 : 0;
+    if (width === 0) continue;
+    const end = at + width;
+    return { token: { kind: "comment", text: src.slice(body, at), start: lt, end }, next: end };
   }
-  const end = close + width;
-  return { token: { kind: "comment", text: src.slice(body, close), start: lt, end }, next: end };
+  return undefined;
 }
 
 /** A CDATA section at `lt` (`<![CDATA[`): it ends at `]]>`. */
