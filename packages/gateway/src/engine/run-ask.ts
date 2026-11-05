@@ -2,7 +2,10 @@ import type { Database } from "bun:sqlite";
 import type { Agent } from "@mastra/core/agent";
 import pino from "pino";
 import { resolvePersona } from "../config/persona.ts";
-import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
+import type {
+  ConnectorWriteRow,
+  PreviewCredentialResolver,
+} from "../connectors/connector-writes/types.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { LocalIndex } from "../index/local-index.ts";
 import type { RankedIndexItem } from "../index/ranked-item.ts";
@@ -28,6 +31,7 @@ import type {
   LocalCandidate,
   PrimaryRetrieval,
 } from "./ask-explain-types.ts";
+import { type BeforeStateRunner, createBeforeStateRunner } from "./before-state.ts";
 import { capPerService, stripInternalRankField } from "./context-fairness.ts";
 import type { ContextTruncation } from "./context-truncation-disclosure.ts";
 import {
@@ -89,6 +93,8 @@ export type RunAskParams = {
   policyHitl?: ExecutorPolicyDep;
   /** Names the credential kind in a connector write's consent preview (config-derived). */
   previewCredentialFor?: PreviewCredentialResolver;
+  /** Test seam: the rows the door executor's before-state runner reads. Production: the table. */
+  beforeStateRows?: readonly ConnectorWriteRow[];
   /**
    * `nimbus explain last` (spec §4). Absent means "no recorder wired" — a test double or a
    * gate-only caller that has no use for it — in which case `runAsk` records nothing rather than
@@ -544,13 +550,15 @@ function buildAskExecutor(p: RunAskParams): ToolExecutor {
 }
 
 /**
- * The one place a turn constructs its `ToolExecutor`. Only `delegation` varies between the ask executor
- * (`p.delegation`) and the connector-write door's (`undefined`); consent, audit, dispatcher,
- * egress, policy and preview credential are the same arguments for both, so they cannot drift.
+ * The one place a turn constructs its `ToolExecutor`. Only `delegation` and `beforeState` vary
+ * between the ask executor (`p.delegation`, no runner) and the connector-write door's (`undefined`,
+ * the before-state runner); consent, audit, dispatcher, egress, policy and preview credential are
+ * the same arguments for both, so they cannot drift.
  */
 function newTurnExecutor(
   p: RunAskParams,
   delegation: ExecutorDelegationDep | undefined,
+  beforeState?: BeforeStateRunner,
 ): ToolExecutor {
   const consent = bindConsentChannel(p.consentCoordinator, p.clientId);
   // I29: every real connector dispatch routes through this executor, so it carries the egress sink
@@ -567,16 +575,22 @@ function newTurnExecutor(
     p.egressSink,
     p.policyHitl ?? NO_POLICY_OVERLAY,
     p.previewCredentialFor,
+    beforeState,
   );
 }
 
 /**
  * The connector-write door's executor: {@link buildAskExecutor}'s shape with NO delegation (I20),
  * so a model-requested write is only ever approved by the local owner — the first of two layers;
- * the second is the `origin: "model"` every door action carries.
+ * the second is the `origin: "model"` every door action carries. It alone carries the before-state
+ * runner (spec § 5.4, D40(b)), so only the door's prompt reads a write's current state.
  */
 export function buildModelWriteExecutor(p: RunAskParams): ToolExecutor {
-  return newTurnExecutor(p, undefined);
+  return newTurnExecutor(
+    p,
+    undefined,
+    createBeforeStateRunner(p.beforeStateRows === undefined ? {} : { rows: p.beforeStateRows }),
+  );
 }
 
 async function runActionsPlan(

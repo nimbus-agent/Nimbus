@@ -11143,7 +11143,8 @@ describe("I53 — a first-party connector write reaches the model only through t
     const at = src.indexOf("export function buildModelWriteExecutor(");
     expect(at).toBeGreaterThan(-1);
     const body = src.slice(at, src.indexOf("\n}\n", at));
-    expect(body).toContain("newTurnExecutor(p, undefined)");
+    // Delegation is argument 2 (`undefined`); argument 3 is the before-state runner (spec § 5.4).
+    expect(body).toMatch(/newTurnExecutor\(\s*p,\s*undefined,\s*createBeforeStateRunner\(/);
     expect(body).not.toContain("delegation");
   });
 

@@ -22,6 +22,9 @@
  * `connectors/connector-write-dispatch.ts`); and every input key the typed preview names is a
  * top-level property of the listed schema (drift: otherwise not offered, one warning per
  * `<generation>:<service>`). A service whose generation is negative (no known slot) offers nothing.
+ * A row with a `before` reader (spec § 5.4) whose read tool the listing does not carry is not
+ * offered at wave 4 (the current state is mandatory there); below wave 4 it is offered and the
+ * executor is told, so the prompt shows `before: unavailable (failed)` without running a read.
  *
  * Drift is checked against the LISTED schema, while the model is shown (and validated against) the
  * SANITISED one (`offeredInputSchema` → `sanitiseUserMcpInputSchema`), which may drop a property
@@ -44,10 +47,10 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import type { ToolExecutor } from "./executor.ts";
+import type { ExecuteOptions, ToolExecutor } from "./executor.ts";
 import { serviceOf } from "./service-of.ts";
 import { wrapToolDescription } from "./tool-output-envelope.ts";
-import type { ActionResult } from "./types.ts";
+import type { ActionResult, PlannedAction } from "./types.ts";
 import { offeredInputSchema, readListedJsonSchema } from "./user-mcp-agent-tools.ts";
 
 /** What the door reads; injected so tests supply rows and listings (ruling D1). */
@@ -181,16 +184,30 @@ function errorResult(err: unknown): { error: string } {
   };
 }
 
+/** What the listing said about one offered row, read once at offer time. */
+interface ListedWrite {
+  /** `mcpClientToolKey(service, toolId)`, the key the listing carries; becomes `mcpToolId`. */
+  readonly mcpToolId: string;
+  readonly entry: Record<string, unknown>;
+  /** The slot generation the row was listed under. */
+  readonly epoch: number;
+  /** The row's `before` reader tool is missing from the listing (a wave 2-3 row only). */
+  readonly beforeReaderUnlisted: boolean;
+}
+
 function buildDoorTool(
   source: ConnectorWriteToolSource,
   executor: () => Pick<ToolExecutor, "execute"> | undefined,
   row: ConnectorWriteRow,
   service: string,
   name: string,
-  mcpToolId: string,
-  entry: Record<string, unknown>,
-  listedEpoch: number,
+  listed: ListedWrite,
 ) {
+  const { mcpToolId, entry, epoch: listedEpoch } = listed;
+  // Gateway-known, never model-supplied: the executor then shows `before: unavailable (failed)`.
+  const executeOptions: ExecuteOptions | undefined = listed.beforeReaderUnlisted
+    ? { beforeReaderUnlisted: true }
+    : undefined;
   const listedDescription = typeof entry["description"] === "string" ? entry["description"] : "";
   return createTool({
     id: name,
@@ -212,11 +229,15 @@ function buildDoorTool(
       if (refused !== undefined) return { refused };
       let result: ActionResult;
       try {
-        result = await ex.execute({
+        const action: PlannedAction = {
           type: row.actionType,
           origin: "model",
           payload: { mcpToolId, input },
-        });
+        };
+        result =
+          executeOptions === undefined
+            ? await ex.execute(action)
+            : await ex.execute(action, executeOptions);
       } catch (err) {
         // `wrapToolForLlm` logs and RE-THROWS, which would abort the model's step.
         return errorResult(err);
@@ -252,6 +273,17 @@ function warnDriftOnce(
     { service, toolId, generation: epoch },
     "connector write preview names an input key the server's schema does not declare; not offered",
   );
+}
+
+/** Whether `row` has a `before` reader whose tool its server's listing does not carry. */
+function beforeReaderMissing(
+  row: ConnectorWriteRow,
+  service: string,
+  listing: Readonly<Record<string, unknown>>,
+): boolean {
+  if (row.before === undefined) return false;
+  const key = mcpClientToolKey(service, row.before.tool);
+  return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
 }
 
 /** The offered tools for ONE service's rows, given its listing. */
@@ -296,10 +328,24 @@ function offerService(
       warnDriftOnce(source, epoch, service, row.toolId);
       continue;
     }
+    const beforeReaderUnlisted = beforeReaderMissing(row, service, listing);
+    if (beforeReaderUnlisted && row.wave === 4) {
+      // Spec § 5.4: the current state is mandatory on a wave-4 prompt, so no reader, no offer.
+      source.warn(
+        { service, toolId: row.toolId, beforeTool: row.before?.tool },
+        "connector write before-state reader is not in its server's listing; not offered",
+      );
+      continue;
+    }
     out[name] = wrap(
       service,
       name,
-      buildDoorTool(source, executor, row, service, name, key, entry, epoch),
+      buildDoorTool(source, executor, row, service, name, {
+        mcpToolId: key,
+        entry,
+        epoch,
+        beforeReaderUnlisted,
+      }),
     );
   }
 }

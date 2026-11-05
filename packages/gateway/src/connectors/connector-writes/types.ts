@@ -37,6 +37,26 @@ export interface BeforeStateField {
   readonly value: string;
 }
 
+/** Why a before-state could not be shown. A closed set: error text never reaches the prompt. */
+export type BeforeStateUnavailableReason =
+  | "timeout"
+  | "failed"
+  | "not configured"
+  | "policy requires approval";
+
+/**
+ * The current state shown beside a write's new values on the model door's prompt. `fields` are
+ * sanitised and at most {@link BEFORE_STATE_MAX_FIELDS}; `notShown` counts the rest (present only
+ * when some were dropped).
+ */
+export type ConnectorWriteBeforeState =
+  | {
+      readonly status: "ok";
+      readonly fields: readonly BeforeStateField[];
+      readonly notShown?: number;
+    }
+  | { readonly status: "unavailable"; readonly reason: BeforeStateUnavailableReason };
+
 /**
  * How a write row reads its target's current state: one READ tool of the row's own connector
  * (never a write id; `connectors/connector-writes/before-reader.ts` validates it), called with
@@ -53,6 +73,22 @@ export interface BeforeStateReader {
   args(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
   /** The labelled current values from the read's reply. */
   select(reply: unknown): readonly BeforeStateField[];
+}
+
+/**
+ * A frozen, null-prototype copy of `input` holding only `argKeys` (each own key present). The
+ * runner hands `reader.args` this and nothing else, so a reader can never base its read on a key
+ * it did not declare.
+ */
+export function pickBeforeReaderArgs(
+  argKeys: readonly string[],
+  input: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, unknown>> {
+  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const k of argKeys) {
+    if (Object.hasOwn(input, k)) out[k] = input[k];
+  }
+  return Object.freeze(out);
 }
 
 const TEMPLATE_PLACEHOLDER = /\{(\w+)\}/g;

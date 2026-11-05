@@ -8,6 +8,7 @@ import { extractToolInput } from "../../engine/tool-input.ts";
 import type { PlannedAction } from "../../engine/types.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import {
+  type ConnectorWriteBeforeState,
   type ConnectorWritePreviewTemplate,
   type ConnectorWriteRow,
   type PreviewCredentialResolver,
@@ -36,6 +37,11 @@ export interface ConnectorWritePreview {
   readonly destination: { readonly service: string; readonly credential?: "personal" | "team" };
   /** Set by the consent display only, for an `origin: "model"` action (never by the builder). */
   readonly requestedBy?: "model";
+  /**
+   * The target's current state (spec § 5.4), set only by the model door's executor
+   * (`engine/before-state.ts`), never by the builder.
+   */
+  readonly before?: ConnectorWriteBeforeState;
 }
 
 /**
@@ -151,7 +157,8 @@ function renderField(
   return renderQuoted(raw);
 }
 
-function findRow(
+/** The row whose preview (and before reader) this action is shown with, or undefined. */
+export function findConnectorWriteRow(
   action: PlannedAction,
   rows: readonly ConnectorWriteRow[],
 ): ConnectorWriteRow | undefined {
@@ -189,7 +196,7 @@ export function buildConnectorWritePreviewFrom(
   rows: readonly ConnectorWriteRow[],
   credentialFor?: PreviewCredentialResolver,
 ): ConnectorWritePreview | undefined {
-  const row = findRow(action, rows);
+  const row = findConnectorWriteRow(action, rows);
   const template = row?.preview;
   if (row === undefined || template === undefined) return undefined;
   const service = serviceOf(row.actionType);

@@ -7,21 +7,7 @@ import { isReadOnlyToolId } from "../../share/read-tool-registry.ts";
 import { isConnectorWriteToolId } from "../connector-write-registry.ts";
 import { type BeforeStateReader, type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
-/**
- * A frozen, null-prototype copy of `input` holding only `argKeys` (each own key present). The
- * runner hands `reader.args` this and nothing else, so a reader can never base its read on a key
- * it did not declare.
- */
-export function pickBeforeReaderArgs(
-  argKeys: readonly string[],
-  input: Readonly<Record<string, unknown>>,
-): Readonly<Record<string, unknown>> {
-  const out: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-  for (const k of argKeys) {
-    if (Object.hasOwn(input, k)) out[k] = input[k];
-  }
-  return Object.freeze(out);
-}
+export { pickBeforeReaderArgs } from "./types.ts";
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

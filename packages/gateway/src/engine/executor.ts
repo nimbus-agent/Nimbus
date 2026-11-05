@@ -3,6 +3,7 @@ import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
 import {
   buildConnectorWritePreview,
+  buildConnectorWritePreviewFrom,
   type ConnectorWritePreview,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
@@ -13,6 +14,11 @@ import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import {
+  BEFORE_READ_HITL_REFUSAL,
+  type BeforeStateRunner,
+  isBeforeReadActionType,
+} from "./before-state.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
 import { serviceOf } from "./service-of.ts";
@@ -551,6 +557,15 @@ export const NO_POLICY_OVERLAY: ExecutorPolicyDep = Object.freeze({
   isHitlRequiredByPolicy: () => false,
 });
 
+/** Per-call facts the caller (gateway code, never the model) knows about an action. */
+export interface ExecuteOptions {
+  /**
+   * The connector-write door found the row's `before` reader tool missing from its server's
+   * listing: the preview shows `before: unavailable (failed)` and no read runs.
+   */
+  readonly beforeReaderUnlisted?: boolean;
+}
+
 export class ToolExecutor {
   constructor(
     private readonly consent: ConsentChannel,
@@ -561,6 +576,12 @@ export class ToolExecutor {
     private readonly policy: ExecutorPolicyDep = NO_POLICY_OVERLAY,
     /** Names the credential kind in a connector write's preview; absent = not shown (M2). */
     private readonly previewCredentialFor?: PreviewCredentialResolver,
+    /**
+     * Spec § 5.4: reads a write's current state for its preview. Passed ONLY by the model door's
+     * executor (`engine/run-ask.ts` `buildModelWriteExecutor`, D40(b)); absent everywhere else, so
+     * every other prompt is unchanged.
+     */
+    private readonly beforeState?: BeforeStateRunner,
   ) {}
 
   /**
@@ -614,11 +635,15 @@ export class ToolExecutor {
 
   /** Resolve a HITL action's approval: a delegated answer when one applies (I20), otherwise the
    *  local owner consent prompt (payload shown via `consentDisplayPayload`, display only). */
-  private async resolveHitlApproval(action: PlannedAction): Promise<boolean> {
+  private async resolveHitlApproval(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+  ): Promise<boolean> {
     const delegated = await this.tryDelegatedApproval(action);
     if (delegated === "fallback") {
       // Built once, so the prompt and the details show the same preview (one credential read).
-      const preview = buildConnectorWritePreview(action, this.previewCredentialFor);
+      // The before-state read (door executor only) runs HERE: an owner prompt is about to be shown.
+      const preview = await this.previewFor(action, opts);
       const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
       return this.consent.requestApproval(
         formatConsentPrompt(action, this.previewCredentialFor, preview),
@@ -629,7 +654,29 @@ export class ToolExecutor {
     return delegated === "approved";
   }
 
-  async gate(action: PlannedAction): Promise<ActionResult | "proceed"> {
+  /**
+   * The typed preview for the owner's prompt. Without a before-state runner it is exactly the
+   * builder's. With one (the door executor), it is built over the runner's rows (production: the
+   * same table) and, when the row has a `before` reader, carries the read's outcome; the read goes
+   * through THIS executor's gate and dispatcher, so it is audited and ledgered (I29).
+   */
+  private async previewFor(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+  ): Promise<ConnectorWritePreview | undefined> {
+    const runner = this.beforeState;
+    if (runner === undefined) return buildConnectorWritePreview(action, this.previewCredentialFor);
+    const preview = buildConnectorWritePreviewFrom(action, runner.rows, this.previewCredentialFor);
+    if (preview === undefined) return undefined;
+    const before = await runner.read(
+      action,
+      { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
+      opts?.beforeReaderUnlisted === true ? { readerUnlisted: true } : {},
+    );
+    return before === undefined ? preview : { ...preview, before };
+  }
+
+  async gate(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult | "proceed"> {
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
     // alone decides `true`, so an org policy is only ever consulted about action types neither
@@ -649,8 +696,15 @@ export class ToolExecutor {
     let auditExtras: { hitlRejectReason?: string } | undefined;
 
     try {
-      if (requiresHITL) {
-        const approved = await this.resolveHitlApproval(action);
+      if (requiresHITL && isBeforeReadActionType(action.type)) {
+        // Spec § 5.4: a before-state read never raises a prompt of its own. A read type the frozen
+        // set, the user-MCP rule or a policy would gate is refused here, structurally, without
+        // asking anyone; it is still audited and ledgered (blocked) below.
+        hitlStatus = "rejected";
+        rejectReason = BEFORE_READ_HITL_REFUSAL;
+        auditExtras = { hitlRejectReason: BEFORE_READ_HITL_REFUSAL };
+      } else if (requiresHITL) {
+        const approved = await this.resolveHitlApproval(action, opts);
         hitlStatus = approved ? "approved" : "rejected";
       } else {
         hitlStatus = "not_required";
@@ -690,8 +744,8 @@ export class ToolExecutor {
     return "proceed";
   }
 
-  async execute(action: PlannedAction): Promise<ActionResult> {
-    const gateResult = await this.gate(action);
+  async execute(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult> {
+    const gateResult = await this.gate(action, opts);
     if (gateResult === "proceed") {
       const result = await this.connectors.dispatch(action);
       return { status: "ok", result };
