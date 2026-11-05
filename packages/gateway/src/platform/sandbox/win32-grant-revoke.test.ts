@@ -150,3 +150,23 @@ describe("appContainerGrantRevokerFor", () => {
     ]);
   });
 });
+
+describe("the defaults (no helper runs)", () => {
+  test("execHelperForExitCode builds a runner from node's execFile without running anything", () => {
+    expect(typeof execHelperForExitCode()).toBe("function");
+  });
+
+  test("a win32 revoker with no options uses the production helper path and runner", () => {
+    // Building it resolves the defaults; nothing runs until revoke() is called.
+    const revoker = appContainerGrantRevokerFor("win32", "obsidian");
+    expect(revoker.active).toBe(true);
+    expect(typeof revoker.revoke).toBe("function");
+  });
+
+  test("an empty slot in the path list ends the batch without a helper run", async () => {
+    const { run, calls } = recordingRun();
+    // A sparse array: `first` is undefined, which the guard treats as the end of the list.
+    await revokeAppContainerGrants(run, "C:h.exe", "obsidian", new Array<string>(1));
+    expect(calls).toHaveLength(0);
+  });
+});
