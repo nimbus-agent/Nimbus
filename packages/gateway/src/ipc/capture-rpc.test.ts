@@ -7,6 +7,7 @@ import {
   actDoorRefusal,
   LINEAR_ASSIGNEE_REFUSAL,
   messagingDestinationRefusal,
+  type TribalKbConfig,
 } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
   buildConnectorWritePreviewFrom,
@@ -600,7 +601,10 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
         ),
       classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
       isServiceConfigured: () => Promise.resolve(true),
-      actionDestinationRefusal: createActionDestinationRefusal(() => policy),
+      actionDestinationRefusal: createActionDestinationRefusal(
+        () => policy,
+        () => undefined,
+      ),
     };
     return {
       gate,
@@ -665,7 +669,7 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
     expect(c.gate.store.countPendingActions(1_000)).toBe(0);
   });
 
-  test("positive controls are queued; a Notion comment on the KB page is NOT refused here (KB is model-door-only)", async () => {
+  test("positive controls are queued; with no KB configured a Notion comment is NOT refused", async () => {
     policy = boundPolicy(["C0123ABCD"]);
     const c = actCtx([]);
     for (const [type, input] of [
@@ -691,9 +695,12 @@ describe("B1 act door: the destination refusal, real messagingDestinationRefusal
       }
     }
     // A throwing policy accessor is the same as an unreadable one.
-    const throwing = createActionDestinationRefusal(() => {
-      throw new Error("policy");
-    });
+    const throwing = createActionDestinationRefusal(
+      () => {
+        throw new Error("policy");
+      },
+      () => undefined,
+    );
     expect(throwing("slack.message.post", { channel: "C9999ZZZZ", text: "hi" })).toBeDefined();
     // A user-MCP type has no routing row, so no messaging destination: allowed here.
     expect(throwing("mcp_echo.echo", { text: "<!here>" })).toBeUndefined();
@@ -824,8 +831,9 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
 
   function actCtx(
     dispatched: PlannedAction[],
-    refusal: CaptureGateDeps["actionDestinationRefusal"] = createActionDestinationRefusal(() =>
-      boundPolicy([]),
+    refusal: CaptureGateDeps["actionDestinationRefusal"] = createActionDestinationRefusal(
+      () => boundPolicy([]),
+      () => undefined,
     ),
   ): CaptureRpcCtx {
     const gate: CaptureGateDeps = {
@@ -956,10 +964,184 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
             ? LINEAR_ASSIGNEE_REFUSAL
             : messagingDestinationRefusal(r.toolId, input, NO_CHATOPS);
         expect(
-          actDoorRefusal(r.toolId, input, NO_CHATOPS),
+          actDoorRefusal(r.toolId, input, { ...NO_CHATOPS, kb: undefined, kbUnreadable: false }),
           `${r.toolId} ${JSON.stringify(input)}`,
         ).toBe(expected);
       }
     }
+  });
+});
+
+// ---- B3: the KB refusals on the act door (OR-B3-1, OR-B3-3; plan R5, R12, Task 3c) -----------
+
+describe("B3 act door: the KB-target and KB-child refusals at submit and at accept", () => {
+  const MCP = { clientId: "m", kind: "mcp" as const };
+  const OWNER = { clientId: "o", kind: "cli" as const };
+  const KB = {
+    notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
+    confluence: { spaceKey: "KB", parentPageId: "4242" },
+  } satisfies TribalKbConfig;
+  // The accessor the act door reads per call (the real `createActionDestinationRefusal`).
+  let kbAccessor: () => TribalKbConfig | undefined = () => undefined;
+
+  function actCtx(dispatched: PlannedAction[]): CaptureRpcCtx {
+    const gate: CaptureGateDeps = {
+      ...ctx.gate,
+      capability: () =>
+        resolveCaptureCapability(
+          {
+            ok: true,
+            config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+          },
+          { capabilitiesDisabled: new Set() },
+        ),
+      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      isServiceConfigured: () => Promise.resolve(true),
+      actionDestinationRefusal: createActionDestinationRefusal(
+        () => boundPolicy([]),
+        () => kbAccessor(),
+      ),
+    };
+    return {
+      gate,
+      act: {
+        dispatcher: {
+          dispatch: (a) => {
+            dispatched.push(a);
+            return Promise.resolve({});
+          },
+        },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+      },
+    };
+  }
+
+  async function submit(c: CaptureRpcCtx, actionType: string, input: Record<string, unknown>) {
+    return await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "action", payload: { actionType, input, summary: "why" } },
+      c,
+      MCP,
+    );
+  }
+
+  async function outcome(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return (e as RpcMethodError).rpcData;
+    }
+    return "queued";
+  }
+
+  const submitAudits = (): number =>
+    (
+      db
+        .query("SELECT COUNT(*) AS n FROM audit_log WHERE action_type = 'capture.submit'")
+        .get() as {
+        n: number;
+      }
+    ).n;
+
+  const REFUSED = { code: "ERR_CAPTURE_ACTION_REFUSED" };
+  const UPDATE_IN_ENG = {
+    pageId: "123",
+    versionNumber: 7,
+    title: "t",
+    storageHtml: "<p>x</p>",
+  };
+
+  test("a Confluence update of the KB parent page is refused at submit: nothing queued, one audit row", async () => {
+    kbAccessor = () => ({ confluence: KB.confluence });
+    const c = actCtx([]);
+    const before = submitAudits();
+    expect(
+      await outcome(submit(c, "confluence.page.update", { ...UPDATE_IN_ENG, pageId: "4242" })),
+    ).toEqual(REFUSED);
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+    expect(submitAudits()).toBe(before + 1);
+  });
+
+  test("a Notion create under the KB database is refused at submit (the KB-target rule)", async () => {
+    kbAccessor = () => KB;
+    const c = actCtx([]);
+    expect(
+      await outcome(
+        submit(c, "notion.page.create", {
+          parentPageId: "https://www.notion.so/Team-0123abcd0123abcd0123abcd0123abcd",
+          title: "t",
+        }),
+      ),
+    ).toEqual(REFUSED);
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+  });
+
+  test("R12: with a Notion KB configured a Notion page update is refused; with none it is queued", async () => {
+    const input = { pageId: "ffffffffffffffffffffffffffffffff", propertiesJson: "{}" };
+    kbAccessor = () => ({ notion: KB.notion });
+    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toEqual(REFUSED);
+    // A Confluence-only KB does not refuse a Notion update.
+    kbAccessor = () => ({ confluence: KB.confluence });
+    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
+    kbAccessor = () => undefined;
+    expect(await outcome(submit(actCtx([]), "notion.page.update", input))).toBe("queued");
+    expect(await outcome(submit(actCtx([]), "confluence.page.update", UPDATE_IN_ENG))).toBe(
+      "queued",
+    );
+  });
+
+  test("a throwing KB accessor refuses every KB-capable proposal; others are unaffected", async () => {
+    kbAccessor = () => {
+      throw new Error("tribal config");
+    };
+    const c = actCtx([]);
+    expect(
+      await outcome(submit(c, "notion.comment.create", { pageId: "ffff", text: "x" })),
+    ).toEqual(REFUSED);
+    expect(await outcome(submit(c, "confluence.page.update", UPDATE_IN_ENG))).toEqual(REFUSED);
+    expect(
+      await outcome(
+        submit(c, "github.issue.comment.create", {
+          owner: "o",
+          repo: "r",
+          issueNumber: 1,
+          body: "x",
+        }),
+      ),
+    ).toBe("queued");
+  });
+
+  test("a KB configured between submit and accept is caught at accept: refused, row stays proposed, nothing dispatched", async () => {
+    kbAccessor = () => undefined;
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const sub = await submit(c, "confluence.page.update", UPDATE_IN_ENG);
+    if (sub.kind !== "hit") throw new Error("submit missed");
+    const id = (sub.value as { id: string }).id;
+    kbAccessor = () => ({ confluence: KB.confluence });
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
+      REFUSED,
+    );
+    expect(c.gate.store.get(id)?.state).toBe("proposed");
+    expect(d).toEqual([]);
+  });
+
+  test("with no KB the same accept goes through to the owner's prompt and one dispatch", async () => {
+    kbAccessor = () => undefined;
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const sub = await submit(c, "confluence.page.update", UPDATE_IN_ENG);
+    if (sub.kind !== "hit") throw new Error("submit missed");
+    const id = (sub.value as { id: string }).id;
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+    expect(d.map((a) => a.type)).toEqual(["confluence.page.update"]);
   });
 });

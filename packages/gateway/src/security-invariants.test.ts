@@ -3421,26 +3421,55 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       expect(src.includes("messagingDestinationRefusal"), f).toBe(false);
     }
     const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
-    expect(rpc).toContain(
-      'import { actDoorRefusal } from "../connectors/connector-writes/model-write-refusals.ts";',
+    expect(rpc).toMatch(
+      /import \{\s*actDoorRefusal,[^}]*\} from "\.\.\/connectors\/connector-writes\/model-write-refusals\.ts";/,
     );
     const helper = rpc.slice(rpc.indexOf("export function createActionDestinationRefusal("));
-    expect(helper.slice(0, helper.indexOf("\n}\n"))).toContain(
-      "return actDoorRefusal(tool, input, { chatops });",
+    const helperBody = helper.slice(0, helper.indexOf("\n}\n"));
+    // B3 (OR-B3-1): the KB destinations reach the ONE act-door function, read per call.
+    expect(helperBody).toContain(
+      "return actDoorRefusal(tool, input, { chatops, kb, kbUnreadable });",
     );
-    // ONE function on that path: it CALLS the messaging check first, then the Linear rule.
+    expect(helperBody).toMatch(
+      /try \{\s*kb = tribalKbConfig\(\);\s*\} catch \{\s*kbUnreadable = true;/,
+    );
+    // ONE function on that path, in order: messaging, the Linear rule, the KB target, the KB child.
     const refusals = stripComments(
       await read("packages/gateway/src/connectors/connector-writes/model-write-refusals.ts"),
     );
     const actDoor = refusals.slice(refusals.indexOf("export function actDoorRefusal("));
     const actBody = actDoor.slice(0, actDoor.indexOf("\n}\n"));
-    const first = actBody.indexOf("= messagingDestinationRefusal(toolId, input, ctx);");
+    const first = actBody.indexOf(
+      "= messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });",
+    );
     expect(first).toBeGreaterThan(0);
-    expect(actBody.indexOf("LINEAR_ASSIGNEE_REFUSAL")).toBeGreaterThan(first);
+    const linear = actBody.indexOf("= linearAssigneeRefusal(toolId, input);");
+    const kbTarget = actBody.indexOf("knowledgeBaseRefusal(toolId, input, ctx.kb)");
+    const kbChild = actBody.indexOf("actDoorKbChildRefusal(toolId, ctx.kb)");
+    expect(linear).toBeGreaterThan(first);
+    expect(kbTarget).toBeGreaterThan(linear);
+    expect(kbChild).toBeGreaterThan(kbTarget);
+    // The model door calls the SAME KB-target implementation.
+    const model = refusals.slice(refusals.indexOf("export function modelWriteRefusal("));
+    expect(model.slice(0, model.indexOf("\n}\n"))).toContain(
+      "return knowledgeBaseRefusal(toolId, input, ctx.kb);",
+    );
+  });
+
+  test("B3 (OR-B3-1, review fix 2): assemble wires the act door with TWO accessors, the KB one the same as platform.tribalKbConfig, loaded before the capture gate", async () => {
     const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
     expect(assemble).toMatch(
-      /actionDestinationRefusal: createActionDestinationRefusal\(\(\) => policyGate\.enforced\(\)\)/,
+      /actionDestinationRefusal: createActionDestinationRefusal\(\s*\(\) => policyGate\.enforced\(\),\s*\(\) => tribalKbConfigOf\(tribalCfg\),\s*\)/,
     );
+    expect(assemble).toMatch(/tribalKbConfig: \(\) => tribalKbConfigOf\(tribalCfg\),/);
+    const load = assemble.indexOf(
+      "const tribalCfg = loadNimbusTribalFromConfigDir(paths.configDir);",
+    );
+    const gate = assemble.indexOf("const captureGate: CaptureGateDeps = {");
+    expect(load).toBeGreaterThan(0);
+    expect(gate).toBeGreaterThan(load);
+    // Loaded once: the act door and the platform accessor read the same value.
+    expect(assemble.split("loadNimbusTribalFromConfigDir(paths.configDir)").length).toBe(2);
   });
 
   test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {

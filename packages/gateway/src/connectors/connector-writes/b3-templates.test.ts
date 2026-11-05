@@ -1,7 +1,7 @@
 // Phase 9.7 B3: the typed previews of the nine draft and page writes (plan R2). Each row's template
 // keys are exactly its tool's input-schema keys in `@nimbus-dev/connectors` 0.4.0
 // (`connectors/<c>/src/tools.ts`; the IMAP drafts use `shared/imap-tool-kit.ts` `sendArgs`), so the
-// § 13 drift check offers it and, for well-formed input, `Other fields` is empty.
+// spec section 13 drift check offers it and, for well-formed input, `Other fields` is empty.
 import { describe, expect, test } from "bun:test";
 
 import { serviceOf } from "../../engine/service-of.ts";

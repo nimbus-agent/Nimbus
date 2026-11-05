@@ -5,6 +5,8 @@ import type { ChatopsChannelBinding, ChatopsPolicy } from "../../policy/types.ts
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import {
+  ACT_DOOR_KB_CHILD_REFUSAL,
+  actDoorRefusal,
   BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   isChatopsDestinationRow,
@@ -652,5 +654,96 @@ describe("B3: the KB-target refusal covers every page row (plan R5)", () => {
       expect(messagingDestinationRefusal(toolId, input, { chatops: NONE }), toolId).toBeUndefined();
       expect(refusal(toolId, input), toolId).toBeUndefined();
     }
+  });
+});
+
+describe("B3: actDoorRefusal's KB rules (plan R5, R12)", () => {
+  const KB = {
+    notion: { databaseId: "0123abcd0123abcd0123abcd0123abcd" },
+    confluence: { spaceKey: "KB", parentPageId: "4242" },
+  } satisfies TribalKbConfig;
+  const ctxWith = (kb: TribalKbConfig | undefined, kbUnreadable = false) => ({
+    chatops: undefined,
+    kb,
+    kbUnreadable,
+  });
+  const PAGE_ROWS: ReadonlyArray<
+    readonly [string, Record<string, unknown>, Record<string, unknown>]
+  > = [
+    [
+      "notion_page_create",
+      { parentPageId: "0123abcd0123abcd0123abcd0123abcd" },
+      { parentPageId: "ffff" },
+    ],
+    ["notion_page_update", { pageId: "0123ABCD-0123-abcd-0123-abcd0123abcd" }, { pageId: "ffff" }],
+    [
+      "notion_block_append",
+      { parentBlockId: "0123abcd0123abcd0123abcd0123abcd" },
+      { parentBlockId: "ffff" },
+    ],
+    ["notion_comment_create", { pageId: "0123abcd0123abcd0123abcd0123abcd" }, { pageId: "ffff" }],
+    ["confluence_page_create", { parentPageId: " 4242 " }, { parentPageId: "55" }],
+    ["confluence_page_update", { pageId: "04242" }, { pageId: "55" }],
+    ["confluence_page_append", { pageId: 4242 }, { pageId: "55" }],
+    ["confluence_comment_add", { pageId: "4242" }, { pageId: "55" }],
+  ];
+  const KB_CHILD_ROWS = [
+    "notion_page_update",
+    "notion_block_append",
+    "confluence_page_update",
+    "confluence_page_append",
+  ];
+
+  test("equals messagingDestinationRefusal on every row that is not KB-capable", () => {
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      if (isKnowledgeBaseCapableRow(r.toolId) || r.toolId === "linear_issue_update") continue;
+      for (const kbUnreadable of [false, true]) {
+        expect(actDoorRefusal(r.toolId, {}, ctxWith(KB, kbUnreadable)), r.toolId).toBe(
+          messagingDestinationRefusal(r.toolId, {}, { chatops: undefined }),
+        );
+      }
+    }
+  });
+
+  test("the KB-target cases refuse with KNOWLEDGE_BASE_REFUSAL, before the KB-child rule", () => {
+    for (const [toolId, target] of PAGE_ROWS) {
+      expect(actDoorRefusal(toolId, target, ctxWith(KB)), toolId).toBe(KNOWLEDGE_BASE_REFUSAL);
+    }
+  });
+
+  test("R12: the four update/append rows refuse while their service's KB is configured, not otherwise", () => {
+    for (const [toolId, , other] of PAGE_ROWS) {
+      const child = KB_CHILD_ROWS.includes(toolId);
+      expect(actDoorRefusal(toolId, other, ctxWith(KB)), toolId).toBe(
+        child ? ACT_DOOR_KB_CHILD_REFUSAL : undefined,
+      );
+      expect(actDoorRefusal(toolId, other, ctxWith(undefined)), toolId).toBeUndefined();
+      const otherService = toolId.startsWith("notion")
+        ? { confluence: KB.confluence }
+        : { notion: KB.notion };
+      expect(actDoorRefusal(toolId, other, ctxWith(otherService)), toolId).toBeUndefined();
+    }
+  });
+
+  test("an unreadable KB config refuses every KB-capable row with KNOWLEDGE_BASE_REFUSAL", () => {
+    for (const [toolId, , other] of PAGE_ROWS) {
+      expect(actDoorRefusal(toolId, other, ctxWith(undefined, true)), toolId).toBe(
+        KNOWLEDGE_BASE_REFUSAL,
+      );
+    }
+  });
+
+  test("the order is messaging, Linear, KB target, KB child", () => {
+    // Linear first: the KB never matters for it.
+    expect(
+      actDoorRefusal("linear_issue_update", { issueId: "i", assigneeId: null }, ctxWith(KB, true)),
+    ).toBe(LINEAR_ASSIGNEE_REFUSAL);
+    // A KB-target append reports the KB-target reason, not the KB-child one.
+    expect(actDoorRefusal("confluence_page_append", { pageId: "4242" }, ctxWith(KB))).toBe(
+      KNOWLEDGE_BASE_REFUSAL,
+    );
+    expect(ACT_DOOR_KB_CHILD_REFUSAL).toBe(
+      "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it",
+    );
   });
 });

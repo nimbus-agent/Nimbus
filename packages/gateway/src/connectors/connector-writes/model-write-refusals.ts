@@ -669,22 +669,70 @@ export function messagingDestinationRefusal(
 }
 
 /**
- * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`): the
- * messaging check, then the Linear reassignment rule (OR-B2-3). The act door runs no before-read
- * (B0b), so it cannot prove a Linear issue unassigned: a `linear_issue_update` proposal that sets
- * `assigneeId` (anything but `undefined`; `null` would unassign) is refused, fail closed. The model door does
- * NOT call this: there the `linear_issue_update` reader's guard decides from the current state.
+ * OR-B3-3 on the act door (R12): it runs no before-read, so it cannot tell a KB child from any
+ * other page; while a KB destination is configured for that service (or the config is
+ * unreadable), these update and append rows are refused over MCP (fail closed). Fixed text.
+ */
+export const ACT_DOOR_KB_CHILD_REFUSAL =
+  "an MCP proposal cannot update or append to a Notion or Confluence page while a Nimbus knowledge base is configured there: the act door cannot check whether the page is in it";
+
+/** The page update/append rows the act door refuses while their service's KB is configured. */
+const NOTION_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
+  "notion_page_update",
+  "notion_block_append",
+]);
+const CONFLUENCE_KB_CHILD_ROWS: ReadonlySet<string> = new Set([
+  "confluence_page_update",
+  "confluence_page_append",
+]);
+
+/** What the act door's refusal reads: the ChatOps bindings and the KB destinations. */
+export interface ActDoorRefusalContext {
+  readonly chatops: ChatopsPolicy | undefined;
+  readonly kb: TribalKbConfig | undefined;
+  /** The KB config could not be read: every KB-capable row is refused (fail closed). */
+  readonly kbUnreadable: boolean;
+}
+
+/** OR-B2-3 on the act door: a Linear update that sets `assigneeId` (anything but `undefined`). */
+function linearAssigneeRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
+  const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
+  return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
+}
+
+/** R12: a page update or append while its service's KB destination is configured. */
+function actDoorKbChildRefusal(toolId: string, kb: TribalKbConfig | undefined): string | undefined {
+  const notion = NOTION_KB_CHILD_ROWS.has(toolId) && kb?.notion !== undefined;
+  const confluence = CONFLUENCE_KB_CHILD_ROWS.has(toolId) && kb?.confluence !== undefined;
+  return notion || confluence ? ACT_DOOR_KB_CHILD_REFUSAL : undefined;
+}
+
+/**
+ * The MCP act door's ONE refusal (`ipc/capture-rpc.ts` `createActionDestinationRefusal`), in
+ * order: the messaging check; the Linear reassignment rule (OR-B2-3: the act door runs no
+ * before-read (B0b), so it cannot prove a Linear issue unassigned, and a `linear_issue_update`
+ * that sets `assigneeId`, `null` included, is refused); the KB-target check the model door also
+ * runs (OR-B3-1; an unreadable KB config refuses every KB-capable row); then the KB-child rule
+ * (R12). The model door does NOT call this: there the readers' guards decide from the current
+ * state.
  */
 export function actDoorRefusal(
   toolId: string,
   input: Readonly<Record<string, unknown>>,
-  ctx: { readonly chatops: ChatopsPolicy | undefined },
+  ctx: ActDoorRefusalContext,
 ): string | undefined {
-  const messaging = messagingDestinationRefusal(toolId, input, ctx);
+  const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
   if (messaging !== undefined) return messaging;
-  if (toolId !== LINEAR_ISSUE_UPDATE_ROW) return undefined;
-  const assignee = Object.hasOwn(input, "assigneeId") ? input["assigneeId"] : undefined;
-  return assignee === undefined ? undefined : LINEAR_ASSIGNEE_REFUSAL;
+  const linear = linearAssigneeRefusal(toolId, input);
+  if (linear !== undefined) return linear;
+  if (ctx.kbUnreadable) {
+    return isKnowledgeBaseCapableRow(toolId) ? KNOWLEDGE_BASE_REFUSAL : undefined;
+  }
+  return knowledgeBaseRefusal(toolId, input, ctx.kb) ?? actDoorKbChildRefusal(toolId, ctx.kb);
 }
 
 /**
