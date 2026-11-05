@@ -32,6 +32,8 @@
 //  7. CDATA: refused in Outlook HTML (an HTML parser ends it at the first `>`, an XML parser does
 //     not); in Confluence storage it is scanned recursively (R5).
 //  8. The textual tripwire (R6), over the raw, deleted-invisible and spaced-invisible forms.
+// Confluence storage adds R5; Drive markup adds R12 (SVG, XHTML and XML forms). Notion JSON (R8)
+// is parsed and walked, and Obsidian Markdown (R9) is the HTML scan plus a fixed `![` rule.
 import { type MarkupToken, REMOTE_SCAN_MAX_CHARS, tokenizeMarkup } from "./markup-tokens.ts";
 import { foldAndStrip, settle, settleUrl } from "./text-normalise.ts";
 
@@ -433,6 +435,7 @@ function styleElementCss(
   k: number,
 ): readonly string[] | undefined {
   const endIndex = matchingEnd(tokens, k, STYLE);
+  // `refusesCss` refuses an unclosed `<style>` before reading it; kept so this never reads past it.
   if (endIndex === -1) return undefined;
   const inside = tokens.slice(k, endIndex + 1);
   const open = inside[0];
@@ -775,6 +778,8 @@ function refusesStorage(
 
 /** R5 CDATA: its content tokenized and scanned as storage, one level deeper. */
 function refusesStorageCdata(content: string, depth: number): boolean {
+  // Defence in depth: a CDATA section cannot hold a complete one (its `]]>` would end the
+  // outer), so a nested opener never tokenizes and this bound is not reached in practice.
   if (depth >= CDATA_MAX_DEPTH) return true;
   const inner = tokenizeMarkup(content);
   if (inner === undefined) return true;
@@ -819,6 +824,281 @@ function confluenceStorageRemote(text: string, opts: DetectOptions): boolean {
 }
 
 // ---------------------------------------------------------------------------------------------
+// R8: Notion block and property JSON. `JSON.parse`, then an iterative walk with an explicit stack
+// over every array element and every own enumerable key (`Object.entries`, so a JSON `__proto__`
+// key is visited). Keys are compared lower-cased. Duplicate keys are not a gap: both Notion tools
+// `JSON.parse` then `JSON.stringify` before sending, so Notion receives exactly what was walked
+// (pinned against the connector source in Task 5).
+// ---------------------------------------------------------------------------------------------
+
+/** Containers nested deeper than this are refused (Notion itself takes two levels of children). */
+const NOTION_SCAN_MAX_DEPTH = 64;
+/** More values than this are refused. */
+const NOTION_SCAN_MAX_NODES = 100_000;
+
+/** (a) and (b): an own key that loads or unfurls an external URL, whatever its value. */
+const NOTION_REFUSED_KEYS: ReadonlySet<string> = new Set([
+  "external",
+  "embed",
+  "bookmark",
+  "link_preview",
+  "link_mention",
+]);
+/** (c): a media key whose value is an object with its own `url`. */
+const NOTION_MEDIA_KEYS: ReadonlySet<string> = new Set([
+  "image",
+  "video",
+  "audio",
+  "pdf",
+  "file",
+  "custom_emoji",
+]);
+/** (d): an own `type` naming one of these. */
+const NOTION_REFUSED_TYPES: ReadonlySet<string> = new Set([
+  "external",
+  "embed",
+  "bookmark",
+  "link_preview",
+  "link_mention",
+]);
+
+function isPlainObject(v: unknown): v is Readonly<Record<string, unknown>> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function hasOwnUrl(v: unknown): boolean {
+  return isPlainObject(v) && Object.keys(v).some((k) => k.toLowerCase() === "url");
+}
+
+/** R8 (a)-(d) on one plain object's own keys. */
+function notionObjectRefused(obj: Readonly<Record<string, unknown>>): boolean {
+  return Object.entries(obj).some(([key, value]) => {
+    const k = key.toLowerCase();
+    if (NOTION_REFUSED_KEYS.has(k)) return true;
+    if (NOTION_MEDIA_KEYS.has(k) && hasOwnUrl(value)) return true;
+    return (
+      k === "type" && typeof value === "string" && NOTION_REFUSED_TYPES.has(value.toLowerCase())
+    );
+  });
+}
+
+/** R8: Notion `childrenJson` (an array) or `propertiesJson` (a plain object). */
+function notionRemote(text: string, shape: "blocks" | "properties"): boolean {
+  let root: unknown;
+  try {
+    root = JSON.parse(text);
+  } catch {
+    return true;
+  }
+  if (shape === "blocks" ? !Array.isArray(root) : !isPlainObject(root)) return true;
+  const stack: { readonly value: unknown; readonly depth: number }[] = [{ value: root, depth: 1 }];
+  let nodes = 0;
+  for (let top = stack.pop(); top !== undefined; top = stack.pop()) {
+    nodes++;
+    if (nodes > NOTION_SCAN_MAX_NODES) return true;
+    const { value, depth } = top;
+    let children: readonly unknown[];
+    if (Array.isArray(value)) {
+      children = value;
+    } else if (isPlainObject(value)) {
+      if (notionObjectRefused(value)) return true;
+      children = Object.values(value);
+    } else {
+      continue;
+    }
+    if (depth > NOTION_SCAN_MAX_DEPTH) return true;
+    for (const child of children) stack.push({ value: child, depth: depth + 1 });
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------------------------
+// R9: Obsidian Markdown. Obsidian renders Markdown images and inline HTML in reading view.
+// Refused: (a) the R4 HTML scan of the whole note (Markdown read as text, inline HTML as markup;
+// no `cid:`); (b) any `![` that does not begin a well-formed vault embed `![[target]]` (target
+// non-empty, no `:`, not starting with `/` or `\`, not followed by `(` or `[`, which could make
+// it a Markdown image), in the raw and both settled forms, so every Markdown image is refused,
+// even a relative one (the destination cannot be found without a CommonMark parser); (c) R6.
+// Fenced code blocks and escaped `\![` are not exempt (stated over-refusal).
+// ---------------------------------------------------------------------------------------------
+
+/** Whether the `![` at `at` begins a well-formed vault embed. */
+function isVaultEmbed(form: string, at: number): boolean {
+  if (!form.startsWith("![[", at)) return false;
+  const close = form.indexOf("]]", at + 3);
+  if (close === -1) return false;
+  const target = form.slice(at + 3, close);
+  if (target === "" || target.includes(":") || isSlash(target[0])) return false;
+  const after = form.charAt(close + 2);
+  return after !== "(" && after !== "[";
+}
+
+/** R9 (b): a `![` that is not a vault embed, in any form (an unsettled note is refused). */
+function markdownImageRemote(text: string): boolean {
+  const deleted = settle(text, "");
+  const spaced = settle(text, " ");
+  if (deleted === undefined || spaced === undefined) return true;
+  return [text, deleted, spaced].some((form) => {
+    for (let at = form.indexOf("!["); at !== -1; at = form.indexOf("![", at + 1)) {
+      if (!isVaultEmbed(form, at)) return true;
+    }
+    return false;
+  });
+}
+
+/** R9: an Obsidian note, (a) then (b) then (c). */
+function obsidianRemote(text: string, opts: DetectOptions): boolean {
+  const rules: MarkupRules = { allowCid: false, confluence: false, allowFragmentUrl: false };
+  const tokens = tokenizeMarkup(text); // (a) step 1
+  if (tokens === undefined) return true;
+  return (
+    refusesTags(tokens, text, rules) || // (a) steps 2-4
+    refusesCss(tokens, text, rules) || // (a) step 5
+    refusesMarkupInDeclarations(tokens) || // (a) step 6
+    hasCdata(tokens) || // (a) step 7
+    markdownImageRemote(text) || // (b)
+    (opts.tripwire && tripwire(text, "default")) // (c)
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// R11: which Drive `mimeType` values scan (owner ruling OR-B3r-2), normalised and fail closed.
+// ---------------------------------------------------------------------------------------------
+
+/** The owner's three markup types (R11 (a)). */
+const DRIVE_MARKUP_TYPES: ReadonlySet<string> = new Set([
+  "text/html",
+  "application/xhtml+xml",
+  "image/svg+xml",
+]);
+/** R11 (b): any essence naming one of these is markup. */
+const MARKUP_ESSENCE = /html|svg|xml/;
+/** R11 (c): a Google Apps type Drive may convert into, which might fetch remote images. */
+const GOOGLE_APPS_PREFIX = "application/vnd.google-apps.";
+/** R11 (d): a clean `type/subtype` token pair (lower-case only). */
+const CLEAN_MIME_ESSENCE = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+$/;
+
+/** The essence of one form: cut at the first `;` (parameters dropped), spaces and TABs trimmed. */
+function mimeEssence(form: string): string {
+  const semi = form.indexOf(";");
+  const essence = semi === -1 ? form : form.slice(0, semi);
+  let lo = 0;
+  let hi = essence.length;
+  const blank = (ch: string): boolean => ch === " " || ch === "\t";
+  while (lo < hi && blank(essence.charAt(lo))) lo++;
+  while (hi > lo && blank(essence.charAt(hi - 1))) hi--;
+  return essence.slice(lo, hi);
+}
+
+function essenceScans(essence: string): boolean {
+  return (
+    DRIVE_MARKUP_TYPES.has(essence) || // (a)
+    MARKUP_ESSENCE.test(essence) || // (b)
+    essence.startsWith(GOOGLE_APPS_PREFIX) || // (c)
+    !CLEAN_MIME_ESSENCE.test(essence) // (d): empty or unclean
+  );
+}
+
+/**
+ * R11: whether a `gdrive_file_create` with this `mimeType` has its `content` scanned as
+ * `drive-markup`. Absent (`undefined`): not scanned (the connector uses `text/plain`). Present
+ * but not a string (`null` included): scanned. A string scans when the essence of its RAW
+ * (lower-cased) or FOLDED (NFKC, invisible characters deleted, lower-cased) form is markup, a
+ * Google Apps type, or not a clean `type/subtype` pair. Stated bound: Drive stores the type it
+ * is given and nothing sniffs content, so a `text/plain` file holding HTML is not scanned.
+ */
+export function driveMimeTypeScans(mimeType: unknown): boolean {
+  if (mimeType === undefined) return false;
+  if (typeof mimeType !== "string") return true;
+  const forms = [mimeType.toLowerCase(), foldAndStrip(mimeType).toLowerCase()];
+  return forms.some((f) => essenceScans(mimeEssence(f)));
+}
+
+// ---------------------------------------------------------------------------------------------
+// R12: SVG, XHTML and the XML forms (`drive-markup` = R4 + R12; no `cid:`). Drive content may be
+// read by an HTML or an XML parser.
+// ---------------------------------------------------------------------------------------------
+
+const FOREIGN_OBJECT: ReadonlySet<string> = new Set(["foreignobject"]);
+const ATTRIBUTE_NAME: ReadonlySet<string> = new Set(["attributename"]);
+/** SMIL can set these at run time (`<set attributeName="href" to="//h"/>`). */
+const SMIL_REFUSED_TARGETS: ReadonlySet<string> = new Set(["href", "src"]);
+const EXTERNAL_IDENTIFIER = /\b(?:system|public)\b/;
+
+/**
+ * R12 SVG elements: `foreignObject` (any case, any prefix: it lays out an HTML subtree), and any
+ * element whose `attributeName` (every form, local part) is `href` or `src` (SMIL `set`,
+ * `animate`, `animateMotion`, `animateTransform`, `discard`; any element, fail closed).
+ */
+function refusesSvgElements(tokens: readonly MarkupToken[]): boolean {
+  return tokens.some((t) => {
+    if (t.kind !== "start") return false;
+    if (localIn(t.name, FOREIGN_OBJECT)) return true;
+    return t.attrs.some((a) => {
+      if (!localIn(a.name, ATTRIBUTE_NAME)) return false;
+      const forms = valueForms(a.value);
+      return forms === undefined || forms.some((f) => SMIL_REFUSED_TARGETS.has(localPart(f)));
+    });
+  });
+}
+
+/** Whether one attribute value, read as CSS, calls a loading function or a non-`#` `url(`. */
+function valueLoadsAsCss(value: string): boolean {
+  // Only a value that can spell `(` (literally, as an entity, or as a CSS escape) can call one.
+  if (!value.includes("(") && !value.includes("&") && !value.includes("\\")) return false;
+  const forms = cssForms(value);
+  return (
+    forms === undefined || forms.some((f) => CSS_LOAD_FUNCTION.test(f) || cssUrlLoads(f, true))
+  );
+}
+
+/**
+ * R12 presentation attributes: any attribute other than `style` (R4 step 5) whose value calls a
+ * CSS `url(` must give EVERY `url(` an argument starting with `#` (Review fix 3: `fill`,
+ * `stroke`, `filter`, `mask`, `clip-path`, `marker-*`, and SMIL `values`, `to`, `from`, `by`);
+ * the other loading functions (`mask` takes images) are refused outright.
+ */
+function refusesPresentationUrls(tokens: readonly MarkupToken[]): boolean {
+  return tokens.some(
+    (t) =>
+      t.kind === "start" && t.attrs.some((a) => !nameIn(a.name, STYLE) && valueLoadsAsCss(a.value)),
+  );
+}
+
+/**
+ * R12 XML declarations: a `<!DOCTYPE ...>` (any `<!` declaration) with an external identifier
+ * (`SYSTEM` or `PUBLIC`; an XML parser may fetch the DTD; owner-accepted over-refusal of the
+ * standard XHTML doctype), and a processing instruction naming `xml-stylesheet`. An internal
+ * subset holds `<` and is refused by R4 step 6.
+ */
+function refusesXmlDeclarations(tokens: readonly MarkupToken[]): boolean {
+  return tokens.some((t) => {
+    if (t.kind !== "declaration") return false;
+    const forms = valueForms(t.text);
+    if (forms === undefined) return true;
+    if (t.text.startsWith("!")) return forms.some((f) => EXTERNAL_IDENTIFIER.test(f));
+    return t.text.startsWith("?") && forms.some((f) => f.includes("xml-stylesheet"));
+  });
+}
+
+/** Drive markup (R4 + R12, no `cid:`): R4's steps, then R12's, as one ordered list. */
+function driveMarkupRemote(text: string, opts: DetectOptions): boolean {
+  const rules: MarkupRules = { allowCid: false, confluence: false, allowFragmentUrl: true };
+  const tokens = tokenizeMarkup(text); // R4 step 1
+  if (tokens === undefined) return true;
+  return (
+    refusesTags(tokens, text, rules) || // R4 steps 2-4
+    refusesCss(tokens, text, rules) || // R4 step 5, with R12's `#` relaxation
+    refusesMarkupInDeclarations(tokens) || // R4 step 6
+    hasCdata(tokens) || // R4 step 7
+    refusesSvgElements(tokens) || // R12 SVG elements
+    refusesPresentationUrls(tokens) || // R12 presentation attributes
+    refusesXmlDeclarations(tokens) || // R12 XML declarations
+    (opts.tripwire && tripwire(text, "drive")) // R4 step 8
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
 // The entry point.
 // ---------------------------------------------------------------------------------------------
 
@@ -840,9 +1120,14 @@ export function remoteContentIn(
         return outlookHtmlRemote(text, opts);
       case "confluence-storage":
         return confluenceStorageRemote(text, opts);
-      default:
-        // The Notion, Obsidian and Drive detectors arrive with Task 4: refused until then.
-        return true;
+      case "notion-blocks":
+        return notionRemote(text, "blocks");
+      case "notion-properties":
+        return notionRemote(text, "properties");
+      case "obsidian-markdown":
+        return obsidianRemote(text, opts);
+      case "drive-markup":
+        return driveMarkupRemote(text, opts);
     }
   } catch {
     return true;

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   CONFLUENCE_INERT_MACROS,
   cssLoadsRemote,
+  driveMimeTypeScans,
   type RemoteContentFormat,
   remoteContentIn,
   urlIsExternal,
@@ -15,6 +16,9 @@ const NUL = String.fromCodePoint(0x00);
 const ZWSP = String.fromCodePoint(0x200b);
 const FULLWIDTH_COLON = String.fromCodePoint(0xff1a);
 const FULLWIDTH_QUOTE = String.fromCodePoint(0xff02);
+const FULLWIDTH_SOLIDUS = String.fromCodePoint(0xff0f);
+const FULLWIDTH_SEMICOLON = String.fromCodePoint(0xff1b);
+const FULLWIDTH_BANG = String.fromCodePoint(0xff01);
 
 /** Refused with the tripwire on; with `structural`, also refused with the tripwire off. */
 function expectRefused(format: RemoteContentFormat, text: string, structural: boolean): void {
@@ -660,6 +664,11 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
   test("storage: a parameter's CDATA counts as its text; a parameter outside a macro is checked", () => {
     expectRefused("confluence-storage", macro("panel", param("x", "<![CDATA[https://h]]>")), true);
     expectAllowed("confluence-storage", param("x", "y"));
+    // Elements inside a parameter do not count as its text (an excerpt-include page link).
+    expectAllowed(
+      "confluence-storage",
+      macro("excerpt-include", param("", `<ac:link><ri:page ri:content-title="X"/></ac:link>`)),
+    );
     expectRefused("confluence-storage", param("x", "//h"), true);
     // An external parameter value: every scheme counts, so "Note: x" is refused (stated over-refusal).
     expectRefused("confluence-storage", macro("panel", param("title", "Note: x")), true);
@@ -667,5 +676,410 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
 
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// R8: Notion (Review Focus 5)
+// ---------------------------------------------------------------------------------------------
+
+/** A block nested three levels deep (toggle > bulleted item > `leaf`). */
+function threeDeep(leaf: string): string {
+  return `[{"toggle":{"rich_text":[],"children":[{"bulleted_list_item":{"rich_text":[],"children":[${leaf}]}}]}}]`;
+}
+
+/** Arrays nested `n` deep (container depth `n`). */
+function nestedArrays(n: number): string {
+  return `${"[".repeat(n)}${"]".repeat(n)}`;
+}
+
+describe("Notion block and property JSON (plan R8)", () => {
+  const BLOCKS: readonly (readonly [string, string, string])[] = [
+    [
+      "an embed nested three levels deep",
+      threeDeep(`{"type":"embed","embed":{"url":"https://h"}}`),
+      threeDeep(`{"type":"paragraph","paragraph":{"rich_text":[]}}`),
+    ],
+    [
+      "an external image three levels deep",
+      threeDeep(`{"type":"image","image":{"type":"external","external":{"url":"https://h"}}}`),
+      threeDeep(`{"type":"image","image":{"type":"file_upload","file_upload":{"id":"x"}}}`),
+    ],
+    [
+      "a bookmark three levels deep",
+      threeDeep(`{"type":"bookmark","bookmark":{"url":"https://h"}}`),
+      threeDeep(`{"type":"quote","quote":{"rich_text":[]}}`),
+    ],
+    [
+      "a video with its own url (rule c)",
+      `[{"video":{"url":"https://h"}}]`,
+      `[{"video":{"caption":[]}}]`,
+    ],
+    [
+      "a custom emoji url (rule c)",
+      `[{"custom_emoji":{"url":"https://h"}}]`,
+      `[{"custom_emoji":{"id":"x"}}]`,
+    ],
+    [
+      "an upper-case URL key under a media key",
+      `[{"Image":{"URL":"https://h"}}]`,
+      `[{"Image":{"name":"x"}}]`,
+    ],
+    [
+      "a callout icon.external",
+      `[{"callout":{"rich_text":[],"icon":{"external":{"url":"https://h"}}}}]`,
+      `[{"callout":{"rich_text":[],"icon":{"emoji":"x"}}}]`,
+    ],
+    [
+      "a link_preview mention",
+      `[{"paragraph":{"rich_text":[{"type":"mention","mention":{"type":"link_preview","link_preview":{"url":"https://h"}}}]}}]`,
+      `[{"paragraph":{"rich_text":[{"type":"mention","mention":{"type":"page","page":{"id":"x"}}}]}}]`,
+    ],
+    [
+      "a link_mention key",
+      `[{"link_mention":{"href":"https://h"}}]`,
+      `[{"link":{"href":"https://h"}}]`,
+    ],
+    ["an upper-case key (Embed)", `[{"Embed":{"url":"https://h"}}]`, `[{"Divider":{}}]`],
+    ["an upper-case type value (EMBED)", `[{"type":"EMBED"}]`, `[{"type":"DIVIDER"}]`],
+    ["65 levels of nesting", nestedArrays(65), nestedArrays(64)],
+    ["not JSON", "[{", "[{}]"],
+    ["an object given as blocks", "{}", "[]"],
+    ["null given as blocks", "null", "[]"],
+    ["a string given as blocks", `"x"`, "[]"],
+  ];
+
+  test.each(BLOCKS)("blocks: %s", (_label, refused, allowed) => {
+    expectRefused("notion-blocks", refused, true);
+    expectAllowed("notion-blocks", allowed);
+  });
+
+  const PROPERTIES: readonly (readonly [string, string, string])[] = [
+    [
+      "an external file entry",
+      `{"Files":{"files":[{"name":"x","type":"external","external":{"url":"https://h"}}]}}`,
+      `{"Files":{"files":[{"name":"x","type":"file_upload","file_upload":{"id":"x"}}]}}`,
+    ],
+    ["a JSON __proto__ key is walked", `{"__proto__":{"external":{}}}`, `{"__proto__":{"x":{}}}`],
+    ["an array given as properties", "[]", "{}"],
+    ["null given as properties", "null", "{}"],
+  ];
+
+  test.each(PROPERTIES)("properties: %s", (_label, refused, allowed) => {
+    expectRefused("notion-properties", refused, true);
+    expectAllowed("notion-properties", allowed);
+  });
+
+  test.each([
+    [
+      "a text link",
+      `[{"paragraph":{"rich_text":[{"type":"text","text":{"content":"x","link":{"url":"https://h"}}}]}}]`,
+    ],
+    ["an href", `[{"paragraph":{"rich_text":[{"href":"https://h","plain_text":"x"}]}}]`],
+    [
+      "a string value that names a refused key",
+      `[{"paragraph":{"rich_text":[{"plain_text":"embed external"}]}}]`,
+    ],
+  ])("blocks allowed: %s", (_label, json) => {
+    expectAllowed("notion-blocks", json);
+  });
+
+  test("a url property is allowed", () => {
+    expectAllowed("notion-properties", `{"Site":{"url":"https://h"}}`);
+  });
+
+  test("the node cap: 100,000 values pass, 100,001 do not", () => {
+    // The root array counts as one value.
+    expectAllowed("notion-blocks", `[${Array.from({ length: 99_999 }, () => "0").join(",")}]`);
+    expectRefused(
+      "notion-blocks",
+      `[${Array.from({ length: 100_001 }, () => "0").join(",")}]`,
+      true,
+    );
+  });
+
+  test("an input over REMOTE_SCAN_MAX_CHARS is refused", () => {
+    expectRefused("notion-blocks", `[${" ".repeat(2_000_000)}]`, true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// R9: Obsidian (Review Focus 5)
+// ---------------------------------------------------------------------------------------------
+
+describe("Obsidian Markdown (plan R9)", () => {
+  const OBSIDIAN: readonly (readonly [string, string, string])[] = [
+    ["an image with no alt", "![](https://h)", "[](https://h)"],
+    ["a space before the URL", "![x]( https://h)", "[x]( https://h)"],
+    ["an angle-bracket URL", "![x](<https://h>)", "[x](<https://h>)"],
+    ["a reference image", `![x][r]${LF}[r]: https://h`, `[x][r]${LF}[r]: https://h`],
+    ["a relative image", "![x](a.png)", "![[a.png]]"],
+    ["a URL as an embed target", "![[https://h]]", "![[h]]"],
+    ["a colon in an embed target", "![[a:b]]", "![[a-b]]"],
+    ["an absolute embed target", "![[/x]]", "![[x]]"],
+    ["a backslash embed target", "![[\\x]]", "![[x]]"],
+    ["an unterminated embed", "![[x", "![[x]]"],
+    ["an empty embed", "![[]]", "![[x]]"],
+    ["an embed followed by a destination", "![[x]](https://h)", "![[x]] (see https://h)"],
+    ["an embed followed by a reference", "![[x]][r]", "![[x]] [r]"],
+    ["an inline img", "<img src=//h>", "<i>x</i>"],
+    ["an inline iframe", "<iframe src=//h></iframe>", "<div>x</div>"],
+    ["an inline link element (no tripwire match)", "<link href=x>", "<a href=x>x</a>"],
+    ["a fullwidth bang", `${FULLWIDTH_BANG}[](https://h)`, "[](https://h)"],
+    ["an entity bang", "&#33;[x](y)", "&#33; [x](y)"],
+    ["an escaped bang (stated)", "\\![x](https://h)", "\\[x](https://h)"],
+    [
+      "an image in a fenced block (stated)",
+      `\`\`\`${LF}![x](y)${LF}\`\`\``,
+      `\`\`\`${LF}[x](y)${LF}\`\`\``,
+    ],
+    ["an inline style", "<style>p{background:url(x)}</style>", "<style>p{color:red}</style>"],
+    ["markup that does not tokenize", "if a <b", "if a < b"],
+    ["a cid image (no cid: in Obsidian)", `<img src="cid:x">`, `<img src="x">`],
+  ];
+
+  test.each(OBSIDIAN)("%s", (_label, refused, allowed) => {
+    expectRefused("obsidian-markdown", refused, true);
+    expectAllowed("obsidian-markdown", allowed);
+  });
+
+  test.each([
+    ["a note embed", "![[note]]"],
+    ["a sized image embed", "![[img.png|200]]"],
+    ["two embeds", "![[a]] and ![[b|x]]"],
+    ["a heading embed", "![[note#Heading]]"],
+    ["a link", "[link](https://h)"],
+    ["an autolink", "<https://h>"],
+    ["a reference definition (a link)", "[r]: https://h"],
+    ["plain text", "Met with the team. Next: ship it."],
+  ])("allowed: %s", (_label, text) => {
+    expectAllowed("obsidian-markdown", text);
+  });
+
+  test("R6: literal url( text is refused (stated over-refusal); the tripwire is (c)", () => {
+    expect(remoteContentIn("obsidian-markdown", "use url(x) here")).toBe(true);
+    expect(remoteContentIn("obsidian-markdown", "use url(x) here", { tripwire: false })).toBe(
+      false,
+    );
+  });
+
+  test("a note that does not settle is refused", () => {
+    expectRefused("obsidian-markdown", "&amp;amp;amp;amp;amp;", true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// R11 + R12: Drive markup files (Review Focus 5)
+// ---------------------------------------------------------------------------------------------
+
+/** How Task 5 composes the Drive row: scanned by type, then refused by content. */
+function driveRefused(mimeType: unknown, content: string): boolean {
+  return driveMimeTypeScans(mimeType) && remoteContentIn("drive-markup", content);
+}
+
+describe("Drive mimeType matching (plan R11)", () => {
+  const PIXEL = "<img src=//h>";
+
+  test.each([
+    ["text/html"],
+    // The essence is lower-cased; were it not, (d)'s lower-case-only pattern would still scan it.
+    ["TEXT/HTML"],
+    ["text/html; charset=utf-8"],
+    ["text/html;charset=UTF-8"],
+    [" text/html "],
+    [`${TAB}text/html${TAB}`],
+    // The FOLDED form is defence in depth: a non-ASCII or invisible character already fails (d)'s
+    // clean-token pattern in the RAW form, so both spellings scan either way.
+    [`text${ZWSP}/html`],
+    [`text${FULLWIDTH_SOLIDUS}html`],
+    [`text/plain${FULLWIDTH_SEMICOLON} x`],
+    ["application/xhtml+xml"],
+    ["image/svg+xml"],
+    ["image/SVG+XML; charset=utf-8"],
+    ["text/xml"],
+    ["application/xml"],
+    ["application/rss+xml"],
+    ["text/x-html"],
+    ["image/svg"],
+    ["application/vnd.google-apps.document"],
+    [""],
+    ["text/ html"],
+    ["html"],
+    ["text"],
+    ["a/b/c"],
+  ])("scanned: %p", (mime) => {
+    expect(driveMimeTypeScans(mime)).toBe(true);
+    expect(driveRefused(mime, PIXEL)).toBe(true);
+  });
+
+  test.each([[42], [null], [true], [{}]])("a non-string is scanned: %p", (mime) => {
+    expect(driveMimeTypeScans(mime)).toBe(true);
+  });
+
+  test.each([
+    [undefined],
+    ["text/plain"],
+    ["TEXT/PLAIN"],
+    ["text/plain; charset=utf-8"],
+    ["text/csv"],
+    ["text/markdown"],
+    ["application/json"],
+    ["image/png"],
+  ])("not scanned (the same content is allowed, shown verbatim): %p", (mime) => {
+    expect(driveMimeTypeScans(mime)).toBe(false);
+    expect(driveRefused(mime, PIXEL)).toBe(false);
+  });
+
+  test("an empty file of a markup type is allowed", () => {
+    expect(driveRefused("text/html", "")).toBe(false);
+  });
+});
+
+describe("Drive SVG and XHTML (plan R12)", () => {
+  const DRIVE: readonly (readonly [string, string, string])[] = [
+    [
+      "an SVG image href",
+      `<svg><image href="//h/x.png"/></svg>`,
+      `<svg><image href="x.png"/></svg>`,
+    ],
+    [
+      "an SVG image xlink:href",
+      `<svg><image xlink:href="https://h/x.png"/></svg>`,
+      `<svg><image xlink:href="#x"/></svg>`,
+    ],
+    ["an SVG use", `<svg><use href="https://h/s.svg#i"/></svg>`, `<svg><use href="#i"/></svg>`],
+    ["an SVG feImage", "<svg><feImage href=//h/></svg>", "<svg><feImage href=#i /></svg>"],
+    [
+      "foreignObject",
+      "<svg><foreignObject><p>x</p></foreignObject></svg>",
+      "<svg><g><text>x</text></g></svg>",
+    ],
+    ["FOREIGNOBJECT", "<FOREIGNOBJECT></FOREIGNOBJECT>", "<G></G>"],
+    ["a prefixed foreignObject", "<svg:foreignObject/>", "<svg:g/>"],
+    [
+      "@import in an SVG style",
+      "<svg><style>@import url(//h/x.css);</style></svg>",
+      "<svg><style>rect{fill:red}</style></svg>",
+    ],
+    [
+      "an external url in an SVG style",
+      "<svg><style>rect{fill:url(https://h/p.svg#g)}</style></svg>",
+      "<svg><style>rect{fill:url(#g)}</style></svg>",
+    ],
+    ["an external fill", `<rect fill="url(https://h/p.svg#g)"/>`, `<rect fill="url(#g)"/>`],
+    ["a quoted external filter", `<rect filter="url( '//h#f' )"/>`, `<rect filter="url( '#f' )"/>`],
+    ["an unterminated mask url", `<rect mask="url(#m"/>`, `<rect mask="url(#m)"/>`],
+    [
+      "every url( is checked (Review fix 3)",
+      `<rect filter="url(#a) url(https://x/y.svg#z)"/>`,
+      `<rect filter="url(#a) url(#b)"/>`,
+    ],
+    ["an image-set mask", `<rect mask="image-set('//h' 1x)"/>`, `<rect mask="url(#m)"/>`],
+    [
+      "an escaped url in a presentation attribute",
+      `<rect fill="u\\72l(//h)"/>`,
+      `<rect fill="u\\72l(#g)"/>`,
+    ],
+    [
+      "an entity-encoded url in a presentation attribute",
+      `<rect fill="&#117;rl(//h)"/>`,
+      `<rect fill="&#117;rl(#g)"/>`,
+    ],
+    [
+      "an external url in a style attribute",
+      `<rect style="fill:url(//h)"/>`,
+      `<rect style="fill:url(#g)"/>`,
+    ],
+    [
+      "SMIL set href",
+      `<set attributeName="href" to="//h"/>`,
+      `<set attributeName="opacity" to="1"/>`,
+    ],
+    [
+      "SMIL animate xlink:href",
+      `<animate attributeName="xlink:href" values="a;//h"/>`,
+      `<animate attributeName="x" values="a;//h"/>`,
+    ],
+    [
+      "SMIL src (upper case)",
+      `<animate attributeName="SRC" values="x"/>`,
+      `<animate attributeName="r" values="x"/>`,
+    ],
+    [
+      "SMIL values holding a url(",
+      `<animate attributeName="fill" values="url(//h)"/>`,
+      `<animate attributeName="fill" values="url(#a)"/>`,
+    ],
+    ["xml-stylesheet", `<?xml-stylesheet href="//h/x.css"?>`, `<?xml version="1.0"?>`],
+    [
+      "an upper-case XML-STYLESHEET",
+      `<?XML-STYLESHEET href="x.css"?>`,
+      `<?xml version="1.0" encoding="UTF-8"?>`,
+    ],
+    ["a SYSTEM doctype", `<!DOCTYPE svg SYSTEM "https://h/x.dtd">`, "<!DOCTYPE svg>"],
+    [
+      "a doctype internal subset",
+      `<!DOCTYPE svg [<!ENTITY e SYSTEM "https://h">]>`,
+      "<!DOCTYPE svg>",
+    ],
+    [
+      "the XHTML PUBLIC doctype (owner-accepted over-refusal)",
+      `<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">`,
+      "<!DOCTYPE html>",
+    ],
+    [
+      "CDATA in an SVG style",
+      "<svg><style><![CDATA[rect{fill:red}]]></style></svg>",
+      "<svg><style>rect{fill:red}</style></svg>",
+    ],
+    ["an event handler", `<svg onload="x"></svg>`, `<svg id="x"></svg>`],
+    ["an unclosed style", "<svg><style>rect{}", "<svg><style>rect{}</style>"],
+    ["an HTML iframe", "<iframe src=x></iframe>", "<p>x</p>"],
+    ["a cid image (no cid: in Drive)", `<img src="cid:x">`, `<img src="x">`],
+  ];
+
+  test.each(DRIVE)("%s", (_label, refused, allowed) => {
+    expectRefused("drive-markup", refused, true);
+    expectAllowed("drive-markup", allowed);
+  });
+
+  test.each([
+    ["a gradient fill", `<svg><rect fill="url(#g)"/><linearGradient id="g"/></svg>`],
+    ["a fragment fill in a style attribute", `<rect style="fill:url(#g)"/>`],
+    ["an SVG link", `<svg><a href="https://h"><text>x</text></a></svg>`],
+    ["an XML declaration", `<?xml version="1.0"?>`],
+    [
+      "SVG namespaces",
+      `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><rect/></svg>`,
+    ],
+    [
+      "an HTML page with a link",
+      `<!DOCTYPE html><html><body><a href="https://h/?a=1&amp;b=2">x</a></body></html>`,
+    ],
+    ["a path", `<path d="M0 0 L10 10 Z"/>`],
+  ])("allowed: %s", (_label, text) => {
+    expectAllowed("drive-markup", text);
+  });
+
+  test("R6 (Drive): a fragment url( is not tripped, any other is", () => {
+    expect(remoteContentIn("drive-markup", "fill: url( '#g' ) in prose")).toBe(false);
+    expect(remoteContentIn("drive-markup", "fill: url(x) in prose")).toBe(true);
+    expect(remoteContentIn("drive-markup", "fill: url(x) in prose", { tripwire: false })).toBe(
+      false,
+    );
+    expect(remoteContentIn("drive-markup", "a url(#a) then url(x)")).toBe(true);
+  });
+
+  test("an unsettled attributeName or declaration is refused", () => {
+    expectRefused("drive-markup", `<set attributeName="&amp;amp;amp;amp;amp;"/>`, true);
+    expectRefused("drive-markup", "<!x &amp;amp;amp;amp;amp;>", true);
+  });
+
+  test("a non-`!`, non-`?` declaration is not an XML declaration", () => {
+    expectAllowed("drive-markup", "</1>");
+  });
+
+  test("markup that does not tokenize is refused", () => {
+    expectRefused("drive-markup", "<svg", true);
   });
 });
