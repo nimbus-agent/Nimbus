@@ -7,11 +7,12 @@ import { serviceOf } from "../../engine/service-of.ts";
 import { extractToolInput } from "../../engine/tool-input.ts";
 import type { PlannedAction } from "../../engine/types.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
-import type {
-  ConnectorWritePreviewTemplate,
-  ConnectorWriteRow,
-  PreviewCredentialResolver,
-  PreviewFieldKind,
+import {
+  type ConnectorWritePreviewTemplate,
+  type ConnectorWriteRow,
+  type PreviewCredentialResolver,
+  type PreviewFieldKind,
+  previewTemplateKeys,
 } from "./types.ts";
 
 /** The desktop collapses a value longer than this behind "Show full"; nothing is ever cut. */
@@ -133,20 +134,8 @@ function interpolate(text: string, input: Record<string, unknown>): string {
   );
 }
 
-/**
- * Every input key a template names: each `fields[].key` (including fields that carry `whenUnset`)
- * and each `{key}` placeholder in `target` and `summary`. The connector-write door's drift check
- * reads the same set, so a key the preview shows is a key the listed schema must declare.
- */
-export function previewTemplateKeys(t: ConnectorWritePreviewTemplate): Set<string> {
-  const named = new Set<string>(t.fields.map((f) => f.key));
-  for (const text of [t.target, t.summary]) {
-    for (const m of text.matchAll(PLACEHOLDER)) {
-      if (m[1] !== undefined) named.add(m[1]);
-    }
-  }
-  return named;
-}
+/** Lives in `./types.ts` (the before-reader check needs it without importing the rows). */
+export { previewTemplateKeys } from "./types.ts";
 
 function renderField(
   f: ConnectorWritePreviewTemplate["fields"][number],
