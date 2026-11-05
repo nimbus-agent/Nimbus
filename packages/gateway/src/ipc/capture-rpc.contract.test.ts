@@ -64,6 +64,7 @@ test("the UI fixture has the shape the real captures.list / captures.get return"
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_contract_${String(++seq)}`,
     now: () => now,
+    actionDestinationRefusal: () => undefined,
   };
   const ctx = { gate };
   const call = async (

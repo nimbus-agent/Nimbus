@@ -3238,6 +3238,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "cap.kinds.includes(",
       "validateCapturePayload(kindRaw",
       "deps.classifyAction?.(",
+      "requireDestinationAllowed(ctx, v)",
       "deps.isServiceConfigured?.(",
       "missingItem(",
       "resolveLinkEndpoints(",
@@ -3353,6 +3354,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
         newId: () => `cap_${String(++seq)}`,
         now: () => 1_000_000,
         scheduleEmbedding: () => {},
+        actionDestinationRefusal: () => undefined,
       };
       const count = (sql: string): number => (db.query(sql).get() as { n: number }).n;
       const items = "SELECT COUNT(*) AS n FROM item WHERE service = 'nimbus'";
@@ -3391,6 +3393,7 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
       "deps.now() >= expiresAt",
       "deps.classifyAction?.(",
       "deps.isServiceConfigured?.(",
+      "actionDestinationVerdict(deps, stored.actionType, stored.input)",
       "deps.store.claimAction(",
       "act.execute(",
       "deps.store.finalizeAction(",
@@ -3398,6 +3401,37 @@ describe("I28 — MCP content enters only through the capture gate, in a fixed o
     const idx = order.map((s) => body.indexOf(s));
     expect(idx.every((i) => i >= 0)).toBe(true);
     expect([...idx].sort((a, b) => a - b)).toEqual(idx);
+  });
+
+  test("act door destination (OR1/OR2): both checks reach the injected dep, which assemble wires to messagingDestinationRefusal", async () => {
+    const gate = stripComments(await read("packages/gateway/src/mcp-sink/capture-gate.ts"));
+    const req = gate.slice(gate.indexOf("function requireDestinationAllowed("));
+    expect(req.slice(0, req.indexOf("\n}\n"))).toContain(
+      "actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input)",
+    );
+    const act = stripComments(await read("packages/gateway/src/mcp-sink/capture-act.ts"));
+    const verdict = act.slice(act.indexOf("export function actionDestinationVerdict("));
+    expect(verdict.slice(0, verdict.indexOf("\n}\n"))).toContain(
+      "return deps.actionDestinationRefusal(actionType, input);",
+    );
+    // D32(f): the sink names no ChatOps or connectors module; the check is injected.
+    for (const f of ["capture-gate.ts", "capture-act.ts", "capture-types.ts"]) {
+      const src = stripComments(await read(`packages/gateway/src/mcp-sink/${f}`));
+      expect(src.toLowerCase().includes("chatops"), f).toBe(false);
+      expect(src.includes("messagingDestinationRefusal"), f).toBe(false);
+    }
+    const rpc = stripComments(await read("packages/gateway/src/ipc/capture-rpc.ts"));
+    expect(rpc).toContain(
+      'import { messagingDestinationRefusal } from "../connectors/connector-writes/model-write-refusals.ts";',
+    );
+    const helper = rpc.slice(rpc.indexOf("export function createActionDestinationRefusal("));
+    expect(helper.slice(0, helper.indexOf("\n}\n"))).toContain(
+      "return messagingDestinationRefusal(tool, input, { chatops });",
+    );
+    const assemble = stripComments(await read("packages/gateway/src/platform/assemble.ts"));
+    expect(assemble).toMatch(
+      /actionDestinationRefusal: createActionDestinationRefusal\(\(\) => policyGate\.enforced\(\)\)/,
+    );
   });
 
   test("act door: acceptCapture routes an action row to an acceptAction CALL, after the owner check", async () => {
@@ -11360,8 +11394,18 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("no production row has a before reader yet (B1-B4 add them; a wave-4 one becomes offerable)", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)).toEqual([]);
+  test("the production rows with a before reader are B1's seven wave-2 comment rows (no wave-4 row has one, so none is offerable)", () => {
+    const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
+    expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "confluence_comment_add",
+      "github_issue_comment_create",
+      "gitlab_issue_note_create",
+      "gitlab_mr_note_create",
+      "jira_comment_add",
+      "linear_comment_create",
+      "notion_comment_create",
+    ]);
+    expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
   });
 
   test("the door executor alone carries the before-state runner, as argument 8", async () => {

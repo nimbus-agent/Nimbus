@@ -51,7 +51,7 @@ All three doors share this one entry (`capture.submit`). Order is the invariant;
 | 3 | Gateway-wide attempt limit (`CaptureAttemptLimiter`, before any validation) | `ERR_CAPTURE_RATE_LIMITED` | no — counted |
 | 4 | Kind allowed by `[mcp_sink] kinds` and `SUBMITTABLE_KINDS` | `ERR_CAPTURE_KIND_NOT_ALLOWED` | yes |
 | 5 | Whitelist rebuild per kind (`capture-validate.ts`; unknown siblings dropped, caps enforced) | `ERR_CAPTURE_INVALID` | yes |
-| 5a/5b | Action only: proposable now, and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
+| 5a/5b | Action only: proposable now, its destination allowed (`actionDestinationRefusal`: a ChatOps channel, a broadcast mention or a GitLab quick action is refused), and its connector configured | `ERR_CAPTURE_ACTION_NOT_PROPOSABLE` / `ERR_CAPTURE_ACTION_REFUSED` / `ERR_CAPTURE_CONNECTOR_UNCONFIGURED` | yes |
 | 6 | Referenced items exist (a link's endpoints must resolve) | `ERR_CAPTURE_UNKNOWN_ITEM` | yes |
 | 7 | Durable hourly cap, read from the `capture` table (survives restart) | `ERR_CAPTURE_RATE_LIMITED` | yes |
 | 8 | Pending cap, proposals only (`max_pending`; actions `action_max_pending`) | `ERR_CAPTURE_QUEUE_FULL` | yes |
@@ -106,7 +106,12 @@ Rules that follow from it:
 2. Owner only.
 3. `proposed` and not expired (`ERR_CAPTURE_EXPIRED`; TTL `action_ttl_hours`). The row is read once.
 4. Re-classify (`classifyActionType`) and re-check configured-ness — a `--model` revoke or policy
-   tightening since submit takes effect here.
+   tightening since submit takes effect here. 4b (Phase 9.7 B1): the destination again,
+   `actionDestinationVerdict` over the injected `actionDestinationRefusal` (the model door's
+   `messagingDestinationRefusal`, built in `ipc/capture-rpc.ts` `createActionDestinationRefusal`
+   and wired in `platform/assemble.ts`): a ChatOps binding added since submit, a broadcast mention
+   or a GitLab quick action → `ERR_CAPTURE_ACTION_REFUSED`, the row stays proposed. The KB
+   refusal is model-door-only.
 5. Atomic claim (CAS incl. the expiry predicate) → `executing`.
 6. Rebuild the action from the stored row.
 7. Execute via `ActDeps.execute`, built per accept by `buildActDeps` in `ipc/capture-rpc.ts`: a
@@ -137,8 +142,8 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-11-05: 160 HITL types, **30 proposable / 130 denied**, 0
-unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
+`ACTION_PROPOSABILITY` (as of 2026-11-05, Phase 9.7 B1: 160 HITL types, **34 proposable / 126 denied**,
+10 of them `not_yet_offered`, 0 unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
 `cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
 `chatops_confined` (I23/D17), `unroutable`, `not_yet_offered` (a routable connector write
 whose proposal waits for its B PR's preview template), `gateway_internal`.

@@ -3,16 +3,25 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { toStandardSchema } from "@mastra/core/schema";
+
 import {
   getModelWriteEnablement,
   setModelWriteEnablement,
   writesEnabledBy,
 } from "../connectors/connector-writes/enablement-store.ts";
-import { row, withPreview } from "../connectors/connector-writes/types.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
+import { createModelWriteToolSource } from "../connectors/connector-writes/model-write-source.ts";
+import { previewTemplateKeys, row, withPreview } from "../connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
+import { buildConnectorWriteAgentTools } from "../engine/connector-write-agent-tools.ts";
 import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
+import { serviceOf } from "../engine/service-of.ts";
 import { LocalIndex } from "../index/local-index.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import { ConnectorRpcError, dispatchConnectorRpc } from "./connector-rpc.ts";
 import {
@@ -95,9 +104,14 @@ describe("connector.writesEnable", () => {
     const p = prompts[0] ?? "";
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 3");
+    // B1 templates the comment write: it is the one row the owner approves now.
     for (const r of expected) {
-      expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  (not offered yet)`);
+      const tag = isModelOfferableRow(r) ? "(new: offered after you approve)" : "(not offered yet)";
+      expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  ${tag}`);
     }
+    expect(expected.filter(isModelOfferableRow).map((r) => r.toolId)).toEqual([
+      "github_issue_comment_create",
+    ]);
     expect(p).toContain("Each call will still ask you before it runs.");
   });
 
@@ -217,7 +231,11 @@ describe("connector.writesDisable and writesStatus", () => {
       writes: 2,
       offerable: 0,
     });
-    expect(s.services.find((x) => x.service === "github")).toMatchObject({ offerable: 0 });
+    // The approved enable covered the one offerable github write (B1's comment row).
+    expect(s.services.find((x) => x.service === "github")).toMatchObject({
+      offerable: 1,
+      awaitingApproval: 0,
+    });
     const locked = (await call("connector.writesStatus", {}, { policy: () => undefined })) as {
       policyAllows: boolean;
     };
@@ -315,5 +333,114 @@ describe("wiring", () => {
     );
     expect(src).toContain(".gate(");
     expect(src).not.toMatch(/\.execute\(/);
+  });
+});
+
+describe("re-consent on the real B1 rows (V84, Task 5)", () => {
+  type Status = {
+    services: Array<{ service: string; offerable: number; awaitingApproval: number }>;
+  };
+  const statusOf = async (service: string) => {
+    const s = (await call("connector.writesStatus", {})) as Status;
+    return s.services.find((x) => x.service === service);
+  };
+
+  /** The model door over the production source, with each real row listed by its template keys. */
+  async function doorTools(): Promise<string[]> {
+    const listing = (service: string): Record<string, unknown> => {
+      const out: Record<string, unknown> = {};
+      for (const r of CONNECTOR_WRITE_ROWS) {
+        if (serviceOf(r.actionType) !== service || r.preview === undefined) continue;
+        const properties: Record<string, Record<string, never>> = {};
+        for (const k of previewTemplateKeys(r.preview)) properties[k] = {};
+        out[mcpClientToolKey(service, r.toolId)] = {
+          description: r.toolId,
+          inputSchema: toStandardSchema({ type: "object", properties }),
+        };
+      }
+      return out;
+    };
+    const src = createModelWriteToolSource({
+      db,
+      enforcedPolicy: () => OPEN as unknown as EnforcedPolicy,
+      listServerTools: async (service) => listing(service),
+      toolsEpoch: () => 0,
+      warn: () => {},
+    });
+    const tools = await buildConnectorWriteAgentTools(
+      src,
+      () => ({ execute: async () => ({ status: "ok", result: {} }) }),
+      (_s, _t, d) => d,
+      new Set(),
+    );
+    return Object.keys(tools).sort((a, b) => a.localeCompare(b));
+  }
+
+  /** An executor that records the enable prompt's details (the payload it was shown). */
+  function recordingExecutor(seen: Array<Record<string, unknown> | undefined>): ToolExecutor {
+    return new ToolExecutor(
+      {
+        requestApproval: async (_p: string, details?: Record<string, unknown>) => {
+          seen.push(details);
+          return true;
+        },
+      },
+      localIndex,
+      { dispatch: async () => ({}) },
+      undefined,
+      NULL_EGRESS_SINK,
+      NO_POLICY_OVERLAY,
+    );
+  }
+
+  const statesOf = (d: Record<string, unknown> | undefined): Record<string, string> => {
+    const writes = (d?.["writes"] ?? []) as Array<{ toolId: string; state: string }>;
+    return Object.fromEntries(writes.map((w) => [w.toolId, w.state]));
+  };
+
+  test("Slack: an opt-in from before B1 offers nothing until the owner re-approves the two posts", async () => {
+    // Before B1 no Slack write was offerable, so the opt-in approved none (V84 approved set []).
+    setModelWriteEnablement(db, "slack", 2, 1, []);
+    expect(await statusOf("slack")).toMatchObject({ offerable: 0, awaitingApproval: 2 });
+    expect((await doorTools()).filter((n) => n.startsWith("slack__"))).toEqual([]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "slack", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(seen).toHaveLength(1);
+    expect(statesOf(seen[0])).toEqual({
+      slack_message_post: "newly_offerable",
+      slack_message_post_dm: "newly_offerable",
+    });
+    expect(await statusOf("slack")).toMatchObject({ offerable: 2, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("slack__"))).toEqual([
+      "slack__slack_message_post",
+      "slack__slack_message_post_dm",
+    ]);
+  });
+
+  test("GitHub: one write awaits approval (the comment); its other wave-2 rows are not offerable", async () => {
+    setModelWriteEnablement(db, "github", 2, 1, []);
+    expect(await statusOf("github")).toMatchObject({ offerable: 0, awaitingApproval: 1 });
+    expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "github", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(statesOf(seen[0])).toEqual({
+      github_issue_create: "not_offerable",
+      github_issue_comment_create: "newly_offerable",
+      github_issue_labels_add: "not_offerable",
+      github_issue_assignees_add: "not_offerable",
+      github_issue_state_set: "not_offerable",
+    });
+    expect(await statusOf("github")).toMatchObject({ offerable: 1, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("github__"))).toEqual([
+      "github__github_issue_comment_create",
+    ]);
   });
 });

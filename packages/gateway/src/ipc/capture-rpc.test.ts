@@ -2,22 +2,30 @@ import type { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 
 import { DEFAULT_MCP_SINK_CONFIG } from "../config/mcp-sink-toml.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  buildConnectorWritePreviewFrom,
+  renderConnectorWritePreviewLines,
+} from "../connectors/connector-writes/preview.ts";
 import { row, textField, withPreview } from "../connectors/connector-writes/types.ts";
+import { classifyActionType, proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
 import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
-import { formatActionConsent } from "../mcp-sink/capture-act.ts";
+import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import {
   buildActDeps,
   type CaptureActWiring,
   type CaptureRpcCtx,
+  createActionDestinationRefusal,
   dispatchCaptureRpc,
 } from "./capture-rpc.ts";
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
@@ -47,6 +55,7 @@ beforeEach(() => {
     refusals: new CaptureRefusalCounter(),
     newId: () => `cap_${String(++seq)}`,
     now: () => 1_000,
+    actionDestinationRefusal: () => undefined,
   };
   ctx = { gate };
 });
@@ -252,13 +261,14 @@ describe("buildActDeps (act door)", () => {
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
   test("the consent prompt is the provenance prompt, with UNREDACTED details", async () => {
+    // An untemplated proposable type (slack.message.post has a typed preview since B1).
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
-    await act.execute("slack.message.post", { token_hint: "visible", text: "hi" }, PROV);
+    await act.execute("github.issue.create", { token_hint: "visible", title: "hi" }, PROV);
     expect(prompts[0]?.prompt).toContain("Agent-proposed action");
     expect(prompts[0]?.details).toEqual({
-      actionType: "slack.message.post",
-      input: { token_hint: "visible", text: "hi" },
+      actionType: "github.issue.create",
+      input: { token_hint: "visible", title: "hi" },
     });
   });
   test("declined → rejected, nothing dispatched", async () => {
@@ -279,8 +289,9 @@ describe("buildActDeps (act door)", () => {
 });
 
 describe("buildActDeps: the typed preview for a templated proposable row (F5)", () => {
-  // SYNTHETIC: no real proposable row carries a template in B0a, so a loop over the real table
-  // would assert nothing. The type and tool are the real routing pair.
+  // SYNTHETIC rows through the `previewRows` seam (written in B0a, before any real proposable row
+  // had a template; the real B1 rows are covered at the end of this file). The type and tool are
+  // the real routing pair.
   const JIRA = withPreview(row("jira_issue_create", "jira.issue.create", "mesh", 2), {
     target: "{projectKey}",
     summary: "Create issue {summary}",
@@ -461,5 +472,253 @@ describe("captures.accept on an action (act door wiring)", () => {
     ).rejects.toMatchObject({ rpcData: { code: "ERR_CAPTURE_DISABLED" } });
     expect(d).toEqual([]);
     expect(c.gate.store.get("cap_act")?.state).toBe("proposed");
+  });
+});
+
+// ---------- B1 on the act door: the real table, real classifier, real destination check ----------
+
+/** The 11 proposable B1 types (slack.message.post routes to slack_message_post), with clean input. */
+const B1_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
+  ["slack.message.post", { channel: "C9999ZZZZ", text: "hi" }],
+  ["teams.message.post", { teamId: "t", channelId: "19:other@thread.tacv2", body: "hi" }],
+  ["teams.message.postChat", { chatId: "19:other@thread.v2", body: "hi" }],
+  ["discord.message.post", { channelId: "123456789012345678", content: "hi" }],
+  ["github.issue.comment.create", { owner: "o", repo: "r", issueNumber: 42, body: "LGTM" }],
+  ["gitlab.issue.note.create", { projectPath: "g/r", issueIid: 7, body: "note" }],
+  ["gitlab.mr.note.create", { projectPath: "g/r", mergeRequestIid: 9, body: "note" }],
+  ["jira.comment.add", { issueKey: "NIM-1", body: "comment" }],
+  ["linear.comment.create", { issueId: "u", body: "comment" }],
+  ["notion.comment.create", { pageId: "ffff", text: "comment" }],
+  ["confluence.comment.add", { pageId: "123", storageHtml: "<p>c</p>" }],
+];
+
+const REAL_CLASSIFY = {
+  modelAccessServices: (): ReadonlySet<string> => new Set<string>(),
+  userMcpModelAccessAllowed: () => false,
+};
+
+function boundPolicy(channels: readonly string[]): EnforcedPolicy {
+  return {
+    capabilitiesDisabled: new Set<string>(),
+    chatops: {
+      channels: new Map(
+        channels.map((c) => [c, { namespace: "ns", unmapped: "refuse", notify: [] }]),
+      ),
+      ownership: new Map(),
+    },
+  } as unknown as EnforcedPolicy;
+}
+
+describe("B1 act door: every proposable B1 type shows its typed preview (Task 4)", () => {
+  const PROV = {
+    captureId: "cap_b1",
+    clientLabel: "agent",
+    createdAt: 0,
+    expiresAt: 1,
+    summary: "why",
+  };
+
+  function wiring(dispatched: PlannedAction[]) {
+    const prompts: Array<{ prompt: string; details: Record<string, unknown> }> = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
+        prompts.push({ prompt: req.prompt, details: req.details ?? {} });
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const w: CaptureActWiring = {
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({});
+        },
+      },
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl: NO_POLICY_OVERLAY,
+    };
+    return { act: buildActDeps(w, coord, "c-cli"), prompts };
+  }
+
+  test("the B1 list is exactly the proposable B1 types", () => {
+    expect(B1_PROPOSABLE).toHaveLength(11);
+    for (const [t] of B1_PROPOSABLE) {
+      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    }
+  });
+
+  for (const [type, input] of B1_PROPOSABLE) {
+    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+      const d: PlannedAction[] = [];
+      const { act, prompts } = wiring(d);
+      await act.execute(type, input, PROV);
+      const toolId = proposableWriteTool(type);
+      if (toolId === undefined) throw new Error(type);
+      const preview = buildConnectorWritePreviewFrom(
+        { type, payload: { mcpToolId: toolId, input } },
+        CONNECTOR_WRITE_ROWS,
+      );
+      if (preview === undefined) throw new Error(`no preview for ${type}`);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.prompt).toBe(
+        [
+          ...formatActionProvenanceLines(PROV),
+          "",
+          ...renderConnectorWritePreviewLines(preview),
+        ].join("\n"),
+      );
+      expect(prompts[0]?.details["kind"]).toBe("connector-write");
+      expect(prompts[0]?.details["proposedBy"]).toBeDefined();
+      // The act door runs no before-read (model door only).
+      expect(prompts[0]?.details["before"]).toBeUndefined();
+      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+    });
+  }
+});
+
+describe("B1 act door: the destination refusal, real messagingDestinationRefusal (Task 4b, OR1/OR2)", () => {
+  const MCP = { clientId: "m", kind: "mcp" as const };
+  const OWNER = { clientId: "o", kind: "cli" as const };
+  let policy: EnforcedPolicy | undefined;
+
+  function actCtx(dispatched: PlannedAction[]): CaptureRpcCtx {
+    const gate: CaptureGateDeps = {
+      ...ctx.gate,
+      capability: () =>
+        resolveCaptureCapability(
+          {
+            ok: true,
+            config: { ...DEFAULT_MCP_SINK_CONFIG, enabled: true, kinds: ["note", "action"] },
+          },
+          { capabilitiesDisabled: new Set() },
+        ),
+      classifyAction: (t) => classifyActionType(t, REAL_CLASSIFY),
+      isServiceConfigured: () => Promise.resolve(true),
+      actionDestinationRefusal: createActionDestinationRefusal(() => policy),
+    };
+    return {
+      gate,
+      act: {
+        dispatcher: {
+          dispatch: (a) => {
+            dispatched.push(a);
+            return Promise.resolve({});
+          },
+        },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+      },
+    };
+  }
+
+  async function submit(c: CaptureRpcCtx, actionType: string, input: Record<string, unknown>) {
+    return await dispatchCaptureRpc(
+      "capture.submit",
+      { kind: "action", payload: { actionType, input, summary: "why" } },
+      c,
+      MCP,
+    );
+  }
+
+  async function refusedCode(p: Promise<unknown>): Promise<unknown> {
+    try {
+      await p;
+    } catch (e) {
+      return (e as RpcMethodError).rpcData;
+    }
+    return "queued";
+  }
+
+  const REFUSED: ReadonlyArray<[string, Record<string, unknown>]> = [
+    // ChatOps channels (OR2).
+    ["slack.message.post", { channel: "C0123ABCD", text: "hi" }],
+    ["slack.message.post", { channel: "#general", text: "hi" }],
+    ["teams.message.post", { teamId: "t", channelId: "19%3Aabc%40thread.tacv2", body: "hi" }],
+    ["teams.message.postChat", { chatId: "19:other@thread.v2", body: "hi" }],
+    // Broadcast mentions (OR1), to destinations ChatOps does not bind.
+    ["slack.message.post", { channel: "C9999ZZZZ", text: "hi <!here>" }],
+    [
+      "github.issue.comment.create",
+      { owner: "o", repo: "r", issueNumber: 1, body: "cc @org/team" },
+    ],
+    ["gitlab.mr.note.create", { projectPath: "g/r", mergeRequestIid: 9, body: "@all" }],
+    // A GitLab quick action.
+    ["gitlab.issue.note.create", { projectPath: "g/r", issueIid: 7, body: "done\n/close" }],
+  ];
+
+  test("each is refused at submit with ERR_CAPTURE_ACTION_REFUSED; nothing is queued", async () => {
+    // Slack C0123ABCD, the Teams thread, and a bound personal (a:) conversation.
+    policy = boundPolicy(["C0123ABCD", "19:abc@thread.tacv2", "a:1botPERSONAL"]);
+    const c = actCtx([]);
+    for (const [type, input] of REFUSED) {
+      expect(await refusedCode(submit(c, type, input)), `${type} ${JSON.stringify(input)}`).toEqual(
+        { code: "ERR_CAPTURE_ACTION_REFUSED" },
+      );
+    }
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+  });
+
+  test("positive controls are queued; a Notion comment on the KB page is NOT refused here (KB is model-door-only)", async () => {
+    policy = boundPolicy(["C0123ABCD"]);
+    const c = actCtx([]);
+    for (const [type, input] of [
+      ["slack.message.post", { channel: "C9999ZZZZ", text: "thanks <@U1>" }],
+      ["gitlab.mr.note.create", { projectPath: "g/r", mergeRequestIid: 9, body: "and/or @alice" }],
+      ["notion.comment.create", { pageId: "1a2b3c4d5e6f7a8b9c0d112233445566", text: "x" }],
+    ] as const) {
+      const out = await submit(c, type, input);
+      expect(out.kind, type).toBe("hit");
+      expect((out as { value: { state: string } }).value.state, type).toBe("proposed");
+    }
+  });
+
+  test("an unreadable policy refuses every Slack/Teams proposal; other services are unaffected", async () => {
+    policy = undefined;
+    const c = actCtx([]);
+    for (const [type, input] of B1_PROPOSABLE) {
+      const got = await refusedCode(submit(c, type, input));
+      if (type.startsWith("slack.") || type.startsWith("teams.")) {
+        expect(got, type).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
+      } else {
+        expect(got, type).toBe("queued");
+      }
+    }
+    // A throwing policy accessor is the same as an unreadable one.
+    const throwing = createActionDestinationRefusal(() => {
+      throw new Error("policy");
+    });
+    expect(throwing("slack.message.post", { channel: "C9999ZZZZ", text: "hi" })).toBeDefined();
+    // A user-MCP type has no routing row, so no messaging destination: allowed here.
+    expect(throwing("mcp_echo.echo", { text: "<!here>" })).toBeUndefined();
+  });
+
+  test("a ChatOps binding added between submit and accept is caught at accept: refused, row stays proposed, nothing dispatched", async () => {
+    policy = boundPolicy([]);
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const sub = await submit(c, "slack.message.post", { channel: "C0123ABCD", text: "hi" });
+    if (sub.kind !== "hit") throw new Error("submit missed");
+    const id = (sub.value as { id: string }).id;
+    policy = boundPolicy(["C0123ABCD"]);
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    let rpcData: unknown;
+    try {
+      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
+    } catch (e) {
+      rpcData = (e as RpcMethodError).rpcData;
+    }
+    expect(rpcData).toEqual({ code: "ERR_CAPTURE_ACTION_REFUSED" });
+    expect(c.gate.store.get(id)?.state).toBe("proposed");
+    expect(d).toEqual([]);
+  });
+
+  test("a not_yet_offered type is still refused at submit as not proposable", async () => {
+    policy = boundPolicy([]);
+    expect(
+      await refusedCode(submit(actCtx([]), "jira.issue.transition", { issueKey: "NIM-1" })),
+    ).toEqual({ code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE" });
   });
 });

@@ -1,18 +1,28 @@
 // packages/gateway/src/connectors/connector-writes/model-write-refusals.ts
-// The door's destination refusals for the model's connector writes (Phase 9.7 B, rulings F3/F4):
-// the model may not post to a channel Nimbus ChatOps listens on, and may not write to the Nimbus
-// knowledge base (the tribal-capture destination; its own gate is the only writer, I25). Pure: the
-// ChatOps bindings and the KB config are passed in, and nothing here reaches the network, so a
-// destination that cannot be PROVEN distinct from a configured one is refused (fail closed).
+// The door's destination refusals for the model's connector writes (Phase 9.7 B, rulings F3/F4 and
+// the owner's 2026-11-05 rulings OR1/OR2): the model may not post to a channel Nimbus ChatOps
+// listens on, may not post a message or comment that notifies a whole channel, group or team (a
+// broadcast mention), and may not write to the Nimbus knowledge base (the tribal-capture
+// destination; its own gate is the only writer, I25). Pure: the ChatOps bindings and the KB config
+// are passed in, and nothing here reaches the network, so a destination that cannot be PROVEN
+// distinct from a configured one is refused (fail closed).
+//
+// `messagingDestinationRefusal` (ChatOps + broadcast) is the ONE function both the model door and
+// the MCP act door call; the KB refusal is model-door-only (`modelWriteRefusal`).
 //
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
+import { FORMAT_INVISIBLE_RANGES } from "../../util/invisible-text.ts";
 
 export const CHATOPS_CHANNEL_REFUSAL =
   "the model cannot post to a channel Nimbus ChatOps listens on";
 export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
+export const BROADCAST_MENTION_REFUSAL =
+  "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
+export const GITLAB_QUICK_ACTION_REFUSAL =
+  "GitLab quick actions (lines starting with /) are not allowed in a model-written note; rephrase without them";
 
 /** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
 export interface TribalKbConfig {
@@ -49,19 +59,37 @@ function ownLookup<T>(table: Readonly<Record<string, T>>, key: string): T | unde
   return Object.hasOwn(table, key) ? table[key] : undefined;
 }
 
+/** A character that renders as nothing (`util/invisible-text.ts`) or a C0/C1 control. */
+function isInvisibleOrControl(cp: number): boolean {
+  return cp <= 0x1f || FORMAT_INVISIBLE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
+}
+
+/** `s` with every invisible or control character replaced by `replacement`. */
+function replaceInvisible(s: string, replacement: string): string {
+  let out = "";
+  for (const ch of s) out += isInvisibleOrControl(ch.codePointAt(0) ?? 0) ? replacement : ch;
+  return out;
+}
+
+/** NFKC (fullwidth forms fold to ASCII), then every invisible or control character deleted. */
+function foldAndStrip(s: string): string {
+  return replaceInvisible(s.normalize("NFKC"), "");
+}
+
 /**
- * A destination as ChatOps would key it: trimmed, percent-decoded, one leading `#` removed, and
- * (for a Teams conversation) the `;messageid=…` suffix dropped. `undefined` when it does not
- * decode. Case is kept here so the id-shape tests below can tell an id from a name.
+ * A destination as ChatOps would key it: folded (NFKC, invisible and control characters
+ * removed), trimmed, percent-decoded and folded again, one leading `#` removed, and (for a Teams
+ * conversation) the `;messageid=…` suffix dropped. `undefined` when it does not decode. Case is
+ * kept here so the id-shape tests below can tell an id from a name.
  */
 function canonicalDestination(raw: string): string | undefined {
-  let s = raw.trim();
+  let s = foldAndStrip(raw).trim();
   try {
     s = decodeURIComponent(s);
   } catch {
     return undefined;
   }
-  s = s.trim();
+  s = foldAndStrip(s).trim();
   if (s.startsWith("#")) s = s.slice(1).trim();
   const semi = s.indexOf(";");
   if (semi !== -1) s = s.slice(0, semi);
@@ -156,7 +184,7 @@ function canonicalNotionId(s: string): string {
 /** F4 (Notion): any KB-capable key naming the KB database (a non-string value is refused). */
 function refusesNotion(
   toolId: string,
-  input: Record<string, unknown>,
+  input: Readonly<Record<string, unknown>>,
   kb: TribalKbConfig,
 ): boolean {
   const keys = ownLookup(NOTION_KB_KEYS, toolId);
@@ -176,7 +204,7 @@ const CANONICAL_PAGE_ID = /^[1-9][0-9]*$/;
 /** F4 (Confluence): a KB-capable key naming the KB parent page, compared as trimmed strings. */
 function refusesConfluence(
   toolId: string,
-  input: Record<string, unknown>,
+  input: Readonly<Record<string, unknown>>,
   kb: TribalKbConfig,
 ): boolean {
   const keys = ownLookup(CONFLUENCE_KB_KEYS, toolId);
@@ -204,24 +232,310 @@ export function isChatopsDestinationRow(toolId: string): boolean {
   return toolId === SLACK_DM_ROW || ownLookup(CHATOPS_POST_ROWS, toolId) !== undefined;
 }
 
-/** The fixed refusal for a model write to `toolId` with `input`, or `undefined` to allow it. */
-export function modelWriteRefusal(
+/**
+ * Whether `toolId` is a Notion or Confluence row whose input can name a knowledge-base page or
+ * database (it is checked by the F4 refusal). Read-only; the completeness test reads it so a new
+ * model-offerable Notion/Confluence row cannot be offered without coverage.
+ */
+export function isKnowledgeBaseCapableRow(toolId: string): boolean {
+  return (
+    ownLookup(NOTION_KB_KEYS, toolId) !== undefined ||
+    ownLookup(CONFLUENCE_KB_KEYS, toolId) !== undefined
+  );
+}
+
+// ---------------------------------------------------------------------------------------------
+// OR1: broadcast mentions. A post or comment whose text would notify a whole channel, group or
+// team is refused. Matching runs on a NORMALISED copy (never on what is sent or shown):
+//
+//  1. In a loop until the text is stable (at most BROADCAST_MAX_ROUNDS rounds; still changing
+//     after that is refused, fail closed): Unicode NFKC (fullwidth `@ ! < &` fold to ASCII), then
+//     every FORMAT_INVISIBLE_RANGES character and C0/C1 control removed, then ONE pass of HTML
+//     entity decoding (`&lt; &gt; &amp; &quot; &apos; &nbsp;`, decimal `&#NN;`, hex `&#xNN;`, the
+//     `;` optional). The order is per round, and the loop repeats it, so an entity spelled with a
+//     fullwidth ampersand or with an invisible character inside it still decodes.
+//  2. Whitespace runs collapse to one space; the text is lower-cased.
+//
+// Removing an invisible character can JOIN two words (`@all` + U+200B + `x` reads `@allx`), which
+// would hide a mention a platform ends at that character, so the whole pass runs twice: once with
+// those characters deleted and once with each replaced by a space. Either form matching refuses.
+// TAB, LF, CR, VT and FF are whitespace in both forms. An `html` body is matched a third time with
+// its tags removed. Decoding, folding and the extra forms can only ADD matches (fail closed).
+//
+// Scanned per row (a non-string value in the scanned field is refused):
+//  - Slack `text`: any `<!` special token except `<!date^...>` (`<!channel>`, `<!here>`,
+//    `<!everyone>`, `<!subteam^ID>` and their `|label` forms), and the plain words `@channel`,
+//    `@here`, `@everyone` (the connector sends no `link_names`, so plain words should not notify;
+//    refusing them costs nothing and does not depend on a Slack default). Allowed: `<@U123>`,
+//    `<#C123>`, `@alice`.
+//  - GitHub `body`: a team, `@org/team`. Bound: a bare `@name` is a user or an organisation and is
+//    not caught (an organisation mention notifies no members); a team can only be named in the
+//    slash form.
+//  - GitLab `body`: `@all`, and any slash path `@group/sub[/...]` (a subgroup or project, never a
+//    user). Bound: `@<top-level-group>` notifies every member but cannot be told from
+//    `@<username>` without a lookup (they share one namespace), so it is NOT caught.
+//  - Teams `body`: any `<at` tag (`<at>`, `<at id=...>`, `<at/>`), plus the plain words
+//    `@channel`, `@team`, `@everyone`. The 0.4.0 tool takes no `mentions` array, and Graph
+//    notifies only for an `<at id>` that has a `mentions` entry, so no Teams broadcast is
+//    reachable through it today; this is defence in depth. Bound: a connector version that adds a
+//    `mentions` input changes the schema the template is checked against, and this rule must be
+//    revisited then.
+//  - Code spans are scanned too (fail closed): GitHub and GitLab do not notify inside backticks,
+//    but telling code apart needs a markdown parser, and a refused model can rephrase.
+// Not scanned: Discord (the connector sends `allowed_mentions: { parse: ["users"] }`, pinned by
+// `discord-mentions.sync.test.ts`), Jira (plain text in one ADF text node: no mention node can
+// exist), Linear, Notion and Confluence (no broadcast mention form in their comment APIs as this
+// connector calls them).
+// ---------------------------------------------------------------------------------------------
+
+export type BroadcastService = "slack" | "teams" | "github" | "gitlab";
+
+/** The rounds of fold + strip + decode before the text must be stable. */
+const BROADCAST_MAX_ROUNDS = 4;
+
+const NAMED_ENTITIES: Readonly<Record<string, string>> = {
+  lt: "<",
+  gt: ">",
+  amp: "&",
+  quot: '"',
+  apos: "'",
+  nbsp: String.fromCodePoint(0xa0),
+};
+
+const ENTITY = /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi;
+
+/** One pass of HTML entity decoding; an unknown name or an invalid code point is left as is. */
+function decodeEntitiesOnce(s: string): string {
+  return s.replace(ENTITY, (m: string, hex?: string, dec?: string, name?: string) => {
+    if (name !== undefined) return ownLookup(NAMED_ENTITIES, name.toLowerCase()) ?? m;
+    const cp = hex === undefined ? Number.parseInt(dec ?? "", 10) : Number.parseInt(hex, 16);
+    const valid = Number.isInteger(cp) && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff);
+    return valid ? String.fromCodePoint(cp) : m;
+  });
+}
+
+/** TAB, LF, VT, FF and CR: whitespace in both forms, never deleted. */
+function isLineSpace(cp: number): boolean {
+  return cp >= 0x09 && cp <= 0x0d;
+}
+
+/**
+ * A line break for the line-preserving form: LF, CR, VT, FF, NEL, and the Unicode line and
+ * paragraph separators (counted as breaks whether or not a platform splits on them: fail closed).
+ */
+function isLineBreak(cp: number): boolean {
+  return (cp >= 0x0a && cp <= 0x0d) || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
+}
+
+/**
+ * One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. With
+ * `keepLines`, every line break becomes LF (a TAB a space); without it, TAB to CR are spaces.
+ */
+function normaliseRound(s: string, invisible: string, keepLines: boolean): string {
+  let out = "";
+  for (const ch of s.normalize("NFKC")) {
+    const cp = ch.codePointAt(0) ?? 0;
+    if (keepLines && isLineBreak(cp)) out += "\n";
+    else if (isLineSpace(cp)) out += " ";
+    else out += isInvisibleOrControl(cp) ? invisible : ch;
+  }
+  return decodeEntitiesOnce(out);
+}
+
+/**
+ * The stable, lower-cased form, or `undefined` when it does not settle (refused). Whitespace runs
+ * collapse to one space, unless `keepLines`, which keeps one LF per line break.
+ */
+function settle(text: string, invisible: string, keepLines = false): string | undefined {
+  let cur = text;
+  for (let i = 0; i < BROADCAST_MAX_ROUNDS; i++) {
+    const next = normaliseRound(cur, invisible, keepLines);
+    if (next === cur) {
+      return (keepLines ? cur : cur.replaceAll(/\s+/g, " ")).toLowerCase();
+    }
+    cur = next;
+  }
+  return undefined;
+}
+
+// A plain-word mention ends where the name does: a name may contain `.` but never ends in one
+// (GitLab's own reference pattern), so `@all.` at the end of a sentence still means `@all`, while
+// `@all.x`, `@allison` and `a@here.com` name something else. Hence `(?!\.*[a-z0-9_-])`, not a
+// lookahead that stops at the first `.`.
+const SLACK_SPECIAL = /<!(?!date\^)/;
+const SLACK_WORDS = /@(?:channel|here|everyone)(?!\.*[a-z0-9_-])/;
+const GITHUB_TEAM = /@[a-z0-9][a-z0-9-]*\/[a-z0-9_.-]+/;
+const GITLAB_ALL = /@all(?!\.*[a-z0-9_-])/;
+const GITLAB_PATH = /@[a-z0-9_][a-z0-9_.-]*\/[a-z0-9_.-]+/;
+const TEAMS_AT_TAG = /<at[\s>/]/;
+const TEAMS_WORDS = /@(?:channel|team|everyone)(?!\.*[a-z0-9_-])/;
+
+const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
+  slack: [SLACK_SPECIAL, SLACK_WORDS],
+  github: [GITHUB_TEAM],
+  gitlab: [GITLAB_ALL, GITLAB_PATH],
+  teams: [TEAMS_AT_TAG, TEAMS_WORDS],
+};
+
+/**
+ * The tag-stripped forms a broadcast scan also matches (never rendered or sent anywhere). Each
+ * `tag` pattern is applied until the text stops changing and every pass is kept, so a tag split
+ * by another tag is seen whole before a later pass removes it. Two tokenisations: innermost-first
+ * (`<[^<>]*>`) and greedy (`<[^>]*>`, where `<x<y>` is one tag).
+ */
+const TAG_PATTERNS: readonly RegExp[] = [/<[^<>]*>/g, /<[^>]*>/g];
+
+function tagStrippedForms(text: string): string[] {
+  const out: string[] = [];
+  for (const tag of TAG_PATTERNS) {
+    let prev = text;
+    for (;;) {
+      const next = prev.replaceAll(tag, "");
+      if (next === prev) break;
+      out.push(next);
+      prev = next;
+    }
+  }
+  return out;
+}
+
+/**
+ * OR1: whether `text`, posted to `service`, carries a broadcast mention (see the table above).
+ * Pure; `true` also when the text does not settle within {@link BROADCAST_MAX_ROUNDS} rounds.
+ */
+export function broadcastMentionIn(
+  service: BroadcastService,
+  text: string,
+  opts: { readonly html: boolean },
+): boolean {
+  // The text as sent, too: NFKC can turn a name-ending character (a fullwidth letter) into a
+  // name character, so `@all` + U+FF58 folds to `@allx` while a parser may still read `@all`.
+  const forms: string[] = [text.toLowerCase()];
+  for (const invisible of ["", " "]) {
+    const settled = settle(text, invisible);
+    if (settled === undefined) return true;
+    forms.push(settled);
+    if (opts.html) forms.push(...tagStrippedForms(settled));
+  }
+  const rules = BROADCAST_RULES[service];
+  return forms.some((f) => rules.some((re) => re.test(f)));
+}
+
+interface BroadcastScan {
+  readonly service: BroadcastService;
+  /** The input key holding the message or comment text. */
+  readonly key: string;
+  /** Whether the input marks the text as HTML. */
+  readonly htmlWhen?: (input: Readonly<Record<string, unknown>>) => boolean;
+}
+
+const teamsHtml = (input: Readonly<Record<string, unknown>>): boolean =>
+  input["contentType"] === "html";
+
+/** The rows whose text the broadcast rule scans, and which field. */
+const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
+  slack_message_post: { service: "slack", key: "text" },
+  slack_message_post_dm: { service: "slack", key: "text" },
+  teams_message_post: { service: "teams", key: "body", htmlWhen: teamsHtml },
+  teams_message_post_chat: { service: "teams", key: "body", htmlWhen: teamsHtml },
+  github_issue_comment_create: { service: "github", key: "body" },
+  gitlab_issue_note_create: { service: "gitlab", key: "body" },
+  gitlab_mr_note_create: { service: "gitlab", key: "body" },
+};
+
+/** OR1 for one row: its scanned field carries a broadcast mention (a non-string one is refused). */
+function refusesBroadcast(toolId: string, input: Readonly<Record<string, unknown>>): boolean {
+  const scan = ownLookup(BROADCAST_SCANNED, toolId);
+  if (scan === undefined) return false;
+  const text = Object.hasOwn(input, scan.key) ? input[scan.key] : undefined;
+  if (typeof text !== "string") return true;
+  return broadcastMentionIn(scan.service, text, { html: scan.htmlWhen?.(input) ?? false });
+}
+
+// ---------------------------------------------------------------------------------------------
+// GitLab quick actions (coordinator ruling 2026-11-05, recorded for the owner): GitLab runs
+// `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body, so a model-written
+// note could change the issue or merge request's state. A GitLab note is refused when any line of
+// its body, normalised as for broadcast mentions but keeping its line breaks (both the deleted and
+// the spaced form), begins with optional whitespace, then `/`, then a letter. A fenced code block
+// does NOT exempt it (fail closed). `and/or` or a URL mid-line is not a quick action.
+// ---------------------------------------------------------------------------------------------
+
+const QUICK_ACTION_LINE = /^\s*\/[a-z]/;
+
+/** Whether a GitLab note body carries a quick-action line (or does not settle: refused). */
+export function gitlabQuickActionIn(text: string): boolean {
+  for (const invisible of ["", " "]) {
+    const settled = settle(text, invisible, true);
+    if (settled === undefined) return true;
+    if (settled.split("\n").some((line) => QUICK_ACTION_LINE.test(line))) return true;
+  }
+  return false;
+}
+
+/** The GitLab note rows and the input key holding the note body. */
+const GITLAB_NOTE_ROWS: Readonly<Record<string, string>> = {
+  gitlab_issue_note_create: "body",
+  gitlab_mr_note_create: "body",
+};
+
+/** A GitLab note whose body runs a quick action (a non-string body is refused). */
+function refusesGitlabQuickAction(
   toolId: string,
-  input: Record<string, unknown>,
-  ctx: RefusalContext,
+  input: Readonly<Record<string, unknown>>,
+): boolean {
+  const key = ownLookup(GITLAB_NOTE_ROWS, toolId);
+  if (key === undefined) return false;
+  const body = Object.hasOwn(input, key) ? input[key] : undefined;
+  return typeof body !== "string" || gitlabQuickActionIn(body);
+}
+
+/** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
+function chatopsRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  chatops: ChatopsPolicy | undefined,
 ): string | undefined {
   if (toolId === SLACK_DM_ROW) {
-    if (ctx.chatops === undefined) return CHATOPS_CHANNEL_REFUSAL;
-    return refusesSlackDm(ctx.chatops) ? CHATOPS_CHANNEL_REFUSAL : undefined;
+    if (chatops === undefined) return CHATOPS_CHANNEL_REFUSAL;
+    return refusesSlackDm(chatops) ? CHATOPS_CHANNEL_REFUSAL : undefined;
   }
   const post = ownLookup(CHATOPS_POST_ROWS, toolId);
-  if (post !== undefined) {
-    // No readable policy: the ChatOps channels cannot be ruled out.
-    if (ctx.chatops === undefined) return CHATOPS_CHANNEL_REFUSAL;
-    return refusesChatopsPost(ctx.chatops, post.platform, input[post.key])
-      ? CHATOPS_CHANNEL_REFUSAL
-      : undefined;
-  }
+  if (post === undefined) return undefined;
+  // No readable policy: the ChatOps channels cannot be ruled out.
+  if (chatops === undefined) return CHATOPS_CHANNEL_REFUSAL;
+  const dest = Object.hasOwn(input, post.key) ? input[post.key] : undefined;
+  return refusesChatopsPost(chatops, post.platform, dest) ? CHATOPS_CHANNEL_REFUSAL : undefined;
+}
+
+/**
+ * The ONE messaging-destination check both doors call (OR1 + OR2): the ChatOps channel first
+ * (so a post to a ChatOps channel that also carries a mention reports the ChatOps reason), then
+ * the broadcast mention, then a GitLab quick action. A fixed text that echoes nothing of the
+ * input, or `undefined`.
+ */
+export function messagingDestinationRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: { readonly chatops: ChatopsPolicy | undefined },
+): string | undefined {
+  const chatops = chatopsRefusal(toolId, input, ctx.chatops);
+  if (chatops !== undefined) return chatops;
+  if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
+  return refusesGitlabQuickAction(toolId, input) ? GITLAB_QUICK_ACTION_REFUSAL : undefined;
+}
+
+/**
+ * The fixed refusal for a MODEL write to `toolId` with `input`, or `undefined` to allow it: the
+ * messaging check, then the knowledge-base check (model door only).
+ */
+export function modelWriteRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  ctx: RefusalContext,
+): string | undefined {
+  const messaging = messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });
+  if (messaging !== undefined) return messaging;
   if (ctx.kb === undefined) return undefined;
   if (refusesNotion(toolId, input, ctx.kb) || refusesConfluence(toolId, input, ctx.kb)) {
     return KNOWLEDGE_BASE_REFUSAL;

@@ -13,8 +13,9 @@
  * offerable now) AND the generation of the slot hosting THIS service still equals the one read
  * right after its listing — a restarted server must be re-listed and re-drift-checked, while
  * unrelated mesh activity changes nothing — else a fixed refusal and nothing dispatched; (3) the
- * input is a plain object; (4) the source's `refusal` hook (a ChatOps channel, the knowledge base)
- * returns nothing, else its fixed text (a throw: a generic one). Only then the executor runs it.
+ * input is a plain object; (4) the source's `refusal` hook (a ChatOps channel, a broadcast mention,
+ * a GitLab quick action, the knowledge base) returns nothing, else its fixed text (a throw: a
+ * generic one). Only then the executor runs it.
  *
  * Offer-time checks: the name fits `[A-Za-z0-9_-]{1,64}` (never truncated) and is not taken; the
  * listing carries the row's own key `mcpClientToolKey(service, toolId)`, which becomes
@@ -68,8 +69,8 @@ export interface ConnectorWriteToolSource {
   recheck(row: ConnectorWriteRow): boolean;
   /**
    * Per-call, after the plain-object input check and before the executor: a fixed refusal text for
-   * a destination the model may never write to (a ChatOps channel, the knowledge base), or
-   * `undefined` to allow. Synchronous; a throw counts as a refusal.
+   * a destination the model may never write to (a ChatOps channel, a broadcast mention, a GitLab
+   * quick action, the knowledge base), or `undefined` to allow. Synchronous; a throw counts as a refusal.
    */
   refusal?(row: ConnectorWriteRow, input: Record<string, unknown>): string | undefined;
   warn(bindings: Record<string, unknown>, msg: string): void;

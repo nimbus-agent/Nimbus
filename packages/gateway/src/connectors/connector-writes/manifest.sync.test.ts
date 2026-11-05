@@ -21,6 +21,80 @@ const gateConfined = (id: string): boolean =>
 const manifestIds = new Set(CONNECTOR_WRITE_MANIFEST.map((e) => e.toolId));
 const rowIds = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
 
+/**
+ * The text of `const <name> = ...;` in `code`, ended at the first `;` outside brackets, or
+ * `undefined` when `code` declares no such const.
+ */
+function constStatement(code: string, name: string): string | undefined {
+  const m = new RegExp(String.raw`\bconst\s+${name}\s*=`).exec(code);
+  if (m === null) return undefined;
+  let depth = 0;
+  for (let i = m.index; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === ";" && depth === 0) return code.slice(m.index, i + 1);
+  }
+  return code.slice(m.index);
+}
+
+/** The top-level arguments of a call's `( ... )` text, split outside strings and brackets. */
+function topLevelArgs(call: string): string[] {
+  const inner = call.slice(1, -1);
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | undefined;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote !== undefined) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = undefined;
+    } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(inner.slice(start).trim());
+  return out;
+}
+
+/** An argument (or const right-hand side) that names a schema: `X` or `X.extend(...)`. */
+const SCHEMA_REF = /^([A-Za-z_$][\w$]*)\s*(?:\.extend\s*\(|$)/;
+
+/** A const statement whose value is a zod schema: `z.<...>` or `<const>.extend(...)`. */
+function schemaConstBase(statement: string): { readonly base?: string } | undefined {
+  const rhs = statement.slice(statement.indexOf("=") + 1).trim();
+  if (/^z\s*\./.test(rhs)) return {};
+  const m = /^([A-Za-z_$][\w$]*)\s*\.extend\s*\(/.exec(rhs);
+  return m?.[1] === undefined ? undefined : { base: m[1] };
+}
+
+/**
+ * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
+ * `schema.extend({...})`) and that const's `.extend(` base chain. Nothing else the call names is
+ * followed: a key that appears only in some other local const is not the tool's input.
+ */
+function withSchemaArgumentDeclarations(code: string, call: string): string {
+  const parts = [call];
+  const seen = new Set<string>();
+  for (const arg of topLevelArgs(call)) {
+    let name = SCHEMA_REF.exec(arg)?.[1];
+    while (name !== undefined && !seen.has(name) && seen.size < 20) {
+      seen.add(name);
+      const statement = constStatement(code, name);
+      const schema = statement === undefined ? undefined : schemaConstBase(statement);
+      if (statement === undefined || schema === undefined) break;
+      parts.push(statement);
+      name = schema.base;
+    }
+  }
+  return parts.join("\n");
+}
+
 describe("connector write manifest", () => {
   test("the committed manifest is what the generator produces from the installed package", () => {
     const committed = readFileSync(MANIFEST_PATH, "utf8").replaceAll("\r\n", "\n");
@@ -105,9 +179,14 @@ describe("connector write manifest", () => {
       // A tool registered through a local helper (Monte Carlo, Bigeye) declares its input schema in
       // the helper's body, which the forwarding call's span does not contain; for those the file is
       // the narrowest region available. Every other tool is checked against its own call only.
-      const call = reg.tags.includes("forwarder")
+      const own = reg.tags.includes("forwarder")
         ? fileCode
         : fileCode.slice(reg.span[0], reg.span[1] + 1);
+      // A tool whose input schema is a local const (`slackMessagePostSchema`, or a `.extend` of
+      // one) declares its keys in that const's statement, outside the call: follow it alone.
+      const call = reg.tags.includes("forwarder")
+        ? own
+        : withSchemaArgumentDeclarations(fileCode, own);
       return templateKeys(r, extra)
         .filter((k) => !call.includes(`${k}:`))
         .map((k) => `${r.toolId}: ${k}`);
@@ -127,5 +206,36 @@ describe("connector write manifest", () => {
 
   test("the manifest's size is plausible", () => {
     expect(CONNECTOR_WRITE_MANIFEST.length).toBeGreaterThanOrEqual(80);
+  });
+
+  test("guard: only the schema argument and its .extend chain are followed", () => {
+    const code = [
+      "const baseSchema = z.object({ owner: z.string() });",
+      "const postSchema = baseSchema.extend({ body: z.string() });",
+      "const unrelated = { secretKey: 1, title: 2 };",
+      "const helper = (p) => ({ path: p });",
+      'reg("t", "Post a, b (c)", postSchema, async (parsed) => unrelated);',
+    ].join("\n");
+    const callAt = code.indexOf('reg("t"') + 3;
+    const call = code.slice(callAt, code.lastIndexOf(")") + 1);
+    const followed = withSchemaArgumentDeclarations(code, call);
+    expect(followed).toContain("body:");
+    expect(followed).toContain("owner:");
+    // A key present only in an unrelated local const is NOT the tool's input: it is reported.
+    expect(followed).not.toContain("secretKey:");
+    expect(followed).not.toContain("title:");
+    expect(topLevelArgs('("a, b", { x: [1, 2] }, s, (p) => f(p, q))')).toEqual([
+      '"a, b"',
+      "{ x: [1, 2] }",
+      "s",
+      "(p) => f(p, q)",
+    ]);
+    // An inline `.extend(` of a schema const is followed too; a non-schema const is not.
+    const inline = withSchemaArgumentDeclarations(
+      code,
+      '("t", baseSchema.extend({ a: 1 }), helper)',
+    );
+    expect(inline).toContain("owner:");
+    expect(inline).not.toContain("path:");
   });
 });

@@ -71,6 +71,7 @@ beforeEach(() => {
     now: () => clock,
     classifyAction: () => ({ kind: "proposable" }),
     isServiceConfigured: () => Promise.resolve(true),
+    actionDestinationRefusal: () => undefined,
   };
   const act: CaptureActWiring = {
     dispatcher: {

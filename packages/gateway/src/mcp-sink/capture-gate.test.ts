@@ -12,6 +12,7 @@ import { deleteGraphEntitiesForItemKeys } from "../graph/relationship-graph.ts";
 import { deleteItemByPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { sourceTypesFor } from "../sources/source-kinds.ts";
+import { ACTION_DESTINATION_UNCHECKED } from "./capture-act.ts";
 import { type CaptureCapability, resolveCaptureCapability } from "./capture-capability.ts";
 import {
   acceptCapture,
@@ -64,6 +65,7 @@ beforeEach(() => {
     newId: () => `cap_${String(++seq)}`,
     now: () => clock,
     scheduleEmbedding: (id) => embedded.push(id),
+    actionDestinationRefusal: () => undefined,
   };
 });
 afterEach(() => db.close());
@@ -1048,6 +1050,55 @@ describe("act door — submit (PR 3)", () => {
     expect(await codeOfAsync(() => submitCapture(rest, MCP, ACT))).toBe(
       "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
     );
+  });
+  test("5a destination refused (OR1/OR2): ERR_CAPTURE_ACTION_REFUSED, nothing stored, one audit row", async () => {
+    const seen: Array<[string, unknown]> = [];
+    deps = {
+      ...deps,
+      actionDestinationRefusal: (t, input) => {
+        seen.push([t, input]);
+        return "the fixed reason";
+      },
+    };
+    let caught: unknown;
+    try {
+      await submitCapture(deps, MCP, ACT);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CaptureError);
+    expect((caught as CaptureError).code).toBe("ERR_CAPTURE_ACTION_REFUSED");
+    expect((caught as CaptureError).message).toBe("ERR_CAPTURE_ACTION_REFUSED: the fixed reason");
+    expect(deps.store.get("cap_1")).toBeUndefined();
+    const rejected = auditRows().filter((r) => r.hitl_status === "rejected");
+    expect(rejected).toHaveLength(1);
+    expect(JSON.parse(rejected[0]?.action_json ?? "{}")).toMatchObject({
+      kind: "action",
+      outcome: "ERR_CAPTURE_ACTION_REFUSED",
+    });
+    // Called with exactly the validated actionType and input.
+    expect(seen).toEqual([["slack.message.post", { text: "hi" }]]);
+  });
+  test("5a a throwing destination check refuses (fail closed) with its fixed text", async () => {
+    deps = {
+      ...deps,
+      actionDestinationRefusal: () => {
+        throw new Error("policy unreadable");
+      },
+    };
+    let caught: unknown;
+    try {
+      await submitCapture(deps, MCP, ACT);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as CaptureError).code).toBe("ERR_CAPTURE_ACTION_REFUSED");
+    expect((caught as CaptureError).message).toContain(ACTION_DESTINATION_UNCHECKED);
+    expect((caught as CaptureError).message).not.toContain("policy unreadable");
+  });
+  test("5a destination allowed (undefined): queued as before", async () => {
+    deps = { ...deps, actionDestinationRefusal: () => undefined };
+    expect((await submitCapture(deps, MCP, ACT)).state).toBe("proposed");
   });
   test("5b unconfigured connector: refused and audited", async () => {
     configured = false;
