@@ -2,6 +2,17 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.20.0](https://github.com/nimbus-agent/Nimbus/compare/v10.19.0...v10.20.0) (2026-11-05)
+
+
+### Features
+
+* **gateway:** a typed preview in the approval prompt for connector writes ([#1884](https://github.com/nimbus-agent/Nimbus/issues/1884)) ([535dc80](https://github.com/nimbus-agent/Nimbus/commit/535dc80202a8b3705477fd61cf06c9e276f59404))
+* **gateway:** owner opt-in for model connector writes (nimbus connector writes) ([#1887](https://github.com/nimbus-agent/Nimbus/issues/1887)) ([6b6479f](https://github.com/nimbus-agent/Nimbus/commit/6b6479f5f019b791e38d7871778f48253f658d00))
+* **gateway:** plumbing for the model's connector-write door ([#1888](https://github.com/nimbus-agent/Nimbus/issues/1888)) ([c2b356f](https://github.com/nimbus-agent/Nimbus/commit/c2b356f7c2753e2b61c6c6428dcf80ebd2005c5f))
+* **gateway:** the model's connector-write door (I53) ([#1889](https://github.com/nimbus-agent/Nimbus/issues/1889)) ([6afc99a](https://github.com/nimbus-agent/Nimbus/commit/6afc99a3314b6e905bbac6ee2c916a8f97471159))
+* **gateway:** Wave-2 framework for model connector writes ([#1890](https://github.com/nimbus-agent/Nimbus/issues/1890)) ([3d96472](https://github.com/nimbus-agent/Nimbus/commit/3d9647263e50fe671bd0d99b769b33bee7e6e2e4))
+
 ## [10.19.0](https://github.com/nimbus-agent/Nimbus/compare/v10.18.0...v10.19.0) (2026-11-04)
 
 
