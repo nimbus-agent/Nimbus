@@ -766,6 +766,53 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     expectAllowed("confluence-storage", macro("jira", `<ac:parameter ac:name="url"/>`));
   });
 
+  test("storage: a jira default parameter is refused when non-empty (adversarial review)", () => {
+    const def = (inner: string): string =>
+      `<ac:structured-macro ac:name="jira">${inner}</ac:structured-macro>`;
+    // The review's fixture: a relative issue-navigator URL in ac:default-parameter, which neither
+    // the URL rule nor the tripwire sees.
+    expectRefused(
+      "confluence-storage",
+      def(
+        "<ac:default-parameter>/sr/jira.issueviews:searchrequest-xml/1/x.xml</ac:default-parameter>",
+      ),
+      true,
+    );
+    expectRefused(
+      "confluence-storage",
+      def("<ac:default-parameter>ENG-1</ac:default-parameter>"),
+      true,
+    );
+    expectRefused(
+      "confluence-storage",
+      def(`<ac:parameter ac:name="">/x.xml</ac:parameter>`),
+      true,
+    );
+    expectRefused("confluence-storage", def("<ac:parameter>/x.xml</ac:parameter>"), true);
+    expectRefused(
+      "confluence-storage",
+      def("<x:DEFAULT-PARAMETER>/x.xml</x:DEFAULT-PARAMETER>"),
+      true,
+    );
+    // A default parameter is also a parameter everywhere: its text gets the URL rule.
+    expectRefused(
+      "confluence-storage",
+      macro("panel", "<ac:default-parameter>//h</ac:default-parameter>"),
+      true,
+    );
+    // Twins.
+    expectAllowed("confluence-storage", def("<ac:default-parameter></ac:default-parameter>"));
+    expectAllowed("confluence-storage", def(param("key", "ENG-1")));
+    expectAllowed(
+      "confluence-storage",
+      macro("anchor", "<ac:default-parameter>top</ac:default-parameter>"),
+    );
+    expectAllowed(
+      "confluence-storage",
+      macro("anchor", `<ac:parameter ac:name="">top</ac:parameter>`),
+    );
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });

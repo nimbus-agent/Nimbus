@@ -774,7 +774,22 @@ export const CONFLUENCE_INERT_MACROS: ReadonlySet<string> = new Set([
 const JIRA_URL_PARAMETERS: ReadonlySet<string> = new Set(["url", "baseurl", "server-url"]);
 
 const MACRO_ELEMENTS: ReadonlySet<string> = new Set(["structured-macro", "macro"]);
-const PARAMETER: ReadonlySet<string> = new Set(["parameter"]);
+/**
+ * A parameter element: any whose local name ENDS in `parameter` (`ac:parameter`, and
+ * `ac:default-parameter`, the macro's unnamed default; adversarial review).
+ */
+function isParameterElement(name: string): boolean {
+  return localForms(name).some((l) => l.endsWith("parameter"));
+}
+
+/**
+ * A default parameter: an element whose local name ends in `parameter` but is not `parameter`
+ * itself, or a parameter with no name or an empty one (the macro's unnamed default).
+ */
+function isDefaultParameter(t: StartToken, names: readonly string[]): boolean {
+  const own = localForms(t.name).some((l) => l !== "parameter" && l.endsWith("parameter"));
+  return own || names.length === 0 || names.includes("");
+}
 const PLAIN_TEXT_BODY: ReadonlySet<string> = new Set(["plain-text-body"]);
 const NAME_ATTRIBUTE: ReadonlySet<string> = new Set(["name"]);
 const CODE_MACROS: ReadonlySet<string> = new Set(["code", "noformat"]);
@@ -910,13 +925,16 @@ function parameterIsUrl(text: string): boolean {
 interface OpenParameter {
   readonly names: readonly string[];
   readonly inJira: boolean;
+  /** The macro's unnamed default parameter (for `jira`, the issue-navigator URL). */
+  readonly isDefault: boolean;
   text: string;
 }
 
-/** R5 for one closed parameter: a URL value, or a non-empty `jira` URL parameter. */
+/** R5 for one closed parameter: a URL value, or a non-empty `jira` URL or default parameter. */
 function refusesParameter(p: OpenParameter): boolean {
   if (parameterIsUrl(p.text)) return true;
-  return p.inJira && p.names.some((n) => JIRA_URL_PARAMETERS.has(n)) && rawUrlForm(p.text) !== "";
+  if (!p.inJira || rawUrlForm(p.text) === "") return false;
+  return p.isDefault || p.names.some((n) => JIRA_URL_PARAMETERS.has(n));
 }
 
 /**
@@ -930,17 +948,17 @@ function stepParameter(
   t: MarkupToken,
   walk: MacroWalk,
 ): OpenParameter | undefined | "refused" {
-  if (t.kind === "start" && localIn(t.name, PARAMETER)) {
+  if (t.kind === "start" && isParameterElement(t.name)) {
     const names = elementNames(t);
     if (open !== undefined || names === undefined) return "refused";
     const inJira = walk.stack.at(-1)?.includes("jira") ?? false;
-    const p: OpenParameter = { names, inJira, text: "" };
+    const p: OpenParameter = { names, inJira, isDefault: isDefaultParameter(t, names), text: "" };
     if (!t.selfClosing) return p;
     return refusesParameter(p) ? "refused" : undefined;
   }
   if (open === undefined) return undefined;
   if (t.kind === "text" || t.kind === "cdata") open.text += t.text;
-  if (t.kind === "end" && localIn(t.name, PARAMETER)) {
+  if (t.kind === "end" && isParameterElement(t.name)) {
     return refusesParameter(open) ? "refused" : undefined;
   }
   return open;
