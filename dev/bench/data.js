@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793862057602,
+  "lastUpdate": 1793864706048,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "6fc59e518c1f269701e57f4b5d5af7bb0b1166db",
-          "message": "fix(docs): derive four drifted invariant claims instead of hand-maintaining them (#1221)\n\n> **Stacked on #1220** — base retargets to `main` when that merges.\nReview the top commit.\n\nFour invariant claims that said one thing while the code said another,\nplus the gate that stops them drifting again. Cluster D of the I1–I30\naudit (#1218 = A, #1219 = B, #1220 = C).\n\nCorrecting the prose alone would have been the same maintenance bet that\nproduced the drift, so each mechanically-checkable claim is now\n**derived** by `audit:status-drift` — an existing gate that already\nexists to keep human-facing surfaces in sync with canonical numbers, and\nis already in the preflight manifest and CI.\n\n## What was wrong\n\n**I13 — the write surface, wrong in three places.**\n`SECURITY-INVARIANTS.md` said `WRITE_ROUTE_ALLOWLIST` had \"twelve\nentries\" and stated its test contract as `length === 12`.\n`cli-reference.md` said \"one of the twelve routes\" and headed a table\n**\"the complete `WRITE_ROUTE_ALLOWLIST`\"** while listing 12 of 14. The\ncode and its enforcement test have said 14 since `POST\n/v1/agents/{agent}` and `POST /v1/items/fetch` landed — the two most\nrecently added, and the two whose write-classification is most\ncontested. An auditor deciding whether a proposed fifteenth route was in\nscope was being handed a list missing exactly those two.\n\n**I17 — wrong by eleven.** `FORBIDDEN_OVER_LAN` is a **denylist**, so\nthe admitted set is \"every served handler minus the listed ones\" and it\ngrows silently whenever a handler is added. Both the I17 section and a\ncomment in `lan-rpc.ts` claimed the admitted set was `federation.query`\n+ `federation.expertise`. It is **thirteen**, including `invoke`,\n`preflight`, `purge` and `shareReceive`. The prose was the only place\nthe admitted set was written down. (No missing control — each admitted\nmethod carries its own gate — but the enumeration a reader would rely on\nwas wrong.)\n\n**I16 — a defense documented as consumed that nothing reads.** The entry\nsaid `SignatureDisabledRegistry` is \"consumed by `nimbus extension list`\n/ `nimbus extension info` for the `(unverified)` / disabled-reason\nbadge\". Neither handler reads it: `automation-rpc.ts` decorates from the\n*pre-T2* registry, and the `(unverified)` badge is computed client-side\nfrom an unrelated signal (`r.publisher === undefined`). Its\n`reasonFor()` and `list()` accessors are called only from tests — the B1\n\"defined but not consumed\" shape, in the document that exists to catch\nit. Corrected to name its one real consumer (`diag.snapshot`) and to say\nplainly that surfacing the reason in `extension list` is unbuilt work,\nnot described behaviour.\n\n**I7 — `allowlist_exact_size` off by one.** The ledger said 105;\n`gateway_bridge.rs` asserts 106.\n\n## The gate\n\nThree derived checks added to `audit:status-drift`, each keyed to code\nrather than prose:\n\n- **Write routes** — resolves every `ROUTE_*` const in the frozen array\nto its literal, then checks any stated count (spelled or numeric), the\nstated `length === N` contract, and that every route is named **in the\nsection that claims to enumerate them all**.\n- **`allowlist_exact_size`** — against the Rust `assert_eq!`.\n- **LAN-admitted set** — derives handlers minus denylist, and fails on\nboth the retired two-method phrasing and any stale stated size.\n\n## Red-prove\n\nSeven mutations, all caught, gate restored green after each:\n\n| Mutation | Caught by |\n| --- | --- |\n| Count back to \"twelve entries\" | stale-count check |\n| Contract back to `=== 12` | stated-contract check |\n| Drop one route from the cli-reference table | enumeration check |\n| Add a 15th route to code, touch no doc | all three, in both docs |\n| `allowlist_exact_size` back to 105 | Rust-assert comparison |\n| Restore the two-methods LAN claim | phrasing check |\n| Add a federation handler, touch no doc | stated-size check |\n\nTwo of those checks exist **because** the red-prove found gaps in my\nfirst attempt. Dropping a route from the \"complete\" table was *not*\ncaught initially — the route appears in a second table elsewhere in the\nfile, so a document-wide `includes` was satisfied; the check is now\nscoped to the block that calls itself complete. And adding a federation\nhandler was not caught, because I had only pinned the retired phrasing\nand not the replacement's stated size — the same failure one step along.\n\nThe gate also flagged **two false positives in my own work**, both\nfixed: \"Eleven entries\" in the I7 section is about renderer-allowlist\nadditions, not write routes (count checks are now scoped to lines\nmentioning `WRITE_ROUTE_ALLOWLIST`), and my corrected I17 prose\noriginally quoted the retired sentence verbatim, tripping its own check\n— it now describes the old claim instead of reproducing it. A check that\nfires on its own explanation gets deleted rather than obeyed.\n\nAlso verified rather than assumed: the two token scopes added to the\n`cli-reference.md` table (`agents`, `fetch`) are checked against\n`http-route-auth.ts`, not inferred from the route names.\n\n`bun run preflight:fast` — 29/29. `bun test scripts/structure-audit` —\n603 pass, 0 fail (the gate's own unit tests build minimal fixture repos,\nso the derived checks opt out cleanly when their inputs are absent\nrather than throwing ENOENT and taking the ceiling checks down with\nthem).\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T07:09:57Z",
-          "tree_id": "a9d535f7a3ac1618ea5e9189937020f68f783995",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/6fc59e518c1f269701e57f4b5d5af7bb0b1166db"
-        },
-        "date": 1786864736556,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 255.86746504999863,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 261.46584744999893,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 236.6401775999988,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "23b0fca7e4c9a6e0596b10080727cffb579e262c",
+          "message": "chore: release main (#1885)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.20.0</summary>\n\n##\n[10.20.0](https://github.com/nimbus-agent/Nimbus/compare/v10.19.0...v10.20.0)\n(2026-11-05)\n\n\n### Features\n\n* **gateway:** a typed preview in the approval prompt for connector\nwrites ([#1884](https://github.com/nimbus-agent/Nimbus/issues/1884))\n([535dc80](https://github.com/nimbus-agent/Nimbus/commit/535dc80202a8b3705477fd61cf06c9e276f59404))\n* **gateway:** owner opt-in for model connector writes (nimbus connector\nwrites) ([#1887](https://github.com/nimbus-agent/Nimbus/issues/1887))\n([6b6479f](https://github.com/nimbus-agent/Nimbus/commit/6b6479f5f019b791e38d7871778f48253f658d00))\n* **gateway:** plumbing for the model's connector-write door\n([#1888](https://github.com/nimbus-agent/Nimbus/issues/1888))\n([c2b356f](https://github.com/nimbus-agent/Nimbus/commit/c2b356f7c2753e2b61c6c6428dcf80ebd2005c5f))\n* **gateway:** the model's connector-write door (I53)\n([#1889](https://github.com/nimbus-agent/Nimbus/issues/1889))\n([6afc99a](https://github.com/nimbus-agent/Nimbus/commit/6afc99a3314b6e905bbac6ee2c916a8f97471159))\n* **gateway:** Wave-2 framework for model connector writes\n([#1890](https://github.com/nimbus-agent/Nimbus/issues/1890))\n([3d96472](https://github.com/nimbus-agent/Nimbus/commit/3d9647263e50fe671bd0d99b769b33bee7e6e2e4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-05T09:38:43+02:00",
+          "tree_id": "378397b29833467911a100a5147360ea03f9f4fd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/23b0fca7e4c9a6e0596b10080727cffb579e262c"
+        },
+        "date": 1793864702171,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 189.520055150002,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 191.0087971499983,
             "unit": "ms"
           }
         ]
