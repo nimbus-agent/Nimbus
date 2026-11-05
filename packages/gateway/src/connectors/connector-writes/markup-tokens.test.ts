@@ -344,6 +344,29 @@ describe("tokenizeMarkup: does not tokenize (undefined, refused)", () => {
 const PINNED_FILES: string[] = ["markup-tokens.ts", "remote-content.ts"];
 
 /**
+ * `text-normalise.ts` (the shared normalisation the detectors read) is pinned too (final review
+ * item 5), with an explicit allowlist: these two lines build MATCHING COPIES (the entity decode
+ * and the whitespace collapse), never text that is sent, shown or written back. No other replace
+ * call may appear there.
+ */
+const TEXT_NORMALISE_MATCHING_COPIES: readonly string[] = [
+  "return s.replace(ENTITY, (m: string, hex?: string, dec?: string, name?: string) => {",
+  String.raw`return (keepLines ? cur : cur.replaceAll(/\s+/g, " ")).toLowerCase();`,
+];
+
+/** The trimmed lines of comment-free `src` that call `.replace(` or `.replaceAll(` (strings skipped). */
+function replaceCallLines(src: string): string[] {
+  const code = stripComments(src);
+  const blanked = stripStringLiterals(code).split("\n");
+  const lines = code.split("\n");
+  const out: string[] = [];
+  blanked.forEach((b, i) => {
+    if (/\.replace(?:All)?\s*\(/.test(b)) out.push((lines[i] ?? "").trim());
+  });
+  return out;
+}
+
+/**
  * Every regex literal of comment-free `code`. A `/` that `stripStringLiterals` blanked is inside a
  * string and skipped; the literal itself is read from `code` (that helper blanks regex bodies).
  */
@@ -451,6 +474,20 @@ describe("source pin: the remote-content files never strip, replace or match a t
   test.each(PINNED_FILES)("%s", (file) => {
     const src = readFileSync(join(import.meta.dir, file), "utf8");
     expect(pinViolations(src)).toEqual([]);
+  });
+
+  test("text-normalise.ts: no RegExp construction or `<`-matching regex, and its ONLY replace calls are the two matching-copy lines", () => {
+    const src = readFileSync(join(import.meta.dir, "text-normalise.ts"), "utf8");
+    expect(pinViolations(src).filter((v) => v !== "replace call")).toEqual([]);
+    expect(replaceCallLines(src)).toEqual([...TEXT_NORMALISE_MATCHING_COPIES]);
+  });
+
+  test("guard: the replace-call lister sees every call, one line each", () => {
+    expect(
+      replaceCallLines(
+        `const a = s.replace(x, y);\n// t.replace(z)\nconst b = "u.replace(";\nconst c = v.replaceAll (w, q);`,
+      ),
+    ).toEqual(["const a = s.replace(x, y);", "const c = v.replaceAll (w, q);"]);
   });
 
   test("the pin's matcher fails mutated snippets and passes clean ones", () => {
