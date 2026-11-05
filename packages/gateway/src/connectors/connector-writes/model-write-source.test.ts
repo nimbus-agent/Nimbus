@@ -290,6 +290,7 @@ const REAL_SERVICES = [
   "gmail",
   "outlook",
   "apple",
+  "google_drive",
 ];
 
 function chatopsPolicy(channels: readonly string[]): EnforcedPolicy {
@@ -364,14 +365,14 @@ async function realDoor(
 describe("the real messaging rows through the real door (plan Task 3)", () => {
   const chatopsRefused = { refused: CHATOPS_CHANNEL_REFUSAL };
 
-  test("every B1, B2 and B3 row is offered on an approved wave-2 opt-in", async () => {
+  test("every B1-B4a row is offered on an approved wave-2 opt-in", async () => {
     const door = await realDoor(() => BOUND);
     expect(door.offered).toEqual(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
         .sort((a, b) => a.localeCompare(b)),
     );
-    expect(door.offered).toHaveLength(34);
+    expect(door.offered).toHaveLength(37);
   });
 
   test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {

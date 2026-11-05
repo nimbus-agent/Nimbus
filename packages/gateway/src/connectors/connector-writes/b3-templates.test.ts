@@ -28,14 +28,6 @@ const B3_ROWS = [
 ] as const;
 type B3Row = (typeof B3_ROWS)[number];
 
-/** The four wave-2 rows left for B4 (calendar, Drive, Obsidian; spec 14). */
-const B4_ROWS = [
-  "apple_calendar_event_create",
-  "gdrive_file_create",
-  "obsidian_append_to_daily_note",
-  "outlook_calendar_create",
-];
-
 /** The 0.4.0 input-schema keys of each row, spelled out from the connector source (sorted). */
 const SCHEMA_KEYS: Readonly<Record<B3Row, readonly string[]>> = {
   gmail_draft_create: ["bcc", "body", "cc", "subject", "to"],
@@ -213,12 +205,7 @@ describe("B3 typed previews (plan R2)", () => {
       expect(r.preview, id).toBeDefined();
       expect(isModelOfferableRow(r), id).toBe(true);
     }
-    // The wave-2 rows still without a template are then exactly the four B4 ones.
-    expect(
-      CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 2 && r.preview === undefined)
-        .map((r) => r.toolId)
-        .sort((a, b) => a.localeCompare(b)),
-    ).toEqual(B4_ROWS);
+    // Which wave-2 rows are still untemplated is owned by b4-templates.test.ts.
   });
 
   for (const id of B3_ROWS) {

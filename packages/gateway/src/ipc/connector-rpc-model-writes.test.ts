@@ -561,12 +561,16 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
     ]);
   });
 
-  test("Gmail, Outlook and Apple enabled before B3: the draft awaits approval, nothing is offered", async () => {
-    for (const service of ["gmail", "outlook", "apple"]) {
+  test("Gmail, Outlook and Apple enabled before B3: the draft (and, since B4a, the calendar create) await approval, nothing is offered", async () => {
+    for (const [service, awaiting] of [
+      ["gmail", 1],
+      ["outlook", 2],
+      ["apple", 2],
+    ] as const) {
       setModelWriteEnablement(db, service, 2, 1, []);
       expect(await statusOf(service), service).toMatchObject({
         offerable: 0,
-        awaitingApproval: 1,
+        awaitingApproval: awaiting,
       });
       expect(
         (await doorTools()).filter((n) => n.startsWith(`${service}__`)),

@@ -30,19 +30,21 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 34 B1, B2 and B3 rows (posts, comments, issue writes, drafts, pages) are offerable", () => {
+  test("exactly the 37 B1-B4a rows (posts, comments, issue writes, drafts, pages, calendar events, Drive files) are offerable", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual(
       [
+        "apple_calendar_event_create",
         "apple_mail_draft_create",
         "confluence_comment_add",
         "confluence_page_append",
         "confluence_page_create",
         "confluence_page_update",
         "discord_message_post",
+        "gdrive_file_create",
         "github_issue_assignees_add",
         "github_issue_comment_create",
         "github_issue_create",
@@ -66,6 +68,7 @@ describe("isModelOfferableRow (M1)", () => {
         "notion_comment_create",
         "notion_page_create",
         "notion_page_update",
+        "outlook_calendar_create",
         "outlook_draft_create",
         "slack_message_post",
         "slack_message_post_dm",
@@ -73,6 +76,7 @@ describe("isModelOfferableRow (M1)", () => {
         "teams_message_post_chat",
       ].sort((a, b) => a.localeCompare(b)),
     );
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(37);
     // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
@@ -84,7 +88,9 @@ describe("isModelOfferableRow (M1)", () => {
     expect(offerableWritesEnabledBy("notion", 2)).toHaveLength(4);
     expect(offerableWritesEnabledBy("confluence", 2)).toHaveLength(4);
     expect(offerableWritesEnabledBy("gmail", 2)).toHaveLength(1);
-    expect(offerableWritesEnabledBy("outlook", 2)).toHaveLength(1);
-    expect(offerableWritesEnabledBy("apple", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("outlook", 2)).toHaveLength(2);
+    expect(offerableWritesEnabledBy("apple", 2)).toHaveLength(2);
+    expect(offerableWritesEnabledBy("google_drive", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("obsidian", 2)).toEqual([]);
   });
 });
