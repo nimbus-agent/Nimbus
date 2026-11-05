@@ -1024,6 +1024,25 @@ describe("act door — submit (PR 3)", () => {
     );
     expect(auditRows().filter((r) => r.hitl_status === "rejected")).toHaveLength(2);
   });
+  test("5a a not_yet_offered write: refused, and the refusal names the class", async () => {
+    deps = { ...deps, classifyAction: () => ({ kind: "denied", class: "not_yet_offered" }) };
+    const act = {
+      kind: "action",
+      payload: { actionType: "jira.issue.transition", input: {}, summary: "why" },
+    };
+    let caught: unknown;
+    try {
+      await submitCapture(deps, MCP, act);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(CaptureError);
+    expect((caught as CaptureError).code).toBe("ERR_CAPTURE_ACTION_NOT_PROPOSABLE");
+    expect((caught as CaptureError).message).toContain(
+      "jira.issue.transition cannot be proposed (not_yet_offered)",
+    );
+    expect(auditRows().filter((r) => r.hitl_status === "rejected")).toHaveLength(1);
+  });
   test("deps absent: refused NOT_PROPOSABLE (fail-closed)", async () => {
     const { classifyAction: _c, ...rest } = deps;
     expect(await codeOfAsync(() => submitCapture(rest, MCP, ACT))).toBe(

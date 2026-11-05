@@ -9,5 +9,6 @@ export const KNOWLEDGE_ROWS: readonly ConnectorWriteRow[] = [
   row("confluence_page_create", "confluence.page.create", "mesh", 2),
   row("confluence_page_update", "confluence.page.update", "mesh", 2),
   row("confluence_comment_add", "confluence.comment.add", "mesh", 2),
+  row("confluence_page_append", "confluence.page.append", "mesh", 2),
   row("obsidian_append_to_daily_note", "obsidian.note.append", "mesh", 2),
 ];

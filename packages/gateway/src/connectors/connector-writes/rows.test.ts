@@ -3,13 +3,16 @@ import { describe, expect, test } from "bun:test";
 import { CHATOPS_POST_TOOL_IDS } from "../../chatops/transport/connector-post.ts";
 import { HITL_REQUIRED } from "../../engine/executor.ts";
 import { serviceOf } from "../../engine/service-of.ts";
+import { isReadOnlyToolId } from "../../share/read-tool-registry.ts";
 import { TRIBAL_KB_WRITE_TOOL_IDS } from "../../tribal/tribal-write-gate.ts";
 import {
   CONNECTOR_WRITES,
   connectorWriteRowByToolId,
   isConnectorWriteToolId,
 } from "../connector-write-registry.ts";
+import { ACTION_PROPOSABILITY } from "../proposable-actions.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
+import { isModelOfferableRow } from "./model-offerable.ts";
 
 const TODAYS_WRITE_ROWS: readonly string[] = [
   "snowflake.tag.set snowflake_tag_set snowflake",
@@ -108,9 +111,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("88 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(88);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(88);
+  test("102 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(102);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(102);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -177,4 +180,61 @@ describe("connector write preview templates", () => {
   // The A2 tripwire that stood here ("no proposable row has a template yet") is retired: the act
   // door now shows the typed preview under the provenance header (ipc/capture-rpc.ts
   // `actConsentDisplay`, proven in capture-rpc.test.ts with a synthetic templated proposable row).
+});
+
+/** The 14 writes `@nimbus-dev/connectors` 0.4.0 added (Phase 9.7 B-X), spelled out. */
+const CONNECTORS_0_4_0_WRITES: readonly string[] = [
+  "github_issue_comment_create",
+  "github_issue_labels_add",
+  "github_issue_assignees_add",
+  "github_issue_state_set",
+  "gitlab_issue_create",
+  "gitlab_issue_note_create",
+  "gitlab_mr_note_create",
+  "gitlab_issue_labels_add",
+  "gitlab_issue_assignees_add",
+  "gitlab_issue_state_set",
+  "jira_issue_transition",
+  "outlook_draft_create",
+  "discord_message_post",
+  "confluence_page_append",
+];
+
+describe("connectors 0.4.0 writes (B-X)", () => {
+  test("each is a wave-2 mesh row whose action type is its tool id dotted, in the frozen set", () => {
+    expect(CONNECTORS_0_4_0_WRITES).toHaveLength(14);
+    for (const id of CONNECTORS_0_4_0_WRITES) {
+      const r = connectorWriteRowByToolId(id);
+      expect(r, id).toEqual({
+        toolId: id,
+        actionType: id.replaceAll("_", "."),
+        transport: "mesh",
+        wave: 2,
+      });
+      expect(HITL_REQUIRED.has(id.replaceAll("_", ".")), id).toBe(true);
+      expect(isConnectorWriteToolId(id), id).toBe(true);
+    }
+  });
+
+  test("none is offered to the model: no preview template, no before reader", () => {
+    const rows = CONNECTOR_WRITE_ROWS.filter((r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId));
+    expect(rows).toHaveLength(14);
+    expect(rows.filter((r) => isModelOfferableRow(r)).map((r) => r.toolId)).toEqual([]);
+    expect(rows.filter((r) => r.preview !== undefined || r.before !== undefined)).toEqual([]);
+  });
+
+  test("none is proposable over MCP: every one is denied not_yet_offered", () => {
+    for (const id of CONNECTORS_0_4_0_WRITES) {
+      expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual({
+        kind: "denied",
+        class: "not_yet_offered",
+      });
+    }
+  });
+
+  test("the new read jira_issue_transitions_list is not a write and is read-only", () => {
+    expect(isReadOnlyToolId("jira_issue_transitions_list")).toBe(true);
+    expect(isConnectorWriteToolId("jira_issue_transitions_list")).toBe(false);
+    expect(connectorWriteRowByToolId("jira_issue_transitions_list")).toBeUndefined();
+  });
 });

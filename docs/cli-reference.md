@@ -2833,6 +2833,8 @@ Authenticate a service and store credentials in the OS keystore. Never stores cr
 
 The canonical per-connector credential keys live in `CONNECTOR_VAULT_SECRET_KEYS` (`packages/gateway/src/connectors/connector-secrets-manifest.ts`); the list below is grouped by domain.
 
+**Outlook and `Mail.ReadWrite` (2026-11-05).** `nimbus connector auth outlook` now also requests `Mail.ReadWrite`, which the Outlook draft-create write (`outlook_draft_create`, connectors 0.4.0) needs. An existing Outlook connection keeps working unchanged: a token refresh asks for no new scope, and the connector simply does not register the draft tool while the scope is missing. Run `nimbus connector auth outlook` again only if you want draft create. An enterprise (work or school) tenant may require an administrator to consent to `Mail.ReadWrite` before that re-authorisation succeeds.
+
 ```bash
 # Cloud storage / mail / calendar (OAuth PKCE — opens browser)
 nimbus connector auth google_drive

@@ -4,6 +4,7 @@ import { type ConnectorWriteRow, row } from "./types.ts";
 export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
   row("gmail_draft_create", "gmail.draft.create", "mesh", 2),
   row("apple_mail_draft_create", "apple.mail.draft.create", "mesh", 2),
+  row("outlook_draft_create", "outlook.draft.create", "mesh", 2),
   row("outlook_calendar_create", "outlook.calendar.create", "mesh", 2),
   row("apple_calendar_event_create", "apple.calendar.event.create", "mesh", 2),
   row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 3),

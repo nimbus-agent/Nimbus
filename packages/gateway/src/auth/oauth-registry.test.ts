@@ -588,6 +588,37 @@ describe("exchangeAuthorizationCode", () => {
 });
 
 describe("refreshViaRegistry", () => {
+  test("a Microsoft refresh sends no scope field, so a connection keeps the scopes it was granted", async () => {
+    // The safety of widening the Outlook default scopes (Mail.ReadWrite, connectors 0.4.0) rests on
+    // this: a refresh asks for no scope, so Microsoft re-issues the scopes already consented and an
+    // existing connection granted the old set is never refused for a scope it never consented to.
+    const vault = createMemoryVault();
+    const bodies: string[] = [];
+    const r = await refreshViaRegistry({
+      descriptor: OAUTH_PROVIDERS.microsoft,
+      refreshToken: "old-refresh",
+      clientId: "cid",
+      vault,
+      fetchFn: async (_url, init) => {
+        bodies.push(String(init?.body ?? ""));
+        return new Response(
+          JSON.stringify({
+            access_token: "new-access",
+            expires_in: 120,
+            scope: "Mail.Read Mail.Send Calendars.Read",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    expect(bodies).toHaveLength(1);
+    const form = new URLSearchParams(bodies[0]);
+    expect(form.has("scope")).toBe(false);
+    expect(form.get("grant_type")).toBe("refresh_token");
+    expect(bodies[0]).not.toContain("Mail.ReadWrite");
+    expect(r.scopes).not.toContain("Mail.ReadWrite");
+  });
+
   test("persists merged refresh token (refresh_token ?? old) to the vault key", async () => {
     const vault = createMemoryVault();
     const r = await refreshViaRegistry({

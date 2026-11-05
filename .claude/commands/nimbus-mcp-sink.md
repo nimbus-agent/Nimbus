@@ -137,10 +137,11 @@ routing row means `Tool not found`, never dispatch-by-type. An agent-supplied `m
 | `listProposableActionTypes` | what `capture.status` advertises (configured first-party types + one `mcp_<id>.*` pattern per `--model` server) |
 
 Counts — derive from `HITL_REQUIRED` (`packages/gateway/src/engine/executor.ts`) and
-`ACTION_PROPOSABILITY` (as of 2026-10-29: 144 HITL types, **30 proposable / 114 denied**, 0
+`ACTION_PROPOSABILITY` (as of 2026-11-05: 160 HITL types, **30 proposable / 130 denied**, 0
 unclassified). Denied classes (`DeniedClass`): `file`, `calendar_delete`, `vcs`, `pipeline`,
 `cloud`, `iac`, `k8s`, `deployment`, `incident`, `data_platform`, `tribal_kb` (I25/D19),
-`chatops_confined` (I23/D17), `unroutable`, `gateway_internal`.
+`chatops_confined` (I23/D17), `unroutable`, `not_yet_offered` (a routable connector write
+whose proposal waits for its B PR's preview template), `gateway_internal`.
 
 **Mesh-only servers:** `obsidian.note.append` is proposable although `obsidian` is not a catalog
 connector. `resolveServerTool` attributes keys with `meshServerForToolKey` — the catalog rule

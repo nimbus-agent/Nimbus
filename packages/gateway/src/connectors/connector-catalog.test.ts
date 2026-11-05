@@ -112,6 +112,20 @@ describe("oauthProfileForService — supported providers", () => {
     expect(profile.defaultScopes).toContain("Calendars.Read");
   });
 
+  test("a fresh Outlook auth requests exactly these scopes, Mail.ReadWrite included (draft create)", () => {
+    expect(oauthProfileForService("outlook").defaultScopes).toEqual([
+      "Mail.Read",
+      "Mail.ReadWrite",
+      "Mail.Send",
+      "Calendars.Read",
+      "Calendars.ReadWrite",
+      "Contacts.Read",
+      "offline_access",
+      "openid",
+      "profile",
+    ]);
+  });
+
   test("returns Microsoft provider profile for Teams", () => {
     const profile = oauthProfileForService("teams");
     expect(profile.provider).toBe("microsoft");
