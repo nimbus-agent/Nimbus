@@ -90,7 +90,9 @@ function harness(opts: {
   const connectors: ConnectorDispatcher = {
     dispatch: async (a) => {
       rec.dispatched.push(a);
-      return isBeforeReadActionType(a.type) ? opts.readReply : { updated: true };
+      if (!isBeforeReadActionType(a.type)) return { updated: true };
+      if (opts.readReply instanceof Error) throw opts.readReply;
+      return opts.readReply;
     },
   };
   const exec = new ToolExecutor(
@@ -111,7 +113,7 @@ function harness(opts: {
 }
 
 describe("the before-state guard inside gate() (B2a)", () => {
-  test("refused: no prompt, no write dispatched, rejected with the fixed reason, egress blocked after the read", async () => {
+  test("allows false (the read succeeded, the issue is not open) -> refused: no prompt, no write dispatched, rejected with the fixed reason, egress blocked after the read", async () => {
     const { exec, rec, egress } = harness({ readReply: { open: false } });
     const out = await exec.execute(WRITE);
     expect(out).toEqual({ status: "rejected", reason: GUARD_REASON });
@@ -129,8 +131,8 @@ describe("the before-state guard inside gate() (B2a)", () => {
     ]);
   });
 
-  test("a failed read under an applicable guard is refused the same way (fail closed)", async () => {
-    const { exec, rec, egress } = harness({ readReply: undefined });
+  test("a read that FAILS (the dispatcher throws) under an applicable guard is refused the same way (fail closed)", async () => {
+    const { exec, rec, egress } = harness({ readReply: new Error("Tool not found") });
     expect(await exec.execute(WRITE)).toEqual({ status: "rejected", reason: GUARD_REASON });
     expect(rec.prompts).toEqual([]);
     expect(rec.dispatched.map((a) => a.type)).toEqual(["jira.before.read"]);
