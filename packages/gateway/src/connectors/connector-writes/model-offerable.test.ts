@@ -30,9 +30,32 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("today nothing is offerable (no row has a before reader): stated, not hidden", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toEqual([]);
+  test("exactly the 12 B1 message/comment rows are offerable", () => {
+    expect(
+      CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(
+      [
+        "confluence_comment_add",
+        "discord_message_post",
+        "github_issue_comment_create",
+        "gitlab_issue_note_create",
+        "gitlab_mr_note_create",
+        "jira_comment_add",
+        "linear_comment_create",
+        "notion_comment_create",
+        "slack_message_post",
+        "slack_message_post_dm",
+        "teams_message_post",
+        "teams_message_post_chat",
+      ].sort((a, b) => a.localeCompare(b)),
+    );
+    // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
+    expect(offerableWritesEnabledBy("slack", 2)).toHaveLength(2);
+    expect(offerableWritesEnabledBy("github", 2)).toHaveLength(1);
+    expect(offerableWritesEnabledBy("gitlab", 2)).toHaveLength(2);
   });
 });

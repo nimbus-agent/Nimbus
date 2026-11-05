@@ -21,6 +21,42 @@ const gateConfined = (id: string): boolean =>
 const manifestIds = new Set(CONNECTOR_WRITE_MANIFEST.map((e) => e.toolId));
 const rowIds = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
 
+/**
+ * The text of `const <name> = ...;` in `code`, ended at the first `;` outside brackets, or
+ * `undefined` when `code` declares no such const.
+ */
+function constStatement(code: string, name: string): string | undefined {
+  const m = new RegExp(String.raw`\bconst\s+${name}\s*=`).exec(code);
+  if (m === null) return undefined;
+  let depth = 0;
+  for (let i = m.index; i < code.length; i++) {
+    const ch = code[i];
+    if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === ";" && depth === 0) return code.slice(m.index, i + 1);
+  }
+  return code.slice(m.index);
+}
+
+/**
+ * `text` plus the declaration of every local const it names, transitively (a schema built with
+ * `.extend` from another const). Only identifiers the file declares with `const` are followed.
+ */
+function withLocalConstDeclarations(code: string, text: string): string {
+  const seen = new Set<string>();
+  const parts = [text];
+  for (let i = 0; i < parts.length && i < 50; i++) {
+    for (const m of (parts[i] ?? "").matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
+      const id = m[1];
+      if (id === undefined || seen.has(id)) continue;
+      seen.add(id);
+      const decl = constStatement(code, id);
+      if (decl !== undefined) parts.push(decl);
+    }
+  }
+  return parts.join("\n");
+}
+
 describe("connector write manifest", () => {
   test("the committed manifest is what the generator produces from the installed package", () => {
     const committed = readFileSync(MANIFEST_PATH, "utf8").replaceAll("\r\n", "\n");
@@ -105,9 +141,12 @@ describe("connector write manifest", () => {
       // A tool registered through a local helper (Monte Carlo, Bigeye) declares its input schema in
       // the helper's body, which the forwarding call's span does not contain; for those the file is
       // the narrowest region available. Every other tool is checked against its own call only.
-      const call = reg.tags.includes("forwarder")
+      const own = reg.tags.includes("forwarder")
         ? fileCode
         : fileCode.slice(reg.span[0], reg.span[1] + 1);
+      // A tool whose input schema is a local const (`slackMessagePostSchema`, or a `.extend` of
+      // one) declares its keys in that const's statement, outside the call: follow them.
+      const call = withLocalConstDeclarations(fileCode, own);
       return templateKeys(r, extra)
         .filter((k) => !call.includes(`${k}:`))
         .map((k) => `${r.toolId}: ${k}`);

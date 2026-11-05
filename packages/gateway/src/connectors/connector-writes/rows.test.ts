@@ -200,12 +200,24 @@ const CONNECTORS_0_4_0_WRITES: readonly string[] = [
   "confluence_page_append",
 ];
 
+/** The 0.4.0 writes B1 templates (message and comment posts). */
+const B1_OFFERED_0_4_0: readonly string[] = [
+  "github_issue_comment_create",
+  "gitlab_issue_note_create",
+  "gitlab_mr_note_create",
+  "discord_message_post",
+];
+
 describe("connectors 0.4.0 writes (B-X)", () => {
   test("each is a wave-2 mesh row whose action type is its tool id dotted, in the frozen set", () => {
     expect(CONNECTORS_0_4_0_WRITES).toHaveLength(14);
     for (const id of CONNECTORS_0_4_0_WRITES) {
       const r = connectorWriteRowByToolId(id);
-      expect(r, id).toEqual({
+      const core =
+        r === undefined
+          ? undefined
+          : { toolId: r.toolId, actionType: r.actionType, transport: r.transport, wave: r.wave };
+      expect(core, id).toEqual({
         toolId: id,
         actionType: id.replaceAll("_", "."),
         transport: "mesh",
@@ -216,9 +228,20 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     }
   });
 
-  test("none is offered to the model: no preview template, no before reader", () => {
-    const rows = CONNECTOR_WRITE_ROWS.filter((r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId));
-    expect(rows).toHaveLength(14);
+  test("the four B1 ones are offered to the model (typed preview, wave 2)", () => {
+    for (const id of B1_OFFERED_0_4_0) {
+      const r = connectorWriteRowByToolId(id);
+      expect(r?.preview, id).toBeDefined();
+      expect(r?.wave, id).toBe(2);
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(true);
+    }
+  });
+
+  test("the other ten are not: no preview template, no before reader", () => {
+    const rows = CONNECTOR_WRITE_ROWS.filter(
+      (r) => CONNECTORS_0_4_0_WRITES.includes(r.toolId) && !B1_OFFERED_0_4_0.includes(r.toolId),
+    );
+    expect(rows).toHaveLength(10);
     expect(rows.filter((r) => isModelOfferableRow(r)).map((r) => r.toolId)).toEqual([]);
     expect(rows.filter((r) => r.preview !== undefined || r.before !== undefined)).toEqual([]);
   });

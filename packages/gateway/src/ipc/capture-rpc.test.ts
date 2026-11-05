@@ -252,13 +252,14 @@ describe("buildActDeps (act door)", () => {
     expect(d[0]?.payload).toEqual({ mcpToolId: "mcp_echo_echo", input: { text: "hi" } });
   });
   test("the consent prompt is the provenance prompt, with UNREDACTED details", async () => {
+    // An untemplated proposable type (slack.message.post has a typed preview since B1).
     const d: PlannedAction[] = [];
     const { act, prompts } = wiring(d, true);
-    await act.execute("slack.message.post", { token_hint: "visible", text: "hi" }, PROV);
+    await act.execute("github.issue.create", { token_hint: "visible", title: "hi" }, PROV);
     expect(prompts[0]?.prompt).toContain("Agent-proposed action");
     expect(prompts[0]?.details).toEqual({
-      actionType: "slack.message.post",
-      input: { token_hint: "visible", text: "hi" },
+      actionType: "github.issue.create",
+      input: { token_hint: "visible", title: "hi" },
     });
   });
   test("declined → rejected, nothing dispatched", async () => {

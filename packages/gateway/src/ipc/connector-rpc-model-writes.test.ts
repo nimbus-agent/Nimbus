@@ -8,6 +8,7 @@ import {
   setModelWriteEnablement,
   writesEnabledBy,
 } from "../connectors/connector-writes/enablement-store.ts";
+import { isModelOfferableRow } from "../connectors/connector-writes/model-offerable.ts";
 import { row, withPreview } from "../connectors/connector-writes/types.ts";
 import { dbRun } from "../db/write.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
@@ -95,9 +96,14 @@ describe("connector.writesEnable", () => {
     const p = prompts[0] ?? "";
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 3");
+    // B1 templates the comment write: it is the one row the owner approves now.
     for (const r of expected) {
-      expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  (not offered yet)`);
+      const tag = isModelOfferableRow(r) ? "(new: offered after you approve)" : "(not offered yet)";
+      expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  ${tag}`);
     }
+    expect(expected.filter(isModelOfferableRow).map((r) => r.toolId)).toEqual([
+      "github_issue_comment_create",
+    ]);
     expect(p).toContain("Each call will still ask you before it runs.");
   });
 
@@ -217,7 +223,11 @@ describe("connector.writesDisable and writesStatus", () => {
       writes: 2,
       offerable: 0,
     });
-    expect(s.services.find((x) => x.service === "github")).toMatchObject({ offerable: 0 });
+    // The approved enable covered the one offerable github write (B1's comment row).
+    expect(s.services.find((x) => x.service === "github")).toMatchObject({
+      offerable: 1,
+      awaitingApproval: 0,
+    });
     const locked = (await call("connector.writesStatus", {}, { policy: () => undefined })) as {
       policyAllows: boolean;
     };
