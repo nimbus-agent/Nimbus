@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793856004294,
+  "lastUpdate": 1793862057602,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "84d3e6294a0cf537824410044b93dbe8325a4c13",
-          "message": "fix(security): wire the two I22/I18 defenses that were resolved but never read (#1220)\n\n> **Stacked on #1219** — base retargets to `main` automatically when\nthat merges. Review the top commit.\n\nTwo defenses that exist, are documented, are tested at the unit level,\nand are consulted by nothing on the path that matters. Cluster C of the\nI1–I30 audit (#1218 = A, #1219 = B). Both fixes were confirmed with you\nbefore implementing.\n\n## I22 — a signed org policy's HITL list had zero readers\n\n`PolicyGate` computes `EnforcedPolicy.hitlRequired` as a monotonic union\nof the baseline and `[policy.hitl] require`. `policy/quorum-override.ts`\nexports `isHitlRequiredByPolicy` to read it. **Nothing called it** —\nrepo-wide, the only references were its own definition and its unit\ntest.\n\nSo an org admin could sign `nimbus.policy.toml`, watch the signature\nverify, and get no gate. `gate()` asked only\n`HITL_REQUIRED.has(action.type)`. Of the resolved `EnforcedPolicy`\nfields, `hitlRequired` was the *only* one with no enforcement site —\nretention, `connectorAllow`, `auditShipTo`, quorum and chatops are all\ngenuinely wired. That is the B1 \"defined but never consumed\" shape, on a\ndocumented invariant.\n\n**`gate()` now computes `HITL_REQUIRED.has(action.type) ||\nthis.requiredByPolicy(action.type)`.** An OR — never an assignment,\nnever a ternary. The frozen set is the floor and policy is a ratchet\nabove it, which is what makes this compatible with I2's *cannot be\nbypassed or configured away*: a hostile, buggy or stale policy can add\nan action type, never remove one.\n\nA partial wiring would be its own hole — one executor built without the\noverlay looks exactly like the system working. So all **eleven**\nproduction construction sites pass either the real overlay or a named\n`NO_POLICY_OVERLAY`, following the `NULL_EGRESS_SINK` precedent (I29) so\na site that simply forgot is visible rather than defaulted, and a test\nsweeps for it.\n\nThe overlay reads `policyGate.enforced()` **per call** rather than\ncapturing it, so a newly verified bundle takes effect without a restart.\nA throwing overlay adds nothing rather than gating everything — an\noverlay fault becoming a self-inflicted DoS would be a worse failure\nthan the one being fixed, and I2 is still the floor underneath.\n\n## I18 — the identity guard reached local IPC but not the wire\n\nEvery federated gate reads it: `gate-commons.ts`, `invoke-gate.ts` and\n`preflight-gate.ts` all test `ctx.identity?.enabled === true &&\n!ctx.identity.isOperatorValid()`. `ctx.identity` has exactly two\nproducers — `ipc/server/dispatchers.ts` for local IPC, and\n`federation-server.ts` for the LAN wire, fed by\n`buildFederationLanServer`'s options.\n\nOnly the first wired it. That options object literal has fourteen keys\nand `identityGuard` was not among them, so over the wire `ctx.identity`\nwas always `undefined`, `undefined?.enabled === true` was false, and\n**the branch never executed**. The guard fired only when the owner\nqueried their own machine — the one case it isn't needed for — while a\ngateway whose operator SSO session had been deprovisioned or expired\npast grace kept answering `federation.query`, `auditExport`, `invoke`\nand `preflight`.\n\nIt is late-bound through `identityBootRefHolder`, because identity boots\n*after* federation (`bootFederationIntoIpcOpts` then\n`bootIdentityIntoIpcOpts`), and fails closed until populated. Not a new\npattern: `buildTeamCredentialContexts` already solves the identical\nordering problem the identical way — that precedent existed and the LAN\nserver simply never got one.\n\n**Scope, stated plainly:** this is defense-in-depth, not an\nauthorization bypass. Every primary gate on the wire path was and is\nintact — NaCl pairing, namespace existence, the live-checked grant,\nconsent, plus RBAC + quorum + write-tool rejection for invoke and the\nowner's HITL for preflight. No peer gains access it did not already\nhold. What was missing is offboarding: revocation did not fail\nfederation closed. It is also behind opt-in `[identity].enabled`.\n\n## Red-prove\n\nEach wiring was reverted and the guard confirmed red, naming the right\nthing:\n\n| Mutation | Failing tests |\n| --- | --- |\n| `gate()` back to the frozen set alone | `(d) gate() ORs the overlay`,\n`an ungated action type prompts…`, `a denied policy-added prompt\nblocks…`, `a signed [policy.hitl] require entry produces a real consent\nprompt` |\n| Invert the OR into a policy-wins ternary | `a frozen-set action still\nprompts…`, `a throwing overlay adds nothing…`, `NO_POLICY_OVERLAY is the\nidentity`, + `(d)` |\n| Unwire ONE of the eleven executors | `(c) every production\nToolExecutor is handed a policy overlay` |\n| Remove the LAN server's `identityGuard` | `the OVER-THE-WIRE\nfederation path is given an identity guard` |\n\nThe inversion case matters most: it is the edit that would silently turn\na tighten-only ratchet into something a policy can loosen, and three\nindependent tests catch it.\n\nBehavioural coverage in the new `engine/executor-policy-hitl.test.ts`\nruns the whole chain with nothing hand-built in the middle — sign →\nverify → resolve → read → gate → prompt — plus the two controls that\nstop it passing vacuously: a signed policy naming nothing leaves the\naction ungated, and a **tampered** bundle's `require` list never reaches\nthe gate. The previous I22 assertion stopped at \"resolve\", against a\n`LocalBaseline` production never constructs, which is exactly how the\nresolution stayed correct for a year while nothing consumed its output.\n\nOne self-inflicted catch worth noting: the executor-sweep test first\nreported `executor.ts` as unwired — it was matching that file's own doc\ncomment, which *says* `new ToolExecutor(...)` while explaining this very\nrule. Comments are stripped now.\n\n`bun run preflight:fast` — 29/29. `security-invariants` + `engine` +\n`policy` + `chatops` — 717 pass, 0 fail. `platform` + `ipc` — 1,960\npass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T06:53:01Z",
-          "tree_id": "d084eee88ff97de074a8bfec3aabdd287bc7e7fe",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/84d3e6294a0cf537824410044b93dbe8325a4c13"
-        },
-        "date": 1786863862265,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 330.8907164999986,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 329.7786810999969,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 295.58783959999965,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3d9647263e50fe671bd0d99b769b33bee7e6e2e4",
+          "message": "feat(gateway): Wave-2 framework for model connector writes (#1890)\n\nThis is Phase 9.7 Project B, B0a: the framework for model connector\nwrites in Wave 2. No row is turned on. The model is still offered no\nwrite, because no wave-2 row has a preview template yet; B1–B4 add them.\n\n## What it adds\n\n- **Per-service listing and generation.**\n- Each of 14 wave-2 services is listable on its own mesh slot, alongside\nthe 9 phase-3 services.\n- Each service is checked with its own credential predicate,\n`connectors/lazy-mesh/service-credential.ts`. The predicate reads Vault\nkeys and context only, never a token refresh.\n- A configured sibling never stands in for an unconfigured service in a\nshared Google or Microsoft bundle: its generation is `-1` and its\nlisting is `undefined`.\n- The order is unchanged: write rows, then policy, then the service's\nown credential, then that slot only, then the filtered listing.\n- **Re-consent, from the owner's ruling, with schema V84.**\n- The opt-in records exactly the tool ids the enable prompt listed\n(`approved_tool_ids`).\n- The door offers only approved writes, and both the listing and the\nper-call recheck check this.\n  - A pre-V84 opt-in offers nothing until it is re-enabled.\n- `status` shows `offerable` as approved and offerable, plus\n`awaitingApproval`. The CLI line gains `, <n> awaiting approval`. The\nprompt marks each write `(offered to the model)`, `(new: offered after\nyou approve)` or `(not offered yet)`.\n- **The door refuses ChatOps destinations, from the owner's ruling.** It\nrefuses Slack and Teams posts to channels ChatOps binds or notifies,\nusing the live policy.\n- Values are normalised before comparison (`#`, case, percent-encoding,\n`;messageid=`).\n- It fails closed for any destination it cannot prove is a different\nchannel, including Slack names and an unreadable policy.\n- It refuses every model Slack DM while Slack ChatOps is configured,\nbecause the bot's user id is not knowable offline.\n- **The door refuses the knowledge base (I25), from the owner's ruling,\nby exact id.**\n- It refuses Notion writes to the KB database: the ids are\ncanonicalised, and a URL that contains the id is also refused.\n- It refuses Confluence page create, update and comment on the KB\nparent. Ids are compared as strings, and a non-canonical numeric id is\nrefused.\n- **The MCP act door shows the typed preview.**\n- A proposed action for a templated row shows the provenance header,\nthen the gateway-built preview.\n- The proposer's details sit only under `details.proposedBy`, sanitised.\nIts `unverifiedSummary` never overwrites the template summary. The\ndesktop shows it as a distinct \"Unverified agent proposal\" block.\n- With no template, the prompt and details are byte-identical to before.\n- The A2 tripwire is replaced by a positive test on a synthetic\ntemplated row.\n\n## Tests\n\nRed-proofs, each a temporary mutation that was reverted:\n- skipping the per-service credential check fails the sibling-bundle\ntests;\n- dropping the approved filter from the listing fails one test, and\ndropping it from the recheck fails another;\n- removing normalisation fails the Teams spelling tests;\n- dropping the `parentBlockId` check fails three tests;\n- removing the DM branch fails two tests;\n- copying the proposer's summary into `summary` fails the summary test;\n- removing the non-canonical Confluence id check fails its test.\n\nLocal results:\n- `preflight:fast` and `typecheck:tests` (0 new) pass.\n- The scoped gateway suites give 11,645 pass and 0 fail, before the\nfinal round. After it, connectors, engine, ipc and security-invariants\ngive 8,986 pass.\n- The desktop HITL tests give 95 of 95.\n- `bun test packages/cli --parallel` shows only the 11 TUI Yoga failures\nthat were already there.\n\n## Docs\n\n`CLAUDE.md` and `GEMINI.md` (V84, the I53 bullet), the roadmap,\n`architecture.md`, `docs/README.md`, `cli-reference.md`,\n`SECURITY-INVARIANTS.md` (the I53 statement and bounds, and an I28\nact-door note covering what the act door does not refuse), the schema\nreference (V84) and `CHANGELOG.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Connector-write approvals now apply to individually named writes.\nExisting approvals must be renewed, and status displays writes awaiting\napproval.\n* Action approval prompts can show a typed preview and separate proposal\ndetails.\n* **Safeguards**\n* Model writes to configured ChatOps destinations and the tribal\nknowledge base are refused. Services are checked individually for\ncredentials before their tools are listed.\n* No Wave 2 or Wave 3 writes are currently available to the model\nbecause they lack preview templates.\n* **Documentation**\n* Updated product status, setup guidance, architecture, security, and\nschema documentation.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T06:52:26Z",
+          "tree_id": "5de7ce83a4426256127186a57682f26c1859d7ad",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3d9647263e50fe671bd0d99b769b33bee7e6e2e4"
+        },
+        "date": 1793862053098,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 239.9012611999977,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 236.6401775999988,
             "unit": "ms"
           }
         ]
