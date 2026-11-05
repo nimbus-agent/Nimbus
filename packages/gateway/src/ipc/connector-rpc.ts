@@ -190,7 +190,10 @@ export async function dispatchConnectorRpc(options: {
     // The Obsidian opt-in is also the trigger of its sandbox write grant (I15, B4b).
     ...(connectorMesh === undefined
       ? {}
-      : { onObsidianGrantChanged: () => connectorMesh.restartObsidian() }),
+      : {
+          onObsidianGrantChanged: () => connectorMesh.restartObsidian(),
+          obsidianWriteScope: () => connectorMesh.obsidianWriteScope(),
+        }),
   });
 
   switch (method) {

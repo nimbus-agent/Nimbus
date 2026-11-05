@@ -6,6 +6,7 @@ import {
   getModelWriteEnablement,
   listModelWriteEnablement,
   modelWriteServices,
+  OBSIDIAN_APPEND_TOOL_ID,
   offerableWritesEnabledBy,
   removeModelWriteEnablement,
   setModelWriteEnablement,
@@ -35,6 +36,15 @@ export interface ModelWritesDeps {
    * never reject (`LazyConnectorMesh.restartObsidian`). Absent: nothing restarts.
    */
   readonly onObsidianGrantChanged?: () => Promise<void>;
+  /**
+   * What approving the Obsidian append would let its sandbox write now (`LazyConnectorMesh.
+   * obsidianWriteScope`), shown in the enable prompt. Absent: the prompt says the folders are unknown.
+   */
+  readonly obsidianWriteScope?: () => {
+    readonly roots: readonly string[];
+    readonly vaults: readonly string[];
+    readonly skipped: readonly { readonly path: string; readonly reason: string }[];
+  };
 }
 
 /** The service whose opt-in also decides a sandbox write grant (I15, OR-B4-1). */
@@ -74,6 +84,21 @@ function parseServiceForDisable(raw: unknown): string {
   return raw;
 }
 
+/** The Obsidian write scope for the prompt, only when approving would grant it; never throws. */
+function obsidianScopeFor(
+  service: string,
+  writes: readonly { readonly toolId: string; readonly offerable: boolean }[],
+  deps: ModelWritesDeps,
+): ReturnType<NonNullable<ModelWritesDeps["obsidianWriteScope"]>> | undefined {
+  if (service !== OBSIDIAN_SERVICE || deps.obsidianWriteScope === undefined) return undefined;
+  if (!writes.some((w) => w.toolId === OBSIDIAN_APPEND_TOOL_ID && w.offerable)) return undefined;
+  try {
+    return deps.obsidianWriteScope();
+  } catch {
+    return undefined; // the prompt then says the folders are not known
+  }
+}
+
 /** In a fixed order: validate, eligible service, LIVE policy, the owner's gate, then the write. */
 export async function handleConnectorWritesEnable(
   rec: Record<string, unknown> | undefined,
@@ -101,10 +126,11 @@ export async function handleConnectorWritesEnable(
     }
     return { toolId: r.toolId, actionType: r.actionType, wave: r.wave, offerable, state };
   });
-  const gate = await deps.toolExecutor.gate({
-    type: "connector.writes.enable",
-    payload: { service, maxWave, writes },
-  });
+  const payload: Record<string, unknown> = { service, maxWave, writes };
+  // The Obsidian widening is named in the prompt the owner approves (I15, OR-B4-1).
+  const scope = obsidianScopeFor(service, writes, deps);
+  if (scope !== undefined) payload["fileWriteScope"] = scope;
+  const gate = await deps.toolExecutor.gate({ type: "connector.writes.enable", payload });
   if (gate !== "proceed") {
     throw new ConnectorRpcError(-32000, "ERR_CONNECTOR_WRITES_DECLINED: nothing was enabled");
   }
