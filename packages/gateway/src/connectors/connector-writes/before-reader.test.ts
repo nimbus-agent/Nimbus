@@ -1049,6 +1049,25 @@ describe("the Jira transition's two reads (OR-B2-1)", () => {
     expect(out).toEqual({ status: "ok", fields: DONE });
   });
 
+  test("an offered transition with no to.name or no name still shows To and Transition, as (unknown)", async () => {
+    for (const entry of [
+      { id: "31", name: "Done" },
+      { id: "31", name: "Done", to: {} },
+      { id: "31", to: { name: true } },
+    ]) {
+      const { out } = await runByTool("jira_issue_transition", input, {
+        ...READS,
+        jira_jira_issue_transitions_list: mcp({ transitions: [entry] }),
+      });
+      if (out?.status !== "ok") throw new Error("expected ok");
+      expect(
+        out.fields.map((f) => f.label),
+        JSON.stringify(entry),
+      ).toEqual(["From", "Transition", "To"]);
+      expect(out.fields.find((f) => f.label === "To")?.value).toBe("(unknown)");
+    }
+  });
+
   test("the selection unwraps BOTH MCP replies", () => {
     expect(selectWith("jira_issue_transition", input)(mcp(TRANSITIONS), mcp(JIRA))).toEqual(DONE);
   });

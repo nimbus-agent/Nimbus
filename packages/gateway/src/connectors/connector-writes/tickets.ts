@@ -142,10 +142,14 @@ export function linearAssigneeProvenNull(reply: unknown): boolean {
 /** The text shown as the target status when the issue does not offer the transition now. */
 export const JIRA_TRANSITION_NOT_AVAILABLE = "not available for this issue now";
 
+/** The text shown for an offered transition whose name or target status the reply omits. */
+export const JIRA_TRANSITION_UNKNOWN = "(unknown)";
+
 /**
  * Jira transition (OR-B2-1): `alsoReply` is `jira_issue_get` (its status is the identity and the
  * From); `reply` is `jira_issue_transitions_list`, whose `transitions` array is required; the entry
- * whose `id` equals the write's `transitionId` gives the Transition name and the To status. No
+ * whose `id` equals the write's `transitionId` gives the Transition name and the To status (each
+ * {@link JIRA_TRANSITION_UNKNOWN} when the entry omits it, so the To line is never dropped). No
  * such entry: To reads {@link JIRA_TRANSITION_NOT_AVAILABLE} (the write would fail upstream).
  */
 export function selectJiraTransition(
@@ -175,10 +179,8 @@ export function selectJiraTransition(
   }
   return [
     { label: "From", value: from },
-    ...presentFields([
-      ["Transition", stringAt(entry, ["name"])],
-      ["To", stringAt(entry, ["to", "name"])],
-    ]),
+    { label: "Transition", value: stringAt(entry, ["name"]) ?? JIRA_TRANSITION_UNKNOWN },
+    { label: "To", value: stringAt(entry, ["to", "name"]) ?? JIRA_TRANSITION_UNKNOWN },
   ];
 }
 
