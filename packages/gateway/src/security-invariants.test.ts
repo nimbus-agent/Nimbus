@@ -11270,13 +11270,16 @@ describe("I53 — a first-party connector write reaches the model only through t
     }
   });
 
-  test("the production source stays gated: enablement, policy and offerability", async () => {
+  test("the production source stays gated: enablement, policy, offerability and the approved set", async () => {
     const src = stripComments(
       await read("packages/gateway/src/connectors/connector-writes/model-write-source.ts"),
     );
     expect(src).toContain("isModelOfferableRow");
     expect(src).toContain("isConnectorWriteModelAccessEnabled");
     expect(src).toContain("getModelWriteEnablement");
+    // V84 re-consent: the listing and the per-call recheck share ONE predicate that reads it.
+    expect(src).toContain("approvedToolIds.has(row.toolId)");
+    expect(src.match(/offeredUnder\(/g)?.length).toBe(3);
   });
 
   test("D39 exists with all four clauses, run() calls it, and the door is an anchor", async () => {

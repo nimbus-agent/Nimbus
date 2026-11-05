@@ -129,6 +129,16 @@ interface StatusRow {
   maxWave?: number;
   writes: number;
   offerable?: number;
+  awaitingApproval?: number;
+}
+
+/**
+ * `, <n> awaiting approval` when an enabled service has writes offerable now that the owner has not
+ * approved by name (an opt-in from before they were offerable): re-enabling approves them.
+ */
+function awaitingSuffix(row: StatusRow): string {
+  const n = row.awaitingApproval;
+  return typeof n === "number" && n > 0 ? `, ${String(n)} awaiting approval` : "";
 }
 
 async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> {
@@ -150,7 +160,7 @@ async function runStatus(d: ConnectorWritesDeps, tail: string[]): Promise<void> 
       const name = row.service.padEnd(width);
       d.log(
         row.enabled
-          ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now`
+          ? `${name}  enabled  wave ${String(row.maxWave)}  ${String(row.writes)} writes, ${String(row.offerable ?? 0)} offerable now${awaitingSuffix(row)}`
           : `${name}  off`,
       );
     }

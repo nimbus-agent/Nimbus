@@ -1,7 +1,7 @@
 // packages/gateway/src/connectors/connector-writes/enablement-store.ts
-// The owner's opt-in for model connector writes (V83 `connector_write_enablement`). Written only by
-// the HITL-gated `connector.writes.enable` handler; today only `connector.writesStatus` reads it, and the
-// model's tool source will (Phase 9.7 A5).
+// The owner's opt-in for model connector writes (V83 `connector_write_enablement`, V84
+// `approved_tool_ids`). Written only by the HITL-gated `connector.writes.enable` handler; read by
+// `connector.writesStatus` and the model's tool source (`model-write-source.ts`).
 import type { Database } from "bun:sqlite";
 
 import { dbRun } from "../../db/write.ts";
@@ -14,37 +14,73 @@ export interface ModelWriteEnablement {
   readonly service: string;
   readonly maxWave: ConnectorWriteWave;
   readonly enabledAt: number;
+  /**
+   * The tool ids the owner approved by name (V84): the rows the enable prompt listed as offerable
+   * when they approved it. The model is offered only these. Empty for an opt-in written before V84,
+   * or a stored value that does not parse as an array of strings (fail closed).
+   */
+  readonly approvedToolIds: ReadonlySet<string>;
 }
 
 interface EnablementDbRow {
   service: string;
   max_wave: number;
   enabled_at: number;
+  approved_tool_ids: string;
+}
+
+const SELECT_COLUMNS = "service, max_wave, enabled_at, approved_tool_ids";
+
+/** The stored JSON array, or an EMPTY set when it is anything else (fail closed). */
+function parseApproved(raw: unknown): ReadonlySet<string> {
+  if (typeof raw !== "string") return new Set();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return new Set();
+  }
+  if (!Array.isArray(parsed) || !parsed.every((v): v is string => typeof v === "string")) {
+    return new Set();
+  }
+  return new Set(parsed);
 }
 
 function fromDb(r: EnablementDbRow): ModelWriteEnablement {
-  return { service: r.service, maxWave: r.max_wave as ConnectorWriteWave, enabledAt: r.enabled_at };
+  return {
+    service: r.service,
+    maxWave: r.max_wave as ConnectorWriteWave,
+    enabledAt: r.enabled_at,
+    approvedToolIds: parseApproved(r.approved_tool_ids),
+  };
 }
 
-/** Every service with at least one row in the write table, sorted. */
-export function modelWriteServices(): readonly string[] {
-  return [...new Set(CONNECTOR_WRITE_ROWS.map((r) => serviceOf(r.actionType)))].sort((a, b) =>
-    a.localeCompare(b),
-  );
+/** Every service with at least one row in the write table (or `rows`), sorted. */
+export function modelWriteServices(
+  rows: readonly ConnectorWriteRow[] = CONNECTOR_WRITE_ROWS,
+): readonly string[] {
+  return [...new Set(rows.map((r) => serviceOf(r.actionType)))].sort((a, b) => a.localeCompare(b));
 }
 
-/** Enable (or re-enable with a different wave: the row is replaced) a service for the model. */
+/**
+ * Enable (or re-enable: the row is replaced) a service for the model, with the tool ids the owner
+ * approved by name. The set is stored sorted and de-duplicated, so re-enabling replaces it whole.
+ */
 export function setModelWriteEnablement(
   db: Database,
   service: string,
   maxWave: ConnectorWriteWave,
   now: number,
+  approvedToolIds: readonly string[],
 ): void {
+  const approved = JSON.stringify([...new Set(approvedToolIds)].sort((a, b) => a.localeCompare(b)));
   dbRun(
     db,
-    `INSERT INTO connector_write_enablement (service, max_wave, enabled_at) VALUES (?, ?, ?)
-     ON CONFLICT(service) DO UPDATE SET max_wave = excluded.max_wave, enabled_at = excluded.enabled_at`,
-    [service, maxWave, now],
+    `INSERT INTO connector_write_enablement (service, max_wave, enabled_at, approved_tool_ids)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(service) DO UPDATE SET max_wave = excluded.max_wave,
+       enabled_at = excluded.enabled_at, approved_tool_ids = excluded.approved_tool_ids`,
+    [service, maxWave, now, approved],
   );
 }
 
@@ -60,32 +96,32 @@ export function getModelWriteEnablement(
   service: string,
 ): ModelWriteEnablement | undefined {
   const r = db
-    .query("SELECT service, max_wave, enabled_at FROM connector_write_enablement WHERE service = ?")
+    .query(`SELECT ${SELECT_COLUMNS} FROM connector_write_enablement WHERE service = ?`)
     .get(service) as EnablementDbRow | null;
   return r === null ? undefined : fromDb(r);
 }
 
 export function listModelWriteEnablement(db: Database): readonly ModelWriteEnablement[] {
   const rows = db
-    .query("SELECT service, max_wave, enabled_at FROM connector_write_enablement")
+    .query(`SELECT ${SELECT_COLUMNS} FROM connector_write_enablement`)
     .all() as EnablementDbRow[];
   return rows.map(fromDb).sort((a, b) => a.service.localeCompare(b.service));
 }
 
-/** The rows of `service` whose wave is at or below `maxWave`: what enabling it offers the model. */
+/** The rows of `service` whose wave is at or below `maxWave`: what enabling it covers. */
 export function writesEnabledBy(
   service: string,
   maxWave: ConnectorWriteWave,
+  rows: readonly ConnectorWriteRow[] = CONNECTOR_WRITE_ROWS,
 ): readonly ConnectorWriteRow[] {
-  return CONNECTOR_WRITE_ROWS.filter(
-    (r) => serviceOf(r.actionType) === service && r.wave <= maxWave,
-  );
+  return rows.filter((r) => serviceOf(r.actionType) === service && r.wave <= maxWave);
 }
 
-/** The subset of {@link writesEnabledBy} the model can actually be offered now (M1). */
+/** The subset of {@link writesEnabledBy} the model could be offered now (M1), approved or not. */
 export function offerableWritesEnabledBy(
   service: string,
   maxWave: ConnectorWriteWave,
+  rows: readonly ConnectorWriteRow[] = CONNECTOR_WRITE_ROWS,
 ): readonly ConnectorWriteRow[] {
-  return writesEnabledBy(service, maxWave).filter(isModelOfferableRow);
+  return writesEnabledBy(service, maxWave, rows).filter(isModelOfferableRow);
 }

@@ -3,6 +3,7 @@
 import type { Database } from "bun:sqlite";
 
 import {
+  getModelWriteEnablement,
   listModelWriteEnablement,
   modelWriteServices,
   offerableWritesEnabledBy,
@@ -12,7 +13,10 @@ import {
 } from "../../connectors/connector-writes/enablement-store.ts";
 import { isModelOfferableRow } from "../../connectors/connector-writes/model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "../../connectors/connector-writes/model-write-capability.ts";
-import type { ConnectorWriteWave } from "../../connectors/connector-writes/types.ts";
+import type {
+  ConnectorWriteRow,
+  ConnectorWriteWave,
+} from "../../connectors/connector-writes/types.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";
@@ -23,7 +27,15 @@ export interface ModelWritesDeps {
   /** LIVE resolved policy (I22); `undefined` means "cannot tell" and refuses. */
   readonly getEnforcedPolicy: () => Pick<EnforcedPolicy, "capabilitiesDisabled"> | undefined;
   readonly now: () => number;
+  /** Test seam; production uses the write table. */
+  readonly rows?: readonly ConnectorWriteRow[];
 }
+
+/**
+ * How the enable prompt marks one write (F7): offered under the CURRENT opt-in, offerable now but
+ * offered only once this prompt is approved, or not offerable yet (approving does not offer it).
+ */
+export type EnableWriteState = "already_approved" | "newly_offerable" | "not_offerable";
 
 const DEFAULT_WAVE: ConnectorWriteWave = 3;
 
@@ -33,8 +45,11 @@ function parseWave(raw: unknown): ConnectorWriteWave {
   throw new ConnectorRpcError(-32602, "ERR_CONNECTOR_WRITES_BAD_WAVE: wave must be 2, 3 or 4");
 }
 
-function parseEligibleService(raw: unknown): string {
-  if (typeof raw !== "string" || !modelWriteServices().includes(raw)) {
+function parseEligibleService(
+  raw: unknown,
+  rows: readonly ConnectorWriteRow[] | undefined,
+): string {
+  if (typeof raw !== "string" || !modelWriteServices(rows).includes(raw)) {
     throw new ConnectorRpcError(
       -32602,
       "ERR_CONNECTOR_WRITES_UNKNOWN_SERVICE: that service has no connector writes",
@@ -59,19 +74,24 @@ export async function handleConnectorWritesEnable(
     throw new ConnectorRpcError(-32603, "connector.writesEnable requires a toolExecutor");
   }
   const maxWave = parseWave(rec?.["wave"]);
-  const service = parseEligibleService(rec?.["service"]);
+  const service = parseEligibleService(rec?.["service"], deps.rows);
   if (!isConnectorWriteModelAccessEnabled(deps.getEnforcedPolicy())) {
     throw new ConnectorRpcError(
       -32000,
       "ERR_CONNECTOR_WRITES_POLICY: org policy does not allow model connector writes",
     );
   }
-  const writes = writesEnabledBy(service, maxWave).map((r) => ({
-    toolId: r.toolId,
-    actionType: r.actionType,
-    wave: r.wave,
-    offerable: isModelOfferableRow(r),
-  }));
+  // Read BEFORE the gate: the prompt says which writes the current opt-in already offers.
+  const existing = getModelWriteEnablement(deps.db, service);
+  const writes = writesEnabledBy(service, maxWave, deps.rows).map((r) => {
+    const offerable = isModelOfferableRow(r);
+    let state: EnableWriteState = "not_offerable";
+    if (offerable) {
+      state =
+        existing?.approvedToolIds.has(r.toolId) === true ? "already_approved" : "newly_offerable";
+    }
+    return { toolId: r.toolId, actionType: r.actionType, wave: r.wave, offerable, state };
+  });
   const gate = await deps.toolExecutor.gate({
     type: "connector.writes.enable",
     payload: { service, maxWave, writes },
@@ -79,7 +99,9 @@ export async function handleConnectorWritesEnable(
   if (gate !== "proceed") {
     throw new ConnectorRpcError(-32000, "ERR_CONNECTOR_WRITES_DECLINED: nothing was enabled");
   }
-  setModelWriteEnablement(deps.db, service, maxWave, deps.now());
+  // The approved set is exactly the offerable-now writes the owner just saw listed (V84).
+  const approved = writes.filter((w) => w.offerable).map((w) => w.toolId);
+  setModelWriteEnablement(deps.db, service, maxWave, deps.now(), approved);
   return { service, maxWave, writes: writes.length };
 }
 
@@ -91,6 +113,11 @@ export function handleConnectorWritesDisable(
   return { removed: removeModelWriteEnablement(deps.db, parseServiceForDisable(rec?.["service"])) };
 }
 
+/**
+ * Per service: `offerable` is what the model is offered now (offerable AND approved by name, V84)
+ * and `awaitingApproval` is what is offerable now but not approved (re-enable to approve it). A
+ * service that is not enabled has nothing approved, so its offerable writes all await approval.
+ */
 export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
   services: Array<{
     service: string;
@@ -99,27 +126,24 @@ export function handleConnectorWritesStatus(deps: ModelWritesDeps): {
     enabledAt?: number;
     writes: number;
     offerable: number;
+    awaitingApproval: number;
   }>;
   policyAllows: boolean;
 } {
   const enabled = new Map(listModelWriteEnablement(deps.db).map((e) => [e.service, e]));
-  const services = modelWriteServices().map((service) => {
+  const services = modelWriteServices(deps.rows).map((service) => {
     const e = enabled.get(service);
+    const maxWave = e?.maxWave ?? 4;
+    const offerableNow = offerableWritesEnabledBy(service, maxWave, deps.rows);
+    const approved = offerableNow.filter((r) => e?.approvedToolIds.has(r.toolId) === true).length;
+    const counts = {
+      writes: writesEnabledBy(service, maxWave, deps.rows).length,
+      offerable: approved,
+      awaitingApproval: offerableNow.length - approved,
+    };
     return e === undefined
-      ? {
-          service,
-          enabled: false,
-          writes: writesEnabledBy(service, 4).length,
-          offerable: offerableWritesEnabledBy(service, 4).length,
-        }
-      : {
-          service,
-          enabled: true,
-          maxWave: e.maxWave,
-          enabledAt: e.enabledAt,
-          writes: writesEnabledBy(service, e.maxWave).length,
-          offerable: offerableWritesEnabledBy(service, e.maxWave).length,
-        };
+      ? { service, enabled: false, ...counts }
+      : { service, enabled: true, maxWave: e.maxWave, enabledAt: e.enabledAt, ...counts };
   });
   return {
     services,

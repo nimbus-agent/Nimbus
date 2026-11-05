@@ -177,7 +177,7 @@ function harness(
     [`Release runbook. ${INSTRUCTION}`],
   );
   const rowWave = hooks.rowWave ?? 2;
-  setModelWriteEnablement(db, "argocd", rowWave, 1);
+  setModelWriteEnablement(db, "argocd", rowWave, 1, [fixtureRow(rowWave).toolId]);
 
   let policy = ALLOWED;
   let delegateAsks = 0;
@@ -385,7 +385,20 @@ describe("Review Focus 3: the offer is re-checked at call time", () => {
     const h = harness("indexed item", true, {
       rowWave: 3,
       beforeCall: (x) => {
-        setModelWriteEnablement(x.db, "argocd", 2, 2);
+        setModelWriteEnablement(x.db, "argocd", 2, 2, [fixtureRow(2).toolId]);
+      },
+    });
+    await turn(h);
+    expect(h.seenByModel[1]).toBe(refused);
+    expect(writeConsents(h)).toEqual([]);
+    expect(writeDispatches(h)).toEqual([]);
+  });
+
+  test("approved set no longer names the write between listing and call: refused, nothing dispatched", async () => {
+    const h = harness("indexed item", true, {
+      beforeCall: (x) => {
+        // Same service, same wave: only the owner's approved set changes (V84 re-consent).
+        setModelWriteEnablement(x.db, "argocd", 2, 2, []);
       },
     });
     await turn(h);

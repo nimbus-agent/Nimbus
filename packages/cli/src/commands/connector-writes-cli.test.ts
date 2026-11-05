@@ -137,6 +137,36 @@ describe("connector writes status", () => {
     ]);
   });
 
+  it("appends the awaiting-approval count only when it is non-zero", async () => {
+    const h = harness({
+      services: [
+        {
+          service: "github",
+          enabled: true,
+          maxWave: 2,
+          writes: 1,
+          offerable: 0,
+          awaitingApproval: 1,
+        },
+        {
+          service: "jira",
+          enabled: true,
+          maxWave: 2,
+          writes: 3,
+          offerable: 2,
+          awaitingApproval: 0,
+        },
+      ],
+      policyAllows: true,
+    });
+    await runConnectorWrites(["status"], h.deps);
+    expect(h.logs).toEqual([
+      "github  enabled  wave 2  1 writes, 0 offerable now, 1 awaiting approval",
+      "jira    enabled  wave 2  3 writes, 2 offerable now",
+      "Policy: allows",
+    ]);
+  });
+
   it("reports a forbidding policy", async () => {
     const h = harness({ services: [], policyAllows: false });
     await runConnectorWrites(["status"], h.deps);
