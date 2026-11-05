@@ -35,7 +35,11 @@
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
-import { driveContentFormat, type RemoteContentFormat, remoteContentIn } from "./remote-content.ts";
+import {
+  driveContentFormats,
+  type RemoteContentFormat,
+  remoteContentIn,
+} from "./remote-content.ts";
 import { foldAndStrip, settle } from "./text-normalise.ts";
 import type { TribalKbConfig } from "./types.ts";
 
@@ -747,7 +751,7 @@ function nullOptionalFieldCheck(
 //  - `obsidian_append_to_daily_note` `content` (Markdown, Mermaid fences included);
 //  - `gdrive_file_create` `content` (OPTIONAL: unset or `""` makes an empty file and is not
 //    scanned), when its `mimeType` is markup or its `name` ends in a markup extension
-//    (`driveContentFormat`), or as Markdown for a `.md` name.
+//    (`driveContentFormats`), and as Markdown for a `.md` name, whatever its type.
 // Not scanned: plain-text bodies (Gmail and iCloud drafts, an Outlook draft sent as Text, every
 // calendar body), titles and recipients, the Notion page create and comment text, a Drive file of a
 // clean non-markup type and name, the B1/B2 message, comment and issue rows and `outlook_mail_send`
@@ -759,10 +763,13 @@ function nullOptionalFieldCheck(
 export const REMOTE_CONTENT_REFUSAL =
   "the model cannot write a draft, page, note or file that loads remote content (an external image, embed, frame or stylesheet) when it is opened; use a plain link instead";
 
-/** One scanned row: the field holding the body, and the format it is read as (or not scanned). */
+/**
+ * One scanned row: the field holding the body, and every format it is read as (none: not
+ * scanned). The body is refused when ANY of them refuses.
+ */
 interface RemoteContentScan {
   readonly key: ScannedKey;
-  readonly format: (input: Readonly<Record<string, unknown>>) => RemoteContentFormat | undefined;
+  readonly formats: (input: Readonly<Record<string, unknown>>) => readonly RemoteContentFormat[];
 }
 
 function own(input: Readonly<Record<string, unknown>>, key: string): unknown {
@@ -770,33 +777,36 @@ function own(input: Readonly<Record<string, unknown>>, key: string): unknown {
 }
 
 /** Row 1: Outlook HTML unless `contentType` is absent or exactly `"text"` (fail closed). */
-function outlookDraftFormat(
+function outlookDraftFormats(
   input: Readonly<Record<string, unknown>>,
-): RemoteContentFormat | undefined {
+): readonly RemoteContentFormat[] {
   const contentType = own(input, "contentType");
-  return contentType === undefined || contentType === "text" ? undefined : "outlook-html";
+  return contentType === undefined || contentType === "text" ? [] : ["outlook-html"];
 }
 
-/** Row 9: the Drive create, by `mimeType` (R11) or `name` extension (coordinator ruling). */
-export function driveMarkupFormat(
+/**
+ * Row 9: the Drive create, by `mimeType` (R11) AND by `name` extension (coordinator rulings): every
+ * scan either calls for, so a markup type does not hide a `.md` name.
+ */
+export function driveMarkupFormats(
   input: Readonly<Record<string, unknown>>,
-): RemoteContentFormat | undefined {
-  return driveContentFormat(own(input, "mimeType"), own(input, "name"));
+): readonly RemoteContentFormat[] {
+  return driveContentFormats(own(input, "mimeType"), own(input, "name"));
 }
 
-const always = (format: RemoteContentFormat) => (): RemoteContentFormat => format;
+const always = (format: RemoteContentFormat) => (): readonly RemoteContentFormat[] => [format];
 
 /** The rows whose body the remote-content rule scans, the field and its format. */
 const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
-  outlook_draft_create: { key: REQUIRED("body"), format: outlookDraftFormat },
-  confluence_page_create: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
-  confluence_page_update: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
-  confluence_page_append: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
-  confluence_comment_add: { key: REQUIRED("storageHtml"), format: always("confluence-storage") },
-  notion_block_append: { key: REQUIRED("childrenJson"), format: always("notion-blocks") },
-  notion_page_update: { key: REQUIRED("propertiesJson"), format: always("notion-properties") },
-  obsidian_append_to_daily_note: { key: REQUIRED("content"), format: always("obsidian-markdown") },
-  gdrive_file_create: { key: OPTIONAL("content"), format: driveMarkupFormat },
+  outlook_draft_create: { key: REQUIRED("body"), formats: outlookDraftFormats },
+  confluence_page_create: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_page_update: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_page_append: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_comment_add: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  notion_block_append: { key: REQUIRED("childrenJson"), formats: always("notion-blocks") },
+  notion_page_update: { key: REQUIRED("propertiesJson"), formats: always("notion-properties") },
+  obsidian_append_to_daily_note: { key: REQUIRED("content"), formats: always("obsidian-markdown") },
+  gdrive_file_create: { key: OPTIONAL("content"), formats: driveMarkupFormats },
 };
 
 /** The rows the remote-content rule scans (read-only, for its completeness tripwire). */
@@ -823,12 +833,14 @@ function remoteContentRefusal(
   const scan = ownLookup(REMOTE_CONTENT_SCANNED, toolId);
   if (scan === undefined) return undefined;
   try {
-    const format = scan.format(input);
-    if (format === undefined) return undefined;
+    const formats = scan.formats(input);
+    if (formats.length === 0) return undefined;
     const refused = refusesKeys(
       input,
       [scan.key],
-      (text) => !(text === "" && !scan.key.required) && remoteContentIn(format, text),
+      (text) =>
+        !(text === "" && !scan.key.required) &&
+        formats.some((format) => remoteContentIn(format, text)),
     );
     return refused ? REMOTE_CONTENT_REFUSAL : undefined;
   } catch {

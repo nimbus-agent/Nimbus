@@ -404,6 +404,11 @@ const DRIVE_REFUSED: ReadonlyArray<RemoteContentDoorCase> = [
   drive("a .svg name with no type", `<svg><image href="//h/x.png"/></svg>`, { name: "logo.svg" }),
   drive("a .html. name (trailing dot)", "<img src=//h>", { name: "report.html." }),
   drive("a .md name holding a Markdown image", "![x](https://h/p.gif)", { name: "notes.md" }),
+  // Final review item 4: a markup type does not hide the `.md` name's Markdown scan.
+  drive("a text/html type with a .md name holding a Markdown image", "![](https://h/p.gif)", {
+    mimeType: "text/html",
+    name: "notes.md",
+  }),
 ];
 
 const DRIVE_ALLOWED: ReadonlyArray<RemoteContentDoorCase> = [

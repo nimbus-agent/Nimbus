@@ -16,7 +16,7 @@ import {
 // ruling OR-B3r-2, and the coordinator's ruling on the review) both doors refuse remote content in
 // a markup file: its `mimeType` is HTML, XHTML, SVG or other markup (`driveMimeTypeScans`), or its
 // `name` ends in `.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht` or `.mhtml`; a `.md` name is
-// scanned as Markdown (`driveContentFormat`). A `text/plain` file with a plain name is not scanned.
+// scanned as Markdown (`driveContentFormats`). A `text/plain` file with a plain name is not scanned.
 //
 // The before reads the folder the file lands in (`gdrive_file_metadata` on `parentId`, or on
 // Drive's `root` alias when it is unset): its name, whether it is a folder, whether it is shared

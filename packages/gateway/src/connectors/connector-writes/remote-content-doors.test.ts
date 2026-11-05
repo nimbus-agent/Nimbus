@@ -20,7 +20,7 @@ import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import {
   actDoorRefusal,
-  driveMarkupFormat,
+  driveMarkupFormats,
   KNOWLEDGE_BASE_REFUSAL,
   messagingDestinationRefusal,
   modelWriteRefusal,
@@ -141,9 +141,20 @@ describe("B3r: the row rules (plan R1, R10, R11 and the coordinator's rulings)",
       REMOTE_CONTENT_REFUSAL,
     );
     expect(onAllDoors("gdrive_file_create", { name: "a.txt", content: "![x](y)" })).toBeUndefined();
-    expect(driveMarkupFormat({ name: "a.md" })).toBe("obsidian-markdown");
-    expect(driveMarkupFormat({ mimeType: "image/svg+xml", name: "a.md" })).toBe("drive-markup");
-    expect(driveMarkupFormat({})).toBeUndefined();
+    expect(driveMarkupFormats({ name: "a.md" })).toEqual(["obsidian-markdown"]);
+    expect(driveMarkupFormats({ mimeType: "image/svg+xml", name: "a.md" })).toEqual([
+      "drive-markup",
+      "obsidian-markdown",
+    ]);
+    expect(driveMarkupFormats({})).toEqual([]);
+    // Final review item 4: a markup type does not hide a Markdown name.
+    expect(
+      onAllDoors("gdrive_file_create", {
+        mimeType: "text/html",
+        name: "notes.md",
+        content: "![](https://h/p.gif)",
+      }),
+    ).toBe(REMOTE_CONTENT_REFUSAL);
   });
 
   test("order (R10): remote content is reported before the KB-target text on the model door", () => {

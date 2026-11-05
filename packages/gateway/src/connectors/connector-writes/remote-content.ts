@@ -1395,25 +1395,32 @@ function driveNameForms(name: string): readonly string[] {
 }
 
 /**
- * Coordinator ruling (adversarial review, for Task 5's `driveMarkupFormat`): a
- * `gdrive_file_create` is scanned when EITHER its `mimeType` scans (R11) OR its `name` ends in a
- * markup extension (`.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht`, `.mhtml`; case-insensitive,
- * after normalisation): both as `drive-markup`. Otherwise a name ending in `.md` is scanned as
- * `obsidian-markdown`. A `name` that is present but not a string scans as `drive-markup` (fail
- * closed); an absent `name` decides nothing. `undefined`: not scanned.
+ * Coordinator rulings (adversarial review and final review item 4, for `driveMarkupFormats`):
+ * EVERY scan a `gdrive_file_create` calls for, by its type and by its name, each run and either
+ * refusing. `drive-markup` when the `mimeType` scans (R11) or the `name` ends in a markup
+ * extension (`.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht`, `.mhtml`; case-insensitive, after
+ * normalisation); `obsidian-markdown` when the `name` ends in `.md`, whatever the type says (a
+ * markup type does not hide a Markdown name: a Markdown app syncing the folder renders it by its
+ * name). A `name` that is present but not a string calls for both (fail closed); an absent `name`
+ * decides nothing. Empty: not scanned.
  */
-export function driveContentFormat(
+export function driveContentFormats(
   mimeType: unknown,
   name: unknown,
-): DriveContentFormat | undefined {
-  if (driveMimeTypeScans(mimeType)) return "drive-markup";
-  if (name === undefined) return undefined;
-  if (typeof name !== "string") return "drive-markup";
-  const forms = driveNameForms(name);
-  const endsIn = (exts: readonly string[]): boolean =>
-    forms.some((f) => exts.some((e) => f.endsWith(e)));
-  if (endsIn(DRIVE_MARKUP_EXTENSIONS)) return "drive-markup";
-  return endsIn(DRIVE_MARKDOWN_EXTENSIONS) ? "obsidian-markdown" : undefined;
+): readonly DriveContentFormat[] {
+  const out = new Set<DriveContentFormat>();
+  if (driveMimeTypeScans(mimeType)) out.add("drive-markup");
+  if (name !== undefined && typeof name !== "string") {
+    out.add("drive-markup");
+    out.add("obsidian-markdown");
+  } else if (typeof name === "string") {
+    const forms = driveNameForms(name);
+    const endsIn = (exts: readonly string[]): boolean =>
+      forms.some((f) => exts.some((e) => f.endsWith(e)));
+    if (endsIn(DRIVE_MARKUP_EXTENSIONS)) out.add("drive-markup");
+    if (endsIn(DRIVE_MARKDOWN_EXTENSIONS)) out.add("obsidian-markdown");
+  }
+  return [...out];
 }
 
 // ---------------------------------------------------------------------------------------------
