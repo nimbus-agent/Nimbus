@@ -743,23 +743,40 @@ function calendarRefusal(
   return undefined;
 }
 
-// Drive file create (B4a, coordinator ruling 2026-11-05): a `parentId` that is present but `null`
-// is refused on both doors. The preview shows `null` as unset (`(not set: the root of My Drive)`)
-// while the connector's schema rejects it, and a preview must never claim what will not happen.
-// Any other value is shown as given (a non-string is shown as JSON and fails upstream).
-export const DRIVE_PARENT_REFUSAL = "a Drive file's parent folder must be a folder id or omitted";
+// Null optional fields on the B4a rows (coordinator rulings 2026-11-05): an optional input key
+// that is present but `null` is refused on both doors. The preview renders `null` as the field's
+// unset default (`UTC`, `(not set: no one is invited)`, `(not set: the root of My Drive)`, ...)
+// while the connector's schema rejects `null`, so the preview would claim what will not happen.
+// The keys are the optional (`whenUnset`) schema keys of each row; the text names the key (from
+// this table, never from the input) and echoes no value. Runs before the calendar checks, so a
+// null iCloud field reports this text rather than the iCloud text refusal.
 
-const DRIVE_FILE_CREATE_ROW = "gdrive_file_create";
+/** The fixed refusal for a present-but-null optional field `key` (a schema key, never a value). */
+export function nullOptionalFieldRefusal(key: string): string {
+  return `the field \`${key}\` cannot be null; omit it or give a value`;
+}
 
-/** The Drive parent check (`undefined` for every other row, or when allowed). */
-function driveParentRefusal(
+/** The optional input keys of each B4a row, whose `null` the doors refuse. */
+const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = {
+  [OUTLOOK_CALENDAR_ROW]: ["timeZone", "attendees", "body"],
+  [APPLE_CALENDAR_ROW]: ["calendar", "attendees", "location", "description", "uid"],
+  gdrive_file_create: ["mimeType", "parentId", "content"],
+};
+
+/** The optional keys whose `null` is refused for `toolId` (read-only, for its drift test). */
+export function nullRefusedOptionalKeys(toolId: string): readonly string[] {
+  return ownLookup(NULL_REFUSED_OPTIONAL_KEYS, toolId) ?? [];
+}
+
+/** The null-field check (`undefined` for every other row, or when no listed key is null). */
+function nullOptionalFieldCheck(
   toolId: string,
   input: Readonly<Record<string, unknown>>,
 ): string | undefined {
-  if (toolId !== DRIVE_FILE_CREATE_ROW) return undefined;
-  return Object.hasOwn(input, "parentId") && input["parentId"] === null
-    ? DRIVE_PARENT_REFUSAL
-    : undefined;
+  const key = nullRefusedOptionalKeys(toolId).find(
+    (k) => Object.hasOwn(input, k) && input[k] === null,
+  );
+  return key === undefined ? undefined : nullOptionalFieldRefusal(key);
 }
 
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
@@ -784,9 +801,10 @@ function chatopsRefusal(
  * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
  * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
  * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label,
- * then (B4a) the calendar checks (time before text) and the Drive null-parent check. It covers message and comment text, (B2)
- * issue titles, bodies and descriptions, and (B4a) calendar event times, iCloud event text and
- * attendees. A fixed text that echoes nothing of the input, or `undefined`.
+ * then (B4a) the null optional-field check of the calendar and Drive creates, then the calendar
+ * checks (time before text). It covers message and comment text, (B2) issue titles, bodies and
+ * descriptions, and (B4a) calendar event times, iCloud event text and attendees, and null
+ * optional fields. A fixed text that echoes nothing of the input, or `undefined`.
  */
 export function messagingDestinationRefusal(
   toolId: string,
@@ -798,7 +816,7 @@ export function messagingDestinationRefusal(
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
   if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
   if (refusesGitlabScopedLabel(toolId, input)) return GITLAB_SCOPED_LABEL_REFUSAL;
-  return calendarRefusal(toolId, input) ?? driveParentRefusal(toolId, input);
+  return nullOptionalFieldCheck(toolId, input) ?? calendarRefusal(toolId, input);
 }
 
 /**

@@ -12,13 +12,14 @@ import {
   CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   calendarTimeIsExplicit,
-  DRIVE_PARENT_REFUSAL,
   isChatopsDestinationRow,
   isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
   messagingDestinationRefusal,
   modelWriteRefusal,
+  nullOptionalFieldRefusal,
+  nullRefusedOptionalKeys,
   quickActionTextKeys,
   scannedTextKeys,
   scopedLabelKeys,
@@ -895,7 +896,6 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
       [42],
       [null],
       "a@x.com",
-      null,
       { 0: "a@x.com" },
     ];
     for (const attendees of bad) {
@@ -941,46 +941,87 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
   });
 });
 
-describe("B4a: a Drive create with a null parentId (coordinator ruling, both doors)", () => {
-  const DRIVE = "gdrive_file_create";
+describe("B4a: a present-but-null optional field on the calendar and Drive creates (coordinator rulings, both doors)", () => {
   const ACT_CTX = { chatops: NONE, kb: undefined, kbUnreadable: false };
-  const all = (input: Record<string, unknown>): Array<string | undefined> => [
-    messagingDestinationRefusal(DRIVE, input, { chatops: NONE }),
-    modelWriteRefusal(DRIVE, input, { chatops: NONE, kb: undefined }),
-    actDoorRefusal(DRIVE, input, ACT_CTX),
+  const all = (toolId: string, input: Record<string, unknown>): Array<string | undefined> => [
+    messagingDestinationRefusal(toolId, input, { chatops: NONE }),
+    modelWriteRefusal(toolId, input, { chatops: NONE, kb: undefined }),
+    actDoorRefusal(toolId, input, ACT_CTX),
   ];
+  const CLEAN: Readonly<Record<string, Record<string, unknown>>> = {
+    outlook_calendar_create: {
+      subject: "Review",
+      startDateTime: "2026-11-05T10:00",
+      endDateTime: "2026-11-05T11:00",
+    },
+    apple_calendar_event_create: {
+      summary: "Review",
+      start: "20261105T100000Z",
+      end: "20261105T110000Z",
+    },
+    gdrive_file_create: { name: "n.txt" },
+  };
+  const ROWS = Object.keys(CLEAN);
 
-  test("the text is fixed", () => {
-    expect(DRIVE_PARENT_REFUSAL).toBe(
-      "a Drive file's parent folder must be a folder id or omitted",
+  test("the text names the schema key and nothing else", () => {
+    expect(nullOptionalFieldRefusal("timeZone")).toBe(
+      "the field `timeZone` cannot be null; omit it or give a value",
     );
   });
 
-  test("parentId: null is refused on every entry point", () => {
-    expect(all({ name: "n.txt", parentId: null })).toEqual([
-      DRIVE_PARENT_REFUSAL,
-      DRIVE_PARENT_REFUSAL,
-      DRIVE_PARENT_REFUSAL,
-    ]);
+  test("the refused keys are exactly each row's optional (whenUnset) template keys", () => {
+    for (const toolId of ROWS) {
+      const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === toolId);
+      const optional = (r?.preview?.fields ?? [])
+        .filter((f) => f.whenUnset !== undefined)
+        .map((f) => f.key)
+        .sort((a, b) => a.localeCompare(b));
+      expect(
+        [...nullRefusedOptionalKeys(toolId)].sort((a, b) => a.localeCompare(b)),
+        toolId,
+      ).toEqual(optional);
+    }
+    expect(nullRefusedOptionalKeys("slack_message_post")).toEqual([]);
   });
 
-  test("omitted, undefined or a folder id is allowed", () => {
-    for (const input of [
-      { name: "n" },
-      { name: "n", parentId: undefined },
-      { name: "n", parentId: "F1" },
-    ]) {
-      expect(all(input), JSON.stringify(input)).toEqual([undefined, undefined, undefined]);
+  for (const [toolId, key] of [
+    ["outlook_calendar_create", "timeZone"],
+    ["outlook_calendar_create", "attendees"],
+    ["outlook_calendar_create", "body"],
+    ["apple_calendar_event_create", "attendees"],
+    ["apple_calendar_event_create", "description"],
+    ["gdrive_file_create", "content"],
+    ["gdrive_file_create", "mimeType"],
+    ["gdrive_file_create", "parentId"],
+  ] as const) {
+    test(`${toolId}: ${key} null is refused on every entry point, naming ${key}`, () => {
+      const refusal = nullOptionalFieldRefusal(key);
+      expect(all(toolId, { ...CLEAN[toolId], [key]: null })).toEqual([refusal, refusal, refusal]);
+    });
+  }
+
+  test("every optional key of every row: null refused; omitted or undefined allowed", () => {
+    for (const toolId of ROWS) {
+      expect(all(toolId, { ...CLEAN[toolId] }), toolId).toEqual([undefined, undefined, undefined]);
+      for (const key of nullRefusedOptionalKeys(toolId)) {
+        expect(all(toolId, { ...CLEAN[toolId], [key]: undefined }), `${toolId}.${key}`).toEqual([
+          undefined,
+          undefined,
+          undefined,
+        ]);
+        expect(all(toolId, { ...CLEAN[toolId], [key]: null })[0], `${toolId}.${key}`).toBe(
+          nullOptionalFieldRefusal(key),
+        );
+      }
     }
   });
 
-  test("row-scoped: another row with parentId: null is not refused by it", () => {
+  test("row-scoped: another row with these keys null is not refused by it", () => {
+    const junk = { timeZone: null, attendees: null, body: null, content: null, parentId: null };
     for (const r of CONNECTOR_WRITE_ROWS) {
-      if (r.toolId === DRIVE) continue;
-      expect(
-        messagingDestinationRefusal(r.toolId, { parentId: null }, { chatops: NONE }),
-        r.toolId,
-      ).not.toBe(DRIVE_PARENT_REFUSAL);
+      if (ROWS.includes(r.toolId)) continue;
+      const out = messagingDestinationRefusal(r.toolId, junk, { chatops: NONE });
+      expect(out?.includes("cannot be null") ?? false, r.toolId).toBe(false);
     }
   });
 });

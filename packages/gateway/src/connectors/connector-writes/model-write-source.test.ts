@@ -32,12 +32,12 @@ import {
   CALENDAR_TEXT_REFUSAL,
   CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
-  DRIVE_PARENT_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
   KNOWLEDGE_BASE_CHILD_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
+  nullOptionalFieldRefusal,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
@@ -636,11 +636,19 @@ describe("B4a: the calendar refusals on the real rows through the real door (pla
     ]);
   });
 
-  test("a Drive create with parentId null is refused, nothing executed; omitted is executed once", async () => {
+  test("a null optional field is refused (Drive parentId, Outlook timeZone), nothing executed; omitted is executed once", async () => {
     const door = await realDoor(() => BOUND);
     expect(
       await door.call("google_drive__gdrive_file_create", { name: "n.txt", parentId: null }),
-    ).toEqual({ refused: DRIVE_PARENT_REFUSAL });
+    ).toEqual({ refused: nullOptionalFieldRefusal("parentId") });
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00",
+        endDateTime: "2026-11-05T11:00",
+        timeZone: null,
+      }),
+    ).toEqual({ refused: nullOptionalFieldRefusal("timeZone") });
     expect(door.executed).toEqual([]);
     expect(await door.call("google_drive__gdrive_file_create", { name: "n.txt" })).toEqual({
       sent: true,
