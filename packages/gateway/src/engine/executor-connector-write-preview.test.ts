@@ -77,6 +77,35 @@ describe("the executor shows a connector write's typed preview", () => {
     );
   });
 
+  test("a ChatOps-shaped slack.message.post (no mcpToolId) keeps today's prompt byte for byte", async () => {
+    // B1 templates the mesh row, but without `mcpToolId` the builder picks only `write`-transport
+    // rows, so a door that does not name the tool (chatops-boot.ts) is unchanged.
+    const h = harness(true);
+    await h.exec.execute({
+      type: "slack.message.post",
+      payload: { channel: "C0123ABCD", text: "hi" },
+    });
+    expect(h.prompts[0]).toBe(
+      'Action requires your approval\n\nType: slack.message.post\n\nDetails: {"channel":"C0123ABCD","text":"hi"}',
+    );
+    expect(h.details[0]?.["kind"]).toBeUndefined();
+  });
+
+  test("the same action naming the B1 row's tool gets the typed preview", async () => {
+    const h = harness(true);
+    await h.exec.execute({
+      type: "slack.message.post",
+      payload: { mcpToolId: "slack_slack_message_post", input: { channel: "C1", text: "hi" } },
+    });
+    const prompt = h.prompts[0] ?? "";
+    expect(prompt).toContain("Target:  C1");
+    expect(prompt).toContain("Post a Slack message to C1");
+    expect(prompt).toContain('  Message: "hi"');
+    expect(prompt).not.toContain("Details:");
+    expect(h.details[0]?.["kind"]).toBe("connector-write");
+    expect(h.details[0]?.["toolId"]).toBe("slack_message_post");
+  });
+
   test("a mismatched mcpToolId keeps today's prompt", async () => {
     const h = harness(true);
     await h.exec.execute({
