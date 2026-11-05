@@ -246,12 +246,13 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     expect(rows.filter((r) => r.preview !== undefined || r.before !== undefined)).toEqual([]);
   });
 
-  test("none is proposable over MCP: every one is denied not_yet_offered", () => {
+  test("the four B1 ones are proposable over MCP; the other ten stay not_yet_offered", () => {
     for (const id of CONNECTORS_0_4_0_WRITES) {
-      expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual({
-        kind: "denied",
-        class: "not_yet_offered",
-      });
+      expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual(
+        B1_OFFERED_0_4_0.includes(id)
+          ? { kind: "proposable" }
+          : { kind: "denied", class: "not_yet_offered" },
+      );
     }
   });
 

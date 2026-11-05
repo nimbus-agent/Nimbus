@@ -84,6 +84,11 @@ export const PROPOSABLE_WRITE_TOOLS: Readonly<Record<string, string>> = Object.f
   "jira.issue.update": "jira_issue_update",
   "jira.comment.add": "jira_comment_add",
   "github.issue.create": "github_issue_create",
+  // Phase 9.7 B1: the comment and Discord posts, each with a typed preview template.
+  "github.issue.comment.create": "github_issue_comment_create",
+  "gitlab.issue.note.create": "gitlab_issue_note_create",
+  "gitlab.mr.note.create": "gitlab_mr_note_create",
+  "discord.message.post": "discord_message_post",
   "notion.page.create": "notion_page_create",
   "notion.page.update": "notion_page_update",
   "notion.block.append": "notion_block_append",
@@ -220,19 +225,15 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
     // @nimbus-dev/connectors 0.4.0's Wave-2 writes: routable, but not offered to MCP clients until
     // their B PR (B1–B4) adds the preview template.
     ...denied("not_yet_offered", [
-      "github.issue.comment.create",
       "github.issue.labels.add",
       "github.issue.assignees.add",
       "github.issue.state.set",
       "gitlab.issue.create",
-      "gitlab.issue.note.create",
-      "gitlab.mr.note.create",
       "gitlab.issue.labels.add",
       "gitlab.issue.assignees.add",
       "gitlab.issue.state.set",
       "jira.issue.transition",
       "outlook.draft.create",
-      "discord.message.post",
       "confluence.page.append",
     ]),
     ...denied("gateway_internal", [

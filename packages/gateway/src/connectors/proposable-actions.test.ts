@@ -24,8 +24,12 @@ const PROPOSABLE = [
   "confluence.comment.add",
   "confluence.page.create",
   "confluence.page.update",
+  "discord.message.post",
   "fastmail.mail.send",
+  "github.issue.comment.create",
   "github.issue.create",
+  "gitlab.issue.note.create",
+  "gitlab.mr.note.create",
   "gmail.draft.create",
   "gmail.draft.send",
   "gmail.message.send",
@@ -54,12 +58,21 @@ describe("ACTION_PROPOSABILITY", () => {
   test("is total over HITL_REQUIRED and names nothing else", () => {
     expect(Object.keys(ACTION_PROPOSABILITY).sort()).toEqual([...HITL_REQUIRED].sort());
   });
-  test("the proposable set is exactly the reviewed 30", () => {
+  test("the proposable set is exactly the reviewed 34", () => {
     const got = Object.entries(ACTION_PROPOSABILITY)
       .filter(([, p]) => p.kind === "proposable")
       .map(([t]) => t)
       .sort();
     expect(got).toEqual(PROPOSABLE);
+  });
+  test("counts, derived: 34 proposable, 126 denied, 10 of them not_yet_offered", () => {
+    const all = Object.values(ACTION_PROPOSABILITY);
+    expect(all.filter((p) => p.kind === "proposable")).toHaveLength(34);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(126);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(
+      10,
+    );
+    expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {
     for (const t of [
@@ -83,17 +96,13 @@ test("not_yet_offered is exactly the routable 0.4.0 writes, each a real connecto
   expect(notYet).toEqual(
     [
       "confluence.page.append",
-      "discord.message.post",
       "github.issue.assignees.add",
-      "github.issue.comment.create",
       "github.issue.labels.add",
       "github.issue.state.set",
       "gitlab.issue.assignees.add",
       "gitlab.issue.create",
       "gitlab.issue.labels.add",
-      "gitlab.issue.note.create",
       "gitlab.issue.state.set",
-      "gitlab.mr.note.create",
       "jira.issue.transition",
       "outlook.draft.create",
     ].sort(),
