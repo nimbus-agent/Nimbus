@@ -38,20 +38,58 @@ function constStatement(code: string, name: string): string | undefined {
   return code.slice(m.index);
 }
 
+/** The top-level arguments of a call's `( ... )` text, split outside strings and brackets. */
+function topLevelArgs(call: string): string[] {
+  const inner = call.slice(1, -1);
+  const out: string[] = [];
+  let depth = 0;
+  let quote: string | undefined;
+  let start = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (quote !== undefined) {
+      if (ch === "\\") i++;
+      else if (ch === quote) quote = undefined;
+    } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
+    else if (ch === "(" || ch === "[" || ch === "{") depth++;
+    else if (ch === ")" || ch === "]" || ch === "}") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(inner.slice(start, i).trim());
+      start = i + 1;
+    }
+  }
+  out.push(inner.slice(start).trim());
+  return out;
+}
+
+/** An argument (or const right-hand side) that names a schema: `X` or `X.extend(...)`. */
+const SCHEMA_REF = /^([A-Za-z_$][\w$]*)\s*(?:\.extend\s*\(|$)/;
+
+/** A const statement whose value is a zod schema: `z.<...>` or `<const>.extend(...)`. */
+function schemaConstBase(statement: string): { readonly base?: string } | undefined {
+  const rhs = statement.slice(statement.indexOf("=") + 1).trim();
+  if (/^z\s*\./.test(rhs)) return {};
+  const m = /^([A-Za-z_$][\w$]*)\s*\.extend\s*\(/.exec(rhs);
+  return m?.[1] === undefined ? undefined : { base: m[1] };
+}
+
 /**
- * `text` plus the declaration of every local const it names, transitively (a schema built with
- * `.extend` from another const). Only identifiers the file declares with `const` are followed.
+ * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
+ * `schema.extend({...})`) and that const's `.extend(` base chain. Nothing else the call names is
+ * followed: a key that appears only in some other local const is not the tool's input.
  */
-function withLocalConstDeclarations(code: string, text: string): string {
+function withSchemaArgumentDeclarations(code: string, call: string): string {
+  const parts = [call];
   const seen = new Set<string>();
-  const parts = [text];
-  for (let i = 0; i < parts.length && i < 50; i++) {
-    for (const m of (parts[i] ?? "").matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
-      const id = m[1];
-      if (id === undefined || seen.has(id)) continue;
-      seen.add(id);
-      const decl = constStatement(code, id);
-      if (decl !== undefined) parts.push(decl);
+  for (const arg of topLevelArgs(call)) {
+    let name = SCHEMA_REF.exec(arg)?.[1];
+    while (name !== undefined && !seen.has(name) && seen.size < 20) {
+      seen.add(name);
+      const statement = constStatement(code, name);
+      const schema = statement === undefined ? undefined : schemaConstBase(statement);
+      if (statement === undefined || schema === undefined) break;
+      parts.push(statement);
+      name = schema.base;
     }
   }
   return parts.join("\n");
@@ -145,8 +183,10 @@ describe("connector write manifest", () => {
         ? fileCode
         : fileCode.slice(reg.span[0], reg.span[1] + 1);
       // A tool whose input schema is a local const (`slackMessagePostSchema`, or a `.extend` of
-      // one) declares its keys in that const's statement, outside the call: follow them.
-      const call = withLocalConstDeclarations(fileCode, own);
+      // one) declares its keys in that const's statement, outside the call: follow it alone.
+      const call = reg.tags.includes("forwarder")
+        ? own
+        : withSchemaArgumentDeclarations(fileCode, own);
       return templateKeys(r, extra)
         .filter((k) => !call.includes(`${k}:`))
         .map((k) => `${r.toolId}: ${k}`);
@@ -166,5 +206,36 @@ describe("connector write manifest", () => {
 
   test("the manifest's size is plausible", () => {
     expect(CONNECTOR_WRITE_MANIFEST.length).toBeGreaterThanOrEqual(80);
+  });
+
+  test("guard: only the schema argument and its .extend chain are followed", () => {
+    const code = [
+      "const baseSchema = z.object({ owner: z.string() });",
+      "const postSchema = baseSchema.extend({ body: z.string() });",
+      "const unrelated = { secretKey: 1, title: 2 };",
+      "const helper = (p) => ({ path: p });",
+      'reg("t", "Post a, b (c)", postSchema, async (parsed) => unrelated);',
+    ].join("\n");
+    const callAt = code.indexOf('reg("t"') + 3;
+    const call = code.slice(callAt, code.lastIndexOf(")") + 1);
+    const followed = withSchemaArgumentDeclarations(code, call);
+    expect(followed).toContain("body:");
+    expect(followed).toContain("owner:");
+    // A key present only in an unrelated local const is NOT the tool's input: it is reported.
+    expect(followed).not.toContain("secretKey:");
+    expect(followed).not.toContain("title:");
+    expect(topLevelArgs('("a, b", { x: [1, 2] }, s, (p) => f(p, q))')).toEqual([
+      '"a, b"',
+      "{ x: [1, 2] }",
+      "s",
+      "(p) => f(p, q)",
+    ]);
+    // An inline `.extend(` of a schema const is followed too; a non-schema const is not.
+    const inline = withSchemaArgumentDeclarations(
+      code,
+      '("t", baseSchema.extend({ a: 1 }), helper)',
+    );
+    expect(inline).toContain("owner:");
+    expect(inline).not.toContain("path:");
   });
 });
