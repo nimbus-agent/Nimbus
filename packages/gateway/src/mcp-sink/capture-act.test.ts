@@ -23,6 +23,8 @@ let clock: number;
 let cap: CaptureCapability;
 let verdict: "proposable" | "denied";
 let configured: boolean;
+/** What the injected destination check answers (undefined: allowed). */
+let destinationRefusal: string | undefined;
 let deps: ActGateDeps;
 
 function capWith(disabled: string[] = []): CaptureCapability {
@@ -38,6 +40,7 @@ beforeEach(() => {
   cap = capWith();
   verdict = "proposable";
   configured = true;
+  destinationRefusal = undefined;
   deps = {
     db,
     store: new CaptureStore(db),
@@ -46,6 +49,7 @@ beforeEach(() => {
       verdict === "proposable" ? { kind: "proposable" } : { kind: "denied", class: "vcs" },
     isServiceConfigured: () => Promise.resolve(configured),
     now: () => clock,
+    actionDestinationRefusal: () => destinationRefusal,
   };
   deps.store.insert({
     id: "cap_a",
@@ -135,6 +139,42 @@ describe("acceptAction — ordered refusals", () => {
       "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
     );
     expect(row().state).toBe("proposed");
+  });
+  test("4b destination refused at accept (a ChatOps binding added since submit) → REFUSED, stays proposed, no claim, no execute", async () => {
+    const seen: Array<[string, unknown]> = [];
+    deps = {
+      ...deps,
+      actionDestinationRefusal: (t, input) => {
+        seen.push([t, input]);
+        return "the fixed reason";
+      },
+    };
+    const a = act({ status: "ok", result: {} });
+    let caught: unknown;
+    try {
+      await acceptAction(deps, OWNER, row(), a);
+    } catch (e) {
+      caught = e;
+    }
+    expect((caught as CaptureError).code).toBe("ERR_CAPTURE_ACTION_REFUSED");
+    expect((caught as CaptureError).message).toBe("ERR_CAPTURE_ACTION_REFUSED: the fixed reason");
+    expect(row().state).toBe("proposed");
+    expect(a.calls).toHaveLength(0);
+    expect(audits().filter((r) => r.action_type === "capture.action.accept")).toEqual([]);
+    expect(seen).toEqual([["slack.message.post", { text: "hi" }]]);
+  });
+  test("4b a throwing destination check at accept refuses (fail closed); allowed proceeds", async () => {
+    deps = {
+      ...deps,
+      actionDestinationRefusal: () => {
+        throw new Error("x");
+      },
+    };
+    const a = act({ status: "ok", result: {} });
+    expect(await code(acceptAction(deps, OWNER, row(), a))).toBe("ERR_CAPTURE_ACTION_REFUSED");
+    expect(a.calls).toHaveLength(0);
+    deps = { ...deps, actionDestinationRefusal: () => undefined };
+    expect((await acceptAction(deps, OWNER, row(), a)).state).toBe("executed");
   });
   test("5 claim lost (expired during the configured await) → STATE, no execute", async () => {
     deps = {

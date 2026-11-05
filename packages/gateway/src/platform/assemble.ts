@@ -255,6 +255,7 @@ import {
   mergeRoots,
 } from "../index/registered-roots-store.ts";
 import type { StatusReaders } from "../ipc/admin-status-rpc.ts";
+import { createActionDestinationRefusal } from "../ipc/capture-rpc.ts";
 import { resumePendingRemovals } from "../ipc/connector-rpc-handlers/index.ts";
 import type { EgressRpcCtx } from "../ipc/egress-rpc.ts";
 import type { FleetRpcCtx } from "../ipc/fleet-rpc.ts";
@@ -3862,6 +3863,8 @@ export async function assemblePlatformServices(
     isServiceConfigured,
     listProposableActionTypes: () =>
       listProposableActionTypes({ ...actClassifyCtx, isServiceConfigured }),
+    // OR1/OR2: the model door's messaging check, on the act door too, over the LIVE policy.
+    actionDestinationRefusal: createActionDestinationRefusal(() => policyGate.enforced()),
     ...(scheduleItemEmbedding === undefined
       ? {}
       : { scheduleEmbedding: (id: string) => scheduleItemEmbedding(id) }),

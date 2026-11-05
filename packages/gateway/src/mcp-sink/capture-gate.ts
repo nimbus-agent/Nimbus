@@ -5,7 +5,12 @@ import { deleteEvidenceCitingItem } from "../decisions/decision-store.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { deleteItemByPrimaryKey, itemPrimaryKey, upsertIndexedItem } from "../index/item-store.ts";
 import type { ClientKind } from "../ipc/server/client-kind.ts";
-import { type ActionAcceptResult, acceptAction, expireDueActionsAudited } from "./capture-act.ts";
+import {
+  type ActionAcceptResult,
+  acceptAction,
+  actionDestinationVerdict,
+  expireDueActionsAudited,
+} from "./capture-act.ts";
 import type { CaptureCapability } from "./capture-capability.ts";
 import { CAPTURE_ROLE_BY_KIND } from "./capture-client-policy.ts";
 import {
@@ -73,6 +78,17 @@ export interface CaptureGateDeps {
   isServiceConfigured?(service: string): Promise<boolean>;
   /** The action types `capture.status` advertises as proposable now. */
   listProposableActionTypes?(): Promise<readonly string[]>;
+  /**
+   * The act door's destination refusal (owner rulings OR1/OR2): a fixed reason when the proposed
+   * action posts to a channel ChatOps listens on, carries a broadcast mention or a GitLab quick
+   * action, else `undefined`. The SAME check the model door runs, injected by `ipc/capture-rpc.ts`
+   * (this module imports nothing from `connectors/`, D32(f)). Required, so a construction site
+   * that forgets it fails typecheck. Called at submit (step 5a) and again at accept.
+   */
+  actionDestinationRefusal(
+    actionType: string,
+    input: Readonly<Record<string, unknown>>,
+  ): string | undefined;
 }
 
 export interface CaptureCaller {
@@ -303,6 +319,21 @@ function requireProposable(
   }
 }
 
+/** Step 5a's second refusal: the destination is one the model may never post to. */
+function requireDestinationAllowed(ctx: SubmitContext, v: ActionCapture): void {
+  const reason = actionDestinationVerdict(ctx.deps, v.payload.actionType, v.payload.input);
+  if (reason !== undefined) {
+    refuseAudited(
+      ctx.deps,
+      ctx.caller,
+      "action",
+      ctx.clientLabel,
+      "ERR_CAPTURE_ACTION_REFUSED",
+      reason,
+    );
+  }
+}
+
 /** Step 5b's refusal: the action's connector is not configured on this machine. */
 function requireConfigured(
   ctx: SubmitContext,
@@ -370,6 +401,7 @@ export async function submitCapture(
   //    await stays synchronous through the write, so a concurrent submit cannot slip past the caps.
   if (v.kind === "action") {
     requireProposable(ctx, v, deps.classifyAction?.(v.payload.actionType));
+    requireDestinationAllowed(ctx, v);
     requireConfigured(ctx, v, await deps.isServiceConfigured?.(serviceOf(v.payload.actionType)));
   }
   // 6. Referenced items exist (a capture item only while live/accepted); a link's endpoints must

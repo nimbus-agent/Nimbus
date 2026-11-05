@@ -22,8 +22,34 @@ import { FORMAT_INVISIBLE_RANGES, rangesRegExp } from "./invisible-text.ts";
  */
 export type ActGateDeps = Pick<
   CaptureGateDeps,
-  "db" | "store" | "capability" | "classifyAction" | "isServiceConfigured" | "now"
+  | "db"
+  | "store"
+  | "capability"
+  | "classifyAction"
+  | "isServiceConfigured"
+  | "actionDestinationRefusal"
+  | "now"
 >;
+
+/** The fixed reason when the destination check itself throws: it cannot be ruled out. */
+export const ACTION_DESTINATION_UNCHECKED =
+  "the proposed action's destination could not be checked";
+
+/**
+ * The injected destination refusal, fail-closed: a throw is a refusal. Shared by submit (5a) and
+ * accept (step 4b below), so both doors read the same verdict.
+ */
+export function actionDestinationVerdict(
+  deps: Pick<CaptureGateDeps, "actionDestinationRefusal">,
+  actionType: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  try {
+    return deps.actionDestinationRefusal(actionType, input);
+  } catch {
+    return ACTION_DESTINATION_UNCHECKED;
+  }
+}
 
 export type ActionAcceptResult = {
   readonly id: string;
@@ -219,6 +245,12 @@ export async function acceptAction(
       "ERR_CAPTURE_CONNECTOR_UNCONFIGURED",
       `${serviceOf(stored.actionType)} is not configured; the capture stays proposed`,
     );
+  }
+  // 4b. The destination again (OR1/OR2): a ChatOps binding or the policy may have changed since
+  //     submit. Synchronous from here to the claim. A refusal leaves the row proposed.
+  const refused = actionDestinationVerdict(deps, stored.actionType, stored.input);
+  if (refused !== undefined) {
+    throw new CaptureError("ERR_CAPTURE_ACTION_REFUSED", refused);
   }
   // 5. Claim: ONE transaction, CAS incl. the expiry predicate (closes the window across step 4's await).
   const claimAt = deps.now();

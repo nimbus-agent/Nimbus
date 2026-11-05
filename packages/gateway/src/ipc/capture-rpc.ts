@@ -1,4 +1,5 @@
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { messagingDestinationRefusal } from "../connectors/connector-writes/model-write-refusals.ts";
 import {
   buildConnectorWritePreviewFrom,
   isPlainObject,
@@ -29,6 +30,7 @@ import {
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
 import { type ActDeps, type ActionProvenance, CaptureError } from "../mcp-sink/capture-types.ts";
+import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
@@ -104,6 +106,32 @@ export function actConsentDisplay(
         expiresAt: provenance.expiresAt,
       },
     },
+  };
+}
+
+/**
+ * The act door's destination refusal (owner rulings OR1/OR2), injected into the capture gate as
+ * `actionDestinationRefusal` (built in `platform/assemble.ts`). It is the SAME
+ * `messagingDestinationRefusal` the model door calls, run on the routing table's tool for the type,
+ * so a proposed post to a channel ChatOps listens on, or text carrying a broadcast mention or a
+ * GitLab quick action, is refused at submit and again at accept. The ChatOps bindings come from the
+ * LIVE enforced policy, read per call; a throw passes `undefined`, which refuses every Slack/Teams
+ * post. The knowledge-base refusal stays model-door-only. A type with no routing row (a user-MCP
+ * type) has no messaging destination here: `undefined`.
+ */
+export function createActionDestinationRefusal(
+  enforcedPolicy: () => EnforcedPolicy | undefined,
+): CaptureGateDeps["actionDestinationRefusal"] {
+  return (actionType, input) => {
+    const tool = proposableWriteTool(actionType);
+    if (tool === undefined) return undefined;
+    let chatops: EnforcedPolicy["chatops"] | undefined;
+    try {
+      chatops = enforcedPolicy()?.chatops;
+    } catch {
+      chatops = undefined;
+    }
+    return messagingDestinationRefusal(tool, input, { chatops });
   };
 }
 
