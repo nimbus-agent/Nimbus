@@ -30,3 +30,14 @@
 
 ## PR
 Title: `feat(gateway): the model door shows a write's current state before you approve it`. Not breaking (no row has a reader yet). Auto-merge; resolve threads.
+
+## Review fixes (Antigravity, 2026-11-05) — binding, they override the text above where they conflict
+1. **Service containment:** the dispatcher guard also requires the resolved key to belong to `serviceOf(action.type)` (`meshServerForToolKey(key) === service`), so a before-read can never call another connector's tool or misattribute its egress row. Throw `ERR_BEFORE_READ_SERVICE_MISMATCH` before dispatch; test it.
+2. **A read never raises a prompt, structurally:** inside `ToolExecutor.gate()`, an action whose type ends `.before.read` that would require HITL is rejected without calling consent (audit `rejected`, reason `policy requires approval`, egress `blocked`); the runner maps that to `unavailable (policy requires approval)`. Test with a policy that requires HITL for it.
+3. **The race:** clear the timer in a `finally`; attach a rejection handler to the in-flight read so a late failure is never unhandled; a late reply is discarded (never written anywhere).
+4. **Door isolation:** `newTurnExecutor(p, delegation, beforeState?)` — `buildAskExecutor` passes none, `buildModelWriteExecutor` passes the runner. The runner is constructor argument 8 (after `previewCredentialFor`); every other construction site leaves it absent.
+5. **`select` throws ⇒ `unavailable (failed)`** (try/catch); `args` throwing likewise.
+6. **Reason mapping:** an exported `classifyBeforeStateError(err)` with a closed result type; "Tool not found"/unconfigured ⇒ `not configured`; anything else ⇒ `failed`.
+7. **Tests that can fail:** `args` isolation via a `Proxy` that throws on any key outside `argKeys`; the guard tests assert the exact error and zero tool calls; the HITL test uses a real policy rule.
+8. **Drift:** a Wave-4 row whose `before.tool` is absent from the listing is not offered; a Wave < 4 row is offered and its before shows `unavailable (failed)`.
+9. **Caps:** `BEFORE_STATE_MAX_FIELDS = 20` exported from `types.ts`; extra fields dropped with a final `(N more fields not shown)` line (values themselves are never cut).
