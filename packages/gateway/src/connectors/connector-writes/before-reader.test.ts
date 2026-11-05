@@ -894,11 +894,11 @@ describe("the B2 issue-write before-readers (plan R3)", () => {
     expect(out.fields).toHaveLength(5);
   });
 
-  test("GitLab: labels are strings (an object label is not read as one)", () => {
+  test("GitLab: labels are strings (an object label is counted as unreadable, never as none)", () => {
     const sel = selectWith("gitlab_issue_labels_add");
     expect(sel(mcp({ title: "t", labels: [{ name: "bug" }], assignees: [] }))).toEqual([
       { label: "Title", value: "t" },
-      { label: "Labels", value: "(none)" },
+      { label: "Labels", value: "(1 entry, unreadable)" },
       { label: "Assignees", value: "(none)" },
     ]);
   });

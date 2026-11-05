@@ -103,11 +103,22 @@ describe("listAt (B2: labels and assignees)", () => {
     expect(listAt({ x: { l: [{ n: "a" }, { n: "b" }] } }, ["x", "l"], "n")).toBe("a, b");
   });
 
-  test("an entry without a name is skipped; an empty or nameless list reads (none)", () => {
-    expect(listAt({ l: [{ n: "a" }, {}, null, { n: { deep: 1 } }] }, ["l"], "n")).toBe("a");
+  test("only an empty list reads (none); unreadable entries are counted, never dropped", () => {
     expect(listAt({ l: [] }, ["l"])).toBe("(none)");
-    expect(listAt({ l: [{}] }, ["l"], "n")).toBe("(none)");
-    expect(listAt({ l: [{ n: "a" }] }, ["l"])).toBe("(none)");
+    expect(listAt({ l: [{ n: "a" }, {}, null, { n: { deep: 1 } }] }, ["l"], "n")).toBe(
+      "a (+3 unreadable)",
+    );
+    expect(listAt({ l: [{ n: "a" }, { n: "b" }, {}] }, ["l"], "n")).toBe("a, b (+1 unreadable)");
+    expect(listAt({ l: [{}] }, ["l"], "n")).toBe("(1 entry, unreadable)");
+    expect(listAt({ l: [{ n: "a" }, { n: "b" }] }, ["l"])).toBe("(2 entries, unreadable)");
+  });
+
+  test("past the cap, unreadable entries are counted in (+N more)", () => {
+    const fifty = Array.from({ length: 50 }, (_, i) => `n${String(i)}`);
+    expect(listAt({ l: [...fifty, {}, {}] }, ["l"])).toBe(`${fifty.join(", ")} (+2 unreadable)`);
+    expect(listAt({ l: [...fifty, "x", {}] }, ["l"])).toBe(
+      `${fifty.join(", ")} (+2 more, 1 of them unreadable)`,
+    );
   });
 
   test("absent, null, an object or a string is undefined (the field is omitted)", () => {

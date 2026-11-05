@@ -67,21 +67,33 @@ export const BEFORE_LIST_MAX_ENTRIES = 50;
 
 /**
  * The list at `path`, joined for a before-state field: each entry a string (`item` absent) or the
- * string at `item` inside an object entry; an entry without one is skipped. At most
- * {@link BEFORE_LIST_MAX_ENTRIES} are joined with `, ` and the rest appended as `(+N more)`; an
- * empty list reads `(none)`. `undefined` when the value is absent or not an array (the field is
- * then omitted, never shown as empty).
+ * string at `item` inside an object entry. At most {@link BEFORE_LIST_MAX_ENTRIES} readable names
+ * are joined with `, `; every other entry is counted, never silently dropped: `(+N more)` for
+ * readable names past the cap, `(+N unreadable)` for entries with no readable name, or
+ * `(+N more, M of them unreadable)` for both. Only an EMPTY list reads `(none)`; a non-empty list
+ * with no readable entry reads `(N entries, unreadable)` (`(1 entry, unreadable)`). `undefined` when the value is absent or
+ * not an array (the field is then omitted, never shown as empty).
  */
 export function listAt(v: unknown, path: readonly string[], item?: string): string | undefined {
   const list = valueAt(v, path);
   if (!Array.isArray(list)) return undefined;
+  const entries = list as unknown[];
+  if (entries.length === 0) return "(none)";
   const names: string[] = [];
-  for (const entry of list as unknown[]) {
+  for (const entry of entries) {
     const name = item === undefined ? stringAt(entry, []) : stringAt(entry, [item]);
     if (name !== undefined) names.push(name);
   }
-  if (names.length === 0) return "(none)";
-  const shown = names.slice(0, BEFORE_LIST_MAX_ENTRIES).join(", ");
-  const more = names.length - BEFORE_LIST_MAX_ENTRIES;
-  return more > 0 ? `${shown} (+${String(more)} more)` : shown;
+  const unreadable = entries.length - names.length;
+  if (names.length === 0) {
+    return `(${String(entries.length)} ${entries.length === 1 ? "entry" : "entries"}, unreadable)`;
+  }
+  const shown = names.slice(0, BEFORE_LIST_MAX_ENTRIES);
+  const hidden = entries.length - shown.length;
+  if (hidden === 0) return shown.join(", ");
+  let suffix: string;
+  if (unreadable === 0) suffix = `+${String(hidden)} more`;
+  else if (unreadable === hidden) suffix = `+${String(unreadable)} unreadable`;
+  else suffix = `+${String(hidden)} more, ${String(unreadable)} of them unreadable`;
+  return `${shown.join(", ")} (${suffix})`;
 }
