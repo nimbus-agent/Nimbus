@@ -215,7 +215,8 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
     ],
   }),
   // The connector sends only the keys given; a description replaces the whole description. The
-  // before shows summary, status and type; the current description (ADF, unbounded) is not shown.
+  // before shows summary, status and type; the current description (ADF, unbounded) is not shown,
+  // and the field label says so.
   withBefore(
     withPreview(row("jira_issue_update", "jira.issue.update", "mesh", 2), {
       target: "{issueKey}",
@@ -224,7 +225,7 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
         textField("summary", "New summary", "(not set: unchanged)"),
         textField(
           "description",
-          "New description (replaces the whole description; sent as plain text)",
+          "New description (replaces the current one, which is not shown; sent as plain text)",
           "(not set: unchanged)",
         ),
       ],

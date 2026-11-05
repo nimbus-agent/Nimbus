@@ -208,7 +208,7 @@ const GOLDEN: Readonly<Record<B2Row, readonly string[]>> = {
     "Update Jira issue NIM-1",
     "",
     '  New summary: "New"',
-    '  New description (replaces the whole description; sent as plain text): "Steps"',
+    '  New description (replaces the current one, which is not shown; sent as plain text): "Steps"',
   ],
   jira_issue_transition: [
     "Service: jira",
@@ -304,7 +304,7 @@ describe("B2 typed previews (plan R2)", () => {
     expect(
       fieldValue(
         jiraUpdate,
-        "New description (replaces the whole description; sent as plain text)",
+        "New description (replaces the current one, which is not shown; sent as plain text)",
       ),
     ).toBe("(not set: unchanged)");
 
