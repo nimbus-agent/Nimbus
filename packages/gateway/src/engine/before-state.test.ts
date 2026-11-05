@@ -405,6 +405,14 @@ describe("before-state through the door's ToolExecutor", () => {
     expect(seen.details[0]?.["before"]).toBeUndefined();
   });
 
+  test("a HITL action that is not a connector-write row: no preview, no read, the plain prompt", async () => {
+    const { exec, seen } = executorHarness({});
+    await exec.execute({ type: "egress.prune", payload: {} });
+    expect(seen.dispatched.map((a) => a.type)).toEqual(["egress.prune"]);
+    expect(seen.prompts).toHaveLength(1);
+    expect(seen.details[0]?.["before"]).toBeUndefined();
+  });
+
   test("the door's unlisted-reader option: failed, no read runs", async () => {
     const { exec, seen } = executorHarness({});
     await exec.execute(WRITE, { beforeReaderUnlisted: true });
