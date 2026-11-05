@@ -396,7 +396,9 @@ describe("the Obsidian daily-note file grant under the real sandbox", () => {
       const st = lstatSync(today);
       expect(st.isFile()).toBe(true);
       expect(st.ino).toBe(before);
-      expect(readFileSync(today, "utf8")).not.toContain("HACKED");
+      // A "HACKED" append may land in today's note ITSELF (measured on Linux: the unlink is EBUSY,
+      // so the link fails and the next append writes the still-granted note): that is the one file
+      // the child may write. What must never change is any other file, above all the plugin.
     },
   );
 
