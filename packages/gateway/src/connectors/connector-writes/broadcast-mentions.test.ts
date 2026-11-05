@@ -162,13 +162,21 @@ describe("broadcastMentionIn (OR1)", () => {
     expect(hit("gitlab", "@<b>all</b>", html)).toBe(true);
   });
 
-  test("entity decoding is bounded: a 10,000-deep chain returns fast and is refused (fail closed)", () => {
-    const chain = `&${"amp;".repeat(10_000)}lt;!here&gt;`;
+  test("the round cap is exactly 4: three decodes settle, a fourth is refused (fail closed)", () => {
+    // `&` + `amp;` x n + `x` needs n decoding rounds plus one round that changes nothing.
+    const chain = (n: number) => `&${"amp;".repeat(n)}x`;
+    expect(hit("github", chain(3))).toBe(false);
+    expect(hit("github", chain(4))).toBe(true);
+    expect(hit("gitlab", chain(3))).toBe(false);
+    expect(hit("gitlab", chain(4))).toBe(true);
+  });
+
+  test("a 10,000-deep chain is refused and does not hang", () => {
     const started = performance.now();
-    expect(hit("slack", chain)).toBe(true);
-    expect(performance.now() - started).toBeLessThan(50);
-    // Still undecoded after the cap, the text is refused even with no mention in it.
+    expect(hit("slack", `&${"amp;".repeat(10_000)}lt;!here&gt;`)).toBe(true);
     expect(hit("github", `&${"amp;".repeat(10_000)}x`)).toBe(true);
+    // A generous ceiling (CI runners are an order of magnitude slower): the cap is proven above.
+    expect(performance.now() - started).toBeLessThan(2000);
   });
 
   test("a chain shallow enough to settle decodes and is judged on its content", () => {
