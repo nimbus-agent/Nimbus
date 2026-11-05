@@ -21,20 +21,35 @@ export type HelperExitRun = (helperPath: string, argv: readonly string[]) => Pro
 export type ExecFileExitLike = (
   file: string,
   args: readonly string[],
-  options: { windowsHide: boolean },
-  callback: (error: (Error & { code?: unknown }) | null) => void,
+  options: { windowsHide: boolean; timeout: number; killSignal: NodeJS.Signals },
+  callback: (error: (Error & { code?: unknown; killed?: unknown }) | null) => void,
 ) => unknown;
 
 /**
- * Production {@link HelperExitRun}: the helper, hidden. A non-zero exit resolves to that code; an
- * error with no numeric exit code (the helper missing, a spawn failure) rejects.
+ * How long one revoke run may take before it is killed and counts as a failure. The helper waits
+ * up to 120 s for its DACL lock, so this is above that, and far above a healthy run (milliseconds).
  */
-export function execHelperForExitCode(execFileImpl: ExecFileExitLike = execFile): HelperExitRun {
+export const REVOKE_HELPER_TIMEOUT_MS = 180_000;
+
+/**
+ * Production {@link HelperExitRun}: the helper, hidden, killed after {@link REVOKE_HELPER_TIMEOUT_MS}.
+ * A non-zero exit resolves to that code; a timeout (the child killed), or an error with no numeric
+ * exit code (the helper missing, a spawn failure), REJECTS, so the spawn is refused (fail closed).
+ */
+export function execHelperForExitCode(
+  execFileImpl: ExecFileExitLike = execFile,
+  timeoutMs: number = REVOKE_HELPER_TIMEOUT_MS,
+): HelperExitRun {
   return (path, argv) =>
     new Promise<number>((resolve, reject) => {
-      execFileImpl(path, argv, { windowsHide: true }, (err) => {
+      const options = { windowsHide: true, timeout: timeoutMs, killSignal: "SIGKILL" as const };
+      execFileImpl(path, argv, options, (err) => {
         if (err === null) {
           resolve(0);
+          return;
+        }
+        if (err.killed === true) {
+          reject(new Error(`the sandbox helper did not finish within ${String(timeoutMs)} ms`));
           return;
         }
         if (typeof err.code === "number") resolve(err.code);

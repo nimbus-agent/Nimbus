@@ -5,6 +5,7 @@ import {
   type ExecFileExitLike,
   execHelperForExitCode,
   type HelperExitRun,
+  REVOKE_HELPER_TIMEOUT_MS,
   REVOKE_PATHS_PER_RUN,
   revokeAppContainerGrants,
 } from "./win32-grant-revoke.ts";
@@ -83,7 +84,7 @@ describe("revokeAppContainerGrants", () => {
 
 describe("execHelperForExitCode", () => {
   test("exit 0 resolves 0, a numeric exit code resolves to it, and the spawn is hidden", async () => {
-    const seen: Array<{ windowsHide: boolean }> = [];
+    const seen: Array<{ windowsHide: boolean; timeout: number; killSignal: string }> = [];
     const outcomes: Array<(Error & { code?: unknown }) | null> = [
       null,
       Object.assign(new Error("exit"), { code: 1 }),
@@ -96,7 +97,22 @@ describe("execHelperForExitCode", () => {
     const run = execHelperForExitCode(impl);
     expect(await run("h", ["--x"])).toBe(0);
     expect(await run("h", ["--x"])).toBe(1);
-    expect(seen).toEqual([{ windowsHide: true }, { windowsHide: true }]);
+    const opts = { windowsHide: true, timeout: REVOKE_HELPER_TIMEOUT_MS, killSignal: "SIGKILL" };
+    expect(seen).toEqual([opts, opts]);
+    expect(REVOKE_HELPER_TIMEOUT_MS).toBeGreaterThan(120_000);
+  });
+
+  // DI only: a real hung child through node:child_process inside a macOS --parallel worker can
+  // lose its exit (oven-sh/bun#41024). Node's execFile sets `killed: true` when its timeout fires.
+  test("a run killed by the timeout REJECTS (fail closed), even though it carries an exit code", async () => {
+    const impl: ExecFileExitLike = (_f, _a, o, cb) => {
+      expect(o).toEqual({ windowsHide: true, timeout: 50, killSignal: "SIGKILL" });
+      cb(Object.assign(new Error("killed"), { code: 1, killed: true }));
+      return undefined;
+    };
+    await expect(execHelperForExitCode(impl, 50)("h", [])).rejects.toThrow(
+      "did not finish within 50 ms",
+    );
   });
 
   test("an error without a numeric code (helper missing) rejects", async () => {
