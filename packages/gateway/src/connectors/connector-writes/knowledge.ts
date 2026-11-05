@@ -298,9 +298,18 @@ export function selectConfluenceAppendTail(reply: unknown): readonly BeforeState
 // created under one, is not guarded (OR-B3-3 names updates and appends).
 // ---------------------------------------------------------------------------------------------
 
+/** The parent types proven outside any database, so outside the KB (an allowlist, fail closed). */
+const NOTION_NON_DATABASE_PARENTS: ReadonlySet<string> = new Set([
+  "page_id",
+  "workspace",
+  "block_id",
+]);
+
 /**
- * The Notion guard's `allows`: true only when the reply's own `page.parent` is a plain object that
- * is not a `database_id` parent, or is one whose canonical id differs from the KB database's.
+ * The Notion guard's `allows`: true only when the reply's own `page.parent` is a plain object whose
+ * `type` is `page_id`, `workspace` or `block_id`, or is a `database_id` parent whose canonical id
+ * differs from the KB database's. Any other parent type is refused: a newer Notion API version
+ * reports a page in a database with `data_source_id`, and the connector may bump its version pin.
  * No Notion KB in `kb`, a missing `page` or `parent`, a database parent without an id, an
  * unparseable or error reply: false. (For a block append the read is `notion_page_get` on
  * `parentBlockId`, so with a Notion KB configured the model can append only to PAGES: a block id
@@ -312,7 +321,9 @@ export function notionKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefi
   try {
     const parent = ownRecord(ownRecord(beforeReplyJson(reply), "page"), "parent");
     if (parent === undefined) return false;
-    if (parent["type"] !== "database_id") return true;
+    const type = parent["type"];
+    if (typeof type === "string" && NOTION_NON_DATABASE_PARENTS.has(type)) return true;
+    if (type !== "database_id") return false;
     const id = parent["database_id"];
     return typeof id === "string" && canonicalNotionId(id) !== canonicalNotionId(db);
   } catch {

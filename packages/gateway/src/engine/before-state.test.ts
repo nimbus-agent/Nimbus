@@ -1654,6 +1654,11 @@ describe("the KB-child guard on the real page rows (OR-B3-3)", () => {
           mcpReply({ page: null, blockChildren: { results: [] } }),
           notionPage({ type: "database_id" }),
           { ...notionPage({ type: "page_id" }), isError: true },
+          notionPage({ type: "data_source_id", data_source_id: KB_DB }),
+          notionPage({
+            type: "data_source_id",
+            data_source_id: "ffffffffffffffffffffffffffffffff",
+          }),
           throwing("boom"),
           throwing("Tool not found"),
         ]) {

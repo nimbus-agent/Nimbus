@@ -547,6 +547,10 @@ describe("the KB-child allows functions over the MCP reply shape (OR-B3-3, R11)"
       [page({ type: "database_id", database_id: "ffffffffffffffffffffffffffffffff" }), true],
       [page({ type: "database_id", database_id: "0123ABCD0123ABCD0123ABCD0123ABCD" }), false],
       [page({ type: "database_id", database_id: 7 }), false],
+      // A newer Notion API reports a page in a database this way: refused (an allowlist).
+      [page({ type: "data_source_id", data_source_id: "ffffffffffffffffffffffffffffffff" }), false],
+      [page({ type: "something_new" }), false],
+      [page({ page_id: "p" }), false],
       [page(null), false],
       [page([]), false],
       [mcp({ page: null }), false],
