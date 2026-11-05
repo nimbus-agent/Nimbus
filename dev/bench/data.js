@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793868514487,
+  "lastUpdate": 1793869210138,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "b59ccacf437af334ce3f70bb4cb9db6bc6a4ba99",
-          "message": "fix(release): make the drop-guard ask whether the release PR is complete, not whether one exists (#1224)\n\n`v2.4.6` shipped a security fix with no entry in its release notes.\nEvery gate reported healthy.\n\n## What happened\n\nrelease-please could not parse the squash commit for #1218:\n\n```\n❯ error message: Error: unexpected token '(' at 103:15, valid tokens [)]\n```\n\nLine 103, column 15 of that commit message:\n\n```\n`.run(`/`.exec(` in this tree are asserted **not** to flag, …\n 1    6 9    15\n```\n\nCode spans holding **unbalanced parentheses**. The parser opened a group\nat the first `(`, wanted `)`, and hit the second. Since a squash commit\nbody *is* the PR description, a PR body broke the release tooling — and\n#1218 was dropped from the changelog.\n\n## Why the existing guard let it through\n\nThe drop-guard did its job **twice**: the runs on #1218 and #1219 went\nred, and its own error text names this exact cause — *\"release-please\nmost likely could not PARSE a commit and skipped it.\"*\n\nThen #1220 merged. release-please opened a release PR covering #1220 and\n#1221, `prs_created` came back `true`, and the guard went green — with\n#1218 still missing.\n\nThat is the gap. The guard is **existence-based**:\n\n```bash\nif [ \"${RELEASES_CREATED:-false}\" = \"true\" ] \\\n  || [ \"${PRS_CREATED:-false}\" = \"true\" ] \\\n  || [ \"${RECONCILED:-false}\" = \"true\" ] \\\n  || [ \"$pending\" -gt 0 ]; then\n```\n\nIt asks *\"did a release PR appear?\"*, never *\"does that PR account for\nevery user-facing commit?\"* A partially-generated release PR satisfies\nall four signals.\n\n## The fix\n\n`scripts/release/release-pr-completeness.ts` asks the second question:\nof the `feat`/`fix` commits since the newest tag, which does the\n**pending** release PR's CHANGELOG diff not mention? Anything missing\nfails the run, because the remedy needs a human — the changelog must be\nedited before the PR merges, and after that the tag is immutable.\n\nDeliberately scoped so it cannot double-report or cry wolf:\n\n- **Only when a release PR is pending.** The \"nothing was produced at\nall\" case stays with the existing guard, which handles it and says more.\n- **Matches on the PR number**, not prose — release-please writes\n`([#1221](…/issues/1221))`, and a number is exact where a description is\nnot. Commits with no PR ref (direct pushes) fall back to description\ntext.\n- **Reads the CHANGELOG patch, not the PR body.** Release-please\ncollapses long bodies; the diff is authoritative.\n- **`trimEnd` only, never `trim`.** Leading whitespace is the tell that\na line is a body line rather than a subject, and counting indented\nexamples would make this fire on healthy runs. My own test caught me\ntrimming both ends.\n\nCheckout and bun are added at that step rather than the top of the job —\nevery earlier step is API-only, and putting a checkout in front of the\ntoken mint and the release action buys nothing. No `bun install`: the\nscript imports nothing outside the Bun runtime and shells out to `gh`.\n\n## Red-prove — against live data, not fixtures\n\nRun against the real v2.4.6 range and the real files of release PR #1222\nas it stood:\n\n```\n=== against the REAL #1222 as merged ===\n  ok=false  checked=3\n  the pending release PR omits 1 of 3 user-facing commit(s) since v2.4.5:\n    dropped: fix(security): widen D12 past its receiver-name blind spot … (#1218)\n\n=== with the #1218 entry added (the remedy) ===\n  ok=true  errors=0\n\n=== against the HEALTHY v2.4.5 release PR #1213 (must not fire) ===\n  ok=true  checked=1\n```\n\nAll three legs matter: it catches the real drop and names the right\ncommit, it **clears when the remedy is applied** (a guard nobody can\nsatisfy is as useless as one nobody can trip), and it stays silent on a\nhealthy release. 14 unit tests cover the same ground from the real\nv2.4.6 subjects and generated patch, plus the cases that must not fire —\n`test`/`refactor`/`chore` in the same range are never demanded, since\ndemanding them would leave this permanently red.\n\n## Also here\n\n`docs/CHANGELOG.md` — the canonical dated log — had no entry for any of\n#1216–#1221. It now records the audit, **including #1218**, which is\nwhere that fix's record lives given `v2.4.6`'s generated notes omit it\nand the tag cannot be changed.\n\n`bun run preflight:fast` — 29/29 (`audit:workflow-lint` and\n`audit:action-sha-pins` both clean over the edited workflow). `bun test\nscripts/release` — 278 pass, 4 fail; the 4 are the pre-existing Windows\nGPG `nimbus-verify.ps1` failures, identical on `main`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added automated validation to ensure user-facing changes are\nrepresented in pending release notes.\n* Release checks now flag missing changelog entries and incomplete\nrelease pull requests.\n\n* **Documentation**\n* Added the v2.4.6 changelog entry, including recent fixes, safeguards,\nand release-validation improvements.\n\n* **Tests**\n* Added comprehensive coverage for release-note completeness checks,\nincluding valid, missing, and ignored change scenarios.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T08:00:47Z",
-          "tree_id": "5c97710668f82e03e8741d0ce5cc40a5ece1ffc3",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/b59ccacf437af334ce3f70bb4cb9db6bc6a4ba99"
-        },
-        "date": 1786867939408,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 323.1580717500063,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 325.9866589999976,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 228.2762197500022,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "dd8682e7b5526a781326ea3e1724085a11d68108",
+          "message": "chore: release main (#1893)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.21.0</summary>\n\n##\n[10.21.0](https://github.com/nimbus-agent/Nimbus/compare/v10.20.0...v10.21.0)\n(2026-11-05)\n\n\n### Features\n\n* **gateway:** the model door shows a write's current state before you\napprove it ([#1891](https://github.com/nimbus-agent/Nimbus/issues/1891))\n([137e77c](https://github.com/nimbus-agent/Nimbus/commit/137e77c70f2c30bb705d5d06423fbf5ef4e45673))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-05T10:47:50+02:00",
+          "tree_id": "e9cad9e68d529165f84f041f935df5be53e07fae",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/dd8682e7b5526a781326ea3e1724085a11d68108"
+        },
+        "date": 1793869206035,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.35643474999705,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 287.03247674999875,
             "unit": "ms"
           }
         ]
