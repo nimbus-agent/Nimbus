@@ -5,10 +5,12 @@ import type { ChatopsChannelBinding, ChatopsPolicy } from "../../policy/types.ts
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import {
+  BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   isChatopsDestinationRow,
   isKnowledgeBaseCapableRow,
   KNOWLEDGE_BASE_REFUSAL,
+  messagingDestinationRefusal,
   modelWriteRefusal,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
@@ -330,5 +332,101 @@ describe("completeness tripwire (plan R6): every offerable messaging/KB row is c
         toolId,
       ).toBeUndefined();
     }
+  });
+});
+
+describe("Antigravity fix 2: destinations are folded before they are compared", () => {
+  const ZWSP = String.fromCodePoint(0x200b);
+  const FW_C = String.fromCodePoint(0xff23);
+
+  test("a Teams thread id with U+200B inserted is refused when the clean id is bound", () => {
+    expect(teamsChannel(`19:abc${ZWSP}DEF123@thread.tacv2`)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    expect(teamsChat(`19${ZWSP}:abcDEF123@thread.tacv2`)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    // Percent-encoded invisible characters are folded after the decode too.
+    expect(teamsChannel("19:abc%E2%80%8BDEF123@thread.tacv2")).toBe(CHATOPS_CHANNEL_REFUSAL);
+    // A fullwidth percent sign folds BEFORE the decode, so the escape it starts decodes too.
+    const FW_PERCENT = String.fromCodePoint(0xff05);
+    expect(teamsChannel(`19:abcDEF123${FW_PERCENT}40thread.tacv2`)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    // Positive control: a genuinely different thread is still allowed.
+    expect(teamsChannel(`19:other${ZWSP}@thread.tacv2`)).toBeUndefined();
+  });
+
+  test("a Slack id with U+200B inserted, or written fullwidth, is refused when the clean id is bound", () => {
+    // (Also refused before fix 2: an unfolded value is not a Slack id, and a non-id destination
+    // cannot be proven distinct. Folding makes it compare as the bound id itself.)
+    expect(slack(`C0123${ZWSP}ABCD`)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    expect(slack(`${FW_C}0123ABCD`)).toBe(CHATOPS_CHANNEL_REFUSAL);
+    expect(slack(`C9999${ZWSP}ZZZZ`)).toBeUndefined();
+  });
+});
+
+describe("modelWriteRefusal = messagingDestinationRefusal, then the KB (OR1/OR2)", () => {
+  const POLICY = chatops({ C0123ABCD: [], "19:abc@thread.tacv2": [] });
+  const MESSAGING: ReadonlyArray<[string, Record<string, unknown>]> = [
+    ["slack_message_post", { channel: "C0123ABCD", text: "hi" }],
+    ["slack_message_post", { channel: "C9999ZZZZ", text: "hi <!here>" }],
+    ["slack_message_post", { channel: "C9999ZZZZ", text: "hi" }],
+    ["slack_message_post_dm", { user_ids: "U1", text: "hi" }],
+    ["teams_message_post", { teamId: "t", channelId: "19:x@thread.v2", body: "<at/>" }],
+    ["teams_message_post_chat", { chatId: "19:abc@thread.tacv2", body: "hi" }],
+    ["github_issue_comment_create", { owner: "o", repo: "r", issueNumber: 1, body: "@o/t" }],
+    ["gitlab_issue_note_create", { projectPath: "g/r", issueIid: 1, body: "@alice" }],
+    ["gitlab_mr_note_create", { projectPath: "g/r", mergeRequestIid: 1, body: "@all" }],
+  ];
+
+  test("for every messaging row the two agree, with and without a readable policy", () => {
+    for (const [toolId, input] of MESSAGING) {
+      for (const policy of [POLICY, undefined]) {
+        expect(modelWriteRefusal(toolId, input, { chatops: policy, kb: KB }), toolId).toBe(
+          messagingDestinationRefusal(toolId, input, { chatops: policy }),
+        );
+      }
+    }
+  });
+
+  test("ChatOps is checked first: a ChatOps-channel post with a mention reports the ChatOps reason", () => {
+    expect(
+      messagingDestinationRefusal(
+        "slack_message_post",
+        { channel: "C0123ABCD", text: "<!here>" },
+        { chatops: POLICY },
+      ),
+    ).toBe(CHATOPS_CHANNEL_REFUSAL);
+  });
+
+  test("the KB refusal stays model-door-only: messagingDestinationRefusal never returns it", () => {
+    const input = { pageId: NOTION_ID_CANONICAL, text: "x" };
+    expect(modelWriteRefusal("notion_comment_create", input, { chatops: POLICY, kb: KB })).toBe(
+      KNOWLEDGE_BASE_REFUSAL,
+    );
+    expect(
+      messagingDestinationRefusal("notion_comment_create", input, { chatops: POLICY }),
+    ).toBeUndefined();
+    expect(
+      modelWriteRefusal(
+        "confluence_comment_add",
+        { pageId: "98765", storageHtml: "<p>x</p>" },
+        { chatops: POLICY, kb: KB },
+      ),
+    ).toBe(KNOWLEDGE_BASE_REFUSAL);
+  });
+
+  test("stated scope: Discord, Jira, Linear, Notion and Confluence bodies are not scanned", () => {
+    const loud = "<!channel> @all @o/t <at/>";
+    for (const [toolId, input] of [
+      ["discord_message_post", { channelId: "123456789012345678", content: loud }],
+      ["jira_comment_add", { issueKey: "NIM-1", body: loud }],
+      ["linear_comment_create", { issueId: "u", body: loud }],
+      ["notion_comment_create", { pageId: "ffff", text: loud }],
+      ["confluence_comment_add", { pageId: "12345", storageHtml: loud }],
+    ] as const) {
+      expect(modelWriteRefusal(toolId, input, { chatops: POLICY, kb: KB }), toolId).toBeUndefined();
+    }
+  });
+
+  test("the broadcast text is fixed and echoes nothing", () => {
+    expect(BROADCAST_MENTION_REFUSAL).toBe(
+      "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention",
+    );
   });
 });

@@ -11360,8 +11360,18 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("no production row has a before reader yet (B1-B4 add them; a wave-4 one becomes offerable)", () => {
-    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)).toEqual([]);
+  test("the production rows with a before reader are B1's seven wave-2 comment rows (no wave-4 row has one, so none is offerable)", () => {
+    const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
+    expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+      "confluence_comment_add",
+      "github_issue_comment_create",
+      "gitlab_issue_note_create",
+      "gitlab_mr_note_create",
+      "jira_comment_add",
+      "linear_comment_create",
+      "notion_comment_create",
+    ]);
+    expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
   });
 
   test("the door executor alone carries the before-state runner, as argument 8", async () => {

@@ -82,8 +82,9 @@ export function createModelWriteToolSource(deps: ModelWriteSourceDeps): Connecto
       if (!policyAllows(deps)) return false;
       return offeredUnder(getModelWriteEnablement(deps.db, serviceOf(row.actionType)), row);
     },
-    // F3/F4: the ChatOps bindings come from the SAME live enforced policy the offer reads; a
-    // throw or an unreadable policy refuses a ChatOps-platform post.
+    // F3/F4 and OR1 (`modelWriteRefusal`: ChatOps channel, broadcast mention, knowledge base): the
+    // ChatOps bindings come from the SAME live enforced policy the offer reads; a throw or an
+    // unreadable policy refuses a ChatOps-platform post.
     refusal: (row, input) => {
       let chatops: EnforcedPolicy["chatops"] | undefined;
       try {

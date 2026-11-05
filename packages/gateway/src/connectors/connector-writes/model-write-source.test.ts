@@ -19,6 +19,7 @@ import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "./model-write-capability.ts";
 import {
+  BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
   type TribalKbConfig,
@@ -422,5 +423,41 @@ describe("the real messaging rows through the real door (plan Task 3)", () => {
       await door.call("confluence__confluence_comment_add", { pageId: "12345", storageHtml: "x" }),
     ).toEqual({ sent: true });
     expect(door.executed).toHaveLength(1);
+  });
+});
+
+describe("the broadcast-mention refusal on the real rows through the real door (OR1)", () => {
+  const broadcast = { refused: BROADCAST_MENTION_REFUSAL };
+  const CASES: ReadonlyArray<[string, Record<string, unknown>, string]> = [
+    ["slack__slack_message_post", { channel: "C9999ZZZZ" }, "text"],
+    ["github__github_issue_comment_create", { owner: "o", repo: "r", issueNumber: 42 }, "body"],
+    ["gitlab__gitlab_mr_note_create", { projectPath: "g/r", mergeRequestIid: 9 }, "body"],
+  ];
+  const LOUD: Readonly<Record<string, string>> = {
+    slack__slack_message_post: "hi <!here>",
+    github__github_issue_comment_create: "cc @nimbus-agent/core",
+    gitlab__gitlab_mr_note_create: "@all",
+  };
+
+  test("a broadcast is refused with the fixed text before anything is executed", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const [name, base, key] of CASES) {
+      expect(await door.call(name, { ...base, [key]: LOUD[name] }), name).toEqual(broadcast);
+    }
+    expect(door.executed).toEqual([]);
+  });
+
+  test("the same rows with a user mention are executed once each", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const [name, base, key] of CASES) {
+      expect(await door.call(name, { ...base, [key]: "thanks @alice" }), name).toEqual({
+        sent: true,
+      });
+    }
+    expect(door.executed.map((a) => a.type)).toEqual([
+      "slack.message.post",
+      "github.issue.comment.create",
+      "gitlab.mr.note.create",
+    ]);
   });
 });
