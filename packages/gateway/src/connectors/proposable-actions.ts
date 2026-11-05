@@ -28,10 +28,11 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld until the Phase 9.7
-   * B PR that gives it a typed preview template lands. Unlike `unroutable`, a tool DOES resolve:
-   * the refusal is a review decision, not a routing fact, and moving a type out of this class into
-   * `PROPOSABLE_WRITE_TOOLS` is that later PR's job.
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld: until the Phase 9.7
+   * B PR that gives it a typed preview template lands, or (`jira.issue.transition`, owner ruling
+   * OR-B2-4) because the act door runs no before-read and so could not show what the write changes.
+   * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
+   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job.
    */
   | "not_yet_offered"
   | "gateway_internal";
