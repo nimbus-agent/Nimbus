@@ -12,7 +12,7 @@ import {
 } from "./before-reader.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { buildConnectorWritePreviewFrom, renderConnectorWritePreviewLines } from "./preview.ts";
-import { linearAssigneeProvenNull } from "./tickets.ts";
+import { linearAssigneeProvenNull, selectJiraTransition } from "./tickets.ts";
 import {
   BEFORE_STATE_MAX_FIELDS,
   type BeforeStateRead,
@@ -1066,6 +1066,44 @@ describe("the Jira transition's two reads (OR-B2-1)", () => {
       ).toEqual(["From", "Transition", "To"]);
       expect(out.fields.find((f) => f.label === "To")?.value).toBe("(unknown)");
     }
+  });
+
+  test("selectJiraTransition over real CallToolResults reads ONLY the declared pick keys", () => {
+    const allowed = new Set(["issueKey", "transitionId"]);
+    const touched: string[] = [];
+    const target: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    target["issueKey"] = "NIM-1";
+    target["transitionId"] = "31";
+    const strict = new Proxy(target, {
+      get(t, key) {
+        if (typeof key === "string" && allowed.has(key)) {
+          touched.push(key);
+          return t[key];
+        }
+        throw new Error(`read ${String(key)}, which is not declared`);
+      },
+      has(t, key) {
+        if (typeof key === "string" && allowed.has(key)) return key in t;
+        throw new Error(`tested ${String(key)}, which is not declared`);
+      },
+      ownKeys() {
+        throw new Error("enumerated the pick");
+      },
+    });
+    const callToolResult = (data: unknown) => ({
+      content: [{ type: "text", text: JSON.stringify(data) }],
+      isError: false,
+    });
+    expect(selectJiraTransition(callToolResult(TRANSITIONS), strict, callToolResult(JIRA))).toEqual(
+      DONE,
+    );
+    expect(touched).toContain("transitionId");
+    // The reader declares the union the selection may read, and nothing else.
+    const before = realRow("jira_issue_transition").before;
+    expect(before === undefined ? [] : beforeReaderArgKeys(before)).toEqual([
+      "issueKey",
+      "transitionId",
+    ]);
   });
 
   test("the selection unwraps BOTH MCP replies", () => {
