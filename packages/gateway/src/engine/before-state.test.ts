@@ -531,3 +531,21 @@ describe("a before-state read never raises a prompt (structural refusal in gate(
     expect(seen.prompts).toEqual([]);
   });
 });
+
+describe("the owner's prompt text shows the before-state", () => {
+  test("the CLI prompt carries a Before: block after the new values", async () => {
+    const { exec, seen } = executorHarness({ readReply: { summary: "old title" } });
+    await exec.execute(WRITE);
+    const prompt = seen.prompts[0] ?? "";
+    expect(prompt).toContain("Requested by: the model");
+    expect(prompt).toContain('  Summary: "new"');
+    expect(prompt.indexOf('  Summary: "new"')).toBeLessThan(prompt.indexOf("Before:"));
+    expect(prompt).toContain("Before:\n  Summary: old title");
+  });
+
+  test("an unavailable read is one fixed line", async () => {
+    const { exec, seen } = executorHarness({});
+    await exec.execute(WRITE, { beforeReaderUnlisted: true });
+    expect(seen.prompts[0]).toContain("Before: unavailable (failed)");
+  });
+});

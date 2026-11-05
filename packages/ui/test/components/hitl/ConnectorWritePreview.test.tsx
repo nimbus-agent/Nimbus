@@ -237,3 +237,70 @@ describe("ConnectorWritePreview: the MCP act door's proposer", () => {
     expect(block).toHaveTextContent("<b>trust me</b>");
   });
 });
+
+describe("ConnectorWritePreview — the target's current state (spec § 5.4)", () => {
+  it("ok: a Before section with each label and value, as text", () => {
+    const { container } = render(
+      <ConnectorWritePreview
+        details={details({
+          before: {
+            status: "ok",
+            fields: [
+              { label: "Title", value: "Old title" },
+              { label: "State", value: "<b>open</b>" },
+            ],
+          },
+        })}
+      />,
+    );
+    const block = screen.getByTestId("connector-write-before");
+    expect(block).toHaveTextContent("Before");
+    expect(block).toHaveTextContent("Old title");
+    expect(block).toHaveTextContent("<b>open</b>");
+    expect(container.querySelector("b")).toBeNull();
+  });
+
+  it("ok with dropped fields shows the count; with none says so", () => {
+    const { unmount } = render(
+      <ConnectorWritePreview
+        details={details({
+          before: { status: "ok", fields: [{ label: "A", value: "1" }], notShown: 3 },
+        })}
+      />,
+    );
+    expect(screen.getByTestId("connector-write-before")).toHaveTextContent(
+      "(3 more fields not shown)",
+    );
+    unmount();
+    render(<ConnectorWritePreview details={details({ before: { status: "ok", fields: [] } })} />);
+    expect(screen.getByTestId("connector-write-before")).toHaveTextContent("(no fields)");
+  });
+
+  it("unavailable: the fixed reason only", () => {
+    for (const reason of ["timeout", "failed", "not configured", "policy requires approval"]) {
+      const { unmount } = render(
+        <ConnectorWritePreview details={details({ before: { status: "unavailable", reason } })} />,
+      );
+      expect(screen.getByTestId("connector-write-before")).toHaveTextContent(
+        `unavailable (${reason})`,
+      );
+      unmount();
+    }
+  });
+
+  it("absent or malformed before (or an unknown reason): no section", () => {
+    for (const b of [
+      undefined,
+      "x",
+      { status: "weird" },
+      { status: "unavailable", reason: "the server said: secret" },
+      { status: "ok", fields: "nope" },
+    ]) {
+      const { unmount } = render(
+        <ConnectorWritePreview details={details(b === undefined ? {} : { before: b })} />,
+      );
+      expect(screen.queryByTestId("connector-write-before")).toBeNull();
+      unmount();
+    }
+  });
+});

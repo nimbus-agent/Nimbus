@@ -261,5 +261,21 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
     lines.push("Other fields:");
     for (const f of p.otherFields) lines.push(`  ${oneLine(f.key)}: ${oneLine(f.value)}`);
   }
+  if (p.before !== undefined) lines.push("", ...beforeLines(p.before));
   return lines;
+}
+
+/**
+ * The target's current state, after the new values (spec § 5.4). Labels and values were sanitised
+ * by the runner and are never cut; a dropped field is counted on a final line.
+ */
+function beforeLines(b: ConnectorWriteBeforeState): string[] {
+  if (b.status === "unavailable") return [`Before: unavailable (${b.reason})`];
+  const notShown = b.notShown ?? 0;
+  if (b.fields.length === 0 && notShown === 0) return ["Before: (no fields)"];
+  const out = ["Before:", ...b.fields.map((f) => `  ${oneLine(f.label)}: ${oneLine(f.value)}`)];
+  if (notShown > 0) {
+    out.push(`  (${notShown} more ${notShown === 1 ? "field" : "fields"} not shown)`);
+  }
+  return out;
 }

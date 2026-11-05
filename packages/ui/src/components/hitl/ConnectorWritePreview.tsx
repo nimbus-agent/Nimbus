@@ -183,8 +183,72 @@ export function ConnectorWritePreview({
           <Rows rows={others} />
         </section>
       )}
+      <BeforeState raw={details["before"]} />
       <ProposedBy details={details} />
     </div>
+  );
+}
+
+/** The four fixed reasons the gateway can send; any other text is not shown. */
+const BEFORE_UNAVAILABLE_REASONS: ReadonlySet<string> = new Set([
+  "timeout",
+  "failed",
+  "not configured",
+  "policy requires approval",
+]);
+
+type BeforeView =
+  | { readonly status: "ok"; readonly rows: Row[]; readonly notShown: number }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+function readBefore(raw: unknown): BeforeView | undefined {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const b = asRecord(raw);
+  if (b["status"] === "unavailable") {
+    const reason = b["reason"];
+    return typeof reason === "string" && BEFORE_UNAVAILABLE_REASONS.has(reason)
+      ? { status: "unavailable", reason }
+      : undefined;
+  }
+  if (b["status"] !== "ok" || !Array.isArray(b["fields"])) return undefined;
+  const rows = (b["fields"] as unknown[]).flatMap((entry, i) => {
+    const rec = asRecord(entry);
+    const label = rec["label"];
+    const value = rec["value"];
+    if (typeof label !== "string" || typeof value !== "string") return [];
+    return [
+      { id: `b${i}`, label: label === "" ? "(empty label)" : label, kind: "text", value } as Row,
+    ];
+  });
+  const n = b["notShown"];
+  const notShown = typeof n === "number" && Number.isInteger(n) && n > 0 ? n : 0;
+  return { status: "ok", rows, notShown };
+}
+
+/**
+ * The target's current state, read by the gateway just before this prompt (spec § 5.4), shown
+ * after the new values. Every string is the gateway's sanitised text, rendered as a text node;
+ * an unreadable state is one fixed reason, never error text.
+ */
+function BeforeState({ raw }: { readonly raw: unknown }): ReactNode {
+  const view = readBefore(raw);
+  if (view === undefined) return null;
+  return (
+    <section data-testid="connector-write-before" className="flex flex-col gap-1">
+      <h3 className="text-sm font-semibold">Before</h3>
+      {view.status === "unavailable" && (
+        <p className="text-sm text-[var(--color-fg-muted)]">unavailable ({view.reason})</p>
+      )}
+      {view.status === "ok" && view.rows.length > 0 && <Rows rows={view.rows} />}
+      {view.status === "ok" && view.rows.length === 0 && view.notShown === 0 && (
+        <p className="text-sm text-[var(--color-fg-muted)]">(no fields)</p>
+      )}
+      {view.status === "ok" && view.notShown > 0 && (
+        <p className="text-sm text-[var(--color-fg-muted)]">
+          ({view.notShown} more {view.notShown === 1 ? "field" : "fields"} not shown)
+        </p>
+      )}
+    </section>
   );
 }
 
