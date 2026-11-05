@@ -189,3 +189,51 @@ describe("ConnectorWritePreview — who asked", () => {
     );
   });
 });
+
+describe("ConnectorWritePreview: the MCP act door's proposer", () => {
+  const proposedBy = {
+    clientLabel: "claude-desktop",
+    unverifiedSummary: "Files the bug the user described",
+    createdAt: 0,
+    expiresAt: 60_000,
+  };
+
+  it("renders the proposer in its own 'Unverified agent proposal' block, apart from the summary", () => {
+    render(<ConnectorWritePreview details={details({ proposedBy })} />);
+    const block = screen.getByTestId("connector-write-proposed-by");
+    expect(block).toHaveTextContent("Unverified agent proposal");
+    expect(block).toHaveTextContent("claude-desktop");
+    expect(block).toHaveTextContent("Files the bug the user described");
+    expect(block).toHaveTextContent("1970-01-01T00:00:00.000Z");
+    expect(block).toHaveTextContent("1970-01-01T00:01:00.000Z");
+    // The gateway-built summary stays the template's, outside the block.
+    expect(block).not.toHaveTextContent("Create an issue in acme/repo");
+    expect(screen.getByTestId("connector-write-preview")).toHaveTextContent(
+      "Create an issue in acme/repo",
+    );
+  });
+
+  it("no proposedBy (or a malformed one): no block", () => {
+    for (const p of [undefined, "x", ["a"], null]) {
+      const { unmount } = render(
+        <ConnectorWritePreview details={details(p === undefined ? {} : { proposedBy: p })} />,
+      );
+      expect(screen.queryByTestId("connector-write-proposed-by")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("an unlabelled client reads as unlabelled; proposer text is rendered as text", () => {
+    const { container } = render(
+      <ConnectorWritePreview
+        details={details({
+          proposedBy: { ...proposedBy, clientLabel: null, unverifiedSummary: "<b>trust me</b>" },
+        })}
+      />,
+    );
+    const block = screen.getByTestId("connector-write-proposed-by");
+    expect(block).toHaveTextContent("unlabelled");
+    expect(container.querySelector("b")).toBeNull();
+    expect(block).toHaveTextContent("<b>trust me</b>");
+  });
+});

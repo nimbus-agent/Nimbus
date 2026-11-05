@@ -183,6 +183,47 @@ export function ConnectorWritePreview({
           <Rows rows={others} />
         </section>
       )}
+      <ProposedBy details={details} />
     </div>
+  );
+}
+
+function isoTime(v: unknown): string | undefined {
+  if (typeof v !== "number" || !Number.isFinite(v)) return undefined;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? undefined : d.toISOString();
+}
+
+/**
+ * The MCP act door's proposer (I28), below the gateway-built preview and visually apart from it:
+ * who proposed the action and what the agent SAYS it does. That text is the agent's own claim, so
+ * it is labelled unverified and never shown as the preview's summary.
+ */
+function ProposedBy({ details }: { readonly details: Record<string, unknown> }): ReactNode {
+  const raw = details["proposedBy"];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const p = asRecord(raw);
+  const label = text(p["clientLabel"]) ?? "unlabelled";
+  const entries: ReadonlyArray<[string, string, string | undefined]> = [
+    ["client", "MCP client", label],
+    [
+      "summary",
+      "Agent's summary",
+      typeof p["unverifiedSummary"] === "string" ? p["unverifiedSummary"] : undefined,
+    ],
+    ["created", "Proposed at", isoTime(p["createdAt"])],
+    ["expires", "Expires", isoTime(p["expiresAt"])],
+  ];
+  const rows = entries.flatMap(([id, rowLabel, value]) =>
+    value === undefined ? [] : [{ id, label: rowLabel, kind: "text", value } as Row],
+  );
+  return (
+    <section
+      data-testid="connector-write-proposed-by"
+      className="flex flex-col gap-1 rounded border border-dashed border-[var(--color-amber)] p-2"
+    >
+      <h3 className="text-sm font-semibold">Unverified agent proposal</h3>
+      <Rows rows={rows} />
+    </section>
   );
 }

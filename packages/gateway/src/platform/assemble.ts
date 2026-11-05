@@ -4668,6 +4668,8 @@ export async function assemblePlatformServices(
       egressSink: makeEgressSink(db),
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl,
+      // The typed preview's `Credential:` line reads the same pin the write itself uses (as runAsk).
+      previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,
     },
   };
 

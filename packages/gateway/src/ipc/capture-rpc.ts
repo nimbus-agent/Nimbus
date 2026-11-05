@@ -1,9 +1,20 @@
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import {
+  buildConnectorWritePreviewFrom,
+  isPlainObject,
+  renderConnectorWritePreviewLines,
+  sanitisePreviewText,
+} from "../connectors/connector-writes/preview.ts";
+import type {
+  ConnectorWriteRow,
+  PreviewCredentialResolver,
+} from "../connectors/connector-writes/types.ts";
 import { proposableWriteTool } from "../connectors/proposable-actions.ts";
 import { userMcpToolKeyForActionType } from "../connectors/user-mcp-store.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { bindConsentChannel, type ExecutorPolicyDep, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
-import { formatActionConsent } from "../mcp-sink/capture-act.ts";
+import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
 import {
   acceptCapture,
   type CaptureCaller,
@@ -17,7 +28,7 @@ import {
   revokeCapture,
   submitCapture,
 } from "../mcp-sink/capture-gate.ts";
-import { type ActDeps, CaptureError } from "../mcp-sink/capture-types.ts";
+import { type ActDeps, type ActionProvenance, CaptureError } from "../mcp-sink/capture-types.ts";
 import { dispatchByMethod, type RpcMissOrHit } from "./_lib/dispatch-by-method.ts";
 import type { ConsentCoordinator } from "./consent.ts";
 import { RpcMethodError } from "./server/rpc-error.ts";
@@ -44,6 +55,56 @@ export interface CaptureActWiring {
   readonly egressSink: EgressSink;
   readonly audit: AuditSink;
   readonly policyHitl: ExecutorPolicyDep;
+  /** Which credential a write would use, for the typed preview's `Credential:` line (as runAsk). */
+  readonly previewCredentialFor?: PreviewCredentialResolver;
+  /** Test seam: the rows a typed preview is built from. Production: the write table. */
+  readonly previewRows?: readonly ConnectorWriteRow[];
+}
+
+/**
+ * The act door's prompt and details (F5). For a write whose row carries a preview template and an
+ * object input: the provenance header, then the gateway-built typed preview; the details are that
+ * preview with the proposer ONLY under `proposedBy` (its unverified summary as `unverifiedSummary`,
+ * never overwriting the template's `summary`). Otherwise: the verbatim prompt and
+ * `{ actionType, input }`, exactly as before.
+ */
+export function actConsentDisplay(
+  w: Pick<CaptureActWiring, "previewCredentialFor" | "previewRows">,
+  actionType: string,
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+  provenance: ActionProvenance,
+): { prompt: string; details: Record<string, unknown> } {
+  const preview = isPlainObject(input)
+    ? buildConnectorWritePreviewFrom(
+        { type: actionType, payload: { mcpToolId: toolId, input } },
+        w.previewRows ?? CONNECTOR_WRITE_ROWS,
+        w.previewCredentialFor,
+      )
+    : undefined;
+  if (preview === undefined) {
+    return {
+      prompt: formatActionConsent(provenance, actionType, input),
+      details: { actionType, input },
+    };
+  }
+  return {
+    prompt: [
+      ...formatActionProvenanceLines(provenance),
+      "",
+      ...renderConnectorWritePreviewLines(preview),
+    ].join("\n"),
+    details: {
+      ...preview,
+      proposedBy: {
+        clientLabel:
+          provenance.clientLabel === null ? null : sanitisePreviewText(provenance.clientLabel),
+        unverifiedSummary: sanitisePreviewText(provenance.summary),
+        createdAt: provenance.createdAt,
+        expiresAt: provenance.expiresAt,
+      },
+    },
+  };
 }
 
 /**
@@ -84,11 +145,8 @@ export function buildActDeps(
         // This exact message is what classifyActionError maps to ERR_ACTION_TOOL_NOT_FOUND.
         throw new Error("Tool not found");
       }
-      const consent = provenanceConsent(
-        bindConsentChannel(coordinator, clientId),
-        formatActionConsent(provenance, actionType, input),
-        { actionType, input },
-      );
+      const { prompt, details } = actConsentDisplay(w, actionType, toolId, input, provenance);
+      const consent = provenanceConsent(bindConsentChannel(coordinator, clientId), prompt, details);
       // I20/I42: no delegate — the LOCAL owner who ran `captures accept` answers.
       const executor = new ToolExecutor(
         consent,

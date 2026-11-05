@@ -2664,9 +2664,10 @@ code_execution=true
       /\n\s*connectorWriteDeps,\n/,
     );
     // The destructuring from `buildTeamCredentialContexts`, the ChatOps boot (see (j)), the
-    // services literal, and — the fourth — the I28 act door's dispatcher inside the
-    // `captureRpcCtx.act` wiring, whose exact shape is pinned just below: four.
-    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(4);
+    // services literal, the I28 act door's dispatcher inside the `captureRpcCtx.act` wiring, and —
+    // the fifth — that wiring's typed-preview credential READ (`.credentialFor(s).credential`, no
+    // copy of the context), both pinned exactly just below: five.
+    expect(assembly.match(/\bconnectorWriteDeps\b/g)).toHaveLength(5);
     const captureAt = assembly.indexOf("ipcOpts.captureRpcCtx = {");
     expect(captureAt).toBeGreaterThan(-1);
     const captureCtx = assembly.slice(captureAt, assembly.indexOf("\n  };", captureAt));
@@ -2675,7 +2676,10 @@ code_execution=true
     expect(captureCtx.slice(actAt)).toMatch(
       /^act: \{\s*dispatcher: createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(meshDispatcherClient\(connectorMesh\)\),\s*connectorWriteDeps,?\s*\),/,
     );
-    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(1);
+    expect(captureCtx.match(/\bconnectorWriteDeps\b/g)).toHaveLength(2);
+    expect(captureCtx).toContain(
+      "previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,",
+    );
     const main = stripComments(await read("packages/gateway/src/gateway-main.ts"));
     expect(main).toMatch(
       /createConnectorWriteDispatcher\(\s*createConnectorDispatcher\(dispatcherClient\),\s*platform\.connectorWriteDeps,?\s*\)/,

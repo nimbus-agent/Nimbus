@@ -9,7 +9,6 @@ import {
   connectorWriteRowByToolId,
   isConnectorWriteToolId,
 } from "../connector-write-registry.ts";
-import { PROPOSABLE_WRITE_TOOLS } from "../proposable-actions.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 
 const TODAYS_WRITE_ROWS: readonly string[] = [
@@ -175,14 +174,7 @@ describe("connector write preview templates", () => {
       ),
     ).toEqual([]);
   });
-
-  test("no proposable row has a template yet (the MCP sink replaces the executor prompt)", () => {
-    const proposable = new Set(Object.values(PROPOSABLE_WRITE_TOOLS));
-    expect(
-      CONNECTOR_WRITE_ROWS.filter((r) => proposable.has(r.toolId) && r.preview !== undefined).map(
-        (r) => r.toolId,
-      ),
-      "extend ipc/capture-rpc.ts provenanceConsent to show the typed preview first",
-    ).toEqual([]);
-  });
+  // The A2 tripwire that stood here ("no proposable row has a template yet") is retired: the act
+  // door now shows the typed preview under the provenance header (ipc/capture-rpc.ts
+  // `actConsentDisplay`, proven in capture-rpc.test.ts with a synthetic templated proposable row).
 });
