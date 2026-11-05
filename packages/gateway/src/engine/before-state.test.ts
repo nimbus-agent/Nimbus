@@ -1,11 +1,13 @@
 /**
  * The before-state reader (spec § 5.4) on its own and through the real `ToolExecutor`. Every row
- * here is SYNTHETIC: no production row has a `before` reader in B0b.
+ * here is SYNTHETIC: no production row uses a second read (`also`) or a guard (B2a ships the
+ * mechanism only); the B1 production readers are tested in `before-reader.test.ts`.
  */
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
+  type BeforeStateGuard,
   type BeforeStateReader,
   type ConnectorWriteRow,
   row,
@@ -164,6 +166,7 @@ describe("before-state runner", () => {
         },
       },
       { ...READER, select: () => "nope" as unknown as [] },
+      { ...READER, select: () => ["not an object"] as unknown as [] },
       { ...READER, select: () => [{ label: "x", value: 1 as unknown as string }] },
     ];
     for (const reader of cases) {
@@ -295,6 +298,10 @@ describe("before-state runner", () => {
     } finally {
       process.off("unhandledRejection", onUnhandled);
     }
+  });
+
+  test("with no options the runner previews over the production write table", () => {
+    expect(createBeforeStateRunner().rows).toBe(CONNECTOR_WRITE_ROWS);
   });
 
   test("production defaults: the real timer resolves a fast read with nothing left scheduled", async () => {
@@ -553,5 +560,512 @@ describe("the owner's prompt text shows the before-state", () => {
     const { exec, seen } = executorHarness({});
     await exec.execute(WRITE, { beforeReaderUnlisted: true });
     expect(seen.prompts[0]).toContain("Before: unavailable (failed)");
+  });
+});
+
+// ---- B2a: two reads, one budget --------------------------------------------------------------
+
+/** A fake clock: `advance(ms)` fires every timer whose deadline has passed; `set` calls counted. */
+function fakeClock() {
+  let now = 0;
+  let next = 1;
+  const pending = new Map<number, { at: number; fn: () => void }>();
+  const counts = { set: 0, clear: 0 };
+  return {
+    counts,
+    pending,
+    advance(ms: number): void {
+      now += ms;
+      for (const [h, t] of [...pending]) {
+        if (t.at <= now) {
+          pending.delete(h);
+          t.fn();
+        }
+      }
+    },
+    timers: {
+      set: (fn: () => void, ms: number): unknown => {
+        counts.set += 1;
+        const h = next++;
+        pending.set(h, { at: now + ms, fn });
+        return h;
+      },
+      clear: (h: unknown): void => {
+        counts.clear += 1;
+        pending.delete(h as number);
+      },
+    } satisfies NonNullable<BeforeStateRunnerOptions["timers"]>,
+  };
+}
+
+function deferred<T>() {
+  let resolve: (v: T) => void = () => {};
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
+/** Resolves to `"pending"` when `p` has not settled within a few ticks (a test never hangs). */
+async function settledOrPending<T>(p: Promise<T>): Promise<T | "pending"> {
+  return Promise.race([p, Bun.sleep(20).then(() => "pending" as const)]);
+}
+
+const TRANSITION_PREVIEW = {
+  target: "{issueKey}",
+  summary: "Move {issueKey} through {transitionId}",
+  fields: [
+    { key: "transitionId", label: "Transition id", kind: "text" as const },
+    { key: "expand", label: "Expand", kind: "text" as const },
+  ],
+};
+
+interface TwoReadSeen {
+  firstArgs: unknown[];
+  alsoArgs: unknown[];
+  selectCalls: Array<{ reply: unknown; picked: Readonly<Record<string, unknown>>; also: unknown }>;
+}
+
+/** A synthetic two-read reader: the transitions list (needs transitionId), then the issue. */
+function twoReadReader(
+  seen: TwoReadSeen,
+  over: Partial<BeforeStateReader> = {},
+): BeforeStateReader {
+  return {
+    tool: "jira_issue_transitions_list",
+    argKeys: ["issueKey", "transitionId"],
+    args: (input) => {
+      seen.firstArgs.push({ ...input });
+      return { issueKey: input["issueKey"] };
+    },
+    also: {
+      tool: "jira_issue_get",
+      argKeys: ["issueKey", "expand"],
+      args: (input) => {
+        seen.alsoArgs.push({ ...input });
+        return { issueKey: input["issueKey"] };
+      },
+    },
+    select: (reply, picked, also) => {
+      seen.selectCalls.push({ reply, picked, also });
+      const r = reply as { to?: unknown };
+      const a = also as { status?: unknown };
+      return [
+        { label: "From", value: String(a.status) },
+        { label: "To", value: `${String(r.to)} via ${String(picked["transitionId"])}` },
+      ];
+    },
+    ...over,
+  };
+}
+
+function transitionRow(reader: BeforeStateReader): ConnectorWriteRow {
+  return withBefore(
+    withPreview(
+      row("jira_issue_transition", "jira.issue.transition", "mesh", 2),
+      TRANSITION_PREVIEW,
+    ),
+    reader,
+  );
+}
+
+const TRANSITION: PlannedAction = {
+  type: "jira.issue.transition",
+  origin: "model",
+  payload: {
+    mcpToolId: "jira_jira_issue_transition",
+    input: { issueKey: "NIM-1", transitionId: "31", comment: "MODEL-ONLY" },
+  },
+};
+
+const newSeen = (): TwoReadSeen => ({ firstArgs: [], alsoArgs: [], selectCalls: [] });
+
+type GateAnswer = Awaited<ReturnType<BeforeReadOps["gate"]>>;
+
+/** Ops whose dispatch answers by tool key; a function answer is called (it may throw). */
+function opsByTool(
+  answers: Record<string, unknown>,
+  gated: PlannedAction[] = [],
+  gateAnswer: (a: PlannedAction) => GateAnswer = () => "proceed",
+): BeforeReadOps {
+  return {
+    gate: async (a) => {
+      gated.push(a);
+      return gateAnswer(a);
+    },
+    dispatch: async (a) => {
+      const answer = answers[String(a.payload?.["mcpToolId"])];
+      return typeof answer === "function" ? (answer as () => unknown)() : answer;
+    },
+  };
+}
+
+const READS_OK: Record<string, unknown> = {
+  jira_jira_issue_transitions_list: { to: "Done" },
+  jira_jira_issue_get: { status: "In Progress" },
+};
+
+const throwing = (msg: string) => (): never => {
+  throw new Error(msg);
+};
+
+describe("a before-state reader may take a second read (B2a)", () => {
+  test("two gated reads in order, then select gets (first reply, the union pick, second reply)", async () => {
+    const seen = newSeen();
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(seen))] });
+    const out = await runner.read(TRANSITION, opsByTool(READS_OK, gated));
+    expect(gated).toEqual([
+      {
+        type: "jira.before.read",
+        payload: { mcpToolId: "jira_jira_issue_transitions_list", input: { issueKey: "NIM-1" } },
+      },
+      {
+        type: "jira.before.read",
+        payload: { mcpToolId: "jira_jira_issue_get", input: { issueKey: "NIM-1" } },
+      },
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "From", value: "In Progress" },
+        { label: "To", value: "Done via 31" },
+      ],
+    });
+    expect(seen.selectCalls).toHaveLength(1);
+    const call = seen.selectCalls[0];
+    expect(call?.reply).toEqual({ to: "Done" });
+    expect(call?.also).toEqual({ status: "In Progress" });
+    // The pick: frozen, null-prototype, the declared keys the input has (`expand` is absent), and
+    // never an undeclared one (`comment`).
+    const picked = call?.picked ?? {};
+    expect(Object.isFrozen(picked)).toBe(true);
+    expect(Object.getPrototypeOf(picked)).toBeNull();
+    expect({ ...picked }).toEqual({ issueKey: "NIM-1", transitionId: "31" });
+    // Each read's args received only its OWN argKeys.
+    expect(seen.firstArgs).toEqual([{ issueKey: "NIM-1", transitionId: "31" }]);
+    expect(seen.alsoArgs).toEqual([{ issueKey: "NIM-1" }]);
+  });
+
+  test("the first read throws: the second is never gated, and the whole before is failed", async () => {
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(newSeen()))] });
+    const out = await runner.read(
+      TRANSITION,
+      opsByTool({ ...READS_OK, jira_jira_issue_transitions_list: throwing("boom") }, gated),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+    expect(gated.map((a) => a.payload?.["mcpToolId"])).toEqual([
+      "jira_jira_issue_transitions_list",
+    ]);
+  });
+
+  test("the second read is not found: not configured, and no field of the first is shown", async () => {
+    const gated: PlannedAction[] = [];
+    const seen = newSeen();
+    const runner = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(seen))] });
+    const out = await runner.read(
+      TRANSITION,
+      opsByTool({ ...READS_OK, jira_jira_issue_get: throwing("Tool not found") }, gated),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "not configured" });
+    expect(gated).toHaveLength(2);
+    expect(seen.selectCalls).toEqual([]);
+  });
+
+  test("the second read refused by the gate (policy): policy requires approval", async () => {
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(newSeen()))] });
+    const out = await runner.read(
+      TRANSITION,
+      opsByTool(READS_OK, gated, (a) =>
+        a.payload?.["mcpToolId"] === "jira_jira_issue_get"
+          ? { status: "rejected", reason: BEFORE_READ_HITL_REFUSAL }
+          : "proceed",
+      ),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "policy requires approval" });
+    expect(gated).toHaveLength(2);
+  });
+
+  test("the first read refused by the gate: the second is never gated", async () => {
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [transitionRow(twoReadReader(newSeen()))] });
+    const out = await runner.read(
+      TRANSITION,
+      opsByTool(READS_OK, gated, () => ({ status: "rejected", reason: BEFORE_READ_HITL_REFUSAL })),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "policy requires approval" });
+    expect(gated).toHaveLength(1);
+  });
+
+  test("also.args failing (undefined or a throw): failed, and no read runs", async () => {
+    for (const args of [() => undefined, throwing("also args boom")]) {
+      const gated: PlannedAction[] = [];
+      const reader = twoReadReader(newSeen());
+      const runner = createBeforeStateRunner({
+        rows: [
+          transitionRow({
+            ...reader,
+            also: { tool: "jira_issue_get", argKeys: ["issueKey"], args },
+          }),
+        ],
+      });
+      expect(await runner.read(TRANSITION, opsByTool(READS_OK, gated))).toEqual({
+        status: "unavailable",
+        reason: "failed",
+      });
+      expect(gated).toEqual([]);
+    }
+  });
+
+  test("one budget: the timer is set ONCE for both reads; 3 s + 3 s of fake time is a timeout", async () => {
+    const clock = fakeClock();
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    const runner = createBeforeStateRunner({
+      rows: [transitionRow(twoReadReader(newSeen()))],
+      timers: clock.timers,
+    });
+    const pending = runner.read(TRANSITION, {
+      gate: async () => "proceed",
+      dispatch: (a) =>
+        a.payload?.["mcpToolId"] === "jira_jira_issue_get" ? second.promise : first.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(3000);
+    first.resolve({ to: "Done" });
+    await Bun.sleep(0);
+    clock.advance(3000);
+    const out = await settledOrPending(pending);
+    expect(out).toEqual({ status: "unavailable", reason: "timeout" });
+    // The late second reply is ignored.
+    second.resolve({ status: REPLY_MARK });
+    await Bun.sleep(0);
+    expect(JSON.stringify(out)).not.toContain(REPLY_MARK);
+    expect(clock.counts).toEqual({ set: 1, clear: 1 });
+    expect(clock.pending.size).toBe(0);
+  });
+
+  test("the budget spent during the first read: the second read is never gated", async () => {
+    const clock = fakeClock();
+    const first = deferred<unknown>();
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({
+      rows: [transitionRow(twoReadReader(newSeen()))],
+      timers: clock.timers,
+    });
+    const pending = runner.read(TRANSITION, {
+      gate: async (a) => {
+        gated.push(a);
+        return "proceed";
+      },
+      dispatch: () => first.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(BEFORE_STATE_TIMEOUT_MS);
+    expect(await pending).toEqual({ status: "unavailable", reason: "timeout" });
+    first.resolve({ to: "Done" });
+    await Bun.sleep(5);
+    expect(gated).toHaveLength(1);
+  });
+
+  test("both reads inside the budget: one timer, cleared once, and the fields shown", async () => {
+    const clock = fakeClock();
+    const runner = createBeforeStateRunner({
+      rows: [transitionRow(twoReadReader(newSeen()))],
+      timers: clock.timers,
+    });
+    const out = await runner.read(TRANSITION, opsByTool(READS_OK));
+    expect(out?.status).toBe("ok");
+    expect(clock.counts).toEqual({ set: 1, clear: 1 });
+  });
+
+  test("a one-read reader is unchanged: its select gets the pick and alsoReply undefined", async () => {
+    const calls: unknown[][] = [];
+    const reader: BeforeStateReader = {
+      ...READER,
+      select: (...a) => {
+        calls.push(a);
+        return [{ label: "Summary", value: "old" }];
+      },
+    };
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [rowWith(reader)] });
+    const out = await runner.read(WRITE, opsReturning({ summary: "old" }, gated));
+    expect(out).toEqual({ status: "ok", fields: [{ label: "Summary", value: "old" }] });
+    expect(gated).toHaveLength(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toHaveLength(3);
+    expect(calls[0]?.[2]).toBeUndefined();
+    expect({ ...(calls[0]?.[1] as object) }).toEqual({ issueKey: "NIM-1" });
+  });
+});
+
+// ---- B2a: the before-state guard -------------------------------------------------------------
+
+const GUARD_REASON = "the model cannot move this issue; ask the owner";
+
+/** A guard that applies when `transitionId` is set and allows when `allows` says so. */
+function guarded(
+  allows: BeforeStateGuard["allows"],
+  over: Partial<BeforeStateReader> = {},
+  appliesTo: BeforeStateGuard["appliesTo"] = (p) => p["transitionId"] !== undefined,
+): ConnectorWriteRow {
+  return transitionRow({
+    ...twoReadReader(newSeen()),
+    guard: { reason: GUARD_REASON, appliesTo, allows },
+    ...over,
+  });
+}
+
+const REFUSED = { status: "refused", reason: GUARD_REASON } as const;
+
+const withoutTransition: PlannedAction = {
+  ...TRANSITION,
+  payload: { mcpToolId: "jira_jira_issue_transition", input: { issueKey: "NIM-1" } },
+};
+
+describe("the before-state guard (B2a)", () => {
+  test("not applicable: the normal before, whatever allows says", async () => {
+    const runner = createBeforeStateRunner({ rows: [guarded(() => false)] });
+    const out = await runner.read(withoutTransition, opsByTool(READS_OK));
+    expect(out?.status).toBe("ok");
+  });
+
+  test("not applicable and a read fails: unavailable, never refused", async () => {
+    const runner = createBeforeStateRunner({ rows: [guarded(() => false)] });
+    const out = await runner.read(
+      withoutTransition,
+      opsByTool({ ...READS_OK, jira_jira_issue_get: throwing("x") }),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+  });
+
+  test("applicable and allows returns exactly true: the normal before; allows saw both replies and the pick", async () => {
+    const seen: unknown[][] = [];
+    const runner = createBeforeStateRunner({
+      rows: [
+        guarded((...a) => {
+          seen.push(a);
+          return true;
+        }),
+      ],
+    });
+    const out = await runner.read(TRANSITION, opsByTool(READS_OK));
+    expect(out?.status).toBe("ok");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.[0]).toEqual({ to: "Done" });
+    expect({ ...(seen[0]?.[1] as object) }).toEqual({ issueKey: "NIM-1", transitionId: "31" });
+    expect(seen[0]?.[2]).toEqual({ status: "In Progress" });
+  });
+
+  test("applicable: allows false, a throw, or a truthy non-true value refuses", async () => {
+    const answers: Array<BeforeStateGuard["allows"]> = [
+      () => false,
+      throwing("allows boom"),
+      () => 1 as unknown as boolean,
+      () => "true" as unknown as boolean,
+    ];
+    for (const allows of answers) {
+      const runner = createBeforeStateRunner({ rows: [guarded(allows)] });
+      expect(await runner.read(TRANSITION, opsByTool(READS_OK))).toEqual(REFUSED);
+    }
+  });
+
+  test("applicable: every failed or missing read refuses (fail closed), never unavailable", async () => {
+    const cases: Array<readonly [string, BeforeReadOps]> = [
+      [
+        "first read throws",
+        opsByTool({ ...READS_OK, jira_jira_issue_transitions_list: throwing("x") }),
+      ],
+      ["second read throws", opsByTool({ ...READS_OK, jira_jira_issue_get: throwing("x") })],
+      [
+        "second read not found",
+        opsByTool({ ...READS_OK, jira_jira_issue_get: throwing("Tool not found") }),
+      ],
+      [
+        "a read policy-refused",
+        opsByTool(READS_OK, [], () => ({ status: "rejected", reason: BEFORE_READ_HITL_REFUSAL })),
+      ],
+    ];
+    for (const [name, ops] of cases) {
+      const runner = createBeforeStateRunner({ rows: [guarded(() => true)] });
+      expect(await runner.read(TRANSITION, ops), name).toEqual(REFUSED);
+    }
+  });
+
+  test("applicable: a read that times out refuses", async () => {
+    const clock = fakeClock();
+    const runner = createBeforeStateRunner({ rows: [guarded(() => true)], timers: clock.timers });
+    const pending = runner.read(TRANSITION, {
+      gate: async () => "proceed",
+      dispatch: () => new Promise(() => {}),
+    });
+    await Bun.sleep(0);
+    clock.advance(BEFORE_STATE_TIMEOUT_MS);
+    expect(await pending).toEqual(REFUSED);
+  });
+
+  test("applicable: the reader unlisted refuses, and no read runs", async () => {
+    const gated: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [guarded(() => true)] });
+    expect(
+      await runner.read(TRANSITION, opsByTool(READS_OK, gated), { readerUnlisted: true }),
+    ).toEqual(REFUSED);
+    expect(gated).toEqual([]);
+  });
+
+  test("applicable: args or also.args failing (undefined or a throw) refuses, and no read runs", async () => {
+    const failing = [() => undefined, throwing("args boom")];
+    for (const args of failing) {
+      for (const over of [
+        { args },
+        { also: { tool: "jira_issue_get", argKeys: ["issueKey"], args } },
+      ] as const) {
+        const gated: PlannedAction[] = [];
+        const runner = createBeforeStateRunner({ rows: [guarded(() => true, over)] });
+        expect(await runner.read(TRANSITION, opsByTool(READS_OK, gated))).toEqual(REFUSED);
+        expect(gated).toEqual([]);
+      }
+    }
+  });
+
+  test("applicable: select failing after the guard allowed refuses (no half-shown before)", async () => {
+    const runner = createBeforeStateRunner({
+      rows: [guarded(() => true, { select: throwing("select boom") })],
+    });
+    expect(await runner.read(TRANSITION, opsByTool(READS_OK))).toEqual(REFUSED);
+  });
+
+  test("a non-object write input refuses when the reader has a guard (nothing to decide from)", async () => {
+    const runner = createBeforeStateRunner({ rows: [guarded(() => true)] });
+    const odd: PlannedAction = {
+      ...TRANSITION,
+      payload: { mcpToolId: "jira_jira_issue_transition", input: "nope" },
+    };
+    expect(await runner.read(odd, opsByTool(READS_OK))).toEqual(REFUSED);
+  });
+
+  test("appliesTo throwing, or returning anything but false, applies (fail closed)", async () => {
+    for (const appliesTo of [
+      throwing("applies boom"),
+      () => undefined as unknown as boolean,
+      () => 0 as unknown as boolean,
+    ]) {
+      const runner = createBeforeStateRunner({
+        rows: [guarded(() => false, {}, appliesTo)],
+      });
+      expect(await runner.read(withoutTransition, opsByTool(READS_OK))).toEqual(REFUSED);
+    }
+  });
+
+  test("a one-read reader with a guard refuses the same way", async () => {
+    const reader: BeforeStateReader = {
+      ...READER,
+      guard: { reason: GUARD_REASON, appliesTo: () => true, allows: () => false },
+    };
+    const runner = createBeforeStateRunner({ rows: [rowWith(reader)] });
+    expect(await runner.read(WRITE, opsReturning({ summary: "old" }))).toEqual(REFUSED);
   });
 });

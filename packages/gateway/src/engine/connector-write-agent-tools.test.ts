@@ -16,6 +16,7 @@ import {
   CONNECTOR_WRITE_TOOL_NAME_MAX,
   type ConnectorWriteToolSource,
   connectorWriteModelToolName,
+  DECLINED_RESULT_TEXT,
   DESTINATION_REFUSAL,
   templateKeysInSchema,
 } from "./connector-write-agent-tools.ts";
@@ -717,5 +718,110 @@ describe("a row's before reader at offer time", () => {
     const src = fakeSource([withReader(4)], { argocd: argocdListing({ [READ_KEY]: "nope" }) });
     const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
     expect(keys(tools)).toEqual([]);
+  });
+});
+
+// ---------- B2a: a second read at offer time, and a guard's refusal ----------
+
+describe("a two-read reader at offer time, and a guard refusal at call time (B2a)", () => {
+  const READ_KEY = "argocd_argocd_app_get";
+  const ALSO_KEY = "argocd_argocd_app_history_list";
+  const GUARD_REASON = "the model cannot sync this app; ask the owner";
+  const twoReads = {
+    tool: "argocd_app_get",
+    argKeys: ["name"],
+    args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    also: {
+      tool: "argocd_app_history_list",
+      argKeys: ["name"],
+      args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    },
+    guard: { reason: GUARD_REASON, appliesTo: () => true, allows: () => true },
+    select: () => [],
+  };
+  const twoReadRow = (wave: 2 | 3 | 4): ConnectorWriteRow =>
+    withBefore(
+      withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
+      twoReads,
+    );
+  type OptsExecutor = FakeExecutor & { opts: unknown[] };
+  function optsExecutor(result: ActionResult = { status: "ok", result: "done" }): OptsExecutor {
+    const ex: OptsExecutor = {
+      actions: [],
+      opts: [],
+      execute: async (action: PlannedAction, ...rest: unknown[]) => {
+        ex.actions.push(action);
+        ex.opts.push(rest);
+        return result;
+      },
+    };
+    return ex;
+  }
+
+  test("both read tools listed: offered, and execute gets no option", async () => {
+    const src = fakeSource([twoReadRow(4)], {
+      argocd: argocdListing({ [READ_KEY]: entry("Get"), [ALSO_KEY]: entry("History") }),
+    });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[]]);
+  });
+
+  test("also.tool missing from the listing at wave 2: offered with beforeReaderUnlisted", async () => {
+    const src = fakeSource([twoReadRow(2)], {
+      argocd: argocdListing({ [READ_KEY]: entry("Get") }),
+    });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[{ beforeReaderUnlisted: true }]]);
+  });
+
+  test("also.tool missing (or not a plain object) at wave 4: not offered", async () => {
+    for (const also of [{}, { [ALSO_KEY]: "nope" }]) {
+      const src = fakeSource([twoReadRow(4)], {
+        argocd: argocdListing({ [READ_KEY]: entry("Get"), ...also }),
+      });
+      const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+      expect(keys(tools)).toEqual([]);
+    }
+  });
+
+  test("a rejection carrying the row's guard reason is { refused: reason }; any other is declined", async () => {
+    const listing = argocdListing({ [READ_KEY]: entry("Get"), [ALSO_KEY]: entry("History") });
+    const guarded = optsExecutor({ status: "rejected", reason: GUARD_REASON });
+    let tools = await buildConnectorWriteAgentTools(
+      fakeSource([twoReadRow(2)], { argocd: listing }),
+      () => guarded,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({ refused: GUARD_REASON });
+    const declined = optsExecutor({ status: "rejected", reason: "User declined consent gate." });
+    tools = await buildConnectorWriteAgentTools(
+      fakeSource([twoReadRow(2)], { argocd: listing }),
+      () => declined,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      declined: DECLINED_RESULT_TEXT,
+    });
+  });
+
+  test("a row WITHOUT a guard never passes a rejection reason back, even one equal to another row's guard", async () => {
+    const ex = optsExecutor({ status: "rejected", reason: GUARD_REASON });
+    const tools = await buildConnectorWriteAgentTools(
+      fakeSource([SYNC], { argocd: argocdListing() }),
+      () => ex,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      declined: DECLINED_RESULT_TEXT,
+    });
   });
 });
