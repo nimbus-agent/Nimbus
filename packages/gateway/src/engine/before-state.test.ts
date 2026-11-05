@@ -1827,10 +1827,63 @@ describe("the KB-child guard on the real page rows (OR-B3-3)", () => {
         }
       });
 
-      test("in the KB space with other ancestors, or in another space: the before fields", async () => {
-        const others = confluencePage({ key: "KB" }, [{ id: "1" }, "junk", null, { id: "2" }]);
-        expect((await read(others))?.status).toBe("ok");
+      test("in the KB space with 0.5.0's ancestors not under the KB parent, or in another space: the before fields", async () => {
+        for (const ancestors of [
+          [
+            { id: "1", title: "Home" },
+            { id: "77", title: "Runbooks" },
+          ],
+          [{ id: "42420", title: null }],
+          [],
+        ]) {
+          expect(
+            (await read(confluencePage({ key: "KB" }, ancestors)))?.status,
+            JSON.stringify(ancestors),
+          ).toBe("ok");
+        }
         expect((await read(confluencePage({ key: "ENG" })))?.status).toBe("ok");
+        // Another space proves the page outside the KB whatever its ancestors look like.
+        expect((await read(confluencePage({ key: "ENG" }, [{ id: null }, "junk"])))?.status).toBe(
+          "ok",
+        );
+      });
+
+      test("in the KB space with a null-id, malformed or non-canonical ancestor: refused", async () => {
+        for (const ancestors of [
+          [{ id: "1" }, { id: null, title: "Hidden" }],
+          [{ id: "1" }, "junk", null, { id: "2" }],
+          [{ title: "no id" }],
+          [[{ id: "1" }]],
+          [{ id: "" }],
+          [{ id: "0" }],
+          [{ id: "12a" }],
+          [{ id: 9 }],
+        ]) {
+          expect(
+            await read(confluencePage({ key: "KB" }, ancestors)),
+            JSON.stringify(ancestors),
+          ).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("the KB parent as an ancestor or as the page itself refuses in ANY space, beside junk too", async () => {
+        for (const reply of [
+          confluencePage({ key: "ENG" }, [{ id: "1" }, { id: "4242", title: "KB" }]),
+          confluencePage({ key: "ENG" }, [{ id: null }, { id: "04242" }]),
+          confluencePage({ key: "KB" }, ["junk", { id: 4242 }]),
+          mcpReply({ id: "4242", title: "KB", space: { key: "ENG" }, ancestors: [] }),
+          mcpReply({ id: " 4242 ", title: "KB", space: { key: "KB" }, ancestors: [] }),
+        ]) {
+          expect(await read(reply)).toEqual(KB_CHILD_REFUSED);
+        }
+      });
+
+      test("a KB parent id that is not canonical cannot be compared: refused in the KB space only", async () => {
+        const odd = () => ({ kb: { confluence: { spaceKey: "KB", parentPageId: "kb-root" } } });
+        expect(await read(confluencePage({ key: "KB" }, [{ id: "1" }]), odd)).toEqual(
+          KB_CHILD_REFUSED,
+        );
+        expect((await read(confluencePage({ key: "ENG" }, [{ id: "1" }]), odd))?.status).toBe("ok");
       });
 
       test("space missing or not a string, ancestors not an array, a failed read: refused", async () => {

@@ -331,36 +331,93 @@ export function notionKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefi
   }
 }
 
+/** A Confluence content id (decimal digits, trimmed) without leading zeros; else `undefined`. */
+function canonicalConfluenceId(v: unknown): string | undefined {
+  if (typeof v !== "string") return undefined;
+  const t = v.trim();
+  if (!/^[0-9]+$/.test(t)) return undefined;
+  const c = t.replace(/^0+/, "");
+  return c === "" ? undefined : c;
+}
+
+/** An own `id` of `v`, read as evidence: a canonical string id, or a safe integer as its digits. */
+function confluenceEvidenceId(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null || Array.isArray(v) || !Object.hasOwn(v, "id")) {
+    return undefined;
+  }
+  const id: unknown = (v as Record<string, unknown>)["id"];
+  return canonicalConfluenceId(
+    typeof id === "number" && Number.isSafeInteger(id) ? String(id) : id,
+  );
+}
+
+interface ConfluenceAncestors {
+  /** The evidence id of every entry that has one (a match among them refuses). */
+  readonly ids: readonly string[];
+  /**
+   * Whether EVERY entry is a plain object with a canonical STRING `id`. False when any entry is
+   * a non-object, has no `id`, a `null` id (0.5.0's form for an id Confluence did not send as a
+   * string), a number or a non-canonical string: one unknown ancestor could be the KB parent.
+   */
+  readonly complete: boolean;
+}
+
+/** The reply's `ancestors`; `undefined` when it is absent (0.4.0) or not an array. */
+function confluenceAncestors(j: unknown): ConfluenceAncestors | undefined {
+  if (typeof j !== "object" || j === null || !Object.hasOwn(j, "ancestors")) return undefined;
+  const ancestors: unknown = (j as Record<string, unknown>)["ancestors"];
+  if (!Array.isArray(ancestors)) return undefined;
+  const ids: string[] = [];
+  let complete = true;
+  for (const a of ancestors as unknown[]) {
+    const id = confluenceEvidenceId(a);
+    if (id === undefined) {
+      complete = false;
+      continue;
+    }
+    ids.push(id);
+    // A safe-integer id is evidence (above) but not the string form 0.5.0 sends: incomplete.
+    if (typeof (a as Record<string, unknown>)["id"] !== "string") complete = false;
+  }
+  return { ids, complete };
+}
+
 /**
- * The Confluence guard's `allows`: true only when the reply's own `space.key` is a string naming
- * another space than the KB's (trimmed, case-insensitive), or, in the KB space, when the reply's
- * own `ancestors` array has no entry whose `String(id).trim()` is the KB parent page (any depth,
- * any order: stricter than a direct parent). No Confluence KB in `kb`, no space key, `ancestors`
- * absent or not an array, an unparseable or error reply: false. Bound: 0.4.0's
- * `confluence_page_get` does not expand `ancestors`, so every update or append of a page IN the KB
- * space is refused until nimbus-mcp-servers adds it (then this narrows with no gateway change).
+ * The Confluence guard's `allows`. 0.5.0's `confluence_page_get` expands `ancestors` as
+ * `Array<{ id: string | null; title: string | null }>`, top-level page first, direct parent last.
+ * In order:
+ *  1. Evidence of the KB parent refuses in EVERY space: the reply's own `id`, or any ancestor's
+ *     id (a string, or a safe integer, even beside malformed entries), canonically equal to the
+ *     KB parent page (decimal, trimmed, leading zeros dropped). Any depth, any order: stricter
+ *     than a direct parent. A space key that names another space does not outweigh it (a KB
+ *     parent configured with the wrong `spaceKey`).
+ *  2. A string `space.key` naming another space than the KB's (trimmed, case-insensitive) allows:
+ *     Confluence ancestors never cross spaces, so the space alone proves the page outside the KB,
+ *     whatever its `ancestors` look like (the space check still applies).
+ *  3. In the KB space it allows only when `ancestors` proves the page is not under the KB parent:
+ *     an array whose every entry is an object with a canonical string `id`, none of them the
+ *     parent. `ancestors` absent (0.4.0, or a server that ignored the expand), not an array, or
+ *     with any malformed or `null`-id entry: refused (fail closed). A KB parent id that is not
+ *     canonical cannot be compared: refused in the KB space.
+ * No Confluence KB in `kb`, no space key, an unparseable or error reply: false. The KB page itself
+ * is caught earlier by the exact-id rule on the input (`modelWriteRefusal`); step 1 repeats it on
+ * the reply.
  */
 export function confluenceKbChildAllowed(reply: unknown, kb: TribalKbConfig | undefined): boolean {
   const c = kb?.confluence;
   if (c === undefined) return false;
   try {
     const j = beforeReplyJson(reply);
+    const parent = canonicalConfluenceId(c.parentPageId);
+    const ancestors = confluenceAncestors(j);
+    if (parent !== undefined) {
+      if (confluenceEvidenceId(j) === parent) return false;
+      if (ancestors?.ids.includes(parent) === true) return false;
+    }
     const space = ownRecord(j, "space")?.["key"];
     if (typeof space !== "string") return false;
     if (space.trim().toLowerCase() !== c.spaceKey.trim().toLowerCase()) return true;
-    const ancestors =
-      typeof j === "object" && j !== null && Object.hasOwn(j, "ancestors")
-        ? (j as Record<string, unknown>)["ancestors"]
-        : undefined;
-    if (!Array.isArray(ancestors)) return false;
-    const parent = c.parentPageId.trim();
-    return !(ancestors as unknown[]).some(
-      (a) =>
-        typeof a === "object" &&
-        a !== null &&
-        Object.hasOwn(a, "id") &&
-        String((a as Record<string, unknown>)["id"]).trim() === parent,
-    );
+    return parent !== undefined && ancestors?.complete === true;
   } catch {
     return false;
   }

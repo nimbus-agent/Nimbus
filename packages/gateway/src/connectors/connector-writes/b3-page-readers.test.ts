@@ -571,17 +571,44 @@ describe("the KB-child allows functions over the MCP reply shape (OR-B3-3, R11)"
     expect(notionKbChildAllowed(ok, { confluence: KB.confluence })).toBe(false);
   });
 
-  test("Confluence: both reply shapes (0.4.0 without ancestors, and with them)", () => {
+  test("Confluence: both reply shapes (0.4.0 without ancestors, and 0.5.0's with them)", () => {
+    // 0.5.0: `ancestors: Array<{ id: string | null; title: string | null }>`, top level first.
+    const a = (...ids: Array<string | null>) => ids.map((id) => ({ id, title: null }));
     const cases: ReadonlyArray<readonly [unknown, boolean]> = [
       [conf({ space: { key: "ENG" } }), true],
+      // 0.4.0 (no `ancestors` key): unknown, refused in the KB space.
       [conf({ space: { key: "KB" } }), false],
       [conf({ space: { key: "kb" } }), false],
-      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, { id: "2" }] }), true],
+      [conf({ space: { key: "KB" }, ancestors: a("1", "2") }), true],
       [conf({ space: { key: "KB" }, ancestors: [] }), true],
-      [conf({ space: { key: "KB" }, ancestors: [{ id: "4242" }] }), false],
-      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, { id: "4242" }] }), false],
+      [conf({ space: { key: " kb " }, ancestors: a("1", "42420", "424") }), true],
+      [conf({ id: "77", space: { key: "KB" }, ancestors: a("1") }), true],
+      // The KB parent at any depth: refused.
+      [conf({ space: { key: "KB" }, ancestors: a("4242") }), false],
+      [conf({ space: { key: "KB" }, ancestors: a("4242", "1") }), false],
+      [conf({ space: { key: "KB" }, ancestors: a("1", "4242") }), false],
+      [conf({ space: { key: "KB" }, ancestors: a("1", " 4242 ", "2") }), false],
+      [conf({ space: { key: "KB" }, ancestors: a("1", "004242") }), false],
       [conf({ space: { key: "KB" }, ancestors: [{ id: 4242 }, { id: "9" }] }), false],
+      // A null, missing or malformed entry in the KB space: unknown, refused.
+      [conf({ space: { key: "KB" }, ancestors: a("1", null) }), false],
+      [conf({ space: { key: "KB" }, ancestors: a(null) }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ title: "x" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, null] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "1" }, "2"] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "x1" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: "000" }] }), false],
+      [conf({ space: { key: "KB" }, ancestors: [{ id: 9 }] }), false],
       [conf({ space: { key: "KB" }, ancestors: "4242" }), false],
+      [conf({ space: { key: "KB" }, ancestors: null }), false],
+      [conf({ space: { key: "KB" }, ancestors: { 0: { id: "1" } } }), false],
+      // Another space: allowed whatever `ancestors` holds, unless it names the KB parent.
+      [conf({ space: { key: "ENG" }, ancestors: a(null) }), true],
+      [conf({ space: { key: "ENG" }, ancestors: a("1", "4242") }), false],
+      [conf({ space: { key: "ENG" }, ancestors: [null, { id: "4242" }] }), false],
+      // The page itself is the KB parent: refused in any space.
+      [conf({ id: "4242", space: { key: "ENG" } }), false],
+      [conf({ id: 4242, space: { key: "KB" }, ancestors: [] }), false],
       [conf({ space: { key: 1 } }), false],
       [conf({}), false],
       [{ ...conf({ space: { key: "ENG" } }), isError: true }, false],
@@ -595,5 +622,36 @@ describe("the KB-child allows functions over the MCP reply shape (OR-B3-3, R11)"
     const ok = conf({ space: { key: "ENG" } });
     expect(confluenceKbChildAllowed(ok, undefined)).toBe(false);
     expect(confluenceKbChildAllowed(ok, { notion: KB.notion })).toBe(false);
+  });
+
+  test("Confluence: a KB parent id that cannot be compared refuses in the KB space only", () => {
+    const inKb = conf({ space: { key: "KB" }, ancestors: [{ id: "1", title: null }] });
+    const inEng = conf({ space: { key: "ENG" }, ancestors: [{ id: "1", title: null }] });
+    for (const parentPageId of ["", "  ", "kb-root", "0", "12.5"]) {
+      const kb = { confluence: { spaceKey: "KB", parentPageId } };
+      expect(confluenceKbChildAllowed(inKb, kb), parentPageId).toBe(false);
+      expect(confluenceKbChildAllowed(inEng, kb), parentPageId).toBe(true);
+    }
+    // A padded or zero-led configured parent still matches its canonical ancestor.
+    for (const parentPageId of [" 4242 ", "04242"]) {
+      const kb = { confluence: { spaceKey: "KB", parentPageId } };
+      const under = conf({ space: { key: "KB" }, ancestors: [{ id: "4242", title: null }] });
+      expect(confluenceKbChildAllowed(under, kb), parentPageId).toBe(false);
+      expect(confluenceKbChildAllowed(inKb, kb), parentPageId).toBe(true);
+    }
+  });
+
+  test("Confluence: a malformed kb entry or a throwing reply getter refuses (fail closed)", () => {
+    const ok = conf({ space: { key: "ENG" }, ancestors: [] });
+    const bad = { confluence: { spaceKey: 7, parentPageId: "4242" } } as unknown as Parameters<
+      typeof confluenceKbChildAllowed
+    >[1];
+    expect(confluenceKbChildAllowed(ok, bad)).toBe(false);
+    const hostile = {
+      get content(): never {
+        throw new Error("boom");
+      },
+    };
+    expect(confluenceKbChildAllowed(hostile, KB)).toBe(false);
   });
 });
