@@ -73,11 +73,6 @@ function schemaConstBase(statement: string): { readonly base?: string } | undefi
   return m?.[1] === undefined ? undefined : { base: m[1] };
 }
 
-/**
- * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
- * `schema.extend({...})`) and that const's `.extend(` base chain. Nothing else the call names is
- * followed: a key that appears only in some other local const is not the tool's input.
- */
 /** The shared mail kit, whose `emailToolSchemas` the draft and send tools pass by member (B3). */
 const SHARED_EMAIL_KIT = "shared/imap-tool-kit.ts";
 
@@ -98,6 +93,14 @@ function sharedEmailSchemaDeclaration(arg: string): string | undefined {
     : undefined;
 }
 
+/**
+ * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
+ * `schema.extend({...})`) and that const's `.extend(` base chain, plus one shared-kit exception:
+ * an argument `emailToolSchemas.<member>` is followed into `shared/imap-tool-kit.ts`
+ * ({@link sharedEmailSchemaDeclaration}), where the mail draft and send tools declare their input.
+ * Nothing else the call names is followed: a key that appears only in some other local const is
+ * not the tool's input.
+ */
 function withSchemaArgumentDeclarations(code: string, call: string): string {
   const parts = [call];
   const seen = new Set<string>();
