@@ -78,8 +78,9 @@ describe("buildHelperArgv: a declared file is --grant-write-file (re-review find
       { cwd: "C:\\cwd" },
     );
     expect(argv).toContain("--grant-write-file");
-    expect(argv[argv.indexOf("--grant-write-file") + 1]).toBe("C:\\n\\v\\2026-11-05.md");
-    expect(argv[argv.indexOf("--grant-write") + 1]).toBe("C:\\data");
+    // Pure argv derivation over literal Windows paths (no filesystem): the helper's own spelling.
+    expect(argv[argv.indexOf("--grant-write-file") + 1]).toBe("C:\\n\\v\\2026-11-05.md"); // cross-platform-ok
+    expect(argv[argv.indexOf("--grant-write") + 1]).toBe("C:\\data"); // cross-platform-ok
     expect(argv.filter((a) => a === "--grant-write")).toHaveLength(1);
   });
 });
