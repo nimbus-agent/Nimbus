@@ -1123,3 +1123,46 @@ describe("Drive SVG and XHTML (plan R12)", () => {
     expectRefused("drive-markup", "<svg", true);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// Linear time (adversarial review). Bounds are generous: CI runners are slow. Each input is run
+// at N and 2N; the best of three runs at 2N must stay under 4x the best at N (with a 10 ms floor,
+// so timer noise on a fast machine cannot fail it). A quadratic scan doubles to ~4x and a
+// catastrophic regex does not finish at all.
+// ---------------------------------------------------------------------------------------------
+
+function bestMs(run: () => void): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < 3; i++) {
+    const t0 = performance.now();
+    run();
+    best = Math.min(best, performance.now() - t0);
+  }
+  return best;
+}
+
+function expectLinear(format: RemoteContentFormat, build: (n: number) => string, n: number): void {
+  const small = build(n);
+  const large = build(2 * n);
+  const tSmall = bestMs(() => remoteContentIn(format, small));
+  const tLarge = bestMs(() => remoteContentIn(format, large));
+  expect(tLarge).toBeLessThan(1000);
+  expect(tLarge).toBeLessThan(4 * Math.max(tSmall, 10));
+}
+
+describe("linear time on adversarial input", () => {
+  test("`src=` + a million spaces (the URL-assignment tripwire)", () => {
+    const text = `src=${" ".repeat(1_000_000)}x`;
+    const t = bestMs(() => remoteContentIn("outlook-html", text));
+    expect(t).toBeLessThan(1000);
+    expectLinear("outlook-html", (n) => `src=${" ".repeat(n)}x`, 500_000);
+    expectLinear("confluence-storage", (n) => `src=${" ".repeat(n)}x`, 500_000);
+  });
+
+  test("`url(` + a million spaces (the Drive CSS tripwire)", () => {
+    const text = `url(${" ".repeat(1_000_000)}x`;
+    const t = bestMs(() => remoteContentIn("drive-markup", text));
+    expect(t).toBeLessThan(1000);
+    expectLinear("drive-markup", (n) => `url(${" ".repeat(n)}x`, 500_000);
+  });
+});

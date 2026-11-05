@@ -486,14 +486,17 @@ function hasCdata(tokens: readonly MarkupToken[]): boolean {
 // prose such as "the image (left)" is not refused by the tripwire.
 // ---------------------------------------------------------------------------------------------
 
+// No two unbounded quantifiers are adjacent over the same characters (adversarial review): the
+// optional quote and the whitespace after it are ONE optional group, so `src=` followed by a
+// million spaces is read in linear time. Pinned by the timing tests.
 const URL_ASSIGNMENT_TRIPWIRE_CID =
-  /\b(?:src|srcset|lowsrc|dynsrc|poster|background)\s*=\s*["'\x60]?\s*(?:[\\/][\\/]|(?!cid:)[a-z][a-z0-9+.-]*:)/;
+  /\b(?:src|srcset|lowsrc|dynsrc|poster|background)\s*=\s*(?:["'\x60]\s*)?(?:[\\/][\\/]|(?!cid:)[a-z][a-z0-9+.-]*:)/;
 const URL_ASSIGNMENT_TRIPWIRE =
-  /\b(?:src|srcset|lowsrc|dynsrc|poster|background)\s*=\s*["'\x60]?\s*(?:[\\/][\\/]|[a-z][a-z0-9+.-]*:)/;
+  /\b(?:src|srcset|lowsrc|dynsrc|poster|background)\s*=\s*(?:["'\x60]\s*)?(?:[\\/][\\/]|[a-z][a-z0-9+.-]*:)/;
 const CSS_TRIPWIRE = /url\s*\(|@import|(?:image|image-set|cross-fade|element|src)\(/;
 /** Drive markup: a `url(` whose argument starts with `#` (an SVG fragment) is not tripped. */
 const CSS_TRIPWIRE_DRIVE =
-  /url\s*\((?!\s*["']?\s*#)|@import|(?:image|image-set|cross-fade|element|src)\(/;
+  /url\s*\((?!\s*(?:["']\s*)?#)|@import|(?:image|image-set|cross-fade|element|src)\(/;
 
 type TripwireKind = "outlook" | "default" | "drive";
 
