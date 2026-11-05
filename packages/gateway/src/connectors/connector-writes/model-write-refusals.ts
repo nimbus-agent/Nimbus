@@ -667,8 +667,28 @@ export const CALENDAR_TEXT_REFUSAL =
 const OUTLOOK_CALENDAR_ROW = "outlook_calendar_create";
 const APPLE_CALENDAR_ROW = "apple_calendar_event_create";
 
-const OUTLOOK_EVENT_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,7})?)?$/;
-const APPLE_EVENT_TIME = /^\d{8}T\d{6}Z$/;
+// The shapes capture year, month, day, hour, minute and (optional for Outlook) second, so the
+// value is also checked to be a real calendar date and clock time (`isRealDateTime`).
+const OUTLOOK_EVENT_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,7})?)?$/;
+const APPLE_EVENT_TIME = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/;
+
+/**
+ * Whether the captured parts name a real date and time: month 1-12, a day that exists in that
+ * month and year (leap years included), hour 0-23, minute and second 0-59. The date is built with
+ * `setUTCFullYear`, never `Date.UTC`, which maps years 0-99 to 1900-1999.
+ */
+function isRealDateTime(m: RegExpExecArray): boolean {
+  // An absent group (Outlook's optional seconds) reads as 0.
+  const part = (i: number): number => Number(m[i] ?? "0");
+  if (part(4) > 23 || part(5) > 59 || part(6) > 59) return false;
+  const [y, mo, d] = [part(1), part(2), part(3)];
+  // A month outside 1-12 or a day the month does not have rolls over to another date, so the
+  // round trip below refuses it.
+  const date = new Date(0);
+  date.setUTCFullYear(y, mo - 1, d);
+  return date.getUTCFullYear() === y && date.getUTCMonth() === mo - 1 && date.getUTCDate() === d;
+}
+
 const APPLE_UID = /^[A-Za-z0-9._@-]{1,200}$/;
 
 /** The time keys of each calendar row and the one form each must take. */
@@ -688,13 +708,16 @@ const APPLE_CALENDAR_TEXT_KEYS: readonly string[] = [
 
 /**
  * Whether `value`, as the calendar row `toolId`'s time key `key`, is in the one form that shows
- * its zone (a string matching that row's pattern). `false` for a key that is not a time key of a
- * calendar row, so a caller can never read "explicit" for an unknown input.
+ * its zone (a string matching that row's pattern) and names a real date and time. `false` for a
+ * key that is not a time key of a calendar row, so a caller can never read "explicit" for an
+ * unknown input.
  */
 export function calendarTimeIsExplicit(toolId: string, key: string, value: unknown): boolean {
   const spec = ownLookup(CALENDAR_TIME_KEYS, toolId);
   if (spec === undefined || !spec.keys.includes(key)) return false;
-  return typeof value === "string" && spec.form.test(value);
+  if (typeof value !== "string") return false;
+  const m = spec.form.exec(value);
+  return m !== null && isRealDateTime(m);
 }
 
 /** A C0 control (U+0000-U+001F, so CR, LF and TAB too), DEL or a C1 control (U+0080-U+009F). */

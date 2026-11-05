@@ -931,6 +931,57 @@ describe("R6: calendar event times and iCloud event text (both doors)", () => {
     }
   });
 
+  test("a well-shaped but impossible date or clock time is refused (CodeRabbit on #1906)", () => {
+    const outlookBad = [
+      "2026-02-30T10:00", // Feb 30
+      "2026-02-29T10:00", // Feb 29 in a non-leap year
+      "2100-02-29T10:00", // a century year that is not a leap year
+      "2026-13-01T10:00", // month 13
+      "2026-00-10T10:00", // month 0
+      "2026-04-31T10:00", // April has 30 days
+      "2026-11-00T10:00", // day 0
+      "2026-11-05T24:00", // hour 24
+      "2026-11-05T10:60", // minute 60
+      "2026-11-05T10:00:60", // second 60
+      "0050-02-29T10:00", // year 50 is not a leap year
+    ];
+    for (const t of outlookBad) {
+      expect(onAllDoors(OUTLOOK, outlookInput({ startDateTime: t })), t).toBe(
+        CALENDAR_TIME_REFUSAL,
+      );
+    }
+    const appleBad = [
+      "20260230T100000Z",
+      "20260229T100000Z",
+      "20261301T100000Z",
+      "20261105T240000Z",
+      "20261105T106000Z",
+      "20261105T100060Z",
+      "00500229T100000Z",
+    ];
+    for (const t of appleBad) {
+      expect(onAllDoors(APPLE, appleInput({ start: t })), t).toBe(CALENDAR_TIME_REFUSAL);
+    }
+  });
+
+  test("real dates are allowed, leap days and years 0000-0099 included (no Date.UTC 19xx mapping)", () => {
+    const outlookOk = [
+      "2028-02-29T10:00", // leap year
+      "2000-02-29T23:59:59", // a century leap year
+      "0000-02-29T00:00", // year 0 is a leap year (1900 is not)
+      "0050-06-15T10:00", // year 50, not 1950
+      "2026-12-31T23:59:59.9999999",
+    ];
+    for (const t of outlookOk) {
+      expect(onAllDoors(OUTLOOK, outlookInput({ startDateTime: t, endDateTime: t })), t).toBe(
+        undefined,
+      );
+    }
+    for (const t of ["20280229T235959Z", "00000229T000000Z", "00500615T100000Z"]) {
+      expect(onAllDoors(APPLE, appleInput({ start: t, end: t })), t).toBeUndefined();
+    }
+  });
+
   test("calendarTimeIsExplicit answers only for a calendar row's own time keys", () => {
     expect(calendarTimeIsExplicit(OUTLOOK, "startDateTime", "2026-11-05T10:00")).toBe(true);
     expect(calendarTimeIsExplicit(OUTLOOK, "start", "2026-11-05T10:00")).toBe(false);
