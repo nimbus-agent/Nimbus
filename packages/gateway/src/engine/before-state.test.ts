@@ -1331,3 +1331,77 @@ describe("the real jira_issue_transition reader (OR-B2-1)", () => {
     });
   });
 });
+
+// ---- B3: the real confluence_page_append reader (plan R3, Task 2) -------------------------------
+
+function confluenceAppend(): PlannedAction {
+  return {
+    type: "confluence.page.append",
+    origin: "model",
+    payload: {
+      mcpToolId: "confluence_confluence_page_append",
+      input: { pageId: "123", storageHtml: "<p>new</p>" },
+    },
+  };
+}
+
+const CONFLUENCE_PAGE = {
+  title: "Runbook",
+  space: { key: "ENG" },
+  version: { number: 7 },
+  body: { storage: { value: "<p>old</p>" } },
+};
+
+describe("the real confluence_page_append reader (B3)", () => {
+  const runner = () => createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS });
+
+  test("one confluence.before.read gated, keyed confluence_confluence_page_get, with the page id only", async () => {
+    const gated: PlannedAction[] = [];
+    const out = await runner().read(
+      confluenceAppend(),
+      opsByTool({ confluence_confluence_page_get: mcpReply(CONFLUENCE_PAGE) }, gated),
+    );
+    expect(gated).toEqual([
+      {
+        type: "confluence.before.read",
+        payload: { mcpToolId: "confluence_confluence_page_get", input: { pageId: "123" } },
+      },
+    ]);
+    expect(out).toEqual({
+      status: "ok",
+      fields: [
+        { label: "Title", value: "Runbook" },
+        { label: "Space", value: "ENG" },
+        { label: "Version", value: "7" },
+        { label: "Current length", value: "10 characters (kept)" },
+        { label: "Current body (end)", value: "<p>old</p>" },
+      ],
+    });
+  });
+
+  test("a read slower than the budget is unavailable (timeout)", async () => {
+    const clock = fakeClock();
+    const slow = deferred<unknown>();
+    const timed = createBeforeStateRunner({ rows: CONNECTOR_WRITE_ROWS, timers: clock.timers });
+    const pending = timed.read(confluenceAppend(), {
+      gate: async () => "proceed",
+      dispatch: () => slow.promise,
+    });
+    await Bun.sleep(0);
+    clock.advance(6000);
+    expect(await pending).toEqual({ status: "unavailable", reason: "timeout" });
+    slow.resolve(mcpReply(CONFLUENCE_PAGE));
+  });
+
+  test("a 5 MB reply (over the 4 MiB cap) is unavailable (failed)", async () => {
+    const huge = mcpReply({
+      ...CONFLUENCE_PAGE,
+      body: { storage: { value: "a".repeat(5 * 1024 * 1024) } },
+    });
+    const out = await runner().read(
+      confluenceAppend(),
+      opsByTool({ confluence_confluence_page_get: huge }),
+    );
+    expect(out).toEqual({ status: "unavailable", reason: "failed" });
+  });
+});

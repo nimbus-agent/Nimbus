@@ -97,3 +97,37 @@ export function listAt(v: unknown, path: readonly string[], item?: string): stri
   else suffix = `+${String(hidden)} more, ${String(unreadable)} of them unreadable`;
   return `${shown.join(", ")} (${suffix})`;
 }
+
+/** A before-state excerpt of page content shows at most this many characters (code points). */
+export const BEFORE_EXCERPT_MAX_CHARS = 1000;
+
+/**
+ * The first `max` code points of `s` (a surrogate pair is never split), followed by
+ * ` (<k> more characters not shown)` when `k` code points were cut; `s` as is within the cap.
+ * Every B3 page selector routes every value through this (or {@link excerptTail}), so no page
+ * content reaches the prompt uncapped.
+ */
+export function excerptHead(s: string, max: number = BEFORE_EXCERPT_MAX_CHARS): string {
+  const cps = [...s];
+  if (cps.length <= max) return s;
+  const cut = cps.length - max;
+  return `${cps.slice(0, max).join("")} (${String(cut)} more characters not shown)`;
+}
+
+/**
+ * The last `max` code points of `s`, preceded by `(<k> earlier characters not shown) ` when `k`
+ * code points were cut; `s` as is within the cap.
+ */
+export function excerptTail(s: string, max: number = BEFORE_EXCERPT_MAX_CHARS): string {
+  const cps = [...s];
+  if (cps.length <= max) return s;
+  const cut = cps.length - max;
+  return `(${String(cut)} earlier characters not shown) ${cps.slice(cut).join("")}`;
+}
+
+/** The number of code points in `s` (what the page selectors call characters). */
+export function codePointLength(s: string): number {
+  let n = 0;
+  for (const _ of s) n++;
+  return n;
+}

@@ -2,8 +2,12 @@ import { describe, expect, test } from "bun:test";
 
 import { MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
 import {
+  BEFORE_EXCERPT_MAX_CHARS,
   BEFORE_LIST_MAX_ENTRIES,
   beforeReplyJson,
+  codePointLength,
+  excerptHead,
+  excerptTail,
   listAt,
   presentFields,
   requiredStringAt,
@@ -133,5 +137,58 @@ describe("listAt (B2: labels and assignees)", () => {
     const fifty = Array.from({ length: 50 }, (_, i) => `n${String(i)}`);
     expect(listAt({ l: fifty }, ["l"])).toBe(fifty.join(", "));
     expect(listAt({ l: [...fifty, "x", "y"] }, ["l"])).toBe(`${fifty.join(", ")} (+2 more)`);
+  });
+});
+
+describe("the excerpt cap (B3, plan R4)", () => {
+  const ASTRAL = String.fromCodePoint(0x1f600);
+
+  /** Whether `s` has an unpaired surrogate code unit. */
+  function hasLoneSurrogate(s: string): boolean {
+    for (const ch of s) {
+      const cp = ch.codePointAt(0) ?? 0;
+      if (cp >= 0xd800 && cp <= 0xdfff) return true;
+    }
+    return false;
+  }
+
+  test("the cap is 1,000 code points", () => {
+    expect(BEFORE_EXCERPT_MAX_CHARS).toBe(1000);
+  });
+
+  test("a string within the cap is returned as is", () => {
+    const s = "a".repeat(1000);
+    expect(excerptHead(s)).toBe(s);
+    expect(excerptTail(s)).toBe(s);
+    expect(excerptHead("")).toBe("");
+  });
+
+  test("one over: 1,000 kept and the count marked", () => {
+    const s = `${"a".repeat(1000)}b`;
+    expect(excerptHead(s)).toBe(`${"a".repeat(1000)} (1 more characters not shown)`);
+    expect(excerptTail(`b${"a".repeat(1000)}`)).toBe(
+      `(1 earlier characters not shown) ${"a".repeat(1000)}`,
+    );
+  });
+
+  test("astral characters are cut on a code-point boundary and counted as one each", () => {
+    const s = ASTRAL.repeat(1001);
+    const head = excerptHead(s);
+    const tail = excerptTail(s);
+    expect(head).toBe(`${ASTRAL.repeat(1000)} (1 more characters not shown)`);
+    expect(tail).toBe(`(1 earlier characters not shown) ${ASTRAL.repeat(1000)}`);
+    expect(hasLoneSurrogate(head)).toBe(false);
+    expect(hasLoneSurrogate(tail)).toBe(false);
+    expect(codePointLength(s)).toBe(1001);
+  });
+
+  test("a max of 0 gives only the marker", () => {
+    expect(excerptHead("abc", 0)).toBe(" (3 more characters not shown)");
+    expect(excerptTail("abc", 0)).toBe("(3 earlier characters not shown) ");
+  });
+
+  test("a custom max", () => {
+    expect(excerptHead("abcdef", 2)).toBe("ab (4 more characters not shown)");
+    expect(excerptTail("abcdef", 2)).toBe("(4 earlier characters not shown) ef");
   });
 });
