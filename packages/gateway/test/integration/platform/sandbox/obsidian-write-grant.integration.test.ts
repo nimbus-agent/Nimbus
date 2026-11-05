@@ -374,7 +374,9 @@ describe("the Obsidian write grant under the real sandbox", () => {
       const source = join(root, "root-note-2.md");
       writeFileSync(source, "root note 2\n");
       const link = join(vaultA, "child-hard-link.md");
+      const ranMarker = join(vaultA, "hard-link-probe-ran.md");
       rmSync(link, { force: true });
+      rmSync(ranMarker, { force: true });
       const argv = IS_WIN
         ? ["cmd.exe", "/d", "/c", "mklink", "/H", link, source]
         : (() => {
@@ -385,6 +387,8 @@ describe("the Obsidian write grant under the real sandbox", () => {
                 "const fs = require('node:fs');",
                 `try { fs.linkSync(${JSON.stringify(source)}, ${JSON.stringify(link)}); } catch {}`,
                 `try { fs.appendFileSync(${JSON.stringify(link)}, ${JSON.stringify(MARK)}); } catch {}`,
+                // Proof the probe ran at all: an append the grant allows, inside the vault.
+                `try { fs.appendFileSync(${JSON.stringify(ranMarker)}, ${JSON.stringify(MARK)}); } catch {}`,
               ].join("\n"),
             );
             return [process.execPath, script];
@@ -399,6 +403,9 @@ describe("the Obsidian write grant under the real sandbox", () => {
         // mklink only links; a second confined run tries the write through it.
         await runSandboxed(obsidianPolicy(true), probeArgv([link]));
       }
+      // Off win32 the same child also wrote a file in the vault: proof it ran (finding 4). On
+      // win32 the child is `cmd mklink`, which writes nothing else.
+      if (!IS_WIN) expect(readFileSync(ranMarker, "utf8")).toContain(MARK);
       const madeLink = isHardLink();
       console.log(
         `[obsidian-write-grant] ${process.platform}: child-made hard link in the vault: ${madeLink ? "CREATED" : "refused"}`,
