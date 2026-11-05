@@ -30,7 +30,7 @@ function base(): string {
 function policy(write: readonly string[], canonicalWritePaths?: readonly string[]): SandboxPolicy {
   return {
     id: "com.nimbus.obsidian",
-    permissions: { network: [], filesystem: { read: [], write } },
+    permissions: { network: [], filesystem: { read: [], write: [...write] } },
     ...(canonicalWritePaths === undefined ? {} : { canonicalWritePaths }),
   };
 }
