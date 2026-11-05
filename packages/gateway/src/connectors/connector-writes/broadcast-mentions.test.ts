@@ -173,6 +173,8 @@ describe("broadcastMentionIn (OR1)", () => {
     expect(hit("teams", '<a<i></i>t id="0">x</at>', text)).toBe(false);
     expect(hit("teams", '<a<i></i>t id="0">x</at>', html)).toBe(true);
     expect(hit("teams", "@cha<b><i></i></b>nnel", html)).toBe(true);
+    // An unclosed "<" before a tag: only the greedy strip joins the mention back up.
+    expect(hit("teams", "@chan<x<y>nel", html)).toBe(true);
   });
 
   test("the round cap is exactly 4: three decodes settle, a fourth is refused (fail closed)", () => {

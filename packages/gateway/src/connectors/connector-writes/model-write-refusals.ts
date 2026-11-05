@@ -378,19 +378,25 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
 };
 
 /**
- * The tag-stripped forms a broadcast scan also matches (never rendered or sent anywhere): each pass
- * removes the innermost tags, and every intermediate form is kept, so a tag split by another tag
- * (`<a<b></b>t>`) is seen whole before a later pass removes it too.
+ * The tag-stripped forms a broadcast scan also matches (never rendered or sent anywhere). Each
+ * `tag` pattern is applied until the text stops changing and every pass is kept, so a tag split
+ * by another tag is seen whole before a later pass removes it. Two tokenisations: innermost-first
+ * (`<[^<>]*>`) and greedy (`<[^>]*>`, where `<x<y>` is one tag).
  */
+const TAG_PATTERNS: readonly RegExp[] = [/<[^<>]*>/g, /<[^>]*>/g];
+
 function tagStrippedForms(text: string): string[] {
   const out: string[] = [];
-  let prev = text;
-  for (;;) {
-    const next = prev.replaceAll(/<[^<>]*>/g, "");
-    if (next === prev) return out;
-    out.push(next);
-    prev = next;
+  for (const tag of TAG_PATTERNS) {
+    let prev = text;
+    for (;;) {
+      const next = prev.replaceAll(tag, "");
+      if (next === prev) break;
+      out.push(next);
+      prev = next;
+    }
   }
+  return out;
 }
 
 /**
