@@ -2157,6 +2157,118 @@ export function checkEvalConfinement(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
+// ---- D39 (the model's connector-write door, I53) ------------------------------------------------
+// A first-party connector write reaches the model only through `engine/connector-write-agent-tools.ts`,
+// on an executor built without delegation, with every action carrying `origin: "model"`. Four clauses:
+// (a) a non-test gateway file that VALUE-imports the write table (anything under
+//     `connectors/connector-writes/`, or `connector-write-registry`) and also calls `createTool`
+//     — including an aliased import (`createTool as ct`) or a namespace import's member — is the
+//     door itself; no other file builds model tools from the write table. A type-only import is
+//     ignored, so a file may name a row's TYPE. The importer of the door MODULE (`engine/agent.ts`)
+//     is not a trigger: it imports the builder, never the rows;
+// (b) `getAgentRequestConnectorWriteExecutor`, the read of the owner-turn executor, is named only by
+//     `engine/agent-request-context.ts` (its definition), `engine/run-ask.ts`, `engine/agent.ts` and
+//     the door;
+// (c) the door file names no transport: `invokeConnectorWrite`, `withConnectorSession`,
+//     `createConnectorDispatcher` or `.dispatch(` — it runs an action through the turn's executor
+//     and nothing else;
+// (d) the door file contains `origin: "model"`, the marker `tryDelegatedApproval` refuses to delegate.
+// Comments and string literals are stripped before identifiers are matched (the import clauses read
+// comment-stripped source, a specifier IS a string). Test files and anything outside
+// packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically composed name or
+// specifier evades a text scan; the executor's own construction (no delegation) and the door's
+// per-call checks are pinned behaviourally by I53's tests.
+const D39_DOOR = "packages/gateway/src/engine/connector-write-agent-tools.ts";
+const D39_EXECUTOR_READ_RE = /\bgetAgentRequestConnectorWriteExecutor\b/g;
+const D39_EXECUTOR_READ_ALLOWED: readonly string[] = [
+  "packages/gateway/src/engine/agent-request-context.ts",
+  "packages/gateway/src/engine/run-ask.ts",
+  "packages/gateway/src/engine/agent.ts",
+  D39_DOOR,
+];
+const D39_TRANSPORT_RE =
+  /\b(?:invokeConnectorWrite|withConnectorSession|createConnectorDispatcher)\b|\.\s*dispatch\s*\(/g;
+const D39_ORIGIN_RE = /\borigin\s*:\s*["']model["']/;
+const D39_ROWS_SPECIFIER_RE = /connectors\/connector-writes\/|connector-write-registry/;
+// `import <clause> from "x"` (static, comment-stripped); `export … from` re-exports count as values.
+const D39_STATIC_IMPORT_RE =
+  /^[ \t]*(?:import|export)\s+(type\s+)?([^;"']*?)\s*from\s*["']([^"']+)["']/gm;
+const D39_DYNAMIC_IMPORT_RE = /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g;
+
+/** True when an import clause names at least one value (not `type X` / `import type`). */
+function clauseHasValue(typeOnly: boolean, clause: string): boolean {
+  if (typeOnly) return false;
+  const withoutTypes = clause.replace(/\btype\s+\w+(?:\s+as\s+\w+)?/g, "");
+  return /[A-Za-z_$*]/.test(withoutTypes);
+}
+
+function importsWriteTableAsValue(commentFree: string): boolean {
+  for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
+    if (!D39_ROWS_SPECIFIER_RE.test(m[3] ?? "")) continue;
+    if (clauseHasValue(m[1] !== undefined, m[2] ?? "")) return true;
+  }
+  for (const m of commentFree.matchAll(D39_DYNAMIC_IMPORT_RE)) {
+    if (D39_ROWS_SPECIFIER_RE.test(m[1] ?? "")) return true;
+  }
+  return false;
+}
+
+/** Every local name `createTool` is bound to, plus a namespace import's `t.createTool`. */
+function createToolCallRe(commentFree: string): RegExp {
+  const names = new Set<string>(["createTool"]);
+  const namespaces = new Set<string>();
+  for (const m of commentFree.matchAll(D39_STATIC_IMPORT_RE)) {
+    if (!/@mastra\/core\/tools/.test(m[3] ?? "") || m[1] !== undefined) continue;
+    const clause = m[2] ?? "";
+    for (const a of clause.matchAll(/\bcreateTool\s+as\s+([A-Za-z_$][\w$]*)/g)) {
+      if (a[1] !== undefined) names.add(a[1]);
+    }
+    const ns = /\*\s*as\s+([A-Za-z_$][\w$]*)/.exec(clause);
+    if (ns?.[1] !== undefined) namespaces.add(ns[1]);
+  }
+  const alt = [...names, ...[...namespaces].map((n) => `${n}\\s*\\.\\s*createTool`)].join("|");
+  return new RegExp(`(?<![.\\w$])(?:${alt})\\s*(?:<[^()]*>)?\\s*\\(|\\.\\s*createTool\\s*\\(`, "g");
+}
+
+export function checkModelWriteDoor(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    const original = f.contents.split("\n");
+    const push = (rule: string, src: string, index: number | undefined): void => {
+      const line = src.slice(0, index).split("\n").length;
+      out.push({ rule, file: f.relPath, line, snippet: (original[line - 1] ?? "").trim() });
+    };
+    const isDoor = f.relPath === D39_DOOR;
+    if (!isDoor && importsWriteTableAsValue(commentFree)) {
+      const m = createToolCallRe(commentFree).exec(code);
+      if (m !== null) push("connector-write-tools-built-outside-door", code, m.index);
+    }
+    if (!D39_EXECUTOR_READ_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D39_EXECUTOR_READ_RE)) {
+        push("connector-write-executor-read-confined", code, m.index);
+      }
+    }
+    if (isDoor) {
+      for (const m of code.matchAll(D39_TRANSPORT_RE)) {
+        push("connector-write-door-names-transport", code, m.index);
+      }
+      if (!D39_ORIGIN_RE.test(commentFree)) {
+        out.push({
+          rule: "connector-write-door-origin-model",
+          file: f.relPath,
+          line: 1,
+          snippet: 'no origin: "model" in the door',
+        });
+      }
+    }
+  }
+  return out;
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -3193,6 +3305,9 @@ export const RULE_ANCHORS: readonly string[] = [
   // D38 — anchored on the eval role, which every clause SCANS: it sits under extensions/eval/ (so
   // (c)(d)(e) read it) and is allow-listed by neither (a) nor (b).
   "packages/gateway/src/extensions/eval/eval-role.ts",
+  // D39 — the door itself: clauses (c) and (d) read ONLY this file, so a rule that cannot find it
+  // would report clean while checking neither.
+  "packages/gateway/src/engine/connector-write-agent-tools.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3543,6 +3658,24 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D38${D38_CLAUSE[e.rule] ?? ""} — extension code could run for evaluation with network, credentials or gateway state, or the eval role's one stdout document could be corrupted (I49): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkModelWriteDoor(files);
+    const D39_CLAUSE: Readonly<Record<string, string>> = {
+      "connector-write-tools-built-outside-door":
+        "(a) tools built from the connector-write table outside engine/connector-write-agent-tools.ts",
+      "connector-write-executor-read-confined":
+        "(b) getAgentRequestConnectorWriteExecutor named outside agent-request-context.ts, run-ask.ts, agent.ts and the door",
+      "connector-write-door-names-transport":
+        "(c) the door names a connector transport (invokeConnectorWrite, withConnectorSession, createConnectorDispatcher or .dispatch())",
+      "connector-write-door-origin-model": '(d) the door carries no origin: "model"',
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D39${D39_CLAUSE[e.rule] ?? ""} — the model could reach a connector write outside the owner-turn door, or without the no-delegation marker (I53): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

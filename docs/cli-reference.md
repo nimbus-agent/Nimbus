@@ -396,6 +396,8 @@ Ask the agent a natural-language question or give it a task. The agent answers f
 
 If `[llm].prefer_local = true` and a local provider is available, `nimbus ask` routes open-ended conversational answers through the local model. With Ollama, set `[llm].local_model` to any pulled model name; if no remote classifier API key is configured, Nimbus falls back to local indexed-context answering instead of failing before the local model can run.
 
+**Connector writes (Phase 9.7 PR A5b).** `nimbus ask` declares itself the owner's CLI (`session.declareKind { kind: "cli" }`) as its first frame, which is what lets the gateway offer the model your enabled connector writes (see `nimbus connector writes enable`). A write is offered only on that kind of turn, and each call the model makes asks you first, with the typed preview of the exact input and the line `Requested by: the model`; if you decline, the model is told only that the write was declined. **None is offerable yet:** a write needs a typed preview and wave 3 or lower (or a `before` reader), and no shipped row has both, so the model is offered no write today. An older gateway without `session.declareKind` simply offers none.
+
 ```bash
 nimbus ask "Find all PDFs I received last month that I haven't opened"
 nimbus ask "Which of my open PRs mention payment-service and have failing CI?"
@@ -2818,6 +2820,8 @@ nimbus repl --session <id>       # Resume a saved session
 ```
 
 Use this for scripts and headless environments; `nimbus tui` is the richer alternative for interactive developer sessions. `nimbus tui`'s fallback path invokes `runRepl` internally on unsuitable terminals, so you never need to choose manually — just run `nimbus tui` and let it degrade.
+
+`nimbus repl` declares itself the owner's CLI the same way `nimbus ask` does, so the model may be offered the connector writes you enabled (each call asks you first; none is offerable yet). See [`nimbus ask`](#nimbus-ask).
 
 ---
 

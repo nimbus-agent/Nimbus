@@ -26,6 +26,7 @@ import {
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
+  checkModelWriteDoor,
   checkWrapServerSpecInvariant,
 } from "../../../scripts/structure-audit/check-nimbus-invariants.ts";
 import { stripComments, stripStringLiterals } from "../../../scripts/structure-audit/lib.ts";
@@ -11124,5 +11125,174 @@ describe("I52 — a stored run grant is equal to or narrower than its manifest, 
     expect(res.status).toBe("rejected");
     expect(remote).toBe(0);
     expect(prompts).toBe(1);
+  });
+});
+
+describe("I53 — a first-party connector write reaches the model only through the owner-turn door", () => {
+  // Wiring pins read the real sources; behaviour is driven through the REAL door builder with a
+  // recording executor. The end-to-end prompt-injection proof (real runAsk, real ToolExecutor, an
+  // active in-scope delegate) is `engine/connector-write-injection.test.ts`.
+  const DOOR_PATH = "packages/gateway/src/engine/connector-write-agent-tools.ts";
+
+  test("the door's executor is built with NO delegation (the first layer)", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = src.indexOf("export function buildModelWriteExecutor(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    expect(body).toContain("newTurnExecutor(p, undefined)");
+    expect(body).not.toContain("delegation");
+  });
+
+  test("the executor is set only on an owner cli/ui, non-demo turn, and cleared otherwise", async () => {
+    const src = stripComments(await read("packages/gateway/src/engine/run-ask.ts"));
+    const at = src.indexOf("function offerConnectorWriteExecutorIfOwner(");
+    expect(at).toBeGreaterThan(-1);
+    const body = src.slice(at, src.indexOf("\n}\n", at));
+    expect(body).toContain("p.offerConnectorWriteTools === true && !isDemo(p)");
+    expect(body).toContain("store.connectorWriteExecutor = buildModelWriteExecutor(p)");
+    expect(body).toContain("delete store.connectorWriteExecutor");
+  });
+
+  test("the owner-turn map offers the door to cli and ui only; an undeclared client gets none", async () => {
+    const { CONNECTOR_WRITE_OFFER_BY_KIND } = await import("./ipc/server/inline-handlers.ts");
+    expect({ ...CONNECTOR_WRITE_OFFER_BY_KIND }).toEqual({
+      cli: true,
+      ui: true,
+      unknown: false,
+      mcp: false,
+      http: false,
+      chatops: false,
+      fleet: false,
+      push: false,
+    });
+  });
+
+  test("the CLI's ask and repl declare cli before they talk", async () => {
+    for (const rel of ["packages/cli/src/commands/ask.ts", "packages/cli/src/commands/repl.ts"]) {
+      expect(await read(rel)).toContain("declareCliClientKind");
+    }
+    expect(await read("packages/cli/src/lib/declare-client-kind.ts")).toContain('kind: "cli"');
+  });
+
+  async function door(opts: { recheck: boolean | "throws"; executor: boolean }) {
+    const { buildConnectorWriteAgentTools } = await import(
+      "./engine/connector-write-agent-tools.ts"
+    );
+    const { row, textField, withPreview } = await import("./connectors/connector-writes/types.ts");
+    const { toStandardSchema } = await import("@mastra/core/schema");
+    const ROW = withPreview(row("argocd_app_sync", "argocd.app.sync", "write", 2), {
+      target: "{name}",
+      summary: "Sync application {name}",
+      fields: [textField("revision", "Revision", "HEAD")],
+    });
+    const actions: PlannedAction[] = [];
+    const epoch = 7000 + Math.floor(Math.random() * 1e6);
+    const source = {
+      offerableEnabledRows: () => [ROW],
+      listServerTools: async () => ({
+        argocd_argocd_app_sync: {
+          description: "sync",
+          inputSchema: toStandardSchema({
+            type: "object",
+            properties: { name: { type: "string" }, revision: { type: "string" } },
+          } as Parameters<typeof toStandardSchema>[0]),
+        },
+      }),
+      toolsEpoch: () => epoch,
+      recheck: () => {
+        if (opts.recheck === "throws") throw new Error("policy unreadable");
+        return opts.recheck;
+      },
+      warn: () => undefined,
+    };
+    const executor = opts.executor
+      ? {
+          execute: async (a: PlannedAction) => {
+            actions.push(a);
+            return { status: "ok" as const, result: { synced: true } };
+          },
+        }
+      : undefined;
+    const tools = await buildConnectorWriteAgentTools(
+      source,
+      () => executor,
+      (_s, _t, def) => def,
+      new Set(),
+    );
+    const tool = tools["argocd__argocd_app_sync"] as {
+      execute: (input: unknown) => Promise<unknown>;
+    };
+    return { tool, actions };
+  }
+
+  test("every door action carries origin: model, the second layer against delegation", async () => {
+    const { tool, actions } = await door({ recheck: true, executor: true });
+    await tool.execute({ name: "web", revision: "abc" });
+    expect(actions).toHaveLength(1);
+    expect(actions[0]?.origin).toBe("model");
+    expect(actions[0]?.type).toBe("argocd.app.sync");
+  });
+
+  test("no executor on the turn: a stale tool call is refused and nothing is dispatched", async () => {
+    const { tool, actions } = await door({ recheck: true, executor: false });
+    expect(await tool.execute({ name: "web" })).toEqual({
+      refused: "connector writes are only callable by the local owner",
+    });
+    expect(actions).toHaveLength(0);
+  });
+
+  test("the per-call recheck refuses when enablement or policy lapsed, or cannot be read", async () => {
+    for (const recheck of [false, "throws"] as const) {
+      const { tool, actions } = await door({ recheck, executor: true });
+      expect(await tool.execute({ name: "web" })).toEqual({
+        refused: "this connector write is no longer enabled; ask again",
+      });
+      expect(actions).toHaveLength(0);
+    }
+  });
+
+  test("the production source stays gated: enablement, policy and offerability", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/connectors/connector-writes/model-write-source.ts"),
+    );
+    expect(src).toContain("isModelOfferableRow");
+    expect(src).toContain("isConnectorWriteModelAccessEnabled");
+    expect(src).toContain("getModelWriteEnablement");
+  });
+
+  test("D39 exists with all four clauses, run() calls it, and the door is an anchor", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    for (const id of [
+      "connector-write-tools-built-outside-door",
+      "connector-write-executor-read-confined",
+      "connector-write-door-names-transport",
+      "connector-write-door-origin-model",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const runAt = audit.indexOf("async function run(");
+    expect(runAt).toBeGreaterThan(-1);
+    expect(audit.slice(runAt)).toContain("checkModelWriteDoor(files)");
+    expect(audit).toContain(`"${DOOR_PATH}"`);
+  });
+
+  test("the checker rejects a second builder of write tools (red-proof, not just presence)", () => {
+    const v = checkModelWriteDoor([
+      {
+        relPath: "packages/gateway/src/engine/rogue.ts",
+        contents:
+          'import { createTool as ct } from "@mastra/core/tools";\nimport { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";\nct({});',
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["connector-write-tools-built-outside-door"]);
+  });
+
+  test("the production tree has no violation of D39", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(files.some((f) => f.relPath === DOOR_PATH)).toBe(true);
+    expect(checkModelWriteDoor(files)).toEqual([]);
   });
 });
