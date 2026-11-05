@@ -932,6 +932,20 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     }
   });
 
+  test("a style closed only in HTML's view (the closer inside a comment) is refused", () => {
+    expectRefused("outlook-html", "<style>p{}<!-- </style> -->", true);
+    expectRefused("outlook-html", `<style>p{}<a title="</style>">`, true);
+  });
+
+  test("Obsidian: a two-backtick run is not a fence; an unsettled mermaid body is refused", () => {
+    expectAllowed("obsidian-markdown", `\x60\x60mermaid${LF}click A "https://h"${LF}\x60\x60`);
+    expectRefused(
+      "obsidian-markdown",
+      `\x60\x60\x60mermaid${LF}&amp;amp;amp;amp;amp;${LF}\x60\x60\x60`,
+      true,
+    );
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });
