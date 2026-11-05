@@ -8,6 +8,7 @@ import {
   checkActuationConfinement,
   checkAgentEmitterImportConfinement,
   checkAgentProvenanceWriters,
+  checkBeforeStateRead,
   checkBrokeredFetchLiteralConfinement,
   checkCaptureGateCallers,
   checkCaptureGateImporters,
@@ -4105,5 +4106,82 @@ describe("D39 — the model's connector-write door is the only builder of write 
     }
     expect(files.some((f) => f.relPath === DOOR)).toBe(true);
     expect(checkModelWriteDoor(files)).toEqual([]);
+  });
+});
+
+describe("D40 — a before-state read stays a guarded read on the door's executor (I53, spec § 5.4)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const BEFORE = "packages/gateway/src/engine/before-state.ts";
+  const RUN_ASK = "packages/gateway/src/engine/run-ask.ts";
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const REGISTRY = "packages/gateway/src/connectors/registry.ts";
+  const GOOD = [
+    file(
+      BEFORE,
+      'const S = ".before.read";\nexport function createBeforeStateRunner() {}\nexport function isBeforeReadActionType() {}',
+    ),
+    file(
+      RUN_ASK,
+      'import {\n  type BeforeStateRunner,\n  createBeforeStateRunner,\n} from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation);\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
+    ),
+    file(EXECUTOR, "if (isBeforeReadActionType(action.type)) {}"),
+    file(REGISTRY, "if (!isBeforeReadActionType(t)) return; // .before.read guard"),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkBeforeStateRead(files).map((v) => v.rule);
+  const replace = (relPath: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === relPath ? file(relPath, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkBeforeStateRead(GOOD)).toEqual([]);
+  });
+
+  test("(a) FAILS on the literal anywhere else, in a string or a template", () => {
+    const other = "packages/gateway/src/engine/other.ts";
+    expect(rules([...GOOD, file(other, 'const t = "jira.before.read";')])).toEqual([
+      "before-read-literal-confined",
+    ]);
+    expect(
+      rules([...GOOD, file(other, ["const t = `", "$", "{s}.before.read`;"].join(""))]),
+    ).toEqual(["before-read-literal-confined"]);
+    // Comments and test files are not scanned.
+    expect(rules([...GOOD, file(other, "// a .before.read type")])).toEqual([]);
+    expect(
+      rules([...GOOD, file("packages/gateway/src/engine/x.test.ts", '"a.before.read"')]),
+    ).toEqual([]);
+  });
+
+  test("(b) FAILS on the runner built outside run-ask.ts's door builder", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file("packages/gateway/src/ipc/x.ts", "const r = createBeforeStateRunner();"),
+      ]),
+    ).toEqual(["before-state-runner-confined"]);
+    // Inside run-ask.ts but in the ASK executor's builder.
+    expect(
+      rules(
+        replace(
+          RUN_ASK,
+          'import { createBeforeStateRunner } from "./before-state.ts";\nfunction buildAskExecutor(p) {\n  return newTurnExecutor(p, p.delegation, createBeforeStateRunner());\n}\nexport function buildModelWriteExecutor(p) {\n  return newTurnExecutor(p, undefined, createBeforeStateRunner());\n}\n',
+        ),
+      ),
+    ).toEqual(["before-state-runner-confined"]);
+  });
+
+  test("(c) FAILS when the gate refusal or the dispatch guard stops naming the predicate", () => {
+    expect(rules(replace(EXECUTOR, "if (requiresHITL) {}"))).toEqual(["before-read-guard-present"]);
+    expect(rules(replace(REGISTRY, "// no guard here"))).toEqual(["before-read-guard-present"]);
+    expect(rules(GOOD.filter((f) => f.relPath !== REGISTRY))).toEqual([
+      "before-read-guard-present",
+    ]);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(files.some((f) => f.relPath === BEFORE)).toBe(true);
+    expect(checkBeforeStateRead(files)).toEqual([]);
   });
 });
