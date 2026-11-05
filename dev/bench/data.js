@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793834808938,
+  "lastUpdate": 1793856004294,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "0549fef939e35d1f4bdc2ca4f1849fca33287f2b",
-          "message": "test(security): make five invariant enforcement tests capable of failing (#1219)\n\nFive `security-invariants.test.ts` assertions that pass whether or not\nthe invariant holds, and the forged audit row one of them was hiding.\nCluster B of the I1–I30 audit; #1218 was cluster A.\n\nFor each, the question asked was: **what single edit to production code\nwould break this invariant and leave this test green?** Where I could\nname one, it is a finding.\n\n## I15 — a per-*file* check over a file with 26 spawn sites\n\nThe test was a four-file loop whose whole body was\n`expect(src).toMatch(/wrapServerSpec\\s*\\(/)` — one token, anywhere in\nthe file. `connector-spawns.ts` funnels 26 MCPClient spawns through a\nsingle `wrap` helper, so its token survives **any** per-site removal.\nThe static `D10-wrap-spec` rule short-circuited per file too.\n\nReproduced against the real file: unwrapping one connector left **6\n`wrapServerSpec(` tokens** in place, and both gates reported clean. The\nthird gate — that connector's own spawner test — also passes, because\nonly 6 of the file's spawner describes assert `.command`. The child\nwould then run with a live OAuth token in its env and no\nlandlock/seccomp/seatbelt profile, past three green checks.\n\nBoth checks are now **per site**: every `...connectorSpawn(` literal\nmust be lexically enclosed by a `wrap(` / `wrapServerSpec(` call,\nresolved by walking back to the nearest open paren. Against the real\ntree that is 78 sites, zero violations, zero false positives.\n\nThe hardcoded four also omitted **`chatops-bot-spawn.ts`**, which has\ntwo real spawn sites. The list is now derived, behind a non-vacuity\nfloor so a mis-globbed scan can't pass as a compliant tree.\n\n## I4 — a forged `approved` row, and a grep that saw one file\n\n`connectors/reindex.ts:122` wrote `hitlStatus: \"approved\"` on its\n`data.minimization.prune` audit row. `ipc/reindex-rpc.ts` gates `depth\n=== \"full\"` alone, and the `full` branch returns `itemsAffected: 0` — so\nthat row can **only** be emitted on a path where the gate was never\nentered. A consent decision that never happened, inside the verified\nhash chain: the S1-F5 / chain C6 shape the invariant exists to prevent.\nIt now writes `not_required`, following the documented pattern at\n`federation-rpc.ts:543-546`.\n\nThe entire enforcement of I4 was one `read()` of\n`commands/data-delete.ts` and one `not.toMatch` — adding the string to\nany other file was invisible, and there is no static D-rule for I4. It\nnow scans `packages/{gateway,cli,ui}/src` recursively against an\n**earned set** of five files, each carrying the gate that backs it.\nEvery entry was checked against its gate rather than assumed: the set is\ndeliberately *not* \"the files that currently contain the string\", which\nis how an allowlist becomes a laundering mechanism for the thing it\npolices. `reindex.ts` was in that population and is not in the set.\n\n## I18 — an assertion satisfied by a type declaration\n\n`expect(gate).toContain(\"isOperatorValid\")` against `query-gate.ts`,\nwhere the only occurrence of that string is the ctx **type field**:\n\n```ts\nreadonly identity?: { readonly enabled: boolean; readonly isOperatorValid: () => boolean };\n```\n\nThe call lives in `_lib/gate-commons.ts` and the wiring in\n`ipc/federation-rpc.ts` — files the test never opened. Deleting the one\nline that supplies `ctx.identity` left it green, because `query-gate.ts`\nwould be byte-identical.\n\nThe test's own title promised two things and asserted neither half about\nthe first. There is now an assertion for each: the real call site, the\nwiring that feeds it, and a tree scan proving no module outside\n`identity/` verifies a JWT.\n\n## I1 — a regex that did not match its own documented anti-pattern\n\n`docs/SECURITY-INVARIANTS.md` writes the anti-pattern as `{ env: {\n...process.env, EXTRA: ... } }`. The regex was\n`/\\{\\s*\\.\\.\\.process\\.env\\s*\\}/`, which requires `}` **immediately**\nafter the spread — so it matched the bare form and missed the documented\none. The comma form is what a real regression looks like, since the site\nbeing rewritten needs to add a variable alongside the inherited\nenvironment.\n\nIts companion asserted `extensionProcessEnv(` appears **≥ 20** times\nagainst **80** real call sites, so 60 could regress and still pass — and\n`readDirConcat` swept in `*.test.ts`, so fixtures counted toward that\nfloor, and was non-recursive, so a subdirectory was invisible. The floor\nis now derived: every `env:` under lazy-mesh is enumerated and\nclassified, written as what *cannot* pass, with locals resolved back to\ntheir `extensionProcessEnv` binding rather than exempted.\n\n## D22 — four assertions scanning for strings inside the functions being\nscanned for\n\n`expect(audit).toContain(\"D22-connectors-dispatch\")` and three siblings.\nAll four literals are `rule:` fields **inside the check functions**.\nDeleting the `run()` block that invokes them leaves every assertion\ngreen while `audit:invariants` stops executing D22. Rules (b) and (c)\nsurvive that by luck — each has an independent tree-scan elsewhere. Rule\n(a), the `connectors.dispatch` confinement, has none. Now asserts the\ninvocations, same shape as the scan-floor test in #1217.\n\n## Red-prove\n\nEvery guard was reverted and confirmed to fail naming the right thing —\nmutations applied to real files, restored after, tree verified clean:\n\n| Mutation | Failing test |\n| --- | --- |\n| `{ ...process.env, X }` into a lazy-mesh spawn | `contains no \\`{\n...process.env\\` spread` + `every env: … comes from extensionProcessEnv`\n|\n| Unwrap one spawn site (6 wrapper tokens remain) | `every ServerSpec\nliteral under lazy-mesh is enclosed` |\n| `approved` row in a file outside the earned set | `no production file\noutside the earned set hardcodes hitlStatus` |\n| Delete `identity: ctx.identityGuard` | `the federated gate CALLS\nisOperatorValid` |\n| Delete the D22 invocation from `run()` | `D22 confines\nconnectors.dispatch …` |\n\nDocs updated in the same commit per the triple rule, including three\nclaims that were simply false: I18's \"size assertion 94\" describes an\nassertion this file has never contained (`94` appears nowhere in it);\nI4's \"the only production assignment site\" was wrong by five; and I1's\nwiring counts said \"30+ … `connector-spawns.ts` (16), `phase3-config.ts`\n(8)\" against actual figures of 78, 31 and 45.\n\n`bun run preflight:fast` — 29/29. `bun test\npackages/gateway/src/security-invariants.test.ts\nscripts/structure-audit` — 715 pass, 0 fail. Connector + lazy-mesh\nsuites — 3,154 pass, 0 fail.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Bug Fixes**\n* Corrected metadata-only reindex audit records so they accurately\nreflect when consent was not required.\n* Improved security checks for environment handling, approval records,\nconnector spawning, identity validation, and audit enforcement.\n* Added detection for partially wrapped or unwrapped server\nspecifications.\n\n* **Tests**\n* Expanded invariant and structure-audit coverage to validate all\nrelevant sites and prevent false passes.\n* Added checks for approved exceptions, stale exemptions, recursive\nscanning, and identity/RPC wiring.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-16T06:34:48Z",
-          "tree_id": "368fd60ced41d082887fa065cb97cb4c8119b138",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/0549fef939e35d1f4bdc2ca4f1849fca33287f2b"
-        },
-        "date": 1786862770446,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 321.07903450000015,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.5561085999936,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 224.67011835000085,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6afc99a3314b6e905bbac6ee2c916a8f97471159",
+          "message": "feat(gateway): the model's connector-write door (I53) (#1889)\n\nThis is Phase 9.7 Wave 1, A5b: the model's connector-write door. It adds\ninvariant I53 and static rule D39, and it completes Project A (Wave 1:\nA1–A5b).\n\nOn the local owner's own turn, the conversational model is offered one\ntool per connector write that meets all four conditions:\n- the owner enabled it with `nimbus connector writes enable`;\n- org policy allows it;\n- it is offerable now;\n- the opt-in covers its wave.\n\n**In production, nothing is offerable yet.** The 18 templated rows are\nall wave 4 and have no `before` reader. The wave-2/3 rows have no\ntemplates, and their services are not yet in the listing map or the\nper-slot generation check. Project B must add all three. Until then the\ndoor is proven with fixture rows, and when an enabled service cannot be\nlisted, the door says so once per generation.\n\n## How a call works\n\n- **Owner turn only.** The door executor exists only when the\nserver-held client kind is `cli` or `ui` and the gateway is not a demo.\n- The new `CONNECTOR_WRITE_OFFER_BY_KIND` sets `unknown: false`, which\nis stricter than user-MCP.\n- `nimbus ask` and `repl` now declare `cli`. The kind is self-reported,\nnot an authorization. The boundary is the user-only local socket plus\nthe owner's prompt on every call.\n- ChatOps, HTTP, MCP, fleet, push, workflow, LAN and federated paths\nnever get it.\n- **No delegation, two layers.** The door's executor has `delegation:\nundefined`, and every action carries a top-level `origin: \"model\"`,\nwhich A5a made non-delegable.\n- **Checks on every call, in order.** First the executor must be\npresent. Then, failing closed, it re-checks:\n  - the enablement row and its wave;\n  - the policy;\n  - that the row is still offerable;\n- that the service's own slot generation is unchanged since the tool was\nlisted. Unrelated servers spawning or idling do not invalidate it.\n- **The previewed write is the one dispatched.** `mcpToolId` is the\nlisted key. A new guard in `connector-write-dispatch.ts` refuses a\n`write`-row dispatch whose string `mcpToolId` names a different row.\n- **What the model sees:**\n  - a fixed description prefix outside the wrapped server text;\n  - schemas rebuilt through the user-MCP allowlist;\n- a drift check: a tool is offered only if its template's keys are in\nthe listed schema;\n  - every result inside `<tool_output>`;\n  - a fixed result on denial;\n  - a sanitised error, cut to 500 characters, if dispatch throws.\n- **The desktop shows the origin.** It displays \"Requested by: the\nmodel\". The preview is built once per gate.\n\n## I53 and D39\n\nI53 is recorded in `docs/SECURITY-INVARIANTS.md`, with stated bounds:\n- nothing is offerable until Project B;\n- team-credential behaviour;\n- the bundle's siblings spawn;\n- enum and property names in schemas;\n- the check-then-act window while a prompt is open;\n- D39 sees `createTool` only.\n\nD39 is enforced in `check-nimbus-invariants.ts`:\n- (a) only the door builds model tools from the write table, including a\n`createTool as …` alias;\n- (b) the request-context field and its getter are confined, for both\nread and write;\n- (c) the door never names a transport, a dispatcher or any dispatch\ncall;\n- (d) the door sets `origin: \"model\"`;\n- (e) the door builder and the executor builder are each named only in\ntheir own sites.\n\nEach sub-rule was red-proved, and the real tree is clean.\n\n## Tests\n\n- `engine/connector-write-agent-tools.test.ts` covers:\n  - naming, collisions and listed-key mismatches;\n  - drift, with a positive control in every negative test;\n  - the order of the per-call checks, and their refusals;\n  - per-slot generation;\n  - declined and error results;\n  - the warning for an unlisted service.\n- `engine/connector-write-injection.test.ts` has 9 tests on the real\n`runAsk` stack, with the production source and executor and an active\ndelegate on every turn. It covers:\n- an indexed item, a tool reply, and a simulated peer answer, each\ninstructing a write;\n  - owner approval and denial;\n- enablement revoked, wave lowered, and policy locked between listing\nand call.\n- `connector-write-dispatch` guard tests, plus tests for the CLI's\n`declare-client-kind`, the turn wiring and the desktop.\n- An `I53` block in `security-invariants.test.ts` and the D39 tests.\n\nRed-proofs, each a temporary mutation that was reverted:\n- skipping the executor-first check, dropping `origin`, removing the\ndispatch guard and dropping drift each fail their tests;\n- `unknown: true` fails the kind tests;\n- the global epoch fails the generation tests;\n- a delegating executor without `origin` fails the injection suite; with\n`origin` kept, the owner is still asked.\n\n## Checks\n\n- `preflight:fast` and `typecheck:tests` (0 new) pass.\n- The gateway suites give 11,953 pass and 0 fail.\n- The CLI commands and lib give 5,106 pass and 0 fail.\n- The desktop HITL tests give 92 of 92.\n- `audit:invariants`, `audit:doc-refs` and `audit:status-drift` are\nclean.\n\n## Docs\n\n- The five core docs: `CLAUDE.md` and `GEMINI.md` (I1–I53, D10–D39, S4\nprogress), the roadmap with Project A complete, `architecture.md`,\n`docs/README.md`, and `cli-reference.md` (ask and repl declare `cli`).\n- `SECURITY-INVARIANTS.md` (I53), `CHANGELOG.md`, `.coderabbit.yaml`,\n`.github/SECURITY.md` and four skills.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Eligible local-owner CLI and UI sessions can offer first-party\nconnector write actions to the model. Actions are rechecked before\nexecution and require owner approval; declined actions are reported as\ndeclined.\n* Approval previews identify when an action was requested by the model.\n* **Improvements**\n* CLI ask and REPL sessions declare their client type when supported;\nolder gateways can continue without the declaration.\n* Connector actions with mismatched tool identifiers are rejected before\ndispatch.\n* **Documentation**\n* Updated security and feature documentation to cover the safeguards. No\nshipped connector writes are currently eligible to be offered.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T05:09:11Z",
+          "tree_id": "8f9f24641e75373523e9b86a8429a97416ffc2d6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/6afc99a3314b6e905bbac6ee2c916a8f97471159"
+        },
+        "date": 1793855999765,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 292.1339719500018,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 295.58783959999965,
             "unit": "ms"
           }
         ]
