@@ -32,7 +32,7 @@ import {
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";
 
-const SECRET_MARK = "BEFORE-REPLY-MARKER-7f3a";
+const REPLY_MARK = "BEFORE-REPLY-MARKER-7f3a";
 
 const READER: BeforeStateReader = {
   tool: "jira_issue_get",
@@ -285,7 +285,7 @@ describe("before-state runner", () => {
         await Bun.sleep(0);
         t.fire();
         expect(await pending).toEqual({ status: "unavailable", reason: "timeout" });
-        if (i === 0) resolveReply({ summary: SECRET_MARK });
+        if (i === 0) resolveReply({ summary: REPLY_MARK });
         else rejectReply(new Error("late"));
         await Bun.sleep(0);
       }
@@ -347,7 +347,7 @@ function executorHarness(opts: {
     dispatch: async (a) => {
       seen.dispatched.push(a);
       return isBeforeReadActionType(a.type)
-        ? (opts.readReply ?? { summary: `old ${SECRET_MARK}` })
+        ? (opts.readReply ?? { summary: `old ${REPLY_MARK}` })
         : { updated: true };
     },
   };
@@ -383,18 +383,18 @@ describe("before-state through the door's ToolExecutor", () => {
     expect(seen.prompts).toHaveLength(1);
     expect(seen.details[0]?.["before"]).toEqual({
       status: "ok",
-      fields: [{ label: "Summary", value: `old ${SECRET_MARK}` }],
+      fields: [{ label: "Summary", value: `old ${REPLY_MARK}` }],
     });
   });
 
   test("the read's reply never reaches the result handed back, the write's audit row or any egress row", async () => {
     const { exec, seen } = executorHarness({});
     const out = await exec.execute(WRITE);
-    expect(JSON.stringify(out)).not.toContain(SECRET_MARK);
-    for (const a of seen.audits) expect(a.actionJson).not.toContain(SECRET_MARK);
-    for (const e of seen.egress) expect(JSON.stringify(e)).not.toContain(SECRET_MARK);
+    expect(JSON.stringify(out)).not.toContain(REPLY_MARK);
+    for (const a of seen.audits) expect(a.actionJson).not.toContain(REPLY_MARK);
+    for (const e of seen.egress) expect(JSON.stringify(e)).not.toContain(REPLY_MARK);
     // The control: the reply DID reach the owner's prompt details.
-    expect(JSON.stringify(seen.details[0])).toContain(SECRET_MARK);
+    expect(JSON.stringify(seen.details[0])).toContain(REPLY_MARK);
   });
 
   test("without a runner (every other executor): no read, and the prompt has no before", async () => {
