@@ -22,6 +22,7 @@ const PROPOSABLE = [
   "apple.mail.draft.create",
   "apple.mail.send",
   "confluence.comment.add",
+  "confluence.page.append",
   "confluence.page.create",
   "confluence.page.update",
   "discord.message.post",
@@ -54,6 +55,7 @@ const PROPOSABLE = [
   "notion.page.update",
   "obsidian.note.append",
   "outlook.calendar.create",
+  "outlook.draft.create",
   "outlook.mail.send",
   "protonmail.mail.send",
   "slack.message.post",
@@ -65,19 +67,19 @@ describe("ACTION_PROPOSABILITY", () => {
   test("is total over HITL_REQUIRED and names nothing else", () => {
     expect(Object.keys(ACTION_PROPOSABILITY).sort()).toEqual([...HITL_REQUIRED].sort());
   });
-  test("the proposable set is exactly the reviewed 41", () => {
+  test("the proposable set is exactly the reviewed 43", () => {
     const got = Object.entries(ACTION_PROPOSABILITY)
       .filter(([, p]) => p.kind === "proposable")
       .map(([t]) => t)
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 41 proposable, 119 denied, 3 of them not_yet_offered", () => {
+  test("counts, derived: 43 proposable, 117 denied, 1 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
-    expect(PROPOSABLE).toHaveLength(41);
-    expect(all.filter((p) => p.kind === "proposable")).toHaveLength(41);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(119);
-    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(3);
+    expect(PROPOSABLE).toHaveLength(43);
+    expect(all.filter((p) => p.kind === "proposable")).toHaveLength(43);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(117);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(1);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {
@@ -94,14 +96,14 @@ describe("ACTION_PROPOSABILITY", () => {
   });
 });
 
-test("not_yet_offered is exactly the three withheld 0.4.0 writes, each a real connector-write row", () => {
+test("not_yet_offered is exactly the Jira transition (B3 offered the draft and the append), a real connector-write row", () => {
   const notYet = Object.entries(ACTION_PROPOSABILITY)
     .filter(([, p]) => p.kind === "denied" && p.class === "not_yet_offered")
     .map(([t]) => t)
     .sort();
   expect(notYet).toEqual(
     // jira.issue.transition by owner ruling OR-B2-4 (no before-read on the act door).
-    ["confluence.page.append", "jira.issue.transition", "outlook.draft.create"].sort(),
+    ["jira.issue.transition"],
   );
   // Unlike `unroutable`, each resolves: a row names its tool on its own server.
   const rowTypes = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.actionType));
@@ -110,6 +112,15 @@ test("not_yet_offered is exactly the three withheld 0.4.0 writes, each a real co
     expect(classifyActionType(t, OPEN), t).toEqual({ kind: "denied", class: "not_yet_offered" });
     expect(proposableWriteTool(t), t).toBeUndefined();
   }
+});
+
+test("email.draft.create stays unroutable: no row's action type, never proposable (B3)", () => {
+  expect(ACTION_PROPOSABILITY["email.draft.create"]).toEqual({
+    kind: "denied",
+    class: "unroutable",
+  });
+  expect(proposableWriteTool("email.draft.create")).toBeUndefined();
+  expect(CONNECTOR_WRITE_ROWS.some((r) => r.actionType === "email.draft.create")).toBe(false);
 });
 
 test("share.publish stays denied as gateway_internal", () => {

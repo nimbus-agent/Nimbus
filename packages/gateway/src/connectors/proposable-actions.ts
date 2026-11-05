@@ -28,9 +28,9 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld: until the Phase 9.7
-   * B PR that gives it a typed preview template lands, or (`jira.issue.transition`, owner ruling
-   * OR-B2-4) because the act door runs no before-read and so could not show what the write changes.
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Since B3 the one
+   * member is `jira.issue.transition` (owner ruling OR-B2-4): the act door runs no before-read and
+   * so could not show what the write changes.
    * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
    * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job.
    */
@@ -106,6 +106,11 @@ export const PROPOSABLE_WRITE_TOOLS: Readonly<Record<string, string>> = Object.f
   "confluence.page.create": "confluence_page_create",
   "confluence.page.update": "confluence_page_update",
   "confluence.comment.add": "confluence_comment_add",
+  // Phase 9.7 B3: the Outlook draft and the Confluence append, each with a typed preview template.
+  // While a KB destination is configured, `actDoorRefusal` refuses a page write to it and every
+  // Notion/Confluence page update or append (OR-B3-1, OR-B3-3).
+  "outlook.draft.create": "outlook_draft_create",
+  "confluence.page.append": "confluence_page_append",
   "google_drive.file.create": "gdrive_file_create",
   // `obsidian` is a mesh-only server (lazy-mesh/tool-map.ts MESH_ONLY_SERVER_IDS), not a catalog id.
   "obsidian.note.append": "obsidian_append_to_daily_note",
@@ -232,16 +237,11 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "email.draft.create",
       "calendar.event.create",
     ]),
-    // @nimbus-dev/connectors 0.4.0's Wave-2 writes that are routable but not offered to MCP clients:
-    // the draft and page append wait for their B PR's preview template (B3/B4).
-    // `jira.issue.transition` is withheld by owner ruling OR-B2-4: before-reads run on the model
-    // door only (B0b), so an MCP proposal would ask the owner to approve a bare numeric transition
-    // id, with no From or To, on a write that can be one-way.
-    ...denied("not_yet_offered", [
-      "jira.issue.transition",
-      "outlook.draft.create",
-      "confluence.page.append",
-    ]),
+    // A routable write not offered to MCP clients. `jira.issue.transition` is withheld by owner
+    // ruling OR-B2-4: before-reads run on the model door only (B0b), so an MCP proposal would ask
+    // the owner to approve a bare numeric transition id, with no From or To, on a write that can be
+    // one-way.
+    ...denied("not_yet_offered", ["jira.issue.transition"]),
     ...denied("gateway_internal", [
       "data.delete",
       "data.export",

@@ -825,6 +825,92 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
   }
 });
 
+// ---- B3: the draft and page writes on the act door (plan Task 4, R8) --------------------------
+
+/** The nine B3 types, with clean input (no KB configured, so R12 refuses none of them). */
+const B3_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
+  ["gmail.draft.create", { to: "a@x.com", subject: "S", body: "B" }],
+  ["apple.mail.draft.create", { to: "a@x.com", subject: "S", body: "B" }],
+  ["outlook.draft.create", { to: "a@x.com", subject: "S", body: "B", contentType: "html" }],
+  ["notion.page.create", { parentPageId: "ffff", title: "T" }],
+  ["notion.page.update", { pageId: "ffff", propertiesJson: "{}" }],
+  ["notion.block.append", { parentBlockId: "ffff", childrenJson: "[]" }],
+  ["confluence.page.create", { spaceKey: "ENG", title: "T", storageHtml: "<p>x</p>" }],
+  ["confluence.page.update", { pageId: "123", versionNumber: 7, title: "T", storageHtml: "x" }],
+  ["confluence.page.append", { pageId: "123", storageHtml: "<p>x</p>" }],
+];
+
+describe("B3 act door: every draft and page write shows its typed preview, with no before", () => {
+  const PROV = {
+    captureId: "cap_b3",
+    clientLabel: "agent",
+    createdAt: 0,
+    expiresAt: 1,
+    summary: "why",
+  };
+
+  function wiring(dispatched: PlannedAction[]) {
+    const prompts: Array<{ prompt: string; details: Record<string, unknown> }> = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string; details?: Record<string, unknown> }) => {
+        prompts.push({ prompt: req.prompt, details: req.details ?? {} });
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const w: CaptureActWiring = {
+      dispatcher: {
+        dispatch: (a) => {
+          dispatched.push(a);
+          return Promise.resolve({});
+        },
+      },
+      egressSink: makeEgressSink(db),
+      audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+      policyHitl: NO_POLICY_OVERLAY,
+    };
+    return { act: buildActDeps(w, coord, "c-cli"), prompts };
+  }
+
+  test("the nine are proposable; email.draft.create stays unroutable", () => {
+    expect(B3_PROPOSABLE).toHaveLength(9);
+    for (const [t] of B3_PROPOSABLE) {
+      expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    }
+    expect(classifyActionType("email.draft.create", REAL_CLASSIFY)).toEqual({
+      kind: "denied",
+      class: "unroutable",
+    });
+  });
+
+  for (const [type, input] of B3_PROPOSABLE) {
+    test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
+      const d: PlannedAction[] = [];
+      const { act, prompts } = wiring(d);
+      await act.execute(type, input, PROV);
+      const toolId = proposableWriteTool(type);
+      if (toolId === undefined) throw new Error(type);
+      const preview = buildConnectorWritePreviewFrom(
+        { type, payload: { mcpToolId: toolId, input } },
+        CONNECTOR_WRITE_ROWS,
+      );
+      if (preview === undefined) throw new Error(`no preview for ${type}`);
+      expect(prompts).toHaveLength(1);
+      expect(prompts[0]?.prompt).toBe(
+        [
+          ...formatActionProvenanceLines(PROV),
+          "",
+          ...renderConnectorWritePreviewLines(preview),
+        ].join("\n"),
+      );
+      expect(prompts[0]?.details["kind"]).toBe("connector-write");
+      // Before-reads run on the model door only (B0b).
+      expect(prompts[0]?.details["before"]).toBeUndefined();
+      expect(prompts[0]?.prompt).not.toContain("Before:");
+      expect(d).toEqual([{ type, payload: { mcpToolId: toolId, input } }]);
+    });
+  }
+});
+
 describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)", () => {
   const MCP = { clientId: "m", kind: "mcp" as const };
   const OWNER = { clientId: "o", kind: "cli" as const };
@@ -1064,6 +1150,24 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     expect(submitAudits()).toBe(before + 1);
   });
 
+  test("a Confluence append to the KB parent page is refused at submit (proposable since B3)", async () => {
+    kbAccessor = () => ({ confluence: KB.confluence });
+    const c = actCtx([]);
+    const before = submitAudits();
+    expect(
+      await outcome(submit(c, "confluence.page.append", { pageId: "4242", storageHtml: "x" })),
+    ).toEqual(REFUSED);
+    expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+    expect(submitAudits()).toBe(before + 1);
+    // With no KB configured the same append is queued (R12 refuses nothing then).
+    kbAccessor = () => undefined;
+    expect(
+      await outcome(
+        submit(actCtx([]), "confluence.page.append", { pageId: "4242", storageHtml: "x" }),
+      ),
+    ).toBe("queued");
+  });
+
   test("a Notion create under the KB database is refused at submit (the KB-target rule)", async () => {
     kbAccessor = () => KB;
     const c = actCtx([]);
@@ -1118,6 +1222,24 @@ describe("B3 act door: the KB-target and KB-child refusals at submit and at acce
     const d: PlannedAction[] = [];
     const c = actCtx(d);
     const sub = await submit(c, "confluence.page.update", UPDATE_IN_ENG);
+    if (sub.kind !== "hit") throw new Error("submit missed");
+    const id = (sub.value as { id: string }).id;
+    kbAccessor = () => ({ confluence: KB.confluence });
+    const consent = {
+      requestConsent: () => Promise.resolve(true),
+    } as unknown as ConsentCoordinator;
+    expect(await outcome(dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent))).toEqual(
+      REFUSED,
+    );
+    expect(c.gate.store.get(id)?.state).toBe("proposed");
+    expect(d).toEqual([]);
+  });
+
+  test("an append to the KB parent queued before a KB was configured is refused at accept", async () => {
+    kbAccessor = () => undefined;
+    const d: PlannedAction[] = [];
+    const c = actCtx(d);
+    const sub = await submit(c, "confluence.page.append", { pageId: "4242", storageHtml: "x" });
     if (sub.kind !== "hit") throw new Error("submit missed");
     const id = (sub.value as { id: string }).id;
     kbAccessor = () => ({ confluence: KB.confluence });

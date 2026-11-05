@@ -269,8 +269,8 @@ describe("connectors 0.4.0 writes (B-X)", () => {
     expect(rows.map((r) => r.toolId)).toEqual([]);
   });
 
-  test("eleven are proposable over MCP; the Jira transition, the draft and the append stay not_yet_offered", () => {
-    const withheld = ["jira_issue_transition", "outlook_draft_create", "confluence_page_append"];
+  test("thirteen are proposable over MCP; only the Jira transition stays not_yet_offered", () => {
+    const withheld = ["jira_issue_transition"];
     for (const id of CONNECTORS_0_4_0_WRITES) {
       expect(ACTION_PROPOSABILITY[id.replaceAll("_", ".")], id).toEqual(
         withheld.includes(id)
@@ -278,7 +278,7 @@ describe("connectors 0.4.0 writes (B-X)", () => {
           : { kind: "proposable" },
       );
     }
-    expect(CONNECTORS_0_4_0_WRITES.filter((id) => !withheld.includes(id))).toHaveLength(11);
+    expect(CONNECTORS_0_4_0_WRITES.filter((id) => !withheld.includes(id))).toHaveLength(13);
   });
 
   test("the new read jira_issue_transitions_list is not a write and is read-only", () => {
