@@ -21,6 +21,8 @@ export const KNOWLEDGE_BASE_REFUSAL =
   "the model cannot write to the Nimbus knowledge base; use the capture flow";
 export const BROADCAST_MENTION_REFUSAL =
   "the model cannot post a message that notifies a whole channel, group or team; rephrase without the broadcast mention";
+export const GITLAB_QUICK_ACTION_REFUSAL =
+  "GitLab quick actions (lines starting with /) are not allowed in a model-written note; rephrase without them";
 
 /** The `[tribal]` knowledge-base destinations (`config/nimbus-toml.ts` `NimbusTribalToml`). */
 export interface TribalKbConfig {
@@ -317,23 +319,40 @@ function isLineSpace(cp: number): boolean {
   return cp >= 0x09 && cp <= 0x0d;
 }
 
-/** One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. */
-function normaliseRound(s: string, invisible: string): string {
+/**
+ * A line break for the line-preserving form: LF, CR, VT, FF, NEL, and the Unicode line and
+ * paragraph separators (counted as breaks whether or not a platform splits on them: fail closed).
+ */
+function isLineBreak(cp: number): boolean {
+  return (cp >= 0x0a && cp <= 0x0d) || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
+}
+
+/**
+ * One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. With
+ * `keepLines`, every line break becomes LF (a TAB a space); without it, TAB to CR are spaces.
+ */
+function normaliseRound(s: string, invisible: string, keepLines: boolean): string {
   let out = "";
   for (const ch of s.normalize("NFKC")) {
     const cp = ch.codePointAt(0) ?? 0;
-    if (isLineSpace(cp)) out += " ";
+    if (keepLines && isLineBreak(cp)) out += "\n";
+    else if (isLineSpace(cp)) out += " ";
     else out += isInvisibleOrControl(cp) ? invisible : ch;
   }
   return decodeEntitiesOnce(out);
 }
 
-/** The stable, collapsed, lower-cased form, or `undefined` when it does not settle (refused). */
-function settle(text: string, invisible: string): string | undefined {
+/**
+ * The stable, lower-cased form, or `undefined` when it does not settle (refused). Whitespace runs
+ * collapse to one space, unless `keepLines`, which keeps one LF per line break.
+ */
+function settle(text: string, invisible: string, keepLines = false): string | undefined {
   let cur = text;
   for (let i = 0; i < BROADCAST_MAX_ROUNDS; i++) {
-    const next = normaliseRound(cur, invisible);
-    if (next === cur) return cur.replaceAll(/\s+/g, " ").toLowerCase();
+    const next = normaliseRound(cur, invisible, keepLines);
+    if (next === cur) {
+      return (keepLines ? cur : cur.replaceAll(/\s+/g, " ")).toLowerCase();
+    }
     cur = next;
   }
   return undefined;
@@ -409,6 +428,44 @@ function refusesBroadcast(toolId: string, input: Readonly<Record<string, unknown
   return broadcastMentionIn(scan.service, text, { html: scan.htmlWhen?.(input) ?? false });
 }
 
+// ---------------------------------------------------------------------------------------------
+// GitLab quick actions (coordinator ruling 2026-11-05, recorded for the owner): GitLab runs
+// `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body, so a model-written
+// note could change the issue or merge request's state. A GitLab note is refused when any line of
+// its body, normalised as for broadcast mentions but keeping its line breaks (both the deleted and
+// the spaced form), begins with optional whitespace, then `/`, then a letter. A fenced code block
+// does NOT exempt it (fail closed). `and/or` or a URL mid-line is not a quick action.
+// ---------------------------------------------------------------------------------------------
+
+const QUICK_ACTION_LINE = /^\s*\/[a-z]/;
+
+/** Whether a GitLab note body carries a quick-action line (or does not settle: refused). */
+export function gitlabQuickActionIn(text: string): boolean {
+  for (const invisible of ["", " "]) {
+    const settled = settle(text, invisible, true);
+    if (settled === undefined) return true;
+    if (settled.split("\n").some((line) => QUICK_ACTION_LINE.test(line))) return true;
+  }
+  return false;
+}
+
+/** The GitLab note rows and the input key holding the note body. */
+const GITLAB_NOTE_ROWS: Readonly<Record<string, string>> = {
+  gitlab_issue_note_create: "body",
+  gitlab_mr_note_create: "body",
+};
+
+/** A GitLab note whose body runs a quick action (a non-string body is refused). */
+function refusesGitlabQuickAction(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): boolean {
+  const key = ownLookup(GITLAB_NOTE_ROWS, toolId);
+  if (key === undefined) return false;
+  const body = Object.hasOwn(input, key) ? input[key] : undefined;
+  return typeof body !== "string" || gitlabQuickActionIn(body);
+}
+
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
 function chatopsRefusal(
   toolId: string,
@@ -430,7 +487,8 @@ function chatopsRefusal(
 /**
  * The ONE messaging-destination check both doors call (OR1 + OR2): the ChatOps channel first
  * (so a post to a ChatOps channel that also carries a mention reports the ChatOps reason), then
- * the broadcast mention. A fixed text that echoes nothing of the input, or `undefined`.
+ * the broadcast mention, then a GitLab quick action. A fixed text that echoes nothing of the
+ * input, or `undefined`.
  */
 export function messagingDestinationRefusal(
   toolId: string,
@@ -439,7 +497,8 @@ export function messagingDestinationRefusal(
 ): string | undefined {
   const chatops = chatopsRefusal(toolId, input, ctx.chatops);
   if (chatops !== undefined) return chatops;
-  return refusesBroadcast(toolId, input) ? BROADCAST_MENTION_REFUSAL : undefined;
+  if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
+  return refusesGitlabQuickAction(toolId, input) ? GITLAB_QUICK_ACTION_REFUSAL : undefined;
 }
 
 /**

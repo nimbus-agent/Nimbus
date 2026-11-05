@@ -21,6 +21,7 @@ import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "./model-write-capabilit
 import {
   BROADCAST_MENTION_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
+  GITLAB_QUICK_ACTION_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
@@ -459,5 +460,35 @@ describe("the broadcast-mention refusal on the real rows through the real door (
       "github.issue.comment.create",
       "gitlab.mr.note.create",
     ]);
+  });
+});
+
+describe("GitLab quick actions on the real rows through the real door", () => {
+  test("a note that would /close or /merge is refused before anything is executed", async () => {
+    const door = await realDoor(() => BOUND);
+    const refused = { refused: GITLAB_QUICK_ACTION_REFUSAL };
+    expect(
+      await door.call("gitlab__gitlab_issue_note_create", {
+        projectPath: "g/r",
+        issueIid: 7,
+        body: "done\r\n/close",
+      }),
+    ).toEqual(refused);
+    expect(
+      await door.call("gitlab__gitlab_mr_note_create", {
+        projectPath: "g/r",
+        mergeRequestIid: 9,
+        body: "  /merge",
+      }),
+    ).toEqual(refused);
+    expect(door.executed).toEqual([]);
+    expect(
+      await door.call("gitlab__gitlab_mr_note_create", {
+        projectPath: "g/r",
+        mergeRequestIid: 9,
+        body: "approve and/or merge when green",
+      }),
+    ).toEqual({ sent: true });
+    expect(door.executed).toHaveLength(1);
   });
 });
