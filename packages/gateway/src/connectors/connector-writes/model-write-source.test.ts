@@ -133,3 +133,84 @@ describe("createModelWriteToolSource", () => {
     expect(src.recheck(SYNC)).toBe(true);
   });
 });
+
+describe("createModelWriteToolSource: the destination refusals (F3/F4)", () => {
+  const POST = withPreview(row("slack_message_post", "slack.message.post", "mesh", 2), {
+    target: "{channel}",
+    summary: "Post",
+    fields: [],
+  });
+  const APPEND = withPreview(row("notion_block_append", "notion.block.append", "mesh", 2), {
+    target: "{parentBlockId}",
+    summary: "Append",
+    fields: [],
+  });
+  const withChatops = {
+    capabilitiesDisabled: new Set<string>(),
+    chatops: {
+      channels: new Map([["C0123ABCD", { namespace: "ns", unmapped: "refuse", notify: [] }]]),
+      ownership: new Map(),
+    },
+  } as unknown as EnforcedPolicy;
+
+  function refusingSource(
+    enforcedPolicy: ModelWriteSourceDeps["enforcedPolicy"],
+    getTribalKbConfig?: ModelWriteSourceDeps["getTribalKbConfig"],
+  ) {
+    return createModelWriteToolSource({
+      db,
+      enforcedPolicy,
+      listServerTools: async () => undefined,
+      toolsEpoch: () => 0,
+      warn: () => {},
+      rows: [POST, APPEND],
+      ...(getTribalKbConfig === undefined ? {} : { getTribalKbConfig }),
+    });
+  }
+
+  test("the ChatOps bindings are read from the live enforced policy", () => {
+    let policy = withChatops;
+    const src = refusingSource(() => policy);
+    expect(src.refusal?.(POST, { channel: "#c0123abcd", text: "x" })).toBe(
+      "the model cannot post to a channel Nimbus ChatOps listens on",
+    );
+    expect(src.refusal?.(POST, { channel: "C9999ZZZZ", text: "x" })).toBeUndefined();
+    // A policy whose ChatOps binds no channel: nothing to refuse.
+    policy = {
+      capabilitiesDisabled: new Set<string>(),
+      chatops: { channels: new Map(), ownership: new Map() },
+    } as unknown as EnforcedPolicy;
+    expect(src.refusal?.(POST, { channel: "#c0123abcd", text: "x" })).toBeUndefined();
+  });
+
+  test("an unreadable or throwing policy refuses a ChatOps-platform post", () => {
+    expect(refusingSource(() => undefined).refusal?.(POST, { channel: "C9999ZZZZ" })).toBe(
+      "the model cannot post to a channel Nimbus ChatOps listens on",
+    );
+    expect(
+      refusingSource(() => {
+        throw new Error("x");
+      }).refusal?.(POST, { channel: "C9999ZZZZ" }),
+    ).toBe("the model cannot post to a channel Nimbus ChatOps listens on");
+  });
+
+  test("the KB config is read per call; a throw propagates (the door refuses it)", () => {
+    let kbId: string | undefined = "aaaa-bbbb";
+    const src = refusingSource(
+      () => ALLOWED,
+      () => (kbId === undefined ? undefined : { notion: { databaseId: kbId } }),
+    );
+    expect(src.refusal?.(APPEND, { parentBlockId: "AAAABBBB" })).toBe(
+      "the model cannot write to the Nimbus knowledge base; use the capture flow",
+    );
+    kbId = undefined;
+    expect(src.refusal?.(APPEND, { parentBlockId: "AAAABBBB" })).toBeUndefined();
+    const throwing = refusingSource(
+      () => ALLOWED,
+      () => {
+        throw new Error("config");
+      },
+    );
+    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x" })).toThrow();
+  });
+});

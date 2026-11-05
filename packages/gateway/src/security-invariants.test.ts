@@ -11277,6 +11277,14 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(src).toContain("isModelOfferableRow");
     expect(src).toContain("isConnectorWriteModelAccessEnabled");
     expect(src).toContain("getModelWriteEnablement");
+    // F3/F4: the destination refusals read the live policy's ChatOps bindings and the KB config.
+    expect(src).toContain("modelWriteRefusal(row.toolId, input,");
+    const door = stripComments(
+      await read("packages/gateway/src/engine/connector-write-agent-tools.ts"),
+    );
+    const refusalAt = door.indexOf("destinationRefusal(source, row, input)");
+    expect(refusalAt).toBeGreaterThan(door.indexOf("if (!isPlainObject(input))"));
+    expect(refusalAt).toBeLessThan(door.indexOf("ex.execute("));
     // V84 re-consent: the listing and the per-call recheck share ONE predicate that reads it.
     expect(src).toContain("approvedToolIds.has(row.toolId)");
     expect(src.match(/offeredUnder\(/g)?.length).toBe(3);

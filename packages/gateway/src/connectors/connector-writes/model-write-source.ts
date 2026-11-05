@@ -16,6 +16,11 @@ import {
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts";
+import {
+  CHATOPS_CHANNEL_REFUSAL,
+  modelWriteRefusal,
+  type TribalKbConfig,
+} from "./model-write-refusals.ts";
 import type { ConnectorWriteRow } from "./types.ts";
 
 export interface ModelWriteSourceDeps {
@@ -27,6 +32,11 @@ export interface ModelWriteSourceDeps {
   readonly warn: ConnectorWriteToolSource["warn"];
   /** Test seam; production uses the write table. */
   readonly rows?: readonly ConnectorWriteRow[];
+  /**
+   * The `[tribal]` knowledge-base destinations (F4), read per call. Absent or `undefined`: no KB
+   * is configured, so nothing is refused for it. A throw refuses the call (fail closed).
+   */
+  readonly getTribalKbConfig?: () => TribalKbConfig | undefined;
 }
 
 function policyAllows(deps: ModelWriteSourceDeps): boolean {
@@ -70,6 +80,17 @@ export function createModelWriteToolSource(deps: ModelWriteSourceDeps): Connecto
     recheck: (row) => {
       if (!policyAllows(deps)) return false;
       return offeredUnder(getModelWriteEnablement(deps.db, serviceOf(row.actionType)), row);
+    },
+    // F3/F4: the ChatOps bindings come from the SAME live enforced policy the offer reads; a
+    // throw or an unreadable policy refuses a ChatOps-platform post.
+    refusal: (row, input) => {
+      let chatops: EnforcedPolicy["chatops"] | undefined;
+      try {
+        chatops = deps.enforcedPolicy?.()?.chatops;
+      } catch {
+        return CHATOPS_CHANNEL_REFUSAL;
+      }
+      return modelWriteRefusal(row.toolId, input, { chatops, kb: deps.getTribalKbConfig?.() });
     },
     warn: deps.warn,
   };
