@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793906619284,
+  "lastUpdate": 1793918937696,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5b9c1152c6c0df19f0035ab401bd62413132b89b",
-          "message": "feat(agents): give every interleaved brief disclosure one definition and a guard (#1245)\n\nI31 PR 1 made whole-section disclosures safe by construction: `## Gaps`\nand negotiate's two reserved sections are built by the renderer and\nre-attached verbatim, so a rewrite cannot drop them. The sentences\ninterleaved with the numbers they qualify cannot use that mechanism —\nthey sit inside prose the model is meant to rewrite — and the\nanchor-phrase fallback covered only negotiate's seven null-lane\ndisclaimers, from string literals in `render.ts` with a matching copy in\n`brief-contract.ts`. Two sets free to drift: edit one and you get either\na guard requiring a phrase nothing renders, which rejects every\nsynthesis, or a rendered disclosure nothing guards.\n\n## What changed\n\nNew `agents/_lib/brief-disclosures.ts` is the single definition of each\ndisclosure — its `line`, the text the renderer emits; its `anchor`, the\nfactual fragment that must survive a rewrite; and, where it is\nconditional, its presence predicate. `render.ts` emits `.line`.\n`brief-contract.ts`'s `requiredPhrases` requires `.anchor` under the\nsame predicate, by asking the module rather than re-deriving it, so the\nguard cannot require a phrase the brief never rendered, nor miss one it\ndid.\n\nCoverage widens from those seven sentences to the whole interleaved set:\nnegotiate's ownership accountability disclaimer and list-truncation\nclause, its two `unattributable` disambiguation lines, glossary's two\ndefinition-provenance lines, and the last-modified-not-created window\nclause.\n\nThe window clause needed a second scope, not just an anchor. It lives in\nthe preamble above the first `##` — deliberately, since it qualifies\nevery headline count in the brief — where `sectionBody` cannot reach, so\na required phrase pointed at it had nowhere to be checked.\n`markdown-sections.ts` gains `preambleBody`, fence-aware through the\nsame shared scan. It is scoped to the preamble rather than the whole\ndocument: a rewrite that deletes the clause from the header and mentions\nit under some unrelated section has still dropped it from the place the\ncounts are read against.\n\nAnchors are each sentence's factual clause, never its full text —\nrequiring that verbatim would reject legitimate paraphrase and discard\nthe rewrite — and never its variable tail, since the decisions line ends\n\"not necessarily yours\" or \"not necessarily theirs\" depending on\n`--person`, so a tail-inclusive anchor would be inert for half of all\nbriefs.\n\n## Behaviour change worth stating plainly\n\nA negotiate brief now ALWAYS has a non-empty requirement set, because\nthe window clause is unconditional. Before this, a fully-populated\nnegotiate brief had none — a model could return a single line and it was\naccepted verbatim. Three fixtures across the suite encoded that\nbehaviour and now carry the disclosures a real rewrite must keep.\n\n## Bounds, recorded rather than hidden\n\nA phrase check proves a fragment survived, not that the sentence around\nit still means what it meant: a rewrite keeping \"no indexed author\"\ninside a sentence that reverses its sense would pass.\n\nGlossary requires a phrase only in `term` mode, for `entries[0]`,\nexactly mirroring `renderGlossaryBody`. List and miss mode render no\nprovenance sentence at all, and requiring one there would reject every\nlist-mode synthesis over a disclosure the renderer never wrote.\n\nOne design item was dropped on contact with the code: exact-match\nheading scoping for glossary terms, proposed against a prefix collision\nbetween two term sections that cannot arise, because term mode renders a\nsingle entry. The extra axis on the shared scanner went with it.\n\n## Verification\n\n- `bun run preflight:fast` — passed, all 29 gates.\n- `bun run preflight` — every gate green except `audit:coverage-floor`,\nwhich flags 3 violations in `socket-listeners.ts` and\n`platform/linux.ts`. Neither file is touched by this branch, and both\nmatch the documented Windows-only divergence where the Linux PAL arm\nnever executes. This branch's own files: `brief-disclosures.ts` 100%\nline and 100% branch; `brief-contract.ts` 97.3 and 95.5;\n`markdown-sections.ts` 100 and 91.2; `render.ts` 98.8 and 90.3 — all\nclear of the 85 and 80 floors.\n- `bun test packages/gateway/src` — 11381 pass, 0 fail.\n- Six red-proofs, each by reverting the mechanism and confirming the\nmatching test goes red: the window requirement, preamble scoping, the\nzero-suppression predicate, an inert anchor, the glossary mode mirror,\nand the new `security-invariants.test.ts` I31 row.\n\n## Docs\n\nI31's statement, wiring site, anti-patterns and compliance recipe; the\nmirrored `CLAUDE.md` and `GEMINI.md` bullets, which asserted the\nopposite; the roadmap's Remaining-in-S1 row plus the stale \"is PR 2's\nscope\" clause in the A0 row; a dated `CHANGELOG.md` entry.\n\nNo schema change, no IPC change, no Tauri allowlist change, no new\ninvariant — I31 already exists and its text is updated in place.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-18T19:16:03+03:00",
-          "tree_id": "83ae81dd3a2daca4b40ebb5e71ebf3b8b1ffdb9e",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5b9c1152c6c0df19f0035ab401bd62413132b89b"
-        },
-        "date": 1787070322688,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 247.25556044999647,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 246.8442115000005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 302.0639181999999,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "babdf72ad44e58c5ab0b0841d94af1986157b462",
+          "message": "feat(gateway): the model can propose an Obsidian daily-note append; the sandbox may write only today's note (#1911)\n\nPhase 9.7 Project B, PR B4b: the model can propose an Obsidian\ndaily-note append. This is the last Project B write.\n\nThe append is HITL-gated and shows the end of the note it writes. It is\noffered only after the owner re-approves with `nimbus connector writes\nenable obsidian`. Its sandbox is widened so that it can write exactly\none file per vault: today's daily note.\n\n**The grant (owner rulings OR-B4-1 and 2026-11-05)**\n- **When it exists.** Write access exists only while the owner's `enable\nobsidian` approval includes the append. Without that approval the\nObsidian spawn is unchanged.\n- **What it covers.** It covers today's daily-note FILE in each\ndiscovered vault, and nothing else:\n  - not the vault;\n- not `.obsidian`, including plugins, which Obsidian runs with full user\nrights;\n  - not `.git`, including its hooks;\n  - not another note, and not a new file.\n\nAn earlier draft granted the whole vault. The final review showed that\nthis let a compromised connector plant `.obsidian/plugins/*/main.js` or\na git hook, and the owner narrowed it.\n- **Resolving the file.** The gateway resolves the path with the\nappend's own resolver (UTC date). It creates the folder and an empty\nnote on the host with `O_EXCL`/`O_NOFOLLOW`. It refuses a link, a\nnon-file, a second hard link (`nlink > 1`), and any path in `.obsidian`\nor `.git` in any letter case.\n- **The gateway declares the grant.** It states that each grant is a\nfile (`canonicalWriteFiles`). The wrapper refuses the spawn unless each\ndeclared path is still a regular file with one link. Nothing is guessed\nfrom what is on disk.\n- **Per OS:**\n  - **Linux:** a bwrap bind of that file.\n- **macOS:** `(allow file-write-data (literal <file>))` only. There is\nno create, unlink or rename, so the child cannot unlink the note and\nhard-link another file into its place.\n- **Windows:** `--grant-write-file`. The helper refuses anything that is\nnot a regular file and grants a non-inheritable ACE with no DELETE\nright.\n- **Day rollover.** The first spawn decision after the UTC date changes\ndetaches the old client, grants the new note and revokes yesterday's.\nUntil then the sandbox refuses the new file, so it fails closed.\n- **Revoke and ledger (Windows).**\n- Disabling detaches the old client immediately and revokes its access\nat once; it never waits on a draining tool call.\n- A persisted ledger in `<configDir>`, not `dataDir`, records every\ngranted file. Every revoke covers the ledger, so a gateway restart\nleaves no stale write access.\n  - The revoke times out after 180 s and fails closed.\n- The helper takes a lock around every DACL read-modify-write, so a\nconcurrent grant cannot restore a revoked ACE.\n  - Users without the approval pay nothing new.\n- **The enable prompt.** It names each vault's file pattern and says\nnothing else becomes writable, including in any vault made later.\n\n**The append row**\n- It shows a typed preview.\n- Its before-state reads the tail of today's note through connectors\n0.5.0's `obsidian_daily_note_get`. That read is realpath-contained,\ncapped at 16 KiB, and never shown to the model.\n- It is offered to the model, which brings the totals to 38 offerable,\n56 templated and 23 readers. The act door is unchanged at 43/117/1.\n\n**Also fixed**\n- Gateway indexing no longer follows a link below a root. It also never\nreads a note through a link swapped in after the walk: it uses\n`O_NOFOLLOW` plus a dev/ino check, and refuses reparse points on win32.\n- Vault discovery for the grant skips links. It needs a real `.obsidian`\nfolder and is bounded in depth and size.\n\n**Stated bounds (I15)**\n- The child can rewrite or truncate today's note, which is the one file\nit holds.\n- On macOS, a HOST process that swaps today's note for a hard link after\nthe spawn makes that file writable through the path. The child itself\ncannot.\n- On Linux, a folder swapped in between the wrapper's check and the bind\nis not caught; again, the child cannot do this.\n- While the grant is on, each spawn creates today's empty note in every\nvault.\n\n**Tests**\n- A real sandbox on each OS:\n  - today's note is written the connector's way;\n- refused: `.obsidian/plugins/x/main.js`, `community-plugins.json`,\n`.git/hooks/pre-commit`, another note, a new note, the root, a sibling\nand a link out;\n- rename onto, deletion of, and deletion beside today's note are all\nrefused, each with an unsandboxed control;\n  - with the grant off after a revoke, nothing is written;\n- on macOS, the unlink-then-hard-link and symlink or folder swap\nattempts against a plugin's `main.js` are refused.\n- Results:\n  - Windows: 28/28.\n  - Linux under real bwrap (WSL): 98/98.\n- The macOS cases run on the macOS CI leg; this PR is their first real\nrun.\n- Every confinement change was red-proved, including rebuilding the\nhelper without each check.\n\n**Not breaking.** Nothing is granted or offered until the owner re-runs\n`enable obsidian` and approves. Every append still prompts.\n\n**Docs:** the five core docs (CLAUDE.md and GEMINI.md, roadmap,\narchitecture, README, cli-reference); SECURITY-INVARIANTS I15 (scope,\nper-OS behaviour, bounds), I53 and I28; `docs/sandbox.md`; the Obsidian\nconnector page; the sandbox and mcp-sink skills; and the CHANGELOG.\n\n**Verification**\n- `preflight:fast`, `typecheck` and `typecheck:tests` (0 new) pass, as\ndo `audit:doc-refs`, `audit:status-drift` and\n`audit:platform-test-gaps`.\n- `verify:docker --changed`: the only red is the suite's own \"sandbox\nprerequisite present on CI\" check, because the container has no working\nbwrap. The CI Linux leg installs it.\n- The whole-branch review and two re-reviews were each answered, ending\nwith this file-only design.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added an Obsidian daily-note append option. Each append requires\napproval, and enabling Obsidian writes permits changes only to the\ncurrent UTC daily note in eligible vaults.\n* Approval prompts show the proposed text and relevant details from the\nexisting note.\n* **Security**\n* Writes to linked, protected, or out-of-scope files are refused.\nObsidian indexing no longer follows links below configured roots.\n* **Documentation**\n* Updated guidance to describe the new write option, approval flow, and\nrestrictions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-05T22:40:45Z",
+          "tree_id": "e58f03f6d1d57e33db5ff20e726dd03c4bd96eae",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/babdf72ad44e58c5ab0b0841d94af1986157b462"
+        },
+        "date": 1793918932773,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.4956441000035,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.78117464999778,
             "unit": "ms"
           }
         ]
