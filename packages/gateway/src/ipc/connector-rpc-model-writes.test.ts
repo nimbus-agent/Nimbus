@@ -561,17 +561,62 @@ describe("re-consent on the real B1 and B2 rows (V84; B1 and B2 Task 5)", () => 
     ]);
   });
 
-  test("Gmail, Outlook and Apple enabled before B3: the draft awaits approval, nothing is offered", async () => {
-    for (const service of ["gmail", "outlook", "apple"]) {
+  test("Gmail, Outlook and Apple enabled before B3: the draft (and, since B4a, the calendar create) await approval, nothing is offered", async () => {
+    for (const [service, awaiting] of [
+      ["gmail", 1],
+      ["outlook", 2],
+      ["apple", 2],
+    ] as const) {
       setModelWriteEnablement(db, service, 2, 1, []);
       expect(await statusOf(service), service).toMatchObject({
         offerable: 0,
-        awaitingApproval: 1,
+        awaitingApproval: awaiting,
       });
       expect(
         (await doorTools()).filter((n) => n.startsWith(`${service}__`)),
         service,
       ).toEqual([]);
     }
+  });
+
+  for (const [service, draft, calendar] of [
+    ["outlook", "outlook_draft_create", "outlook_calendar_create"],
+    ["apple", "apple_mail_draft_create", "apple_calendar_event_create"],
+  ] as const) {
+    test(`B4a: a ${service} opt-in approved at B3 (the draft) has the calendar create awaiting approval`, async () => {
+      setModelWriteEnablement(db, service, 2, 1, [draft]);
+      expect(await statusOf(service)).toMatchObject({ offerable: 1, awaitingApproval: 1 });
+      expect((await doorTools()).filter((n) => n.startsWith(`${service}__`))).toEqual([
+        `${service}__${draft}`,
+      ]);
+      const seen: Array<Record<string, unknown> | undefined> = [];
+      await call("connector.writesEnable", { service, wave: 2 }, { exec: recordingExecutor(seen) });
+      expect(seen).toHaveLength(1);
+      expect(statesOf(seen[0])).toEqual({
+        [draft]: "already_approved",
+        [calendar]: "newly_offerable",
+      });
+      expect(await statusOf(service)).toMatchObject({ offerable: 2, awaitingApproval: 0 });
+      expect((await doorTools()).filter((n) => n.startsWith(`${service}__`))).toEqual(
+        [`${service}__${calendar}`, `${service}__${draft}`].sort((a, b) => a.localeCompare(b)),
+      );
+    });
+  }
+
+  test("B4a: a google_drive opt-in made earlier approved nothing offerable; the file create awaits approval", async () => {
+    setModelWriteEnablement(db, "google_drive", 2, 1, []);
+    expect(await statusOf("google_drive")).toMatchObject({ offerable: 0, awaitingApproval: 1 });
+    expect((await doorTools()).filter((n) => n.startsWith("google_drive__"))).toEqual([]);
+    const seen: Array<Record<string, unknown> | undefined> = [];
+    await call(
+      "connector.writesEnable",
+      { service: "google_drive", wave: 2 },
+      { exec: recordingExecutor(seen) },
+    );
+    expect(statesOf(seen[0])).toEqual({ gdrive_file_create: "newly_offerable" });
+    expect(await statusOf("google_drive")).toMatchObject({ offerable: 1, awaitingApproval: 0 });
+    expect((await doorTools()).filter((n) => n.startsWith("google_drive__"))).toEqual([
+      "google_drive__gdrive_file_create",
+    ]);
   });
 });

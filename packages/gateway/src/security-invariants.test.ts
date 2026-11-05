@@ -11465,12 +11465,13 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes and B3's five page writes, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes and B4a's Drive create, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",
+      "gdrive_file_create",
       "github_issue_assignees_add",
       "github_issue_comment_create",
       "github_issue_labels_add",

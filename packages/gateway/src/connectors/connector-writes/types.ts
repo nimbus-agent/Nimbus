@@ -24,10 +24,11 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since B3 twenty-one rows
-   * have one: the seven comment rows (B1), nine issue writes (B2) and five page writes (B3); the
-   * Jira transition takes two reads, and five rows carry a guard (the Linear update, and the four
-   * Notion/Confluence page updates and appends with the KB-child guard).
+   * values on the model door's prompt only. Set with {@link withBefore}. Since B4a twenty-two rows
+   * have one: the seven comment rows (B1), nine issue writes (B2), five page writes (B3) and the
+   * Drive file create (B4a, its target folder); the Jira transition takes two reads, and five
+   * rows carry a guard (the Linear update, and the four Notion/Confluence page updates and appends
+   * with the KB-child guard).
    */
   readonly before?: BeforeStateReader;
 }

@@ -29,12 +29,15 @@ import { isModelOfferableRow } from "./model-offerable.ts";
 import { CONNECTOR_WRITE_MODEL_ACCESS_CAPABILITY } from "./model-write-capability.ts";
 import {
   BROADCAST_MENTION_REFUSAL,
+  CALENDAR_TEXT_REFUSAL,
+  CALENDAR_TIME_REFUSAL,
   CHATOPS_CHANNEL_REFUSAL,
   GITLAB_QUICK_ACTION_REFUSAL,
   GITLAB_SCOPED_LABEL_REFUSAL,
   KNOWLEDGE_BASE_CHILD_REFUSAL,
   KNOWLEDGE_BASE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
+  nullOptionalFieldRefusal,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
@@ -290,6 +293,7 @@ const REAL_SERVICES = [
   "gmail",
   "outlook",
   "apple",
+  "google_drive",
 ];
 
 function chatopsPolicy(channels: readonly string[]): EnforcedPolicy {
@@ -364,14 +368,14 @@ async function realDoor(
 describe("the real messaging rows through the real door (plan Task 3)", () => {
   const chatopsRefused = { refused: CHATOPS_CHANNEL_REFUSAL };
 
-  test("every B1, B2 and B3 row is offered on an approved wave-2 opt-in", async () => {
+  test("every B1-B4a row is offered on an approved wave-2 opt-in", async () => {
     const door = await realDoor(() => BOUND);
     expect(door.offered).toEqual(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => `${serviceOf(r.actionType)}__${r.toolId}`)
         .sort((a, b) => a.localeCompare(b)),
     );
-    expect(door.offered).toHaveLength(34);
+    expect(door.offered).toHaveLength(37);
   });
 
   test("Slack: the bound channel by id and any channel NAME are refused, the DM too; nothing executed", async () => {
@@ -584,6 +588,72 @@ describe("B2: the issue-write refusals on the real rows through the real door (p
       "github.issue.create",
       "gitlab.issue.labels.add",
     ]);
+  });
+});
+
+describe("B4a: the calendar refusals on the real rows through the real door (plan R6)", () => {
+  test("an Outlook time with an offset and an iCloud CR in the title are refused; nothing executed", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00:00+02:00",
+        endDateTime: "2026-11-05T11:00:00",
+      }),
+    ).toEqual({ refused: CALENDAR_TIME_REFUSAL });
+    expect(
+      await door.call("apple__apple_calendar_event_create", {
+        summary: "Review\rATTENDEE:mailto:x@evil.example",
+        start: "20261105T100000Z",
+        end: "20261105T110000Z",
+      }),
+    ).toEqual({ refused: CALENDAR_TEXT_REFUSAL });
+    expect(door.executed).toEqual([]);
+  });
+
+  test("clean Outlook and iCloud creates are executed once each", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00:00",
+        endDateTime: "2026-11-05T11:00:00",
+        timeZone: "Europe/Paris",
+        attendees: "a@x.com, b@y.com",
+      }),
+    ).toEqual({ sent: true });
+    expect(
+      await door.call("apple__apple_calendar_event_create", {
+        summary: "Review",
+        start: "20261105T100000Z",
+        end: "20261105T110000Z",
+        attendees: ["a@x.com"],
+      }),
+    ).toEqual({ sent: true });
+    expect(door.executed.map((a) => a.type)).toEqual([
+      "outlook.calendar.create",
+      "apple.calendar.event.create",
+    ]);
+  });
+
+  test("a null optional field is refused (Drive parentId, Outlook timeZone), nothing executed; omitted is executed once", async () => {
+    const door = await realDoor(() => BOUND);
+    expect(
+      await door.call("google_drive__gdrive_file_create", { name: "n.txt", parentId: null }),
+    ).toEqual({ refused: nullOptionalFieldRefusal("parentId") });
+    expect(
+      await door.call("outlook__outlook_calendar_create", {
+        subject: "Review",
+        startDateTime: "2026-11-05T10:00",
+        endDateTime: "2026-11-05T11:00",
+        timeZone: null,
+      }),
+    ).toEqual({ refused: nullOptionalFieldRefusal("timeZone") });
+    expect(door.executed).toEqual([]);
+    expect(await door.call("google_drive__gdrive_file_create", { name: "n.txt" })).toEqual({
+      sent: true,
+    });
+    expect(door.executed.map((a) => a.type)).toEqual(["google_drive.file.create"]);
   });
 });
 
