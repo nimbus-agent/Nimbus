@@ -3,6 +3,7 @@ import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
 import {
   buildConnectorWritePreview,
+  type ConnectorWritePreview,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
 import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
@@ -294,15 +295,33 @@ export function redactPayloadForConsentDisplay(value: unknown): unknown {
  * substring match that also hides `author`, `keywords` or `monkey`, so a prompt-injected model could
  * otherwise move the input it wants approved under such a key and out of the owner's sight. The
  * global regex is deliberately left as is for every other action type.
+ *
+ * An `origin: "model"` action (top level only, gateway-set) is shown with `requestedBy: "model"`,
+ * so the desktop says who asked as the CLI's `Requested by` line does. It is added AFTER the
+ * payload is wrapped, so the gateway's value wins over any payload key of that name and the
+ * addition can never make a payload pose as a preview. `preview` is one the caller already built
+ * for this action (the gate builds it once, for both display functions).
  */
 export function consentDisplayPayload(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
+  preview?: ConnectorWritePreview,
 ): Record<string, unknown> | undefined {
   // A connector write with a preview template is shown as the gateway-built typed preview. No
   // user-MCP type has a row, so this cannot shadow the verbatim user-MCP display below.
-  const preview = buildConnectorWritePreview(action, credentialFor);
-  if (preview !== undefined) return preview as unknown as Record<string, unknown>;
+  const typed = preview ?? buildConnectorWritePreview(action, credentialFor);
+  if (typed !== undefined) {
+    if (action.origin !== "model") return typed as unknown as Record<string, unknown>;
+    const withOrigin: ConnectorWritePreview = { ...typed, requestedBy: "model" };
+    return withOrigin as unknown as Record<string, unknown>;
+  }
+  const shown = shownPayload(action);
+  if (action.origin !== "model") return shown;
+  return { ...shown, requestedBy: "model" };
+}
+
+/** The non-preview display payload, without the origin (the CLI prints that on its own line). */
+function shownPayload(action: PlannedAction): Record<string, unknown> | undefined {
   return neverPosesAsPreview(otherDisplayPayload(action));
 }
 
@@ -371,7 +390,7 @@ function hasPlanText(action: PlannedAction): boolean {
  * them).
  */
 function detailsLinePayload(action: PlannedAction): Record<string, unknown> | undefined {
-  const shown = consentDisplayPayload(action);
+  const shown = shownPayload(action);
   if (shown === undefined || !hasPlanText(action) || action.type !== "extension.autoUpdate") {
     return shown;
   }
@@ -392,6 +411,7 @@ function omitPlanText(payload: Record<string, unknown>): Record<string, unknown>
 export function formatConsentPrompt(
   action: PlannedAction,
   credentialFor?: PreviewCredentialResolver,
+  preview?: ConnectorWritePreview,
 ): string {
   const lines = [`Action requires your approval`, ``, `Type: ${action.type}`];
   // One fixed line on every prompt shape below; the origin is gateway-set, never payload text.
@@ -414,10 +434,10 @@ export function formatConsentPrompt(
     lines.push("", ...evalLines, "", "runs with no network and no credentials");
     return lines.join("\n");
   }
-  const preview = buildConnectorWritePreview(action, credentialFor);
-  if (preview !== undefined) {
+  const typed = preview ?? buildConnectorWritePreview(action, credentialFor);
+  if (typed !== undefined) {
     // Purpose-built, escaped rendering; a JSON Details line would repeat it (and show it raw).
-    lines.push("", ...renderConnectorWritePreviewLines(preview));
+    lines.push("", ...renderConnectorWritePreviewLines(typed));
     return lines.join("\n");
   }
   if (action.payload !== undefined && Object.keys(action.payload).length > 0) {
@@ -597,9 +617,11 @@ export class ToolExecutor {
   private async resolveHitlApproval(action: PlannedAction): Promise<boolean> {
     const delegated = await this.tryDelegatedApproval(action);
     if (delegated === "fallback") {
-      const details = consentDisplayPayload(action, this.previewCredentialFor);
+      // Built once, so the prompt and the details show the same preview (one credential read).
+      const preview = buildConnectorWritePreview(action, this.previewCredentialFor);
+      const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
       return this.consent.requestApproval(
-        formatConsentPrompt(action, this.previewCredentialFor),
+        formatConsentPrompt(action, this.previewCredentialFor, preview),
         details,
         action.type,
       );

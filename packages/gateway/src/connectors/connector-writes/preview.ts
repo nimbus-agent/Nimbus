@@ -33,6 +33,8 @@ export interface ConnectorWritePreview {
   readonly fields: readonly ConnectorWritePreviewField[];
   readonly otherFields: readonly { readonly key: string; readonly value: string }[];
   readonly destination: { readonly service: string; readonly credential?: "personal" | "team" };
+  /** Set by the consent display only, for an `origin: "model"` action (never by the builder). */
+  readonly requestedBy?: "model";
 }
 
 /**

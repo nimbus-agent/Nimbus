@@ -25,6 +25,23 @@ export function isConnectorWriteDetails(
   );
 }
 
+/**
+ * The fixed line the CLI prompt also prints: the gateway sets `requestedBy: "model"` only for an
+ * action the model asked for (its top-level origin), so only that exact value draws it.
+ */
+export function RequestedByModel({
+  details,
+}: {
+  readonly details: Record<string, unknown>;
+}): ReactNode {
+  if (details["requestedBy"] !== "model") return null;
+  return (
+    <p data-testid="hitl-requested-by" className="text-sm font-semibold">
+      Requested by: the model
+    </p>
+  );
+}
+
 function asRecord(v: unknown): Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
@@ -154,6 +171,7 @@ export function ConnectorWritePreview({
   const others = readOtherFields(details["otherFields"]);
   return (
     <div data-testid="connector-write-preview" className="flex flex-col gap-3">
+      <RequestedByModel details={details} />
       {summary !== undefined && (
         <p className="text-sm whitespace-pre-wrap break-words">{summary}</p>
       )}
