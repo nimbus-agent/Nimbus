@@ -307,3 +307,26 @@ audit-only, the call listed for the owner).
 - **Demo turns are excluded** explicitly (`isDemo`), since the user-MCP precedent does not exclude them.
 - **`payload.mcpToolId` is the listed key** `<service>_<toolId>`; the door asserts it equals `mcpClientToolKey(serviceOf(row.actionType), row.toolId)`.
 - **Delivery:** A5 splits into A5a (plumbing with no model exposure: `PlannedAction.origin` and its delegation refusal, the consent line, the preview's credential kind, a raw per-server mesh listing, share-replay write refusal, offerable counts) and A5b (the door, its request-context executor without delegation, the injection suite, I53 and static rule D39).
+
+## 14. Project B (Wave 2) design addendum (2026-11-05)
+
+Research (read-only, 2026-11-05) against `@nimbus-dev/connectors` 0.3.0 and the gateway after A5b, plus the owner's rulings of the same day.
+
+**Owner rulings.**
+- **Re-consent.** An opt-in records exactly which writes the owner approved (the offerable set shown in the `connector.writes.enable` prompt). A write that becomes offerable later (a new template or `before`) is not offered until the owner re-runs `enable` and approves the new list; `status` shows `N new writes awaiting approval`.
+- **ChatOps loop.** The model door refuses a Slack or Teams post whose channel is one ChatOps listens on (a model post goes out with the owner's own token, and ChatOps would read it as the owner's command).
+- **Knowledge-base guard (I25).** The door refuses a Notion or Confluence page write whose target is exactly the configured tribal KB database, parent page, or space and parent page. No ancestry read.
+- **Scope.** Beyond § 6, Project B templates: Notion page create/update/comment, Confluence page create/comment, Jira issue update, Teams chat post, Slack DM; Outlook and Apple calendar event create (they send invitations: the preview names the attendees explicitly); Google Drive file create; Obsidian daily-note append (its sandbox grant is widened to write inside the configured vault paths, an owner-approved widening); Discord post as the bot (a new tool; the preview says it posts as the bot).
+
+**What the code needs first (B0, no row turned on).**
+- Per-service listing and generation: `FIRST_PARTY_LISTING` becomes a map from each wave-2 service to its own mesh slot, credential check and ensure function (the predicates already in `lazy-mesh/credential-orchestration.ts`, extracted once); `toolsGenerationFor(service)` reads that slot's generation.
+- The before-state reader (§ 5.4), door-only: a `BeforeStateReader { tool, argKeys, args(input), select(reply) }` on the row; the door's executor runs it after delegation falls back and before the prompt, as a `<service>.before.read` action through `gate()` (audit and egress rows land) and then dispatch, raced against 5 s; the reply is sanitised into the preview's `before` and never returned to the model. The dispatcher refuses a `*.before.read` action whose resolved tool is not a read (`isReadOnlyToolId` and not `isConnectorWriteToolId`); a static rule (D40) confines the `.before.read` literal. Other doors run no before-read.
+- The MCP sink's act door shows the typed preview (`ipc/capture-rpc.ts`: provenance header plus the preview), replacing the A2 tripwire with a positive test: 23 of the 24 wave-2 rows are proposable.
+- Re-consent storage: the opt-in row records the approved tool ids; the door offers only rows in that set; `status` and the enable prompt name the difference.
+- Door refusals for the ChatOps-channel and KB-target rulings.
+
+**Cross-repo (nimbus-mcp-servers, one release, owner-authorised PRs with auto-merge):** GitHub issue/PR comment, issue update (labels, assignees, state) and a `GITHUB_API_BASE_URL` override; GitLab issue create, issue note, MR note, issue update; Jira issue transition and a transitions list; Outlook draft create; Discord message post (bot); Confluence page append. Each new write then needs its row, frozen-set type, proposability class and template.
+
+**Spec corrections.** Discord has no `*.message.post` type today (it is a new tool). "Page current tail" is cheap for Confluence (one `confluence_page_get`) but not for Notion (children are paged from the front; Notion's before shows at most the first blocks). Most connector hosts are hard-coded, so an end-to-end test against a fake server is possible only for hosts that are configurable (Jira, Confluence, GitLab); the others are proven in-process. § 5.3's `diff` kind remains unbuilt; Confluence append avoids needing it.
+
+**Delivery.** B0 framework (above); B-X the nimbus-mcp-servers tools and release, then the pin bump with rows; B1 messaging and comments; B2 issues (create, update, transition, label/assign); B3 drafts, pages and knowledge append; B4 calendar, Drive, Obsidian, Discord. Each B PR adds its templates, before-readers where cheap, injection fixtures, and (for Jira/Confluence/GitLab) an end-to-end test against a fake server.
