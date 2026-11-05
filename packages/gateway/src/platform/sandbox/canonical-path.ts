@@ -44,16 +44,54 @@ export function canonicalPath(p: string): string {
  * Applied together with the cwd at each runner's spawn site, so a grant and the child's view of
  * the granted directory are always the same string. `network` and `id` are carried through
  * untouched — neither is a path.
+ *
+ * A path the gateway already canonicalised (`canonicalWritePaths`) or declared a single file
+ * (`canonicalWriteFiles`, I15, the Obsidian daily notes) must canonicalise to ITSELF here: a
+ * different answer means it was swapped for a link after the gateway (and the wrapper) checked it,
+ * and this THROWS, so the runner refuses the spawn. Otherwise the declared file would silently stop
+ * matching its declaration and fall back to a folder grant (a macOS `subpath`, an inheritable
+ * Windows ACE). The declarations are carried through with the same mapping.
  */
-export function canonicalPolicyPaths(policy: SandboxPolicy): SandboxPolicy {
+export function canonicalPolicyPaths(
+  policy: SandboxPolicy,
+  canonical: (p: string) => string = canonicalPath,
+): SandboxPolicy {
+  for (const p of [...(policy.canonicalWritePaths ?? []), ...(policy.canonicalWriteFiles ?? [])]) {
+    if (canonical(p) !== p) {
+      throw new Error(
+        `refusing to spawn: the write grant ${p} changed since the gateway decided it`,
+      );
+    }
+  }
   return {
     ...policy,
     permissions: {
       ...policy.permissions,
       filesystem: {
-        read: policy.permissions.filesystem.read.map(canonicalPath),
-        write: policy.permissions.filesystem.write.map(canonicalPath),
+        read: policy.permissions.filesystem.read.map(canonical),
+        write: policy.permissions.filesystem.write.map(canonical),
       },
     },
+    ...(policy.canonicalWritePaths === undefined
+      ? {}
+      : { canonicalWritePaths: policy.canonicalWritePaths.map(canonical) }),
+    ...(policy.canonicalWriteFiles === undefined
+      ? {}
+      : { canonicalWriteFiles: policy.canonicalWriteFiles.map(canonical) }),
   };
+}
+
+/**
+ * The declared single-file write grants (`canonicalWriteFiles`), each of which MUST be in the final
+ * write list. A declared file missing from it THROWS (the runner refuses the spawn): a write path
+ * that was declared a file never falls back to a folder grant.
+ */
+export function declaredWriteFiles(policy: SandboxPolicy): ReadonlySet<string> {
+  const write = new Set(policy.permissions.filesystem.write);
+  for (const p of policy.canonicalWriteFiles ?? []) {
+    if (!write.has(p)) {
+      throw new Error(`refusing to spawn: the declared file grant ${p} is not in the write list`);
+    }
+  }
+  return new Set(policy.canonicalWriteFiles ?? []);
 }

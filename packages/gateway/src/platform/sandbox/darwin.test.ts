@@ -323,9 +323,21 @@ describe("a file write grant is a literal (the Obsidian daily note, I15)", () =>
           write: [onDisk, join(dir, "declared-folder"), "/declared/gone.md"],
         },
       },
-      canonicalWriteFiles: [join(dir, "declared-folder"), "/declared/gone.md", "/not/in/write.md"],
+      canonicalWriteFiles: [join(dir, "declared-folder"), "/declared/gone.md"],
     });
     expect([...set]).toEqual([join(dir, "declared-folder"), "/declared/gone.md"]);
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a declared file that is not in the write list REFUSES the spawn (never a subpath fallback)", () => {
+    expect(() =>
+      writeFilesOf({
+        id: "x",
+        permissions: { network: [], filesystem: { read: [], write: ["/n/other.md"] } },
+        canonicalWriteFiles: ["/n/2026-11-05.md"],
+      }),
+    ).toThrow(
+      "refusing to spawn: the declared file grant /n/2026-11-05.md is not in the write list",
+    );
   });
 });

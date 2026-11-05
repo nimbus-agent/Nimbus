@@ -84,3 +84,18 @@ describe("buildHelperArgv: a declared file is --grant-write-file (re-review find
     expect(argv.filter((a) => a === "--grant-write")).toHaveLength(1);
   });
 });
+
+describe("buildHelperArgv: a declared file never falls back to an inheritable grant", () => {
+  it("a declared file that is not in the write list throws instead of passing --grant-write", () => {
+    expect(() =>
+      buildHelperArgv(
+        {
+          id: "com.nimbus.obsidian",
+          permissions: { network: [], filesystem: { read: [], write: ["C:/n/other.md"] } },
+          canonicalWriteFiles: ["C:/n/2026-11-05.md"],
+        },
+        { cwd: "C:/cwd" },
+      ),
+    ).toThrow("is not in the write list");
+  });
+});

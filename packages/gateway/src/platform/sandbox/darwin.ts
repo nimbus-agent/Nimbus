@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-import { canonicalPath, canonicalPolicyPaths } from "./canonical-path.ts";
+import { canonicalPath, canonicalPolicyPaths, declaredWriteFiles } from "./canonical-path.ts";
 import { declaredNetworkPorts, type SandboxPolicy } from "./sandbox-policy.ts";
 import type { SandboxRunner, SandboxSpawnOptions } from "./sandbox-runner.ts";
 
@@ -25,8 +25,8 @@ interface SbplOpts {
  * grant into a `subpath` one. A declared path that is not in the write list is not granted at all.
  */
 export function writeFilesOf(policy: SandboxPolicy): ReadonlySet<string> {
-  const write = new Set(policy.permissions.filesystem.write);
-  return new Set((policy.canonicalWriteFiles ?? []).filter((p) => write.has(p)));
+  // Fails closed: a declared file missing from the write list refuses the spawn (it throws).
+  return declaredWriteFiles(policy);
 }
 
 /**
