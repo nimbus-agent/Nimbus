@@ -162,6 +162,11 @@ describe("broadcastMentionIn (OR1)", () => {
     expect(hit("gitlab", "@<b>all</b>", html)).toBe(true);
   });
 
+  test("the text as sent is matched too: NFKC must not erase a mention's end", () => {
+    // U+FF58 (fullwidth x) folds to "x", turning "@all" into "@allx"; the raw form still ends at it.
+    expect(hit("gitlab", "cc @all\uFF58 please", text)).toBe(true);
+  });
+
   test("a tag split by another tag is seen whole before a later pass removes it", () => {
     // One pass leaves `<at id="0">`; a strip-until-stable that kept only the last form would
     // lose it, and a single pass would still split `@chan<b></b>nel` in two.

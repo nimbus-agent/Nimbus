@@ -402,7 +402,9 @@ export function broadcastMentionIn(
   text: string,
   opts: { readonly html: boolean },
 ): boolean {
-  const forms: string[] = [];
+  // The text as sent, too: NFKC can turn a name-ending character (a fullwidth letter) into a
+  // name character, so `@all` + U+FF58 folds to `@allx` while a parser may still read `@all`.
+  const forms: string[] = [text.toLowerCase()];
   for (const invisible of ["", " "]) {
     const settled = settle(text, invisible);
     if (settled === undefined) return true;
