@@ -9,7 +9,6 @@ import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
-import { canonicalPath } from "../../platform/sandbox/canonical-path.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
   type AppContainerGrantRevoker,
@@ -67,15 +66,17 @@ import {
   userMcpMeshKey,
 } from "./keys.ts";
 import {
+  type DailyNoteGrantDeps,
+  type DailyNoteSkip,
+  dailyNotePattern,
+  utcDay,
+} from "./obsidian-daily-note-grant.ts";
+import {
   fileObsidianGrantLedger,
   type ObsidianGrantLedgerStore,
   obsidianGrantLedgerFile,
 } from "./obsidian-grant-ledger.ts";
-import {
-  type ObsidianWriteGrant,
-  type ObsidianWriteGrantDeps,
-  obsidianWriteGrantPaths,
-} from "./obsidian-write-grant.ts";
+import { type ObsidianGrantSkip, obsidianWriteGrantPaths } from "./obsidian-write-grant.ts";
 import {
   phase3AddArgocdMcp,
   phase3AddBigeyeMcp,
@@ -186,9 +187,12 @@ export class LazyConnectorMesh {
   private readonly sandboxDirExists: (dir: string) => boolean;
   private readonly filesystemSpawnGate: Promise<void> | undefined;
   private readonly extensionSlots: ExtensionSlots;
-  /** The configured `[[filesystem.roots]]` the Obsidian connector reads (its vaults it may write). */
+  /** The configured `[[filesystem.roots]]` the Obsidian connector reads (each vault's daily note it may write). */
   private readonly obsidianRoots: readonly string[];
-  private readonly obsidianGrantDeps: ObsidianWriteGrantDeps;
+  private readonly obsidianGrantDeps: DailyNoteGrantDeps;
+  private readonly obsidianNow: () => Date;
+  /** The UTC date the live Obsidian client's daily-note grant is for; undefined without a grant. */
+  private obsidianGrantDay: string | undefined;
   /** Windows only: the fail-closed revoke of the Obsidian profile's ACEs before each grant. */
   private readonly obsidianRevoker: AppContainerGrantRevoker;
   /** Windows only: every path ever handed a write grant and not yet revoked, persisted. */
@@ -235,7 +239,9 @@ export class LazyConnectorMesh {
       /** Test seam: the Obsidian pre-spawn revoker. Production: `appContainerGrantRevokerFor`. */
       obsidianGrantRevoker?: AppContainerGrantRevoker;
       /** Test seam: the facts the Obsidian grant reads. Production: real discovery and realpath. */
-      obsidianWriteGrantDeps?: ObsidianWriteGrantDeps;
+      obsidianWriteGrantDeps?: DailyNoteGrantDeps;
+      /** Test seam: the clock that names today's daily note. Production: `new Date()`. */
+      now?: () => Date;
       /** Test seam: the Obsidian grant ledger. Production: a file under `configDir`. */
       obsidianGrantLedger?: ObsidianGrantLedgerStore;
     },
@@ -281,7 +287,9 @@ export class LazyConnectorMesh {
     });
     const platform = options?.platform ?? process.platform;
     this.obsidianRoots = options?.obsidianVaultPaths ?? [];
+    this.obsidianNow = options?.now ?? (() => new Date());
     this.obsidianGrantDeps = options?.obsidianWriteGrantDeps ?? {
+      now: () => this.obsidianNow(),
       discoverVaults: (roots) => discoverVaultsForWriteGrant(roots),
       realpath: (p) => realpathSync.native(p),
       homeDir: homedir(),
@@ -304,6 +312,7 @@ export class LazyConnectorMesh {
       obsidianWriteGrantDeps: this.obsidianGrantDeps,
       obsidianPreSpawn: (plan) => this.obsidianPreSpawn(plan),
       obsidianSerial: <T>(fn: () => Promise<T>) => this.runObsidianSerial(fn),
+      obsidianRefreshStale: () => this.refreshStaleObsidian(),
       sandboxCwd: paths.sandboxDir,
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
@@ -924,21 +933,29 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The paths a Windows revoke must cover: every ledger entry (a path some earlier spawn, in this
-   * process or before a restart, was handed a write grant on), each vault the grant would keep
-   * NOW, each skipped vault canonicalised (a vault that was kept once and is skipped now), and
-   * `extra`. A root is covered only when it was granted as a vault (then it is in the ledger or a
-   * kept vault), never as a read root. Skipped `home-or-root` paths are left out: no grant ever
-   * names one (the grant function refuses it), and a revoke there would rewrite a whole drive's or
-   * home folder's DACL. Deduplicated, in that order.
+   * The paths a Windows revoke must cover: every ledger entry (each file some earlier spawn, in this
+   * process or before a restart, was handed a write grant on) and `extra` (this spawn's files).
+   * The ledger is written before any grant, so it names every file that can hold a write ACE; no
+   * folder is ever granted write (the grant is one daily-note file per vault). Deduplicated.
    */
   private obsidianRevokePaths(
     ledger: readonly string[],
     extra: readonly string[],
   ): readonly string[] {
-    const now = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps);
-    const skipped = now.skipped.filter((x) => x.reason !== "home-or-root").map((x) => x.path);
-    return [...new Set([...ledger, ...now.paths, ...skipped.map(canonicalPath), ...extra])];
+    return [...new Set([...ledger, ...extra])];
+  }
+
+  /**
+   * At the start of every Obsidian spawn decision: a live client whose grant names an earlier UTC
+   * day's daily note is detached (in-flight calls drain in the background), so this decision spawns
+   * one for today. Without the restart the old child's appends to today's note would be refused by
+   * the sandbox (it holds only yesterday's file): fail closed, but unusable until the slot idles out.
+   */
+  private refreshStaleObsidian(): void {
+    const day = this.obsidianGrantDay;
+    if (day === undefined || day === utcDay(this.obsidianNow())) return;
+    this.obsidianGrantDay = undefined;
+    void this.detachLazyClient(LAZY_MESH.obsidian);
   }
 
   /**
@@ -963,7 +980,9 @@ export class LazyConnectorMesh {
   private async obsidianPreSpawn(plan: {
     readonly roots: readonly string[];
     readonly writePaths: readonly string[];
+    readonly day?: string;
   }): Promise<void> {
+    this.obsidianGrantDay = plan.writePaths.length > 0 ? plan.day : undefined;
     if (!this.obsidianRevoker.active) return;
     try {
       await this.revokeObsidianGrants(plan.writePaths);
@@ -997,6 +1016,7 @@ export class LazyConnectorMesh {
   async restartObsidian(): Promise<void> {
     try {
       await this.runObsidianSerial(async () => {
+        this.obsidianGrantDay = undefined;
         void this.detachLazyClient(LAZY_MESH.obsidian);
         if (this.obsidianRevoker.active) await this.revokeObsidianGrants([]);
       });
@@ -1006,17 +1026,29 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * What approving the Obsidian append would let its sandbox write NOW: the configured roots (as
-   * configured), the vaults the grant keeps, and each skipped vault with its reason. For the
-   * `connector.writes.enable obsidian` prompt; reads the filesystem, grants nothing.
+   * What approving the Obsidian append would let its sandbox write: the configured roots (as
+   * configured), for each vault the grant keeps its daily-note file PATTERN
+   * (`<vault>/<daily folder>/<format>.md`: one file a day, the date in UTC), and each vault, or
+   * vault's note, that can never be granted, with the reason. For the `connector.writes.enable
+   * obsidian` prompt; reads the filesystem, creates nothing, grants nothing.
    */
   obsidianWriteScope(): {
     readonly roots: readonly string[];
-    readonly vaults: readonly string[];
-    readonly skipped: ObsidianWriteGrant["skipped"];
+    readonly notes: readonly string[];
+    readonly skipped: readonly {
+      readonly path: string;
+      readonly reason: ObsidianGrantSkip | DailyNoteSkip;
+    }[];
   } {
     const g = obsidianWriteGrantPaths(this.obsidianRoots, this.obsidianGrantDeps);
-    return { roots: [...this.obsidianRoots], vaults: g.paths, skipped: g.skipped };
+    const notes: string[] = [];
+    const skipped: { path: string; reason: ObsidianGrantSkip | DailyNoteSkip }[] = [...g.skipped];
+    for (const vault of g.paths) {
+      const r = dailyNotePattern(vault, this.obsidianGrantDeps.platform);
+      if ("pattern" in r) notes.push(r.pattern);
+      else skipped.push(r);
+    }
+    return { roots: [...this.obsidianRoots], notes, skipped };
   }
 
   async ensureConfluenceRunning(): Promise<void> {

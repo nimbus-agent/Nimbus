@@ -42,7 +42,8 @@ export interface ModelWritesDeps {
    */
   readonly obsidianWriteScope?: () => {
     readonly roots: readonly string[];
-    readonly vaults: readonly string[];
+    /** Per vault, its daily-note file pattern (`<vault>/<daily folder>/<format>.md`). */
+    readonly notes: readonly string[];
     readonly skipped: readonly { readonly path: string; readonly reason: string }[];
   };
 }

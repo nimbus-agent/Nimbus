@@ -28,6 +28,10 @@ import type { LazyMcpSlot, MeshLogger } from "./slot.ts";
 const temps: string[] = [];
 let mesh: LazyConnectorMesh | undefined;
 
+/** The fixed clock every mesh here runs on, and the daily note it names in a default vault. */
+const NOW = new Date(Date.UTC(2026, 10, 5, 12));
+const note = (vault: string): string => join(vault, "2026-11-05.md");
+
 function tempBase(): string {
   const d = realpathSync.native(mkdtempSync(join(tmpdir(), "nimbus-mesh-obs-")));
   temps.push(d);
@@ -113,6 +117,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     const t = tree();
     const revokes: Revokes = [];
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => false,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
@@ -123,7 +128,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     expect(obsidianClient(m)).toBeDefined();
   });
 
-  test("grant on: the vaults are revoked and recorded in the ledger BEFORE the client exists", async () => {
+  test("grant on: today's note is revoked and recorded in the ledger BEFORE the client exists", async () => {
     const t = tree();
     const paths = makePaths(t.base);
     const revokes: Revokes = [];
@@ -131,6 +136,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     let ledgerAtRevoke: readonly string[] = ["unset"];
     const ledger = fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
     const m = new LazyConnectorMesh(paths, createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: {
@@ -145,18 +151,19 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     });
     mesh = m;
     await m.ensureObsidianRunning();
-    // The root is never revoked as a read root; only the vault it holds.
-    expect(revokes).toEqual([[t.vault]]);
+    // Only today's daily-note FILE: never the vault, never the root.
+    expect(revokes).toEqual([[note(t.vault)]]);
     expect(clientAtRevoke).toBeUndefined();
     expect(ledgerAtRevoke).toEqual([]);
-    expect(ledger.load()).toEqual([t.vault]);
+    expect(ledger.load()).toEqual([note(t.vault)]);
     expect(obsidianClient(m)).toBeDefined();
   });
 
-  test("the ledger survives a gateway restart: a vault no longer discovered is still revoked", async () => {
+  test("the ledger survives a gateway restart: a note no longer granted is still revoked", async () => {
     const t = tree();
     const paths = makePaths(t.base);
     const first = new LazyConnectorMesh(paths, createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: fakeRevoker(true, []),
@@ -167,13 +174,14 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     rmSync(join(t.vault, ".obsidian"), { recursive: true, force: true });
     const revokes: Revokes = [];
     const m = new LazyConnectorMesh(paths, createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => false,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
     });
     mesh = m;
     await m.ensureObsidianRunning();
-    expect(revokes).toEqual([[t.vault]]);
+    expect(revokes).toEqual([[note(t.vault)]]);
     const ledger = fileObsidianGrantLedger(obsidianGrantLedgerFile(paths.configDir));
     expect(ledger.load()).toEqual([]);
   });
@@ -185,6 +193,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     const w = warnings();
     const store = memoryLedger([join(t.base, "old-vault")]);
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       logger: w.logger,
       obsidianGrantLedger: store,
@@ -213,6 +222,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     writeFileSync(file, "{not json");
     const revokes: Revokes = [];
     const m = new LazyConnectorMesh(paths, createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianGrantRevoker: fakeRevoker(true, revokes),
     });
@@ -222,26 +232,60 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     expect(revokes).toEqual([]);
   });
 
-  test("a skipped vault is revoked canonicalised; a home-or-root skip never is", async () => {
+  test("the revoke names only the ledger and this spawn's files: never a vault, a nested one or a root", async () => {
     const t = tree();
     const nested = join(t.vault, "inner");
     mkdirSync(join(nested, ".obsidian"), { recursive: true });
     const revokes: Revokes = [];
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
-      obsidianVaultPaths: [t.root, t.base],
+      now: () => NOW,
+      obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
-      obsidianWriteGrantDeps: {
-        discoverVaults: () => [t.vault, nested, t.base],
-        realpath: (p) => realpathSync.native(p),
-        homeDir: t.base,
-        protectedRoots: [],
-        platform: process.platform,
-      },
+      obsidianGrantLedger: memoryLedger([join(t.base, "old-note.md")]),
     });
     mesh = m;
     await m.ensureObsidianRunning();
-    expect(revokes).toEqual([[t.vault, nested]]);
+    expect(revokes).toEqual([[join(t.base, "old-note.md"), note(t.vault)]]);
+  });
+
+  test("the UTC date changes: the next call detaches the client, revokes yesterday's note and grants today's", async () => {
+    const t = tree();
+    const revokes: Revokes = [];
+    let now = new Date(Date.UTC(2026, 10, 5, 23, 59));
+    const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => now,
+      obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => true,
+      obsidianGrantRevoker: fakeRevoker(true, revokes),
+    });
+    mesh = m;
+    await m.ensureObsidianRunning();
+    const first = obsidianClient(m);
+    await m.ensureObsidianRunning();
+    expect(obsidianClient(m)).toBe(first); // same day: reused
+    now = new Date(Date.UTC(2026, 10, 6, 0, 1));
+    await m.ensureObsidianRunning();
+    expect(obsidianClient(m)).toBeDefined();
+    expect(obsidianClient(m)).not.toBe(first);
+    expect(revokes).toEqual([[note(t.vault)], [note(t.vault), join(t.vault, "2026-11-06.md")]]);
+  });
+
+  test("without a grant the date change restarts nothing", async () => {
+    const t = tree();
+    let now = new Date(Date.UTC(2026, 10, 5, 23, 59));
+    const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => now,
+      obsidianVaultPaths: [t.root],
+      obsidianWriteGrantEnabled: () => false,
+      obsidianGrantRevoker: fakeRevoker(true, []),
+    });
+    mesh = m;
+    await m.ensureObsidianRunning();
+    const first = obsidianClient(m);
+    now = new Date(Date.UTC(2026, 10, 6, 0, 1));
+    await m.ensureObsidianRunning();
+    expect(obsidianClient(m)).toBe(first);
   });
 
   test("off Windows the revoker is inert: never called, no ledger written, the spawn proceeds", async () => {
@@ -249,6 +293,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
     const revokes: Revokes = [];
     const store = memoryLedger([]);
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: fakeRevoker(false, revokes),
@@ -264,6 +309,7 @@ describe("the Obsidian pre-spawn revoke (Windows) and its ledger", () => {
   test("the production revoker follows the platform option: inert on linux", async () => {
     const t = tree();
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       platform: "linux",
     });
@@ -279,6 +325,7 @@ describe("restartObsidian", () => {
     const revokes: Revokes = [];
     let approved = true;
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => approved,
       obsidianGrantRevoker: fakeRevoker(true, revokes),
@@ -290,7 +337,7 @@ describe("restartObsidian", () => {
     approved = false;
     await m.restartObsidian();
     expect(obsidianClient(m)).toBeUndefined();
-    expect(revokes).toEqual([[t.vault], [t.vault]]);
+    expect(revokes).toEqual([[note(t.vault)], [note(t.vault)]]);
     await m.ensureObsidianRunning();
     expect(obsidianClient(m)).not.toBe(first);
     // The ledger is empty and the grant off: the respawn ran no helper.
@@ -300,6 +347,7 @@ describe("restartObsidian", () => {
   test("an in-flight call does not hold the restart, a listing, or the next spawn; the old client disconnects after it", async () => {
     const t = tree();
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianGrantRevoker: fakeRevoker(true, []),
     });
@@ -338,6 +386,7 @@ describe("restartObsidian", () => {
     const t = tree();
     const w = warnings();
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       logger: w.logger,
       obsidianGrantLedger: memoryLedger([t.vault]),
@@ -353,6 +402,7 @@ describe("restartObsidian", () => {
     const gate = Promise.withResolvers<void>();
     let calls = 0;
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
       obsidianWriteGrantEnabled: () => true,
       obsidianGrantRevoker: {
@@ -379,17 +429,18 @@ describe("restartObsidian", () => {
 });
 
 describe("obsidianWriteScope (the enable prompt's preview)", () => {
-  test("names the roots as configured, the vaults kept and each skipped vault", () => {
+  test("names the roots as configured, each kept vault's daily-note pattern and each skipped vault", () => {
     const t = tree();
     const nested = join(t.vault, "inner");
     mkdirSync(join(nested, ".obsidian"), { recursive: true });
     const m = new LazyConnectorMesh(makePaths(t.base), createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [t.root],
     });
     mesh = m;
     expect(m.obsidianWriteScope()).toEqual({
       roots: [t.root],
-      vaults: [t.vault],
+      notes: [join(t.vault, "YYYY-MM-DD.md")],
       skipped: [{ path: nested, reason: "nested" }],
     });
   });
@@ -400,12 +451,13 @@ describe("obsidianWriteScope (the enable prompt's preview)", () => {
     const vault = join(paths.extensionsDir, "v");
     mkdirSync(join(vault, ".obsidian"), { recursive: true });
     const m = new LazyConnectorMesh(paths, createMockVault(), {
+      now: () => NOW,
       obsidianVaultPaths: [join(base, "nimbus")],
     });
     mesh = m;
     expect(m.obsidianWriteScope()).toEqual({
       roots: [join(base, "nimbus")],
-      vaults: [],
+      notes: [],
       skipped: [{ path: vault, reason: "protected" }],
     });
   });
@@ -413,7 +465,7 @@ describe("obsidianWriteScope (the enable prompt's preview)", () => {
   test("no roots: nothing", () => {
     const m = new LazyConnectorMesh(makePaths(tempBase()), createMockVault());
     mesh = m;
-    expect(m.obsidianWriteScope()).toEqual({ roots: [], vaults: [], skipped: [] });
+    expect(m.obsidianWriteScope()).toEqual({ roots: [], notes: [], skipped: [] });
   });
 });
 
@@ -428,6 +480,7 @@ describe("the dispatcher listing includes Obsidian (review fix 4)", () => {
   test("a live Obsidian slot's tools are in the merged map, after the filesystem spawn gate", async () => {
     const gate = Promise.withResolvers<void>();
     const m = new LazyConnectorMesh(makePaths(tempBase()), createMockVault(), {
+      now: () => NOW,
       filesystemSpawnGate: gate.promise,
     });
     mesh = m;

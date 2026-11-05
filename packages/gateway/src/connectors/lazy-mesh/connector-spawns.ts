@@ -39,7 +39,7 @@ import {
   storedUrlHosts,
 } from "./first-party-manifests.ts";
 import { connectorSpawn, LAZY_MESH } from "./keys.ts";
-import { obsidianWriteGrantPaths } from "./obsidian-write-grant.ts";
+import { obsidianDailyNoteGrant } from "./obsidian-daily-note-grant.ts";
 import { buildPhase3Servers } from "./phase3-config.ts";
 import type { MeshSpawnContext, ServerSpec } from "./slot.ts";
 import { wrapServerSpec } from "./wrap-server-spec.ts";
@@ -832,7 +832,8 @@ export async function ensureKubernetesMcp(ctx: MeshSpawnContext): Promise<void> 
 /**
  * The Obsidian spawn's manifest: the static base (`write: []`) plus the configured roots as READ
  * paths and `writePaths` as WRITE paths. `writePaths` is either nothing or exactly what
- * `obsidianWriteGrantPaths` kept (I15, B4b); exported so the real-sandbox integration test confines
+ * `obsidianDailyNoteGrant` prepared: today's daily-note FILE per vault (I15, B4b); exported so the
+ * real-sandbox integration test confines
  * its probe with this same builder.
  */
 export function obsidianSpawnManifest(
@@ -867,23 +868,34 @@ function obsidianWriteGrantApproved(ctx: MeshSpawnContext): boolean {
 }
 
 /**
- * The vaults this spawn may write: `obsidianWriteGrantPaths` behind the owner's approval, else
- * nothing. With no approval nothing is discovered, so the spawn is exactly the read-only one.
+ * The files this spawn may write: today's daily note (UTC) of each vault, prepared on the host by
+ * `obsidianDailyNoteGrant`, behind the owner's approval; else nothing. With no approval nothing is
+ * discovered or created, so the spawn is exactly the read-only one. `day` names the date the files
+ * are for, so the mesh can restart the connector when the date changes.
  */
-function obsidianWritePathsFor(ctx: MeshSpawnContext, roots: readonly string[]): readonly string[] {
+function obsidianWritePathsFor(
+  ctx: MeshSpawnContext,
+  roots: readonly string[],
+): { readonly paths: readonly string[]; readonly day?: string } {
   const deps = ctx.obsidianWriteGrantDeps;
-  if (deps === undefined || !obsidianWriteGrantApproved(ctx)) return [];
+  if (deps === undefined || !obsidianWriteGrantApproved(ctx)) return { paths: [] };
   try {
-    return obsidianWriteGrantPaths(roots, deps).paths;
+    const grant = obsidianDailyNoteGrant(roots, deps);
+    return { paths: grant.files, day: grant.day };
   } catch (err) {
-    ctx.logger?.warn({ err }, "obsidian write grant: the vaults could not be computed; no write");
-    return [];
+    ctx.logger?.warn(
+      { err },
+      "obsidian write grant: the daily notes could not be prepared; no write",
+    );
+    return { paths: [] };
   }
 }
 
 async function startObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.obsidian;
   ctx.clearLazyIdle(slotKey);
+  // A client granted yesterday's daily note is detached here, so this call spawns for today.
+  ctx.obsidianRefreshStale?.();
   if (ctx.getLazyClient(slotKey) !== undefined) {
     ctx.scheduleLazyDisconnect(slotKey);
     return;
@@ -892,11 +904,16 @@ async function startObsidianMcp(ctx: MeshSpawnContext): Promise<void> {
   if (vaultPaths.length === 0) {
     return;
   }
-  const writePaths = obsidianWritePathsFor(ctx, vaultPaths);
+  const grant = obsidianWritePathsFor(ctx, vaultPaths);
+  const writePaths = grant.paths;
   if (ctx.obsidianPreSpawn !== undefined) {
     try {
       // Windows: the profile's earlier ACEs are revoked BEFORE this spawn grants (fail closed).
-      await ctx.obsidianPreSpawn({ roots: vaultPaths, writePaths });
+      await ctx.obsidianPreSpawn({
+        roots: vaultPaths,
+        writePaths,
+        ...(grant.day === undefined ? {} : { day: grant.day }),
+      });
     } catch {
       return; // the hook logs; no client means no spawn
     }

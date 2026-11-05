@@ -44,7 +44,7 @@ export type ExtensionManifest = RegistryExtensionManifest & {
   firstPartyWildcardHosts?: readonly string[];
   /**
    * Write paths the gateway already canonicalised (`realpathSync.native`) when it built the grant:
-   * the Obsidian vaults (I15, B4b). The sandbox wrapper refuses the spawn if any of them no longer
+   * the Obsidian daily-note files (I15, B4b). The sandbox wrapper refuses the spawn if any of them no longer
    * canonicalises to itself (a link swapped in between the grant decision and the spawn). Same
    * provenance rule: set only by gateway code, never read from a manifest file.
    */

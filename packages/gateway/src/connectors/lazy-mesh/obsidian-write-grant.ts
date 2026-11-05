@@ -1,6 +1,7 @@
 // packages/gateway/src/connectors/lazy-mesh/obsidian-write-grant.ts
-// The ONE function that decides which directories the Obsidian connector's sandbox may WRITE
-// (I15, Phase 9.7 B4b). Pure: every filesystem fact arrives through `deps`.
+// Which Obsidian vaults the sandbox write grant may consider (I15, Phase 9.7 B4b). Pure: every
+// filesystem fact arrives through `deps`. No vault is ever granted write: since the owner's
+// file-only ruling, `obsidian-daily-note-grant.ts` grants each kept vault's daily-note FILE alone.
 import { findProtectedOverlap, isSameOrInside, pathApiFor } from "../../util/path-overlap.ts";
 
 /**
@@ -33,7 +34,7 @@ export interface ObsidianWriteGrantDeps {
 }
 
 export interface ObsidianWriteGrant {
-  /** Canonical vault directories the sandbox may write, sorted. Never a root unless that root IS a vault. */
+  /** Canonical vaults whose daily note may be granted, sorted. Never a root unless that root IS a vault. */
   readonly paths: readonly string[];
   /** Each discovered vault that is not granted, as discovered, with its reason. */
   readonly skipped: readonly { readonly path: string; readonly reason: ObsidianGrantSkip }[];

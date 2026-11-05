@@ -1056,7 +1056,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     // Obsidian vault semantics are opt-in via [[filesystem.roots]] only — CLI-registered blame
     // roots must not be silently treated as note vaults.
     obsidianVaultPaths: tomlRoots.map((r) => r.path),
-    // I15 (B4b): the Obsidian sandbox may write inside the vaults under those roots only while the
+    // I15 (B4b): the Obsidian sandbox may write today's daily note of each vault under those roots only while the
     // owner's `connector writes enable obsidian` approval includes the append, read LIVE per spawn.
     obsidianWriteGrantEnabled: () => isObsidianWriteGrantApproved(db),
     isConnectorAllowed,

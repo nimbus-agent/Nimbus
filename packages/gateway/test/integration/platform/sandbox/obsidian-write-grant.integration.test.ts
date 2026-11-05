@@ -3,14 +3,11 @@ import { spawnSync } from "node:child_process";
 import {
   existsSync,
   linkSync,
-  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   realpathSync,
-  rmdirSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,7 +15,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 
 import { obsidianSpawnManifest } from "../../../../src/connectors/lazy-mesh/connector-spawns.ts";
-import { obsidianWriteGrantPaths } from "../../../../src/connectors/lazy-mesh/obsidian-write-grant.ts";
+import {
+  type DailyNoteGrantDeps,
+  obsidianDailyNoteGrant,
+} from "../../../../src/connectors/lazy-mesh/obsidian-daily-note-grant.ts";
 import { discoverVaultsForWriteGrant } from "../../../../src/connectors/obsidian-discovery.ts";
 import {
   policyFromManifest,
@@ -29,28 +29,24 @@ import {
 import { appContainerGrantRevokerFor } from "../../../../src/platform/sandbox/win32-grant-revoke.ts";
 
 /**
- * Phase 9.7 B4b (I15, plan R11): the Obsidian write grant confines writes to the vaults, under the
- * REAL sandbox of whichever OS runs this file, through the real `__nimbus-sandbox` role.
+ * Phase 9.7 B4b (I15): the Obsidian write grant is ONE FILE per vault, today's daily note (the
+ * owner's ruling on the final review's finding 1), under the REAL sandbox of whichever OS runs this
+ * file, through the real `__nimbus-sandbox` role.
  *
- * The policy is the one `startObsidianMcp` builds (`obsidianSpawnManifest` over the vaults
- * `obsidianWriteGrantPaths` keeps), plus only what the probe child itself needs to start (its own
- * script directory as cwd, and on Linux/macOS the Bun binary). The child tries to APPEND to each
- * target and the result is read from the HOST filesystem afterwards: an errno differs per OS, a
- * file that did or did not change does not.
- *
- * The connector's own checks are not in play: the probe is a plain script, so whatever is refused
- * here was refused by the sandbox. A control run of the same script UNSANDBOXED writes every
+ * The policy is the one `startObsidianMcp` builds (`obsidianSpawnManifest` over the files
+ * `obsidianDailyNoteGrant` prepares on the host), plus only what the probe child itself needs to
+ * start (its own script directory as cwd, and on Linux/macOS the Bun binary). The child tries to
+ * APPEND to each target, today's note the way the connector does (`mkdir -p` its folder, then open
+ * `a+`), and the result is read from the HOST filesystem afterwards: an errno differs per OS, a file
+ * that did or did not change does not. A control run of the same script UNSANDBOXED writes every
  * target, so a refusal is the sandbox's and not a broken probe.
  *
  * Which OS runs what: every case runs on Linux (bwrap), macOS (sandbox-exec) and Windows
- * (AppContainer helper), each on its own PR leg; the junction-propagation probe is Windows only.
- * Same readiness guard as `exec-sandbox.test.ts`: a missing prerequisite skips locally but FAILS
- * on CI. `spawnSync` throughout, bounded, as `sandbox-wrapper-spawn.test.ts` does: an async
- * `node:child_process` spawn inside a test worker can lose its child's exit on macOS
- * (oven-sh/bun#41024).
- *
- * Windows uses a TEST policy id (`test.obsidian-write-grant`), so the run never creates or edits the
- * real `nimbus-ext-com.nimbus.obsidian` AppContainer profile; the mechanism is the same.
+ * (AppContainer helper), each on its own PR leg; the revoke premise and the ACE-shape case are
+ * Windows only. Same readiness guard as `exec-sandbox.test.ts`: a missing prerequisite skips locally
+ * but FAILS on CI. `spawnSync` throughout, bounded: an async `node:child_process` spawn inside a test
+ * worker can lose its child's exit on macOS (oven-sh/bun#41024). Windows uses a TEST policy id
+ * (`test.obsidian-write-grant`), so the real `nimbus-ext-com.nimbus.obsidian` profile is untouched.
  */
 
 const GATEWAY_ENTRY = resolve(import.meta.dir, "../../../../src/index.ts");
@@ -60,7 +56,9 @@ const WIN_HELPER =
   process.env["NIMBUS_SANDBOX_HELPER_PATH"] ??
   resolve(import.meta.dir, "../../../../src-native/sandbox-helper-win32/nimbus-sandbox-helper.exe");
 const POLICY_ID = "test.obsidian-write-grant";
+const PROFILE = `nimbus-ext-${POLICY_ID}`;
 const SPAWN_MS = 60_000;
+const NOW = new Date(Date.UTC(2026, 10, 5, 12));
 
 function findBwrap(): string | null {
   const r = spawnSync("sh", ["-c", "command -v bwrap"], { encoding: "utf8" });
@@ -87,31 +85,26 @@ const plain = join(root, "plain"); // under the root, in no vault
 const outside = join(top, "outside"); // a sibling of the root
 const work = join(top, "work"); // the probe's cwd (granted by every runner), outside the root
 const linkOut = join(vaultA, "escape"); // a link inside the vault to `outside`
-const rootFile = join(root, "root-note.md"); // a file in the root, in no vault
-const hardLink = join(vaultA, "hard-link.md"); // the SAME file as `rootFile`, linked in the vault
+const today = join(vaultA, "Daily", "2026-11-05.md");
 
 function linkDir(target: string, link: string): void {
   symlinkSync(target, link, IS_WIN ? "junction" : "dir");
 }
 
-mkdirSync(join(vaultA, ".obsidian"), { recursive: true });
+mkdirSync(join(vaultA, ".obsidian", "plugins", "x"), { recursive: true });
 writeFileSync(
   join(vaultA, ".obsidian", "daily-notes.json"),
   '{"folder":"Daily","format":"YYYY-MM-DD"}',
 );
+mkdirSync(join(vaultA, ".git", "hooks"), { recursive: true });
 mkdirSync(plain, { recursive: true });
 mkdirSync(outside, { recursive: true });
 mkdirSync(work, { recursive: true });
 linkDir(outside, linkOut);
 
-const PROFILE = `nimbus-ext-${POLICY_ID}`;
-
 afterAll(() => {
   if (IS_WIN && existsSync(WIN_HELPER)) {
-    const paths = [vaultA, root, work, outside, join(top, "outside2")].flatMap((p) => [
-      "--path",
-      p,
-    ]);
+    const paths = [today, vaultA, root, work].flatMap((p) => ["--path", p]);
     spawnSync(WIN_HELPER, ["--revoke-grants", "--profile", PROFILE, ...paths], {
       windowsHide: true,
       timeout: SPAWN_MS,
@@ -126,28 +119,35 @@ afterAll(() => {
 });
 
 const TARGETS = {
-  vault: join(vaultA, "probe.md"),
+  today,
+  pluginMain: join(vaultA, ".obsidian", "plugins", "x", "main.js"),
+  communityPlugins: join(vaultA, ".obsidian", "community-plugins.json"),
+  gitHook: join(vaultA, ".git", "hooks", "pre-commit"),
+  otherNote: join(vaultA, "other.md"),
+  newFile: join(vaultA, "new-note.md"),
   plain: join(plain, "probe.md"),
   rootDir: join(root, "probe.md"),
   outside: join(outside, "probe.md"),
   throughLink: join(linkOut, "probe-through-link.md"),
-  hardLink,
 } as const;
 type Target = keyof typeof TARGETS;
 /** Where a write to each target lands on the host (the link's lands in `outside`). */
 const LANDS: Readonly<Record<Target, string>> = {
   ...TARGETS,
   throughLink: join(outside, "probe-through-link.md"),
-  hardLink: rootFile,
 };
 const MARK = "PROBE-WRITE";
-const CONFINED: readonly Target[] = ["plain", "rootDir", "outside", "throughLink"];
+const NOT_TODAY: readonly Target[] = (Object.keys(TARGETS) as Target[]).filter(
+  (t) => t !== "today",
+);
 
 function resetTargets(): void {
-  for (const p of Object.values(LANDS)) rmSync(p, { force: true });
-  writeFileSync(rootFile, "root note\n");
-  rmSync(hardLink, { force: true });
-  linkSync(rootFile, hardLink);
+  // Today's note is TRUNCATED in place, never recreated: a new file would drop any ACE the last
+  // spawn left on it, and the revoke cases below are about exactly that ACE.
+  for (const [t, p] of Object.entries(LANDS)) if (t !== "today") rmSync(p, { force: true });
+  if (existsSync(today)) writeFileSync(today, "");
+  writeFileSync(TARGETS.communityPlugins, "[]");
+  writeFileSync(TARGETS.otherNote, "# another note\n");
 }
 
 function written(t: Target): boolean {
@@ -160,13 +160,16 @@ function psq(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
 }
 
-/** The child: try to append MARK to every target; stdout says which writes it saw succeed. */
+/**
+ * The child: try to append MARK to every target (today's note the connector's way: create its
+ * folder, then open for append); stdout says which writes it saw succeed.
+ */
 function probeArgv(targets: readonly string[] = Object.values(TARGETS)): string[] {
   if (IS_WIN) {
     const ps = targets
       .map(
         (p) =>
-          `try { [IO.File]::AppendAllText(${psq(p)}, '${MARK}'); $o += 'w' } catch { $o += 'd' }`,
+          `try { [IO.Directory]::CreateDirectory(${psq(dirname(p))}) | Out-Null } catch {}; try { [IO.File]::AppendAllText(${psq(p)}, '${MARK}'); $o += 'w' } catch { $o += 'd' }`,
       )
       .join("; ");
     const script = join(work, "probe.ps1");
@@ -186,26 +189,33 @@ function probeArgv(targets: readonly string[] = Object.values(TARGETS)): string[
     script,
     [
       "const fs = require('node:fs');",
+      "const path = require('node:path');",
       `const targets = ${JSON.stringify(targets)};`,
       "let o = '';",
-      `for (const t of targets) { try { fs.appendFileSync(t, ${JSON.stringify(MARK)}); o += 'w'; } catch { o += 'd'; } }`,
+      "for (const t of targets) {",
+      "  try { fs.mkdirSync(path.dirname(t), { recursive: true }); } catch {}",
+      `  try { const fd = fs.openSync(t, 'a+'); fs.writeSync(fd, ${JSON.stringify(MARK)}); fs.closeSync(fd); o += 'w'; } catch { o += 'd'; }`,
+      "}",
       "process.stdout.write(o);",
     ].join("\n"),
   );
   return [process.execPath, script];
 }
 
+function grantDeps(): DailyNoteGrantDeps {
+  return {
+    discoverVaults: (r) => discoverVaultsForWriteGrant(r),
+    realpath: (p) => realpathSync.native(p),
+    homeDir: join(top, "home"),
+    protectedRoots: [join(top, "nimbus-data")],
+    platform: process.platform,
+    now: () => NOW,
+  };
+}
+
 /** Exactly the Obsidian spawn's policy, with the probe child's own start-up needs added. */
 function obsidianPolicy(grantOn: boolean): SandboxPolicy {
-  const writes = grantOn
-    ? obsidianWriteGrantPaths([root], {
-        discoverVaults: (r) => discoverVaultsForWriteGrant(r),
-        realpath: (p) => realpathSync.native(p),
-        homeDir: join(top, "home"),
-        protectedRoots: [join(top, "nimbus-data")],
-        platform: process.platform,
-      }).paths
-    : [];
+  const writes = grantOn ? obsidianDailyNoteGrant([root], grantDeps()).files : [];
   const base = policyFromManifest(obsidianSpawnManifest([root], writes));
   const childNeeds = IS_WIN
     ? [work]
@@ -231,7 +241,7 @@ function obsidianPolicy(grantOn: boolean): SandboxPolicy {
  * What the mesh does before every Obsidian spawn on Windows (`obsidianPreSpawn`): revoke the
  * profile's write ACEs, through the PRODUCTION revoker, on the real helper. A no-op elsewhere.
  */
-async function revokeLikeTheMesh(paths: readonly string[] = [vaultA]): Promise<void> {
+async function revokeLikeTheMesh(paths: readonly string[] = [today]): Promise<void> {
   await appContainerGrantRevokerFor(process.platform, POLICY_ID, {
     helperPath: () => WIN_HELPER,
   }).revoke(paths);
@@ -269,36 +279,40 @@ async function runSandboxed(
   return out;
 }
 
-function isLink(p: string): boolean {
-  try {
-    return lstatSync(p).isSymbolicLink();
-  } catch {
-    return false;
-  }
+/**
+ * The stored inheritance flags of each explicit AppContainer ACE on `path`, read with Windows PowerShell and
+ * .NET `File.GetAccessControl` (icacls never prints `(OI)`/`(CI)` for a file, so it cannot show them;
+ * the `Get-Acl` cmdlet is avoided: its module does not load when 5.1 inherits a pwsh 7 PSModulePath).
+ */
+function appContainerInheritance(path: string): string[] {
+  const ps = `[System.IO.File]::GetAccessControl('${path.replace(/'/g, "''")}').GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier]) | Where-Object { $_.IdentityReference.Value -like 'S-1-15-2-*' } | ForEach-Object { $_.InheritanceFlags.ToString() }`;
+  const r = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", ps], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: SPAWN_MS,
+  });
+  return (r.stdout ?? "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
 }
 
-/** Remove a junction (never its target) or a plain folder at `p`. */
-function removeEntry(p: string): void {
-  if (isLink(p)) rmdirSync(p);
-  else rmSync(p, { recursive: true, force: true });
-}
-
-/** Explicit or inherited AppContainer ACEs on `path` (icacls prints an unresolved SID verbatim). */
+/** AppContainer ACE lines on `path` (icacls prints an unresolved SID verbatim). */
 function appContainerAces(path: string): string[] {
   const r = spawnSync("icacls", [path], { encoding: "utf8", windowsHide: true, timeout: SPAWN_MS });
   return (r.stdout ?? "").split(/\r?\n/).filter((l) => /S-1-15-2-[\d-]+:/.test(l));
 }
 
-describe("the Obsidian write grant under the real sandbox", () => {
+describe("the Obsidian daily-note file grant under the real sandbox", () => {
   beforeEach(() => resetTargets());
 
   it("the prerequisite is present on CI (a missing sandbox must not read as a pass)", () => {
     if (IS_CI) expect(MISSING).toBeNull();
   });
 
-  it("the grant this policy carries is exactly the vault, never the root", () => {
+  it("the grant this policy carries is exactly today's note, never a vault or a root", () => {
     const p = obsidianPolicy(true);
-    expect(p.permissions.filesystem.write).toEqual([vaultA]);
+    expect(p.permissions.filesystem.write).toEqual([today]);
     expect(p.permissions.filesystem.read).toContain(root);
     expect(obsidianPolicy(false).permissions.filesystem.write).toEqual([]);
   });
@@ -316,165 +330,78 @@ describe("the Obsidian write grant under the real sandbox", () => {
   });
 
   it.skipIf(!READY)(
-    "grant on: the vault is written; the sibling, the root, a plain folder and a link out are not",
+    "grant on: today's note is written; plugins, settings, git hooks, another note, a new note and everything outside are not",
     async () => {
       const r = await runSandboxed(obsidianPolicy(true));
       expect(r.status).toBe(0);
       expect(r.stdout.length).toBe(Object.keys(TARGETS).length);
-      expect(written("vault")).toBe(true);
-      for (const t of CONFINED) expect(written(t), t).toBe(false);
+      expect(written("today")).toBe(true);
+      for (const t of NOT_TODAY) expect(written(t), t).toBe(false);
     },
   );
 
   it.skipIf(!READY)(
-    "grant off (after the mesh's revoke): even the vault is not written",
+    "grant off (after the mesh's revoke): not even today's note is written",
     async () => {
       await runSandboxed(obsidianPolicy(true)); // a grant-on spawn first, as after a disable
       resetTargets();
       const r = await runSandboxed(obsidianPolicy(false));
       expect(r.status).toBe(0);
       expect(r.stdout.length).toBe(Object.keys(TARGETS).length);
-      for (const t of ["vault", ...CONFINED] as const) expect(written(t), t).toBe(false);
+      for (const t of Object.keys(TARGETS) as Target[]) expect(written(t), t).toBe(false);
     },
   );
 
-  // Why the revoke exists, measured: without it a grant-on spawn's inheritable write ACE outlives
-  // its child, and the next grant-off spawn of the same profile still writes the vault.
+  // Why the revoke exists, measured: without it a grant-on spawn's write ACE on the file outlives
+  // its child, and the next grant-off spawn of the same profile still writes it.
   it.skipIf(!READY || !IS_WIN)(
     "Windows: WITHOUT the revoke, a grant-off spawn still writes (the premise)",
     async () => {
       await runSandboxed(obsidianPolicy(true));
       resetTargets();
-      await runSandboxed(obsidianPolicy(false), probeArgv(), { revoke: false });
-      expect(written("vault")).toBe(true);
+      await runSandboxed(obsidianPolicy(false), probeArgv([today]), { revoke: false });
+      expect(readFileSync(today, "utf8")).toContain(MARK);
       await revokeLikeTheMesh();
     },
   );
 
-  // Review finding 6 (all OSes, recorded): a HARD link planted in the vault by the host, naming a
-  // file in the root outside every vault. See HARD_LINK_WRITE_EXPECTED.
-  it.skipIf(!READY)("a hard link planted in a vault to a file outside every vault", async () => {
-    const r = await runSandboxed(obsidianPolicy(true));
-    expect(r.status).toBe(0);
-    const wroteThrough = written("hardLink");
-    console.log(
-      `[obsidian-write-grant] ${process.platform}: write through a planted hard link: ${wroteThrough ? "ALLOWED" : "refused"}`,
-    );
-    // Measured on win32 and linux; on darwin it is RECORDED (the log line above), not asserted:
-    // nobody has measured it there yet (finding 5).
-    const expected = HARD_LINK_WRITE_EXPECTED[process.platform];
-    if (expected !== undefined) expect(wroteThrough).toBe(expected);
-  });
-
-  // Review finding 6, the sharper half: can the CHILD itself make a hard link in the vault to a
-  // file in the root (which it may only read), then write the root file through it? Every OS must
-  // refuse: Linux because the vault and the root are separate bind mounts (link() is EXDEV),
-  // Windows because CreateHardLink needs write access to the existing file, macOS because SBPL
-  // checks the link's SOURCE path, which is not under a write grant. Asserted on every OS.
-  it.skipIf(!READY)(
-    "the child cannot hard-link a root file into the vault and write it",
-    async () => {
-      const source = join(root, "root-note-2.md");
-      writeFileSync(source, "root note 2\n");
-      const link = join(vaultA, "child-hard-link.md");
-      const ranMarker = join(vaultA, "hard-link-probe-ran.md");
-      rmSync(link, { force: true });
-      rmSync(ranMarker, { force: true });
-      const argv = IS_WIN
-        ? ["cmd.exe", "/d", "/c", "mklink", "/H", link, source]
-        : (() => {
-            const script = join(work, "hardlink.js");
-            writeFileSync(
-              script,
-              [
-                "const fs = require('node:fs');",
-                `try { fs.linkSync(${JSON.stringify(source)}, ${JSON.stringify(link)}); } catch {}`,
-                `try { fs.appendFileSync(${JSON.stringify(link)}, ${JSON.stringify(MARK)}); } catch {}`,
-                // Proof the probe ran at all: an append the grant allows, inside the vault.
-                `try { fs.appendFileSync(${JSON.stringify(ranMarker)}, ${JSON.stringify(MARK)}); } catch {}`,
-              ].join("\n"),
-            );
-            return [process.execPath, script];
-          })();
-      await runSandboxed(obsidianPolicy(true), argv);
-      // A real hard link shares the source's inode. A write that only CREATED a new file at the
-      // link path is not one (measured on Linux: link() is EXDEV across the two bind mounts, then
-      // the append makes a plain file in the vault, which the grant allows).
-      const isHardLink = (): boolean =>
-        existsSync(link) && statSync(link).ino === statSync(source).ino;
-      if (IS_WIN && isHardLink()) {
-        // mklink only links; a second confined run tries the write through it.
-        await runSandboxed(obsidianPolicy(true), probeArgv([link]));
-      }
-      // Off win32 the same child also wrote a file in the vault: proof it ran (finding 4). On
-      // win32 the child is `cmd mklink`, which writes nothing else.
-      if (!IS_WIN) expect(readFileSync(ranMarker, "utf8")).toContain(MARK);
-      const madeLink = isHardLink();
-      console.log(
-        `[obsidian-write-grant] ${process.platform}: child-made hard link in the vault: ${madeLink ? "CREATED" : "refused"}`,
-      );
-      expect(readFileSync(source, "utf8")).toBe("root note 2\n");
-      rmSync(link, { force: true });
-    },
-  );
-
-  // Review finding 6 (Windows): a junction the CHILD creates inside the vault to a folder outside.
-  // Does a later spawn's inheritable GRANT on the vault, or the revoke, propagate through it?
   it.skipIf(!READY || !IS_WIN)(
-    "Windows: a junction the child makes in the vault carries no grant through it",
+    "Windows: the ACE is on the file only; the vault and its folder hold none",
     async () => {
-      const outside2 = join(top, "outside2");
-      mkdirSync(outside2, { recursive: true });
-      const junction = join(vaultA, "child-junction");
-      removeEntry(junction);
-      const make = await runSandboxed(obsidianPolicy(true), [
-        "cmd.exe",
-        "/d",
-        "/c",
-        "mklink",
-        "/J",
-        junction,
-        outside2,
-      ]);
-      const childMadeIt = isLink(junction);
-      console.log(
-        `[obsidian-write-grant] win32: child mklink /J in the vault: status=${String(make.status)} created=${String(childMadeIt)}`,
-      );
-      // Measured on Windows 11: the child's mklink is DENIED setting the reparse point (it may
-      // leave a plain empty folder, which is inside the vault and harmless). The propagation
-      // question is the same for a junction made by anyone, so the host makes one.
-      if (!childMadeIt) {
-        rmSync(junction, { recursive: true, force: true });
-        linkDir(outside2, junction);
-      }
-      expect(appContainerAces(outside2)).toEqual([]);
-      // A later spawn re-grants the vault (inheritable): the ACE must not reach through the junction.
-      const r = await runSandboxed(obsidianPolicy(true), probeArgv([join(junction, "through.md")]));
-      expect(r.status).toBe(0);
-      expect(appContainerAces(outside2)).toEqual([]);
-      expect(existsSync(join(outside2, "through.md"))).toBe(false);
-      // And the revoke leaves the outside folder exactly as it was.
+      await runSandboxed(obsidianPolicy(true), probeArgv([today]));
+      // The explicit ACE the grant made (an inherited `(I)(RX)` one is the root's read grant).
+      const fileAces = appContainerAces(today).filter((l) => !l.includes("(I)"));
+      expect(fileAces.length).toBeGreaterThan(0);
+      // Stored with NO inheritance flags: an ACE on the file itself, nothing beneath its name.
+      expect(appContainerInheritance(today)).toEqual(fileAces.map(() => "None"));
+      expect(appContainerAces(vaultA).filter((l) => !l.includes("(I)"))).toEqual([]);
+      expect(appContainerAces(dirname(today)).filter((l) => !l.includes("(I)"))).toEqual([]);
       await revokeLikeTheMesh();
-      expect(appContainerAces(outside2)).toEqual([]);
-      removeEntry(junction); // the junction itself, never its target
+      expect(appContainerAces(today).filter((l) => !l.includes("(I)"))).toEqual([]);
+    },
+  );
+
+  // A hard link planted by the host AT today's path (to a file outside every vault) is refused at
+  // preparation, so it is never granted, and the child cannot write through it.
+  it.skipIf(!READY)(
+    "a hard link planted at today's path is refused: no grant, and the linked file is untouched",
+    async () => {
+      const victim = join(root, "not-a-daily-note.md");
+      writeFileSync(victim, "victim\n");
+      rmSync(today, { force: true });
+      mkdirSync(dirname(today), { recursive: true });
+      linkSync(victim, today);
+      try {
+        const g = obsidianDailyNoteGrant([root], grantDeps());
+        expect(g.files).toEqual([]);
+        expect(g.skippedNotes.map((s) => s.reason)).toEqual(["hard-link"]);
+        const r = await runSandboxed(obsidianPolicy(true), probeArgv([today]));
+        expect(r.status).toBe(0);
+        expect(readFileSync(victim, "utf8")).toBe("victim\n");
+      } finally {
+        rmSync(today, { force: true });
+        rmSync(victim, { force: true });
+      }
     },
   );
 });
-
-/**
- * What a write through a hard link PLANTED in a vault (by the host, not the child) does. A hard
- * link is a second name for the same file; each OS grants by the name written to, or by the file's
- * one security descriptor, never by where the file was first made:
- *  - win32: the vault's inheritable write ACE is propagated onto the linked file's single DACL;
- *  - linux: the vault is bound read-write and the file is reached through it;
- *  - darwin: SBPL matches the path the write names, which is inside the vault.
- * Stated bound (I15): a pre-existing hard link in a vault to a file outside it makes that file
- * writable. Planting one needs host write access to that file and to the vault, so it gives the
- * sandbox nothing its owner could not already write. A child cannot plant one from inside: on
- * Linux the vault and the root are different bind mounts (EXDEV).
- */
-const HARD_LINK_WRITE_EXPECTED: Readonly<Partial<Record<NodeJS.Platform, boolean>>> = {
-  win32: true, // measured 2026-11-05 on Windows 11
-  linux: true, // measured 2026-11-05 under bwrap (WSL)
-  // darwin: unmeasured; the macOS leg records the outcome in its log.
-};

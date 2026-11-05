@@ -36,7 +36,7 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 |---|---|
 | `obsidian_append_to_daily_note` | Append text to today's daily note. Creates the file if it does not exist. **Always appends — never overwrites.** Adds a leading newline when the existing file does not end in one. |
 
-**The append needs your opt-in.** The connector runs in a sandbox that may only read your vaults. Run `nimbus connector writes enable obsidian` and approve it: the prompt names the folders the sandbox may then write, and only while that approval stands can an append (from the model, or an MCP client's proposal you accepted) reach the file. Each append still asks you first. `nimbus connector writes disable obsidian` withdraws it at once.
+**The append needs your opt-in.** The connector runs in a sandbox that may only read your vaults. Run `nimbus connector writes enable obsidian` and approve it: the sandbox may then write one file in each vault, today's daily note (the date in UTC), and nothing else (not `.obsidian`, not `.git`, no other note), and the prompt names each vault's note pattern. Only while that approval stands can an append (from the model, or an MCP client's proposal you accepted) reach the file, and only for today's date. Each append still asks you first. `nimbus connector writes disable obsidian` withdraws it at once.
 
 ## Platform notes
 

@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 
-import { enableWritesPromptLines } from "./enable-prompt.ts";
+import {
+  enableWritesPromptLines,
+  OBSIDIAN_NOTHING_ELSE_LINE,
+  OBSIDIAN_WIDENING_LINES,
+} from "./enable-prompt.ts";
 
 describe("enableWritesPromptLines", () => {
   test("a well-formed payload lists the service, the wave, every write by state, and the fixed sentence", () => {
@@ -108,8 +112,6 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
     offerable: true,
     state: "newly_offerable",
   };
-  const WIDENING =
-    "Approving also lets the Obsidian connector's sandbox WRITE inside each Obsidian vault found under your [[filesystem.roots]], and any vault made there later (it already reads them):";
   const HEAD = [
     "Service: obsidian",
     "Up to wave: 2",
@@ -117,7 +119,16 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
   ];
   const TAIL = ["", "Each call will still ask you before it runs."];
 
-  test("names each root, each vault found and each skipped path with its reason", () => {
+  test("the widening is ONE FILE per vault, today's daily note, and nothing else (the owner's ruling)", () => {
+    expect(OBSIDIAN_WIDENING_LINES).toEqual([
+      "Approving also lets the Obsidian connector's sandbox WRITE ONE FILE per vault: today's daily note (the date in UTC), in each Obsidian vault found under your [[filesystem.roots]], and any vault made there later (it already reads them):",
+    ]);
+    expect(OBSIDIAN_NOTHING_ELSE_LINE).toBe(
+      "Nothing else in a vault becomes writable: not .obsidian (plugins, settings), not .git, no other note, no new file.",
+    );
+  });
+
+  test("names each root, each vault's daily-note pattern and each skipped path with its reason", () => {
     expect(
       enableWritesPromptLines({
         service: "obsidian",
@@ -125,36 +136,59 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
         writes: [APPEND],
         fileWriteScope: {
           roots: ["/home/me/notes", "/home/me/work"],
-          vaults: ["/home/me/notes/vaultA"],
-          skipped: [{ path: "/home/me/work/.local/share/nimbus", reason: "protected" }],
+          notes: ["/home/me/notes/vaultA/Daily/YYYY-MM-DD.md"],
+          skipped: [
+            { path: "/home/me/work/.local/share/nimbus", reason: "protected" },
+            { path: "/home/me/notes/B/.obsidian/YYYY-MM-DD.md", reason: "config-dir" },
+          ],
         },
       }),
     ).toEqual([
       ...HEAD,
       "",
-      WIDENING,
+      ...OBSIDIAN_WIDENING_LINES,
       "  /home/me/notes",
       "  /home/me/work",
-      "Vaults found now:",
-      "  /home/me/notes/vaultA",
+      "Daily notes it may write (one file a day):",
+      "  /home/me/notes/vaultA/Daily/YYYY-MM-DD.md",
       "  not writable: /home/me/work/.local/share/nimbus (overlaps a Nimbus folder)",
+      "  not writable: /home/me/notes/B/.obsidian/YYYY-MM-DD.md (the daily-note folder is inside .obsidian or .git)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
       ...TAIL,
     ]);
   });
 
-  test("no vault found: (none)", () => {
+  test("no vault found: (none), and still nothing else", () => {
     expect(
       enableWritesPromptLines({
         service: "obsidian",
         maxWave: 2,
         writes: [APPEND],
-        fileWriteScope: { roots: ["/n"], vaults: [], skipped: [] },
+        fileWriteScope: { roots: ["/n"], notes: [], skipped: [] },
       }),
-    ).toEqual([...HEAD, "", WIDENING, "  /n", "Vaults found now:", "  (none)", ...TAIL]);
+    ).toEqual([
+      ...HEAD,
+      "",
+      ...OBSIDIAN_WIDENING_LINES,
+      "  /n",
+      "Daily notes it may write (one file a day):",
+      "  (none)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
+      ...TAIL,
+    ]);
   });
 
   test("every skip reason has its own wording", () => {
-    const reasons = ["outside-roots", "link", "missing", "home-or-root", "protected", "nested"];
+    const reasons = [
+      "outside-roots",
+      "link",
+      "missing",
+      "home-or-root",
+      "protected",
+      "nested",
+      "config-dir",
+      "outside-vault",
+    ];
     const lines =
       enableWritesPromptLines({
         service: "obsidian",
@@ -162,7 +196,7 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
         writes: [APPEND],
         fileWriteScope: {
           roots: [],
-          vaults: [],
+          notes: [],
           skipped: reasons.map((reason) => ({ path: `/p/${reason}`, reason })),
         },
       }) ?? [];
@@ -171,12 +205,13 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
     expect(new Set(notWritable.map((l) => l.slice(l.indexOf("(")))).size).toBe(reasons.length);
   });
 
-  test("an absent scope still names the widening and says the folders are not known", () => {
+  test("an absent scope still names the widening and its limit, and says the files are not known", () => {
     expect(enableWritesPromptLines({ service: "obsidian", maxWave: 2, writes: [APPEND] })).toEqual([
       ...HEAD,
       "",
-      WIDENING,
-      "  (the folders are not known to this gateway process)",
+      ...OBSIDIAN_WIDENING_LINES,
+      "  (the files are not known to this gateway process)",
+      OBSIDIAN_NOTHING_ELSE_LINE,
       ...TAIL,
     ]);
   });
@@ -184,11 +219,12 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
   test("a malformed scope is a malformed payload", () => {
     for (const fileWriteScope of [
       "x",
-      { roots: [1], vaults: [], skipped: [] },
-      { roots: [], vaults: "v", skipped: [] },
-      { roots: [], vaults: [], skipped: "s" },
-      { roots: [], vaults: [], skipped: [{ path: "/p", reason: "other" }] },
-      { roots: [], vaults: [], skipped: [{ path: 7, reason: "link" }] },
+      { roots: [1], notes: [], skipped: [] },
+      { roots: [], notes: "v", skipped: [] },
+      { roots: [], vaults: [], skipped: [] },
+      { roots: [], notes: [], skipped: "s" },
+      { roots: [], notes: [], skipped: [{ path: "/p", reason: "other" }] },
+      { roots: [], notes: [], skipped: [{ path: 7, reason: "link" }] },
     ]) {
       expect(
         enableWritesPromptLines({
@@ -208,14 +244,14 @@ describe("enableWritesPromptLines: the Obsidian write widening (B4b, I15)", () =
         service: "obsidian",
         maxWave: 2,
         writes: [APPEND],
-        fileWriteScope: { roots: [`/n${esc}[2J`], vaults: [`/n/v\nfake line`], skipped: [] },
+        fileWriteScope: { roots: [`/n${esc}[2J`], notes: [`/n/v\nfake line`], skipped: [] },
       }) ?? [];
     expect(lines.join("\n")).not.toContain(esc);
     expect(lines).not.toContain("fake line");
   });
 
   test("another service, or obsidian without the append offerable, never shows it", () => {
-    const scope = { roots: ["/n"], vaults: ["/n/v"], skipped: [] };
+    const scope = { roots: ["/n"], notes: ["/n/v/YYYY-MM-DD.md"], skipped: [] };
     const github = enableWritesPromptLines({
       service: "github",
       maxWave: 2,

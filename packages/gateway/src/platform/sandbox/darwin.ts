@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { lstatSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -11,6 +11,25 @@ interface SbplOpts {
   cwd: string;
   tmpdir: string;
   policy: SandboxPolicy;
+  /**
+   * The write paths that are FILES (the Obsidian daily-note grant, I15). Each is granted as
+   * `(literal ...)`, so a file grant can never become a grant on anything beneath its name;
+   * every other write path stays a `(subpath ...)`.
+   */
+  writeFiles?: ReadonlySet<string>;
+}
+
+/** The write paths of `policy` that exist as regular files now (a missing path is not one). */
+export function writeFilesOf(policy: SandboxPolicy): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const p of policy.permissions.filesystem.write) {
+    try {
+      if (lstatSync(p).isFile()) out.add(p);
+    } catch {
+      // absent: granted as a subpath, as before
+    }
+  }
+  return out;
 }
 
 /**
@@ -156,7 +175,9 @@ export function generateSbplProfile(opts: SbplOpts): string {
     "(allow file-write*",
     `  (subpath "${opts.cwd}")`,
     `  (subpath "${opts.tmpdir}")`,
-    ...fsWrite.map((p) => `  (subpath "${p}")`),
+    ...fsWrite.map((p) =>
+      opts.writeFiles?.has(p) === true ? `  (literal "${p}")` : `  (subpath "${p}")`,
+    ),
     ")",
   ];
   // PORTS ONLY: a declared entry opens its TCP port to every host, so here a connector's list limits
@@ -195,10 +216,12 @@ export function createDarwinSandboxRunner(): SandboxRunner {
       const sandboxDir = canonicalPath(mkdtempSync(join(tmpdir(), "nimbus-sandbox-")));
       const cwd = canonicalPath(opts.cwd);
       const profilePath = join(sandboxDir, "profile.sb");
+      const policy = canonicalPolicyPaths(opts.policy);
       const profile = generateSbplProfile({
         cwd,
         tmpdir: sandboxDir,
-        policy: canonicalPolicyPaths(opts.policy),
+        policy,
+        writeFiles: writeFilesOf(policy),
       });
       writeFileSync(profilePath, profile);
       // Absolute path to the SIP-protected system binary — never resolve via

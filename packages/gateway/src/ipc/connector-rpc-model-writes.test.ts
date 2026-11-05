@@ -749,7 +749,7 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
     row("obsidian_append_to_daily_note", "obsidian.note.append", "write", 2),
     T,
   );
-  const SCOPE = { roots: ["/n"], vaults: ["/n/v"], skipped: [] };
+  const SCOPE = { roots: ["/n"], notes: ["/n/v/YYYY-MM-DD.md"], skipped: [] };
 
   function deps(exec: ToolExecutor, over: Partial<ModelWritesDeps> = {}): ModelWritesDeps {
     return {
@@ -770,8 +770,9 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
       deps(executor(true, prompts)),
     );
     const p = prompts[0] ?? "";
-    expect(p).toContain("sandbox WRITE inside each Obsidian vault");
-    expect(p).toContain("Vaults found now:\n  /n/v");
+    expect(p).toContain("sandbox WRITE ONE FILE per vault: today's daily note");
+    expect(p).toContain("Daily notes it may write (one file a day):\n  /n/v/YYYY-MM-DD.md");
+    expect(p).toContain("Nothing else in a vault becomes writable");
     expect(isObsidianWriteGrantApproved(db)).toBe(true);
   });
 
@@ -785,7 +786,7 @@ describe("the Obsidian enable prompt names the folders it may write (B4b Task B3
         },
       }),
     );
-    expect(prompts[0]).toContain("(the folders are not known to this gateway process)");
+    expect(prompts[0]).toContain("(the files are not known to this gateway process)");
   });
 
   test("no scope is read when the append is not offerable", async () => {

@@ -322,6 +322,17 @@ static int parse_spawn_args(int argc, wchar_t **argv, spawn_opts *o) {
 /* Apply the cwd grant and the policy-path grants. Returns 0 or the exit code. Does NOT free
  * `sid` — the caller owns it on every path, which is why this returns a code rather than
  * cleaning up itself. */
+/* A FILE has no children, so an inheritable ACE on one means nothing but reads as a subtree grant:
+ * a file path (the Obsidian daily-note grant, I15) gets an ACE on that file ONLY. A directory, or a
+ * path whose attributes cannot be read (it then fails in grant_path), keeps the subtree grant. */
+static DWORD inheritance_for(const wchar_t *path) {
+    DWORD attrs = GetFileAttributesW(path);
+    if (attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+        return NO_INHERITANCE;
+    }
+    return SUB_CONTAINERS_AND_OBJECTS_INHERIT;
+}
+
 static int apply_grants(PSID sid, const spawn_opts *o) {
     /* The working directory: Modify, inheritable — the child works inside it. */
     int rc = grant_path(o->cwd, sid, FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
@@ -340,7 +351,7 @@ static int apply_grants(PSID sid, const spawn_opts *o) {
     for (int k = 0; k < o->nwrite; k++) {
         rc = grant_path(o->writes[k], sid,
                         FILE_GENERIC_READ | FILE_GENERIC_EXECUTE | FILE_GENERIC_WRITE,
-                        SUB_CONTAINERS_AND_OBJECTS_INHERIT);
+                        inheritance_for(o->writes[k]));
         if (rc != 0) return rc;
     }
     return 0;

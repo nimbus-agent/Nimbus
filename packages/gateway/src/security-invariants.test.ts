@@ -1408,18 +1408,32 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       return next < 0 ? code.slice(at) : code.slice(at, at + 1 + next);
     }
 
-    test("the write list is obsidianWriteGrantPaths behind the live approval, or nothing", async () => {
+    test("the write list is today's daily-note FILES behind the live approval, or nothing", async () => {
       const src = await read("packages/gateway/src/connectors/lazy-mesh/connector-spawns.ts");
       const decide = fnBody(src, "obsidianWritePathsFor");
       // The approval is consulted first; without it the list is the empty literal.
       expect(decide).toMatch(
-        /if \(deps === undefined \|\| !obsidianWriteGrantApproved\(ctx\)\) return \[\];/,
+        /if \(deps === undefined \|\| !obsidianWriteGrantApproved\(ctx\)\) return \{ paths: \[\] \};/,
       );
-      expect(decide).toMatch(/return obsidianWriteGrantPaths\(roots, deps\)\.paths;/);
+      expect(decide).toMatch(/const grant = obsidianDailyNoteGrant\(roots, deps\);/);
+      expect(decide).toMatch(/return \{ paths: grant\.files, day: grant\.day \};/);
+      // The grant is files only: the daily-note module never hands out a vault (owner ruling).
+      const dn = stripComments(
+        await read("packages/gateway/src/connectors/lazy-mesh/obsidian-daily-note-grant.ts"),
+      );
+      expect(dn).toMatch(/if \("file" in r\) files\.push\(r\.file\);/);
+      expect(dn).not.toMatch(/files\.push\(vault\)/);
+      expect(dn).toMatch(/const CONFIG_DIRS = \["\.obsidian", "\.git"\];/);
       const approved = fnBody(src, "obsidianWriteGrantApproved");
       expect(approved).toMatch(/ctx\.obsidianWriteGrantEnabled/);
       const start = fnBody(src, "startObsidianMcp");
-      expect(start).toMatch(/const writePaths = obsidianWritePathsFor\(ctx, vaultPaths\);/);
+      expect(start).toMatch(/const grant = obsidianWritePathsFor\(ctx, vaultPaths\);/);
+      expect(start).toMatch(/const writePaths = grant\.paths;/);
+      // The day-rollover refresh runs before the live-client reuse check.
+      expect(start.indexOf("ctx.obsidianRefreshStale?.()")).toBeGreaterThan(0);
+      expect(start.indexOf("ctx.obsidianRefreshStale?.()")).toBeLessThan(
+        start.indexOf("ctx.getLazyClient(slotKey) !== undefined"),
+      );
       expect(start).toMatch(/obsidianSpawnManifest\(vaultPaths, writePaths\)/);
       // The pre-spawn hook (the Windows revoke) is awaited BEFORE the client is created.
       expect(start.indexOf("await ctx.obsidianPreSpawn(")).toBeGreaterThan(0);
@@ -1504,6 +1518,15 @@ describe("I15 — SandboxRunner is intrinsic to every extension spawn", () => {
       expect(mesh).toMatch(
         /appContainerGrantRevokerFor\(platform, manifestForFirstParty\("obsidian"\)\.id\)/,
       );
+      // A file write path is a literal on macOS and gets a non-inheritable ACE on Windows.
+      const darwin = stripComments(await read("packages/gateway/src/platform/sandbox/darwin.ts"));
+      expect(darwin).toMatch(
+        /opts\.writeFiles\?\.has\(p\) === true \? ` {2}\(literal "\$\{p\}"\)`/,
+      );
+      expect(darwin).toMatch(/writeFiles: writeFilesOf\(policy\)/);
+      const helper = await read("packages/gateway/src-native/sandbox-helper-win32/main.c");
+      expect(helper).toMatch(/inheritance_for\(o->writes\[k\]\)/);
+      expect(helper).toMatch(/return NO_INHERITANCE;/);
       // The pre-spawn hook awaits the revoke-then-record step; the ledger is saved only AFTER the
       // revoke resolved (an entry leaves the ledger only once revoked), and before the spawn.
       expect(mesh).toMatch(/await this\.revokeObsidianGrants\(plan\.writePaths\);/);

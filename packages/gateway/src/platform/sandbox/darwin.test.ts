@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { manifestWithExtraNetworkHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
-import { createDarwinSandboxRunner, generateSbplProfile } from "./darwin.ts";
+import { createDarwinSandboxRunner, generateSbplProfile, writeFilesOf } from "./darwin.ts";
 import { policyFromManifest, type SandboxPolicy } from "./sandbox-policy.ts";
 
 // Real, unique temp root for the fake sandbox cwd/tmpdir strings (S5443). The
@@ -277,5 +277,43 @@ describe("the macOS runner reports what it enforces", () => {
   it("can confine a policy that names hosts, and one with no network", () => {
     expect(runner.canConfine(policy({ network: ["api.github.com"] }))).toBeNull();
     expect(runner.canConfine(policy())).toBeNull();
+  });
+});
+
+describe("a file write grant is a literal (the Obsidian daily note, I15)", () => {
+  const filePolicy: SandboxPolicy = {
+    id: "com.nimbus.obsidian",
+    permissions: {
+      network: [],
+      filesystem: { read: ["/notes"], write: ["/notes/v/2026-11-05.md", "/data"] },
+    },
+  };
+
+  it("a write path named in writeFiles is (literal ...), never (subpath ...); others stay subpaths", () => {
+    const p = generateSbplProfile({
+      cwd: "/s/cwd",
+      tmpdir: "/s/tmp",
+      policy: filePolicy,
+      writeFiles: new Set(["/notes/v/2026-11-05.md"]),
+    });
+    const write = p.slice(p.indexOf("(allow file-write*"));
+    expect(write).toContain('  (literal "/notes/v/2026-11-05.md")');
+    expect(write).not.toContain('(subpath "/notes/v/2026-11-05.md")');
+    expect(write).toContain('  (subpath "/data")');
+  });
+
+  it("writeFilesOf names exactly the write paths that are regular files now", () => {
+    const dir = mkdtempSync(join(tmpdir(), "nimbus-darwin-files-"));
+    const file = join(dir, "note.md");
+    writeFileSync(file, "");
+    const set = writeFilesOf({
+      id: "x",
+      permissions: {
+        network: [],
+        filesystem: { read: [], write: [file, dir, join(dir, "absent")] },
+      },
+    });
+    expect([...set]).toEqual([file]);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

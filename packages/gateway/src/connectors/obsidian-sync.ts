@@ -113,7 +113,7 @@ function buildNoteWrite(
 
 /**
  * Read one note, refusing anything that is or passes through a link (B4b review finding 2). Since
- * the Obsidian connector's sandbox may WRITE inside a vault, a note can be swapped for a symlink
+ * the Obsidian connector's sandbox may WRITE today's note in a vault, a note can be swapped for a symlink
  * (or, on Windows, a reparse point) between the walk's `lstat` and this read, and the index would
  * then ingest a file outside the vault. So, in order:
  *  1. `lstat` the note: a link or a non-file is refused;
