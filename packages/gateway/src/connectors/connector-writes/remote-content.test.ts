@@ -813,6 +813,37 @@ describe("edge paths (fail closed, and what stays allowed)", () => {
     );
   });
 
+  test("SVG rules run in every markup format (adversarial review)", () => {
+    const all = [
+      "outlook-html",
+      "confluence-storage",
+      "obsidian-markdown",
+      "drive-markup",
+    ] as const;
+    for (const format of all) {
+      expectRefused(format, String.raw`<svg><rect mask="u\72l(https://h/x.png)"/></svg>`, true);
+      expectRefused(
+        format,
+        `<svg><image href="x.png"><set attributeName="href" to="https://h/p.png"/></image></svg>`,
+        true,
+      );
+      expectRefused(format, "<svg><foreignObject><p>x</p></foreignObject></svg>", true);
+      expectRefused(format, `<svg><rect mask="image-set('x.png' 1x)"/></svg>`, true);
+      // Inside a nested view too.
+      expectRefused(format, String.raw`<a title="<rect fill='u\72l(//h)'/>">`, true);
+      expectRefused(format, `<a title="<set attributeName='href' to='x'/>">`, true);
+      // Twins.
+      expectAllowed(format, `<svg><rect fill="red" mask="none"/></svg>`);
+      expectAllowed(format, `<img alt="Image (1) and src (2)">`);
+      expectAllowed(format, `<svg><animate attributeName="opacity" to="1"/></svg>`);
+    }
+    // The `#` relaxation stays Drive-only.
+    expectAllowed("drive-markup", `<svg><rect fill="url(#g)"/></svg>`);
+    for (const format of ["outlook-html", "confluence-storage", "obsidian-markdown"] as const) {
+      expectRefused(format, `<svg><rect fill="url(#g)"/></svg>`, true);
+    }
+  });
+
   test("storage: input that does not tokenize is refused", () => {
     expectRefused("confluence-storage", "<p", true);
   });

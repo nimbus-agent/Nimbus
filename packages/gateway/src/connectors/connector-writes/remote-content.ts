@@ -387,8 +387,12 @@ function urlArgument(css: string, open: number): string | undefined {
 }
 
 /** Whether a normalised form has a `url(` that loads: any, or (Drive) one not starting with `#`. */
-function cssUrlLoads(form: string, allowFragmentUrl: boolean): boolean {
-  for (const m of form.matchAll(CSS_URL_FUNCTION)) {
+function cssUrlLoads(
+  form: string,
+  allowFragmentUrl: boolean,
+  pattern: RegExp = CSS_URL_FUNCTION,
+): boolean {
+  for (const m of form.matchAll(pattern)) {
     if (!allowFragmentUrl) return true;
     const arg = urlArgument(form, m.index + m[0].length);
     if (arg === undefined || !arg.startsWith("#")) return true;
@@ -702,7 +706,12 @@ function refusesTagsAt(
     if (refusesNestedView(t, text, rules, depth, budget)) return true;
     if (t.kind !== "start") return false;
     if (refusesElement(t, rules) || refusesAttributes(t, rules)) return true;
-    return depth > 0 && refusesStyleAttribute(t, rules.allowFragmentUrl);
+    if (depth === 0) return false;
+    return (
+      refusesStyleAttribute(t, rules.allowFragmentUrl) ||
+      svgElementRefused(t) ||
+      presentationRefused(t, rules.allowFragmentUrl)
+    );
   });
 }
 
@@ -723,6 +732,8 @@ function outlookHtmlRemote(text: string, opts: DetectOptions): boolean {
   if (tokens === undefined) return true;
   return (
     refusesTags(tokens, text, rules) || // steps 2-4
+    refusesSvgElements(tokens) || // SVG elements (every format)
+    refusesPresentationUrls(tokens, false) || // SVG presentation attributes
     refusesCss(tokens, text, rules) || // step 5
     refusesMarkupInDeclarations(tokens) || // step 6
     hasCdata(tokens) || // step 7
@@ -1011,6 +1022,8 @@ function storageRules(tokens: readonly MarkupToken[], text: string, depth: numbe
   const exempt = depth === 0 ? exemptCodeBodies(tokens) : new Set<MarkupToken>();
   return (
     refusesTags(tokens, text, rules) || // steps 2-4
+    refusesSvgElements(tokens) || // SVG elements (every format)
+    refusesPresentationUrls(tokens, false) || // SVG presentation attributes
     refusesCss(tokens, text, rules) || // step 5
     refusesMarkupInDeclarations(tokens) || // step 6
     refusesStorage(tokens, exempt, depth) // step 7 (CDATA) and R5
@@ -1172,6 +1185,8 @@ function obsidianRemote(text: string, opts: DetectOptions): boolean {
   if (tokens === undefined) return true;
   return (
     refusesTags(tokens, text, rules) || // (a) steps 2-4
+    refusesSvgElements(tokens) || // SVG elements (every format)
+    refusesPresentationUrls(tokens, false) || // SVG presentation attributes
     refusesCss(tokens, text, rules) || // (a) step 5
     refusesMarkupInDeclarations(tokens) || // (a) step 6
     hasCdata(tokens) || // (a) step 7
@@ -1249,39 +1264,59 @@ const EXTERNAL_IDENTIFIER = /\b(?:system|public)\b/;
  * element whose `attributeName` (every form, local part) is `href` or `src` (SMIL `set`,
  * `animate`, `animateMotion`, `animateTransform`, `discard`; any element, fail closed).
  */
-function refusesSvgElements(tokens: readonly MarkupToken[]): boolean {
-  return tokens.some((t) => {
-    if (t.kind !== "start") return false;
-    if (localIn(t.name, FOREIGN_OBJECT)) return true;
-    return t.attrs.some((a) => {
-      if (!localIn(a.name, ATTRIBUTE_NAME)) return false;
-      const forms = valueForms(a.value);
-      return forms === undefined || forms.some((f) => SMIL_REFUSED_TARGETS.has(localPart(f)));
-    });
+function svgElementRefused(t: StartToken): boolean {
+  if (localIn(t.name, FOREIGN_OBJECT)) return true;
+  return t.attrs.some((a) => {
+    if (!localIn(a.name, ATTRIBUTE_NAME)) return false;
+    const forms = valueForms(a.value);
+    return forms === undefined || forms.some((f) => SMIL_REFUSED_TARGETS.has(localPart(f)));
   });
 }
 
-/** Whether one attribute value, read as CSS, calls a loading function or a non-`#` `url(`. */
-function valueLoadsAsCss(value: string): boolean {
-  // Only a value that can spell `(` (literally, as an entity, or as a CSS escape) can call one.
-  if (!value.includes("(") && !value.includes("&") && !value.includes("\\")) return false;
-  const forms = cssForms(value);
-  return (
-    forms === undefined || forms.some((f) => CSS_LOAD_FUNCTION.test(f) || cssUrlLoads(f, true))
-  );
+function refusesSvgElements(tokens: readonly MarkupToken[]): boolean {
+  return tokens.some((t) => t.kind === "start" && svgElementRefused(t));
 }
 
 /**
- * R12 presentation attributes: any attribute other than `style` (R4 step 5) whose value calls a
- * CSS `url(` must give EVERY `url(` an argument starting with `#` (Review fix 3: `fill`,
- * `stroke`, `filter`, `mask`, `clip-path`, `marker-*`, and SMIL `values`, `to`, `from`, `by`);
- * the other loading functions (`mask` takes images) are refused outright.
+ * A CSS function token in an attribute value: the name and `(` with nothing between, as CSS
+ * requires, so prose such as `alt="Image (1)"` is not read as a call.
  */
-function refusesPresentationUrls(tokens: readonly MarkupToken[]): boolean {
-  return tokens.some(
-    (t) =>
-      t.kind === "start" && t.attrs.some((a) => !nameIn(a.name, STYLE) && valueLoadsAsCss(a.value)),
+const CSS_LOAD_FUNCTION_TOKEN = /(?:image|image-set|cross-fade|element|src|expression)\(/;
+const CSS_URL_FUNCTION_TOKEN = /url\(/g;
+
+/**
+ * Whether one attribute value, read as CSS (entities and CSS escapes decoded), calls a loading
+ * function, or a `url(` that loads (any `url(`, or with `allowFragmentUrl` one whose argument
+ * does not start with `#`).
+ */
+function valueLoadsAsCss(value: string, allowFragmentUrl: boolean): boolean {
+  // Only a value that can spell `(` (literally, as an entity, or as a CSS escape) can call one.
+  if (!value.includes("(") && !value.includes("&") && !value.includes("\\")) return false;
+  const forms = cssForms(value);
+  if (forms === undefined) return true;
+  return forms.some(
+    (f) =>
+      CSS_LOAD_FUNCTION_TOKEN.test(f) || cssUrlLoads(f, allowFragmentUrl, CSS_URL_FUNCTION_TOKEN),
   );
+}
+
+function presentationRefused(t: StartToken, allowFragmentUrl: boolean): boolean {
+  return t.attrs.some((a) => !nameIn(a.name, STYLE) && valueLoadsAsCss(a.value, allowFragmentUrl));
+}
+
+/**
+ * R12 presentation attributes, in EVERY markup format since the adversarial review (an SVG
+ * `<rect mask="u\72l(...)">` renders in Outlook on the web and in Obsidian too): any attribute
+ * other than `style` (R4 step 5) whose value calls a CSS `url(` is refused; in Drive markup only
+ * (`allowFragmentUrl`), EVERY `url(` argument must start with `#` instead (Review fix 3: `fill`,
+ * `stroke`, `filter`, `mask`, `clip-path`, `marker-*`, and SMIL `values`, `to`, `from`, `by`).
+ * The other loading functions (`mask` takes images) are refused outright.
+ */
+function refusesPresentationUrls(
+  tokens: readonly MarkupToken[],
+  allowFragmentUrl: boolean,
+): boolean {
+  return tokens.some((t) => t.kind === "start" && presentationRefused(t, allowFragmentUrl));
 }
 
 /**
@@ -1311,7 +1346,7 @@ function driveMarkupRemote(text: string, opts: DetectOptions): boolean {
     refusesMarkupInDeclarations(tokens) || // R4 step 6
     hasCdata(tokens) || // R4 step 7
     refusesSvgElements(tokens) || // R12 SVG elements
-    refusesPresentationUrls(tokens) || // R12 presentation attributes
+    refusesPresentationUrls(tokens, true) || // R12 presentation attributes, `#` relaxed
     refusesXmlDeclarations(tokens) || // R12 XML declarations
     (opts.tripwire && tripwire(text, "drive")) // R4 step 8
   );
