@@ -184,6 +184,11 @@ interface MarkupRules {
   readonly confluence: boolean;
   /** Drive markup (R12): a CSS `url(` whose argument starts with `#` is allowed. */
   readonly allowFragmentUrl: boolean;
+  /**
+   * Elements a format refuses beyond R4 step 2 (B3w: Teams `<attachment>`), compared the same
+   * three ways. Checked inside `refusesElement`, so every nested view applies it too.
+   */
+  readonly refusedExtra?: ReadonlySet<string>;
 }
 
 function isConfluenceLink(t: StartToken): boolean {
@@ -195,6 +200,7 @@ function isConfluenceLink(t: StartToken): boolean {
 
 function refusesElement(t: StartToken, rules: MarkupRules): boolean {
   if (nameIn(t.name, REFUSED_ELEMENTS) && !(rules.confluence && isConfluenceLink(t))) return true;
+  if (rules.refusedExtra !== undefined && nameIn(t.name, rules.refusedExtra)) return true;
   return nameIn(t.name, META) && t.attrs.some((a) => nameIn(a.name, HTTP_EQUIV));
 }
 
@@ -762,20 +768,43 @@ interface DetectOptions {
   readonly tripwire: boolean;
 }
 
-/** Outlook HTML (R4, `cid:` allowed in URL attributes): the eight steps, in order. */
-function outlookHtmlRemote(text: string, opts: DetectOptions): boolean {
-  const rules: MarkupRules = { allowCid: true, confluence: false, allowFragmentUrl: false };
+/** What distinguishes one HTML message format from another (B3w: Outlook and Teams). */
+interface HtmlProfile {
+  readonly allowCid: boolean;
+  readonly tripwire: TripwireKind;
+  readonly refusedExtra: ReadonlySet<string>;
+}
+
+const NO_EXTRA_ELEMENTS: ReadonlySet<string> = new Set();
+
+/** An HTML message body (R4): the eight steps, in order, under one format's profile. */
+function htmlMarkupRemote(text: string, opts: DetectOptions, profile: HtmlProfile): boolean {
+  const rules: MarkupRules = {
+    allowCid: profile.allowCid,
+    confluence: false,
+    allowFragmentUrl: false,
+    refusedExtra: profile.refusedExtra,
+  };
   const tokens = tokenizeMarkup(text); // step 1
   if (tokens === undefined) return true;
   return (
-    refusesTags(tokens, text, rules) || // steps 2-4
+    refusesTags(tokens, text, rules) || // steps 2-4 (and the profile's extra elements)
     refusesSvgElements(tokens) || // SVG elements (every format)
     refusesPresentationUrls(tokens, false) || // SVG presentation attributes
     refusesCss(tokens, text, rules) || // step 5
     refusesMarkupInDeclarations(tokens) || // step 6
     hasCdata(tokens) || // step 7
-    (opts.tripwire && tripwire(text, "outlook")) // step 8
+    (opts.tripwire && tripwire(text, profile.tripwire)) // step 8
   );
+}
+
+/** Outlook HTML (R4, `cid:` allowed in URL attributes). */
+function outlookHtmlRemote(text: string, opts: DetectOptions): boolean {
+  return htmlMarkupRemote(text, opts, {
+    allowCid: true,
+    tripwire: "outlook",
+    refusedExtra: NO_EXTRA_ELEMENTS,
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
