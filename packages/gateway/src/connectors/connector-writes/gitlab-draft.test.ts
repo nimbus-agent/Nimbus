@@ -32,6 +32,10 @@ describe("gitlabTitleLooksDraft", () => {
     },
   );
 
+  test("a title that never settles (nested entities) counts as a draft: the detector errs towards draft", () => {
+    expect(gitlabTitleLooksDraft(`&${"amp;".repeat(12)}lt;x`)).toBe(true);
+  });
+
   test("is linear in the title length (no backtracking blow-up)", () => {
     const start = performance.now();
     gitlabTitleLooksDraft(`${" ".repeat(200_000)}x`);
