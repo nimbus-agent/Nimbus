@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { synthBoundRow } from "./bound-fixtures.test-helpers.ts";
 import { offerableWritesEnabledBy, writesEnabledBy } from "./enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
@@ -34,6 +35,13 @@ describe("isModelOfferableRow (M1)", () => {
       true,
     );
     expect(isModelOfferableRow(row({ wave: 4, before: reader, confirm }))).toBe(false);
+  });
+  test("a wave 4 bound write counts like a before reader, and still needs a confirm target (D0b)", () => {
+    const confirm = { template: "{id}" };
+    const bound = synthBoundRow(4).bound;
+    expect(isModelOfferableRow(row({ wave: 4, preview: template, bound, confirm }))).toBe(true);
+    expect(isModelOfferableRow(row({ wave: 4, preview: template, bound }))).toBe(false);
+    expect(isModelOfferableRow(row({ wave: 4, bound, confirm }))).toBe(false);
   });
   test("a wave 2 or 3 row needs no confirm target", () => {
     expect(isModelOfferableRow(row({ wave: 3, preview: template }))).toBe(true);

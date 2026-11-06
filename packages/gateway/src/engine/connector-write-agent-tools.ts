@@ -206,6 +206,8 @@ interface ListedWrite {
   readonly epoch: number;
   /** The row's `before` reader tool is missing from the listing (a wave 2-3 row only). */
   readonly beforeReaderUnlisted: boolean;
+  /** The row's bound `prepare` tool is missing from the listing (the gate then refuses the write). */
+  readonly prepareToolUnlisted: boolean;
 }
 
 function buildDoorTool(
@@ -218,9 +220,13 @@ function buildDoorTool(
 ) {
   const { mcpToolId, entry, epoch: listedEpoch } = listed;
   // Gateway-known, never model-supplied: the executor then shows `before: unavailable (failed)`.
-  const executeOptions: ExecuteOptions | undefined = listed.beforeReaderUnlisted
-    ? { beforeReaderUnlisted: true }
-    : undefined;
+  const executeOptions: ExecuteOptions | undefined =
+    listed.beforeReaderUnlisted || listed.prepareToolUnlisted
+      ? {
+          ...(listed.beforeReaderUnlisted ? { beforeReaderUnlisted: true } : {}),
+          ...(listed.prepareToolUnlisted ? { prepareToolUnlisted: true } : {}),
+        }
+      : undefined;
   const listedDescription = typeof entry["description"] === "string" ? entry["description"] : "";
   // The only rejection reason passed back verbatim: this row's guard's fixed text, if it has one.
   const guardReason = row.before?.guard?.reason;
@@ -309,6 +315,18 @@ function beforeReaderMissing(
   });
 }
 
+/** Whether `row` is bound and its prepare tool is missing from its listing (I54). */
+function prepareToolMissing(
+  row: ConnectorWriteRow,
+  service: string,
+  listing: Readonly<Record<string, unknown>>,
+): boolean {
+  const bound = row.bound;
+  if (bound === undefined) return false;
+  const key = mcpClientToolKey(service, bound.prepare.tool);
+  return !(Object.hasOwn(listing, key) && isPlainObject(listing[key]));
+}
+
 /** The offered tools for ONE service's rows, given its listing. */
 function offerService(
   source: ConnectorWriteToolSource,
@@ -364,6 +382,15 @@ function offerService(
       );
       continue;
     }
+    const prepareToolUnlisted = prepareToolMissing(row, service, listing);
+    if (prepareToolUnlisted && row.wave === 4) {
+      // I54: the prepared facts are mandatory on a wave-4 bound prompt, so no prepare tool, no offer.
+      source.warn(
+        { service, toolId: row.toolId, prepareTool: row.bound?.prepare.tool },
+        "connector write prepare tool is not in its server's listing; not offered",
+      );
+      continue;
+    }
     out[name] = wrap(
       service,
       name,
@@ -372,6 +399,7 @@ function offerService(
         entry,
         epoch,
         beforeReaderUnlisted,
+        prepareToolUnlisted,
       }),
     );
   }

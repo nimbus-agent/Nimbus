@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { standardSchemaToJSONSchema, toStandardSchema } from "@mastra/core/schema";
 
+import {
+  SYNTH_PREPARE_IDS,
+  SYNTH_PREPARE_TOOL,
+  synthBound,
+} from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   type ConnectorWritePreviewTemplate,
@@ -8,6 +13,7 @@ import {
   row,
   textField,
   withBefore,
+  withBound,
   withConfirm,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
@@ -916,5 +922,86 @@ describe("B4a: the real Outlook calendar row and the door's listing check (plan 
     const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
     expect(keys(tools)).toEqual(["outlook__outlook_calendar_create"]);
     expect(src.warnings).toEqual([]);
+  });
+});
+
+// ---------- a bound row's prepare tool at offer time (Phase 9.7 D0b, I54) ----------
+
+describe("a bound row's prepare tool at offer time", () => {
+  const PREPARE_KEY = `argocd_${SYNTH_PREPARE_TOOL}`;
+  const READ_KEY = "argocd_argocd_app_get";
+  const reader = {
+    tool: "argocd_app_get",
+    argKeys: ["name"],
+    args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
+    select: () => [],
+  };
+  const boundRow = (wave: 2 | 3 | 4, withReader = false): ConnectorWriteRow => {
+    const base = withPreview(
+      row("argocd_app_sync", "argocd.app.sync", "write", wave),
+      SYNC_TEMPLATE,
+    );
+    const bound = withBound(base, synthBound({ argKeys: ["name"] }), SYNTH_PREPARE_IDS);
+    return withConfirm(withReader ? withBefore(bound, reader) : bound, { template: "{name}" });
+  };
+  type OptsExecutor = FakeExecutor & { opts: unknown[] };
+  function optsExecutor(): OptsExecutor {
+    const ex: OptsExecutor = {
+      actions: [],
+      opts: [],
+      execute: async (action: PlannedAction, ...rest: unknown[]) => {
+        ex.actions.push(action);
+        ex.opts.push(rest);
+        return { status: "ok", result: "done" };
+      },
+    };
+    return ex;
+  }
+
+  test("wave 4 with its prepare tool listed (and no before reader) is offered, with no option", async () => {
+    const src = fakeSource([boundRow(4)], {
+      argocd: argocdListing({ [PREPARE_KEY]: entry("Plan") }),
+    });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[]]);
+  });
+
+  test("wave 4 whose prepare tool is missing (or not a plain object) is NOT offered, with one warning", async () => {
+    for (const extra of [{}, { [PREPARE_KEY]: "nope" }]) {
+      const src = fakeSource([boundRow(4)], { argocd: argocdListing(extra) });
+      const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+      expect(keys(tools)).toEqual([]);
+      expect(src.warnings.map((w) => w.msg)).toEqual([
+        "connector write prepare tool is not in its server's listing; not offered",
+      ]);
+    }
+  });
+
+  test("wave 2 whose prepare tool is missing is offered and the executor is told", async () => {
+    const src = fakeSource([boundRow(2)], { argocd: argocdListing() });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[{ prepareToolUnlisted: true }]]);
+  });
+
+  test("a wave 2 row missing both its reader and its prepare tool is told both", async () => {
+    const src = fakeSource([boundRow(2, true)], { argocd: argocdListing() });
+    const ex = optsExecutor();
+    const tools = await buildConnectorWriteAgentTools(src, () => ex, wrapSpy().wrap, NONE);
+    await call(tools, SYNC_NAME, { name: "web" });
+    expect(ex.opts).toEqual([[{ beforeReaderUnlisted: true, prepareToolUnlisted: true }]]);
+  });
+
+  test("a wave 4 row with a reader and a prepare tool both listed is offered", async () => {
+    const src = fakeSource([boundRow(4, true)], {
+      argocd: argocdListing({ [PREPARE_KEY]: entry("Plan"), [READ_KEY]: entry("Get") }),
+    });
+    const tools = await buildConnectorWriteAgentTools(src, () => undefined, wrapSpy().wrap, NONE);
+    expect(keys(tools)).toEqual([SYNC_NAME]);
   });
 });
