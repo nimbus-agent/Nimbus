@@ -714,6 +714,104 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
     });
   }
 
+  describe("jira cloudId (C3: the Operations alert tools need the Atlassian cloud id)", () => {
+    const CLOUD_ID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789";
+    const JIRA = {
+      atlassianEmail: "e@x.example",
+      token: "t",
+      apiBaseUrl: "https://acme.atlassian.net",
+    };
+    const BASE_WRITES = [
+      "write:jira.email=e@x.example",
+      "write:jira.api_token=t",
+      "write:jira.base_url=https://acme.atlassian.net",
+    ];
+
+    function withMesh(ctx: ConnectorRpcHandlerContext, restarts: string[]) {
+      return {
+        ...ctx,
+        connectorMesh: {
+          restartJira: () => {
+            restarts.push("jira");
+          },
+        } as unknown as ConnectorRpcHandlerContext["connectorMesh"],
+      };
+    }
+
+    test("a valid cloudId is stored (trimmed) as jira.cloud_id after the other three, then the child restarts", async () => {
+      const seq: string[] = [];
+      const restarts: string[] = [];
+      await handleConnectorAuth(
+        withMesh(recordingCtx("jira", { ...JIRA, cloudId: `  ${CLOUD_ID} ` }, seq), restarts),
+      );
+      expect(seq).toEqual([
+        "egress:jira",
+        "probe:jira",
+        ...BASE_WRITES,
+        registered("jira"),
+        `write:jira.cloud_id=${CLOUD_ID}`,
+      ]);
+      expect(restarts).toEqual(["jira"]);
+    });
+
+    test("a malformed cloudId is refused with -32602 BEFORE anything is probed, stored or restarted", async () => {
+      for (const bad of ["nope", `${CLOUD_ID}/`, "../x", CLOUD_ID.slice(1), 42, true]) {
+        const seq: string[] = [];
+        const restarts: string[] = [];
+        const ctx = withMesh(recordingCtx("jira", { ...JIRA, cloudId: bad }, seq), restarts);
+        const err = await handleConnectorAuth(ctx).then(
+          () => undefined,
+          (e: unknown) => e,
+        );
+        expect(err, String(bad)).toBeInstanceOf(ConnectorRpcError);
+        expect(err, String(bad)).toMatchObject({
+          rpcCode: -32602,
+          message: "jira cloudId must be an Atlassian cloud id (a UUID)",
+        });
+        expect(seq, String(bad)).toEqual([]);
+        expect(restarts, String(bad)).toEqual([]);
+      }
+    });
+
+    test("no cloudId stores the three credentials alone, leaves a stored id untouched, and still restarts the child", async () => {
+      const seq: string[] = [];
+      const restarts: string[] = [];
+      const ctx = withMesh(recordingCtx("jira", JIRA, seq), restarts);
+      await ctx.vault.set("jira.cloud_id", CLOUD_ID);
+      seq.length = 0;
+      await handleConnectorAuth(ctx);
+      expect(seq).toEqual(["egress:jira", "probe:jira", ...BASE_WRITES, registered("jira")]);
+      expect(await ctx.vault.get("jira.cloud_id")).toBe(CLOUD_ID);
+      expect(restarts).toEqual(["jira"]);
+      // A blank cloudId counts as absent.
+      const blank = withMesh(recordingCtx("jira", { ...JIRA, cloudId: "   " }, []), restarts);
+      await handleConnectorAuth(blank);
+      expect(restarts).toEqual(["jira", "jira"]);
+    });
+
+    test("a refused auth (rejected credential, missing field) restarts nothing", async () => {
+      const restarts: string[] = [];
+      const rejected = withMesh(
+        recordingCtx("jira", JIRA, [], { kind: "rejected", httpStatus: 401 }),
+        restarts,
+      );
+      expect(
+        await handleConnectorAuth(rejected).then(
+          () => "ok",
+          () => "refused",
+        ),
+      ).toBe("refused");
+      const missing = withMesh(recordingCtx("jira", { token: "t" }, []), restarts);
+      expect(
+        await handleConnectorAuth(missing).then(
+          () => "ok",
+          () => "refused",
+        ),
+      ).toBe("refused");
+      expect(restarts).toEqual([]);
+    });
+  });
+
   test('gitlab keeps its own api_base rule: a supplied base that normalizes to "" is stored, not deleted', async () => {
     // Unlike sentry's url above, gitlab keys the branch on whether a base was SUPPLIED.
     const seq: string[] = [];

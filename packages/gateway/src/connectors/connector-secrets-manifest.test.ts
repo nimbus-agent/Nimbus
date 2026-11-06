@@ -56,3 +56,12 @@ describe("clearConnectorVaultSecretKeys", () => {
     expect(deleted).toEqual(["github.pat"]);
   });
 });
+
+test("jira declares its three credentials and the optional cloud id (so connector.remove clears it)", () => {
+  expect(CONNECTOR_VAULT_SECRET_KEYS.jira).toEqual([
+    "jira.api_token",
+    "jira.email",
+    "jira.base_url",
+    "jira.cloud_id",
+  ]);
+});

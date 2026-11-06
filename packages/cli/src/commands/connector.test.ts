@@ -992,6 +992,12 @@ const AUTH_ENV_KEYS: string[] = [
   "PAGERDUTY_API_TOKEN",
   "NIMBUS_PAGERDUTY_FROM_EMAIL",
   "PAGERDUTY_FROM_EMAIL",
+  "NIMBUS_JIRA_CLOUD_ID",
+  "NIMBUS_JIRA_EMAIL",
+  "NIMBUS_JIRA_API_TOKEN",
+  "NIMBUS_JIRA_BASE_URL",
+  "ATLASSIAN_EMAIL",
+  "JIRA_BASE_URL",
   "NIMBUS_KUBECONFIG",
   "KUBECONFIG",
   "NIMBUS_AWS_ACCESS_KEY_ID",
@@ -1182,6 +1188,80 @@ describe("runConnector auth pagerduty — the From e-mail its writes need (C1)",
     expect(out.stdout).toContain("NIMBUS_PAGERDUTY_FROM_EMAIL");
     expect(out.stdout).not.toContain("/ PAGERDUTY_FROM_EMAIL");
     expect(out.stdout).toContain("pagerduty.from_email");
+  });
+});
+
+describe("runConnector auth jira — the cloud id the Operations alert tools need (C3)", () => {
+  const CLOUD_ID = "0a1b2c3d-4e5f-6789-abcd-ef0123456789";
+  const JIRA_FLAGS = [
+    "--username",
+    "me@example.com",
+    "--token",
+    "k",
+    "--api-base",
+    "https://acme.atlassian.net",
+  ];
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    out.reset();
+    savedEnv = { ...process.env };
+    for (const k of AUTH_ENV_KEYS) delete process.env[k];
+  });
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) delete process.env[k];
+    Object.assign(process.env, savedEnv);
+    clearFixture();
+  });
+
+  async function sentParams(args: string[]): Promise<Record<string, unknown>> {
+    const mock = createMockIpcClient([{ ok: true, serviceId: "jira", scopesGranted: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "jira", ...args]);
+    return (mock.calls[0]?.params ?? {}) as Record<string, unknown>;
+  }
+
+  it("--cloud-id reaches connector.auth as cloudId, trimmed", async () => {
+    const params = await sentParams([...JIRA_FLAGS, "--cloud-id", `  ${CLOUD_ID} `]);
+    expect(params["cloudId"]).toBe(CLOUD_ID);
+    expect(params["atlassianEmail"]).toBe("me@example.com");
+  });
+
+  it("falls back to NIMBUS_JIRA_CLOUD_ID; the flag wins over it", async () => {
+    process.env["NIMBUS_JIRA_CLOUD_ID"] = CLOUD_ID;
+    expect((await sentParams(JIRA_FLAGS))["cloudId"]).toBe(CLOUD_ID);
+    const other = "ffffffff-4e5f-6789-abcd-ef0123456789";
+    expect((await sentParams([...JIRA_FLAGS, "--cloud-id", other]))["cloudId"]).toBe(other);
+  });
+
+  it("without one no cloudId key is sent", async () => {
+    expect(Object.hasOwn(await sentParams(JIRA_FLAGS), "cloudId")).toBe(false);
+  });
+
+  it("a malformed value is refused client-side with the gateway's message, before any request", async () => {
+    for (const bad of ["nope", `${CLOUD_ID}/`, "../x"]) {
+      const mock = createMockIpcClient([{ ok: true, serviceId: "jira", scopesGranted: [] }]);
+      setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+      await expect(
+        runConnector(["auth", "jira", ...JIRA_FLAGS, "--cloud-id", bad]),
+        bad,
+      ).rejects.toThrow("jira cloudId must be an Atlassian cloud id (a UUID)");
+      expect(mock.calls, bad).toEqual([]);
+    }
+    process.env["NIMBUS_JIRA_CLOUD_ID"] = "bad";
+    await expect(runConnector(["auth", "jira", ...JIRA_FLAGS])).rejects.toThrow(
+      "jira cloudId must be an Atlassian cloud id (a UUID)",
+    );
+  });
+
+  it("`nimbus connector help` lists the flag, the env, the vault key and the bounds", async () => {
+    await runConnector(["help"]);
+    expect(out.stdout).toContain("--cloud-id");
+    expect(out.stdout).toContain("NIMBUS_JIRA_CLOUD_ID");
+    expect(out.stdout).toContain("jira.cloud_id");
+    expect(out.stdout).toContain("_edge/tenant_info");
+    expect(out.stdout).toContain("Data Center");
+    expect(out.stdout).toContain("connector remove jira");
   });
 });
 

@@ -1017,6 +1017,16 @@ export class LazyConnectorMesh {
   }
 
   /**
+   * Retire the Jira child so the next use respawns it with the credentials now in the Vault
+   * (`JIRA_API_TOKEN`, `JIRA_EMAIL`, `JIRA_BASE_URL` and `JIRA_CLOUD_ID` are read at spawn only).
+   * Called after EVERY successful `connector.auth jira`. Same contract as
+   * {@link LazyConnectorMesh.restartPagerduty}.
+   */
+  restartJira(): void {
+    void this.detachLazyClient(LAZY_MESH.jira);
+  }
+
+  /**
    * Called after the owner's Obsidian opt-in changes (enable approved, or disable). Returns
    * promptly, never waiting on an in-flight call:
    *  1. the `mesh:obsidian` slot is DETACHED at once: its client is cleared and its generation and
