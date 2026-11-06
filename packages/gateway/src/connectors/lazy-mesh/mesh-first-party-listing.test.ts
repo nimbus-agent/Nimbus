@@ -11,7 +11,10 @@ import { join } from "node:path";
 import type { MCPClient } from "@mastra/mcp";
 
 import type { PlatformPaths } from "../../platform/paths.ts";
+import { serviceOf } from "../../engine/service-of.ts";
 import { createMockVault } from "../../vault/mock.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
+import { isModelOfferableRow } from "../connector-writes/model-offerable.ts";
 import { perServiceOAuthVaultKey } from "../connector-vault.ts";
 import { LazyDrainTracker } from "./drain.ts";
 import { LAZY_MESH } from "./keys.ts";
@@ -374,6 +377,31 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
         "teams",
       ].sort((a, b) => a.localeCompare(b)),
     );
+  });
+});
+
+describe("every model-offerable write's service can be listed", () => {
+  test("it is in the explicit listing map and has a credential check, so the door never says 'not listed' for a shipped row", () => {
+    const m = new LazyConnectorMesh(makePaths(), createMockVault(), {});
+    mesh = m;
+    const listing = (
+      m as unknown as { firstPartyListing: Readonly<Record<string, { slot: string }>> }
+    ).firstPartyListing;
+    const offerable = CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow);
+    expect(offerable.length).toBeGreaterThan(0);
+    for (const r of offerable) {
+      const service = serviceOf(r.actionType);
+      expect(Object.hasOwn(listing, service), `${r.toolId}: ${service} is not in the listing map`).toBe(
+        true,
+      );
+      // A phase-3 bundle service is checked by its spawner's own adder; every other one needs a
+      // per-service predicate in service-credential.ts.
+      const bundled = listing[service]?.slot === LAZY_MESH.phase3Bundle;
+      expect(
+        bundled || SERVICE_CREDENTIAL_SERVICES.includes(service),
+        `${r.toolId}: ${service} has no credential predicate`,
+      ).toBe(true);
+    }
   });
 });
 
