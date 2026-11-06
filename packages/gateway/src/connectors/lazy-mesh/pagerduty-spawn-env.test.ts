@@ -3,18 +3,18 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { stripComments } from "../../../../../scripts/structure-audit/lib.ts";
-import { pagerdutyChildEnv } from "./connector-spawns.ts";
+import { pagerdutyEnvExtras } from "./connector-spawns.ts";
 
-describe("pagerdutyChildEnv (C1: the From e-mail PagerDuty needs on every write)", () => {
+describe("pagerdutyEnvExtras (C1: the From e-mail PagerDuty needs on every write)", () => {
   test("carries the token and, when stored, the trimmed From e-mail", () => {
-    const env = pagerdutyChildEnv(" tok ", " oncall@example.com ");
+    const env = pagerdutyEnvExtras(" tok ", " oncall@example.com ");
     expect(env["PAGERDUTY_API_TOKEN"]).toBe("tok");
     expect(env["PAGERDUTY_FROM_EMAIL"]).toBe("oncall@example.com");
   });
 
   test("an absent or blank e-mail leaves the variable out entirely (reads still work)", () => {
     for (const email of [null, "", "   "]) {
-      const env = pagerdutyChildEnv("tok", email);
+      const env = pagerdutyEnvExtras("tok", email);
       expect(env["PAGERDUTY_API_TOKEN"], String(email)).toBe("tok");
       expect(Object.hasOwn(env, "PAGERDUTY_FROM_EMAIL"), String(email)).toBe(false);
     }
@@ -27,6 +27,8 @@ describe("pagerdutyChildEnv (C1: the From e-mail PagerDuty needs on every write)
     expect(fn).toMatch(
       /const fromEmail = await readConnectorSecret\(ctx\.vault, "pagerduty", "from_email"\)/,
     );
-    expect(fn).toMatch(/pagerdutyChildEnv\(\s*tok,\s*fromEmail\s*\)/);
+    expect(fn).toMatch(
+      /env:\s*extensionProcessEnv\(\s*pagerdutyEnvExtras\(\s*tok,\s*fromEmail\s*\)\s*\)/,
+    );
   });
 });
