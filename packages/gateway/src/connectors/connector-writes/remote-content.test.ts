@@ -1861,3 +1861,29 @@ describe("B3w final review item 1: diagram openers on every line", () => {
     expectRefused("forge-markdown", text, true);
   });
 });
+
+describe("B3w final review item 2: a fence language spelled with character references", () => {
+  const F = "\x60\x60\x60";
+  const CASES: readonly (readonly [string, string, RemoteContentFormat])[] = [
+    ["&#109;ermaid", `${F}&#109;ermaid\nclick A "https://h"\n${F}`, "forge-markdown"],
+    ["plant&#117;ml", `${F}plant&#117;ml\n!include https://h/x.puml\n${F}`, "forge-markdown"],
+    ["&#109;ermaid (Obsidian)", `${F}&#109;ermaid\nclick A "https://h"\n${F}`, "obsidian-markdown"],
+  ];
+
+  test.each(CASES)("refused: %s", (_label, text, format) => {
+    expectRefused(format, text, true);
+  });
+
+  test("the raw form decides when the settled form would close the fence early", () => {
+    // A body line of `&#96;` references is text in a code block (a renderer decodes no references
+    // there) but reads as a closer once settled, so only the raw form, with its language settled,
+    // sees the click URL.
+    const text = `${F}&#109;ermaid\n&#96;&#96;&#96;\nclick A "https://h"\n${F}`;
+    expectRefused("forge-markdown", text, true);
+    expectRefused("obsidian-markdown", text, true);
+  });
+
+  test("a code fence whose language is spelled with references stays allowed", () => {
+    expectAllowed("forge-markdown", `${F}t&#115;\nlet a = 1;\n${F}`);
+  });
+});

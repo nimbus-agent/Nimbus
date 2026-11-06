@@ -1398,9 +1398,15 @@ function fenceLanguage(info: string): string {
   return folded.slice(i, j);
 }
 
-/** Whether an info string names a diagram fence: its first word, compared exactly with `names`. */
+/**
+ * Whether an info string names a diagram fence: its first word, and the first word of its settled
+ * form (character references decoded: `&#109;ermaid`), compared exactly with `names`. An info
+ * string that does not settle is a diagram fence (fail closed; final B3w review, item 2).
+ */
 function isDiagramInfo(info: string, names: ReadonlySet<string>): boolean {
-  return names.has(fenceLanguage(info));
+  if (names.has(fenceLanguage(info))) return true;
+  const settled = settle(info, "");
+  return settled === undefined || names.has(fenceLanguage(settled));
 }
 
 /** The line breaks the raw text is split on: CRLF, LF, CR, VT, FF, NEL, LS and PS. */
