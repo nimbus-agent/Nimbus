@@ -1387,15 +1387,35 @@ const ABSOLUTE_BOUND_MS = 3000;
 /** Generous: only the asserted bounds decide; a slow runner must not trip the default 5 s. */
 const TIMING_TEST_TIMEOUT_MS = 30_000;
 
+/** The best of three runs: for the tests that check only the absolute backstop. */
 function bestMs(run: () => void): number {
   let best = Number.POSITIVE_INFINITY;
-  for (let i = 0; i < 3; i++) {
-    const t0 = performance.now();
-    run();
-    best = Math.min(best, performance.now() - t0);
+  for (let i = 0; i < 3; i++) best = Math.min(best, timeMs(run));
+  return best;
+}
+
+function timeMs(run: () => void): number {
+  const t0 = performance.now();
+  run();
+  return performance.now() - t0;
+}
+
+/**
+ * The best of five runs of each input, the three inputs INTERLEAVED round-robin, so a burst of
+ * runner contention slows every size alike instead of only the one being timed.
+ */
+function interleavedBestMs(runs: readonly (() => void)[]): number[] {
+  const best = runs.map(() => Number.POSITIVE_INFINITY);
+  for (let round = 0; round < 5; round++) {
+    runs.forEach((run, i) => {
+      best[i] = Math.min(best[i] ?? Number.POSITIVE_INFINITY, timeMs(run));
+    });
   }
   return best;
 }
+
+/** Up to three measurements: a quadratic scanner fails every one, timer noise does not repeat. */
+const LINEAR_ATTEMPTS = 3;
 
 /**
  * N/2, N and 2N: 2N must stay under 4x N (the stated check), and 2N under 8x N/2. The second is
@@ -1407,12 +1427,26 @@ function expectLinear(format: RemoteContentFormat, build: (n: number) => string,
   const quarter = build(Math.floor(n / 2));
   const small = build(n);
   const large = build(2 * n);
-  const tQuarter = bestMs(() => remoteContentIn(format, quarter));
-  const tSmall = bestMs(() => remoteContentIn(format, small));
-  const tLarge = bestMs(() => remoteContentIn(format, large));
-  expect(tLarge).toBeLessThan(ABSOLUTE_BOUND_MS);
-  expect(tLarge).toBeLessThan(4 * Math.max(tSmall, 10));
-  expect(tLarge).toBeLessThan(8 * Math.max(tQuarter, 10));
+  let last = { tQuarter: 0, tSmall: 0, tLarge: 0 };
+  for (let attempt = 0; attempt < LINEAR_ATTEMPTS; attempt++) {
+    const [tQuarter = 0, tSmall = 0, tLarge = 0] = interleavedBestMs([
+      () => remoteContentIn(format, quarter),
+      () => remoteContentIn(format, small),
+      () => remoteContentIn(format, large),
+    ]);
+    last = { tQuarter, tSmall, tLarge };
+    if (
+      tLarge < ABSOLUTE_BOUND_MS &&
+      tLarge < 4 * Math.max(tSmall, 10) &&
+      tLarge < 8 * Math.max(tQuarter, 10)
+    ) {
+      return;
+    }
+  }
+  // Every attempt failed: report the last one through the same three assertions.
+  expect(last.tLarge).toBeLessThan(ABSOLUTE_BOUND_MS);
+  expect(last.tLarge).toBeLessThan(4 * Math.max(last.tSmall, 10));
+  expect(last.tLarge).toBeLessThan(8 * Math.max(last.tQuarter, 10));
 }
 
 describe("linear time on adversarial input", () => {
