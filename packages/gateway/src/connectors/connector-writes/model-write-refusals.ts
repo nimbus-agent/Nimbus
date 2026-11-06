@@ -449,7 +449,11 @@ function htmlUnlessText(input: Readonly<Record<string, unknown>>): boolean {
   return contentType !== undefined && contentType !== "text";
 }
 
-/** The rows whose text the broadcast rule scans, and which fields. */
+/**
+ * The rows whose text the broadcast rule scans, and which fields: the messaging posts, the issue,
+ * pull request and merge request comments and creates (titles included) and, since C2, the pull
+ * request and merge request updates.
+ */
 const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
   slack_message_post: { service: "slack", keys: [REQUIRED("text")] },
   slack_message_post_dm: { service: "slack", keys: [REQUIRED("text")] },
@@ -491,8 +495,8 @@ function refusesBroadcast(toolId: string, input: Readonly<Record<string, unknown
 // GitLab quick actions (coordinator ruling 2026-11-05, recorded for the owner): GitLab runs
 // `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body and from an issue's
 // description at create, so model-written GitLab text could change the issue or merge request's
-// state. Scanned (ruling R-QA, 2026-11-05): a note `body` and an issue create's `description`, the
-// fields GitLab parses for quick actions; NOT the title, which GitLab does not parse (a title such
+// state. Scanned (ruling R-QA, 2026-11-05): a note `body`, an issue create's `description` and (C2) a
+// merge request create's or update's `description`, the fields GitLab parses for quick actions; NOT the title, which GitLab does not parse (a title such
 // as `/api is down` is allowed). A scanned field is refused when any line of it, normalised as for
 // broadcast mentions but keeping its line breaks (both the deleted and the spaced form), begins
 // with optional whitespace, then `/`, then a letter. A fenced code block does NOT exempt it (fail
