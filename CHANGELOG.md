@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.36.0](https://github.com/nimbus-agent/Nimbus/compare/v10.35.0...v10.36.0) (2026-11-06)
+
+
+### Features
+
+* **gateway:** type-to-confirm on every Wave 4 prompt, on every door ([#1927](https://github.com/nimbus-agent/Nimbus/issues/1927)) ([15073bc](https://github.com/nimbus-agent/Nimbus/commit/15073bce79506de5cad3c890169536687278f3ee))
+
 ## [10.35.0](https://github.com/nimbus-agent/Nimbus/compare/v10.34.0...v10.35.0) (2026-11-06)
 
 
