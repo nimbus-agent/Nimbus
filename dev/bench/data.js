@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793950979506,
+  "lastUpdate": 1793957687450,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "80c21dfa0590d1bbb6af88c6556a4a0cfb7da2d3",
-          "message": "feat(briefs): research briefs draw on the whole index, not only clips (#1253)\n\n## What widened\n\n`POST /v1/briefs` has taken `useIndex` since the research-briefs surface\nlanded,\nbut the index search it drove was narrowed to a single item type:\n\n    const hits = await localIndex.searchRankedAsync(\n      { name: query, itemType: \"web_clip\", limit },\n      { semantic: true, contextChunks: 2 },\n    );\n\nSo a brief could only ever cite pages the user had clipped — never the\npull\nrequests, builds, issues or docs the connectors index, which is the\nactual reason\nto run a local gateway. This PR drops the `itemType: \"web_clip\"` filter\n(`IndexSearchQuery.itemType` is optional; the SQL applies it only when\nset), so\nthe same hybrid search, same `limit`, same `semanticAvailable` signal\nnow runs\nacross every indexed type. No new query shape, no new failure mode.\n\nEach `C{n}` citation now also carries `itemType` (the item's type,\nverbatim,\ne.g. `pull_request`) and `itemId` (the index item id for any indexed\nhit), so a\nbrief that leans on a pull request says so instead of calling it a clip.\nThe\nprompt fed to the synthesis model was also given the type per citation\n(`{ token, type, title, url, text }` for `C{n}` entries; `S{n}` entries,\nwhich\nare pages the client itself supplied, carry no type) — see \"Prompt\nchange\" below\nfor how that was gated.\n\n## `kind` and `clipId` are unchanged, on purpose\n\n`SourceRef.kind` keeps its two members (`\"source\" | \"clip\"`): it is\npersisted\nupstream in every saved `research_brief`, and a third member would fail\nvalidation in any reader that predates this change. `clipId` keeps its\nexact\ndocumented meaning — the `nimbus:clip:<sha256>` item id — and is now\npopulated\n**only** for genuine `nimbus:web_clip` hits, never for any other indexed\ntype.\nBefore this PR the field's only possible value already satisfied that\ndescription; after it, a non-clip hit sets `itemId` and leaves `clipId`\nabsent,\nso no existing reader is lied to and no already-saved brief's meaning\nchanges.\n`itemType`/`itemId` are purely additive and optional, so the two repos\n(`Nimbus` and `nimbus-web-clipper`) can land in either order — an\nun-upgraded\nclient sees a ref shape it can already parse.\n\n## The ~5 KB-per-hit bound comes from the chunker, not from a new cap\n\nA brief's index-hit snippet is the winning embedding chunk plus\n`contextChunks: 2` neighbours on each side (`hybrid-internal.ts`,\n`chunkContextLines`), and each chunk is bounded by the chunker at 256\ntokens\n(`maxChars = maxChunkTokens * 4` ≈ 1 KB; `embedding/chunker.ts:9,142`).\nThat's\nat most 5 chunks ≈ 5 KB per hit, ≈ 40 KB across the 8-hit cap — and that\nbound\nis identical for every item type. A 40 MB build log produces more\nchunks, not\nbigger ones, and still contributes only its one winning chunk plus\nneighbours,\nso widening the search does not move this number and needed no new cap.\n(Index-\nhit bodies remain subject to no brief-side byte cap of their own —\n`MAX_SOURCE_\nBYTES`/`MAX_RUN_BYTES` govern only client-fed sources — but that's a\npre-existing property, not something this PR introduces, and ~40 KB\nagainst a\n4 MB run budget doesn't justify one.)\n\n## No per-type quota was added, on purpose\n\nRanking stays purely score-based (reciprocal rank fusion over BM25 +\nvector\nrank); nothing reads item type, so widening introduces no type bias —\nthe 8\nslots go to the 8 best-scoring items, whatever type they are. One real,\naccepted consequence: a single type can take all 8 slots (e.g. eight\npull\nrequests during a week of migration PRs, no clips). A quota such as \"at\nleast 2\nclips, at least 2 issues\" was considered and rejected: it buys type\nvariety by\ndemoting better-matching items for worse-matching ones, on the false\npremise\nthat source-type variety proxies for evidence variety — eight PRs may be\nexactly the right answer, and a forced-in clip is noise the model then\nhas to\nbe told to ignore. If single-type dominance turns out to hurt real\nbriefs, the\nhonest remedy is a gap line naming the skew, not a reshuffle that hides\nit —\nnot built here, since there's no evidence yet that it happens.\n\n## Downstream consumer\n\n`nimbus-web-clipper`, branch `dev/asafgolombek/briefs-over-your-index`,\nis the\nfirst `useIndex: true` caller this surface has ever had, and is built\nagainst\nthis widened contract (spec:\n`docs/superpowers/specs/2026-08-19-briefs-over-your-index-design.md` in\nthat\nrepo).\n\n## Also worth knowing (recorded, not fixed here)\n\n- **Prompt change, gated on evidence, not assumption:** whether to tell\nthe\n  model each citation's type was measured, not assumed — the full\n`packages/gateway/src/briefs` suite (164 tests) was run before/after\nadding\n  the `type` key; no synthesis test regressed and a discriminating test\nconfirms the key's presence/absence. What this did **not** measure:\nevery\nLLM call in the suite is a canned/stubbed response, so no test here can\nshow\na real attribution-behaviour change in either direction — that stays\nopen\n  until a live-model eval exists.\n- **Gap copy reworded:** the three index-related gap strings in\n`brief-gaps.ts`\n  no longer say \"saved clips\" — they describe the whole index now. The\nthree-way split (search failed / nothing matched / keyword-only recall)\nis\n  unchanged.\n- **Wider blast radius under an unchanged disclosure:** a `useIndex` run\ncan\nnow send snippets of indexed pull requests, builds and issues (not just\nclips) to whatever remote LLM `createBriefLlm` falls back to. The\nexisting\n  disclosure sentence (\"The brief and all source text were sent to that\nprovider — they left this machine\") already covers this literally, but\nit's\n  worth flagging explicitly since the scope of what it covers just grew.\n- **Out of scope:** the query embedding sent to search the index is not\nrouted\nthrough `LOCAL_ONLY_PROSE_TYPES` and can leave the machine even when the\ncorpus it searches stays local. Not introduced or worsened by this PR\n(one\n  query string either way), but a real gap — left as a follow-up.\n\n## Testing\n\n- `bun run typecheck` — PASS\n- `bun run lint` — PASS (one pre-existing, unrelated biome\nschema-version info\n  line; see below)\n- `bun test packages/gateway` — PASS: 14165 pass / 32 skip / 0 fail /\n50854\n  expect() calls across 1050 files (171.34s)\n\n<!-- paste the full captured output blocks from task-6-report.md here\n-->\n\n(The PR body's testing section should have the *actual* captured gate\noutput\npasted under it verbatim, per the brief's Step 2 instruction — I've\nreproduced\nthat real output above in this report; the human posting the PR should\ncopy it\nin rather than retype it.)\n\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-19T15:05:38+03:00",
-          "tree_id": "c981437c41cea73c45778fbfd69d5cfdc74a3bec",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/80c21dfa0590d1bbb6af88c6556a4a0cfb7da2d3"
-        },
-        "date": 1787141819838,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 314.22521225000054,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.32449779999223,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.40906980000364,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "08ab1908ee479544d519a290bdbb58a62bfe4130",
+          "message": "feat(gateway): Waves 3-4 reclassification; the model is never offered a mail send (#1918)\n\nPhase 9.7 PR C0, the first PR of Waves 3 and 4. It applies two owner\nrulings from the 2026-11-06 design round: OR-W34-1 and OR-W34-3.\n\n## What changes\n\n- **The sends are never offered to the model (OR-W34-1).**\n`MODEL_NEVER_OFFERED_TOOL_IDS` lists the seven mail sends: Gmail message\nand draft send, Fastmail, IMAP, ProtonMail, Apple and Outlook.\n`isModelOfferableRow` checks it first, so no send is ever offered,\nwhatever template or reader it gets later. Until now `outlook_mail_send`\nwas un-offered only because it had no template. The listing, the\nper-call recheck, `status` and the enable prompt all go through that one\nfunction. The sends stay reachable on the other doors.\n- **Reclassification (OR-W34-3).**\n- Ten templated rows move from wave 4 to wave 3: the Tableau, Looker and\nPower BI refreshes, and the Monte Carlo and Bigeye acknowledge and\nresolve. They become offerable under the default `--wave 3`, so the\nmodel is offered 48 writes, up from 38. As with any newly offerable\nwrite, an existing opt-in offers them only after the owner re-runs\n`nimbus connector writes enable` and approves them. Their templates are\npinned to the connectors 0.5.0 input-schema keys, so the door's drift\ncheck passes against the real servers.\n- Seven irreversible rows move from wave 3 to wave 4: the GitHub, GitLab\nand Bitbucket merges, the branch delete, the tag create and both\ncalendar deletes. Wave 4 always prompts, and later needs a before-state\nand type-to-confirm. None had a template, so nothing the model is\noffered changes.\n- `fieldlessWrite` now takes the wave from every caller.\n\n## Tests\n\n- `c0-reclassify.test.ts`: the never-offered set, which is exact and\nfrozen, and whose ids are all real `.send` rows. It also covers a\ntemplated send with a reader at wave 2 refused, both move lists, and the\nschema keys of the ten rows. It pins the 8 templated `write` rows left\nin wave 4.\n- The enable handler, with a templated synthetic send: the send is\nlisted as not offered and is never stored as approved.\n- Updated pins: the offerable list and its count, the wave-2 door test\nand the `github_pr_merge` wave.\n- Red-proved: with the set check removed, the templated-send test fails.\n\n## Gates\n\n`preflight:fast`, `typecheck:tests`, `security-invariants.test.ts`, the\nwhole `connector-writes` directory plus engine and IPC, which is 7,413\ntests, Istanbul coverage on the changed files (`model-offerable.ts`\n100/100, `types.ts` 100/97.4), and `verify:docker --changed`.\n\n## Docs\n\nCLAUDE.md and GEMINI.md (the status and the I53 line), the roadmap,\narchitecture, `cli-reference.md`, `docs/README.md`, SECURITY-INVARIANTS\n(I53 count and the never-offered set) and the CHANGELOG.\n\nNo migration and no new invariant. This tightens what the model is\noffered: nothing a user configured breaks, and existing opt-ins keep\nworking.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added 10 model-offerable refresh and data-quality actions for Tableau,\nLooker, Power BI, Monte Carlo, and Bigeye, bringing the total to 48.\n* **Behavior Changes**\n* Mail-send actions are not offered to the model, even when they have a\npreview or reader.\n* Merges, branch and tag changes, and calendar deletions now require\nWave 4 enablement; they are no longer available with Wave 3.\n* **Documentation**\n* Updated the guides and release records to reflect the new action\navailability and wave requirements.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T09:24:16Z",
+          "tree_id": "09f8af0afa2f650e658f3373009f22f6cc7bfb79",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/08ab1908ee479544d519a290bdbb58a62bfe4130"
+        },
+        "date": 1793957683362,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.20945839999985,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.2647422999959,
             "unit": "ms"
           }
         ]
