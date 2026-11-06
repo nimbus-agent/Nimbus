@@ -1274,15 +1274,18 @@ function isVaultEmbed(form: string, at: number, cursor: CloseCursor): boolean {
   return after !== "(" && after !== "[";
 }
 
-/** R9 (b): a `![` that is not a vault embed, in any form (an unsettled note is refused). */
-function markdownImageRemote(text: string): boolean {
+/**
+ * R9 (b): a `![` that is not a vault embed, in any form (an unsettled note is refused). With
+ * `vaultEmbeds: false` (B3w forge Markdown, which has no `![[...]]` embeds) every `![` refuses.
+ */
+function markdownImageRemote(text: string, opts: { readonly vaultEmbeds: boolean }): boolean {
   const deleted = settle(text, "");
   const spaced = settle(text, " ");
   if (deleted === undefined || spaced === undefined) return true;
   return [text, deleted, spaced].some((form) => {
     const cursor: CloseCursor = { close: -1 };
     for (let at = form.indexOf("!["); at !== -1; at = form.indexOf("![", at + 1)) {
-      if (!isVaultEmbed(form, at, cursor)) return true;
+      if (!opts.vaultEmbeds || !isVaultEmbed(form, at, cursor)) return true;
     }
     return false;
   });
@@ -1314,7 +1317,7 @@ function fenceOf(line: string): Fence | undefined {
 const MERMAID_URL_SCHEME =
   /\b(?:javascript|data|vbscript|file|mailto|tel|blob|filesystem|about|ws|wss|ftp|http|https):/;
 
-function mermaidBodyLoads(body: string): boolean {
+function diagramBodyLoads(body: string): boolean {
   const deleted = settle(body, "");
   const spaced = settle(body, " ");
   if (deleted === undefined || spaced === undefined) return true;
@@ -1329,12 +1332,13 @@ function mermaidBodyLoads(body: string): boolean {
  * refused: Obsidian renders mermaid, and a `click` link, an image label or an HTML label can load
  * or reach a URL. An unclosed fence runs to the end of the note. One pass over the lines.
  */
-function mermaidLoadsRemote(text: string): boolean {
+function diagramFenceLoadsRemote(text: string, names: ReadonlySet<string>): boolean {
   const lines = text.split("\n");
   for (let i = 0; i < lines.length; i++) {
     const open = fenceOf(lines[i] ?? "");
     if (open === undefined) continue;
-    const mermaid = foldAndStrip(open.info).toLowerCase().includes("mermaid");
+    const info = foldAndStrip(open.info).toLowerCase();
+    const mermaid = [...names].some((n) => info.includes(n));
     let body = "";
     let j = i + 1;
     for (; j < lines.length; j++) {
@@ -1348,26 +1352,39 @@ function mermaidLoadsRemote(text: string): boolean {
         break;
       body += `${lines[j] ?? ""}\n`;
     }
-    if (mermaid && mermaidBodyLoads(body)) return true;
+    if (mermaid && diagramBodyLoads(body)) return true;
     i = j;
   }
   return false;
 }
 
+/** The diagram fences Obsidian renders: mermaid (coordinator ruling). */
+const OBSIDIAN_DIAGRAM_FENCES: ReadonlySet<string> = new Set(["mermaid"]);
+
+/**
+ * R9 (a), shared by Obsidian and forge Markdown (B3w): the R4 HTML scan of a Markdown body's
+ * tokens (inline HTML read as markup, the rest as text; no `cid:`).
+ */
+function markdownHtmlRemote(tokens: readonly MarkupToken[], text: string): boolean {
+  const rules: MarkupRules = { allowCid: false, confluence: false, allowFragmentUrl: false };
+  return (
+    refusesTags(tokens, text, rules) || // R4 steps 2-4
+    refusesSvgElements(tokens) || // SVG elements (every format)
+    refusesPresentationUrls(tokens, false) || // SVG presentation attributes
+    refusesCss(tokens, text, rules) || // R4 step 5
+    refusesMarkupInDeclarations(tokens) || // R4 step 6
+    hasCdata(tokens) // R4 step 7
+  );
+}
+
 /** R9: an Obsidian note, (a) then (b) then (c). */
 function obsidianRemote(text: string, opts: DetectOptions): boolean {
-  const rules: MarkupRules = { allowCid: false, confluence: false, allowFragmentUrl: false };
   const tokens = tokenizeMarkup(text); // (a) step 1
   if (tokens === undefined) return true;
   return (
-    refusesTags(tokens, text, rules) || // (a) steps 2-4
-    refusesSvgElements(tokens) || // SVG elements (every format)
-    refusesPresentationUrls(tokens, false) || // SVG presentation attributes
-    refusesCss(tokens, text, rules) || // (a) step 5
-    refusesMarkupInDeclarations(tokens) || // (a) step 6
-    hasCdata(tokens) || // (a) step 7
-    markdownImageRemote(text) || // (b)
-    mermaidLoadsRemote(text) || // mermaid fences (coordinator ruling)
+    markdownHtmlRemote(tokens, text) || // (a)
+    markdownImageRemote(text, { vaultEmbeds: true }) || // (b)
+    diagramFenceLoadsRemote(text, OBSIDIAN_DIAGRAM_FENCES) || // mermaid fences (coordinator ruling)
     (opts.tripwire && tripwire(text, "default")) // (c)
   );
 }
