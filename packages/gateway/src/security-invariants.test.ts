@@ -24,6 +24,7 @@ import { parseRolePackManifestValue, publisherKeyFingerprint } from "@nimbus-dev
 import {
   checkAgentEmitterImportConfinement,
   checkBeforeStateRead,
+  checkBoundWrites,
   checkConfirmComparison,
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
@@ -59,6 +60,11 @@ import {
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
 import {
+  SYNTH_PREPARE_IDS,
+  SYNTH_REPLY,
+  synthBoundRow,
+} from "./connectors/connector-writes/bound-fixtures.test-helpers.ts";
+import {
   confirmTemplateKeys,
   parseConfirmTemplate,
 } from "./connectors/connector-writes/confirm-template.ts";
@@ -69,6 +75,7 @@ import {
   REMOTE_CONTENT_REFUSAL,
   remoteContentScannedRows,
 } from "./connectors/connector-writes/model-write-refusals.ts";
+import { PREPARE_TOOL_IDS } from "./connectors/connector-writes/prepare-tools.ts";
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "./connectors/connector-writes/types.ts";
 import { transitionHealth } from "./connectors/health.ts";
@@ -84,7 +91,14 @@ import { makeEgressSink, NULL_EGRESS_SINK } from "./egress/egress-ledger.ts";
 import { EGRESS_SOURCE_TYPES, MARKER_SOURCE_TYPES } from "./egress/egress-source-type.ts";
 import { egressHead, listEgress } from "./egress/egress-verify.ts";
 import { wrapLedgeredVlm } from "./egress/vlm-egress.ts";
-import { consentDisplayPayload, formatConsentPrompt, HITL_REQUIRED } from "./engine/executor.ts";
+import {
+  BOUND_VIA_GATE_REASON,
+  consentDisplayPayload,
+  formatConsentPrompt,
+  HITL_REQUIRED,
+  NO_POLICY_OVERLAY,
+  ToolExecutor,
+} from "./engine/executor.ts";
 import { serviceOf } from "./engine/service-of.ts";
 import type { PlannedAction } from "./engine/types.ts";
 import { buildUserMcpAgentTools } from "./engine/user-mcp-agent-tools.ts";
@@ -12320,5 +12334,154 @@ describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remot
         { chatops: undefined, kb: undefined },
       ),
     ).toBe(REMOTE_CONTENT_REFUSAL);
+  });
+});
+
+describe("I54 — a bound connector write is dispatched only with the values its own gate-run prepare step produced", () => {
+  const action = (input: Record<string, unknown>): PlannedAction => ({
+    type: "iac.terraform.apply",
+    payload: { mcpToolId: "iac_synth_apply", input },
+  });
+
+  /** An executor over the synthetic bound row (through the test seam), recording every dispatch. */
+  function boundExecutor(approve = true) {
+    const dispatched: PlannedAction[] = [];
+    const prompts: string[] = [];
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async (prompt) => {
+          prompts.push(prompt);
+          return approve;
+        },
+      },
+      { recordAudit: () => undefined },
+      {
+        dispatch: async (a) => {
+          dispatched.push(a);
+          return a.type.endsWith(".write.prepare") ? SYNTH_REPLY : { applied: true };
+        },
+      },
+      undefined,
+      { append: () => undefined },
+      NO_POLICY_OVERLAY,
+      undefined,
+      undefined,
+      { rows: [synthBoundRow(3)], prepareToolIds: SYNTH_PREPARE_IDS },
+    );
+    return { exec, dispatched, prompts };
+  }
+
+  test("D42 exists with its clauses, run() calls it, and its files are anchors", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    for (const id of [
+      "bound-prepare-literal-confined",
+      "bound-name-confined",
+      "bound-order-pinned",
+      "bound-seam-not-production",
+      "bound-prepare-set-frozen",
+      "bound-public-gate-refuses",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkBoundWrites(files)");
+    for (const anchor of [
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/engine/prepare-step.ts",
+      "packages/gateway/src/connectors/registry.ts",
+      "packages/gateway/src/connectors/connector-writes/prepare-tools.ts",
+    ]) {
+      expect(RULE_ANCHORS).toContain(anchor);
+    }
+  });
+
+  test("the production tree has no violation of D42, and D42 rejects a rogue seam, a rogue injection and a rogue prepare set write", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkBoundWrites(files)).toEqual([]);
+    const rogue = [
+      ...files,
+      {
+        relPath: "packages/gateway/src/ipc/rogue.ts",
+        contents:
+          "const e = new ToolExecutor(a, b, c, d, f, g, h, i, table);\ninjectBoundFields(act, binds, values);\nPREPARE_TOOL_IDS.add(x);\n",
+      },
+    ];
+    expect(new Set(checkBoundWrites(rogue).map((v) => v.rule))).toEqual(
+      new Set(["bound-seam-not-production", "bound-name-confined", "bound-prepare-set-frozen"]),
+    );
+  });
+
+  test("D0b ships the mechanism and no bound row: the production table declares none and the prepare set is empty and immutable", () => {
+    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)).toEqual([]);
+    expect(PREPARE_TOOL_IDS.size).toBe(0);
+    expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
+  });
+
+  test("the public gate() never binds: a bound row reaching it is refused, audited and not dispatched", async () => {
+    const { exec, dispatched } = boundExecutor();
+    const res = await exec.gate(action({ dir: "prod" }));
+    expect(res).toEqual({ status: "rejected", reason: BOUND_VIA_GATE_REASON });
+    expect(dispatched).toEqual([]);
+  });
+
+  test("a caller-supplied bound field is refused before any read or prompt, at the root, in input, and flat", async () => {
+    for (const forged of [
+      { type: "iac.terraform.apply", payload: { planDigest: "x", input: { dir: "prod" } } },
+      action({ dir: "prod", planDigest: "x" }),
+      { type: "iac.terraform.apply", payload: { dir: "prod", planDigest: "x" } },
+    ] as PlannedAction[]) {
+      const { exec, dispatched, prompts } = boundExecutor();
+      const res = await exec.execute(forged);
+      expect(res.status).toBe("rejected");
+      expect(dispatched).toEqual([]);
+      expect(prompts).toEqual([]);
+    }
+  });
+
+  test("an approved bound write is dispatched with the gateway's own prepared value and nothing else bound", async () => {
+    const { exec, dispatched, prompts } = boundExecutor();
+    const res = await exec.execute(action({ dir: "prod" }));
+    expect(res.status).toBe("ok");
+    expect(prompts[0]).toContain("Prepared:");
+    const writes = dispatched.filter((a) => !a.type.endsWith(".write.prepare"));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]?.payload?.["input"]).toEqual({
+      dir: "prod",
+      planDigest: SYNTH_REPLY.digest,
+    });
+    // Declined: the prepare read ran, the write did not.
+    const declined = boundExecutor(false);
+    expect((await declined.exec.execute(action({ dir: "prod" }))).status).toBe("rejected");
+    expect(declined.dispatched.filter((a) => !a.type.endsWith(".write.prepare"))).toEqual([]);
+  });
+
+  test("the dispatcher refuses a prepare tool outside the prepare step", async () => {
+    const d = createConnectorDispatcher(
+      { listTools: async () => ({ iac_synth_plan: { execute: async () => "ran" } }) },
+      { prepareToolIds: SYNTH_PREPARE_IDS },
+    );
+    await expect(
+      d.dispatch({ type: "iac.terraform.apply", payload: { mcpToolId: "iac_synth_plan" } }),
+    ).rejects.toThrow(/ERR_PREPARE_OUTSIDE_STEP/);
+    await expect(
+      d.dispatch({ type: "iac.write.prepare", payload: { mcpToolId: "iac_synth_plan" } }),
+    ).resolves.toBe("ran");
+  });
+
+  test("the prepare phase runs before any approval: resolveHitlApproval orders it after the before-state and before the confirm text and the approval", async () => {
+    const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const at = exec.indexOf("private async resolveHitlApproval(");
+    const body = exec.slice(at, exec.indexOf("\n  }\n", at));
+    const order = [
+      "this.captureBeforePhase(",
+      "this.preparePhase(",
+      "this.renderConfirmPhase(",
+      "this.approvalPhase(",
+    ].map((s) => body.indexOf(s));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
   });
 });

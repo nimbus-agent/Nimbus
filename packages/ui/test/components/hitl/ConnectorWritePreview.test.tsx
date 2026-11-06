@@ -288,6 +288,31 @@ describe("ConnectorWritePreview — the target's current state (spec § 5.4)", (
     }
   });
 
+  it("prepared (a bound write's prepare step, I54): its own titled section, text nodes only", () => {
+    const { container } = render(
+      <ConnectorWritePreview
+        details={details({
+          prepared: {
+            status: "ok",
+            fields: [{ label: "Plan", value: "<b>3 to add</b>" }],
+            notShown: 2,
+          },
+        })}
+      />,
+    );
+    const block = screen.getByTestId("connector-write-prepared");
+    expect(block).toHaveTextContent("Prepared");
+    expect(block).toHaveTextContent("<b>3 to add</b>");
+    expect(block).toHaveTextContent("(2 more fields not shown)");
+    expect(container.querySelector("b")).toBeNull();
+    expect(screen.queryByTestId("connector-write-before")).toBeNull();
+  });
+
+  it("absent or malformed prepared: no section", () => {
+    render(<ConnectorWritePreview details={details({ prepared: { status: "weird" } })} />);
+    expect(screen.queryByTestId("connector-write-prepared")).toBeNull();
+  });
+
   it("absent or malformed before (or an unknown reason): no section", () => {
     for (const b of [
       undefined,

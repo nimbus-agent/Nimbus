@@ -1162,7 +1162,8 @@ export class ToolExecutor {
     const scope: GateScope = { bind: true };
     const gateResult = await this.gateWithin(action, opts, scope);
     if (gateResult === "proceed") {
-      const result = await this.connectors.dispatch(this.dispatchBoundPhase(action, scope));
+      const toDispatch = this.dispatchBoundPhase(action, scope);
+      const result = await this.connectors.dispatch(toDispatch);
       return { status: "ok", result };
     }
     return gateResult;
