@@ -54,7 +54,7 @@ describe("renderConfirmText", () => {
       `deploy${nbsp}prod`,
       "deploy prod",
       "deploy　prod",
-      "x ",
+      "x\u{2028}",
     ]) {
       expect(reason(r, { a: bad }), JSON.stringify(bad)).toBe(
         "confirm: field a is not a usable value",
@@ -107,10 +107,10 @@ describe("renderConfirmText", () => {
     for (const bad of [
       "a\u0007b",
       "a\u001bb",
-      "a‮b",
-      "a⁦b",
-      "a​b",
-      "a﻿b",
+      "a\u{202e}b",
+      "a\u{2066}b",
+      "a\u{200b}b",
+      "a\u{feff}b",
       "café",
       "a…b",
       "a\b",

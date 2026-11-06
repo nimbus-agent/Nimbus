@@ -51,7 +51,7 @@ function isDigit(cp: number): boolean {
 function isFieldName(name: string): boolean {
   if (name === "") return false;
   for (let i = 0; i < name.length; i++) {
-    const cp = name.charCodeAt(i);
+    const cp = name.codePointAt(i) ?? 0;
     const ok = isLetter(cp) || cp === 0x5f || (i > 0 && isDigit(cp));
     if (!ok) return false;
   }
@@ -68,12 +68,26 @@ function textOk(text: string): boolean {
 /** The only placeholder modifier: the last 8 characters of an opaque id (OR-W34-8). */
 const TAIL8 = "tail8";
 
-/**
- * Parses `{field}` / `{field:tail8}` placeholders between literal text. Refuses a template with no
- * placeholder, an unclosed or stray brace, a nested brace, a name that is not an identifier, an
- * unknown modifier, and literal text outside {@link isConfirmChar}.
- */
-export function parseConfirmTemplate(template: string): ConfirmTemplateParse {
+type PlaceholderParse = { ok: true; name: string; tail8: boolean } | { ok: false; reason: string };
+
+/** One placeholder body (the text between the braces): a field name and an optional modifier. */
+function parsePlaceholder(inner: string): PlaceholderParse {
+  if (inner.includes("{")) return { ok: false, reason: "has a nested {" };
+  const colon = inner.indexOf(":");
+  const name = colon === -1 ? inner : inner.slice(0, colon);
+  const modifier = colon === -1 ? undefined : inner.slice(colon + 1);
+  if (!isFieldName(name))
+    return { ok: false, reason: `has a placeholder {${inner}} with a bad name` };
+  if (modifier !== undefined && modifier !== TAIL8) {
+    return { ok: false, reason: `has a placeholder {${inner}} with an unknown modifier` };
+  }
+  return { ok: true, name, tail8: modifier === TAIL8 };
+}
+
+/** Splits a template into segments; the first structural refusal wins. */
+function scanSegments(
+  template: string,
+): { ok: true; segments: ConfirmSegment[] } | { ok: false; reason: string } {
   const segments: ConfirmSegment[] = [];
   let text = "";
   let i = 0;
@@ -87,22 +101,26 @@ export function parseConfirmTemplate(template: string): ConfirmTemplateParse {
     }
     const close = template.indexOf("}", i + 1);
     if (close === -1) return { ok: false, reason: "has an unclosed {" };
-    const inner = template.slice(i + 1, close);
-    if (inner.includes("{")) return { ok: false, reason: "has a nested {" };
-    const colon = inner.indexOf(":");
-    const name = colon === -1 ? inner : inner.slice(0, colon);
-    const modifier = colon === -1 ? undefined : inner.slice(colon + 1);
-    if (!isFieldName(name))
-      return { ok: false, reason: `has a placeholder {${inner}} with a bad name` };
-    if (modifier !== undefined && modifier !== TAIL8) {
-      return { ok: false, reason: `has a placeholder {${inner}} with an unknown modifier` };
-    }
+    const ph = parsePlaceholder(template.slice(i + 1, close));
+    if (!ph.ok) return ph;
     if (text !== "") segments.push({ kind: "text", text });
     text = "";
-    segments.push({ kind: "field", name, tail8: modifier === TAIL8 });
+    segments.push({ kind: "field", name: ph.name, tail8: ph.tail8 });
     i = close + 1;
   }
   if (text !== "") segments.push({ kind: "text", text });
+  return { ok: true, segments };
+}
+
+/**
+ * Parses `{field}` / `{field:tail8}` placeholders between literal text. Refuses a template with no
+ * placeholder, an unclosed or stray brace, a nested brace, a name that is not an identifier, an
+ * unknown modifier, and literal text outside {@link isConfirmChar}.
+ */
+export function parseConfirmTemplate(template: string): ConfirmTemplateParse {
+  const scanned = scanSegments(template);
+  if (!scanned.ok) return scanned;
+  const { segments } = scanned;
   if (!segments.some((s) => s.kind === "field"))
     return { ok: false, reason: "names no placeholder" };
   for (const s of segments) {
@@ -138,6 +156,24 @@ const SENSITIVE_WORDS: ReadonlySet<string> = new Set([
   "authorization",
 ]);
 
+function isUpper(ch: string): boolean {
+  return ch >= "A" && ch <= "Z";
+}
+
+function isLower(ch: string): boolean {
+  return ch >= "a" && ch <= "z";
+}
+
+/** Whether a new word starts at `name[i]`: lower-to-upper, or the last capital of an acronym run. */
+function startsWord(name: string, i: number): boolean {
+  const ch = name.charAt(i);
+  if (!isUpper(ch)) return false;
+  const prev = i > 0 ? name.charAt(i - 1) : "";
+  const next = i + 1 < name.length ? name.charAt(i + 1) : "";
+  const prevLower = isLower(prev) || (prev >= "0" && prev <= "9");
+  return prevLower || (isUpper(prev) && isLower(next));
+}
+
 /**
  * The words of an identifier: split at `_`, `-` and every lower-to-upper camelCase boundary, and
  * before the last capital of an acronym run (`APIKey` is `API`, `Key`). Lowercased.
@@ -147,22 +183,12 @@ function nameParts(name: string): string[] {
   let cur = "";
   for (let i = 0; i < name.length; i++) {
     const ch = name.charAt(i);
-    if (ch === "_" || ch === "-") {
+    const separator = ch === "_" || ch === "-";
+    if (separator || (cur !== "" && startsWord(name, i))) {
       if (cur !== "") parts.push(cur);
       cur = "";
-      continue;
     }
-    const prev = i > 0 ? name.charAt(i - 1) : "";
-    const next = i + 1 < name.length ? name.charAt(i + 1) : "";
-    const upper = ch >= "A" && ch <= "Z";
-    const prevLower = (prev >= "a" && prev <= "z") || (prev >= "0" && prev <= "9");
-    const prevUpper = prev >= "A" && prev <= "Z";
-    const nextLower = next >= "a" && next <= "z";
-    if (upper && cur !== "" && (prevLower || (prevUpper && nextLower))) {
-      parts.push(cur);
-      cur = "";
-    }
-    cur += ch;
+    if (!separator) cur += ch;
   }
   if (cur !== "") parts.push(cur);
   return parts.map((p) => p.toLowerCase());
