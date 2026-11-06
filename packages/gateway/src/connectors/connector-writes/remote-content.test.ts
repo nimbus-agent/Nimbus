@@ -1629,35 +1629,50 @@ describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
     () => {
       const paragraphs = (n: number): string => "<p>a</p>".repeat(n);
       expect(remoteContentIn("teams-html", paragraphs(3))).toBe(false);
-      expectLinear("teams-html", paragraphs, 100_000);
-      expectLinear("teams-html", (n) => "<attachment>".repeat(n), 100_000);
-      expectLinear("teams-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
+      // Each 2N input is about 300,000 characters, so a local run stays near or under 10% of the
+      // 3 s bound and a slow runner keeps its margin (final B3w review, item 3).
+      expectLinear("teams-html", paragraphs, 18_750);
+      expectLinear("teams-html", (n) => "<attachment>".repeat(n), 12_500);
+      expectLinear("teams-html", (n) => `<a title="${"<b>".repeat(n)}">`, 50_000);
     },
     TIMING_TEST_TIMEOUT_MS,
   );
 
   // One test per builder: each measures three sizes, and a slow runner must not sum them all
-  // into one timeout.
+  // into one timeout. Each N makes a 2N input of about 300,000 characters (final B3w review,
+  // item 3: the local tLarge stays near or under 10% of the 3 s bound; measured 1-150 ms).
   const FENCE = "\x60\x60\x60";
   const FORGE_ALLOWED_GROWTH: readonly (readonly [string, (n: number) => string, number])[] = [
-    ["prose", (n) => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n), 20_000],
-    ["closed fences", (n) => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n), 25_000],
+    ["prose", (n) => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n), 4_500],
+    ["closed fences", (n) => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n), 7_000],
     [
       "diagram fences",
       (n) => `${FENCE}mermaid${LF}graph TD; A-->B${LF}${FENCE}${LF}`.repeat(n),
-      15_000,
+      5_000,
     ],
     // One non-diagram fence of many lines: fast-forwarded, never concatenated (review fix 4).
-    ["one big fence", (n) => `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`, 50_000],
+    ["one big fence", (n) => `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`, 14_000],
+    // Closed diagram fences, then a URL in prose: every opener asks for its closer (the closer
+    // stack must stay monotonic, final B3w review item 1).
+    [
+      "closed diagram fences, then a URL",
+      (n) => `${`${FENCE}mermaid${LF}A-->B${LF}${FENCE}${LF}`.repeat(n)}[x](https://h)`,
+      6_000,
+    ],
     // Every fence unclosed and no URL: each opener must not rescan to the end.
-    ["every fence unclosed, no URL", (n) => `${FENCE}mermaid${LF}`.repeat(n), 25_000],
+    ["every fence unclosed, no URL", (n) => `${FENCE}mermaid${LF}`.repeat(n), 14_000],
   ];
-  const FORGE_REFUSED_GROWTH: readonly (readonly [string, (n: number) => string])[] = [
+  const FORGE_REFUSED_GROWTH: readonly (readonly [string, (n: number) => string, number])[] = [
     // Every fence unclosed (the B3r cursor case), with a URL at the very end.
-    ["every fence unclosed, a URL at the end", (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`],
-    ["many `![`", (n) => "![".repeat(n)],
-    ["many near-includes", (n) => `${`::includ${LF}`.repeat(n)}::include`],
-    ["a long quote prefix", (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`],
+    [
+      "every fence unclosed, a URL at the end",
+      (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`,
+      14_000,
+    ],
+    ["many `![`", (n) => "![".repeat(n), 75_000],
+    ["many near-includes", (n) => `${`::includ${LF}`.repeat(n)}::include`, 16_000],
+    ["a long quote prefix", (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`, 75_000],
+    ["a long list-marker prefix", (n) => `${"- ".repeat(n)}${FENCE}mermaid${LF}//`, 75_000],
   ];
 
   test.each(FORGE_ALLOWED_GROWTH)(
@@ -1671,9 +1686,9 @@ describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
 
   test.each(FORGE_REFUSED_GROWTH)(
     "forge-markdown refused: %s",
-    (_label, build) => {
+    (_label, build, n) => {
       expect(remoteContentIn("forge-markdown", build(3), { tripwire: false })).toBe(true);
-      expectLinear("forge-markdown", build, 50_000);
+      expectLinear("forge-markdown", build, n);
     },
     TIMING_TEST_TIMEOUT_MS,
   );
