@@ -45,6 +45,10 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 | `github_pr_merge` | Merge a pull request. |
 | `github_tag_create` | Create a lightweight tag pointing at a commit SHA. |
 
+**Remote content in a model-written comment or issue is refused.** When the model (or an MCP client's proposal) writes a `github_issue_comment_create` comment or a `github_issue_create` body, Nimbus reads the text as Markdown and refuses it, before it asks you, if viewing it would load remote content: any Markdown image (`![alt](url)`, a reference image, an escaped or entity-spelled `!`), whatever its URL, even a relative upload; raw HTML that loads an external URL (`<img src>`, `<picture><source srcset>`, `<video>`, an `<iframe>`, a CSS `url(`); and a diagram block (`mermaid`, PlantUML, a Kroki type, `geojson`, `topojson`, `stl`) that names a URL. Plain links (`[text](url)`, a bare URL) are allowed and shown to you verbatim; a raw-HTML `<img>` with a relative `src` is allowed. Code blocks are not exempt, so some code is refused too: a Rust `#![allow(...)]`, code holding `url(`, `@import` or `src="https://`, an unclosed `<` followed by a letter (`if a <b`), an HTML snippet quoted in a code block. Describe the code or link to the file instead. The refusal is the same fixed message every time and repeats nothing from the text.
+
+GitHub serves images through its own proxy, which hides your viewers' browser details, but a unique image URL still tells its owner that the comment was read and roughly when; Nimbus refuses it either way.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

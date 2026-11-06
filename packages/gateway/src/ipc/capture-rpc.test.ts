@@ -30,6 +30,7 @@ import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import {
@@ -1548,18 +1549,39 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         .get() as { n: number }
     ).n;
 
-  test("the nine scanned types are all proposable", () => {
+  /**
+   * A fixture whose proposal is larger than the capture payload cap: the act door rejects it as
+   * invalid before any destination check (B3w's 1,000,000-character send is one).
+   */
+  const overCap = (k: RemoteContentDoorCase): boolean =>
+    new TextEncoder().encode(
+      JSON.stringify({ actionType: typeOf(k), input: k.input, summary: "why" }),
+    ).length > PAYLOAD_MAX_BYTES;
+  const INVALID = { code: "ERR_CAPTURE_INVALID" };
+
+  test("the twenty scanned types are all proposable", () => {
     const types = new Set(REMOTE_CONTENT_REFUSED_CASES.map(typeOf));
     expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence.comment.add",
       "confluence.page.append",
       "confluence.page.create",
       "confluence.page.update",
+      "github.issue.comment.create",
+      "github.issue.create",
+      "gitlab.issue.create",
+      "gitlab.issue.note.create",
+      "gitlab.mr.note.create",
       "google_drive.file.create",
+      "linear.comment.create",
+      "linear.issue.create",
+      "linear.issue.update",
       "notion.block.append",
       "notion.page.update",
       "obsidian.note.append",
       "outlook.draft.create",
+      "outlook.mail.send",
+      "teams.message.post",
+      "teams.message.postChat",
     ]);
     for (const t of types)
       expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
@@ -1594,7 +1616,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
           refusals: new CaptureRefusalCounter(),
         },
       };
-      expect(await outcome(submit(fresh, k)), k.label).toEqual(REFUSED);
+      expect(await outcome(submit(fresh, k)), k.label).toEqual(overCap(k) ? INVALID : REFUSED);
     }
     expect(ctx.gate.store.countPendingActions(1_000)).toBe(0);
   });
@@ -1610,7 +1632,9 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
 
   /** One refused fixture of each scanned row (the last in the table): a proposal from before B3r. */
   const ONE_PER_ROW: readonly RemoteContentDoorCase[] = [
-    ...new Map(REMOTE_CONTENT_REFUSED_CASES.map((k) => [k.toolId, k] as const)).values(),
+    ...new Map(
+      REMOTE_CONTENT_REFUSED_CASES.filter((k) => !overCap(k)).map((k) => [k.toolId, k] as const),
+    ).values(),
   ];
 
   for (const k of ONE_PER_ROW) {
@@ -1649,5 +1673,146 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     } as unknown as ConsentCoordinator;
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.comment.add"]);
+  });
+
+  // ---- B3w: sent Outlook mail, Teams HTML and forge Markdown (plan Task 4) -------------------
+
+  describe("B3w act door", () => {
+    const B3W_TYPES: readonly string[] = [
+      "github.issue.comment.create",
+      "github.issue.create",
+      "gitlab.issue.create",
+      "gitlab.issue.note.create",
+      "gitlab.mr.note.create",
+      "linear.comment.create",
+      "linear.issue.create",
+      "linear.issue.update",
+      "outlook.mail.send",
+      "teams.message.post",
+      "teams.message.postChat",
+    ];
+    const isB3w = (k: RemoteContentDoorCase): boolean => B3W_TYPES.includes(typeOf(k));
+    const SEND_TO = { to: "ann@x.com", cc: "bob@x.com", subject: "Status" };
+    const accepted = (prompts: string[]): ConsentCoordinator =>
+      ({
+        requestConsent: (_c: string, req: { prompt: string }) => {
+          prompts.push(req.prompt);
+          return Promise.resolve(true);
+        },
+      }) as unknown as ConsentCoordinator;
+
+    test("all eleven new types are proposable", () => {
+      for (const t of B3W_TYPES)
+        expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    });
+
+    test("an HTML outlook.mail.send with a tracking pixel: refused at submit, nothing queued, one audit row", async () => {
+      const c = actCtx([]);
+      const before = submitAudits();
+      const send: RemoteContentDoorCase = {
+        label: "pixel",
+        toolId: "outlook_mail_send",
+        input: { ...SEND_TO, contentType: "html", body: `<p>hi</p><img src="https://h/p.gif">` },
+      };
+      expect(await outcome(submit(c, send))).toEqual(REFUSED);
+      expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+      expect(submitAudits()).toBe(before + 1);
+    });
+
+    test("the same send as text is queued, and the verbatim prompt shows to, cc and the body", async () => {
+      const d: PlannedAction[] = [];
+      const c = actCtx(d);
+      const body = `<p>hi</p><img src="https://h/p.gif">`;
+      const send: RemoteContentDoorCase = {
+        label: "text",
+        toolId: "outlook_mail_send",
+        input: { ...SEND_TO, contentType: "text", body },
+      };
+      const sub = await submit(c, send);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+      const prompts: string[] = [];
+      const id = (sub.value as { id: string }).id;
+      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
+      expect(prompts).toHaveLength(1);
+      const prompt = prompts[0] ?? "";
+      expect(prompt).toContain('"to": "ann@x.com"');
+      expect(prompt).toContain('"cc": "bob@x.com"');
+      expect(prompt).toContain(JSON.stringify(body));
+      expect(d.map((a) => a.type)).toEqual(["outlook.mail.send"]);
+    });
+
+    test("every new refused fixture is refused at submit (a fresh limiter and counter each)", async () => {
+      const cases = REMOTE_CONTENT_REFUSED_CASES.filter(isB3w);
+      expect(new Set(cases.map(typeOf)).size).toBe(B3W_TYPES.length);
+      for (const k of cases) {
+        const c = actCtx([]);
+        const fresh: CaptureRpcCtx = {
+          ...c,
+          gate: {
+            ...c.gate,
+            limiter: new CaptureAttemptLimiter(),
+            refusals: new CaptureRefusalCounter(),
+          },
+        };
+        expect(await outcome(submit(fresh, k)), k.label).toEqual(overCap(k) ? INVALID : REFUSED);
+        expect(fresh.gate.store.countPendingActions(1_000), k.label).toBe(0);
+      }
+    });
+
+    // One test each: the pending-action queue is bounded, and each test gets a fresh store.
+    for (const k of REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w)) {
+      test(`B3w queued: ${k.label}`, async () => {
+        const c = actCtx([]);
+        expect(await outcome(submit(c, k))).toBe("queued");
+        expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+      });
+    }
+
+    test("every new type has an allowed fixture", () => {
+      expect(new Set(REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w).map(typeOf)).size).toBe(
+        B3W_TYPES.length,
+      );
+    });
+
+    for (const t of B3W_TYPES) {
+      test(`${t}: queued through a permissive submit, refused at the strict accept; stays proposed, nothing dispatched`, async () => {
+        const k = ONE_PER_ROW.find((x) => typeOf(x) === t);
+        if (k === undefined) throw new Error(`no refused fixture for ${t}`);
+        const permissive = actCtx([], () => undefined);
+        const sub = await submit(permissive, k);
+        if (sub.kind !== "hit") throw new Error("submit missed");
+        const id = (sub.value as { id: string }).id;
+        const d: PlannedAction[] = [];
+        const strict = actCtx(d);
+        expect(
+          await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, accepted([]))),
+        ).toEqual(REFUSED);
+        expect(strict.gate.store.get(id)?.state).toBe("proposed");
+        expect(d).toEqual([]);
+      });
+    }
+
+    test("a clean teams.message.post goes through accept to one dispatch", async () => {
+      const d: PlannedAction[] = [];
+      const c = actCtx(d);
+      const clean: RemoteContentDoorCase = {
+        label: "clean teams",
+        toolId: "teams_message_post",
+        input: {
+          teamId: "t1",
+          channelId: "19:other@thread.tacv2",
+          contentType: "html",
+          body: `<p>see <a href="https://h">the doc</a></p>`,
+        },
+      };
+      const sub = await submit(c, clean);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      const id = (sub.value as { id: string }).id;
+      const prompts: string[] = [];
+      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
+      expect(prompts).toHaveLength(1);
+      expect(d.map((a) => a.type)).toEqual(["teams.message.post"]);
+    });
   });
 });

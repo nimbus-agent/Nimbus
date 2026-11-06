@@ -126,6 +126,9 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
   row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 3),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),
+  // No template, so the model is never offered it (B3w W3, owner ruling OR-B3w-1); the act door's
+  // verbatim prompt shows every recipient; both doors refuse an HTML body that loads remote
+  // content (B3w).
   row("outlook_mail_send", "outlook.mail.send", "mesh", 3),
   row("fastmail_mail_send", "fastmail.mail.send", "mesh", 3),
   row("imap_mail_send", "imap.mail.send", "mesh", 3),

@@ -62,6 +62,7 @@ import {
   actDoorRefusal,
   modelWriteRefusal,
   REMOTE_CONTENT_REFUSAL,
+  remoteContentScannedRows,
 } from "./connectors/connector-writes/model-write-refusals.ts";
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
 import { transitionHealth } from "./connectors/health.ts";
@@ -11906,6 +11907,44 @@ describe("I53 / I28 — B3r: remote content in drafts, pages, notes and markup f
         "confluence_page_append",
         { pageId: "1", storageHtml: '<ac:image><ri:url ri:value="https://h/x.png"/></ac:image>' },
         { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBe(REMOTE_CONTENT_REFUSAL);
+  });
+});
+
+describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remote content", () => {
+  test("the eleven B3w rows are scanned", () => {
+    const rows = new Set(remoteContentScannedRows());
+    for (const id of [
+      "outlook_mail_send",
+      "teams_message_post",
+      "teams_message_post_chat",
+      "github_issue_comment_create",
+      "github_issue_create",
+      "gitlab_issue_note_create",
+      "gitlab_mr_note_create",
+      "gitlab_issue_create",
+      "linear_comment_create",
+      "linear_issue_create",
+      "linear_issue_update",
+    ]) {
+      expect(rows.has(id), id).toBe(true);
+    }
+  });
+
+  test("behaviour: an HTML Outlook send through the act door, a GitHub comment image through the model door", () => {
+    expect(
+      actDoorRefusal(
+        "outlook_mail_send",
+        { to: "a@x.com", subject: "S", body: "<img src=https://h/p.gif>", contentType: "html" },
+        { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBe(REMOTE_CONTENT_REFUSAL);
+    expect(
+      modelWriteRefusal(
+        "github_issue_comment_create",
+        { owner: "o", repo: "r", issueNumber: 1, body: "![](https://h/p.gif)" },
+        { chatops: undefined, kb: undefined },
       ),
     ).toBe(REMOTE_CONTENT_REFUSAL);
   });

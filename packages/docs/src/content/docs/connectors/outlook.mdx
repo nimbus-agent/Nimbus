@@ -59,6 +59,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 **Remote content in a model-written draft is refused.** When the model (or an MCP client's proposal) saves an `outlook_draft_create` draft with `contentType` set to anything other than `text`, Nimbus reads the body as HTML and refuses it, before it asks you, if opening the draft would load remote content: an external image or tracking pixel, a CSS `url(` or `@import`, a `<link>`, `<iframe>`, `<base>` or `<meta http-equiv>`, an SVG image or `srcset`. An inline `cid:` image and plain links (`<a href>`) are allowed and shown to you verbatim. A draft sent as text is never scanned. The refusal is the same fixed message every time and repeats nothing from the draft.
 
+**Remote content in a sent mail is refused.** An `outlook_mail_send` proposed by an MCP client (the model is never offered sends) is checked the same way at proposal and again when you accept it: with `contentType` set to anything other than `text`, a body that would load remote content when the recipient opens it is refused. The proposal's prompt shows every recipient (`to`, `cc`), the subject and the body exactly as they will be sent.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

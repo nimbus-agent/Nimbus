@@ -1548,3 +1548,406 @@ describe("linear time on adversarial input", () => {
     TIMING_TEST_TIMEOUT_MS,
   );
 });
+
+// ---------------------------------------------------------------------------------------------
+// B3w: Teams HTML (plan W5, Review Focus 2)
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w: teams-html", () => {
+  const REFUSED: readonly (readonly [string, string])[] = [
+    ["an external image", `<img src="https://h/p.gif">`],
+    [
+      "an absolute hosted-content URL (the host is not exempted)",
+      `<img src="https://graph.microsoft.com/v1.0/chats/1/messages/2/hostedContents/3/$value">`,
+    ],
+    ["an attachment", `<attachment id="1"></attachment>`],
+    ["an upper-case attachment", "<ATTACHMENT id=1>"],
+    ["a prefixed attachment", "<x:attachment></x:attachment>"],
+    ["an attachment inside a nested view (review fix 1)", `<span <attachment id="1">>hello</span>`],
+    ["a cid image (no cid: in Teams)", `<img src="cid:x">`],
+    [
+      "Teams emoji markup copied from a message (stated over-refusal)",
+      `<img itemtype="http://schema.skype.com/Emoji" src="https://statics.teams.cdn.office.net/x.png">`,
+    ],
+    ["the nested view", "<a <img src=//h>>"],
+    ["a relative srcset", `<img srcset="a.png 1x">`],
+    ["a style url", `<p style="background:url(x)">`],
+    ["a comment holding markup", "<!-- <img src=//h> -->"],
+    ["CDATA", "<![CDATA[x]]>"],
+    ["an unclosed style", "<style>p{}"],
+  ];
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a relative hosted-content image (names nothing)", `<img src="../hostedContents/1/$value">`],
+    ["a paragraph", "<p>hi</p>"],
+    ["a mention tag (the broadcast rule decides it)", `<at id="0">Ann</at>`],
+    ["a link", `<a href="https://h">x</a>`],
+  ];
+
+  test.each(REFUSED)("refused: %s", (_label, text) => {
+    expectRefused("teams-html", text, true);
+  });
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("teams-html", text);
+  });
+
+  test("the tripwire runs with the default kind (no cid: lookahead)", () => {
+    expect(remoteContentIn("teams-html", "write src=cid:logo in prose")).toBe(true);
+    expect(remoteContentIn("teams-html", "write src=cid:logo in prose", { tripwire: false })).toBe(
+      false,
+    );
+    expect(remoteContentIn("outlook-html", "write src=cid:logo in prose")).toBe(false);
+  });
+
+  test.each(DIFFERENTIALS)("tokenizer differential: %s", (_label, refused, allowed) => {
+    expectRefused("teams-html", refused, true);
+    expectAllowed("teams-html", allowed);
+  });
+
+  test.each(SHARED_REFUSED)("shared pair: %s", (_label, refused, allowed) => {
+    expectRefused("teams-html", refused, true);
+    expectAllowed("teams-html", allowed);
+  });
+
+  test("outlook-html and teams-html agree on every shared pair with no cid: and no attachment", () => {
+    const pairs = [...DIFFERENTIALS, ...SHARED_REFUSED].filter(
+      ([, r, a]) => !/cid:|attachment/i.test(r + a),
+    );
+    for (const [label, refused, allowed] of pairs) {
+      for (const text of [refused, allowed]) {
+        expect(remoteContentIn("teams-html", text), label).toBe(
+          remoteContentIn("outlook-html", text),
+        );
+      }
+    }
+  });
+});
+
+describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
+  test(
+    "teams-html: many paragraphs (allowed), many attachments (refused), the nested-view budget",
+    () => {
+      const paragraphs = (n: number): string => "<p>a</p>".repeat(n);
+      expect(remoteContentIn("teams-html", paragraphs(3))).toBe(false);
+      // Each 2N input is about 300,000 characters, so a local run stays near or under 10% of the
+      // 3 s bound and a slow runner keeps its margin (final B3w review, item 3).
+      expectLinear("teams-html", paragraphs, 18_750);
+      expectLinear("teams-html", (n) => "<attachment>".repeat(n), 12_500);
+      expectLinear("teams-html", (n) => `<a title="${"<b>".repeat(n)}">`, 50_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  // One test per builder: each measures three sizes, and a slow runner must not sum them all
+  // into one timeout. Each N makes a 2N input of about 300,000 characters (final B3w review,
+  // item 3: the local tLarge stays near or under 10% of the 3 s bound; measured 1-150 ms).
+  const FENCE = "\x60\x60\x60";
+  const FORGE_ALLOWED_GROWTH: readonly (readonly [string, (n: number) => string, number])[] = [
+    ["prose", (n) => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n), 4_500],
+    ["closed fences", (n) => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n), 7_000],
+    [
+      "diagram fences",
+      (n) => `${FENCE}mermaid${LF}graph TD; A-->B${LF}${FENCE}${LF}`.repeat(n),
+      5_000,
+    ],
+    // One non-diagram fence of many lines: fast-forwarded, never concatenated (review fix 4).
+    ["one big fence", (n) => `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`, 14_000],
+    // Closed diagram fences, then a URL in prose: every opener asks for its closer (the closer
+    // stack must stay monotonic, final B3w review item 1).
+    [
+      "closed diagram fences, then a URL",
+      (n) => `${`${FENCE}mermaid${LF}A-->B${LF}${FENCE}${LF}`.repeat(n)}[x](https://h)`,
+      6_000,
+    ],
+    // Every fence unclosed and no URL: each opener must not rescan to the end.
+    ["every fence unclosed, no URL", (n) => `${FENCE}mermaid${LF}`.repeat(n), 14_000],
+  ];
+  const FORGE_REFUSED_GROWTH: readonly (readonly [string, (n: number) => string, number])[] = [
+    // Every fence unclosed (the B3r cursor case), with a URL at the very end.
+    [
+      "every fence unclosed, a URL at the end",
+      (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`,
+      14_000,
+    ],
+    ["many `![`", (n) => "![".repeat(n), 75_000],
+    ["many near-includes", (n) => `${`::includ${LF}`.repeat(n)}::include`, 16_000],
+    ["a long quote prefix", (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`, 75_000],
+    ["a long list-marker prefix", (n) => `${"- ".repeat(n)}${FENCE}mermaid${LF}//`, 75_000],
+  ];
+
+  test.each(FORGE_ALLOWED_GROWTH)(
+    "forge-markdown allowed: %s",
+    (_label, build, n) => {
+      expect(remoteContentIn("forge-markdown", build(3))).toBe(false);
+      expectLinear("forge-markdown", build, n);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  test.each(FORGE_REFUSED_GROWTH)(
+    "forge-markdown refused: %s",
+    (_label, build, n) => {
+      expect(remoteContentIn("forge-markdown", build(3), { tripwire: false })).toBe(true);
+      expectLinear("forge-markdown", build, n);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// B3w: forge Markdown (plan W6-W9, W12, Review Focus 3 and 4, review fixes 2, 4, 5, 6)
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w: forge-markdown", () => {
+  const FENCE = "\x60\x60\x60";
+  const fence = (lang: string, body: string, close = FENCE): string =>
+    `intro${LF}${FENCE}${lang}${LF}${body}${LF}${close}${LF}after`;
+
+  const REFUSED: readonly (readonly [string, string])[] = [
+    // Review Focus 3: Markdown images and their spellings.
+    ["an image", "![](https://h/p.gif)"],
+    ["a space before the URL", "![x]( https://h)"],
+    ["an angle-bracket URL", "![x](<https://h>)"],
+    ["a reference image", `![x][r]${LF}[r]: https://h`],
+    ["a relative upload image (W8)", "![x](/uploads/abc/x.png)"],
+    ["a relative image", "![x](x.png)"],
+    ["an entity bang", "&#33;[x](https://h)"],
+    ["a fullwidth bang", `${FULLWIDTH_BANG}[x](https://h)`],
+    ["a zero-width space after the bang (the deleted form joins it)", `!${ZWSP}[x](https://h)`],
+    ["an escaped bang (stated)", "\\![x](https://h)"],
+    ["an HTML image", `<img src="https://h">`],
+    ["a protocol-relative HTML image", "<img src=//h>"],
+    ["an upper-case HTML image", "<IMG SRC=//h>"],
+    ["a picture source", `<picture><source srcset="https://h/x.png"></picture>`],
+    ["a video", `<video src="https://h/v.mp4">`],
+    ["a video poster", "<video poster=//h>"],
+    [
+      "an absolute same-host attachment (W8)",
+      `<img src="https://github.com/user-attachments/assets/x">`,
+    ],
+    ["an image in details", "<details><summary>x</summary><img src=//h></details>"],
+    ["an SVG image", "<svg><image href=//h/></svg>"],
+    ["a style url", `<p style="background:url(//h)">`],
+    [
+      "a relative image beside a stylesheet link (no tripwire match)",
+      `<img src="/x"><link href=x.css>`,
+    ],
+    // The vault embeds Obsidian allows are images here.
+    ["a vault embed (no embeds on a forge)", "![[note]]"],
+    ["a sized vault embed", "![[img.png|200]]"],
+    // Review Focus 4: diagram fences, includes and code.
+    ["a mermaid click", fence("mermaid", `graph TD${LF}click A "https://h"`)],
+    ["a tilde Mermaid fence", `~~~Mermaid${LF}A-->B //h${LF}~~~`],
+    ["a plantuml include", fence("plantuml", "!include https://h/x.puml")],
+    ["a kroki fence", fence("kroki", "https:x")],
+    ["a vega fence with a data url", fence("vega", `{"data":{"url":"https://h/d.json"}}`)],
+    ["an unclosed mermaid fence", `${FENCE}mermaid${LF}A-->B${LF}//h`],
+    ["a mermaid fence in a quote", `> ${FENCE}mermaid${LF}> click A "https://h"${LF}> ${FENCE}`],
+    ["an include at a line start", "  ::include{file=https://h/x.md}"],
+    ["an include after a blockquote marker (review fix 2)", "> ::include{file=https://h/x}"],
+    ["an include after two blockquote markers", "> > ::include{file=x}"],
+    ["an entity-spelled include", "&#58;:include{file=x}"],
+    ["an html fence holding an image (W9, not exempt)", fence("html", "<img src=//h>")],
+    ["a code span holding an image (W9)", "see \x60![x](y)\x60"],
+    ["Rust inner attributes (stated over-refusal, W9)", fence("rust", "#![allow(dead_code)]")],
+    ["an unsettled text (review fix 6)", "&amp;amp;amp;amp;amp;"],
+  ];
+
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a link", "[link](https://h)"],
+    ["an autolink", "<https://h>"],
+    ["a bare URL", "see https://h"],
+    ["a relative upload in raw HTML (W8)", `<img src="/uploads/abc/x.png">`],
+    ["a relative image in raw HTML", `<img src="x.png">`],
+    ["a details block", "<details><summary>a</summary>b</details>"],
+    ["generics in prose", "Vec<T> and Map<K, V>"],
+    ["a ts fence with a comparison", fence("ts", "const a = b < c ? 1 : 2;")],
+    ["a task list", `- [ ] one${LF}- [x] two`],
+    ["a table", `| a | b |${LF}|---|---|${LF}| 1 | 2 |`],
+    ["a user mention", "@user"],
+    ["a mermaid diagram with no URL", fence("mermaid", "graph TD; A-->B")],
+    ["a plantuml diagram with no URL", fence("plantuml", "Alice -> Bob: hi")],
+    ["prose naming ::include mid-line", "use ::include{file=x} in a wiki page"],
+    [
+      "a godot fence holding a URL (review fix 5: not a diagram fence)",
+      fence("godot", "// https://h"),
+    ],
+    ["a snapshot fence holding a URL (review fix 5)", fence("snapshot", "// see https://h")],
+  ];
+
+  test.each(REFUSED)("refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+  });
+
+  test("vault embeds: allowed in Obsidian, refused on a forge", () => {
+    for (const embed of ["![[note]]", "![[img.png|200]]"]) {
+      expect(remoteContentIn("obsidian-markdown", embed)).toBe(false);
+      expect(remoteContentIn("forge-markdown", embed, { tripwire: false })).toBe(true);
+    }
+  });
+
+  // PR #1916 review: a URL a preprocessor or an expression ASSEMBLES spells no `//` or scheme.
+  const CONSTRUCTED = `!$u = "htt" + "ps:/" + "/h/x.json"`;
+  // A dollar sign + `{x}`, built so lint does not read a template placeholder in a plain string.
+  const SUBST = `${String.fromCodePoint(0x24)}{x}`;
+  const LOADERS_REFUSED: readonly (readonly [string, string])[] = [
+    [
+      "a plantuml %load_json of a built URL",
+      fence("plantuml", `${CONSTRUCTED}${LF}!$d = %load_json($u)`),
+    ],
+    [
+      "a spaced plantuml include of a variable",
+      fence("plantuml", `${CONSTRUCTED}${LF}! include $u`),
+    ],
+    ["a puml include_many", fence("puml", "!include_many $u")],
+    ["a plantuml includeurl", fence("PlantUML", "!includeurl $u")],
+    ["a plantuml import", fence("plantuml", "!import $u")],
+    ["a plantuml theme from a variable", fence("plantuml", "!theme t from $u")],
+    ["a plantuml creole image", fence("plantuml", "A -> B: <img:$u>")],
+    ["a c4plantuml stdlib include (stated over-refusal)", fence("c4plantuml", "!include <C4/C4>")],
+    ["a vega url signal", fence("vega", `{"data":{"url":{"signal":"'htt'+'ps:/'+'/h'"}}}`)],
+    ["a vega-lite escaped url key", fence("vega-lite", `{"data":{"\\u0075rl":"x"}}`)],
+    ["a vega expr", fence("vegalite", `{"calculate":"datum.a","as":"b","expr":"x"}`)],
+    ["a d2 substitution", fence("d2", `a.icon: ${SUBST}`)],
+    ["a structurizr script", fence("structurizr", "!script s.groovy")],
+    ["a kroki load_json", fence("kroki", "%load_json($u)")],
+    ["an entity-spelled plantuml fence", fence("plant&#117;ml", "%load_json($u)")],
+  ];
+  const LOADERS_ALLOWED: readonly (readonly [string, string])[] = [
+    ["a vega fence with no loader", fence("vega", `{"mark":"bar"}`)],
+    [
+      "a mermaid fence naming another format's loader",
+      fence("mermaid", `A-->B: ${SUBST} %load_json`),
+    ],
+    ["a d2 fence naming a plantuml loader", fence("d2", "a: '%load_json'")],
+    ["a plantuml fence closed before the loader", `${fence("plantuml", "A -> B")} %load_json($u)`],
+  ];
+
+  test.each(LOADERS_REFUSED)("loader refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  test.each(LOADERS_ALLOWED)("loader allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+  });
+
+  test("Obsidian's mermaid has no loader tokens", () => {
+    expectAllowed("obsidian-markdown", fence("mermaid", `A-->B %load_json($u) ${SUBST}`));
+  });
+
+  test("a diagram language is the first word, exactly (review fix 5)", () => {
+    expectRefused("forge-markdown", fence("mermaid extra words", "click A //h"), true);
+    expectAllowed("forge-markdown", fence("mermaidx", "click A //h"));
+    expectAllowed("obsidian-markdown", fence("mermaid-ish", "click A //h"));
+  });
+
+  test.each(DIFFERENTIALS)("tokenizer differential: %s", (_label, refused, allowed) => {
+    expectRefused("forge-markdown", refused, true);
+    expectAllowed("forge-markdown", allowed);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The final B3w review, item 1: a diagram opener is looked for on EVERY line, independent of
+// fence state, so wrong fence pairing can never hide one (forge and Obsidian alike).
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w final review item 1: diagram openers on every line", () => {
+  const F = "\x60\x60\x60";
+  const CR = String.fromCodePoint(0x0d);
+  const INCLUDE = "!include https://h/x.puml";
+  const REVIEW: readonly (readonly [string, string])[] = [
+    [
+      "an inline code span that looks like a fence opener",
+      `${F}x${F} is code\n${F}plantuml\n${INCLUDE}\n${F}`,
+    ],
+    [
+      "an inline code span, then a mermaid img",
+      `${F}x${F} y\n${F}mermaid\nflowchart TD\nA@{ img: "https://h/p.png" }\n${F}`,
+    ],
+    ["a quoted fence left open", `> ${F}ts\n> x\n\n${F}plantuml\n${INCLUDE}\n${F}`],
+    ["an indented code-block fence", `x\n\n    ${F}\n${F}plantuml\n${INCLUDE}\n${F}`],
+    ["a fence in a list item", `- ${F}plantuml\n  ${INCLUDE}\n  ${F}`],
+    ["CR-only line breaks", `${F}plantuml${CR}${INCLUDE}${CR}${F}`],
+  ];
+
+  test("a body URL spelled with character references is found in the settled form", () => {
+    const body = "!include h&#116;tps&#58;&#47;&#47;h/x.puml";
+    expectRefused("forge-markdown", `${F}plantuml\n${body}\n${F}`, true);
+    expectRefused("obsidian-markdown", `${F}mermaid\n${body}\n${F}`, true);
+  });
+
+  test.each(REVIEW)("forge refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  const OBSIDIAN: readonly (readonly [string, string])[] = [
+    [
+      "an inline code span, then a mermaid click",
+      `${F}x${F} y\n${F}mermaid\nclick A "https://h"\n${F}`,
+    ],
+    ["a quoted fence left open", `> ${F}ts\n> x\n\n${F}mermaid\nclick A "https://h"\n${F}`],
+    ["a fence in a list item", `- ${F}mermaid\n  click A "https://h"\n  ${F}`],
+    ["CR-only line breaks", `${F}mermaid${CR}click A "https://h"${CR}${F}`],
+    ["a numbered list item", `1. ${F}mermaid\n   click A "https://h"\n   ${F}`],
+  ];
+
+  test.each(OBSIDIAN)("obsidian refused: %s", (_label, text) => {
+    expectRefused("obsidian-markdown", text, true);
+  });
+
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a closed diagram, then a URL in prose", `${F}mermaid\nA-->B\n${F}\nsee [x](https://h)`],
+    ["a tilde diagram closed by tildes", `~~~mermaid\nA-->B\n~~~\n[x](https://h)`],
+    ["a quoted diagram closed in the quote", `> ${F}mermaid\n> A-->B\n> ${F}\n[x](https://h)`],
+    ["a longer closer", `${F}mermaid\nA-->B\n${F}${F}\n[x](https://h)`],
+    ["a code fence holding a URL", `${F}ts\nfetch("https://h")\n${F}`],
+  ];
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+    expectAllowed("obsidian-markdown", text);
+  });
+
+  const STRICT: readonly (readonly [string, string])[] = [
+    ["a closer with text after it", `${F}mermaid\nA-->B\n${F} x\n[x](https://h)`],
+    ["a closer indented four spaces", `${F}mermaid\nA-->B\n    ${F}\n[x](https://h)`],
+    ["a shorter closer", `${F}${F}mermaid\nA-->B\n${F}\n[x](https://h)`],
+    ["a closer of the other character", `${F}mermaid\nA-->B\n~~~\n[x](https://h)`],
+    ["a closer outside the opener's quote", `> ${F}mermaid\n> A-->B\n${F}\n[x](https://h)`],
+  ];
+
+  test.each(STRICT)("not a strict closer, so the body runs on: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+});
+
+describe("B3w final review item 2: a fence language spelled with character references", () => {
+  const F = "\x60\x60\x60";
+  const CASES: readonly (readonly [string, string, RemoteContentFormat])[] = [
+    ["&#109;ermaid", `${F}&#109;ermaid\nclick A "https://h"\n${F}`, "forge-markdown"],
+    ["plant&#117;ml", `${F}plant&#117;ml\n!include https://h/x.puml\n${F}`, "forge-markdown"],
+    ["&#109;ermaid (Obsidian)", `${F}&#109;ermaid\nclick A "https://h"\n${F}`, "obsidian-markdown"],
+  ];
+
+  test.each(CASES)("refused: %s", (_label, text, format) => {
+    expectRefused(format, text, true);
+  });
+
+  test("the raw form decides when the settled form would close the fence early", () => {
+    // A body line of `&#96;` references is text in a code block (a renderer decodes no references
+    // there) but reads as a closer once settled, so only the raw form, with its language settled,
+    // sees the click URL.
+    const text = `${F}&#109;ermaid\n&#96;&#96;&#96;\nclick A "https://h"\n${F}`;
+    expectRefused("forge-markdown", text, true);
+    expectRefused("obsidian-markdown", text, true);
+  });
+
+  test("a code fence whose language is spelled with references stays allowed", () => {
+    expectAllowed("forge-markdown", `${F}t&#115;\nlet a = 1;\n${F}`);
+  });
+});

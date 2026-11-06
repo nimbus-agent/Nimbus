@@ -9,7 +9,8 @@
 //
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
 // GitLab scoped labels; it covers issue titles, bodies and descriptions too; since B3r remote
-// content in drafts, pages, notes and Drive markup files; since B4a also the calendar event-time
+// content in drafts, pages, notes and Drive markup files, and since B3w in sent Outlook mail,
+// Teams HTML and GitHub, GitLab and Linear Markdown; since B4a also the calendar event-time
 // and iCloud event-text checks) is the ONE function
 // both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
 // one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
@@ -437,15 +438,23 @@ interface BroadcastScan {
   readonly htmlWhen?: (input: Readonly<Record<string, unknown>>) => boolean;
 }
 
-const teamsHtml = (input: Readonly<Record<string, unknown>>): boolean =>
-  input["contentType"] === "html";
+/**
+ * B3w W4: whether a body is HTML, read from the row's own `contentType`: `true` unless it is
+ * absent or exactly `"text"` (fail closed: `"HTML"`, `null`, `42` or `""` all count as HTML).
+ * Used by the broadcast scan's Teams rows (which then also match the tag-stripped forms) and by
+ * the remote-content formats of the Outlook draft and send and both Teams posts.
+ */
+function htmlUnlessText(input: Readonly<Record<string, unknown>>): boolean {
+  const contentType = Object.hasOwn(input, "contentType") ? input["contentType"] : undefined;
+  return contentType !== undefined && contentType !== "text";
+}
 
 /** The rows whose text the broadcast rule scans, and which fields. */
 const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
   slack_message_post: { service: "slack", keys: [REQUIRED("text")] },
   slack_message_post_dm: { service: "slack", keys: [REQUIRED("text")] },
-  teams_message_post: { service: "teams", keys: [REQUIRED("body")], htmlWhen: teamsHtml },
-  teams_message_post_chat: { service: "teams", keys: [REQUIRED("body")], htmlWhen: teamsHtml },
+  teams_message_post: { service: "teams", keys: [REQUIRED("body")], htmlWhen: htmlUnlessText },
+  teams_message_post_chat: { service: "teams", keys: [REQUIRED("body")], htmlWhen: htmlUnlessText },
   github_issue_comment_create: { service: "github", keys: [REQUIRED("body")] },
   gitlab_issue_note_create: { service: "gitlab", keys: [REQUIRED("body")] },
   gitlab_mr_note_create: { service: "gitlab", keys: [REQUIRED("body")] },
@@ -732,8 +741,8 @@ function nullOptionalFieldCheck(
 }
 
 // ---------------------------------------------------------------------------------------------
-// Remote content in drafts, pages, notes and markup files (Phase 9.7 PR B3r; owner rulings
-// OR-B3-2 and OR-B3r-1..4, and the coordinator's rulings on the B3r reviews). A body that would
+// Remote content in model-written bodies (Phase 9.7 PRs B3r and B3w; owner rulings OR-B3-2,
+// OR-B3r-1..4 and OR-B3w-1..3, and the coordinator's rulings on the reviews). A body that would
 // load remote content when someone opens it (an external image, embed, frame, stylesheet,
 // refresh or base URL) is refused on both doors with one fixed text that echoes nothing. Plain
 // links stay allowed and are shown verbatim. The detectors are structural scans
@@ -751,17 +760,27 @@ function nullOptionalFieldCheck(
 //  - `obsidian_append_to_daily_note` `content` (Markdown, Mermaid fences included);
 //  - `gdrive_file_create` `content` (OPTIONAL: unset or `""` makes an empty file and is not
 //    scanned), when its `mimeType` is markup or its `name` ends in a markup extension
-//    (`driveContentFormats`), and as Markdown for a `.md` name, whatever its type.
-// Not scanned: plain-text bodies (Gmail and iCloud drafts, an Outlook draft sent as Text, every
-// calendar body), titles and recipients, the Notion page create and comment text, a Drive file of a
-// clean non-markup type and name, the B1/B2 message, comment and issue rows and `outlook_mail_send`
-// (the follow-up B3w), and before-state replies (never sent). The owner's own doors (ChatOps,
+//    (`driveContentFormats`), and as Markdown for a `.md` name, whatever its type;
+//  - (B3w) `outlook_mail_send` `body`, as Outlook HTML on the same rule as the draft (the model is
+//    never offered sends, owner ruling OR-B3w-1; the act door scans its proposals);
+//  - (B3w) `teams_message_post` and `teams_message_post_chat` `body`, as Teams HTML unless
+//    `contentType` is absent or exactly `"text"`;
+//  - (B3w) forge Markdown: `github_issue_comment_create` `body`, `github_issue_create` `body`
+//    (optional), `gitlab_issue_note_create` and `gitlab_mr_note_create` `body`,
+//    `gitlab_issue_create` `description` (optional), and Linear's `linear_comment_create` `body`
+//    and `linear_issue_create` / `linear_issue_update` `description` (optional).
+// Not scanned (re-checked against 0.5.0): the Gmail, Fastmail, IMAP, ProtonMail and iCloud sends
+// (text/plain), `gmail_draft_send` (a draft id only), Slack (the connector sends `text` only, no
+// blocks; mrkdwn has no inline image), Discord (`content` only, no embeds), Jira (one plain ADF
+// text node), plain-text bodies (Gmail and iCloud drafts, an Outlook draft or send sent as Text,
+// every calendar body), titles and recipients, the Notion page create and comment text, a Drive
+// file of a clean non-markup type and name, and before-state replies (never sent). The owner's own doors (ChatOps,
 // tribal, workflows, `nimbus connector call`) do not run this rule (stated: OR-B3-2 names
 // model-written content).
 // ---------------------------------------------------------------------------------------------
 
 export const REMOTE_CONTENT_REFUSAL =
-  "the model cannot write a draft, page, note or file that loads remote content (an external image, embed, frame or stylesheet) when it is opened; use a plain link instead";
+  "the model cannot write a message, email, comment, draft, page, note or file that loads remote content (an external image, embed, frame or stylesheet) when it is opened; use a plain link instead";
 
 /**
  * One scanned row: the field holding the body, and every format it is read as (none: not
@@ -776,12 +795,14 @@ function own(input: Readonly<Record<string, unknown>>, key: string): unknown {
   return Object.hasOwn(input, key) ? input[key] : undefined;
 }
 
-/** Row 1: Outlook HTML unless `contentType` is absent or exactly `"text"` (fail closed). */
-function outlookDraftFormats(
-  input: Readonly<Record<string, unknown>>,
-): readonly RemoteContentFormat[] {
-  const contentType = own(input, "contentType");
-  return contentType === undefined || contentType === "text" ? [] : ["outlook-html"];
+/**
+ * Rows 1, 10, 11 and 12: `format` unless `contentType` is absent or exactly `"text"` (W4; the
+ * connectors send HTML only for `"html"`, so anything else present scans, fail closed).
+ */
+function htmlFormatsUnlessText(
+  format: "outlook-html" | "teams-html",
+): (input: Readonly<Record<string, unknown>>) => readonly RemoteContentFormat[] {
+  return (input) => (htmlUnlessText(input) ? [format] : []);
 }
 
 /**
@@ -798,7 +819,7 @@ const always = (format: RemoteContentFormat) => (): readonly RemoteContentFormat
 
 /** The rows whose body the remote-content rule scans, the field and its format. */
 const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
-  outlook_draft_create: { key: REQUIRED("body"), formats: outlookDraftFormats },
+  outlook_draft_create: { key: REQUIRED("body"), formats: htmlFormatsUnlessText("outlook-html") },
   confluence_page_create: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
   confluence_page_update: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
   confluence_page_append: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
@@ -807,6 +828,19 @@ const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
   notion_page_update: { key: REQUIRED("propertiesJson"), formats: always("notion-properties") },
   obsidian_append_to_daily_note: { key: REQUIRED("content"), formats: always("obsidian-markdown") },
   gdrive_file_create: { key: OPTIONAL("content"), formats: driveMarkupFormats },
+  // B3w (owner ruling OR-B3r-3): sent Outlook mail, Teams HTML, and GitHub, GitLab and (owner
+  // ruling OR-B3w-2) Linear Markdown.
+  outlook_mail_send: { key: REQUIRED("body"), formats: htmlFormatsUnlessText("outlook-html") },
+  teams_message_post: { key: REQUIRED("body"), formats: htmlFormatsUnlessText("teams-html") },
+  teams_message_post_chat: { key: REQUIRED("body"), formats: htmlFormatsUnlessText("teams-html") },
+  github_issue_comment_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
+  github_issue_create: { key: OPTIONAL("body"), formats: always("forge-markdown") },
+  gitlab_issue_note_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
+  gitlab_mr_note_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
+  gitlab_issue_create: { key: OPTIONAL("description"), formats: always("forge-markdown") },
+  linear_comment_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
+  linear_issue_create: { key: OPTIONAL("description"), formats: always("forge-markdown") },
+  linear_issue_update: { key: OPTIONAL("description"), formats: always("forge-markdown") },
 };
 
 /** The rows the remote-content rule scans (read-only, for its completeness tripwire). */
@@ -870,10 +904,12 @@ function chatopsRefusal(
  * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
  * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
  * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label,
- * then (B3r) remote content in a draft, page, note or markup file, then (B4a) the null
+ * then (B3r, B3w) remote content in a draft, page, note, markup file, sent Outlook mail, Teams
+ * HTML message, or GitHub, GitLab or Linear Markdown body, then (B4a) the null
  * optional-field check of the calendar and Drive creates, then the calendar checks (time before
  * text). It covers message and comment text, (B2) issue titles, bodies and descriptions, (B3r)
- * the bodies of drafts, pages, notes and Drive markup files, and (B4a) calendar event times,
+ * the bodies of drafts, pages, notes and Drive markup files, (B3w) sent Outlook mail, Teams HTML
+ * and forge Markdown, and (B4a) calendar event times,
  * iCloud event text and attendees, and null optional fields. A fixed text that echoes nothing of
  * the input, or `undefined`.
  */
