@@ -27,16 +27,20 @@ const PROPOSABLE = [
   "confluence.page.update",
   "discord.message.post",
   "fastmail.mail.send",
+  "github.branch.create",
   "github.issue.assignees.add",
   "github.issue.comment.create",
   "github.issue.create",
   "github.issue.labels.add",
   "github.issue.state.set",
+  "github.pr.create",
+  "gitlab.branch.create",
   "gitlab.issue.assignees.add",
   "gitlab.issue.create",
   "gitlab.issue.labels.add",
   "gitlab.issue.note.create",
   "gitlab.issue.state.set",
+  "gitlab.mr.create",
   "gitlab.mr.note.create",
   "gmail.draft.create",
   "gmail.draft.send",
@@ -67,21 +71,19 @@ describe("ACTION_PROPOSABILITY", () => {
   test("is total over HITL_REQUIRED and names nothing else", () => {
     expect(Object.keys(ACTION_PROPOSABILITY).sort()).toEqual([...HITL_REQUIRED].sort());
   });
-  test("the proposable set is exactly the reviewed 43", () => {
+  test("the proposable set is exactly the reviewed 47", () => {
     const got = Object.entries(ACTION_PROPOSABILITY)
       .filter(([, p]) => p.kind === "proposable")
       .map(([t]) => t)
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 43 proposable, 128 denied, 12 of them not_yet_offered", () => {
+  test("counts, derived: 47 proposable, 124 denied, 8 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
-    expect(PROPOSABLE).toHaveLength(43);
-    expect(all.filter((p) => p.kind === "proposable")).toHaveLength(43);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(128);
-    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(
-      12,
-    );
+    expect(PROPOSABLE).toHaveLength(47);
+    expect(all.filter((p) => p.kind === "proposable")).toHaveLength(47);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(124);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(8);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {
@@ -98,7 +100,7 @@ describe("ACTION_PROPOSABILITY", () => {
   });
 });
 
-test("not_yet_offered is exactly the Jira transition plus the eleven connectors 0.6.0 writes (C1), each a real connector-write row", () => {
+test("not_yet_offered is exactly the Jira transition plus the two VCS updates and the five flag and Jira alert writes (C1, C2), each a real connector-write row", () => {
   const notYet = Object.entries(ACTION_PROPOSABILITY)
     .filter(([, p]) => p.kind === "denied" && p.class === "not_yet_offered")
     .map(([t]) => t)
@@ -107,13 +109,12 @@ test("not_yet_offered is exactly the Jira transition plus the eleven connectors 
     [
       // jira.issue.transition by owner ruling OR-B2-4 (no before-read on the act door).
       "jira.issue.transition",
-      // The 0.6.0 writes (C1): untemplated, no act-door refusals yet.
-      "github.branch.create",
-      "github.pr.create",
+      // The two VCS updates (C2): templated, but not recoverable (the connector overwrites the old
+      // text or base) and the act door runs no before-read, so the owner would approve an edit
+      // with no current title or base to compare. The creates are proposable.
       "github.pr.update",
-      "gitlab.branch.create",
-      "gitlab.mr.create",
       "gitlab.mr.update",
+      // The flag and Jira alert writes (C1): untemplated, no act-door refusals yet (C3).
       "launchdarkly.flag.toggle",
       "launchdarkly.flag.rollout.set",
       "flagsmith.feature.state.set",

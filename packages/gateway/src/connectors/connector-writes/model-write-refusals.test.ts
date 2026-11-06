@@ -475,6 +475,12 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     github_issue_assignees_add: [],
     github_issue_state_set: [],
     github_pr_close: [],
+    github_branch_create: [],
+    github_pr_create: ["title", "body"],
+    github_pr_update: ["title", "body"],
+    gitlab_branch_create: [],
+    gitlab_mr_create: ["title", "description"],
+    gitlab_mr_update: ["title", "description"],
     gitlab_issue_note_create: ["body"],
     gitlab_mr_note_create: ["body"],
     gitlab_issue_create: ["title", "description"],
@@ -491,6 +497,9 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     gitlab_issue_labels_add: [],
     gitlab_issue_assignees_add: [],
     gitlab_issue_state_set: [],
+    gitlab_branch_create: [],
+    gitlab_mr_create: ["description"],
+    gitlab_mr_update: ["description"],
   };
 
   test("the broadcast map names exactly the offerable GitHub/GitLab rows, and each row scans those keys", () => {

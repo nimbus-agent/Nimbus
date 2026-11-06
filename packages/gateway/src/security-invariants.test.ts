@@ -11684,7 +11684,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2) and C1's eight wave-3 file, pull request and incident writes (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes and C2's four wave-3 branch, pull request and merge request writes (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
@@ -11694,16 +11694,20 @@ describe("I53 — a first-party connector write reaches the model only through t
       "gdrive_file_move",
       "gdrive_file_rename",
       "gdrive_file_trash",
+      "github_branch_create",
       "github_issue_assignees_add",
       "github_issue_comment_create",
       "github_issue_labels_add",
       "github_issue_state_set",
       "github_pr_close",
+      "github_pr_create",
+      "github_pr_update",
       "gitlab_issue_assignees_add",
       "gitlab_issue_labels_add",
       "gitlab_issue_note_create",
       "gitlab_issue_state_set",
       "gitlab_mr_note_create",
+      "gitlab_mr_update",
       "jira_comment_add",
       "jira_issue_transition",
       "jira_issue_update",
@@ -11728,7 +11732,11 @@ describe("I53 — a first-party connector write reaches the model only through t
       "gdrive_file_move",
       "gdrive_file_rename",
       "gdrive_file_trash",
+      "github_branch_create",
       "github_pr_close",
+      "github_pr_create",
+      "github_pr_update",
+      "gitlab_mr_update",
       "onedrive_item_move",
       "pd_incident_acknowledge",
       "pd_incident_escalate",

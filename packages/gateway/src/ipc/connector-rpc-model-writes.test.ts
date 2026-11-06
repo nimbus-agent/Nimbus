@@ -107,7 +107,7 @@ describe("connector.writesEnable", () => {
     const p = prompts[0] ?? "";
     expect(p).toContain("Service: github");
     expect(p).toContain("Up to wave: 3");
-    // B1 templates the comment write, B2 the four issue writes and C1 the pull request close: the owner approves all six.
+    // B1 templates the comment write, B2 the four issue writes and C1 the pull request close and C2 the branch, pull request create and update: the owner approves all nine.
     for (const r of expected) {
       const tag = isModelOfferableRow(r) ? "(new: offered after you approve)" : "(not offered yet)";
       expect(p).toContain(`${r.toolId}  ${r.actionType}  wave ${r.wave}  ${tag}`);
@@ -119,6 +119,9 @@ describe("connector.writesEnable", () => {
       "github_issue_assignees_add",
       "github_issue_state_set",
       "github_pr_close",
+      "github_branch_create",
+      "github_pr_create",
+      "github_pr_update",
     ]);
     expect(p).toContain("Each call will still ask you before it runs.");
   });

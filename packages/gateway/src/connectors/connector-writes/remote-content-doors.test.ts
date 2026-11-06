@@ -222,6 +222,14 @@ const B3W_ROWS: ReadonlyArray<readonly [string, string, Record<string, unknown>]
   ["gitlab_issue_note_create", "body", { projectPath: "g/r", issueIid: 7 }],
   ["gitlab_mr_note_create", "body", { projectPath: "g/r", mergeRequestIid: 9 }],
   ["gitlab_issue_create", "description", { projectPath: "g/r", title: "T" }],
+  ["github_pr_create", "body", { owner: "o", repo: "r", head: "feat", base: "main", title: "T" }],
+  ["github_pr_update", "body", { owner: "o", repo: "r", pullNumber: 3 }],
+  [
+    "gitlab_mr_create",
+    "description",
+    { projectPath: "g/r", sourceBranch: "feat", targetBranch: "main", title: "T" },
+  ],
+  ["gitlab_mr_update", "description", { projectPath: "g/r", mergeRequestIid: 4 }],
   ["linear_comment_create", "body", { issueId: "i" }],
   ["linear_issue_create", "description", { teamId: "t", title: "T" }],
   ["linear_issue_update", "description", { issueId: "i" }],
@@ -229,6 +237,10 @@ const B3W_ROWS: ReadonlyArray<readonly [string, string, Record<string, unknown>]
 const OPTIONAL_B3W = new Set([
   "github_issue_create",
   "gitlab_issue_create",
+  "github_pr_create",
+  "github_pr_update",
+  "gitlab_mr_create",
+  "gitlab_mr_update",
   "linear_issue_create",
   "linear_issue_update",
 ]);
@@ -309,6 +321,10 @@ describe("B3w: the row rules (plan W2-W4, W11, Review Focus 1 and 5)", () => {
       "gitlab_issue_note_create",
       "gitlab_mr_note_create",
       "gitlab_issue_create",
+      "github_pr_create",
+      "github_pr_update",
+      "gitlab_mr_create",
+      "gitlab_mr_update",
     ]);
     for (const [toolId, key, rest] of B3W_ROWS) {
       const input: Record<string, unknown> = { ...rest };
@@ -389,6 +405,10 @@ const NOT_SCANNED_REMOTE: Readonly<Record<string, string>> = {
   apple_mail_draft_create: "sent as text/plain",
   outlook_calendar_create: "the connector always sends contentType Text (B4 R4)",
   apple_calendar_event_create: "iCalendar DESCRIPTION text (B4 R4)",
+  github_branch_create:
+    "no text field: branch and fromRef are refs, which cannot load content (C2)",
+  gitlab_branch_create:
+    "no text field: branch and fromRef are refs (C2); the schema reader over-reads a `description` from the unrelated schema after `gitlabRefSchema`",
 };
 
 /** Untemplated proposable send rows (no preview fields to read): each sends plain text. */
@@ -458,7 +478,7 @@ describe("B3r and B3w completeness tripwire", () => {
     (r) => isModelOfferableRow(r) || proposable.has(r.toolId),
   );
 
-  test("the scanned rows are exactly the twenty, with exactly the field column", () => {
+  test("the scanned rows are exactly the twenty-four, with exactly the field column", () => {
     expect([...remoteContentScannedRows()].sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
@@ -467,9 +487,13 @@ describe("B3r and B3w completeness tripwire", () => {
       "gdrive_file_create",
       "github_issue_comment_create",
       "github_issue_create",
+      "github_pr_create",
+      "github_pr_update",
       "gitlab_issue_create",
       "gitlab_issue_note_create",
+      "gitlab_mr_create",
       "gitlab_mr_note_create",
+      "gitlab_mr_update",
       "linear_comment_create",
       "linear_issue_create",
       "linear_issue_update",
@@ -499,6 +523,10 @@ describe("B3r and B3w completeness tripwire", () => {
       teams_message_post_chat: ["body"],
       github_issue_comment_create: ["body"],
       github_issue_create: ["body"],
+      github_pr_create: ["body"],
+      github_pr_update: ["body"],
+      gitlab_mr_create: ["description"],
+      gitlab_mr_update: ["description"],
       gitlab_issue_note_create: ["body"],
       gitlab_mr_note_create: ["body"],
       gitlab_issue_create: ["description"],

@@ -449,7 +449,11 @@ function htmlUnlessText(input: Readonly<Record<string, unknown>>): boolean {
   return contentType !== undefined && contentType !== "text";
 }
 
-/** The rows whose text the broadcast rule scans, and which fields. */
+/**
+ * The rows whose text the broadcast rule scans, and which fields: the messaging posts, the issue,
+ * pull request and merge request comments and creates (titles included) and, since C2, the pull
+ * request and merge request updates.
+ */
 const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
   slack_message_post: { service: "slack", keys: [REQUIRED("text")] },
   slack_message_post_dm: { service: "slack", keys: [REQUIRED("text")] },
@@ -461,6 +465,13 @@ const BROADCAST_SCANNED: Readonly<Record<string, BroadcastScan>> = {
   // B2: the issue creates (title always, the body or description when set).
   github_issue_create: { service: "github", keys: [REQUIRED("title"), OPTIONAL("body")] },
   gitlab_issue_create: { service: "gitlab", keys: [REQUIRED("title"), OPTIONAL("description")] },
+  // C2: the pull request and merge request creates (title required) and updates (every key
+  // optional: an update may leave the title or the text alone). Branch names and refs are not
+  // scanned: a ref cannot notify.
+  github_pr_create: { service: "github", keys: [REQUIRED("title"), OPTIONAL("body")] },
+  github_pr_update: { service: "github", keys: [OPTIONAL("title"), OPTIONAL("body")] },
+  gitlab_mr_create: { service: "gitlab", keys: [REQUIRED("title"), OPTIONAL("description")] },
+  gitlab_mr_update: { service: "gitlab", keys: [OPTIONAL("title"), OPTIONAL("description")] },
 };
 
 /**
@@ -484,8 +495,8 @@ function refusesBroadcast(toolId: string, input: Readonly<Record<string, unknown
 // GitLab quick actions (coordinator ruling 2026-11-05, recorded for the owner): GitLab runs
 // `/close`, `/merge`, `/approve`, `/assign @x` and the rest from a note body and from an issue's
 // description at create, so model-written GitLab text could change the issue or merge request's
-// state. Scanned (ruling R-QA, 2026-11-05): a note `body` and an issue create's `description`, the
-// fields GitLab parses for quick actions; NOT the title, which GitLab does not parse (a title such
+// state. Scanned (ruling R-QA, 2026-11-05): a note `body`, an issue create's `description` and (C2) a
+// merge request create's or update's `description`, the fields GitLab parses for quick actions; NOT the title, which GitLab does not parse (a title such
 // as `/api is down` is allowed). A scanned field is refused when any line of it, normalised as for
 // broadcast mentions but keeping its line breaks (both the deleted and the spaced form), begins
 // with optional whitespace, then `/`, then a letter. A fenced code block does NOT exempt it (fail
@@ -509,6 +520,9 @@ const GITLAB_QUICK_ACTION_ROWS: Readonly<Record<string, readonly ScannedKey[]>> 
   gitlab_issue_note_create: [REQUIRED("body")],
   gitlab_mr_note_create: [REQUIRED("body")],
   gitlab_issue_create: [OPTIONAL("description")],
+  // C2: GitLab parses a merge request description for quick actions at create and at edit.
+  gitlab_mr_create: [OPTIONAL("description")],
+  gitlab_mr_update: [OPTIONAL("description")],
 };
 
 /** The input keys the quick-action rule scans for `toolId` (read-only, for its tripwire). */
@@ -767,7 +781,8 @@ function nullOptionalFieldCheck(
 //    `contentType` is absent or exactly `"text"`;
 //  - (B3w) forge Markdown: `github_issue_comment_create` `body`, `github_issue_create` `body`
 //    (optional), `gitlab_issue_note_create` and `gitlab_mr_note_create` `body`,
-//    `gitlab_issue_create` `description` (optional), and Linear's `linear_comment_create` `body`
+//    `gitlab_issue_create` `description` (optional), (C2) `github_pr_create` and `github_pr_update`
+//    `body` and `gitlab_mr_create` and `gitlab_mr_update` `description` (all optional), and Linear's `linear_comment_create` `body`
 //    and `linear_issue_create` / `linear_issue_update` `description` (optional).
 // Not scanned (re-checked against 0.5.0): the Gmail, Fastmail, IMAP, ProtonMail and iCloud sends
 // (text/plain), `gmail_draft_send` (a draft id only), Slack (the connector sends `text` only, no
@@ -838,6 +853,11 @@ const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
   gitlab_issue_note_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
   gitlab_mr_note_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
   gitlab_issue_create: { key: OPTIONAL("description"), formats: always("forge-markdown") },
+  // C2: pull request body and merge request description (titles are plain text, not scanned).
+  github_pr_create: { key: OPTIONAL("body"), formats: always("forge-markdown") },
+  github_pr_update: { key: OPTIONAL("body"), formats: always("forge-markdown") },
+  gitlab_mr_create: { key: OPTIONAL("description"), formats: always("forge-markdown") },
+  gitlab_mr_update: { key: OPTIONAL("description"), formats: always("forge-markdown") },
   linear_comment_create: { key: REQUIRED("body"), formats: always("forge-markdown") },
   linear_issue_create: { key: OPTIONAL("description"), formats: always("forge-markdown") },
   linear_issue_update: { key: OPTIONAL("description"), formats: always("forge-markdown") },

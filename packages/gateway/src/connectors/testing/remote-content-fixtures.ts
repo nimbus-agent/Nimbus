@@ -489,6 +489,32 @@ const FORGE_ROWS: readonly ((label: string, body: string) => RemoteContentDoorCa
     })(l),
   (l, description) =>
     row("gitlab issue", "gitlab_issue_create", { projectPath: "g/r", title: "T", description })(l),
+  // Phase 9.7 C2: the pull request and merge request creates and updates (title is plain text).
+  (l, body) =>
+    row("github pr create", "github_pr_create", {
+      owner: "o",
+      repo: "r",
+      head: "feat",
+      base: "main",
+      title: "T",
+      body,
+    })(l),
+  (l, body) =>
+    row("github pr update", "github_pr_update", { owner: "o", repo: "r", pullNumber: 3, body })(l),
+  (l, description) =>
+    row("gitlab mr create", "gitlab_mr_create", {
+      projectPath: "g/r",
+      sourceBranch: "feat",
+      targetBranch: "main",
+      title: "T",
+      description,
+    })(l),
+  (l, description) =>
+    row("gitlab mr update", "gitlab_mr_update", {
+      projectPath: "g/r",
+      mergeRequestIid: 4,
+      description,
+    })(l),
   (l, body) => row("linear comment", "linear_comment_create", { issueId: "i1", body })(l),
   (l, description) =>
     row("linear issue create", "linear_issue_create", { teamId: "t1", title: "T", description })(l),

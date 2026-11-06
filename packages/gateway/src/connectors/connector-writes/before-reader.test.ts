@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the thirty-one (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, and the eight C1 file, PR and incident writes), and every reader passes", () => {
+  test("the rows with readers are exactly the thirty-five (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, and the four C2 branch, PR and MR rows with a reader), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -185,12 +185,16 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "github_issue_comment_create",
         "github_issue_labels_add",
         "github_issue_state_set",
+        "github_branch_create",
         "github_pr_close",
+        "github_pr_create",
+        "github_pr_update",
         "gitlab_issue_assignees_add",
         "gitlab_issue_labels_add",
         "gitlab_issue_note_create",
         "gitlab_issue_state_set",
         "gitlab_mr_note_create",
+        "gitlab_mr_update",
         "jira_comment_add",
         "jira_issue_transition",
         "jira_issue_update",
@@ -207,7 +211,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "pd_incident_resolve",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(31);
+    expect(withReader).toHaveLength(35);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -715,7 +719,7 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly five (B2, B3)", () => {
+  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly seven (B2, B3, C2)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition", "gdrive_file_move", "onedrive_item_move"]);
@@ -723,6 +727,8 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_page_append",
       "confluence_page_update",
+      "github_pr_update",
+      "gitlab_mr_update",
       "linear_issue_update",
       "notion_block_append",
       "notion_page_update",

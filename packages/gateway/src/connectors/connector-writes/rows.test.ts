@@ -343,8 +343,16 @@ describe("connectors 0.6.0 writes (C1)", () => {
     }
   });
 
-  test("none is templated or proposable yet: all eleven are not_yet_offered", () => {
-    for (const [id, actionType] of CONNECTORS_0_6_0_WRITES) {
+  test("C2: the six VCS writes are templated and the four creates proposable; the updates and the C3 rows are not_yet_offered", () => {
+    const vcs = CONNECTORS_0_6_0_WRITES.slice(0, 6);
+    for (const [id, actionType] of vcs) {
+      expect(connectorWriteRowByToolId(id)?.preview, id).toBeDefined();
+      const creates = id.endsWith("_create");
+      expect(ACTION_PROPOSABILITY[actionType], id).toEqual(
+        creates ? { kind: "proposable" } : { kind: "denied", class: "not_yet_offered" },
+      );
+    }
+    for (const [id, actionType] of CONNECTORS_0_6_0_WRITES.slice(6)) {
       expect(connectorWriteRowByToolId(id)?.preview, id).toBeUndefined();
       expect(ACTION_PROPOSABILITY[actionType], id).toEqual({
         kind: "denied",
@@ -356,15 +364,18 @@ describe("connectors 0.6.0 writes (C1)", () => {
       .map(([t]) => t)
       .sort((a, b) => a.localeCompare(b));
     expect(notYet).toEqual(
-      [...CONNECTORS_0_6_0_WRITES.map(([, t]) => t), "jira.issue.transition"].sort((a, b) =>
-        a.localeCompare(b),
-      ),
+      [
+        "github.pr.update",
+        "gitlab.mr.update",
+        ...CONNECTORS_0_6_0_WRITES.slice(6).map(([, t]) => t),
+        "jira.issue.transition",
+      ].sort((a, b) => a.localeCompare(b)),
     );
   });
 });
 
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 43 proposable, 128 denied (12 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 124 denied (8 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -377,10 +388,10 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
       });
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
-    expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(43);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(128);
+    expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(124);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
-    ).toHaveLength(12);
+    ).toHaveLength(8);
   });
 });

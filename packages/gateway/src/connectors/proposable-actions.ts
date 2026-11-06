@@ -28,15 +28,17 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Twelve members:
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Eight members:
    * `jira.issue.transition` (owner ruling OR-B2-4: the act door runs no before-read and so could
-   * not show what the write changes) and, since C1, the eleven writes of connectors 0.6.0
-   * (`github.{branch.create,pr.create,pr.update}`, `gitlab.{branch.create,mr.create,mr.update}`,
-   * `launchdarkly.flag.{toggle,rollout.set}`, `flagsmith.feature.state.set`,
-   * `jira.ops.alert.{acknowledge,close}`), untemplated and with no act-door refusals yet.
+   * not show what the write changes); since C2 the two VCS updates `github.pr.update` and
+   * `gitlab.mr.update` (templated for the model door, but not recoverable and with no act-door
+   * before-state, so the owner would approve an edit with no current title or base); and the five
+   * writes of connectors 0.6.0 that C3 will template (`launchdarkly.flag.{toggle,rollout.set}`,
+   * `flagsmith.feature.state.set`, `jira.ops.alert.{acknowledge,close}`), untemplated and with no
+   * act-door refusals yet.
    * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
-   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job: the C2
-   * or C3 PR that templates a type (and reviews its act-door refusals) moves it there.
+   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job: the C3
+   * PR that templates a type (and reviews its act-door refusals) moves it there.
    */
   | "not_yet_offered"
   | "gateway_internal";
@@ -89,6 +91,14 @@ export const PROPOSABLE_WRITE_TOOLS: Readonly<Record<string, string>> = Object.f
   "jira.issue.update": "jira_issue_update",
   "jira.comment.add": "jira_comment_add",
   "github.issue.create": "github_issue_create",
+  // Phase 9.7 C2: the branch, pull request and merge request creates. Every text field is scanned
+  // by the refusals the act door runs first (broadcast mention, forge Markdown remote content,
+  // GitLab quick actions in a description), the typed preview shows every field sent, and each is
+  // recoverable. The two updates stay withheld (see `not_yet_offered` below).
+  "github.branch.create": "github_branch_create",
+  "github.pr.create": "github_pr_create",
+  "gitlab.branch.create": "gitlab_branch_create",
+  "gitlab.mr.create": "gitlab_mr_create",
   // Phase 9.7 B1: the comment and Discord posts, each with a typed preview template.
   "github.issue.comment.create": "github_issue_comment_create",
   "gitlab.issue.note.create": "gitlab_issue_note_create",
@@ -245,15 +255,14 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
     // ruling OR-B2-4: before-reads run on the model door only (B0b), so an MCP proposal would ask
     // the owner to approve a bare numeric transition id, with no From or To, on a write that can be
     // one-way.
-    // The eleven connectors 0.6.0 writes (C1) are classified here until C2 (VCS) and C3 (flags,
-    // Jira alerts) template them and add their act-door refusals.
+    // `github.pr.update` and `gitlab.mr.update` (C2) are templated for the model door but withheld
+    // here: they are not recoverable (the connector overwrites the old text or retargets the base)
+    // and the act door runs no before-read, so the owner would approve an edit with no current
+    // title or base to compare (the same reason as the Jira transition). The flag and Jira alert
+    // writes (C1) stay here until C3 templates them and adds their act-door refusals.
     ...denied("not_yet_offered", [
       "jira.issue.transition",
-      "github.branch.create",
-      "github.pr.create",
       "github.pr.update",
-      "gitlab.branch.create",
-      "gitlab.mr.create",
       "gitlab.mr.update",
       "launchdarkly.flag.toggle",
       "launchdarkly.flag.rollout.set",

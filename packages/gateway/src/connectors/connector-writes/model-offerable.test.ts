@@ -30,7 +30,7 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 56 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) and the eight wave-3 file, PR and incident rows (C1)", () => {
+  test("exactly the 62 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) and the six wave-3 branch, pull request and merge request rows (C2)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -58,18 +58,24 @@ describe("isModelOfferableRow (M1)", () => {
         "gdrive_file_move",
         "gdrive_file_rename",
         "gdrive_file_trash",
+        "github_branch_create",
         "github_issue_assignees_add",
         "github_issue_comment_create",
         "github_issue_create",
         "github_issue_labels_add",
         "github_issue_state_set",
         "github_pr_close",
+        "github_pr_create",
+        "github_pr_update",
+        "gitlab_branch_create",
         "gitlab_issue_assignees_add",
         "gitlab_issue_create",
         "gitlab_issue_labels_add",
         "gitlab_issue_note_create",
         "gitlab_issue_state_set",
+        "gitlab_mr_create",
         "gitlab_mr_note_create",
+        "gitlab_mr_update",
         "gmail_draft_create",
         "jira_comment_add",
         "jira_issue_create",
@@ -95,7 +101,7 @@ describe("isModelOfferableRow (M1)", () => {
         "teams_message_post_chat",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(56);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(62);
     // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
