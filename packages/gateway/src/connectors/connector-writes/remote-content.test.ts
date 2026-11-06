@@ -1790,6 +1790,55 @@ describe("B3w: forge-markdown", () => {
     }
   });
 
+  // PR #1916 review: a URL a preprocessor or an expression ASSEMBLES spells no `//` or scheme.
+  const CONSTRUCTED = `!$u = "htt" + "ps:/" + "/h/x.json"`;
+  // A dollar sign + `{x}`, built so lint does not read a template placeholder in a plain string.
+  const SUBST = `${String.fromCodePoint(0x24)}{x}`;
+  const LOADERS_REFUSED: readonly (readonly [string, string])[] = [
+    [
+      "a plantuml %load_json of a built URL",
+      fence("plantuml", `${CONSTRUCTED}${LF}!$d = %load_json($u)`),
+    ],
+    [
+      "a spaced plantuml include of a variable",
+      fence("plantuml", `${CONSTRUCTED}${LF}! include $u`),
+    ],
+    ["a puml include_many", fence("puml", "!include_many $u")],
+    ["a plantuml includeurl", fence("PlantUML", "!includeurl $u")],
+    ["a plantuml import", fence("plantuml", "!import $u")],
+    ["a plantuml theme from a variable", fence("plantuml", "!theme t from $u")],
+    ["a plantuml creole image", fence("plantuml", "A -> B: <img:$u>")],
+    ["a c4plantuml stdlib include (stated over-refusal)", fence("c4plantuml", "!include <C4/C4>")],
+    ["a vega url signal", fence("vega", `{"data":{"url":{"signal":"'htt'+'ps:/'+'/h'"}}}`)],
+    ["a vega-lite escaped url key", fence("vega-lite", `{"data":{"\\u0075rl":"x"}}`)],
+    ["a vega expr", fence("vegalite", `{"calculate":"datum.a","as":"b","expr":"x"}`)],
+    ["a d2 substitution", fence("d2", `a.icon: ${SUBST}`)],
+    ["a structurizr script", fence("structurizr", "!script s.groovy")],
+    ["a kroki load_json", fence("kroki", "%load_json($u)")],
+    ["an entity-spelled plantuml fence", fence("plant&#117;ml", "%load_json($u)")],
+  ];
+  const LOADERS_ALLOWED: readonly (readonly [string, string])[] = [
+    ["a vega fence with no loader", fence("vega", `{"mark":"bar"}`)],
+    [
+      "a mermaid fence naming another format's loader",
+      fence("mermaid", `A-->B: ${SUBST} %load_json`),
+    ],
+    ["a d2 fence naming a plantuml loader", fence("d2", "a: '%load_json'")],
+    ["a plantuml fence closed before the loader", `${fence("plantuml", "A -> B")} %load_json($u)`],
+  ];
+
+  test.each(LOADERS_REFUSED)("loader refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  test.each(LOADERS_ALLOWED)("loader allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+  });
+
+  test("Obsidian's mermaid has no loader tokens", () => {
+    expectAllowed("obsidian-markdown", fence("mermaid", `A-->B %load_json($u) ${SUBST}`));
+  });
+
   test("a diagram language is the first word, exactly (review fix 5)", () => {
     expectRefused("forge-markdown", fence("mermaid extra words", "click A //h"), true);
     expectAllowed("forge-markdown", fence("mermaidx", "click A //h"));

@@ -1385,6 +1385,47 @@ function lineLoads(line: string): boolean {
 }
 
 /**
+ * PR #1916 review: a diagram format with a preprocessor or an expression language can ASSEMBLE a
+ * URL that no line spells (PlantUML `!$u = "htt" + "ps:/" + "/h"` then `%load_json($u)`; a Vega
+ * `{"url": {"signal": "..."}}`; D2 and Structurizr `${var}` substitution), so for those formats a
+ * line naming a loader or a constructor counts as a URL line, whatever its arguments. Matched in
+ * the lower-cased line with every space and TAB removed (`! include`, `%load_json (`). Sources
+ * (retrieved 2026-11-06): PlantUML "Use the preprocessor" (https://plantuml.com/preprocessing:
+ * `!include`, `!include_many`, `!include_once`, `!includesub`, `!includeurl`, `!includedef`,
+ * `!import`, `!theme ... from`, `%load_json`) and "Creole" (`<img:...>`); Vega "Data"
+ * (https://vega.github.io/vega/docs/data/: `url`, which takes a `signal`) and "Expressions";
+ * D2 "Variables" (`${...}`); Structurizr DSL (`!include`, `!script`, `!plugin`, `${...}`).
+ * Over-refusal (I53 bound): a PlantUML stdlib `!include <C4/C4_Context>` and a Vega `expr` that
+ * loads nothing are refused too. `kroki` fences take every format's tokens (fail closed).
+ */
+const PLANTUML_LOADERS = ["!include", "!import", "!theme", "%load_json", "%loadjson", "<img"];
+const VEGA_LOADERS = ["url", "signal", "expr", "loader", "\\u"];
+const SUBSTITUTION_LOADERS = ["${"];
+const STRUCTURIZR_LOADERS = ["!include", "!script", "!plugin", "${"];
+const DIAGRAM_LOADERS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["plantuml", PLANTUML_LOADERS],
+  ["puml", PLANTUML_LOADERS],
+  ["c4plantuml", PLANTUML_LOADERS],
+  ["vega", VEGA_LOADERS],
+  ["vega-lite", VEGA_LOADERS],
+  ["vegalite", VEGA_LOADERS],
+  ["d2", SUBSTITUTION_LOADERS],
+  ["structurizr", STRUCTURIZR_LOADERS],
+  [
+    "kroki",
+    [...PLANTUML_LOADERS, ...VEGA_LOADERS, ...SUBSTITUTION_LOADERS, ...STRUCTURIZR_LOADERS],
+  ],
+]);
+
+/** Every loader token, for an info string that does not settle (fail closed). */
+const ALL_DIAGRAM_LOADER_LANGUAGES: readonly string[] = [...DIAGRAM_LOADERS.keys()];
+
+/** A line lower-cased with every space and TAB removed, for the loader tokens. */
+function compactLine(line: string): string {
+  return line.toLowerCase().replaceAll(/[ \t]/g, "");
+}
+
+/**
  * A fence's language: the FIRST word of its NFKC-folded, lower-cased info string (CommonMark 0.31
  * section 4.5: "the first word of the info string is typically used to specify the language"),
  * compared exactly (B3w review fix 5: `godot` or `snapshot` is not a diagram fence).
@@ -1407,6 +1448,18 @@ function isDiagramInfo(info: string, names: ReadonlySet<string>): boolean {
   if (names.has(fenceLanguage(info))) return true;
   const settled = settle(info, "");
   return settled === undefined || names.has(fenceLanguage(settled));
+}
+
+/**
+ * The loader languages an opener's info string names (in `names`): its first word and its settled
+ * form's, or every loader language when the info string does not settle (fail closed).
+ */
+function loaderLanguagesOf(info: string, names: ReadonlySet<string>): readonly string[] {
+  const settled = settle(info, "");
+  if (settled === undefined) return ALL_DIAGRAM_LOADER_LANGUAGES.filter((l) => names.has(l));
+  return [fenceLanguage(info), fenceLanguage(settled)].filter(
+    (l) => names.has(l) && DIAGRAM_LOADERS.has(l),
+  );
 }
 
 /** The line breaks the raw text is split on: CRLF, LF, CR, VT, FF, NEL, LS and PS. */
@@ -1459,21 +1512,31 @@ function nearestCloser(stack: readonly Closer[] | undefined, len: number): numbe
  */
 function diagramLinesLoad(lines: readonly string[], names: ReadonlySet<string>): boolean {
   const closers: CloserStacks = new Map();
+  // The loader languages these `names` can open (Obsidian's mermaid has none).
+  const loaderLanguages = ALL_DIAGRAM_LOADER_LANGUAGES.filter((l) => names.has(l));
   let nextLoad = Number.POSITIVE_INFINITY;
+  // Per loader language: the nearest line after this one naming one of its loader tokens.
+  const nextLoader = new Map<string, number>();
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i] ?? "";
     const f = fenceLineOf(line);
-    if (f !== undefined) {
-      const key = f.markers + f.ch;
+    if (f !== undefined && isDiagramInfo(f.info, names)) {
+      let bound = nextLoad;
+      for (const l of loaderLanguagesOf(f.info, names)) {
+        bound = Math.min(bound, nextLoader.get(l) ?? Number.POSITIVE_INFINITY);
+      }
       if (
-        nextLoad !== Number.POSITIVE_INFINITY &&
-        isDiagramInfo(f.info, names) &&
-        nextLoad < nearestCloser(closers.get(key), f.len)
+        bound !== Number.POSITIVE_INFINITY &&
+        bound < nearestCloser(closers.get(f.markers + f.ch), f.len)
       )
         return true;
-      if (isStrictCloser(f)) pushCloser(closers, key, f.len, i);
     }
+    if (f !== undefined && isStrictCloser(f)) pushCloser(closers, f.markers + f.ch, f.len, i);
     if (lineLoads(line)) nextLoad = i;
+    const compact = loaderLanguages.length > 0 ? compactLine(line) : "";
+    for (const l of loaderLanguages) {
+      if ((DIAGRAM_LOADERS.get(l) ?? []).some((t) => compact.includes(t))) nextLoader.set(l, i);
+    }
   }
   return false;
 }
