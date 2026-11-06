@@ -58,6 +58,11 @@ import {
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";
+import {
+  actDoorRefusal,
+  modelWriteRefusal,
+  REMOTE_CONTENT_REFUSAL,
+} from "./connectors/connector-writes/model-write-refusals.ts";
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
 import { transitionHealth } from "./connectors/health.ts";
 import {
@@ -11844,5 +11849,64 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(prompts).toBe(0);
     expect(dispatched).toEqual(["jira.before.read"]);
     expect(egress).toEqual(["jira.before.read:authorized", "jira.issue.update:blocked"]);
+  });
+});
+
+describe("I53 / I28 — B3r: remote content in drafts, pages, notes and markup files is refused on both doors", () => {
+  const REFUSALS = "packages/gateway/src/connectors/connector-writes/model-write-refusals.ts";
+
+  /** The comment-free body of `name` (a top-level function) in `src`. */
+  function bodyOf(src: string, name: string): string {
+    const at = src.indexOf(`export function ${name}(`);
+    expect(at, name).toBeGreaterThan(-1);
+    return src.slice(at, src.indexOf("\n}\n", at));
+  }
+
+  test("I53: messagingDestinationRefusal calls remoteContentRefusal after the scoped label, before the null field", async () => {
+    const body = bodyOf(stripComments(await read(REFUSALS)), "messagingDestinationRefusal");
+    const scoped = body.indexOf("refusesGitlabScopedLabel(");
+    const remote = body.indexOf("remoteContentRefusal(toolId, input)");
+    const nullField = body.indexOf("nullOptionalFieldCheck(");
+    expect(scoped).toBeGreaterThan(-1);
+    expect(remote).toBeGreaterThan(scoped);
+    expect(nullField).toBeGreaterThan(remote);
+  });
+
+  test("I28: actDoorRefusal still calls messagingDestinationRefusal first, so the act door gets the rule", async () => {
+    const body = bodyOf(stripComments(await read(REFUSALS)), "actDoorRefusal");
+    const first = body.indexOf(
+      "= messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });",
+    );
+    expect(first).toBeGreaterThan(0);
+    expect(body.slice(0, first)).not.toContain("return");
+    // The model door too.
+    const model = bodyOf(stripComments(await read(REFUSALS)), "modelWriteRefusal");
+    expect(model).toContain(
+      "= messagingDestinationRefusal(toolId, input, { chatops: ctx.chatops });",
+    );
+  });
+
+  test("the rule calls the detector with exactly two arguments (the tripwire seam is unreachable)", async () => {
+    const src = stripComments(await read(REFUSALS));
+    const calls = src.split("remoteContentIn(").length - 1;
+    expect(calls).toBe(1);
+    expect(src).toMatch(/remoteContentIn\(format, text\)/);
+  });
+
+  test("behaviour: an Outlook HTML pixel through the model door, a Confluence ri:url image through the act door", () => {
+    expect(
+      modelWriteRefusal(
+        "outlook_draft_create",
+        { to: "a@x.com", subject: "S", body: "<img src=https://h/p.gif>", contentType: "html" },
+        { chatops: undefined, kb: undefined },
+      ),
+    ).toBe(REMOTE_CONTENT_REFUSAL);
+    expect(
+      actDoorRefusal(
+        "confluence_page_append",
+        { pageId: "1", storageHtml: '<ac:image><ri:url ri:value="https://h/x.png"/></ac:image>' },
+        { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBe(REMOTE_CONTENT_REFUSAL);
   });
 });

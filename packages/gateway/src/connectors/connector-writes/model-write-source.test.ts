@@ -20,6 +20,10 @@ import { runIndexedSchemaMigrations } from "../../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { mcpClientToolKey } from "../lazy-mesh/tool-map.ts";
 import {
+  REMOTE_CONTENT_ALLOWED_CASES,
+  REMOTE_CONTENT_REFUSED_CASES,
+} from "../testing/remote-content-fixtures.ts";
+import {
   offerableWritesEnabledBy,
   removeModelWriteEnablement,
   setModelWriteEnablement,
@@ -38,6 +42,7 @@ import {
   KNOWLEDGE_BASE_REFUSAL,
   LINEAR_ASSIGNEE_REFUSAL,
   nullOptionalFieldRefusal,
+  REMOTE_CONTENT_REFUSAL,
   type TribalKbConfig,
 } from "./model-write-refusals.ts";
 import { createModelWriteToolSource, type ModelWriteSourceDeps } from "./model-write-source.ts";
@@ -232,7 +237,9 @@ describe("createModelWriteToolSource: the destination refusals (F3/F4)", () => {
     const throwing = refusingSource(() => {
       throw new Error("x");
     });
-    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x" })).toThrow("x");
+    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x", childrenJson: "[]" })).toThrow(
+      "x",
+    );
   });
 
   test("the KB config is read per call; a throw propagates (the door refuses it)", () => {
@@ -241,18 +248,20 @@ describe("createModelWriteToolSource: the destination refusals (F3/F4)", () => {
       () => ALLOWED,
       () => (kbId === undefined ? undefined : { notion: { databaseId: kbId } }),
     );
-    expect(src.refusal?.(APPEND, { parentBlockId: "AAAABBBB" })).toBe(
+    expect(src.refusal?.(APPEND, { parentBlockId: "AAAABBBB", childrenJson: "[]" })).toBe(
       "the model cannot write to the Nimbus knowledge base; use the capture flow",
     );
     kbId = undefined;
-    expect(src.refusal?.(APPEND, { parentBlockId: "AAAABBBB" })).toBeUndefined();
+    expect(
+      src.refusal?.(APPEND, { parentBlockId: "AAAABBBB", childrenJson: "[]" }),
+    ).toBeUndefined();
     const throwing = refusingSource(
       () => ALLOWED,
       () => {
         throw new Error("config");
       },
     );
-    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x" })).toThrow();
+    expect(() => throwing.refusal?.(APPEND, { parentBlockId: "x", childrenJson: "[]" })).toThrow();
   });
 });
 
@@ -835,5 +844,121 @@ describe("B3: the KB-child guard through the production door executor (OR-B3-3)"
     const door = await realDoor(() => BOUND, undefined, h.exec);
     expect(await door.call("notion__notion_page_update", write)).toEqual({ updated: true });
     expect(h.prompts).toHaveLength(1);
+  });
+});
+
+// ---- B3r: remote content on the real rows through the real door (plan Task 5) ---------------
+
+describe("B3r: remote content is refused on the real rows through the real door", () => {
+  /** The production executor with a recording consent channel and dispatcher. */
+  function doorExecutor() {
+    const prompts: string[] = [];
+    const dispatched: PlannedAction[] = [];
+    const consent: ConsentChannel = {
+      requestApproval: async (prompt) => {
+        prompts.push(prompt);
+        return true;
+      },
+    };
+    const audit: AuditSink = { recordAudit: () => {} };
+    const connectors: ConnectorDispatcher = {
+      dispatch: async (a) => {
+        dispatched.push(a);
+        return { ok: true };
+      },
+    };
+    const exec = new ToolExecutor(
+      consent,
+      audit,
+      connectors,
+      undefined,
+      makeEgressSink(db),
+      NO_POLICY_OVERLAY,
+      undefined,
+      createBeforeStateRunner({ guardContext: () => ({ kb: undefined }) }),
+    );
+    const egress = () =>
+      (db.query("SELECT method FROM egress_ledger").all() as Array<{ method: string }>).map(
+        (r) => r.method,
+      );
+    return { exec, prompts, dispatched, egress };
+  }
+
+  const nameOf = (toolId: string): string => {
+    const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === toolId);
+    if (r === undefined) throw new Error(toolId);
+    return `${serviceOf(r.actionType)}__${toolId}`;
+  };
+
+  const REPRESENTATIVE: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
+    [
+      "outlook_draft_create",
+      {
+        to: "a@x.com",
+        subject: "S",
+        body: "<p>hi<img src=https://h/p.gif></p>",
+        contentType: "html",
+      },
+    ],
+    [
+      "notion_block_append",
+      {
+        parentBlockId: "ffff",
+        childrenJson:
+          '[{"toggle":{"rich_text":[],"children":[{"bulleted_list_item":{"rich_text":[],"children":[{"type":"embed","embed":{"url":"https://h"}}]}}]}}]',
+      },
+    ],
+    [
+      "gdrive_file_create",
+      {
+        name: "x.svg",
+        mimeType: "image/svg+xml",
+        content: '<svg><image href="https://h/x.png"/></svg>',
+      },
+    ],
+    [
+      "gdrive_file_create",
+      { name: "report.html", mimeType: "text/plain", content: "<img src=//h>" },
+    ],
+    ["obsidian_append_to_daily_note", { vault_id: "Work", content: "![](https://h/p.gif)" }],
+    [
+      "confluence_page_append",
+      { pageId: "123", storageHtml: '<ac:image><ri:url ri:value="https://h/x.png"/></ac:image>' },
+    ],
+  ];
+
+  test.each(REPRESENTATIVE.map(([id, input]) => [id, input] as const))(
+    "%s: refused with the fixed text; no before-read, no prompt, no dispatch, no egress row",
+    async (toolId, input) => {
+      const h = doorExecutor();
+      const door = await realDoor(() => BOUND, undefined, h.exec);
+      expect(await door.call(nameOf(toolId), input)).toEqual({ refused: REMOTE_CONTENT_REFUSAL });
+      expect(h.prompts).toEqual([]);
+      expect(h.dispatched).toEqual([]);
+      expect(h.egress()).toEqual([]);
+    },
+  );
+
+  test("every bypass form of both reviews is refused at the model door; nothing is executed", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const c of REMOTE_CONTENT_REFUSED_CASES) {
+      expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({
+        refused: REMOTE_CONTENT_REFUSAL,
+      });
+    }
+    expect(door.executed).toEqual([]);
+  });
+
+  test("every allowed form reaches the executor unchanged", async () => {
+    const door = await realDoor(() => BOUND);
+    for (const c of REMOTE_CONTENT_ALLOWED_CASES) {
+      const before = door.executed.length;
+      expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({ sent: true });
+      expect(door.executed.length, c.label).toBe(before + 1);
+      expect(door.executed.at(-1)?.payload, c.label).toEqual({
+        mcpToolId: mcpClientToolKey(serviceOf(door.executed.at(-1)?.type ?? ""), c.toolId),
+        input: c.input,
+      });
+    }
   });
 });

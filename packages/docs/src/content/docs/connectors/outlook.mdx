@@ -57,6 +57,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 - **Scope-gated tool registration.** Tools whose required Microsoft Graph scope is not in `MICROSOFT_OAUTH_SCOPES` are not registered at startup. Re-authenticate with broader scopes if you want more tools available.
 
+**Remote content in a model-written draft is refused.** When the model (or an MCP client's proposal) saves an `outlook_draft_create` draft with `contentType` set to anything other than `text`, Nimbus reads the body as HTML and refuses it, before it asks you, if opening the draft would load remote content: an external image or tracking pixel, a CSS `url(` or `@import`, a `<link>`, `<iframe>`, `<base>` or `<meta http-equiv>`, an SVG image or `srcset`. An inline `cid:` image and plain links (`<a href>`) are allowed and shown to you verbatim. A draft sent as text is never scanned. The refusal is the same fixed message every time and repeats nothing from the draft.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

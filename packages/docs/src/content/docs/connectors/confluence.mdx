@@ -55,6 +55,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 - **Confluence Cloud only.** The base URL must be the `*.atlassian.net` site root; the connector appends `/wiki` automatically.
 
+**Remote content in a model-written page is refused.** For `confluence_page_create`, `confluence_page_update`, `confluence_page_append` and `confluence_comment_add` written by the model (or proposed by an MCP client), Nimbus scans the storage HTML and refuses it, before it asks you, if the page would load remote content when opened: an `<ri:url>` image, an external `<img>` or CSS `url(`, a `<link>` or `<iframe>`, an `ac:adf-*` element, a macro outside a fixed list of inert macros (`info`, `note`, `tip`, `warning`, `panel`, `code`, `noformat`, `expand`, `toc`, `status`, `anchor`, `excerpt`, `excerpt-include`, `include`, `details`, `children`, `pagetree` and `jira`), a macro parameter whose value is a URL, or a `jira` macro with a `url`, `baseurl` or default parameter (use `server`, `serverId` and `key` or `jqlQuery`). Attachments (`<ri:attachment>`), page and user links, relative URLs and plain links stay allowed; a `code` or `noformat` macro's body is shown as text and not scanned. An absolute URL to your own Confluence site is also refused, because Nimbus cannot know your tenant; attach the image instead.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

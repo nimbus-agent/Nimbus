@@ -45,6 +45,8 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 - **Links are not followed.** Indexing skips every symlink or junction below a configured root (a linked folder inside a vault included), and never reads a note through a link, so a note outside your roots is never indexed by way of one. A root that is itself a link is followed.
 - The sync also writes to the `obsidian_notes` table and the graph tables (`graph_entity` / `graph_relation`) so wikilink follows work in agent searches.
 
+**Remote content in a model-written append is refused.** For `obsidian_append_to_daily_note` written by the model (or proposed by an MCP client), Nimbus refuses the text, before it asks you, if the note would load remote content in reading view: a Markdown image (`![alt](url)` or a reference image, even with a relative URL), inline HTML that loads something (an `<img>`, `<iframe>`, `<link>` or CSS `url(`), or a `mermaid` block holding a URL. Vault embeds (`![[note]]`, `![[image.png|200]]`), links (`[text](url)`) and autolinks stay allowed. Text holding a `<` followed by a letter that never closes (`a <b`) is refused too, because it cannot be read as markup.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

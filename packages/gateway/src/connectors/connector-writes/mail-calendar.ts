@@ -62,8 +62,9 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
     draftTemplate("an iCloud Mail", draftFields("Body (plain text)")),
   ),
   // Outlook: registered only when the token holds `Mail.ReadWrite`; the connector defaults
-  // `contentType` to text. An HTML body is shown as text (never rendered or fetched), so a remote
-  // image in it is visible verbatim; it would load when the draft is opened (B3r refuses it).
+  // `contentType` to text. An HTML body is shown as text (never rendered or fetched), and since B3r
+  // both doors refuse one that would load remote content when the draft is opened (a body with
+  // `contentType` present and not exactly "text" is scanned as Outlook HTML; plain links stay).
   withPreview(
     row("outlook_draft_create", "outlook.draft.create", "mesh", 2),
     draftTemplate("an Outlook", [

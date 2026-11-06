@@ -8,8 +8,9 @@
 // distinct from a configured one is refused (fail closed).
 //
 // `messagingDestinationRefusal` (ChatOps, broadcast mentions, GitLab quick actions and, since B2,
-// GitLab scoped labels; it covers issue titles, bodies and descriptions too; since B4a also the
-// calendar event-time and iCloud event-text checks) is the ONE function
+// GitLab scoped labels; it covers issue titles, bodies and descriptions too; since B3r remote
+// content in drafts, pages, notes and Drive markup files; since B4a also the calendar event-time
+// and iCloud event-text checks) is the ONE function
 // both the model door and the MCP act door call. The KB-target refusal (`knowledgeBaseRefusal`,
 // one module-private implementation) runs on both doors too since B3 (owner ruling OR-B3-1), and
 // covers every page row: Notion page create, update, block append and comment; Confluence page
@@ -34,7 +35,12 @@
 // This module names only model-offerable write rows; the gate-confined post and KB tools stay
 // named only inside their own gates (D17/D19).
 import type { ChatopsPolicy } from "../../policy/types.ts";
-import { FORMAT_INVISIBLE_RANGES } from "../../util/invisible-text.ts";
+import {
+  driveContentFormats,
+  type RemoteContentFormat,
+  remoteContentIn,
+} from "./remote-content.ts";
+import { foldAndStrip, settle } from "./text-normalise.ts";
 import type { TribalKbConfig } from "./types.ts";
 
 export const CHATOPS_CHANNEL_REFUSAL =
@@ -97,23 +103,6 @@ const CONFLUENCE_KB_KEYS: Readonly<Record<string, readonly string[]>> = {
 
 function ownLookup<T>(table: Readonly<Record<string, T>>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined;
-}
-
-/** A character that renders as nothing (`util/invisible-text.ts`) or a C0/C1 control. */
-function isInvisibleOrControl(cp: number): boolean {
-  return cp <= 0x1f || FORMAT_INVISIBLE_RANGES.some(([lo, hi]) => cp >= lo && cp <= hi);
-}
-
-/** `s` with every invisible or control character replaced by `replacement`. */
-function replaceInvisible(s: string, replacement: string): string {
-  let out = "";
-  for (const ch of s) out += isInvisibleOrControl(ch.codePointAt(0) ?? 0) ? replacement : ch;
-  return out;
-}
-
-/** NFKC (fullwidth forms fold to ASCII), then every invisible or control character deleted. */
-function foldAndStrip(s: string): string {
-  return replaceInvisible(s.normalize("NFKC"), "");
 }
 
 /**
@@ -288,7 +277,7 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 // OR1: broadcast mentions. A post or comment whose text would notify a whole channel, group or
 // team is refused. Matching runs on a NORMALISED copy (never on what is sent or shown):
 //
-//  1. In a loop until the text is stable (at most BROADCAST_MAX_ROUNDS rounds; still changing
+//  1. In a loop until the text is stable (at most NORMALISE_MAX_ROUNDS rounds; still changing
 //     after that is refused, fail closed): Unicode NFKC (fullwidth `@ ! < &` fold to ASCII), then
 //     every FORMAT_INVISIBLE_RANGES character and C0/C1 control removed, then ONE pass of HTML
 //     entity decoding (`&lt; &gt; &amp; &quot; &apos; &nbsp;`, decimal `&#NN;`, hex `&#xNN;`, the
@@ -344,73 +333,8 @@ export function isKnowledgeBaseCapableRow(toolId: string): boolean {
 
 export type BroadcastService = "slack" | "teams" | "github" | "gitlab";
 
-/** The rounds of fold + strip + decode before the text must be stable. */
-const BROADCAST_MAX_ROUNDS = 4;
-
-const NAMED_ENTITIES: Readonly<Record<string, string>> = {
-  lt: "<",
-  gt: ">",
-  amp: "&",
-  quot: '"',
-  apos: "'",
-  nbsp: String.fromCodePoint(0xa0),
-};
-
-const ENTITY = /&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z]+));?/gi;
-
-/** One pass of HTML entity decoding; an unknown name or an invalid code point is left as is. */
-function decodeEntitiesOnce(s: string): string {
-  return s.replace(ENTITY, (m: string, hex?: string, dec?: string, name?: string) => {
-    if (name !== undefined) return ownLookup(NAMED_ENTITIES, name.toLowerCase()) ?? m;
-    const cp = hex === undefined ? Number.parseInt(dec ?? "", 10) : Number.parseInt(hex, 16);
-    const valid = Number.isInteger(cp) && cp <= 0x10ffff && (cp < 0xd800 || cp > 0xdfff);
-    return valid ? String.fromCodePoint(cp) : m;
-  });
-}
-
-/** TAB, LF, VT, FF and CR: whitespace in both forms, never deleted. */
-function isLineSpace(cp: number): boolean {
-  return cp >= 0x09 && cp <= 0x0d;
-}
-
-/**
- * A line break for the line-preserving form: LF, CR, VT, FF, NEL, and the Unicode line and
- * paragraph separators (counted as breaks whether or not a platform splits on them: fail closed).
- */
-function isLineBreak(cp: number): boolean {
-  return (cp >= 0x0a && cp <= 0x0d) || cp === 0x85 || cp === 0x2028 || cp === 0x2029;
-}
-
-/**
- * One round: NFKC, invisible/control characters replaced by `invisible`, one entity pass. With
- * `keepLines`, every line break becomes LF (a TAB a space); without it, TAB to CR are spaces.
- */
-function normaliseRound(s: string, invisible: string, keepLines: boolean): string {
-  let out = "";
-  for (const ch of s.normalize("NFKC")) {
-    const cp = ch.codePointAt(0) ?? 0;
-    if (keepLines && isLineBreak(cp)) out += "\n";
-    else if (isLineSpace(cp)) out += " ";
-    else out += isInvisibleOrControl(cp) ? invisible : ch;
-  }
-  return decodeEntitiesOnce(out);
-}
-
-/**
- * The stable, lower-cased form, or `undefined` when it does not settle (refused). Whitespace runs
- * collapse to one space, unless `keepLines`, which keeps one LF per line break.
- */
-function settle(text: string, invisible: string, keepLines = false): string | undefined {
-  let cur = text;
-  for (let i = 0; i < BROADCAST_MAX_ROUNDS; i++) {
-    const next = normaliseRound(cur, invisible, keepLines);
-    if (next === cur) {
-      return (keepLines ? cur : cur.replaceAll(/\s+/g, " ")).toLowerCase();
-    }
-    cur = next;
-  }
-  return undefined;
-}
+// The normalisation (`settle`, `foldAndStrip`, the entity decoder, NORMALISE_MAX_ROUNDS) lives in
+// `text-normalise.ts` since B3r; it is unchanged.
 
 // A plain-word mention ends where the name does: a name may contain `.` but never ends in one
 // (GitLab's own reference pattern), so `@all.` at the end of a sentence still means `@all`, while
@@ -436,6 +360,10 @@ const BROADCAST_RULES: Readonly<Record<BroadcastService, readonly RegExp[]>> = {
  * `tag` pattern is applied until the text stops changing and every pass is kept, so a tag split
  * by another tag is seen whole before a later pass removes it. Two tokenisations: innermost-first
  * (`<[^<>]*>`) and greedy (`<[^>]*>`, where `<x<y>` is one tag).
+ *
+ * The B3r remote-content detectors do NOT reuse this: a strip-and-match form is the shape of an
+ * incomplete sanitizer (a tag rebuilt by a strip passes it), so they read the tokens of the
+ * structural tokenizer (`markup-tokens.ts`) instead. Here it only ADDS matching forms.
  */
 const TAG_PATTERNS: readonly RegExp[] = [/<[^<>]*>/g, /<[^>]*>/g];
 
@@ -455,7 +383,8 @@ function tagStrippedForms(text: string): string[] {
 
 /**
  * OR1: whether `text`, posted to `service`, carries a broadcast mention (see the table above).
- * Pure; `true` also when the text does not settle within {@link BROADCAST_MAX_ROUNDS} rounds.
+ * Pure; `true` also when the text does not settle within `NORMALISE_MAX_ROUNDS` rounds
+ * (`text-normalise.ts`).
  */
 export function broadcastMentionIn(
   service: BroadcastService,
@@ -802,6 +731,123 @@ function nullOptionalFieldCheck(
   return key === undefined ? undefined : nullOptionalFieldRefusal(key);
 }
 
+// ---------------------------------------------------------------------------------------------
+// Remote content in drafts, pages, notes and markup files (Phase 9.7 PR B3r; owner rulings
+// OR-B3-2 and OR-B3r-1..4, and the coordinator's rulings on the B3r reviews). A body that would
+// load remote content when someone opens it (an external image, embed, frame, stylesheet,
+// refresh or base URL) is refused on both doors with one fixed text that echoes nothing. Plain
+// links stay allowed and are shown verbatim. The detectors are structural scans
+// (`remote-content.ts`: a markup tokenizer, `JSON.parse` and a walk, a fixed `![` rule); they
+// never strip or rewrite. Anything that does not tokenize, parse or settle is refused, and a
+// throw inside the rule refuses too (fail closed, on the act door as well).
+//
+// Scanned rows and fields (derived from the 0.5.0 connector source; pinned by
+// `remote-content.sync.test.ts`):
+//  - `outlook_draft_create` `body`, as Outlook HTML when `contentType` is present and not exactly
+//    `"text"` (the connector sends `HTML` only for `"html"`; anything else present scans, fail
+//    closed);
+//  - `confluence_page_create`, `_update`, `_append` and `confluence_comment_add` `storageHtml`;
+//  - `notion_block_append` `childrenJson` and `notion_page_update` `propertiesJson`;
+//  - `obsidian_append_to_daily_note` `content` (Markdown, Mermaid fences included);
+//  - `gdrive_file_create` `content` (OPTIONAL: unset or `""` makes an empty file and is not
+//    scanned), when its `mimeType` is markup or its `name` ends in a markup extension
+//    (`driveContentFormats`), and as Markdown for a `.md` name, whatever its type.
+// Not scanned: plain-text bodies (Gmail and iCloud drafts, an Outlook draft sent as Text, every
+// calendar body), titles and recipients, the Notion page create and comment text, a Drive file of a
+// clean non-markup type and name, the B1/B2 message, comment and issue rows and `outlook_mail_send`
+// (the follow-up B3w), and before-state replies (never sent). The owner's own doors (ChatOps,
+// tribal, workflows, `nimbus connector call`) do not run this rule (stated: OR-B3-2 names
+// model-written content).
+// ---------------------------------------------------------------------------------------------
+
+export const REMOTE_CONTENT_REFUSAL =
+  "the model cannot write a draft, page, note or file that loads remote content (an external image, embed, frame or stylesheet) when it is opened; use a plain link instead";
+
+/**
+ * One scanned row: the field holding the body, and every format it is read as (none: not
+ * scanned). The body is refused when ANY of them refuses.
+ */
+interface RemoteContentScan {
+  readonly key: ScannedKey;
+  readonly formats: (input: Readonly<Record<string, unknown>>) => readonly RemoteContentFormat[];
+}
+
+function own(input: Readonly<Record<string, unknown>>, key: string): unknown {
+  return Object.hasOwn(input, key) ? input[key] : undefined;
+}
+
+/** Row 1: Outlook HTML unless `contentType` is absent or exactly `"text"` (fail closed). */
+function outlookDraftFormats(
+  input: Readonly<Record<string, unknown>>,
+): readonly RemoteContentFormat[] {
+  const contentType = own(input, "contentType");
+  return contentType === undefined || contentType === "text" ? [] : ["outlook-html"];
+}
+
+/**
+ * Row 9: the Drive create, by `mimeType` (R11) AND by `name` extension (coordinator rulings): every
+ * scan either calls for, so a markup type does not hide a `.md` name.
+ */
+export function driveMarkupFormats(
+  input: Readonly<Record<string, unknown>>,
+): readonly RemoteContentFormat[] {
+  return driveContentFormats(own(input, "mimeType"), own(input, "name"));
+}
+
+const always = (format: RemoteContentFormat) => (): readonly RemoteContentFormat[] => [format];
+
+/** The rows whose body the remote-content rule scans, the field and its format. */
+const REMOTE_CONTENT_SCANNED: Readonly<Record<string, RemoteContentScan>> = {
+  outlook_draft_create: { key: REQUIRED("body"), formats: outlookDraftFormats },
+  confluence_page_create: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_page_update: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_page_append: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  confluence_comment_add: { key: REQUIRED("storageHtml"), formats: always("confluence-storage") },
+  notion_block_append: { key: REQUIRED("childrenJson"), formats: always("notion-blocks") },
+  notion_page_update: { key: REQUIRED("propertiesJson"), formats: always("notion-properties") },
+  obsidian_append_to_daily_note: { key: REQUIRED("content"), formats: always("obsidian-markdown") },
+  gdrive_file_create: { key: OPTIONAL("content"), formats: driveMarkupFormats },
+};
+
+/** The rows the remote-content rule scans (read-only, for its completeness tripwire). */
+export function remoteContentScannedRows(): readonly string[] {
+  return Object.keys(REMOTE_CONTENT_SCANNED);
+}
+
+/** The input key the remote-content rule scans for `toolId` (read-only, for its tripwire). */
+export function remoteContentScannedKeys(toolId: string): readonly string[] {
+  const scan = ownLookup(REMOTE_CONTENT_SCANNED, toolId);
+  return scan === undefined ? [] : [scan.key.key];
+}
+
+/**
+ * The remote-content check for one row: {@link REMOTE_CONTENT_REFUSAL} or `undefined`. A required
+ * key absent or not a string is refused; an optional key absent, `undefined` or `null` is skipped
+ * (`null` is then refused by the null-field check) and `""` is skipped (an empty file). Any throw
+ * (a hostile getter, a detector bug) refuses.
+ */
+function remoteContentRefusal(
+  toolId: string,
+  input: Readonly<Record<string, unknown>>,
+): string | undefined {
+  const scan = ownLookup(REMOTE_CONTENT_SCANNED, toolId);
+  if (scan === undefined) return undefined;
+  try {
+    const formats = scan.formats(input);
+    if (formats.length === 0) return undefined;
+    const refused = refusesKeys(
+      input,
+      [scan.key],
+      (text) =>
+        !(text === "" && !scan.key.required) &&
+        formats.some((format) => remoteContentIn(format, text)),
+    );
+    return refused ? REMOTE_CONTENT_REFUSAL : undefined;
+  } catch {
+    return REMOTE_CONTENT_REFUSAL;
+  }
+}
+
 /** F3: the ChatOps-channel check for a ChatOps-platform row; `undefined` for any other row. */
 function chatopsRefusal(
   toolId: string,
@@ -824,10 +870,12 @@ function chatopsRefusal(
  * The ONE messaging-destination check both doors call (OR1 + OR2, and B2's OR-B2-2): the ChatOps
  * channel first (so a post to a ChatOps channel that also carries a mention reports the ChatOps
  * reason), then the broadcast mention, then a GitLab quick action, then a GitLab scoped label,
- * then (B4a) the null optional-field check of the calendar and Drive creates, then the calendar
- * checks (time before text). It covers message and comment text, (B2) issue titles, bodies and
- * descriptions, and (B4a) calendar event times, iCloud event text and attendees, and null
- * optional fields. A fixed text that echoes nothing of the input, or `undefined`.
+ * then (B3r) remote content in a draft, page, note or markup file, then (B4a) the null
+ * optional-field check of the calendar and Drive creates, then the calendar checks (time before
+ * text). It covers message and comment text, (B2) issue titles, bodies and descriptions, (B3r)
+ * the bodies of drafts, pages, notes and Drive markup files, and (B4a) calendar event times,
+ * iCloud event text and attendees, and null optional fields. A fixed text that echoes nothing of
+ * the input, or `undefined`.
  */
 export function messagingDestinationRefusal(
   toolId: string,
@@ -839,6 +887,8 @@ export function messagingDestinationRefusal(
   if (refusesBroadcast(toolId, input)) return BROADCAST_MENTION_REFUSAL;
   if (refusesGitlabQuickAction(toolId, input)) return GITLAB_QUICK_ACTION_REFUSAL;
   if (refusesGitlabScopedLabel(toolId, input)) return GITLAB_SCOPED_LABEL_REFUSAL;
+  const remote = remoteContentRefusal(toolId, input);
+  if (remote !== undefined) return remote;
   return nullOptionalFieldCheck(toolId, input) ?? calendarRefusal(toolId, input);
 }
 

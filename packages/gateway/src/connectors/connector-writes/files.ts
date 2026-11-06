@@ -12,9 +12,11 @@ import {
 // Drive file create (B4a, plan R2/R3): the content is shown in full, never cut (owner ruling
 // OR-B4-3). The connector has no sharing parameter: the new file inherits the sharing of the folder
 // it lands in, and with no `parentId` it lands in the root of My Drive. It sends no
-// `supportsAllDrives`, so a shared-drive folder is unreachable (stated bound). A `text/html` or
-// `image/svg+xml` file can reference remote content that loads only when someone opens it in a
-// browser; the preview shows its type and content verbatim (it does not join B3r).
+// `supportsAllDrives`, so a shared-drive folder is unreachable (stated bound). Since B3r (owner
+// ruling OR-B3r-2, and the coordinator's ruling on the review) both doors refuse remote content in
+// a markup file: its `mimeType` is HTML, XHTML, SVG or other markup (`driveMimeTypeScans`), or its
+// `name` ends in `.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht` or `.mhtml`; a `.md` name is
+// scanned as Markdown (`driveContentFormats`). A `text/plain` file with a plain name is not scanned.
 //
 // The before reads the folder the file lands in (`gdrive_file_metadata` on `parentId`, or on
 // Drive's `root` alias when it is unset): its name, whether it is a folder, whether it is shared
