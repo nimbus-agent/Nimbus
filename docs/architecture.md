@@ -3281,7 +3281,7 @@ const streamReq: JSONRPCRequest = {
 // Gateway → Client: { method: "consent.request", params: { requestId, prompt, details?, actionType?, confirmText? } }
 //   (`actionType` is the HITL action type, e.g. "data.delete"; absent from an older gateway. A client keys
 //   its preview and default focus on it, and fails safe when it is absent.)
-//   (`confirmText` is present only for a Wave 4 connector write: the owner approves only by typing it exactly, and the
+//   (`confirmText` is present only for a Wave 4 connector write, `<service>/<verb> <target>` such as `github/merge acme/api#42`: the owner approves only by typing it exactly, and the
 //   prompt also ends with the fixed line `To approve, type exactly: <text>` so a client that ignores the field still shows it.)
 // Client → Gateway: { method: "consent.respond", params: { requestId, approved: true, typed? } }
 //   (`typed`, a string of at most 512 characters, else -32602, is the owner's answer to a `confirmText`; the executor alone
