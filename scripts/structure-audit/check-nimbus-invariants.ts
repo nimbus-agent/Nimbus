@@ -2408,6 +2408,166 @@ export function checkBeforeStateRead(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
+// ---- D41 (type-to-confirm, I53 / I20, Phase 9.7 D0a) ---------------------------------------------
+// A Wave 4 connector write is approved only by the owner typing its confirm text, and ONE place
+// decides whether what was typed is right: `engine/executor.ts`. Four clauses:
+// (a) `requestConfirmedApproval` (the consent channel's typed-answer method) is named only by
+//     `engine/executor.ts` (the gate, which is the only caller, and `bindConsentChannel`, which
+//     defines the IPC channel), `engine/types.ts` (the interface), and `ipc/capture-rpc.ts`
+//     inside `provenanceConsent` (the act door's wrapper, which forwards the call with its own
+//     prompt and compares nothing). `requestConfirmedConsent` (the coordinator's half) is named
+//     only by `engine/executor.ts` and `ipc/consent.ts`;
+// (b) `renderConfirmText` is named only by `engine/executor.ts` (its one caller) and
+//     `connectors/connector-writes/confirm.ts` (its definition);
+// (c) the strict comparison of a typed answer with a confirm text — a `===` or `!==` with
+//     `confirmText` or a `.typed` property on either side — occurs only in `engine/executor.ts`,
+//     so `ConsentCoordinatorImpl`, the act-door wrapper and every other channel carry the text
+//     and never judge it;
+// (d) the order is pinned in `engine/executor.ts`: `resolveHitlApproval` calls
+//     `captureBeforePhase`, then `renderConfirmPhase`, then `approvalPhase`; the plain
+//     `this.consent.requestApproval(` call sits in `approvalPhase` after its `confirm.kind ===
+//     "none"` guard and nowhere else, `requestConfirmedApproval(` is called only in
+//     `confirmedOwnerPrompt`, and `renderConfirmPhase` reads the row's wave. A phase that is
+//     reordered, or a Wave 4 write that reaches the plain prompt, is a violation.
+// Comments and string literals are stripped before identifiers are matched; test files and anything
+// outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c): a dynamically composed
+// name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the
+// order pin and the wrapper's span narrow that for the two files that matter), and an ALIAS of the
+// channel method is not followed. The behaviour is pinned by `engine/executor-confirm.test.ts`.
+const D41_EXECUTOR = "packages/gateway/src/engine/executor.ts";
+const D41_CHANNEL_RE = /\brequestConfirmedApproval\b/g;
+const D41_CHANNEL_ALLOWED: readonly string[] = [
+  D41_EXECUTOR,
+  "packages/gateway/src/engine/types.ts",
+  "packages/gateway/src/ipc/capture-rpc.ts",
+];
+const D41_WRAPPER_FILE = "packages/gateway/src/ipc/capture-rpc.ts";
+const D41_COORDINATOR_RE = /\brequestConfirmedConsent\b/g;
+const D41_COORDINATOR_ALLOWED: readonly string[] = [
+  D41_EXECUTOR,
+  "packages/gateway/src/ipc/consent.ts",
+];
+const D41_RENDER_RE = /\brenderConfirmText\b/g;
+const D41_RENDER_ALLOWED: readonly string[] = [
+  D41_EXECUTOR,
+  "packages/gateway/src/connectors/connector-writes/confirm.ts",
+];
+// A comparison with `undefined` or `null` ("is there a confirm text") is a presence check, not a
+// judgement of what was typed.
+const D41_COMPARE_RE =
+  /(?:\bconfirmText|\.typed)\b\s*[!=]==(?!\s*(?:undefined|null)\b)|(?<!\b(?:undefined|null)\s*)[!=]==\s*[\w.]*(?:\bconfirmText\b|\.typed\b)/g;
+
+/** `[start, end)` of the method or function whose signature matches `sig` in `code`, or undefined. */
+function d41Span(code: string, sig: RegExp, close: string): readonly [number, number] | undefined {
+  const at = code.search(sig);
+  if (at === -1) return undefined;
+  const end = code.indexOf(close, at);
+  return [at, end === -1 ? code.length : end];
+}
+
+export function checkConfirmComparison(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const push = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    if (!D41_CHANNEL_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D41_CHANNEL_RE))
+        push(f, "confirm-channel-confined", code, m.index);
+    } else if (f.relPath === D41_WRAPPER_FILE) {
+      const span = d41Span(code, /\bfunction\s+provenanceConsent\s*\(/, "\n}\n");
+      for (const m of code.matchAll(D41_CHANNEL_RE)) {
+        const i = m.index;
+        if (span === undefined || i < span[0] || i >= span[1]) {
+          push(f, "confirm-channel-confined", code, i);
+        }
+      }
+    }
+    // A `*.test-helpers.ts` is test support (an inert coordinator stub), imported by tests only.
+    if (!D41_COORDINATOR_ALLOWED.includes(f.relPath) && !f.relPath.endsWith(".test-helpers.ts")) {
+      for (const m of code.matchAll(D41_COORDINATOR_RE)) {
+        push(f, "confirm-coordinator-confined", code, m.index);
+      }
+    }
+    if (!D41_RENDER_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D41_RENDER_RE))
+        push(f, "confirm-render-confined", code, m.index);
+    }
+    if (f.relPath !== D41_EXECUTOR) {
+      for (const m of code.matchAll(D41_COMPARE_RE)) {
+        push(f, "confirm-comparison-confined", code, m.index);
+      }
+    }
+    if (f.relPath === D41_EXECUTOR) {
+      for (const v of d41OrderPin(f, code)) out.push(v);
+    }
+  }
+  return out;
+}
+
+/** Clause (d): the phase order and the two prompt call sites in `engine/executor.ts`. */
+function d41OrderPin(f: FileEntry, code: string): Violation[] {
+  const out: Violation[] = [];
+  const fail = (what: string): void => {
+    out.push({ rule: "confirm-order-pinned", file: f.relPath, line: 1, snippet: what });
+  };
+  const resolve = d41Span(code, /\bprivate\s+async\s+resolveHitlApproval\s*\(/, "\n  }\n");
+  const body = resolve === undefined ? "" : code.slice(resolve[0], resolve[1]);
+  const before = body.indexOf("this.captureBeforePhase(");
+  const render = body.indexOf("this.renderConfirmPhase(");
+  const approve = body.indexOf("this.approvalPhase(");
+  if (before === -1 || render === -1 || approve === -1 || !(before < render && render < approve)) {
+    fail(
+      "resolveHitlApproval must call captureBeforePhase, renderConfirmPhase, approvalPhase in that order",
+    );
+  }
+  const phase = d41Span(code, /\bprivate\s+async\s+approvalPhase\s*\(/, "\n  }\n");
+  const owner = d41Span(code, /\bprivate\s+async\s+confirmedOwnerPrompt\s*\(/, "\n  }\n");
+  const plainCalls = [...code.matchAll(/\bthis\.consent\.requestApproval\s*\(/g)];
+  const plainAt = plainCalls[0]?.index;
+  const guardAt = phase === undefined ? -1 : code.indexOf("confirm.kind ===", phase[0]);
+  const plainOk =
+    plainCalls.length === 1 &&
+    plainAt !== undefined &&
+    phase !== undefined &&
+    plainAt > phase[0] &&
+    plainAt < phase[1] &&
+    guardAt !== -1 &&
+    guardAt < plainAt;
+  if (!plainOk)
+    fail(
+      "the plain requestApproval call must sit once in approvalPhase after its confirm.kind none guard",
+    );
+  const typedCalls = [...code.matchAll(/\bchannel\.requestConfirmedApproval\s*\(/g)];
+  const typedAt = typedCalls[0]?.index;
+  if (
+    typedCalls.length !== 1 ||
+    typedAt === undefined ||
+    owner === undefined ||
+    typedAt < owner[0] ||
+    typedAt >= owner[1]
+  ) {
+    fail("requestConfirmedApproval must be called once, in confirmedOwnerPrompt");
+  }
+  const renderPhase = d41Span(code, /\bprivate\s+renderConfirmPhase\s*\(/, "\n  }\n");
+  if (
+    renderPhase === undefined ||
+    !/\bwave\s*===\s*4\b/.test(code.slice(renderPhase[0], renderPhase[1]))
+  ) {
+    fail("renderConfirmPhase must decide Wave 4 from the row's wave");
+  }
+  return out;
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -3451,6 +3611,11 @@ export const RULE_ANCHORS: readonly string[] = [
   // connectors/registry.ts by name (engine/executor.ts is anchored above, for D22).
   "packages/gateway/src/engine/before-state.ts",
   "packages/gateway/src/connectors/registry.ts",
+  // D41 — the act door's wrapper (the one non-executor file that may name the channel method, inside
+  // provenanceConsent) and the consent coordinator (which must carry the text and never judge it);
+  // engine/executor.ts is anchored above, for D22.
+  "packages/gateway/src/ipc/capture-rpc.ts",
+  "packages/gateway/src/ipc/consent.ts",
 ];
 
 /** Fail loudly when the scanned set cannot support the rules about to run. */
@@ -3840,6 +4005,27 @@ async function run(): Promise<void> {
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D40${D40_CLAUSE[e.rule] ?? ""} — a before-state read could skip its guard or run on an executor other than the model door's (I53): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkConfirmComparison(files);
+    const D41_CLAUSE: Readonly<Record<string, string>> = {
+      "confirm-channel-confined":
+        "(a) requestConfirmedApproval named outside engine/executor.ts, engine/types.ts and ipc/capture-rpc.ts's provenanceConsent",
+      "confirm-coordinator-confined":
+        "(a) requestConfirmedConsent named outside engine/executor.ts and ipc/consent.ts",
+      "confirm-render-confined":
+        "(b) renderConfirmText named outside engine/executor.ts and connectors/connector-writes/confirm.ts",
+      "confirm-comparison-confined":
+        "(c) a confirmText or .typed comparison outside engine/executor.ts",
+      "confirm-order-pinned":
+        "(d) the executor's confirm phases are out of order or a Wave 4 write can reach the plain prompt",
+    };
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D41${D41_CLAUSE[e.rule] ?? ""} — a Wave 4 write could be approved without the owner typing its confirm text, or the typed text could be judged somewhere other than the gate (I53, I20): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;
