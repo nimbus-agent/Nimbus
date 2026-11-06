@@ -513,6 +513,24 @@ describe("C1 selectors", () => {
     const move = rowOf("gdrive_file_move").before;
     expect(move?.also?.args({ newParentId: "D2" })).toEqual({ fileId: "D2" });
     expect(move?.also?.args({ newParentId: null })).toBeUndefined();
+    const pr = rowOf("github_pr_close").before;
+    expect(pr?.args({ owner: "acme", repo: "api", pullNumber: 42 })).toEqual({
+      owner: "acme",
+      repo: "api",
+      pullNumber: 42,
+    });
+    expect(pr?.args({ owner: "acme", repo: "api", pullNumber: "42" })).toEqual({
+      owner: "acme",
+      repo: "api",
+      pullNumber: 42,
+    });
+    for (const bad of [0, -1, 1.5, "4x", "", "0", null, undefined, Number.NaN, {}, [42]]) {
+      expect(pr?.args({ owner: "acme", repo: "api", pullNumber: bad }), String(bad)).toBeUndefined();
+    }
+    for (const bad of [7, "", null, undefined, {}, ["a"]]) {
+      expect(pr?.args({ owner: bad, repo: "api", pullNumber: 42 }), String(bad)).toBeUndefined();
+      expect(pr?.args({ owner: "acme", repo: bad, pullNumber: 42 }), String(bad)).toBeUndefined();
+    }
     const od = rowOf("onedrive_item_move").before;
     expect(od?.args({ itemId: "I1" })).toEqual({ itemId: "I1" });
     expect(od?.also?.args({ newParentId: "P2" })).toEqual({ itemId: "P2" });

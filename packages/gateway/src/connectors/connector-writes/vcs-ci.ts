@@ -62,6 +62,23 @@ export function selectGithubPrIdentity(reply: unknown): readonly BeforeStateFiel
   ];
 }
 
+/** A positive integer given as a number or a string of digits, else `undefined`. */
+function pullNumberArg(v: unknown): number | undefined {
+  const n = typeof v === "string" && /^[0-9]+$/.test(v) ? Number(v) : v;
+  return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
+}
+
+/** `github_pr_get` input from a PR write: string owner and repo, a positive pull number; else no read. */
+function githubPrReadArgs(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined {
+  const owner = input["owner"];
+  const repo = input["repo"];
+  const pullNumber = pullNumberArg(input["pullNumber"]);
+  if (typeof owner !== "string" || owner === "" || typeof repo !== "string" || repo === "") {
+    return undefined;
+  }
+  return pullNumber === undefined ? undefined : { owner, repo, pullNumber };
+}
+
 function excerptOpt(v: string | undefined): string | undefined {
   return v === undefined ? undefined : excerptHead(v);
 }
@@ -84,11 +101,7 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
     {
       tool: "github_pr_get",
       argKeys: ["owner", "repo", "pullNumber"],
-      args: (input) => ({
-        owner: input["owner"],
-        repo: input["repo"],
-        pullNumber: input["pullNumber"],
-      }),
+      args: githubPrReadArgs,
       select: selectGithubPrIdentity,
     },
   ),
