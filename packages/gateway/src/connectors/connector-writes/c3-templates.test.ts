@@ -38,6 +38,7 @@ import {
 } from "../testing/connector-write-registrations.ts";
 import { setModelWriteEnablement } from "./enablement-store.ts";
 import {
+  ROLLOUT_MAX_VARIATIONS,
   selectFlagsmithState,
   selectLaunchdarklyRollout,
   selectLaunchdarklyToggle,
@@ -51,7 +52,7 @@ import {
   type ConnectorWritePreview,
   renderConnectorWritePreviewLines,
 } from "./preview.ts";
-import { type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
+import { BEFORE_STATE_MAX_FIELDS, type ConnectorWriteRow, previewTemplateKeys } from "./types.ts";
 
 const C3_ROWS = [
   "launchdarkly_flag_toggle",
@@ -111,7 +112,7 @@ const READERS: Readonly<
   flagsmith_feature_state_set: {
     tool: "flagsmith_feature_state_get",
     keys: ["environmentKey", "featureId"],
-    extra: ["enabled"],
+    extra: ["enabled", "value"],
   },
   jira_ops_alert_acknowledge: { tool: "jira_ops_alert_get", keys: ["alertId"], extra: [] },
   jira_ops_alert_close: { tool: "jira_ops_alert_get", keys: ["alertId"], extra: [] },
@@ -245,7 +246,7 @@ const GOLDEN: Readonly<Record<C3Row, readonly string[]>> = {
     "Service: flagsmith",
     "Credential: personal",
     "Target:  env-key-1: feature 42",
-    "In environment env-key-1: enable or disable Flagsmith feature 42 (requested: enabled = true)",
+    "In environment env-key-1: enable or disable Flagsmith feature 42 (requested: enabled = true) and set its value when one is given",
     "",
     '  Environment: "env-key-1"',
     "  Feature id (the preview cannot show its name): 42",
@@ -572,6 +573,37 @@ describe("C3 selectors", () => {
     expect(f["Value now"]).toBe("integer 7");
   });
 
+  test("Flagsmith: a request that carries a value says the value will be set, and names a type change", () => {
+    const same = fieldMap(
+      selectFlagsmithState(FS, { enabled: false, value: { type: "string", value: "green" } }),
+    );
+    expect(same["Change"]).toBe("no change (already off); sets the value to string green");
+    expect(same["Value now"]).toBe("string blue");
+    const typed = fieldMap(
+      selectFlagsmithState(FS, { enabled: true, value: { type: "integer", value: "7" } }),
+    );
+    expect(typed["Change"]).toBe(
+      "turns it ON (it is off now); sets the value to integer 7 (the type changes from string to integer)",
+    );
+    const unknownNow = fieldMap(
+      selectFlagsmithState(
+        { environment_default: { enabled: true, value: 5 }, segment_overrides: [] },
+        { enabled: true, value: { type: "boolean", value: "true" } },
+      ),
+    );
+    expect(unknownNow["Change"]).toContain(
+      "sets the value to boolean true (the current type is unknown)",
+    );
+    // No value in the request: the Change line is the switch alone.
+    expect(fieldMap(selectFlagsmithState(FS, { enabled: true }))["Change"]).toBe(
+      "turns it ON (it is off now)",
+    );
+  });
+
+  test("Flagsmith: the reader declares value, so the select sees it", () => {
+    expect(rowOf("flagsmith_feature_state_set").before?.argKeys).toContain("value");
+  });
+
   test("Flagsmith: an unexpected value shape never throws; it shows the raw JSON excerpt or unknown", () => {
     const odd = fieldMap(
       selectFlagsmithState(
@@ -695,6 +727,26 @@ describe("C3 rollout guard (fail closed)", () => {
     expect(guard.allows(reply, w("v-a", "v-a", "v-b"), undefined, undefined)).toBe(false);
   });
 
+  test("ids that differ by case or whitespace are different ids and are refused", () => {
+    expect(guard.allows(reply, w("V-A", "v-b"), undefined, undefined)).toBe(false);
+    expect(guard.allows(reply, w("v-a ", "v-b"), undefined, undefined)).toBe(false);
+    expect(guard.allows(reply, w(" v-a", "v-b"), undefined, undefined)).toBe(false);
+    expect(guard.allows(reply, w("v-a", "v-A"), undefined, undefined)).toBe(false);
+  });
+
+  test("a 0% variation is allowed and shown", () => {
+    const ask = {
+      weights: [
+        { variationId: "v-a", percent: 0 },
+        { variationId: "v-b", percent: 100 },
+      ],
+    };
+    expect(guard.allows(reply, ask, undefined, undefined)).toBe(true);
+    const f = fieldMap(selectLaunchdarklyRollout(reply, ask));
+    expect(f["Control (v-a)"]).toBe("now 50% -> 0%");
+    expect(f["Total in this request"]).toBe("100%");
+  });
+
   test("a failed or unreadable read, or a malformed request, is refused", () => {
     expect(guard.allows(undefined, w("v-a", "v-b"), undefined, undefined)).toBe(false);
     expect(guard.allows("nope", w("v-a", "v-b"), undefined, undefined)).toBe(false);
@@ -731,6 +783,53 @@ describe("C3 rollout guard (fail closed)", () => {
       })),
     };
     expect(guard.allows(many, all, undefined, undefined)).toBe(false);
+  });
+});
+
+describe("C3 rollout field cap (nothing the owner needs is cut)", () => {
+  const guard = rowOf("launchdarkly_flag_rollout_set").before?.guard;
+  if (guard === undefined) throw new Error("the rollout row has no guard");
+  const flagWith = (n: number) =>
+    ldState("production", (r) => {
+      r.variations = Array.from({ length: n }, (_, i) => ({
+        _id: `v-${String(i)}`,
+        name: `N${String(i)}`,
+        value: i,
+      })) as unknown as typeof r.variations;
+      r.environments.production.fallthrough = { variation: 0 } as never;
+      return r;
+    });
+  const askAll = (n: number) => ({
+    weights: Array.from({ length: n }, (_, i) => ({
+      variationId: `v-${String(i)}`,
+      percent: 1,
+    })),
+  });
+
+  test("the largest allowed flag lists every variation and every fixed line within the cap", () => {
+    expect(ROLLOUT_MAX_VARIATIONS).toBe(15);
+    const n = ROLLOUT_MAX_VARIATIONS;
+    expect(guard.allows(flagWith(n), askAll(n), undefined, undefined)).toBe(true);
+    const fields = selectLaunchdarklyRollout(flagWith(n), askAll(n));
+    expect(fields.length).toBeLessThanOrEqual(BEFORE_STATE_MAX_FIELDS);
+    const labels = fields.map((f) => f.label);
+    for (const fixed of [
+      "Total in this request",
+      "On now",
+      "Off variation",
+      "Fallthrough now",
+      "Version",
+    ]) {
+      expect(labels, fixed).toContain(fixed);
+    }
+    for (let i = 0; i < n; i += 1) {
+      expect(labels.some((l) => l.endsWith(`(v-${String(i)})`))).toBe(true);
+    }
+  });
+
+  test("one variation more is refused", () => {
+    const n = ROLLOUT_MAX_VARIATIONS + 1;
+    expect(guard.allows(flagWith(n), askAll(n), undefined, undefined)).toBe(false);
   });
 });
 
@@ -776,6 +875,7 @@ describe("C3 through the real door", () => {
   async function door(opts: {
     readonly omitReaders?: boolean;
     readonly readReply?: unknown;
+    readonly readThrows?: boolean;
     readonly writeReply?: unknown;
   }) {
     for (const s of ["launchdarkly", "flagsmith", "jira"]) {
@@ -808,6 +908,9 @@ describe("C3 through the real door", () => {
       {
         dispatch: async (a: PlannedAction) => {
           dispatched.push(a);
+          if (opts.readThrows === true && isBeforeReadActionType(a.type)) {
+            throw new Error("the read failed");
+          }
           return isBeforeReadActionType(a.type)
             ? opts.readReply
             : (opts.writeReply ?? { ok: true });
@@ -876,6 +979,34 @@ describe("C3 through the real door", () => {
     );
     expect(d.prompts).toEqual([]);
     expect(d.dispatched.some((a) => !isBeforeReadActionType(a.type))).toBe(false);
+  });
+
+  test("a rollout whose read throws, or whose reply has no such environment, is refused before the prompt", async () => {
+    const throws = await door({ readThrows: true });
+    const out = await throws.call(
+      "launchdarkly__launchdarkly_flag_rollout_set",
+      CLEAN.launchdarkly_flag_rollout_set,
+    );
+    expect(JSON.stringify(out)).toContain("name every variation");
+    expect(throws.prompts).toEqual([]);
+    expect(throws.dispatched.some((a) => !isBeforeReadActionType(a.type))).toBe(false);
+
+    const missing = await door({ readReply: mcp({ key: "new-checkout" }) });
+    const out2 = await missing.call(
+      "launchdarkly__launchdarkly_flag_rollout_set",
+      CLEAN.launchdarkly_flag_rollout_set,
+    );
+    expect(JSON.stringify(out2)).toContain("name every variation");
+    expect(missing.prompts).toEqual([]);
+    expect(missing.dispatched.some((a) => !isBeforeReadActionType(a.type))).toBe(false);
+  });
+
+  test("a toggle whose read throws is still prompted, with Before: unavailable", async () => {
+    const d = await door({ readThrows: true });
+    expect(
+      await d.call("launchdarkly__launchdarkly_flag_toggle", CLEAN.launchdarkly_flag_toggle),
+    ).toEqual({ ok: true });
+    expect(d.prompts[0]).toContain("Before: unavailable");
   });
 
   test("a rollout that omits a variation is refused before the prompt; a complete one is prompted with every variation", async () => {

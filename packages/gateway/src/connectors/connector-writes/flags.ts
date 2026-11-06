@@ -183,8 +183,8 @@ function ldNowText(state: LdState, id: string): string {
  * `now 50% -> 60%`; a variation the request does not name reads `NOT IN THIS REQUEST`; an id the
  * flag does not have reads `UNKNOWN variation id <id>`. Then the request's total, and the
  * environment's `On now`, `Off variation`, `Fallthrough now` and `Version`. The variation lines come
- * FIRST: the runner cuts fields past {@link BEFORE_STATE_MAX_FIELDS}, and the guard keeps the flag
- * small enough that none of them can be.
+ * FIRST, and the guard keeps the flag to {@link ROLLOUT_MAX_VARIATIONS} variations so that the
+ * variation lines plus the five fixed lines fit {@link BEFORE_STATE_MAX_FIELDS}: nothing is cut.
  */
 export function selectLaunchdarklyRollout(
   reply: unknown,
@@ -226,9 +226,19 @@ export function selectLaunchdarklyRollout(
 }
 
 /**
+ * The fixed lines a rollout's before-state ends with: `Total in this request`, `On now`,
+ * `Off variation`, `Fallthrough now` and `Version`. The guard refuses a request naming an id the
+ * flag lacks, so no `UNKNOWN` line is ever added to the variation lines.
+ */
+const ROLLOUT_FIXED_FIELDS = 5;
+
+/** The most variations a rollout can list with every field shown (variation lines + fixed lines). */
+export const ROLLOUT_MAX_VARIATIONS = BEFORE_STATE_MAX_FIELDS - ROLLOUT_FIXED_FIELDS;
+
+/**
  * The rollout guard (fail closed): the write is allowed only when the flag was read, the request
  * names EVERY variation of the flag exactly once and no id the flag lacks, and the flag is small
- * enough that the prompt lists each variation plus the total without the runner cutting a field
+ * enough that the prompt lists each variation plus every fixed line without the runner cutting a field
  * (the connector sends only the ids it is given, and LaunchDarkly's behaviour for an omitted one is
  * not stated; the owner must see every percentage). A reader outage refuses a rollout.
  */
@@ -238,8 +248,8 @@ const ROLLOUT_NAMES_EVERY_VARIATION: BeforeStateGuard = {
   allows: (reply, picked) => {
     try {
       const flagIds = new Set(parseLdState(reply).variations.map((v) => v.id));
-      // The variation lines and the total must fit the runner's field cap.
-      if (flagIds.size === 0 || flagIds.size >= BEFORE_STATE_MAX_FIELDS) return false;
+      // Every field must fit the runner's cap: one line per variation plus the fixed lines.
+      if (flagIds.size === 0 || flagIds.size > ROLLOUT_MAX_VARIATIONS) return false;
       const weights = picked["weights"];
       if (!Array.isArray(weights) || weights.length === 0) return false;
       const named = new Set<string>();
@@ -281,6 +291,50 @@ function flagsmithValueText(value: unknown): string {
   return raw === undefined ? "unknown" : excerptHead(raw);
 }
 
+/** The requested typed value as `{ type, text }`, or `undefined` when the request sets none. */
+function requestedFlagsmithValue(
+  v: unknown,
+): { readonly type: string | undefined; readonly text: string } | undefined {
+  if (v === undefined || v === null) return undefined;
+  if (isRecord(v)) {
+    const type = typeof v["type"] === "string" ? v["type"] : undefined;
+    const inner = v["value"];
+    const shown =
+      typeof inner === "string" || typeof inner === "number" || typeof inner === "boolean"
+        ? String(inner)
+        : (jsonText(inner) ?? "unknown");
+    return { type, text: excerptHead(`${type ?? "?"} ${shown}`) };
+  }
+  return { type: undefined, text: excerptHead(jsonText(v) ?? "unknown") };
+}
+
+/** The `Change` line's value part: sets the value to `<type> <value>`, naming a type change. */
+function flagsmithValueChange(now: unknown, wanted: unknown): string | undefined {
+  const req = requestedFlagsmithValue(wanted);
+  if (req === undefined) return undefined;
+  const nowType = isRecord(now) && typeof now["type"] === "string" ? now["type"] : undefined;
+  let typeNote = "";
+  if (req.type !== undefined && nowType === undefined) {
+    typeNote = " (the current type is unknown)";
+  } else if (req.type !== undefined && nowType !== req.type) {
+    typeNote = ` (the type changes from ${excerptHead(nowType ?? "unknown")} to ${excerptHead(req.type)})`;
+  }
+  return `sets the value to ${req.text}${typeNote}`;
+}
+
+/** The whole `Change` line: the enabled switch and, when the request carries one, the value. */
+function flagsmithChange(
+  enabled: boolean | undefined,
+  picked: Readonly<Record<string, unknown>>,
+  nowValue: unknown,
+): string | undefined {
+  const parts = [
+    switchChange(enabled, picked["enabled"]),
+    flagsmithValueChange(nowValue, picked["value"]),
+  ].filter((x): x is string => x !== undefined);
+  return parts.length === 0 ? undefined : parts.join("; ");
+}
+
 /**
  * Flagsmith feature state (before-state): `Enabled now`, the `Change` the write makes, `Value now`
  * (the value shape was verified only from the docs, so an unexpected one shows as raw JSON or
@@ -306,7 +360,7 @@ export function selectFlagsmithState(
   }
   return presentFields([
     ["Enabled now", enabled === undefined ? "unknown" : String(enabled)],
-    ["Change", switchChange(enabled, picked["enabled"])],
+    ["Change", flagsmithChange(enabled, picked, def["value"])],
     ["Value now", flagsmithValueText(def["value"])],
     ["Segment overrides", segments],
   ]);
@@ -363,7 +417,7 @@ export const FLAGS_ROWS: readonly ConnectorWriteRow[] = [
     withPreview(row("flagsmith_feature_state_set", "flagsmith.feature.state.set", "mesh", 3), {
       target: "{environmentKey}: feature {featureId}",
       summary:
-        "In environment {environmentKey}: enable or disable Flagsmith feature {featureId} (requested: enabled = {enabled})",
+        "In environment {environmentKey}: enable or disable Flagsmith feature {featureId} (requested: enabled = {enabled}) and set its value when one is given",
       fields: [
         textField("environmentKey", "Environment"),
         // Flagsmith's read carries no feature NAME, so the preview can show only the id.
@@ -374,8 +428,8 @@ export const FLAGS_ROWS: readonly ConnectorWriteRow[] = [
     }),
     {
       tool: "flagsmith_feature_state_get",
-      // `enabled` is declared for the select, never sent to the read.
-      argKeys: ["environmentKey", "featureId", "enabled"],
+      // `enabled` and `value` are declared for the select, never sent to the read.
+      argKeys: ["environmentKey", "featureId", "enabled", "value"],
       args: (input) => {
         const environmentKey = nonEmpty(input["environmentKey"]);
         const featureId = positiveIntegerArg(input["featureId"]);

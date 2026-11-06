@@ -1055,6 +1055,7 @@ describe("B4a: a present-but-null optional field on the calendar and Drive creat
       end: "20261105T110000Z",
     },
     gdrive_file_create: { name: "n.txt" },
+    flagsmith_feature_state_set: { environmentKey: "e", featureId: 1, enabled: true },
   };
   const ROWS = Object.keys(CLEAN);
 
@@ -1088,6 +1089,7 @@ describe("B4a: a present-but-null optional field on the calendar and Drive creat
     ["gdrive_file_create", "content"],
     ["gdrive_file_create", "mimeType"],
     ["gdrive_file_create", "parentId"],
+    ["flagsmith_feature_state_set", "value"],
   ] as const) {
     test(`${toolId}: ${key} null is refused on every entry point, naming ${key}`, () => {
       const refusal = nullOptionalFieldRefusal(key);
