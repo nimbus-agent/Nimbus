@@ -68,7 +68,7 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       actionType?: string | undefined;
     },
   ): Promise<boolean> {
-    return this.open(clientId, params, undefined).then((answer) => answer.approved);
+    return this.open(clientId, params, undefined, (answer) => answer.approved);
   }
 
   requestConfirmedConsent(
@@ -81,10 +81,12 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       confirmText: string;
     },
   ): Promise<{ approved: boolean; typed: string }> {
-    return this.open(clientId, params, params.confirmText);
+    return this.open(clientId, params, params.confirmText, (answer) => answer);
   }
 
-  private open(
+  // One promise per request (no derived `.then` chain): a derived promise rejects a tick later, and
+  // a caller that awaits several pending requests in turn would see an unhandled rejection.
+  private open<T>(
     clientId: string,
     params: {
       requestId: string;
@@ -93,8 +95,12 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       actionType?: string | undefined;
     },
     confirmText: string | undefined,
-  ): Promise<{ approved: boolean; typed: string }> {
-    return new Promise<{ approved: boolean; typed: string }>((resolve, reject) => {
+    toResult: (answer: { approved: boolean; typed: string }) => T,
+  ): Promise<T> {
+    return new Promise<T>((resolveResult, reject) => {
+      const resolve = (answer: { approved: boolean; typed: string }): void => {
+        resolveResult(toResult(answer));
+      };
       const write = this.getWriter(clientId);
       if (write === undefined) {
         reject(new ConsentDisconnectedError("No active IPC session for client"));

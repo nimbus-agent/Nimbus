@@ -261,6 +261,12 @@ function buildMocks(approve: boolean): {
       consentCalls.push(prompt);
       return Promise.resolve(approve);
     },
+    // A Wave 4 write (Phase 9.7 D0a) is asked through this method: the fake owner types the
+    // confirm text exactly when approving, so the gate fires once either way.
+    requestConfirmedApproval(req): Promise<{ approved: boolean; typed: string }> {
+      consentCalls.push(req.prompt);
+      return Promise.resolve({ approved: approve, typed: approve ? req.confirmText : "" });
+    },
   };
 
   const audit: AuditSink = {
