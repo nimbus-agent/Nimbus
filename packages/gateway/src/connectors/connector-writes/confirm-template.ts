@@ -17,8 +17,8 @@ export type ConfirmTemplateParse =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * A character a confirm text may hold: printable ASCII letters, digits, space and `_ - . / : # @ !`.
- * Everything else (controls, bidi marks, non-ASCII, brackets, a backslash) is refused, so what the
+ * A character a confirm text may hold: printable ASCII letters, digits, space and `_ - . /  : # @ !`.
+ * Everything else (controls, bidi marks, non-ASCII, brackets) is refused, so what the
  * owner types is exactly what the prompt shows.
  */
 export function isConfirmChar(cp: number): boolean {
@@ -31,6 +31,7 @@ export function isConfirmChar(cp: number): boolean {
     cp === 0x2d || // -
     cp === 0x2e || // .
     cp === 0x2f || // /
+    cp === 0x5c || // backslash (a Windows path)
     cp === 0x3a || // :
     cp === 0x23 || // #
     cp === 0x40 || // @

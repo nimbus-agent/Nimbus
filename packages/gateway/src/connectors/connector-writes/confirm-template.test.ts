@@ -56,7 +56,7 @@ describe("parseConfirmTemplate", () => {
   test("refuses literal text outside the confirm character set", () => {
     const r = parseConfirmTemplate("{a}é");
     expect(r.ok).toBe(false);
-    expect(parseConfirmTemplate(String.raw`{a}\{b}`).ok).toBe(false);
+    expect(parseConfirmTemplate("{a}(b)").ok).toBe(false);
   });
 
   test("confirmTemplateKeys lists the field names in order, repeats once", () => {
@@ -67,9 +67,10 @@ describe("parseConfirmTemplate", () => {
 });
 
 describe("isConfirmChar", () => {
-  test("allows exactly letters, digits, space and _ - . / : # @ !", () => {
-    for (const c of "azAZ09 _-./:#@!") expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(true);
-    for (const c of ["\\", "(", ")", "~", "\t", "\n", "é", "…", "%", "+", "="]) {
+  test("allows exactly letters, digits, space and _ - . / backslash : # @ !", () => {
+    for (const c of "azAZ09 _-./:#@!" + String.fromCharCode(92))
+      expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(true);
+    for (const c of ["(", ")", "~", "\t", "\n", "é", "…", "%", "+", "="]) {
       expect(isConfirmChar(c.codePointAt(0) ?? 0)).toBe(false);
     }
   });

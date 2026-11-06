@@ -153,6 +153,18 @@ describe("a Wave 4 write needs the exact typed text (b-f)", () => {
     expect(h.egress.at(-1)?.resultStatus).toBe("authorized");
   });
 
+  test("a Windows working directory (backslashes) is typeable: the exact text approves", async () => {
+    const wd = `C:${String.fromCharCode(92)}infra${String.fromCharCode(92)}prod`;
+    const h = harness({ confirmAnswer: { approved: true, typed: `iac/${wd}` } });
+    const res = await h.exec.execute({
+      type: "iac.terraform.apply",
+      payload: { workingDirectory: wd },
+    });
+    expect(res.status).toBe("ok");
+    expect(h.confirmed[0]?.confirmText).toBe(`iac/${wd}`);
+    expect(auditOf(h)["confirm"]).toBe("matched");
+  });
+
   test("the prompt ends with the fixed line and the details still carry the preview", async () => {
     const h = harness({ confirmAnswer: { approved: true, typed: "snowflake/DB.S.T" } });
     await h.exec.execute(SNOWFLAKE);
