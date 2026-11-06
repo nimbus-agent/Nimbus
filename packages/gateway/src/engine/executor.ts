@@ -7,6 +7,7 @@ import {
 } from "../connectors/connector-writes/confirm.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
+import { PREPARE_TOOL_IDS } from "../connectors/connector-writes/prepare-tools.ts";
 import {
   buildConnectorWritePreview,
   buildConnectorWritePreviewFrom,
@@ -15,7 +16,10 @@ import {
   renderConnectorWritePreviewLines,
   rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
-import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
+import type {
+  ConnectorWriteRow,
+  PreviewCredentialResolver,
+} from "../connectors/connector-writes/types.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
@@ -30,6 +34,15 @@ import {
 } from "./before-state.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
+import {
+  boundInputRefusal,
+  injectBoundFields,
+  isPrepareActionType,
+  PREPARE_HITL_REFUSAL,
+  type PreparedWrite,
+  PrepareRefusedError,
+  runPrepareStep,
+} from "./prepare-step.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type {
@@ -570,8 +583,40 @@ export const CONFIRM_UNSUPPORTED_REASON =
 export const TOOL_TYPE_MISMATCH_REASON =
   "The action names a connector write tool that belongs to another action type.";
 
+/** The reason when a bound write reaches the public `gate()`: only `execute()` can bind it. */
+export const BOUND_VIA_GATE_REASON = "A bound write runs only through the executor's execute().";
+
+/** The reason when a bound row's action type does not require the owner's approval. */
+export const BOUND_NOT_HITL_REASON = "A bound write requires the owner's approval.";
+
+/** The reason when an action of a bound type names another tool than the bound row's own. */
+export const BOUND_ROW_MISMATCH_REASON = "The action names another tool than the bound write.";
+
 /** The reason when the typed text did not equal the confirm text. */
 export const CONFIRM_MISMATCH_REASON = "The typed confirmation did not match.";
+
+/** Ends the gate with a rejection: the reason is both the caller's and the audit row's. */
+function refuseGate(record: GateRecord, reason: string): "rejected" {
+  record.rejectReason = reason;
+  record.hitlRejectReason = reason;
+  return "rejected";
+}
+
+/** The preview with the prepare step's facts, when there are any. */
+function withPrepared(
+  preview: ConnectorWritePreview | undefined,
+  prepared: PreparedWrite | undefined,
+): ConnectorWritePreview | undefined {
+  if (prepared === undefined || preview === undefined) return preview;
+  return {
+    ...preview,
+    prepared: {
+      status: "ok",
+      fields: prepared.fields,
+      ...(prepared.notShown === undefined ? {} : { notShown: prepared.notShown }),
+    },
+  };
+}
 
 /** The audit fields of a record: only the ones a phase set, so an ordinary row is unchanged. */
 function auditExtrasOf(record: GateRecord): {
@@ -660,6 +705,29 @@ export interface ExecuteOptions {
    * listing: the preview shows `before: unavailable (failed)` and no read runs.
    */
   readonly beforeReaderUnlisted?: boolean;
+  /**
+   * The connector-write door found a bound row's prepare tool missing from its server's listing:
+   * the write is refused at the gate (`prepare: tool unavailable`) and no read runs.
+   */
+  readonly prepareToolUnlisted?: boolean;
+}
+
+/**
+ * The write table a test substitutes (the constructor's last parameter, D42(c)): the rows the gate
+ * looks writes up in, and the declared prepare tools. Production never passes one.
+ */
+export interface WriteTable {
+  readonly rows: readonly ConnectorWriteRow[];
+  readonly prepareToolIds: ReadonlySet<string>;
+}
+
+/**
+ * One gate run's own scope. `bind` is true only for `execute()`, the one caller that injects a
+ * bound write's values; `prepared` is written by `preparePhase` and read by `dispatchBoundPhase`.
+ */
+interface GateScope {
+  readonly bind: boolean;
+  prepared?: PreparedWrite;
 }
 
 export class ToolExecutor {
@@ -678,7 +746,54 @@ export class ToolExecutor {
      * every other prompt is unchanged.
      */
     private readonly beforeState?: BeforeStateRunner,
+    /**
+     * A test seam, D42(c): production passes nothing, so the gate reads `CONNECTOR_WRITE_ROWS` and
+     * `PREPARE_TOOL_IDS`. A synthetic bound row cannot exist in production, so the tests supply it.
+     */
+    private readonly writeTable?: WriteTable,
   ) {}
+
+  /** The rows the gate looks a write up in. */
+  private rows(): readonly ConnectorWriteRow[] {
+    return this.writeTable?.rows ?? this.beforeState?.rows ?? CONNECTOR_WRITE_ROWS;
+  }
+
+  /** The declared prepare tools. */
+  private prepareToolIds(): ReadonlySet<string> {
+    return this.writeTable === undefined ? PREPARE_TOOL_IDS : this.writeTable.prepareToolIds;
+  }
+
+  /**
+   * The bound row of this action's TYPE, if the table has one. Found by type alone (never the
+   * payload, I3), so an action of a bound type can never be treated as an ordinary write.
+   */
+  private boundRowOf(action: PlannedAction): ConnectorWriteRow | undefined {
+    return this.rows().find((r) => r.bound !== undefined && r.actionType === action.type);
+  }
+
+  /**
+   * Whether a bound action may enter the gate at all, or why not (a fixed reason). Pure and run
+   * before any read or prompt: only `execute()` binds; a bound type needs the owner's approval; the
+   * action must name the bound row's own tool (or none); and it may carry no bound field of its own,
+   * at the payload root or in `payload.input`, nor an oversized or non-object input.
+   */
+  private boundRefusal(
+    action: PlannedAction,
+    requiresHITL: boolean,
+    scope: GateScope,
+  ): string | undefined {
+    const row = this.boundRowOf(action);
+    if (row?.bound === undefined) return undefined;
+    if (!scope.bind) return BOUND_VIA_GATE_REASON;
+    if (!requiresHITL) return BOUND_NOT_HITL_REASON;
+    if (
+      typeof action.payload?.["mcpToolId"] === "string" &&
+      findConnectorWriteRow(action, this.rows()) !== row
+    ) {
+      return BOUND_ROW_MISMATCH_REASON;
+    }
+    return boundInputRefusal(row.bound, action);
+  }
 
   /**
    * Whether an org policy requires HITL for this action type on top of the frozen set.
@@ -774,16 +889,22 @@ export class ToolExecutor {
    * Resolve a HITL action's approval, as ONE ordered list of named phases (the order is the
    * invariant; read it here, do not hunt for it):
    *   1. `captureBeforePhase`  the model door's before-state read and the typed preview;
-   *   2. (D0b: `preparePhase`, the bound write's prepare step, goes here);
+   *   2. `preparePhase`       a bound write's prepare step (I54): its values and facts, or a refusal;
    *   3. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
-   *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner.
+   *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
+   * and after the gate, in `execute()`: `dispatchBoundPhase`, the only place bound values are
+   * injected. A delegated approval therefore can never skip the prepare, and both a delegate and
+   * the owner see the prepared facts in the preview.
    */
   private async resolveHitlApproval(
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
     record: GateRecord,
+    scope: GateScope,
   ): Promise<boolean> {
-    const preview = await this.captureBeforePhase(action, opts);
+    const captured = await this.captureBeforePhase(action, opts);
+    const prepared = await this.preparePhase(action, opts, scope);
+    const preview = withPrepared(captured, prepared);
     const confirm = this.renderConfirmPhase(action);
     if (confirm.kind === "refuse") {
       record.rejectReason = confirm.reason;
@@ -794,6 +915,45 @@ export class ToolExecutor {
   }
 
   /**
+   * Phase 2 (I54). A bound row's prepare read runs through THIS executor's gate and dispatcher
+   * (audited and ledgered, I29) before anyone is asked: the values it binds are kept in the gate
+   * scope for `dispatchBoundPhase`, its selected facts go to the preview. Any failure throws
+   * {@link PrepareRefusedError}, which `gate()` records as a rejection on every door. An action
+   * with no bound row passes through.
+   */
+  private async preparePhase(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+    scope: GateScope,
+  ): Promise<PreparedWrite | undefined> {
+    const row = this.boundRowOf(action);
+    if (row?.bound === undefined) return undefined;
+    const prepared = await runPrepareStep(
+      { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
+      row,
+      row.bound,
+      action,
+      {
+        prepareToolIds: this.prepareToolIds(),
+        toolUnlisted: opts?.prepareToolUnlisted === true,
+      },
+    );
+    scope.prepared = prepared;
+    return prepared;
+  }
+
+  /**
+   * Phase 5, after the gate approved. The ONLY place a bound write's values are injected: from this
+   * gate run's own prepare step, into the tool input, with every caller-side copy stripped.
+   */
+  private dispatchBoundPhase(action: PlannedAction, scope: GateScope): PlannedAction {
+    const prepared = scope.prepared;
+    return prepared === undefined
+      ? action
+      : injectBoundFields(action, prepared.binds, prepared.values);
+  }
+
+  /**
    * Phase 3. Whether this action is a Wave 4 write is decided by its ROW (found from `action.type`,
    * never from the payload: I3) and only inside the HITL branch, so it can only make a prompt
    * stricter. Fail closed: a Wave 4 row with no confirm target, an action whose `mcpToolId` names
@@ -801,7 +961,7 @@ export class ToolExecutor {
    * any prompt.
    */
   private renderConfirmPhase(action: PlannedAction): ConfirmPlan {
-    const rows = this.beforeState?.rows ?? CONNECTOR_WRITE_ROWS;
+    const rows = this.rows();
     const wave4 = rows.find((r) => r.wave === 4 && r.actionType === action.type);
     if (wave4 === undefined) return NO_CONFIRM;
     const named = action.payload?.["mcpToolId"];
@@ -877,8 +1037,8 @@ export class ToolExecutor {
     opts: ExecuteOptions | undefined,
   ): Promise<ConnectorWritePreview | undefined> {
     const runner = this.beforeState;
-    if (runner === undefined) return buildConnectorWritePreview(action, this.previewCredentialFor);
-    const preview = buildConnectorWritePreviewFrom(action, runner.rows, this.previewCredentialFor);
+    const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
+    if (runner === undefined) return preview;
     if (preview === undefined) return undefined;
     const before = await runner.read(
       action,
@@ -898,11 +1058,24 @@ export class ToolExecutor {
   private namesOtherTypesWrite(action: PlannedAction): boolean {
     const named = action.payload?.["mcpToolId"];
     if (typeof named !== "string") return false;
-    const hit = rowNamedByToolId(named, this.beforeState?.rows ?? CONNECTOR_WRITE_ROWS);
+    const hit = rowNamedByToolId(named, this.rows());
     return hit !== undefined && hit.actionType !== action.type;
   }
 
+  /**
+   * The public gate: approval, audit and the egress row for any action. It never binds, so a bound
+   * write reaching it is refused (`BOUND_VIA_GATE_REASON`): a caller that gated and then
+   * dispatched the write itself would skip the injection. Only `execute()` binds.
+   */
   async gate(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult | "proceed"> {
+    return this.gateWithin(action, opts, { bind: false });
+  }
+
+  private async gateWithin(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+    scope: GateScope,
+  ): Promise<ActionResult | "proceed"> {
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
     // alone decides `true`, so an org policy is only ever consulted about action types neither
@@ -919,24 +1092,28 @@ export class ToolExecutor {
     // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
     // is always a defined string by the time the rejected branch returns it.
     const record: GateRecord = { rejectReason: USER_DECLINED_REASON };
+    const boundRefusal = this.boundRefusal(action, requiresHITL, scope);
 
     try {
       if (this.namesOtherTypesWrite(action)) {
         // I53: a connector write tool runs only under its OWN action type, whatever the type's own
         // HITL class, so a plain-approval (or no-approval) type can never carry a Wave 4 tool.
         // Refused before any prompt on every carrier; audited and ledgered (blocked) below.
-        hitlStatus = "rejected";
-        record.rejectReason = TOOL_TYPE_MISMATCH_REASON;
-        record.hitlRejectReason = TOOL_TYPE_MISMATCH_REASON;
+        hitlStatus = refuseGate(record, TOOL_TYPE_MISMATCH_REASON);
       } else if (requiresHITL && isBeforeReadActionType(action.type)) {
         // Spec § 5.4: a before-state read never raises a prompt of its own. A read type the frozen
         // set, the user-MCP rule or a policy would gate is refused here, structurally, without
         // asking anyone; it is still audited and ledgered (blocked) below.
-        hitlStatus = "rejected";
-        record.rejectReason = BEFORE_READ_HITL_REFUSAL;
-        record.hitlRejectReason = BEFORE_READ_HITL_REFUSAL;
+        hitlStatus = refuseGate(record, BEFORE_READ_HITL_REFUSAL);
+      } else if (requiresHITL && isPrepareActionType(action.type)) {
+        // I54: the same for a bound write's prepare read: it never raises a prompt of its own.
+        hitlStatus = refuseGate(record, PREPARE_HITL_REFUSAL);
+      } else if (boundRefusal !== undefined) {
+        // I54: a bound write that cannot enter (the public gate, a non-HITL type, another tool, a
+        // caller-supplied bound field, an oversized input): refused before any read or prompt.
+        hitlStatus = refuseGate(record, boundRefusal);
       } else if (requiresHITL) {
-        const approved = await this.resolveHitlApproval(action, opts, record);
+        const approved = await this.resolveHitlApproval(action, opts, record, scope);
         hitlStatus = approved ? "approved" : "rejected";
       } else {
         hitlStatus = "not_required";
@@ -946,12 +1123,11 @@ export class ToolExecutor {
         hitlStatus = "rejected";
         record.rejectReason = e.message;
         record.hitlRejectReason = e.hitlAuditReason;
-      } else if (e instanceof BeforeStateRefusedError) {
-        // B2a: a before-state guard refused the write while its prompt was being built. No prompt
-        // was shown; the write is audited rejected and ledgered blocked below, never dispatched.
-        hitlStatus = "rejected";
-        record.rejectReason = e.reason;
-        record.hitlRejectReason = e.reason;
+      } else if (e instanceof BeforeStateRefusedError || e instanceof PrepareRefusedError) {
+        // B2a / I54: a before-state guard or the prepare step refused the write while its prompt
+        // was being built. No prompt was shown; the write is audited rejected and ledgered blocked
+        // below, never dispatched.
+        hitlStatus = refuseGate(record, e.reason);
       } else {
         throw e;
       }
@@ -983,9 +1159,10 @@ export class ToolExecutor {
   }
 
   async execute(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult> {
-    const gateResult = await this.gate(action, opts);
+    const scope: GateScope = { bind: true };
+    const gateResult = await this.gateWithin(action, opts, scope);
     if (gateResult === "proceed") {
-      const result = await this.connectors.dispatch(action);
+      const result = await this.connectors.dispatch(this.dispatchBoundPhase(action, scope));
       return { status: "ok", result };
     }
     return gateResult;

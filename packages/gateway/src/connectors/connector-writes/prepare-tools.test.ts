@@ -10,7 +10,7 @@ describe("PREPARE_TOOL_IDS (D0b)", () => {
   });
 
   test("is immutable: add, delete and clear throw", () => {
-    expect(() => PREPARE_TOOL_IDS.add("x_plan")).toThrow(TypeError);
+    expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).add("x_plan")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).delete("x")).toThrow(TypeError);
     expect(() => (PREPARE_TOOL_IDS as unknown as Set<string>).clear()).toThrow(TypeError);
     expect(PREPARE_TOOL_IDS.size).toBe(0);
