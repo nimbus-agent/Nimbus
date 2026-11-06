@@ -4346,6 +4346,17 @@ describe("D41 — a Wave 4 write is approved only by typed text, judged only at 
       "    return this.consent.requestApproval(prompt, details, action.type);\n",
     );
     expect(rules(replace(EXECUTOR, unguarded))).toEqual(["confirm-order-pinned"]);
+    // A swapped branch: the plain prompt sits in a guard on another kind, or after the block.
+    const swapped = EXECUTOR_GOOD.replace(
+      'if (confirm.kind === "none") {',
+      'if (confirm.kind === "text") {',
+    );
+    expect(rules(replace(EXECUTOR, swapped))).toEqual(["confirm-order-pinned"]);
+    const after = EXECUTOR_GOOD.replace(
+      '    if (confirm.kind === "none") {\n      return this.consent.requestApproval(prompt, details, action.type);\n    }\n',
+      '    if (confirm.kind === "none") {\n      log(prompt);\n    }\n    return this.consent.requestApproval(prompt, details, action.type);\n',
+    );
+    expect(rules(replace(EXECUTOR, after))).toEqual(["confirm-order-pinned"]);
     const second = EXECUTOR_GOOD.replace(
       "  private async confirmedOwnerPrompt(req, record) {\n",
       "  private async confirmedOwnerPrompt(req, record) {\n    await this.consent.requestApproval(req);\n",

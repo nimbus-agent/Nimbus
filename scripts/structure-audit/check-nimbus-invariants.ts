@@ -2514,6 +2514,17 @@ export function checkConfirmComparison(files: readonly FileEntry[]): Violation[]
   return out;
 }
 
+/** The index of the `}` that closes the block whose body starts at `from`, or -1. */
+function d41BlockEnd(code: string, from: number): number {
+  let depth = 1;
+  for (let i = from; i < code.length; i++) {
+    const ch = code.charAt(i);
+    if (ch === "{") depth++;
+    else if (ch === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
 /** Clause (d): the phase order and the two prompt call sites in `engine/executor.ts`. */
 function d41OrderPin(f: FileEntry, code: string): Violation[] {
   const out: Violation[] = [];
@@ -2534,18 +2545,31 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
   const owner = d41Span(code, /\bprivate\s+async\s+confirmedOwnerPrompt\s*\(/, "\n  }\n");
   const plainCalls = [...code.matchAll(/\bthis\.consent\.requestApproval\s*\(/g)];
   const plainAt = plainCalls[0]?.index;
-  const guardAt = phase === undefined ? -1 : code.indexOf("confirm.kind ===", phase[0]);
+  // The guard must be `if (confirm.kind === "none") {` and the plain call must sit INSIDE its block:
+  // reading the literal needs the string contents, which `code` has blanked; `stripStringLiterals`
+  // keeps every offset, so the match index carries over to `code`, whose braces are reliable.
+  const guard =
+    phase === undefined
+      ? null
+      : /\bif\s*\(\s*confirm\.kind\s*===\s*"none"\s*\)\s*\{/.exec(
+          stripComments(f.contents).slice(phase[0], phase[1]),
+        );
+  const blockStart =
+    guard === null || phase === undefined ? -1 : phase[0] + guard.index + guard[0].length;
+  const blockEnd = blockStart === -1 ? -1 : d41BlockEnd(code, blockStart);
   const plainOk =
     plainCalls.length === 1 &&
     plainAt !== undefined &&
     phase !== undefined &&
     plainAt > phase[0] &&
     plainAt < phase[1] &&
-    guardAt !== -1 &&
-    guardAt < plainAt;
+    blockStart !== -1 &&
+    blockEnd !== -1 &&
+    plainAt >= blockStart &&
+    plainAt < blockEnd;
   if (!plainOk)
     fail(
-      "the plain requestApproval call must sit once in approvalPhase after its confirm.kind none guard",
+      'the plain requestApproval call must sit once in approvalPhase, inside the if (confirm.kind === "none") block',
     );
   const typedCalls = [...code.matchAll(/\bchannel\.requestConfirmedApproval\s*\(/g)];
   const typedAt = typedCalls[0]?.index;
