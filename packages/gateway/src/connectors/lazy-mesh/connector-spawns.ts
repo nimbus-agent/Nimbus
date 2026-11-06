@@ -29,6 +29,7 @@ import { Config } from "../../config.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
+import { isAtlassianCloudId } from "../atlassian-cloud-id.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { transitionHealth } from "../health.ts";
 import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
@@ -474,6 +475,18 @@ export async function ensureLinearMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
+/**
+ * The optional `JIRA_CLOUD_ID` variable of the Jira child: the stored, trimmed Atlassian cloud id
+ * when it is a well-formed one, else nothing (an absent key reads `null`). Leaving the variable out
+ * lets the connector discover the id from `_edge/tenant_info` on an `*.atlassian.net` site; a
+ * malformed stored value is dropped rather than handed to the child. The caller spreads this into
+ * the `extensionProcessEnv` argument (I1), which adds the baseline and nothing else.
+ */
+export function jiraCloudIdEnv(stored: string | null): Record<string, string> {
+  const cloudId = stored?.trim() ?? "";
+  return cloudId !== "" && isAtlassianCloudId(cloudId) ? { JIRA_CLOUD_ID: cloudId } : {};
+}
+
 export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.jira;
   ctx.clearLazyIdle(slotKey);
@@ -484,6 +497,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
   const token = await readConnectorSecret(ctx.vault, "jira", "api_token");
   const email = await readConnectorSecret(ctx.vault, "jira", "email");
   const baseUrl = await readConnectorSecret(ctx.vault, "jira", "base_url");
+  const cloudId = await readConnectorSecret(ctx.vault, "jira", "cloud_id");
   if (
     token === null ||
     token === "" ||
@@ -506,6 +520,7 @@ export async function ensureJiraMcp(ctx: MeshSpawnContext): Promise<void> {
               JIRA_API_TOKEN: token,
               JIRA_EMAIL: email,
               JIRA_BASE_URL: baseUrl,
+              ...jiraCloudIdEnv(cloudId),
             }),
           },
           manifestWithConfiguredHost("jira", siteUrlWithScheme(baseUrl)),

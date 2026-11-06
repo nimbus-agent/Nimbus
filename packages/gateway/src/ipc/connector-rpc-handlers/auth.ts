@@ -25,6 +25,7 @@ import { OAUTH_PROVIDERS } from "../../auth/oauth-registry.ts";
 import { type PKCEOptions, type PKCEResult, runPKCEFlow } from "../../auth/pkce.ts";
 import type { ConnectorSignInKind as CatalogSignInKind } from "../../catalog/catalog-list.ts";
 import { Config } from "../../config.ts";
+import { isAtlassianCloudId } from "../../connectors/atlassian-cloud-id.ts";
 import {
   type ConnectorOAuthProfile,
   type ConnectorServiceId,
@@ -38,6 +39,7 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-
 import {
   type ConnectorSecretKeyOf,
   deleteConnectorSecret,
+  readConnectorSecret,
   sharedOAuthKey,
   writeConnectorSecret,
   writePerServiceOAuthKey,
@@ -807,6 +809,23 @@ async function connectorAuthPagerduty(ctx: ConnectorRpcHandlerContext): Promise<
   return registerAndSucceed(ctx.localIndex, "pagerduty");
 }
 
+/**
+ * Jira's optional `cloudId` (`nimbus connector auth jira --cloud-id`): the Atlassian site UUID the
+ * Operations alert tools need. Absent or blank is `""` (nothing stored, a stored id is left alone);
+ * anything else must be a well-formed cloud id, else `-32602` BEFORE the credential is probed or
+ * anything is stored.
+ */
+function jiraCloudIdField(rec: Record<string, unknown> | undefined): string {
+  const raw = rec?.["cloudId"];
+  if (raw === undefined || raw === null) return "";
+  const value = typeof raw === "string" ? raw.trim() : undefined;
+  if (value === "") return "";
+  if (value === undefined || !isAtlassianCloudId(value)) {
+    throw new ConnectorRpcError(-32602, "jira cloudId must be an Atlassian cloud id (a UUID)");
+  }
+  return value;
+}
+
 type PatConnectorAuthHandler = (ctx: ConnectorRpcHandlerContext) => Promise<ConnectorRpcHit>;
 
 /** A connector whose `connector.auth` stores ONE token under ONE Vault key. */
@@ -875,17 +894,37 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
       missingBase:
         "Missing Jira site base URL for jira (apiBaseUrl), e.g. https://your-domain.atlassian.net",
     });
+    const cloudId = jiraCloudIdField(c.rec);
     const verified = await verifyBeforeStore(c, "jira", {
       base_url: creds.baseNormalized,
       email: creds.email,
       api_token: creds.apiToken,
     });
-    const value = await registerAtlassianApiConnectorAuth({
-      vault: c.vault,
-      localIndex: c.localIndex,
-      serviceId: "jira",
-      creds,
-    });
+    // Everything below mutates the Vault, so the child restart is in a `finally`: it reads all four
+    // values at spawn only, and a write that throws midway must still retire a running one. A
+    // refused or invalid auth threw above, before any write, and never reaches this.
+    let value: Awaited<ReturnType<typeof registerAtlassianApiConnectorAuth>>;
+    try {
+      // A stored cloud id belongs to the site it was stored for. With no new id supplied, keep it
+      // only when the site is unchanged; otherwise the child would hand the OLD tenant's id to the
+      // Operations alert tools of the new site. Cleared BEFORE the new site is written, so a failure
+      // later leaves no stale id (an absent id is the safe state).
+      if (cloudId === "") {
+        const storedBase = await readConnectorSecret(c.vault, "jira", "base_url");
+        if (storedBase !== creds.baseNormalized) {
+          await deleteConnectorSecret(c.vault, "jira", "cloud_id");
+        }
+      }
+      value = await registerAtlassianApiConnectorAuth({
+        vault: c.vault,
+        localIndex: c.localIndex,
+        serviceId: "jira",
+        creds,
+      });
+      if (cloudId !== "") await writeConnectorSecret(c.vault, "jira", "cloud_id", cloudId);
+    } finally {
+      c.connectorMesh?.restartJira();
+    }
     return { kind: "hit", value: { ...value, verified } };
   },
   confluence: async (c) => {

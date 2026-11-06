@@ -343,7 +343,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
     }
   });
 
-  test("C2: the six VCS writes are templated and the four creates proposable; the updates and the C3 rows are not_yet_offered", () => {
+  test("C2 and C3: the six VCS writes and the five flag and alert writes are templated; only the four VCS creates are proposable, the other seven stay not_yet_offered", () => {
     const vcs = CONNECTORS_0_6_0_WRITES.slice(0, 6);
     for (const [id, actionType] of vcs) {
       expect(connectorWriteRowByToolId(id)?.preview, id).toBeDefined();
@@ -353,12 +353,20 @@ describe("connectors 0.6.0 writes (C1)", () => {
       );
     }
     for (const [id, actionType] of CONNECTORS_0_6_0_WRITES.slice(6)) {
-      expect(connectorWriteRowByToolId(id)?.preview, id).toBeUndefined();
+      // C3 templated these five; the act door has no before-read, so they stay withheld.
+      expect(connectorWriteRowByToolId(id)?.preview, id).toBeDefined();
       expect(ACTION_PROPOSABILITY[actionType], id).toEqual({
         kind: "denied",
         class: "not_yet_offered",
       });
     }
+    expect(CONNECTORS_0_6_0_WRITES.slice(6).map(([id]) => id)).toEqual([
+      "launchdarkly_flag_toggle",
+      "launchdarkly_flag_rollout_set",
+      "flagsmith_feature_state_set",
+      "jira_ops_alert_acknowledge",
+      "jira_ops_alert_close",
+    ]);
     const notYet = Object.entries(ACTION_PROPOSABILITY)
       .filter(([, e]) => e.kind === "denied" && e.class === "not_yet_offered")
       .map(([t]) => t)

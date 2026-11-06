@@ -64,7 +64,7 @@ export function selectGithubPrIdentity(reply: unknown): readonly BeforeStateFiel
 }
 
 /** A positive integer given as a number or a string of digits, else `undefined`. */
-function positiveIntegerArg(v: unknown): number | undefined {
+export function positiveIntegerArg(v: unknown): number | undefined {
   const n = typeof v === "string" && /^[0-9]+$/.test(v) ? Number(v) : v;
   return typeof n === "number" && Number.isSafeInteger(n) && n >= 1 ? n : undefined;
 }

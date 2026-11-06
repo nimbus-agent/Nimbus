@@ -28,17 +28,17 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Eight members:
-   * `jira.issue.transition` (owner ruling OR-B2-4: the act door runs no before-read and so could
-   * not show what the write changes); since C2 the two VCS updates `github.pr.update` and
-   * `gitlab.mr.update` (templated for the model door, but not recoverable and with no act-door
-   * before-state, so the owner would approve an edit with no current title or base); and the five
-   * writes of connectors 0.6.0 that C3 will template (`launchdarkly.flag.{toggle,rollout.set}`,
-   * `flagsmith.feature.state.set`, `jira.ops.alert.{acknowledge,close}`), untemplated and with no
-   * act-door refusals yet.
-   * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
-   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job: the C3
-   * PR that templates a type (and reviews its act-door refusals) moves it there.
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Eight members, ONE
+   * reason: the write's value is its before-state, and the act door runs no before-read (B0b), so
+   * the owner would approve it without the state it changes. `jira.issue.transition` (owner ruling
+   * OR-B2-4: a bare numeric transition id); the two VCS updates `github.pr.update` and
+   * `gitlab.mr.update` (C2: not recoverable, and the owner would see no current title or base);
+   * and the five writes of connectors 0.6.0 that C3 templated for the model door
+   * (`launchdarkly.flag.{toggle,rollout.set}`, `flagsmith.feature.state.set`,
+   * `jira.ops.alert.{acknowledge,close}`): a variation id or an alert id is opaque and a flag flip
+   * is its current state, so a queued production change could not be checked on the act door.
+   * Revisit the whole class together if the act door ever gets a before-read.
+   * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact.
    */
   | "not_yet_offered"
   | "gateway_internal";
@@ -258,8 +258,10 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
     // `github.pr.update` and `gitlab.mr.update` (C2) are templated for the model door but withheld
     // here: they are not recoverable (the connector overwrites the old text or retargets the base)
     // and the act door runs no before-read, so the owner would approve an edit with no current
-    // title or base to compare (the same reason as the Jira transition). The flag and Jira alert
-    // writes (C1) stay here until C3 templates them and adds their act-door refusals.
+    // title or base to compare (the same reason as the Jira transition). The three flag writes and
+    // the two Jira Operations alert writes (C3) are templated for the model door and withheld here
+    // for the same reason: a rollout's `weights` are opaque variation ids, an alert id is opaque,
+    // and a flag flip is its current state, none of which the act door can show the owner.
     ...denied("not_yet_offered", [
       "jira.issue.transition",
       "github.pr.update",

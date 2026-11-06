@@ -731,11 +731,12 @@ export function nullOptionalFieldRefusal(key: string): string {
   return `the field \`${key}\` cannot be null; omit it or give a value`;
 }
 
-/** The optional input keys of each B4a row, whose `null` the doors refuse. */
+/** The optional input keys of each B4a row and of the Flagsmith state set (C3), whose `null` the doors refuse. */
 const NULL_REFUSED_OPTIONAL_KEYS: Readonly<Record<string, readonly string[]>> = {
   [OUTLOOK_CALENDAR_ROW]: ["timeZone", "attendees", "body"],
   [APPLE_CALENDAR_ROW]: ["calendar", "attendees", "location", "description", "uid"],
   gdrive_file_create: ["mimeType", "parentId", "content"],
+  flagsmith_feature_state_set: ["value"],
 };
 
 /** The optional keys whose `null` is refused for `toolId` (read-only, for its drift test). */

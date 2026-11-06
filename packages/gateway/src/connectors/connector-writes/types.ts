@@ -24,15 +24,17 @@ export interface ConnectorWriteRow {
   readonly preview?: ConnectorWritePreviewTemplate;
   /**
    * Reads the target's current state for the typed preview (spec § 5.4), shown beside the new
-   * values on the model door's prompt only. Set with {@link withBefore}. Since C2 thirty-five rows
+   * values on the model door's prompt only. Set with {@link withBefore}. Since C3 forty rows
    * have one: the seven comment rows (B1), nine issue writes (B2), five page writes (B3), the
    * Drive file create (B4a, its target folder), the Obsidian append (B4b, the note's end) and the
    * eight Wave 3 file, PR and incident writes (C1: Drive move, rename and trash, the OneDrive move,
    * the GitHub pull request close and the three PagerDuty incident writes) and the four C2 VCS rows
    * (the GitHub branch create, the pull request create and update, the GitLab merge request
-   * update); the Jira transition and the two file moves take two reads, and seven rows carry a
-   * guard (the Linear update, the four Notion/Confluence page updates and appends with the
-   * KB-child guard, and the two C2 updates that refuse an empty update).
+   * update) and the five C3 flag and alert writes (the LaunchDarkly toggle and rollout, the
+   * Flagsmith state set, the two Jira Operations alert writes); the Jira transition and the two
+   * file moves take two reads, and eight rows carry a guard (the Linear update, the four
+   * Notion/Confluence page updates and appends with the KB-child guard, the two C2 updates that
+   * refuse an empty update, and the C3 LaunchDarkly rollout, which must name every variation).
    */
   readonly before?: BeforeStateReader;
 }

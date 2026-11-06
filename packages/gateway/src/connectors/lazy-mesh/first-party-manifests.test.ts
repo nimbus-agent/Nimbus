@@ -611,3 +611,33 @@ describe("withInstalledCliTrees", () => {
     expect(withInstalledCliTrees(base(), "github", present, "linux")).toBe(base());
   });
 });
+
+describe("C3: the Operations alert and flag writes need no new network host (I15, I50)", () => {
+  const wildcards = (net: readonly string[]): string[] => net.filter((h) => h.includes("*"));
+
+  test("jira: the static manifest names api.atlassian.com, the configured site adds its own host, no wildcard", () => {
+    const base = manifestForFirstParty("jira");
+    expect(base.permissions.network).toContain("api.atlassian.com");
+    expect(wildcards(base.permissions.network)).toEqual([]);
+    expect(base.firstPartyWildcardHosts ?? []).toEqual([]);
+    const site = "https://acme.atlassian.net";
+    const hosts = storedUrlHosts("jira", siteUrlWithScheme(site));
+    const withSite = manifestWithExtraNetworkHosts("jira", hosts, { ownerConfigured: hosts });
+    expect(withSite.permissions.network).toContain("api.atlassian.com");
+    expect(withSite.permissions.network).toContain("acme.atlassian.net");
+    expect(wildcards(withSite.permissions.network)).toEqual([]);
+    expect(withSite.firstPartyWildcardHosts ?? []).toEqual([]);
+  });
+
+  test("launchdarkly and flagsmith: their fixed API host, no wildcard", () => {
+    for (const [id, host] of [
+      ["launchdarkly", "app.launchdarkly.com"],
+      ["flagsmith", "api.flagsmith.com"],
+    ] as const) {
+      const m = manifestForFirstParty(id);
+      expect(m.permissions.network, id).toContain(host);
+      expect(wildcards(m.permissions.network), id).toEqual([]);
+      expect(m.firstPartyWildcardHosts ?? [], id).toEqual([]);
+    }
+  });
+});

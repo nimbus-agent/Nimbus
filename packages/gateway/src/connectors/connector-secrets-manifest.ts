@@ -15,7 +15,9 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   gitlab: ["gitlab.pat", "gitlab.api_base"],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],
   linear: ["linear.api_key"],
-  jira: ["jira.api_token", "jira.email", "jira.base_url"],
+  // `jira.cloud_id` is OPTIONAL and non-secret in effect (the Atlassian site UUID the Operations alert
+  // tools need); it is a Vault key so `connector.remove jira` clears it.
+  jira: ["jira.api_token", "jira.email", "jira.base_url", "jira.cloud_id"],
   notion: ["notion.oauth"],
   confluence: ["confluence.api_token", "confluence.email", "confluence.base_url"],
   discord: ["discord.bot_token", "discord.enabled"],
