@@ -1786,3 +1786,78 @@ describe("B3w: forge-markdown", () => {
     expectAllowed("forge-markdown", allowed);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// The final B3w review, item 1: a diagram opener is looked for on EVERY line, independent of
+// fence state, so wrong fence pairing can never hide one (forge and Obsidian alike).
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w final review item 1: diagram openers on every line", () => {
+  const F = "\x60\x60\x60";
+  const CR = String.fromCodePoint(0x0d);
+  const INCLUDE = "!include https://h/x.puml";
+  const REVIEW: readonly (readonly [string, string])[] = [
+    [
+      "an inline code span that looks like a fence opener",
+      `${F}x${F} is code\n${F}plantuml\n${INCLUDE}\n${F}`,
+    ],
+    [
+      "an inline code span, then a mermaid img",
+      `${F}x${F} y\n${F}mermaid\nflowchart TD\nA@{ img: "https://h/p.png" }\n${F}`,
+    ],
+    ["a quoted fence left open", `> ${F}ts\n> x\n\n${F}plantuml\n${INCLUDE}\n${F}`],
+    ["an indented code-block fence", `x\n\n    ${F}\n${F}plantuml\n${INCLUDE}\n${F}`],
+    ["a fence in a list item", `- ${F}plantuml\n  ${INCLUDE}\n  ${F}`],
+    ["CR-only line breaks", `${F}plantuml${CR}${INCLUDE}${CR}${F}`],
+  ];
+
+  test("a body URL spelled with character references is found in the settled form", () => {
+    const body = "!include h&#116;tps&#58;&#47;&#47;h/x.puml";
+    expectRefused("forge-markdown", `${F}plantuml\n${body}\n${F}`, true);
+    expectRefused("obsidian-markdown", `${F}mermaid\n${body}\n${F}`, true);
+  });
+
+  test.each(REVIEW)("forge refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  const OBSIDIAN: readonly (readonly [string, string])[] = [
+    [
+      "an inline code span, then a mermaid click",
+      `${F}x${F} y\n${F}mermaid\nclick A "https://h"\n${F}`,
+    ],
+    ["a quoted fence left open", `> ${F}ts\n> x\n\n${F}mermaid\nclick A "https://h"\n${F}`],
+    ["a fence in a list item", `- ${F}mermaid\n  click A "https://h"\n  ${F}`],
+    ["CR-only line breaks", `${F}mermaid${CR}click A "https://h"${CR}${F}`],
+    ["a numbered list item", `1. ${F}mermaid\n   click A "https://h"\n   ${F}`],
+  ];
+
+  test.each(OBSIDIAN)("obsidian refused: %s", (_label, text) => {
+    expectRefused("obsidian-markdown", text, true);
+  });
+
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a closed diagram, then a URL in prose", `${F}mermaid\nA-->B\n${F}\nsee [x](https://h)`],
+    ["a tilde diagram closed by tildes", `~~~mermaid\nA-->B\n~~~\n[x](https://h)`],
+    ["a quoted diagram closed in the quote", `> ${F}mermaid\n> A-->B\n> ${F}\n[x](https://h)`],
+    ["a longer closer", `${F}mermaid\nA-->B\n${F}${F}\n[x](https://h)`],
+    ["a code fence holding a URL", `${F}ts\nfetch("https://h")\n${F}`],
+  ];
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+    expectAllowed("obsidian-markdown", text);
+  });
+
+  const STRICT: readonly (readonly [string, string])[] = [
+    ["a closer with text after it", `${F}mermaid\nA-->B\n${F} x\n[x](https://h)`],
+    ["a closer indented four spaces", `${F}mermaid\nA-->B\n    ${F}\n[x](https://h)`],
+    ["a shorter closer", `${F}${F}mermaid\nA-->B\n${F}\n[x](https://h)`],
+    ["a closer of the other character", `${F}mermaid\nA-->B\n~~~\n[x](https://h)`],
+    ["a closer outside the opener's quote", `> ${F}mermaid\n> A-->B\n${F}\n[x](https://h)`],
+  ];
+
+  test.each(STRICT)("not a strict closer, so the body runs on: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+});

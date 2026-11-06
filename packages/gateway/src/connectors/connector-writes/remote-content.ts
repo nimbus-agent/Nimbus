@@ -1293,39 +1293,95 @@ function markdownImageRemote(text: string, opts: { readonly vaultEmbeds: boolean
   });
 }
 
-/** A fence line: its character (backtick or tilde), its run length, and the text after it. */
-interface Fence {
+/**
+ * A line that holds a fence run: the container markers before it (`>` and list markers, the
+ * whitespace dropped), the indent between the last marker and the run (a TAB counts 4), the fence
+ * character (backtick or tilde), the run length and the text after the run.
+ */
+interface FenceLine {
+  readonly markers: string;
+  readonly indent: number;
   readonly ch: string;
   readonly len: number;
   readonly info: string;
 }
 
 /**
- * The fence a line opens or closes, or `undefined`. Leading spaces, TABs and blockquote `>` are
- * skipped whatever their count (an over-approximation: Obsidian renders a mermaid fence inside a
- * quote too, and a 4-space-indented "fence" is read as one, fail closed).
+ * A list marker at `i` (`-`, `*`, `+`, or one to nine digits then `.` or `)`) followed by a space,
+ * a TAB or the end of the line: the index after it, or -1.
  */
-function fenceOf(line: string): Fence | undefined {
+function listMarkerEnd(line: string, i: number): number {
+  const c = line.charAt(i);
+  let j = i;
+  if (c === "-" || c === "*" || c === "+") j = i + 1;
+  else {
+    while (j - i < 9 && line.charAt(j) >= "0" && line.charAt(j) <= "9") j++;
+    if (j === i || (line.charAt(j) !== "." && line.charAt(j) !== ")")) return -1;
+    j++;
+  }
+  const next = line.charAt(j);
+  return next === "" || next === " " || next === "\t" ? j : -1;
+}
+
+/**
+ * The fence run a line holds after any spaces, TABs, blockquote `>` markers and list markers, or
+ * `undefined`. Any indent is accepted for an opener (an over-approximation: a 4-space-indented
+ * "fence" is read as one, fail closed); a closer is checked separately.
+ */
+function fenceLineOf(line: string): FenceLine | undefined {
+  let markers = "";
+  let indent = 0;
   let i = 0;
-  while (i < line.length && (line[i] === " " || line[i] === "\t" || line[i] === ">")) i++;
+  while (i < line.length) {
+    const c = line.charAt(i);
+    if (c === " " || c === "\t") {
+      indent += c === " " ? 1 : 4;
+      i++;
+      continue;
+    }
+    if (c === ">") {
+      markers += ">";
+      indent = 0;
+      i++;
+      continue;
+    }
+    const end = listMarkerEnd(line, i);
+    if (end === -1) break;
+    markers += c === "-" || c === "*" || c === "+" ? c : `N${line.charAt(end - 1)}`;
+    indent = 0;
+    i = end;
+  }
   const ch = line.charAt(i);
   if (ch !== "\x60" && ch !== "~") return undefined;
   let j = i;
   while (line.charAt(j) === ch) j++;
-  return j - i < 3 ? undefined : { ch, len: j - i, info: line.slice(j) };
+  return j - i < 3 ? undefined : { markers, indent, ch, len: j - i, info: line.slice(j) };
 }
 
-/** A URL in a mermaid body: `//` anywhere, or one of the real URL schemes (`click A "https:..."`). */
+/** Only spaces and TABs. */
+function isBlank(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== " " && text[i] !== "\t") return false;
+  }
+  return true;
+}
+
+/**
+ * A STRICT closing fence: at most 3 columns of indent after its container markers, and nothing
+ * after the run but spaces and TABs. Its markers, character and length are matched by the caller.
+ */
+function isStrictCloser(f: FenceLine): boolean {
+  return f.indent <= 3 && isBlank(f.info);
+}
+
+/** A URL in a diagram body: `//` anywhere, or one of the real URL schemes (`click A "https:..."`). */
 const MERMAID_URL_SCHEME =
   /\b(?:javascript|data|vbscript|file|mailto|tel|blob|filesystem|about|ws|wss|ftp|http|https):/;
 
-function diagramBodyLoads(body: string): boolean {
-  const deleted = settle(body, "");
-  const spaced = settle(body, " ");
-  if (deleted === undefined || spaced === undefined) return true;
-  return [body.toLowerCase(), deleted, spaced].some(
-    (f) => f.includes("//") || MERMAID_URL_SCHEME.test(f),
-  );
+/** Whether one line of a diagram body names a URL (lower-cased; the settled text is scanned too). */
+function lineLoads(line: string): boolean {
+  const lower = line.toLowerCase();
+  return lower.includes("//") || MERMAID_URL_SCHEME.test(lower);
 }
 
 /**
@@ -1342,37 +1398,93 @@ function fenceLanguage(info: string): string {
   return folded.slice(i, j);
 }
 
+/** Whether an info string names a diagram fence: its first word, compared exactly with `names`. */
+function isDiagramInfo(info: string, names: ReadonlySet<string>): boolean {
+  return names.has(fenceLanguage(info));
+}
+
+/** The line breaks the raw text is split on: CRLF, LF, CR, VT, FF, NEL, LS and PS. */
+const LINE_BREAKS = /\r\n|[\n\r\v\f\u0085\u2028\u2029]/;
+
 /**
- * Coordinator rulings: a diagram fence (backtick or tilde; its language in `names`) whose body
- * holds `//` or a real URL scheme is refused, because the renderer can reach a URL on view (a
- * mermaid `click` link, a PlantUML `!include https://...`, a Vega `"url"`). An unclosed fence runs
- * to the end of the text. Whether a fence is a diagram fence is decided from its language BEFORE
- * its lines are read; any other fence is skipped to its closing line without building a body
- * (B3w review fix 4). One pass over the lines.
+ * A closer stack per container markers + fence character, for the reverse pass: the nearest closer
+ * is last, and each entry below it is strictly longer (a nearer closer at least as long makes a
+ * farther one unreachable), so the nearest closer at least `len` long is found by binary search.
  */
-function diagramFenceLoadsRemote(text: string, names: ReadonlySet<string>): boolean {
-  const lines = text.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const open = fenceOf(lines[i] ?? "");
-    if (open === undefined) continue;
-    const diagram = names.has(fenceLanguage(open.info));
-    let body = "";
-    let j = i + 1;
-    for (; j < lines.length; j++) {
-      const close = fenceOf(lines[j] ?? "");
+interface Closer {
+  readonly len: number;
+  readonly at: number;
+}
+type CloserStacks = Map<string, Closer[]>;
+
+function pushCloser(stacks: CloserStacks, key: string, len: number, at: number): void {
+  let stack = stacks.get(key);
+  if (stack === undefined) {
+    stack = [];
+    stacks.set(key, stack);
+  }
+  while (stack.length > 0 && (stack.at(-1)?.len ?? 0) <= len) stack.pop();
+  stack.push({ len, at });
+}
+
+/** The index of the nearest closer at least `len` long, or `Infinity` when there is none. */
+function nearestCloser(stack: readonly Closer[] | undefined, len: number): number {
+  if (stack === undefined) return Number.POSITIVE_INFINITY;
+  // Lengths decrease along the array; find the last entry whose length is at least `len`.
+  let lo = 0;
+  let hi = stack.length - 1;
+  let found = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if ((stack[mid]?.len ?? 0) >= len) {
+      found = mid;
+      lo = mid + 1;
+    } else hi = mid - 1;
+  }
+  return found === -1 ? Number.POSITIVE_INFINITY : (stack[found]?.at ?? Number.POSITIVE_INFINITY);
+}
+
+/**
+ * One form's lines: a diagram opener ANYWHERE (inside another fence, an indented code block, a list
+ * item or a blockquote too: fence state is never tracked, so wrong pairing cannot hide one) whose
+ * body, up to its strict closer (same markers, same character, a run at least as long) or the end
+ * of the text, holds a URL line. One reverse pass: the nearest URL line after each line and the
+ * closer stacks are both maintained as the pass moves up, so the whole scan is linear.
+ */
+function diagramLinesLoad(lines: readonly string[], names: ReadonlySet<string>): boolean {
+  const closers: CloserStacks = new Map();
+  let nextLoad = Number.POSITIVE_INFINITY;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? "";
+    const f = fenceLineOf(line);
+    if (f !== undefined) {
+      const key = f.markers + f.ch;
       if (
-        close !== undefined &&
-        close.ch === open.ch &&
-        close.len >= open.len &&
-        close.info.trim() === ""
+        nextLoad !== Number.POSITIVE_INFINITY &&
+        isDiagramInfo(f.info, names) &&
+        nextLoad < nearestCloser(closers.get(key), f.len)
       )
-        break;
-      if (diagram) body += `${lines[j] ?? ""}\n`;
+        return true;
+      if (isStrictCloser(f)) pushCloser(closers, key, f.len, i);
     }
-    if (diagram && diagramBodyLoads(body)) return true;
-    i = j;
+    if (lineLoads(line)) nextLoad = i;
   }
   return false;
+}
+
+/**
+ * Coordinator rulings and the final B3w review (item 1): a diagram fence (backtick or tilde; its
+ * language in `names`) whose body holds `//` or a real URL scheme is refused, because the renderer
+ * can reach a URL on view (a mermaid `click` link or `img`, a PlantUML `!include https://...`, a
+ * Vega `"url"`). Openers are looked for on every line, independent of fence state, in the raw text
+ * (split on every line break) and in its settled form (line breaks kept); an unsettled text refuses.
+ */
+function diagramFenceLoadsRemote(text: string, names: ReadonlySet<string>): boolean {
+  const settled = settle(text, "", true);
+  if (settled === undefined) return true;
+  return (
+    diagramLinesLoad(text.split(LINE_BREAKS), names) || diagramLinesLoad(settled.split("\n"), names)
+  );
 }
 
 /** The diagram fences Obsidian renders: mermaid (coordinator ruling). */
