@@ -407,15 +407,40 @@ function schemaTextKeys(toolId: string): readonly string[] {
   for (const r of SCAN.registrations.filter((x) => x.id === toolId)) {
     const file = stripComments(SOURCES.find((src) => src.rel === r.file)?.text ?? "");
     let text = file.slice(r.span[0], r.span[1] + 1);
-    // The schema named in the call (`const <name> = z...`), when it is defined in the same file.
-    for (const m of text.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
-      const at = file.indexOf(`const ${m[1] ?? ""} = z`);
-      if (at !== -1) text += file.slice(at, file.indexOf("});", at) + 3);
+    // The schema named in the call (`const <name> = z.object(...)` or `= base.extend(...)`), when
+    // it is defined in the same file.
+    // Followed through `.extend` bases (`outlookDraftCreateArgs = outlookMailSendArgs.extend`).
+    const seen = new Set<string>();
+    let pending = text;
+    while (pending !== "") {
+      let found = "";
+      for (const m of pending.matchAll(/\b([A-Za-z_$][\w$]*)\b/g)) {
+        const name = m[1] ?? "";
+        if (seen.has(name)) continue;
+        seen.add(name);
+        const head = `const ${name} = `;
+        const at = file.indexOf(head);
+        if (at === -1) continue;
+        // Only a schema definition: `= z.` or `= <base>.extend(`, never a helper function.
+        const rhs = file.slice(at + head.length, at + head.length + 200);
+        if (/^(?:z\s*\.|[A-Za-z_$][\w$]*\s*\.\s*extend\s*\()/.test(rhs))
+          found += file.slice(at, file.indexOf("});", at) + 3);
+      }
+      text += found;
+      pending = found;
     }
+    // A key may name a string schema constant (`body: noteBodySchema`, `const noteBodySchema =
+    // z.string()...`), as well as `z.string` inline.
+    const stringSchemas = new Set(
+      [...file.matchAll(/\bconst\s+([A-Za-z_$][\w$]*)\s*=\s*z\s*\.\s*string\b/g)].map(
+        (m) => m[1] ?? "",
+      ),
+    );
     for (const m of text.matchAll(
-      /\b(body|text|description|content|message)\s*:\s*z\s*\.\s*string/g,
+      /\b(body|text|description|content|message)\s*:\s*(z\s*\.\s*string\b|[A-Za-z_$][\w$]*)/g,
     )) {
-      out.add(m[1] ?? "");
+      const value = m[2] ?? "";
+      if (/^z\s*\./.test(value) || stringSchemas.has(value)) out.add(m[1] ?? "");
     }
   }
   return [...out];
@@ -526,22 +551,44 @@ describe("B3r and B3w completeness tripwire", () => {
     }
   });
 
-  test("every proposable tool whose 0.5.0 schema has a free-text key is classified", () => {
+  /**
+   * Final B3w review, item 4: per KEY, not per tool. Each free-text key a proposable tool's schema
+   * declares is scanned for that tool, unless the whole tool is named as not scanned.
+   */
+  function unclassifiedKeys(toolId: string, keys: readonly string[]): readonly string[] {
+    if (Object.hasOwn(NOT_SCANNED_REMOTE, toolId) || Object.hasOwn(UNTEMPLATED_SENDS, toolId))
+      return [];
+    const scanned = remoteContentScannedKeys(toolId);
+    return keys.filter((k) => !scanned.includes(k)).map((k) => `${toolId}.${k}`);
+  }
+
+  test("the per-key check names a key a scanned tool does not scan (a synthetic extra key)", () => {
+    expect(unclassifiedKeys("github_issue_comment_create", ["body"])).toEqual([]);
+    expect(unclassifiedKeys("github_issue_comment_create", ["body", "message"])).toEqual([
+      "github_issue_comment_create.message",
+    ]);
+    expect(unclassifiedKeys("slack_message_post", ["text", "message"])).toEqual([]);
+  });
+
+  test("every free-text key of every proposable tool's 0.5.0 schema is scanned or its tool named", () => {
     const unexplained: string[] = [];
     let withKeys = 0;
     for (const toolId of new Set(Object.values(PROPOSABLE_WRITE_TOOLS))) {
-      if (schemaTextKeys(toolId).length === 0) continue;
+      const keys = schemaTextKeys(toolId);
+      if (keys.length === 0) continue;
       withKeys++;
-      const classified =
-        remoteContentScannedKeys(toolId).length > 0 ||
-        Object.hasOwn(NOT_SCANNED_REMOTE, toolId) ||
-        Object.hasOwn(UNTEMPLATED_SENDS, toolId);
-      if (!classified) unexplained.push(toolId);
+      unexplained.push(...unclassifiedKeys(toolId, keys));
     }
     expect(unexplained).toEqual([]);
     // The reader sees real schemas (a broken reader would see none and pass vacuously).
     expect(withKeys).toBeGreaterThan(15);
     expect(schemaTextKeys("outlook_mail_send")).toContain("body");
+    // Not vacuous per key either: the reader finds every scanned plain-text key (the markup keys
+    // `storageHtml`, `childrenJson` and `propertiesJson` are outside its key list).
+    for (const id of remoteContentScannedRows()) {
+      const plain = remoteContentScannedKeys(id).filter((k) => !MARKUP_KEYS.has(k));
+      expect(schemaTextKeys(id), id).toEqual(plain);
+    }
   });
 });
 
