@@ -12109,7 +12109,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(askBody).not.toContain("createBeforeStateRunner");
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     expect(exec).toMatch(
-      /private readonly previewCredentialFor\?: PreviewCredentialResolver,\s*private readonly beforeState\?: BeforeStateRunner,\s*\)/,
+      /private readonly previewCredentialFor\?: PreviewCredentialResolver,\s*private readonly beforeState\?: BeforeStateRunner,\s*private readonly writeTable\?: WriteTable,\s*\)/,
     );
   });
 
@@ -12178,11 +12178,15 @@ describe("I53 — a first-party connector write reaches the model only through t
       'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
     );
     expect(exec.match(/new BeforeStateRefusedError\(/g)).toHaveLength(1);
-    const gateAt = exec.indexOf("async gate(action: PlannedAction");
+    const gateAt = exec.indexOf("private async gateWithin(");
     const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
     expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);
     expect(gateBody).toMatch(
-      /else if \(e instanceof BeforeStateRefusedError\) \{\s*hitlStatus = "rejected";\s*record\.rejectReason = e\.reason;\s*record\.hitlRejectReason = e\.reason;/,
+      /else if \(e instanceof BeforeStateRefusedError \|\| e instanceof PrepareRefusedError\) \{\s*hitlStatus = refuseGate\(record, e\.reason\);/,
+    );
+    // The one helper sets BOTH the caller's reason and the audit reason from the same fixed text.
+    expect(exec).toMatch(
+      /function refuseGate\(record: GateRecord, reason: string\): "rejected" \{\s*record\.rejectReason = reason;\s*record\.hitlRejectReason = reason;\s*return "rejected";/,
     );
   });
 

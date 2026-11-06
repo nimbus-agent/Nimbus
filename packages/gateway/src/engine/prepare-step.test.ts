@@ -396,6 +396,13 @@ describe("runPrepareStep", () => {
     expect(prepared.values["planDigest"]).toBe("sha256:abc123");
   });
 
+  test("a reply of undefined has no bound value and refuses", async () => {
+    const { ops } = opsOf({ dispatch: async () => undefined });
+    expect(await refusalOf(runPrepareStep(ops, ROW, BOUND, ACTION, options))).toBe(
+      PREPARE_REFUSALS.unbound,
+    );
+  });
+
   test("a reply over the cap refuses; one that cannot be serialised does too", async () => {
     const big = { ...SYNTH_REPLY, pad: "x".repeat(2000) };
     const { ops } = opsOf({}, big);
