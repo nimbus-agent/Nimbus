@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793950587910,
+  "lastUpdate": 1793950979506,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "148a5852ae62d475618f3b8d4d6586d95bc68f7e",
-          "message": "ci(coverage-gates): stop the sandbox apt step from wedging a job for hours (#1250)\n\n## What broke\n\nAt 04:32 UTC today two concurrent runs wedged in the SAME step of the\nLinux\n`Coverage — Sandbox` gate and sat there with no output:\n\n| Run | Job | Stuck since |\n| --- | --- | --- |\n| 32215321881 | PR quality, release PR #1247 | 04:32:14 |\n| 32215286724 | push CI on `main` | 04:34:17 |\n\nStep 7 of 12 — the inline `apt-get` install of bubblewrap, libcap-dev,\nstrace\nand cppcheck. The coverage gate itself never started. Every sibling\nshard in the\nsame matrix finished in 45s to 2.5min, the same gate passed in 58s on\nrun\n32214313933 eighteen minutes earlier, and GitHub Status reported Actions\noperational throughout. So: not the tests, not the branch, not an\noutage.\n\nTwo independent defects, both in this file.\n\n## 1. The step could hang forever\n\nThe inline step carried no non-interactive settings:\n\n```bash\nsudo apt-get update -qq && sudo apt-get install -y -qq bubblewrap libcap-dev strace cppcheck\n```\n\n`-y` answers apt's OWN confirmation. It does not answer debconf, and it\ndoes not\nanswer needrestart, whose \"which services should be restarted?\" list is\na\npost-install hook. A prompt on a runner blocks on stdin forever, which\nis what\nthe two wedged jobs look like from the outside: a step with no output\nand no\nend.\n\nIts direct sibling, `scripts/linux/install-vault-deps.sh`, already sets\n`DEBIAN_FRONTEND=noninteractive` — and the Vault gate's own apt install\nsucceeded at 04:32 on the same wedged run, on the same archive. That\nasymmetry\nis the evidence.\n\nThis PR moves the step into `scripts/linux/install-sandbox-deps.sh`,\nmirroring\nthe vault script, with three layered defenses:\n\n- `DEBIAN_FRONTEND=noninteractive` and `NEEDRESTART_MODE=a` stop the\nprompts we\n  know about;\n- `< /dev/null` on both apt invocations turns any prompt we did NOT\nanticipate\n  into an immediate EOF failure instead of an indefinite hang;\n- `-o Acquire::Retries=3` covers a flaky mirror, the other way this step\nhas\n  historically gone red.\n\nThe same three are applied to `install-vault-deps.sh`, which shares the\nblind\nspot — it had only the first of them, so it can still be wedged by\nneedrestart.\n\n## 2. Nothing capped the job\n\n`coverage-gates-pal` and `coverage-gates-linux` were the ONLY two jobs\nin\n`_test-suite.yml` without `timeout-minutes`; the other six all carry 30\nor 60.\nThey inherited GitHub's 360-minute default, so a wedge costs six hours\nof runner\ntime per job before anything kills it. Both now carry `timeout-minutes:\n30`,\nagainst an observed 1-4 minute runtime.\n\n## Verification\n\n- `scripts/linux/install-sandbox-deps.sh` and the hardened\n  `install-vault-deps.sh` both run green end-to-end in an `ubuntu:24.04`\ncontainer — the runner's distro — installing all four and all three\npackages\n  respectively. Not a syntax check: real apt, real installs, exit 0.\n- `bun run preflight:fast` — 29 of 29 gates pass, including\n`audit:workflow-lint`\n  and `audit:coverage-gate-pal`, which parses both job blocks I edited.\n- `bun test scripts/structure-audit/check-coverage-gate-pal.test.ts` —\n39 pass.\n\n## Known gap, deliberately left\n\nA survey of all 74 jobs across the 25 workflows finds 12 without\n`timeout-minutes`. Five are reusable-workflow callers, where the key is\nnot\nsupported and the called workflow's own jobs carry the cap — those are\nexempt.\nThe other seven are real and still uncapped: `filter` and `scope` and\n`label`\nand `action` and `analysis` and `stale` and `detect-trigger`. They are\nall small\njobs and none is implicated here, so capping them, plus an audit that\nkeeps a\nnew job from forgetting, belongs in its own PR rather than widening this\none.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-19T11:00:47+03:00",
-          "tree_id": "a2a0994e552eb1397179a31bbce0a8e586a89504",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/148a5852ae62d475618f3b8d4d6586d95bc68f7e"
-        },
-        "date": 1787127842664,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 312.28496275000214,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.8369476499938,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 299.6986421500027,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5d46525e728ebfa2f852c7682f4bb6e1f4179903",
+          "message": "chore: release main (#1917)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.31.0</summary>\n\n##\n[10.31.0](https://github.com/nimbus-agent/Nimbus/compare/v10.30.0...v10.31.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** sent mail, Teams and forge Markdown cannot load remote\ncontent, on both doors\n([#1916](https://github.com/nimbus-agent/Nimbus/issues/1916))\n([eabe782](https://github.com/nimbus-agent/Nimbus/commit/eabe782d57807f0ca4cab23861357e4714694232))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T07:32:22Z",
+          "tree_id": "1a3b074d862adf4482ee1a8c966a6aa87966aef6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5d46525e728ebfa2f852c7682f4bb6e1f4179903"
+        },
+        "date": 1793950975940,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 187.1278720499995,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 177.40906980000364,
             "unit": "ms"
           }
         ]
