@@ -71,6 +71,7 @@ const ENSURE_METHODS = [
   "ensureAppleRunning",
   "ensureObsidianRunning",
   "ensureBitbucketRunning",
+  "ensurePagerdutyRunning",
 ] as const;
 
 async function build(opts: {
@@ -177,16 +178,14 @@ describe("listFirstPartyServerTools", () => {
   });
 
   test("a service with write rows but no map entry fails closed, even inside a running bundle", async () => {
-    // onedrive shares the Microsoft bundle with outlook/teams, and bitbucket has its own slot:
-    // neither is in the listing map, so a configured bundle never lists them.
+    // bitbucket has its own slot and is not in the listing map, so a configured slot never lists it.
     const { m, ensures } = await build({
-      secrets: { "microsoft.oauth": EXPIRED_OAUTH, "bitbucket.username": "u" },
+      secrets: { "bitbucket.username": "u" },
       slots: {
-        [LAZY_MESH.microsoftBundle]: { onedrive_onedrive_item_move: { inputSchema: SCHEMA } },
         [LAZY_MESH.bitbucket]: { bitbucket_bitbucket_pr_merge: { inputSchema: SCHEMA } },
       },
     });
-    for (const s of ["onedrive", "bitbucket"]) {
+    for (const s of ["bitbucket"]) {
       expect(await m.listFirstPartyServerTools(s), s).toBeUndefined();
       expect(m.toolsGenerationFor(s), s).toBe(-1);
     }
@@ -277,6 +276,54 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
     expect(ensures()).toBe(0);
   });
 
+  test("onedrive ensures ONLY the Microsoft bundle slot and lists only its own server's keys (C1)", async () => {
+    const { m, calls } = await build({
+      secrets: { "microsoft.oauth": EXPIRED_OAUTH },
+      slots: {
+        [LAZY_MESH.microsoftBundle]: {
+          onedrive_onedrive_item_move: { inputSchema: SCHEMA },
+          outlook_outlook_draft_create: { inputSchema: SCHEMA },
+        },
+      },
+    });
+    expect(m.toolsGenerationFor("onedrive")).toBe(-1);
+    expect(Object.keys((await m.listFirstPartyServerTools("onedrive")) ?? {})).toEqual([
+      "onedrive_onedrive_item_move",
+    ]);
+    expect(m.toolsGenerationFor("onedrive")).toBeGreaterThanOrEqual(0);
+    expect(calls).toEqual(["ensureMicrosoftBundleRunning"]);
+  });
+
+  test("pagerduty ensures ONLY its own slot; -1 until a listing confirmed it (C1)", async () => {
+    const { m, calls } = await build({
+      secrets: { "pagerduty.api_token": "t", "pagerduty.from_email": "a@b.co" },
+      slots: {
+        [LAZY_MESH.pagerduty]: { pagerduty_pd_incident_acknowledge: { inputSchema: SCHEMA } },
+      },
+    });
+    expect(m.toolsGenerationFor("pagerduty")).toBe(-1);
+    expect(Object.keys((await m.listFirstPartyServerTools("pagerduty")) ?? {})).toEqual([
+      "pagerduty_pd_incident_acknowledge",
+    ]);
+    expect(m.toolsGenerationFor("pagerduty")).toBe(0);
+    expect(calls).toEqual(["ensurePagerdutyRunning"]);
+  });
+
+  test("an unconfigured onedrive or pagerduty (token without from_email) never reaches any ensure*", async () => {
+    const { m, ensures } = await build({
+      secrets: { "pagerduty.api_token": "t" },
+      slots: {
+        [LAZY_MESH.microsoftBundle]: { onedrive_onedrive_item_move: {} },
+        [LAZY_MESH.pagerduty]: { pagerduty_pd_incident_acknowledge: {} },
+      },
+    });
+    for (const s of ["onedrive", "pagerduty"]) {
+      expect(await m.listFirstPartyServerTools(s), s).toBeUndefined();
+      expect(m.toolsGenerationFor(s), s).toBe(-1);
+    }
+    expect(ensures()).toBe(0);
+  });
+
   test("obsidian is configured by its vault paths, never by the Vault", async () => {
     const without = await build({ slots: { [LAZY_MESH.obsidian]: { obsidian_x: {} } } });
     expect(await without.m.listFirstPartyServerTools("obsidian")).toBeUndefined();
@@ -320,7 +367,9 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
         "linear",
         "notion",
         "obsidian",
+        "onedrive",
         "outlook",
+        "pagerduty",
         "slack",
         "teams",
       ].sort((a, b) => a.localeCompare(b)),

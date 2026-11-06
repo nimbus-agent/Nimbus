@@ -292,7 +292,7 @@ const OAUTH_UNSUPPORTED_DETAILS: Partial<Record<ConnectorServiceId, string>> = {
   discord: "uses a bot token + opt-in",
   jenkins: "uses base URL + username + API token",
   circleci: "uses a personal API token",
-  pagerduty: "uses a REST API token",
+  pagerduty: "uses a REST API token, plus the e-mail of a PagerDuty user for writes",
   kubernetes: "uses a kubeconfig file path",
   aws: "uses access key + secret + region or profile",
   azure: "uses service principal tenant + client id + secret",

@@ -762,6 +762,19 @@ export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
+/**
+ * The PagerDuty child's environment: the API token and, when one is stored, the `From` e-mail the
+ * connector's writes need (`PAGERDUTY_FROM_EMAIL`). An absent or blank e-mail leaves the variable
+ * out, so the reads keep working and only a write refuses.
+ */
+export function pagerdutyChildEnv(token: string, fromEmail: string | null): Record<string, string> {
+  const email = fromEmail?.trim() ?? "";
+  return extensionProcessEnv({
+    PAGERDUTY_API_TOKEN: token.trim(),
+    ...(email === "" ? {} : { PAGERDUTY_FROM_EMAIL: email }),
+  });
+}
+
 export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.pagerduty;
   ctx.clearLazyIdle(slotKey);
@@ -773,6 +786,7 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   if (tok === null || tok.trim() === "") {
     return;
   }
+  const fromEmail = await readConnectorSecret(ctx.vault, "pagerduty", "from_email");
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -781,7 +795,7 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
         pagerduty: wrap(
           {
             ...connectorSpawn("pagerduty"),
-            env: extensionProcessEnv({ PAGERDUTY_API_TOKEN: tok.trim() }),
+            env: pagerdutyChildEnv(tok, fromEmail),
           },
           "pagerduty",
           ctx,

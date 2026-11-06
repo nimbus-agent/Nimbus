@@ -420,6 +420,8 @@ type ConnectorAuthParams = {
   bitbucketUsername?: string;
   username?: string;
   atlassianEmail?: string;
+  /** PagerDuty: the e-mail of a valid PagerDuty user, sent as the `From` header on every write. */
+  fromEmail?: string;
   apiBaseUrl?: string;
   kubeconfigPath?: string;
   context?: string;
@@ -466,12 +468,23 @@ function applyCircleciConnectorAuth(p: ConnectorAuthParams, token: string | unde
   );
 }
 
-function applyPagerdutyConnectorAuth(p: ConnectorAuthParams, token: string | undefined): void {
+function applyPagerdutyConnectorAuth(
+  p: ConnectorAuthParams,
+  token: string | undefined,
+  username: string | undefined,
+): void {
   p.personalAccessToken = requirePatFromFlagsOrEnv(
     token,
     ["NIMBUS_PAGERDUTY_API_TOKEN", "PAGERDUTY_API_TOKEN"],
-    "PagerDuty requires an API token: nimbus connector auth pagerduty --token <token>  (or set NIMBUS_PAGERDUTY_API_TOKEN)",
+    "PagerDuty requires an API token: nimbus connector auth pagerduty --token <token> [--username <email>]  (or set NIMBUS_PAGERDUTY_API_TOKEN)",
   );
+  // PagerDuty requires the e-mail of a valid user as the `From` header on every incident write.
+  // Optional here: without it the connector reads, but acknowledge/resolve/escalate refuse.
+  const fromEmail =
+    username?.trim() || firstEnvTrimmed(["NIMBUS_PAGERDUTY_FROM_EMAIL", "PAGERDUTY_FROM_EMAIL"]);
+  if (fromEmail !== "") {
+    p.fromEmail = fromEmail;
+  }
 }
 
 function applyAwsConnectorAuth(
@@ -782,7 +795,7 @@ const CONNECTOR_AUTH_PARAM_APPLIERS: Record<string, ConnectorPatAuthParamApplier
   linear: (p, f) => applyLinearConnectorAuth(p, f.token),
   github: (p, f) => applyGithubConnectorAuth(p, f.token),
   circleci: (p, f) => applyCircleciConnectorAuth(p, f.token),
-  pagerduty: (p, f) => applyPagerdutyConnectorAuth(p, f.token),
+  pagerduty: (p, f) => applyPagerdutyConnectorAuth(p, f.token, f.username),
   kubernetes: (p, f) => applyKubernetesConnectorAuth(p, f.kubeconfig, f.kubeContext),
   aws: (p, f) => {
     const awsFlags: {
@@ -1410,7 +1423,8 @@ CircleCI: --token (personal API token) or env NIMBUS_CIRCLECI_API_TOKEN / CIRCLE
   const pdEnv = "NIMBUS_PAGERDUTY_API_TOKEN";
   const pdAlt = "PAGERDUTY_API_TOKEN";
   console.log(
-    `PagerDuty: --token (REST API token) or env ${pdEnv} / ${pdAlt} (vault key pagerduty.api_token). Indexes open incidents for search.`,
+    `PagerDuty: --token (REST API token) or env ${pdEnv} / ${pdAlt} (vault key pagerduty.api_token). Indexes open incidents for search.
+  --username <email> (or env NIMBUS_PAGERDUTY_FROM_EMAIL / PAGERDUTY_FROM_EMAIL; vault key pagerduty.from_email): the e-mail of a valid PagerDuty user. PagerDuty requires it as the From header on every incident write (acknowledge, resolve, escalate); without it incidents are read and indexed but those writes are not offered to the model.`,
   );
   console.log(`Kubernetes: --kubeconfig <path> [--context <name>] or env NIMBUS_KUBECONFIG / KUBECONFIG (vault keys kubernetes.kubeconfig, optional kubernetes.context). Indexes cluster deployments.
 

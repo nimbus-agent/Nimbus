@@ -79,7 +79,9 @@ describe("ACTION_PROPOSABILITY", () => {
     expect(PROPOSABLE).toHaveLength(43);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(43);
     expect(all.filter((p) => p.kind === "denied")).toHaveLength(128);
-    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(12);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(
+      12,
+    );
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {

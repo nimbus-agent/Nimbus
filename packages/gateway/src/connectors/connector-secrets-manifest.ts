@@ -21,7 +21,7 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   discord: ["discord.bot_token", "discord.enabled"],
   jenkins: ["jenkins.base_url", "jenkins.username", "jenkins.api_token"],
   circleci: ["circleci.api_token"],
-  pagerduty: ["pagerduty.api_token"],
+  pagerduty: ["pagerduty.api_token", "pagerduty.from_email"],
   kubernetes: ["kubernetes.kubeconfig", "kubernetes.context"],
   aws: ["aws.access_key_id", "aws.secret_access_key", "aws.default_region", "aws.profile"],
   azure: ["azure.tenant_id", "azure.client_id", "azure.client_secret"],

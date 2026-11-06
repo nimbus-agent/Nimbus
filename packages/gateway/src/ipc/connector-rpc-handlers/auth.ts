@@ -43,6 +43,7 @@ import {
   writePerServiceOAuthKey,
 } from "../../connectors/connector-vault.ts";
 import { hasCredentialProbe, runCredentialProbe } from "../../connectors/credential-probe.ts";
+import { isPagerdutyFromEmail } from "../../connectors/pagerduty-from-email.ts";
 import { recordSyncEgress } from "../../egress/sync-egress.ts";
 import type { LocalIndex } from "../../index/local-index.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
@@ -779,6 +780,31 @@ async function connectorAuthOAuthPkce(
   };
 }
 
+/**
+ * PagerDuty: the REST API token, plus (optionally) `fromEmail`, the e-mail of a valid PagerDuty
+ * user. PagerDuty requires it as the `From` header on every incident write, so without it the
+ * connector reads but its writes refuse, and the model door does not offer them. A malformed
+ * address is refused BEFORE anything is stored.
+ */
+async function connectorAuthPagerduty(ctx: ConnectorRpcHandlerContext): Promise<ConnectorRpcHit> {
+  const token = aliasedStringField(ctx.rec, PAT_TOKEN_FIELDS);
+  if (token === "") {
+    throw new ConnectorRpcError(-32602, "Missing API token for pagerduty");
+  }
+  const fromEmail = extractStringField(ctx.rec?.["fromEmail"]).trim();
+  if (fromEmail !== "" && !isPagerdutyFromEmail(fromEmail)) {
+    throw new ConnectorRpcError(
+      -32602,
+      "pagerduty fromEmail must be the e-mail address of a valid PagerDuty user",
+    );
+  }
+  await writeConnectorSecret(ctx.vault, "pagerduty", "api_token", token);
+  if (fromEmail !== "") {
+    await writeConnectorSecret(ctx.vault, "pagerduty", "from_email", fromEmail);
+  }
+  return registerAndSucceed(ctx.localIndex, "pagerduty");
+}
+
 type PatConnectorAuthHandler = (ctx: ConnectorRpcHandlerContext) => Promise<ConnectorRpcHit>;
 
 /** A connector whose `connector.auth` stores ONE token under ONE Vault key. */
@@ -830,12 +856,7 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
     secretKey: "api_token",
     missingTokenMessage: "Missing API token for circleci",
   }),
-  pagerduty: tokenOnlyConnectorAuth({
-    serviceId: "pagerduty",
-    tokenFields: PAT_TOKEN_FIELDS,
-    secretKey: "api_token",
-    missingTokenMessage: "Missing API token for pagerduty",
-  }),
+  pagerduty: (c) => connectorAuthPagerduty(c),
   kubernetes: (c) => connectorAuthKubernetes(c.rec, c.vault, c.localIndex),
   aws: (c) => connectorAuthAws(c.rec, c.vault, c.localIndex),
   azure: (c) => connectorAuthAzure(c.rec, c.vault, c.localIndex),

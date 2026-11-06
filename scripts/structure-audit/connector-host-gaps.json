@@ -63,6 +63,18 @@
       "host": "users.info",
       "kind": "not called",
       "reason": "A Slack Web API method name, passed as the path to slack.com/api/. The .info is not a TLD here."
+    },
+    {
+      "connector": "gitlab",
+      "host": "api.github.com",
+      "kind": "not called",
+      "reason": "Connectors 0.6.0: tools.ts imports the pure isSafeGitRef check from shared/github-rest.ts, which names GH_API. The GitLab connector never calls it."
+    },
+    {
+      "connector": "gitlab",
+      "host": "docs.gitlab.com",
+      "kind": "not called",
+      "reason": "Connectors 0.6.0: a documentation link in a tool description and a code comment, never fetched."
     }
   ],
   "knownUnreachable": [

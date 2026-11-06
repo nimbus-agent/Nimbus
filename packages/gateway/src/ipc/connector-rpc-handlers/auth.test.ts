@@ -973,6 +973,33 @@ describe("token-only connectors (linear, circleci, pagerduty) — reading the to
     });
   }
 
+  test("pagerduty: fromEmail is stored AFTER the token as pagerduty.from_email (trimmed)", async () => {
+    const writes: string[] = [];
+    await handleConnectorAuth(
+      tokenCtx("pagerduty", { token: "t", fromEmail: "  oncall@example.com " }, writes),
+    );
+    expect(writes).toEqual(["pagerduty.api_token=t", "pagerduty.from_email=oncall@example.com"]);
+    expect(loadRegisteredIds()).toEqual(["pagerduty"]);
+  });
+
+  test("pagerduty: a malformed fromEmail is refused BEFORE the token is stored", async () => {
+    for (const bad of ["nope", "a@b", "a b@c.co", "a@@b.co"]) {
+      const writes: string[] = [];
+      expect(
+        await refusalMessage(tokenCtx("pagerduty", { token: "t", fromEmail: bad }, writes)),
+        bad,
+      ).toBe("pagerduty fromEmail must be the e-mail address of a valid PagerDuty user");
+      expect(writes, bad).toEqual([]);
+    }
+    expect(loadRegisteredIds()).toEqual([]);
+  });
+
+  test("pagerduty: no fromEmail stores the token alone (reads work, writes are not offered)", async () => {
+    const writes: string[] = [];
+    await handleConnectorAuth(tokenCtx("pagerduty", { token: "t", fromEmail: "   " }, writes));
+    expect(writes).toEqual(["pagerduty.api_token=t"]);
+  });
+
   /** Service ids with a scheduler row in this test's index — a refusal must register none. */
   function loadRegisteredIds(): string[] {
     return db
