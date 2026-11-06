@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793958066875,
+  "lastUpdate": 1793971026073,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "d134eeab66409690656d3689edd9e02f47e64d8b",
-          "message": "chore: release main (#1256)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.7.0</summary>\n\n##\n[2.7.0](https://github.com/nimbus-agent/Nimbus/compare/v2.6.0...v2.7.0)\n(2026-08-19)\n\n\n### Features\n\n* **briefs:** research briefs draw on the whole index, not only clips\n([#1253](https://github.com/nimbus-agent/Nimbus/issues/1253))\n([80c21df](https://github.com/nimbus-agent/Nimbus/commit/80c21dfa0590d1bbb6af88c6556a4a0cfb7da2d3))\n* **engine:** [persona] gives Nimbus a configurable voice\n([#1248](https://github.com/nimbus-agent/Nimbus/issues/1248))\n([10b3175](https://github.com/nimbus-agent/Nimbus/commit/10b31750e57f1b3a6469b731b0942929b7f4d7fc))\n* **engine:** nimbus ask --devil argues against the plan\n([#1246](https://github.com/nimbus-agent/Nimbus/issues/1246))\n([becc386](https://github.com/nimbus-agent/Nimbus/commit/becc386cb9d114ed4bf9f292b3ce99cb7e97afa7))\n* **metrics:** nimbus stats charts a metric over time\n([#1249](https://github.com/nimbus-agent/Nimbus/issues/1249))\n([ba316d4](https://github.com/nimbus-agent/Nimbus/commit/ba316d412fb25b83d78be798e757bd64c9fdfb80))\n\n\n### Bug Fixes\n\n* **ci:** stop the AuditPanel vitest flake, clear the Sonar board, and\nmake docs/README.md the only README\n([#1252](https://github.com/nimbus-agent/Nimbus/issues/1252))\n([70f15ca](https://github.com/nimbus-agent/Nimbus/commit/70f15ca9ab2d0ad1ccb93acc01ab54ad3106c38f))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-19T15:59:28+03:00",
-          "tree_id": "c7f68b9fcaf59c4713126f1ab12012ff4ecb48cb",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/d134eeab66409690656d3689edd9e02f47e64d8b"
-        },
-        "date": 1787145035554,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 320.684162499999,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.244068350007,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 198.61592389999822,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "0c79015c22b4a4ad3eb3558dcffeae79ecccf4ca",
+          "message": "feat(gateway): pin connectors 0.6.0, classify the Wave 3 writes, offer the Drive, OneDrive, PR close and PagerDuty writes (#1921)\n\nPhase 9.7 PR C1, the first Wave 3 gateway PR. It pins\n`@nimbus-dev/connectors` 0.6.0, classifies the 11 new writes, and\ntemplates the eight existing Wave 3 rows, so the model is offered 56\nwrites, up from 48.\n\n## What changes\n\n- **Pin 0.6.0.** The lockfile is on the published package, and the\nregenerated manifest has 113 registered writes from 39 connectors. This\ncloses the version-skew window that the 0.6.0 release opened.\n- **Eleven new writes are classified, all wave 3.**\n- The new writes: `github_branch_create`, `github_pr_create`,\n`github_pr_update`, `gitlab_branch_create`, `gitlab_mr_create`,\n`gitlab_mr_update`, `launchdarkly_flag_toggle`,\n`launchdarkly_flag_rollout_set`, `flagsmith_feature_state_set`,\n`jira_ops_alert_acknowledge` and `jira_ops_alert_close` (JSM Operations,\nowner ruling OR-W34-7).\n- Each has a row, a hand-written frozen-set type (I2, 160 to 171) and a\n`not_yet_offered` proposability class (43 proposable, 128 denied).\n- They stay untemplated, so the model is offered none of them yet. C2\ntemplates the VCS ones and C3 the flag and alert ones.\n- Recoverability as the connectors declare it: 5 are recoverable and 6\nare not. The gateway does not read it.\n- **The eight existing Wave 3 rows get templates and before-readers:**\n- Drive move, rename and trash, and the OneDrive move. The moves also\nread the destination folder. The Drive move's preview says that without\n`removeParentId` the connector removes the file's first current folder.\n  - The GitHub PR close.\n- PagerDuty acknowledge, resolve and escalate. Escalate has its own\ntemplate with the required level.\n- Template keys are checked against the installed package's own schemas,\nnot only a hand-written list.\n- **Listing slots.** OneDrive joins the Microsoft bundle slot and\nPagerDuty gets its own. A new guard test fails if any model-offerable\nrow's service has no listing slot or credential check, because that case\nis otherwise silent: the template exists but nothing is ever offered.\n- **The PagerDuty `From` email.** 0.6.0 fixed the PagerDuty writes,\nwhich had never worked; PagerDuty requires a `From` user email.\n- It is a new Vault key, `pagerduty.from_email`, set with `nimbus\nconnector auth pagerduty --username <email>` or\n`NIMBUS_PAGERDUTY_FROM_EMAIL`.\n  - The email is checked by a linear, regex-free validator.\n  - It reaches the connector only through `extensionProcessEnv` (I1).\n- Storing it restarts a running PagerDuty slot, so its next write uses\nthe new value.\n- The model is offered the PagerDuty writes only when both the token and\nthe email are stored.\n- **`gdrive_file_trash`** is registered as a write upstream now, so its\nread-registered overlay row is gone.\n\n## Gates\n\n- `preflight:fast`, `typecheck:tests` and `security-invariants.test.ts`\npass.\n- The connectors, engine, ipc and federation directories pass, with\nabout 12,000 tests, plus the CLI connector tests.\n- Istanbul coverage on the changed files is above the floors.\n- `verify:docker --changed` passes.\n\n## Reviews\n\nAntigravity approved the plan in round 2, after eight findings. After\nthe build, an adversarial whole-branch review found no security defect;\nit raised stale doc restatements, the PagerDuty restart, the listing\nguard test, a reader argument check and a generic env fallback, and all\nare fixed.\n\n## Docs\n\nThe five core docs, SECURITY-INVARIANTS (I2, I26 and I53 counts), and\nthe CHANGELOG.\n\nNo migration. No `!`: a user who wants the PagerDuty writes adds the\nemail, and nothing that works today stops working.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added previews and before-action details for eight connector actions,\nincluding Google Drive file changes, OneDrive moves, GitHub pull-request\nclosing, and PagerDuty incident updates.\n* OneDrive and PagerDuty tools now appear in their respective service\nlistings when configured.\n\n* **Updates**\n* PagerDuty incident writes now require a valid PagerDuty user email;\nreads remain available without one.\n* Eleven additional write actions are classified for owner approval but\nare not yet available to the model or through MCP.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T13:01:49Z",
+          "tree_id": "e56d5d5c5a4351920e0280db431ad601d9e80d2b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/0c79015c22b4a4ad3eb3558dcffeae79ecccf4ca"
+        },
+        "date": 1793971020901,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 234.30904494999632,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 233.9739669999977,
             "unit": "ms"
           }
         ]
