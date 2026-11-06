@@ -68,6 +68,9 @@ export function installCliMocks(): void {
     isCancel: (v: unknown): boolean => v === cancelSymbol,
     // `nimbus init`'s "What do you do?" question; cancelled unless a test drives it directly.
     select: async (): Promise<symbol> => cancelSymbol,
+    // The type-to-confirm prompt (Phase 9.7 D0a): cancelled, so a Wave 4 approval declines,
+    // unless a test injects its own text function. A missing export breaks every importer.
+    text: async (): Promise<symbol> => cancelSymbol,
     spinner: (): {
       start: (msg?: string) => void;
       message: (msg?: string) => void;
