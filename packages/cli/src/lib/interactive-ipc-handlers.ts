@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 
-import { confirm, isCancel } from "@clack/prompts";
+import { confirm, isCancel, text } from "@clack/prompts";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 
@@ -15,16 +15,46 @@ export function registerAgentChunkStdout(client: IPCClient): void {
 
 type ConfirmFn = (opts: { message: string }) => Promise<boolean | symbol>;
 
+type TextFn = (opts: { message: string }) => Promise<string | symbol>;
+
+/**
+ * Printed when a request that needs a typed confirmation reaches a handler that cannot collect
+ * one (`--yes`, a scripted consent file). The write is denied; nothing is approved on the owner's
+ * behalf (Phase 9.7 D0a, I53).
+ */
+export const CONFIRM_TEXT_DENIED_LINE =
+  "[consent] this action needs a typed confirmation, which --yes and scripted consent cannot give; denied. Run it interactively.\n";
+
+/** A `consent.request` that carries a non-empty `confirmText` is a Wave 4 (type-to-confirm) request. */
+function confirmTextOf(p: { confirmText?: unknown }): string | undefined {
+  return typeof p.confirmText === "string" && p.confirmText.length > 0 ? p.confirmText : undefined;
+}
+
 export function registerConsentPromptHandler(
   client: IPCClient,
   confirmFn: ConfirmFn = confirm,
+  textFn: TextFn = text,
 ): void {
   client.onNotification("consent.request", async (params: unknown) => {
-    const p = params as { requestId?: string; prompt?: string };
+    const p = params as { requestId?: string; prompt?: string; confirmText?: unknown };
     if (typeof p.requestId !== "string") {
       return;
     }
     const message = typeof p.prompt === "string" ? p.prompt : "Approve action?";
+    const confirmText = confirmTextOf(p);
+    if (confirmText !== undefined) {
+      process.stdout.write(`${message}\n`);
+      const answer = await textFn({
+        message: `Type exactly ${confirmText} to approve (compared exactly as typed: no trimming, case matters; leave empty to decline):`,
+      });
+      const typed = isCancel(answer) || typeof answer !== "string" ? "" : answer;
+      await client.call("consent.respond", {
+        requestId: p.requestId,
+        approved: typed !== "",
+        typed,
+      });
+      return;
+    }
     const ok = await confirmFn({ message });
     const approved = !isCancel(ok) && ok === true;
     await client.call("consent.respond", {
@@ -47,8 +77,13 @@ export function registerConsentPromptHandler(
  */
 export function registerAutoApproveConsentHandler(client: IPCClient, sourceLabel = "--yes"): void {
   client.onNotification("consent.request", async (params: unknown) => {
-    const p = params as { requestId?: string; prompt?: string };
+    const p = params as { requestId?: string; prompt?: string; confirmText?: unknown };
     if (typeof p.requestId !== "string") {
+      return;
+    }
+    if (confirmTextOf(p) !== undefined) {
+      process.stderr.write(CONFIRM_TEXT_DENIED_LINE);
+      await client.call("consent.respond", { requestId: p.requestId, approved: false });
       return;
     }
     const detail = typeof p.prompt === "string" && p.prompt.length > 0 ? p.prompt : p.requestId;
@@ -105,8 +140,14 @@ export function registerScriptConsentHandler(client: IPCClient, source: string):
   }
   let cursor = 0;
   client.onNotification("consent.request", async (params: unknown) => {
-    const p = params as { requestId?: string; prompt?: string };
+    const p = params as { requestId?: string; prompt?: string; confirmText?: unknown };
     if (typeof p.requestId !== "string") {
+      return;
+    }
+    if (confirmTextOf(p) !== undefined) {
+      // Denied without consuming a scripted decision: a script line cannot carry typed text.
+      process.stderr.write(CONFIRM_TEXT_DENIED_LINE);
+      await client.call("consent.respond", { requestId: p.requestId, approved: false });
       return;
     }
     if (cursor >= decisions.length) {

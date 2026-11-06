@@ -5,6 +5,7 @@ import { join } from "node:path";
 
 import type { IPCClient } from "../ipc-client/index.ts";
 import {
+  CONFIRM_TEXT_DENIED_LINE,
   registerAgentChunkStdout,
   registerAutoApproveConsentHandler,
   registerConsentPromptHandler,
@@ -584,5 +585,138 @@ describe("registerScriptConsentHandler — notification handler branches", () =>
     expect(calls).toEqual([
       { method: "consent.respond", params: { requestId: "r-blank", approved: true } },
     ]);
+  });
+});
+
+describe("type-to-confirm (Phase 9.7 D0a)", () => {
+  const CONFIRM = "github/acme/api#42";
+  const noConfirm = async (): Promise<boolean | symbol> => {
+    throw new Error("the yes/no prompt must not be used for a confirm request");
+  };
+
+  function captureStdio(): { restore: () => void; out: () => string; err: () => string } {
+    let out = "";
+    let err = "";
+    const o = process.stdout.write.bind(process.stdout);
+    const e = process.stderr.write.bind(process.stderr);
+    process.stdout.write = ((c: unknown) => {
+      out += String(c);
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((c: unknown) => {
+      err += String(c);
+      return true;
+    }) as typeof process.stderr.write;
+    return {
+      restore: () => {
+        process.stdout.write = o;
+        process.stderr.write = e;
+      },
+      out: () => out,
+      err: () => err,
+    };
+  }
+
+  test("the prompt handler asks for text, says it is compared exactly, and sends approved + typed", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const messages: string[] = [];
+    const textFn = async (o: { message: string }): Promise<string | symbol> => {
+      messages.push(o.message);
+      return CONFIRM;
+    };
+    const cap = captureStdio();
+    try {
+      registerConsentPromptHandler(client, noConfirm, textFn);
+      await fire("consent.request", {
+        requestId: "w4",
+        prompt: "Merge PR?\n\nTo approve, type exactly: github/acme/api#42",
+        confirmText: CONFIRM,
+      });
+    } finally {
+      cap.restore();
+    }
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "w4", approved: true, typed: CONFIRM } },
+    ]);
+    expect(cap.out()).toContain("Merge PR?");
+    expect(messages[0]).toContain(CONFIRM);
+    expect(messages[0]).toContain("compared exactly as typed");
+  });
+
+  test("the typed text is sent untrimmed (the gateway decides)", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const cap = captureStdio();
+    try {
+      registerConsentPromptHandler(client, noConfirm, async () => ` ${CONFIRM}`);
+      await fire("consent.request", { requestId: "w4s", prompt: "p", confirmText: CONFIRM });
+    } finally {
+      cap.restore();
+    }
+    expect(calls[0]?.params).toEqual({ requestId: "w4s", approved: true, typed: ` ${CONFIRM}` });
+  });
+
+  test("a cancelled or empty answer sends approved false with empty typed", async () => {
+    for (const answer of [Symbol("cancel"), ""]) {
+      const { client, fire, calls } = makeMultiClient();
+      const cap = captureStdio();
+      try {
+        registerConsentPromptHandler(client, noConfirm, async () => answer);
+        await fire("consent.request", { requestId: "w4c", prompt: "p", confirmText: CONFIRM });
+      } finally {
+        cap.restore();
+      }
+      expect(calls).toEqual([
+        { method: "consent.respond", params: { requestId: "w4c", approved: false, typed: "" } },
+      ]);
+    }
+  });
+
+  test("an empty confirmText is not a confirm request: the yes/no prompt is used", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    registerConsentPromptHandler(
+      client,
+      async () => true,
+      async () => "x",
+    );
+    await fire("consent.request", { requestId: "plain", prompt: "p", confirmText: "" });
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "plain", approved: true } },
+    ]);
+  });
+
+  test("--yes denies a confirm request with the fixed stderr line", async () => {
+    const { client, fire, calls } = makeMultiClient();
+    const cap = captureStdio();
+    try {
+      registerAutoApproveConsentHandler(client);
+      await fire("consent.request", { requestId: "w4y", prompt: "p", confirmText: CONFIRM });
+    } finally {
+      cap.restore();
+    }
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "w4y", approved: false } },
+    ]);
+    expect(cap.err()).toBe(CONFIRM_TEXT_DENIED_LINE);
+    expect(cap.err()).not.toContain("auto-approving");
+  });
+
+  test("scripted consent denies a confirm request, consumes no decision, and sends no typed", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "script-consent-w4-"));
+    const source = join(tmpDir, "d.jsonl");
+    writeFileSync(source, '{"approved":true,"typed":"x"}\n', "utf8");
+    const { client, fire, calls } = makeMultiClient();
+    const cap = captureStdio();
+    try {
+      registerScriptConsentHandler(client, source);
+      await fire("consent.request", { requestId: "w4j", prompt: "p", confirmText: CONFIRM });
+      await fire("consent.request", { requestId: "after", prompt: "Plain" });
+    } finally {
+      cap.restore();
+    }
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "w4j", approved: false } },
+      { method: "consent.respond", params: { requestId: "after", approved: true } },
+    ]);
+    expect(cap.err()).toBe(CONFIRM_TEXT_DENIED_LINE);
   });
 });
