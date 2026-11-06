@@ -4376,6 +4376,18 @@ describe("D41 — a Wave 4 write is approved only by typed text, judged only at 
     }
   });
 
+  test("(c3) FAILS on a second plain requestApproval call through any receiver", () => {
+    const phase = "  private async approvalPhase(action, preview, confirm, record) {\n";
+    for (const extra of [
+      "const channel = this.consent; await channel.requestApproval(prompt);",
+      "await this.consent.requestApproval?.(prompt);",
+      "await other\n      .requestApproval (prompt);",
+    ]) {
+      const twice = EXECUTOR_GOOD.replace(phase, `${phase}    ${extra}\n`);
+      expect(rules(replace(EXECUTOR, twice)), extra).toEqual(["confirm-order-pinned"]);
+    }
+  });
+
   test("(d) FAILS when the typed call moves out of confirmedOwnerPrompt, or Wave 4 is not read from the row", () => {
     const moved = EXECUTOR_GOOD.replace(
       "  private async approvalPhase(action, preview, confirm, record) {\n",

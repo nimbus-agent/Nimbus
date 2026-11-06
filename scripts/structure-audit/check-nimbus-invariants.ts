@@ -2543,7 +2543,8 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
   }
   const phase = d41Span(code, /\bprivate\s+async\s+approvalPhase\s*\(/, "\n  }\n");
   const owner = d41Span(code, /\bprivate\s+async\s+confirmedOwnerPrompt\s*\(/, "\n  }\n");
-  const plainCalls = [...code.matchAll(/\bthis\.consent\.requestApproval\s*\(/g)];
+  // Any receiver (an alias of the channel, `this.consent`, an optional call): exactly one call.
+  const plainCalls = [...code.matchAll(/\.\s*requestApproval\s*(?:\?\.)?\s*\(/g)];
   const plainAt = plainCalls[0]?.index;
   // The guard must be `if (confirm.kind === "none") {` and the plain call must sit INSIDE its block:
   // reading the literal needs the string contents, which `code` has blanked; `stripStringLiterals`
