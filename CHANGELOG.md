@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.33.0](https://github.com/nimbus-agent/Nimbus/compare/v10.32.0...v10.33.0) (2026-11-06)
+
+
+### Features
+
+* **gateway:** pin connectors 0.6.0, classify the Wave 3 writes, offer the Drive, OneDrive, PR close and PagerDuty writes ([#1921](https://github.com/nimbus-agent/Nimbus/issues/1921)) ([0c79015](https://github.com/nimbus-agent/Nimbus/commit/0c79015c22b4a4ad3eb3558dcffeae79ecccf4ca))
+
 ## [10.32.0](https://github.com/nimbus-agent/Nimbus/compare/v10.31.0...v10.32.0) (2026-11-06)
 
 
