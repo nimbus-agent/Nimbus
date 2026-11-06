@@ -51,7 +51,7 @@ function isWhitespace(cp: number): boolean {
   );
 }
 
-/** Trimmed, with each internal whitespace run collapsed to one space. Linear, no regular expression. */
+/** Trimmed, with each internal whitespace run collapsed to one space (the raw value must equal it: `scalarText`). Linear, no regular expression. */
 function normaliseValue(s: string): string {
   let out = "";
   let pendingSpace = false;
@@ -67,14 +67,20 @@ function normaliseValue(s: string): string {
   return out;
 }
 
-/** One scalar (a non-empty string or a finite number) as normalised text, or undefined. */
+/**
+ * One scalar (a non-empty string or a finite number) as text, or undefined. The text must be the
+ * value the connector receives, character for character: a string whose normalised form differs
+ * from itself (a leading or trailing space, a doubled space, a tab, a no-break space or any other
+ * whitespace but one interior ASCII space) is refused, because `deploy prod` and `deploy  prod`
+ * would otherwise show and be typed as the same text yet dispatch as two different targets.
+ */
 function scalarText(v: unknown): string | undefined {
   let raw: string;
   if (typeof v === "string") raw = v;
   else if (typeof v === "number" && Number.isFinite(v)) raw = String(v);
   else return undefined;
   const text = normaliseValue(raw);
-  return text === "" ? undefined : text;
+  return text === "" || text !== raw ? undefined : text;
 }
 
 /** A field's value: a scalar, or an array of scalars joined with single spaces in input order (a comma is outside the confirm character set). */
@@ -107,7 +113,7 @@ function fieldText(
 
 /**
  * The text the owner types to approve a Wave 4 write: `<service>/<rendered template>`. Each value
- * is trimmed and whitespace-collapsed; the whole text must be printable ASCII letters, digits,
+ * must already be its own normalised form (no leading, trailing or doubled space, no other whitespace: else a refusal); the whole text must be printable ASCII letters, digits,
  * space and `_ - . /  : # @ !` and 1 to {@link CONFIRM_MAX_LENGTH} characters. Anything else (an
  * unset, empty, boolean, object or null value, a non-ASCII target, a long target) is a refusal,
  * never a truncation or an escape: an unspeakable target is not confirmed.

@@ -37,14 +37,32 @@ describe("renderConfirmText", () => {
     expect(text(two, { a: ["x", "y"], b: ["z", 3] })).toBe("github/x y/z 3");
   });
 
-  test("trims and collapses whitespace runs in every value", () => {
+  test("a value with a single interior ASCII space renders as it is", () => {
     const r = confirmRow("{a}/{b}");
-    expect(text(r, { a: "  my \t\n  app ", b: ["  p   q  ", "r"] })).toBe("github/my app/p q r");
+    expect(text(r, { a: "my app", b: ["p q", "r"] })).toBe("github/my app/p q r");
   });
 
-  test("trailing whitespace-only tails and leading runs leave no stray space", () => {
+  test("a value the normaliser would change is refused, so the text is injective in the dispatched value", () => {
     const r = confirmRow("{a}");
-    expect(text(r, { a: "  x " })).toBe("github/x");
+    const nbsp = String.fromCharCode(0xa0);
+    for (const bad of [
+      "deploy  prod",
+      " deploy prod",
+      "deploy prod ",
+      "deploy\tprod",
+      "deploy\nprod",
+      `deploy${nbsp}prod`,
+      "deploy prod",
+      "deploy　prod",
+      "x ",
+    ]) {
+      expect(reason(r, { a: bad }), JSON.stringify(bad)).toBe(
+        "confirm: field a is not a usable value",
+      );
+    }
+    // An array element is held to the same rule.
+    expect(reason(r, { a: ["ok", "two  spaces"] })).toBe("confirm: field a is not a usable value");
+    expect(text(r, { a: "deploy prod" })).toBe("github/deploy prod");
   });
 
   test("tail8 keeps the last 8 characters, or the whole id when shorter", () => {
