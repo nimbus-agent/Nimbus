@@ -49,6 +49,10 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 - For **self-hosted GitLab**, set `gitlab.api_base_url` in the Vault (e.g. `https://gitlab.example.com/api/v4`). Defaults to `https://gitlab.com/api/v4`.
 
+**Remote content in a model-written note or issue is refused.** When the model (or an MCP client's proposal) writes a `gitlab_issue_note_create` or `gitlab_mr_note_create` note or a `gitlab_issue_create` description, Nimbus reads the text as Markdown and refuses it, before it asks you, if viewing it would load remote content: any Markdown image (`![alt](url)`, a reference image, an escaped or entity-spelled `!`), whatever its URL, even a relative upload; raw HTML that loads an external URL (`<img src>`, `<picture><source srcset>`, `<video>`, an `<iframe>`, a CSS `url(`); and a diagram block (`mermaid`, PlantUML, a Kroki type) that names a URL. Plain links (`[text](url)`, a bare URL) are allowed and shown to you verbatim; a raw-HTML `<img>` with a relative `src` such as `/uploads/x.png` is allowed. Code blocks are not exempt, so some code is refused too: a Rust `#![allow(...)]`, code holding `url(`, `@import` or `src="https://`, an unclosed `<` followed by a letter (`if a <b`), an HTML snippet quoted in a code block. Describe the code or link to the file instead. The refusal is the same fixed message every time and repeats nothing from the text.
+
+A line that starts with `::include` (after any `>` quote markers) is refused as well, since an instance can fetch an included URL. Unless your administrator enabled GitLab's asset proxy, an external image is loaded from each viewer's own browser, so its owner would see every viewer.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

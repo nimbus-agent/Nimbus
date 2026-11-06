@@ -1,8 +1,9 @@
 // packages/gateway/src/connectors/connector-writes/remote-content.ts
-// The remote-content detectors of Phase 9.7 PR B3r (owner rulings OR-B3-2 and OR-B3r-1..4): does
-// a model-written draft, page, note or markup file load remote content (an external image, embed,
-// frame, stylesheet, refresh or base URL) when someone opens it? `remoteContentIn(format, text)`
-// returns `true` to refuse. Pure: a string in, a boolean out; no network, config or Vault.
+// The remote-content detectors of Phase 9.7 PRs B3r and B3w (owner rulings OR-B3-2, OR-B3r-1..4
+// and OR-B3w-1..3): does a model-written draft, page, note, markup file, sent Outlook mail, Teams
+// HTML message or GitHub, GitLab or Linear Markdown body load remote content (an external image,
+// embed, frame, stylesheet, refresh or base URL) when someone opens it?
+// `remoteContentIn(format, text)` returns `true` to refuse. Pure: a string in, a boolean out; no network, config or Vault.
 //
 // These are DETECTORS, never sanitizers: nothing here strips, rewrites or returns modified text
 // (CodeQL js/incomplete-multi-character-sanitization, js/bad-tag-filter). HTML and storage are read
