@@ -36,6 +36,11 @@ import {
 import { setModelWriteEnablement } from "./enablement-store.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
+import {
+  BROADCAST_MENTION_REFUSAL,
+  GITLAB_QUICK_ACTION_REFUSAL,
+  REMOTE_CONTENT_REFUSAL,
+} from "./model-write-refusals.ts";
 import { createModelWriteToolSource } from "./model-write-source.ts";
 import {
   buildConnectorWritePreviewFrom,
@@ -422,6 +427,23 @@ describe("C2 selectors", () => {
     expect(line({ ...MR, draft: undefined }, {})).toBe("unchanged (ready)");
   });
 
+  test("GitLab MR update: a title GitLab and the folded detector may read differently is UNCERTAIN, never 'unchanged (draft)'", () => {
+    const line = (reply: unknown, picked: Record<string, unknown>) =>
+      fieldMap(selectGitlabMrUpdate(reply, picked))["Draft state"];
+    const draft = { ...MR, title: "Draft: Fix x", draft: true };
+    const uncertain = "UNCERTAIN: the new title may or may not mark this merge request as draft";
+    for (const title of [
+      "Dra​ft: x",
+      "Draft：x",
+      "［Draft］x",
+      "Draft&#58; x",
+      "WIP: x",
+    ]) {
+      expect(line(draft, { title }), title).toBe(uncertain);
+    }
+    expect(line({ ...MR, draft: false }, { title: "WIP: x" })).toBe(uncertain);
+  });
+
   test("GitLab MR update: title, state, target branch RETARGETS; never the description", () => {
     const f = fieldMap(selectGitlabMrUpdate(mcp(MR), { targetBranch: "release" }));
     expect(f["Title"]).toBe("Fix x");
@@ -680,24 +702,45 @@ describe("C2 through the real door", () => {
 
   test("hostile model calls are refused by the per-call recheck; nothing is dispatched or prompted", async () => {
     const d = await door({});
-    const hostile: ReadonlyArray<readonly [string, Record<string, unknown>]> = [
-      ["github__github_pr_create", { ...CLEAN.github_pr_create, body: "cc @org/team" }],
-      ["github__github_pr_create", { ...CLEAN.github_pr_create, title: "@org/team" }],
+    const hostile: ReadonlyArray<readonly [string, Record<string, unknown>, string]> = [
+      [
+        "github__github_pr_create",
+        { ...CLEAN.github_pr_create, body: "cc @org/team" },
+        BROADCAST_MENTION_REFUSAL,
+      ],
+      [
+        "github__github_pr_create",
+        { ...CLEAN.github_pr_create, title: "@org/team" },
+        BROADCAST_MENTION_REFUSAL,
+      ],
       [
         "github__github_pr_update",
         { owner: "o", repo: "r", pullNumber: 1, body: "![x](https://evil/p.png)" },
+        REMOTE_CONTENT_REFUSAL,
       ],
-      ["github__github_pr_create", { ...CLEAN.github_pr_create, body: "<img src=//h>" }],
-      ["gitlab__gitlab_mr_create", { ...CLEAN.gitlab_mr_create, description: "/merge" }],
+      [
+        "github__github_pr_create",
+        { ...CLEAN.github_pr_create, body: "<img src=//h>" },
+        REMOTE_CONTENT_REFUSAL,
+      ],
+      [
+        "gitlab__gitlab_mr_create",
+        { ...CLEAN.gitlab_mr_create, description: "/merge" },
+        GITLAB_QUICK_ACTION_REFUSAL,
+      ],
       [
         "gitlab__gitlab_mr_update",
         { projectPath: "g/r", mergeRequestIid: 2, description: "ok\n/approve" },
+        GITLAB_QUICK_ACTION_REFUSAL,
       ],
-      ["gitlab__gitlab_mr_create", { ...CLEAN.gitlab_mr_create, title: "@all" }],
+      [
+        "gitlab__gitlab_mr_create",
+        { ...CLEAN.gitlab_mr_create, title: "@all" },
+        BROADCAST_MENTION_REFUSAL,
+      ],
     ];
-    for (const [name, input] of hostile) {
-      const out = JSON.stringify(await d.call(name, input));
-      expect(out, name).toContain("refused");
+    for (const [name, input, refusal] of hostile) {
+      expect(await d.call(name, input), name).toEqual({ refused: refusal });
     }
     expect(d.prompts).toEqual([]);
     expect(d.dispatched).toEqual([]);

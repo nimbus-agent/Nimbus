@@ -6,7 +6,7 @@ import {
   requiredStringAt,
   stringAt,
 } from "./before-select.ts";
-import { gitlabTitleLooksDraft } from "./gitlab-draft.ts";
+import { gitlabTitleIsDraftExact, gitlabTitleLooksDraft } from "./gitlab-draft.ts";
 import {
   type BeforeStateField,
   type ConnectorWriteRow,
@@ -194,8 +194,11 @@ export function selectGithubPrUpdate(
 function gitlabDraftLine(currentDraft: boolean, newTitle: unknown): string {
   const now = currentDraft ? "draft" : "ready";
   if (typeof newTitle !== "string") return `unchanged (${now})`;
-  const next = gitlabTitleLooksDraft(newTitle);
-  if (next === currentDraft) return `unchanged (${now})`;
+  const exact = gitlabTitleIsDraftExact(newTitle);
+  if (exact !== gitlabTitleLooksDraft(newTitle)) {
+    return "UNCERTAIN: the new title may or may not mark this merge request as draft";
+  }
+  if (exact === currentDraft) return `unchanged (${now})`;
   return currentDraft
     ? "MARKS READY: the new title drops its draft prefix"
     : "MARKS AS DRAFT: the new title adds a draft prefix";

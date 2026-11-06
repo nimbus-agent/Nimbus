@@ -2,7 +2,7 @@
 // String.fromCodePoint: none is written literally.
 import { describe, expect, test } from "bun:test";
 
-import { gitlabTitleLooksDraft } from "./gitlab-draft.ts";
+import { gitlabTitleIsDraftExact, gitlabTitleLooksDraft } from "./gitlab-draft.ts";
 
 const ZWSP = String.fromCodePoint(0x200b);
 const RLO = String.fromCodePoint(0x202e);
@@ -40,6 +40,28 @@ describe("gitlabTitleLooksDraft", () => {
     const start = performance.now();
     gitlabTitleLooksDraft(`${" ".repeat(200_000)}x`);
     gitlabTitleLooksDraft(`[${"draft".repeat(40_000)}`);
+    expect(performance.now() - start).toBeLessThan(2000);
+  });
+});
+
+describe("gitlabTitleIsDraftExact (GitLab's own rule on the raw title)", () => {
+  test.each(["Draft: x", "DRAFT: x", "[draft] x", "(Draft) x", "Draft:x"])("draft: %j", (t) => {
+    expect(gitlabTitleIsDraftExact(t)).toBe(true);
+  });
+  test.each([
+    "WIP: x",
+    " Draft: x",
+    `Dra${ZWSP}ft: x`,
+    "Draft：x",
+    "［Draft］x",
+    "Draft&#58; x",
+    "x",
+  ])("not a draft: %j", (t) => {
+    expect(gitlabTitleIsDraftExact(t)).toBe(false);
+  });
+  test("is linear in the title length", () => {
+    const start = performance.now();
+    gitlabTitleIsDraftExact(`[${"draft".repeat(40_000)}`);
     expect(performance.now() - start).toBeLessThan(2000);
   });
 });
