@@ -4431,7 +4431,12 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     "    return this.approvalPhase(action, preview, confirm, record);",
     "  }",
     "  private async preparePhase(action, opts, scope) {",
+    "    const gate = (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true });",
     "    return runPrepareStep(ops, row, row.bound, action, { prepareToolIds: this.prepareToolIds() });",
+    "  }",
+    "  private async gateWithin(action, opts, scope) {",
+    "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;",
+    "    return this.resolveHitlApproval(action, opts, record, scope);",
     "  }",
     "  private dispatchBoundPhase(action, scope) {",
     "    return injectBoundFields(action, binds, values);",
@@ -4584,6 +4589,52 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     expect(rules(replace(EXECUTOR, `${EXECUTOR_GOOD} PREPARE_TOOL_IDS.delete("x");`))).toContain(
       "bound-prepare-set-frozen",
     );
+  });
+
+  test("(f) FAILS when a caller's prepare type is no longer refused outside the step", () => {
+    const noRefusal = EXECUTOR_GOOD.replace(
+      "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n",
+      "",
+    );
+    expect(rules(replace(EXECUTOR, noRefusal))).toContain("bound-order-pinned");
+    const late = EXECUTOR_GOOD.replace(
+      "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n    return this.resolveHitlApproval(action, opts, record, scope);\n",
+      "    const r = this.resolveHitlApproval(action, opts, record, scope);\n    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n    return r;\n",
+    );
+    expect(rules(replace(EXECUTOR, late))).toContain("bound-order-pinned");
+    const elsewhere = EXECUTOR_GOOD.replace(
+      "  async gate(action, opts) {\n",
+      "  async gate(action, opts) {\n    const s = { prepareStep: true };\n",
+    );
+    expect(rules(replace(EXECUTOR, elsewhere))).toContain("bound-order-pinned");
+    const gone = EXECUTOR_GOOD.replace("{ bind: false, prepareStep: true }", "{ bind: false }");
+    expect(rules(replace(EXECUTOR, gone))).toContain("bound-order-pinned");
+  });
+
+  test("a test-helpers file is exempt only while no production file imports it", () => {
+    const helper = file(
+      "packages/gateway/src/engine/fixtures.test-helpers.ts",
+      "withBound(r, b, ids); writeTable;",
+    );
+    expect(rules([...GOOD, helper])).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        helper,
+        file(OTHER, 'import { x } from "../engine/fixtures.test-helpers.ts";'),
+      ]),
+    ).toContain("bound-seam-not-production");
+    // A test importing it keeps the exemption.
+    expect(
+      rules([
+        ...GOOD,
+        helper,
+        file(
+          "packages/gateway/src/ipc/y.test.ts",
+          'import { x } from "../engine/fixtures.test-helpers.ts";',
+        ),
+      ]),
+    ).toEqual([]);
   });
 
   test("(e) FAILS when the public gate could bind", () => {

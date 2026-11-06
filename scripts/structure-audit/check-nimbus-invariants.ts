@@ -2609,18 +2609,24 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 //     then `connectors.dispatch`;
 // (c) no production code replaces the write table: `writeTable`, `WriteTable` and `prepareToolIds`
 //     are named only by the executor, the registry, `engine/prepare-step.ts`, prepare-tools.ts and
-//     types.ts (a test-support `*.test-helpers.ts` and test files are exempt), no `new ToolExecutor(`
+//     types.ts (test files, and a test-support `*.test-helpers.ts` that NO production file imports, are
+//     exempt), no `new ToolExecutor(`
 //     passes a ninth argument, no `createConnectorDispatcher(` options name `prepareToolIds` and no
 //     `withBound(` passes a third argument;
 // (d) `PREPARE_TOOL_IDS` is frozen (source pins on prepare-tools.ts: `Object.freeze(` and the three
 //     throwing mutators) and nothing outside tests calls `.add(`, `.delete(` or `.clear(` on it;
 // (e) the public `gate()` can never bind: it passes `{ bind: false }`, `execute()` passes
 //     `{ bind: true }` (each once, in its own method), and `boundRefusal` tests `!scope.bind`
-//     before it calls `boundInputRefusal(`.
+//     before it calls `boundInputRefusal(`;
+// (f) a prepare action type is the step's own read: `prepareStep: true` is written once, in
+//     `preparePhase`, and `gateWithin` tests `isPrepareActionType(` together with
+//     `scope.prepareStep` before it reaches `resolveHitlApproval(`, so a caller's `<svc>.write.prepare`
+//     is refused whichever door sent it.
 // Comments and string literals are stripped before identifiers are matched; test files and anything
 // outside packages/gateway/src/ are not scanned. STATED BOUND, as D33(c)/D41: a dynamically composed
 // name evades a text scan, a second use inside an allow-listed file is exempt whole-file (the order
-// pins narrow that for the executor), and an alias is not followed. The behaviour is pinned by
+// pins narrow that for the executor), and an alias is not followed. The order pins are TEXTUAL: the
+// behavioural tests are authoritative. The behaviour is pinned by
 // `engine/executor-bound.test.ts`, `engine/prepare-step.test.ts` and `connectors/registry.test.ts`.
 const D42_EXECUTOR = "packages/gateway/src/engine/executor.ts";
 const D42_STEP = "packages/gateway/src/engine/prepare-step.ts";
@@ -2662,8 +2668,20 @@ function d42CallArgs(code: string, open: number): string[] {
   return args;
 }
 
+/** The base names of the `*.test-helpers` modules a production file (not a test) imports. */
+function d42ImportedHelpers(files: readonly FileEntry[]): ReadonlySet<string> {
+  const names = new Set<string>();
+  const re = /["'][^"']*?([\w.-]+\.test-helpers)(?:\.ts)?["']/g;
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    for (const m of stripComments(f.contents).matchAll(re)) names.add(m[1] ?? "");
+  }
+  return names;
+}
+
 export function checkBoundWrites(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
+  const importedHelpers = d42ImportedHelpers(files);
   const push = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
     const line = src.slice(0, index).split("\n").length;
     out.push({
@@ -2677,7 +2695,12 @@ export function checkBoundWrites(files: readonly FileEntry[]): Violation[] {
     out.push({ rule, file: f.relPath, line: 1, snippet: what });
   };
   for (const f of files) {
-    if (f.relPath.endsWith(".test.ts") || f.relPath.endsWith(".test-helpers.ts")) continue;
+    if (f.relPath.endsWith(".test.ts")) continue;
+    // A test-support helper is exempt only while no production file imports it.
+    if (f.relPath.endsWith(".test-helpers.ts")) {
+      const base = f.relPath.slice(f.relPath.lastIndexOf("/") + 1).replace(/\.ts$/, "");
+      if (!importedHelpers.has(base)) continue;
+    }
     if (!f.relPath.startsWith("packages/gateway/src/")) continue;
     const commentFree = stripComments(f.contents);
     const code = stripStringLiterals(commentFree);
@@ -2724,7 +2747,27 @@ export function checkBoundWrites(files: readonly FileEntry[]): Violation[] {
   return out;
 }
 
-/** Clauses (b) and (e): the phase order, the single injection site and the public gate's refusal. */
+/** Clause (f): the prepare step's private gate scope, and the gate's refusal of a caller's prepare type. */
+function d42PrepareScopePins(
+  code: string,
+  span: (sig: RegExp) => string,
+  fail: (what: string) => void,
+): void {
+  const scoped = /\bprepareStep\s*:\s*true\b/g;
+  const total = [...code.matchAll(scoped)].length;
+  const within = [...span(/\bprivate\s+async\s+preparePhase\s*\(/).matchAll(scoped)].length;
+  if (total !== 1 || within !== 1) fail("prepareStep: true must be written once, in preparePhase");
+  const gate = span(/\bprivate\s+async\s+gateWithin\s*\(/);
+  const refusal = gate.search(/\bisPrepareActionType\s*\([^)]*\)\s*&&\s*scope\.prepareStep\b/);
+  const hitl = gate.search(/\bthis\.resolveHitlApproval\s*\(/);
+  if (refusal === -1 || hitl === -1 || refusal > hitl) {
+    fail(
+      "gateWithin must refuse a prepare type unless scope.prepareStep, before resolveHitlApproval",
+    );
+  }
+}
+
+/** Clauses (b), (e) and (f): the phase order, the single injection site and the public gate's refusal. */
 function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
   const out: Violation[] = [];
   const fail = (what: string): void => {
@@ -2785,6 +2828,7 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
       snippet: "gate() must pass { bind: false } and execute() { bind: true }, once each",
     });
   }
+  d42PrepareScopePins(code, span, fail);
   const refusal = span(/\bprivate\s+boundRefusal\s*\(/);
   const guard = refusal.search(/!\s*scope\.bind\b/);
   const input = refusal.search(/\bboundInputRefusal\s*\(/);
