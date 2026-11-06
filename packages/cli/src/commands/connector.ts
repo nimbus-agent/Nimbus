@@ -1436,7 +1436,7 @@ Linear: use --token or env NIMBUS_LINEAR_API_KEY (linear.api_key).
   or env NIMBUS_JIRA_EMAIL, NIMBUS_JIRA_API_TOKEN, NIMBUS_JIRA_BASE_URL (jira.email, jira.api_token, jira.base_url).
   --cloud-id <uuid> (or env NIMBUS_JIRA_CLOUD_ID; vault key jira.cloud_id): your Atlassian cloud id, needed by the Jira Service Management alert tools
   (acknowledge and close). Optional on a *.atlassian.net site (found by asking https://<site>.atlassian.net/_edge/tenant_info, which also shows it);
-  REQUIRED for a Data Center or proxied site. Leaving the flag off keeps a stored id: only "nimbus connector remove jira" clears it.
+  REQUIRED for a Data Center or proxied site. Leaving the flag off keeps a stored id while the site URL is unchanged; it is cleared when the site changes, or by "nimbus connector remove jira".
 Notion: OAuth in the browser (notion.oauth); see auth notion --help for env setup.
 Confluence: same flags/env pattern as Jira (NIMBUS_CONFLUENCE_* → confluence.email, confluence.api_token, confluence.base_url).
 `);

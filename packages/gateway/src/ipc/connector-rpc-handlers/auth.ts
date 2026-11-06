@@ -39,6 +39,7 @@ import { CONNECTOR_VAULT_SECRET_KEYS } from "../../connectors/connector-secrets-
 import {
   type ConnectorSecretKeyOf,
   deleteConnectorSecret,
+  readConnectorSecret,
   sharedOAuthKey,
   writeConnectorSecret,
   writePerServiceOAuthKey,
@@ -899,17 +900,31 @@ const PAT_CONNECTOR_AUTH_HANDLERS: Partial<Record<ConnectorServiceId, PatConnect
       email: creds.email,
       api_token: creds.apiToken,
     });
-    const value = await registerAtlassianApiConnectorAuth({
-      vault: c.vault,
-      localIndex: c.localIndex,
-      serviceId: "jira",
-      creds,
-    });
-    // Absent leaves a stored id alone: only `connector.remove jira` clears it.
-    if (cloudId !== "") await writeConnectorSecret(c.vault, "jira", "cloud_id", cloudId);
-    // The child reads all four values at spawn only: every successful auth (a rotated token,
-    // e-mail or site URL too, not only a new cloud id) retires a running one.
-    c.connectorMesh?.restartJira();
+    // Everything below mutates the Vault, so the child restart is in a `finally`: it reads all four
+    // values at spawn only, and a write that throws midway must still retire a running one. A
+    // refused or invalid auth threw above, before any write, and never reaches this.
+    let value: Awaited<ReturnType<typeof registerAtlassianApiConnectorAuth>>;
+    try {
+      // A stored cloud id belongs to the site it was stored for. With no new id supplied, keep it
+      // only when the site is unchanged; otherwise the child would hand the OLD tenant's id to the
+      // Operations alert tools of the new site. Cleared BEFORE the new site is written, so a failure
+      // later leaves no stale id (an absent id is the safe state).
+      if (cloudId === "") {
+        const storedBase = await readConnectorSecret(c.vault, "jira", "base_url");
+        if (storedBase !== creds.baseNormalized) {
+          await deleteConnectorSecret(c.vault, "jira", "cloud_id");
+        }
+      }
+      value = await registerAtlassianApiConnectorAuth({
+        vault: c.vault,
+        localIndex: c.localIndex,
+        serviceId: "jira",
+        creds,
+      });
+      if (cloudId !== "") await writeConnectorSecret(c.vault, "jira", "cloud_id", cloudId);
+    } finally {
+      c.connectorMesh?.restartJira();
+    }
     return { kind: "hit", value: { ...value, verified } };
   },
   confluence: async (c) => {

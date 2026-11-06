@@ -773,20 +773,101 @@ describe("PAT handlers — the exact Vault plan, then the shared registration ta
       }
     });
 
-    test("no cloudId stores the three credentials alone, leaves a stored id untouched, and still restarts the child", async () => {
+    test("no cloudId on the SAME site keeps the stored id, stores the three credentials, and still restarts the child", async () => {
       const seq: string[] = [];
       const restarts: string[] = [];
       const ctx = withMesh(recordingCtx("jira", JIRA, seq), restarts);
       await ctx.vault.set("jira.cloud_id", CLOUD_ID);
+      await ctx.vault.set("jira.base_url", "https://acme.atlassian.net");
       seq.length = 0;
       await handleConnectorAuth(ctx);
       expect(seq).toEqual(["egress:jira", "probe:jira", ...BASE_WRITES, registered("jira")]);
       expect(await ctx.vault.get("jira.cloud_id")).toBe(CLOUD_ID);
       expect(restarts).toEqual(["jira"]);
-      // A blank cloudId counts as absent.
-      const blank = withMesh(recordingCtx("jira", { ...JIRA, cloudId: "   " }, []), restarts);
+      // A blank cloudId counts as absent; a trailing slash on the same site is the same site.
+      const blank = withMesh(
+        recordingCtx(
+          "jira",
+          { ...JIRA, cloudId: "   ", apiBaseUrl: "https://acme.atlassian.net/" },
+          [],
+        ),
+        restarts,
+      );
+      await blank.vault.set("jira.cloud_id", CLOUD_ID);
+      await blank.vault.set("jira.base_url", "https://acme.atlassian.net");
       await handleConnectorAuth(blank);
+      expect(await blank.vault.get("jira.cloud_id")).toBe(CLOUD_ID);
       expect(restarts).toEqual(["jira", "jira"]);
+    });
+
+    test("no cloudId on a DIFFERENT site (or with no stored site) deletes the stored id before the new site is written", async () => {
+      for (const stored of ["https://other.atlassian.net", null]) {
+        const seq: string[] = [];
+        const restarts: string[] = [];
+        const ctx = withMesh(recordingCtx("jira", JIRA, seq), restarts);
+        await ctx.vault.set("jira.cloud_id", CLOUD_ID);
+        if (stored !== null) await ctx.vault.set("jira.base_url", stored);
+        seq.length = 0;
+        await handleConnectorAuth(ctx);
+        expect(seq, String(stored)).toEqual([
+          "egress:jira",
+          "probe:jira",
+          "delete:jira.cloud_id",
+          ...BASE_WRITES,
+          registered("jira"),
+        ]);
+        expect(await ctx.vault.get("jira.cloud_id"), String(stored)).toBeNull();
+        expect(restarts).toEqual(["jira"]);
+      }
+    });
+
+    test("a cloudId supplied with a different site is stored, not deleted", async () => {
+      const seq: string[] = [];
+      const ctx = withMesh(recordingCtx("jira", { ...JIRA, cloudId: CLOUD_ID }, seq), []);
+      await ctx.vault.set("jira.base_url", "https://other.atlassian.net");
+      await handleConnectorAuth(ctx);
+      expect(seq.some((op) => op.startsWith("delete:"))).toBe(false);
+      expect(await ctx.vault.get("jira.cloud_id")).toBe(CLOUD_ID);
+    });
+
+    test("the child restarts even when writing the cloud id throws after the other secrets were written", async () => {
+      const restarts: string[] = [];
+      const ctx = withMesh(recordingCtx("jira", { ...JIRA, cloudId: CLOUD_ID }, []), restarts);
+      const realSet = ctx.vault.set.bind(ctx.vault);
+      const boom = {
+        ...ctx,
+        vault: {
+          ...ctx.vault,
+          get: ctx.vault.get,
+          set: async (k: string, v: string) => {
+            if (k === "jira.cloud_id") throw new Error("vault write failed");
+            await realSet(k, v);
+          },
+          delete: ctx.vault.delete,
+          listKeys: ctx.vault.listKeys,
+        },
+      };
+      const outcome = await handleConnectorAuth(boom as ConnectorRpcHandlerContext).then(
+        () => "ok",
+        (e: unknown) => (e as Error).message,
+      );
+      expect(outcome).toBe("vault write failed");
+      expect(await ctx.vault.get("jira.api_token")).toBe("t");
+      expect(restarts).toEqual(["jira"]);
+    });
+
+    test("a refused probe never restarts, stores nothing and deletes nothing", async () => {
+      for (const verdict of [{ kind: "rejected", httpStatus: 403 }] as const) {
+        const seq: string[] = [];
+        const restarts: string[] = [];
+        const ctx = withMesh(recordingCtx("jira", JIRA, seq, verdict), restarts);
+        await ctx.vault.set("jira.cloud_id", CLOUD_ID);
+        seq.length = 0;
+        await handleConnectorAuth(ctx).catch(() => undefined);
+        expect(seq).toEqual(["egress:jira", "probe:jira"]);
+        expect(await ctx.vault.get("jira.cloud_id")).toBe(CLOUD_ID);
+        expect(restarts).toEqual([]);
+      }
     });
 
     test("a refused auth (rejected credential, missing field) restarts nothing", async () => {
