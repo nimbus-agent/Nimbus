@@ -1636,40 +1636,44 @@ describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
     TIMING_TEST_TIMEOUT_MS,
   );
 
-  test(
-    "forge-markdown: prose, closed fences and diagram fences (allowed); open fences, `![`, includes and a long quote prefix (refused)",
-    () => {
-      const FENCE = "\x60\x60\x60";
-      const prose = (n: number): string => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n);
-      const closed = (n: number): string => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n);
-      const diagrams = (n: number): string =>
-        `${FENCE}mermaid${LF}graph TD; A-->B${LF}${FENCE}${LF}`.repeat(n);
-      for (const build of [prose, closed, diagrams]) {
-        expect(remoteContentIn("forge-markdown", build(3))).toBe(false);
-      }
-      expectLinear("forge-markdown", prose, 20_000);
-      expectLinear("forge-markdown", closed, 25_000);
-      expectLinear("forge-markdown", diagrams, 15_000);
-      // One non-diagram fence of many lines: fast-forwarded, never concatenated (review fix 4).
-      const bigFence = (n: number): string =>
-        `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`;
-      expect(remoteContentIn("forge-markdown", bigFence(3))).toBe(false);
-      expectLinear("forge-markdown", bigFence, 50_000);
-      // Every fence unclosed and no URL (allowed): each opener must not rescan to the end.
-      const openFences = (n: number): string => `${FENCE}mermaid${LF}`.repeat(n);
-      expect(remoteContentIn("forge-markdown", openFences(3))).toBe(false);
-      expectLinear("forge-markdown", openFences, 25_000);
-      const refused: readonly ((n: number) => string)[] = [
-        // Every fence unclosed (the B3r cursor case), with a URL at the very end.
-        (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`,
-        (n) => "![".repeat(n),
-        (n) => `${`::includ${LF}`.repeat(n)}::include`,
-        (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`,
-      ];
-      for (const build of refused) {
-        expect(remoteContentIn("forge-markdown", build(3), { tripwire: false })).toBe(true);
-        expectLinear("forge-markdown", build, 50_000);
-      }
+  // One test per builder: each measures three sizes, and a slow runner must not sum them all
+  // into one timeout.
+  const FENCE = "\x60\x60\x60";
+  const FORGE_ALLOWED_GROWTH: readonly (readonly [string, (n: number) => string, number])[] = [
+    ["prose", (n) => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n), 20_000],
+    ["closed fences", (n) => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n), 25_000],
+    [
+      "diagram fences",
+      (n) => `${FENCE}mermaid${LF}graph TD; A-->B${LF}${FENCE}${LF}`.repeat(n),
+      15_000,
+    ],
+    // One non-diagram fence of many lines: fast-forwarded, never concatenated (review fix 4).
+    ["one big fence", (n) => `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`, 50_000],
+    // Every fence unclosed and no URL: each opener must not rescan to the end.
+    ["every fence unclosed, no URL", (n) => `${FENCE}mermaid${LF}`.repeat(n), 25_000],
+  ];
+  const FORGE_REFUSED_GROWTH: readonly (readonly [string, (n: number) => string])[] = [
+    // Every fence unclosed (the B3r cursor case), with a URL at the very end.
+    ["every fence unclosed, a URL at the end", (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`],
+    ["many `![`", (n) => "![".repeat(n)],
+    ["many near-includes", (n) => `${`::includ${LF}`.repeat(n)}::include`],
+    ["a long quote prefix", (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`],
+  ];
+
+  test.each(FORGE_ALLOWED_GROWTH)(
+    "forge-markdown allowed: %s",
+    (_label, build, n) => {
+      expect(remoteContentIn("forge-markdown", build(3))).toBe(false);
+      expectLinear("forge-markdown", build, n);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+
+  test.each(FORGE_REFUSED_GROWTH)(
+    "forge-markdown refused: %s",
+    (_label, build) => {
+      expect(remoteContentIn("forge-markdown", build(3), { tripwire: false })).toBe(true);
+      expectLinear("forge-markdown", build, 50_000);
     },
     TIMING_TEST_TIMEOUT_MS,
   );

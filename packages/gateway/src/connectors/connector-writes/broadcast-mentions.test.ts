@@ -261,6 +261,27 @@ describe("messagingDestinationRefusal: the broadcast rule on the rows (OR1)", ()
     );
   });
 
+  test('B3w W4: any present contentType other than "text" is HTML for the broadcast scan too', () => {
+    const input = (contentType: unknown) => ({
+      chatId: "19:a@thread.v2",
+      body: "@<i></i>channel",
+      contentType,
+    });
+    for (const contentType of ["HTML", null, 42, ""]) {
+      expect(
+        messagingDestinationRefusal("teams_message_post_chat", input(contentType), NO_CHATOPS),
+        String(contentType),
+      ).toBe(BROADCAST_MENTION_REFUSAL);
+    }
+    // An inherited contentType is not the row's own (own properties only).
+    const inherited = Object.create({ contentType: "html" }) as Record<string, unknown>;
+    inherited["chatId"] = "19:a@thread.v2";
+    inherited["body"] = "@<i></i>channel";
+    expect(
+      messagingDestinationRefusal("teams_message_post_chat", inherited, NO_CHATOPS),
+    ).toBeUndefined();
+  });
+
   test("positive controls on the same rows are allowed", () => {
     expect(
       messagingDestinationRefusal(

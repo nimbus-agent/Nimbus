@@ -884,6 +884,10 @@ describe("B3r: remote content is refused on the real rows through the real door"
     return { exec, prompts, dispatched, egress };
   }
 
+  /** The door's fixtures for rows the model is offered (`outlook_mail_send` never is, OR-B3w-1). */
+  const offeredToModel = (c: { readonly toolId: string }): boolean =>
+    CONNECTOR_WRITE_ROWS.some((r) => r.toolId === c.toolId && isModelOfferableRow(r));
+
   const nameOf = (toolId: string): string => {
     const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === toolId);
     if (r === undefined) throw new Error(toolId);
@@ -921,6 +925,22 @@ describe("B3r: remote content is refused on the real rows through the real door"
       { name: "report.html", mimeType: "text/plain", content: "<img src=//h>" },
     ],
     ["obsidian_append_to_daily_note", { vault_id: "Work", content: "![](https://h/p.gif)" }],
+    // B3w: the comment row HAS a before reader, which must not run.
+    [
+      "github_issue_comment_create",
+      { owner: "o", repo: "r", issueNumber: 1, body: "![](https://h/p.gif)" },
+    ],
+    [
+      "teams_message_post",
+      {
+        teamId: "t",
+        channelId: "19:other@thread.tacv2",
+        contentType: "html",
+        body: `<img src="https://h/p.gif">`,
+      },
+    ],
+    ["gitlab_mr_note_create", { projectPath: "g/r", mergeRequestIid: 9, body: "<img src=//h>" }],
+    ["linear_comment_create", { issueId: "i", body: "![x](https://h)" }],
     [
       "confluence_page_append",
       { pageId: "123", storageHtml: '<ac:image><ri:url ri:value="https://h/x.png"/></ac:image>' },
@@ -941,7 +961,7 @@ describe("B3r: remote content is refused on the real rows through the real door"
 
   test("every bypass form of both reviews is refused at the model door; nothing is executed", async () => {
     const door = await realDoor(() => BOUND);
-    for (const c of REMOTE_CONTENT_REFUSED_CASES) {
+    for (const c of REMOTE_CONTENT_REFUSED_CASES.filter(offeredToModel)) {
       expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({
         refused: REMOTE_CONTENT_REFUSAL,
       });
@@ -951,7 +971,7 @@ describe("B3r: remote content is refused on the real rows through the real door"
 
   test("every allowed form reaches the executor unchanged", async () => {
     const door = await realDoor(() => BOUND);
-    for (const c of REMOTE_CONTENT_ALLOWED_CASES) {
+    for (const c of REMOTE_CONTENT_ALLOWED_CASES.filter(offeredToModel)) {
       const before = door.executed.length;
       expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({ sent: true });
       expect(door.executed.length, c.label).toBe(before + 1);

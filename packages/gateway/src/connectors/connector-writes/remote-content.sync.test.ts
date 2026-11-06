@@ -174,3 +174,157 @@ describe("remote-content: the installed connectors send each body as the rule re
     ).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// B3w (plan Task 3): the sent-mail, Teams and forge rows, and the re-checked exclusions.
+// ---------------------------------------------------------------------------------------------
+
+/** The comment-free text of a connectors-package file by package-relative path. */
+function packageFile(rel: string): string {
+  const src = SOURCES.find((s) => s.rel === rel);
+  if (src === undefined) throw new Error(`${rel} is not in the installed connectors package`);
+  return compact(stripComments(src.text));
+}
+
+// (f)
+function outlookSendUsesGraphMessage(call: string): boolean {
+  return compact(call).includes(
+    "JSON.stringify({ message: graphMessage(data), saveToSentItems: true })",
+  );
+}
+
+// (g)
+function teamsSendsBodyOnly(file: string): boolean {
+  const at = file.indexOf("async function postGraphMessage(");
+  if (at === -1) return false;
+  const fn = file.slice(at, file.indexOf("}); }", at) + 5);
+  return (
+    fn.includes('body: { contentType: contentType === "html" ? "html" : "text", content, }') &&
+    !/attachments|hostedContents|mentions/.test(fn)
+  );
+}
+
+// (h), (i)
+const sends = (call: string, needle: string): boolean => compact(call).includes(needle);
+
+// (j)
+function slackSendsTextOnly(call: string): boolean {
+  const c = compact(call);
+  return (
+    c.includes(
+      "const body: Record<string, unknown> = { channel: parsed.channel, text: parsed.text, };",
+    ) && !/blocks|attachments/.test(c)
+  );
+}
+function discordSendsContentOnly(call: string): boolean {
+  const c = compact(call);
+  return (
+    c.includes(
+      'body: JSON.stringify({ content: parsed.content, allowed_mentions: { parse: ["users"] }, })',
+    ) && !/embeds/.test(c)
+  );
+}
+
+describe("remote-content (B3w): the installed connectors send each new body as the rule reads it", () => {
+  test("(f) outlook_mail_send posts graphMessage(data) (the draft's mapping, pin (b))", () => {
+    expect(outlookSendUsesGraphMessage(registration("outlook_mail_send", "outlook"))).toBe(true);
+  });
+
+  test("(g) Teams posts only { body: { contentType, content } }, and both tools pass parsed.contentType", () => {
+    const file = packageFile("connectors/teams/src/tools.ts");
+    expect(teamsSendsBodyOnly(file)).toBe(true);
+    for (const id of ["teams_message_post", "teams_message_post_chat"]) {
+      expect(compact(registration(id, "teams")), id).toContain("parsed.contentType");
+    }
+  });
+
+  test("(h) GitHub and GitLab send the body (or description) as given", () => {
+    expect(
+      sends(
+        registration("github_issue_create", "github"),
+        'jsonInit("POST", { title: parsed.title, body: parsed.body })',
+      ),
+    ).toBe(true);
+    expect(
+      sends(
+        registration("github_issue_comment_create", "github"),
+        'jsonInit("POST", { body: parsed.body })',
+      ),
+    ).toBe(true);
+    for (const id of ["gitlab_issue_note_create", "gitlab_mr_note_create"]) {
+      expect(sends(registration(id, "gitlab"), 'jsonBody("POST", { body: parsed.body })'), id).toBe(
+        true,
+      );
+    }
+    expect(
+      sends(registration("gitlab_issue_create", "gitlab"), "description: parsed.description"),
+    ).toBe(true);
+  });
+
+  test("(i) Linear sends the description and the comment body as given", () => {
+    for (const id of ["linear_issue_create", "linear_issue_update"]) {
+      expect(
+        sends(registration(id, "linear"), 'input["description"] = parsed.description'),
+        id,
+      ).toBe(true);
+    }
+    expect(sends(registration("linear_comment_create", "linear"), "body: parsed.body")).toBe(true);
+  });
+
+  test("(j) the exclusions: Slack text only, Discord content only, Jira through plainToAdf", () => {
+    expect(slackSendsTextOnly(registration("slack_message_post", "slack"))).toBe(true);
+    expect(discordSendsContentOnly(registration("discord_message_post", "discord"))).toBe(true);
+    for (const id of ["jira_issue_create", "jira_issue_update", "jira_comment_add"]) {
+      expect(compact(registration(id, "jira")), id).toContain("plainToAdf(parsed.");
+    }
+  });
+
+  test("(k) the plain-text sends: Gmail, Fastmail, IMAP/ProtonMail and Apple send text/plain", () => {
+    expect(packageFile("connectors/gmail/src/tools.ts")).toContain(
+      '"Content-Type: text/plain; charset=UTF-8"',
+    );
+    expect(packageFile("connectors/fastmail/src/jmap-client.ts")).toContain(
+      'bodyStructure: { type: "text/plain"',
+    );
+    const imap = packageFile("shared/imapflow-adapter.ts");
+    expect(imap).toContain("text: input.body,");
+    expect(/\bhtml\s*:/.test(imap)).toBe(false);
+    expect(packageFile("connectors/apple/src/adapters.ts")).toContain(
+      '"Content-Type: text/plain; charset=UTF-8"',
+    );
+  });
+
+  test("guard: each B3w matcher fails a mutated snippet", () => {
+    expect(
+      outlookSendUsesGraphMessage(
+        "JSON.stringify({ message: graphMessage(data), saveToSentItems: true })",
+      ),
+    ).toBe(true);
+    expect(outlookSendUsesGraphMessage("JSON.stringify({ message: { body: data.body } })")).toBe(
+      false,
+    );
+    const teams =
+      'async function postGraphMessage( token, path, content, contentType = "text", ) { return graphRequest(token, path, { body: JSON.stringify({ body: { contentType: contentType === "html" ? "html" : "text", content, }, }), }); }';
+    expect(teamsSendsBodyOnly(teams)).toBe(true);
+    // An `attachments` key added beside the body (the review's planned red-proof).
+    expect(
+      teamsSendsBodyOnly(teams.split("content, },").join("content, }, attachments: [],")),
+    ).toBe(false);
+    expect(
+      slackSendsTextOnly(
+        "const body: Record<string, unknown> = { channel: parsed.channel, text: parsed.text, }; body.blocks = x;",
+      ),
+    ).toBe(false);
+    expect(
+      discordSendsContentOnly(
+        'body: JSON.stringify({ content: parsed.content, allowed_mentions: { parse: ["users"] }, }) embeds',
+      ),
+    ).toBe(false);
+    expect(
+      sends(
+        'jsonInit("POST", { body: render(parsed.body) })',
+        'jsonInit("POST", { body: parsed.body })',
+      ),
+    ).toBe(false);
+  });
+});

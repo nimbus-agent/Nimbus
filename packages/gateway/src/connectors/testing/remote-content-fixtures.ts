@@ -1,8 +1,9 @@
 // packages/gateway/src/connectors/testing/remote-content-fixtures.ts
-// Test fixtures for the B3r remote-content refusal on the REAL doors (plan Tasks 5-6): every
-// structural bypass form of both adversarial reviews, placed in the scanned field of a real row
-// (the Outlook HTML draft, a Confluence page append or comment, a Notion block append or page
-// update, the Obsidian daily-note append, a Drive file create), each beside allowed cases. The
+// Test fixtures for the B3r and B3w remote-content refusal on the REAL doors: every structural
+// bypass form of the reviews, placed in the scanned field of a real row (the Outlook HTML draft
+// and send, a Confluence page append or comment, a Notion block append or page update, the
+// Obsidian daily-note append, a Drive file create; since B3w a Teams channel or chat post, and
+// GitHub, GitLab and Linear issues, comments and notes), each beside allowed cases. The
 // door tests (`model-write-refusals` doors, the act door's submit and accept, the injection
 // suite) run all of them; the detector unit tests live in `remote-content.test.ts`.
 //
@@ -423,6 +424,154 @@ const DRIVE_ALLOWED: ReadonlyArray<RemoteContentDoorCase> = [
   drive("a .md name with a link", "[x](https://h)", { name: "notes.md" }),
 ];
 
+// ---- B3w: sent mail, Teams HTML and forge Markdown ------------------------------------------
+
+/** A builder argument meaning "leave `contentType` out" (an `undefined` argument takes the default). */
+const ABSENT = Symbol("absent");
+
+function row(prefix: string, toolId: string, input: Readonly<Record<string, unknown>>) {
+  return (label: string): RemoteContentDoorCase => ({
+    label: `${prefix}: ${label}`,
+    toolId,
+    input,
+  });
+}
+
+function outlookSend(
+  label: string,
+  body: string,
+  contentType: unknown = "html",
+): RemoteContentDoorCase {
+  const input: Record<string, unknown> = { to: "a@x.com", subject: "S", body };
+  if (contentType !== ABSENT) input["contentType"] = contentType;
+  return row("outlook send", "outlook_mail_send", input)(label);
+}
+
+/** A Teams channel post to a channel ChatOps does not bind (the door fixtures bind none). */
+function teamsChannel(
+  label: string,
+  body: string,
+  contentType: unknown = "html",
+): RemoteContentDoorCase {
+  const input: Record<string, unknown> = { teamId: "t1", channelId: "19:other@thread.tacv2", body };
+  if (contentType !== ABSENT) input["contentType"] = contentType;
+  return row("teams channel", "teams_message_post", input)(label);
+}
+
+function teamsChat(
+  label: string,
+  body: string,
+  contentType: unknown = "html",
+): RemoteContentDoorCase {
+  const input: Record<string, unknown> = { chatId: "19:chat@thread.v2", body };
+  if (contentType !== ABSENT) input["contentType"] = contentType;
+  return row("teams chat", "teams_message_post_chat", input)(label);
+}
+
+/** Every forge Markdown row, with the body in its scanned field. */
+const FORGE_ROWS: readonly ((label: string, body: string) => RemoteContentDoorCase)[] = [
+  (l, body) =>
+    row("github comment", "github_issue_comment_create", {
+      owner: "o",
+      repo: "r",
+      issueNumber: 1,
+      body,
+    })(l),
+  (l, body) =>
+    row("github issue", "github_issue_create", { owner: "o", repo: "r", title: "T", body })(l),
+  (l, body) =>
+    row("gitlab note", "gitlab_issue_note_create", { projectPath: "g/r", issueIid: 7, body })(l),
+  (l, body) =>
+    row("gitlab mr note", "gitlab_mr_note_create", {
+      projectPath: "g/r",
+      mergeRequestIid: 9,
+      body,
+    })(l),
+  (l, description) =>
+    row("gitlab issue", "gitlab_issue_create", { projectPath: "g/r", title: "T", description })(l),
+  (l, body) => row("linear comment", "linear_comment_create", { issueId: "i1", body })(l),
+  (l, description) =>
+    row("linear issue create", "linear_issue_create", { teamId: "t1", title: "T", description })(l),
+  (l, description) =>
+    row("linear issue update", "linear_issue_update", { issueId: "i1", description })(l),
+];
+
+const TEAMS_REFUSED: ReadonlyArray<readonly [string, string]> = [
+  ["an external image", `<img src="https://h/p.gif">`],
+  [
+    "an absolute hosted-content URL",
+    `<img src="https://graph.microsoft.com/v1.0/chats/1/messages/2/hostedContents/3/$value">`,
+  ],
+  ["an attachment", `<attachment id="1"></attachment>`],
+  ["an upper-case attachment", "<ATTACHMENT id=1>"],
+  ["a prefixed attachment", "<x:attachment></x:attachment>"],
+  ["an attachment in a nested view", `<span <attachment id="1">>hello</span>`],
+  ["a cid image (no cid: in Teams)", `<img src="cid:x">`],
+  [
+    "Teams emoji markup (stated over-refusal)",
+    `<img itemtype="http://schema.skype.com/Emoji" src="https://statics.teams.cdn.office.net/x.png">`,
+  ],
+  ["the nested view", "<a <img src=//h>>"],
+  ["a relative srcset", `<img srcset="a.png 1x">`],
+  ["a style url", `<p style="background:url(x)">`],
+  ["a comment holding markup", "<!-- <img src=//h> -->"],
+  ["CDATA", "<![CDATA[x]]>"],
+  ["an unclosed style", "<style>p{}"],
+];
+
+const TEAMS_ALLOWED: ReadonlyArray<readonly [string, string]> = [
+  ["a relative hosted-content image", `<img src="../hostedContents/1/$value">`],
+  ["a paragraph", "<p>hi</p>"],
+  ["a link", `<a href="https://h">x</a>`],
+];
+
+const FENCE = "\x60\x60\x60";
+const fenced = (lang: string, body: string): string =>
+  `intro${LF}${FENCE}${lang}${LF}${body}${LF}${FENCE}${LF}after`;
+
+const FORGE_REFUSED: ReadonlyArray<readonly [string, string]> = [
+  ["an image", "![](https://h/p.gif)"],
+  ["a space before the URL", "![x]( https://h)"],
+  ["an angle-bracket URL", "![x](<https://h>)"],
+  ["a reference image", `![x][r]${LF}[r]: https://h`],
+  ["a relative upload image", "![x](/uploads/abc/x.png)"],
+  ["a relative image", "![x](x.png)"],
+  ["an entity bang", "&#33;[x](https://h)"],
+  ["a fullwidth bang", `${FULLWIDTH_BANG}[x](https://h)`],
+  ["a zero-width space after the bang", `!${ZWSP}[x](https://h)`],
+  ["an escaped bang (stated)", "\\![x](https://h)"],
+  ["an HTML image", `<img src="https://h">`],
+  ["an upper-case HTML image", "<IMG SRC=//h>"],
+  ["a picture source", `<picture><source srcset="https://h/x.png"></picture>`],
+  ["a video", `<video src="https://h/v.mp4">`],
+  ["a video poster", "<video poster=//h>"],
+  ["an absolute same-host attachment", `<img src="https://github.com/user-attachments/assets/x">`],
+  ["an image in details", "<details><summary>x</summary><img src=//h></details>"],
+  ["an SVG image", "<svg><image href=//h/></svg>"],
+  ["a relative image beside a stylesheet link", `<img src="/x"><link href=x.css>`],
+  ["a vault embed (none on a forge)", "![[note]]"],
+  ["a mermaid click", fenced("mermaid", `graph TD${LF}click A "https://h"`)],
+  ["a plantuml include", fenced("plantuml", "!include https://h/x.puml")],
+  ["an unclosed mermaid fence", `${FENCE}mermaid${LF}A-->B${LF}//h`],
+  ["an include at a line start", "  ::include{file=https://h/x.md}"],
+  ["an include after a blockquote marker", "> ::include{file=https://h/x}"],
+  ["an entity-spelled include", "&#58;:include{file=x}"],
+  ["an html fence holding an image (not exempt)", fenced("html", "<img src=//h>")],
+  ["a code span holding an image", "see \x60![x](y)\x60"],
+  ["Rust inner attributes (stated over-refusal)", fenced("rust", "#![allow(dead_code)]")],
+];
+
+const FORGE_ALLOWED: ReadonlyArray<readonly [string, string]> = [
+  ["a link", "[link](https://h)"],
+  ["an autolink", "<https://h>"],
+  ["a relative upload in raw HTML", `<img src="/uploads/abc/x.png">`],
+  ["a details block", "<details><summary>a</summary>b</details>"],
+  ["generics in prose", "Vec<T> and Map<K, V>"],
+  ["a ts fence with a comparison", fenced("ts", "const a = b < c ? 1 : 2;")],
+  ["a mermaid diagram with no URL", fenced("mermaid", "graph TD; A-->B")],
+  ["a godot fence holding a URL (not a diagram fence)", fenced("godot", "// https://h")],
+];
+
 /** Every structural bypass form of both reviews, in the scanned field of a real row. */
 export const REMOTE_CONTENT_REFUSED_CASES: readonly RemoteContentDoorCase[] = [
   ...HTML_REFUSED.map(([l, b]) => outlook(l, b)),
@@ -435,6 +584,19 @@ export const REMOTE_CONTENT_REFUSED_CASES: readonly RemoteContentDoorCase[] = [
   ...NOTION_PROPERTIES_REFUSED.map(([l, b]) => properties(l, b)),
   ...OBSIDIAN_REFUSED.map(([l, b]) => obsidian(l, b)),
   ...DRIVE_REFUSED,
+  // B3w: every B3r Outlook form through the send, the Teams forms, the forge forms on every row.
+  ...HTML_REFUSED.map(([l, b]) => outlookSend(l, b)),
+  ...["HTML", null, 42, ""].map((ct) =>
+    outlookSend(`contentType ${JSON.stringify(ct)} scans`, "<img src=//h>", ct),
+  ),
+  outlookSend(
+    "a 1,000,000-character body ending in an image",
+    `${"<p>a</p>".repeat(125_000)}<img src=//h>`,
+  ),
+  ...TEAMS_REFUSED.map(([l, b]) => teamsChannel(l, b)),
+  ...TEAMS_REFUSED.map(([l, b]) => teamsChat(l, b)),
+  teamsChannel("contentType HTML scans", `<img src="https://h/p.gif">`, "HTML"),
+  ...FORGE_ROWS.flatMap((build) => FORGE_REFUSED.map(([l, b]) => build(l, b))),
 ];
 
 /** The allowed forms beside them: each reaches the owner's prompt (or is queued) as before. */
@@ -460,4 +622,14 @@ export const REMOTE_CONTENT_ALLOWED_CASES: readonly RemoteContentDoorCase[] = [
   ...NOTION_PROPERTIES_ALLOWED.map(([l, b]) => properties(l, b)),
   ...OBSIDIAN_ALLOWED.map(([l, b]) => obsidian(l, b)),
   ...DRIVE_ALLOWED,
+  // B3w.
+  ...HTML_ALLOWED.map(([l, b]) => outlookSend(l, b)),
+  outlookSend("a cid image", `<img src="cid:logo">`),
+  outlookSend("sent as Text, a pixel shown literally", "<img src=//h>", "text"),
+  outlookSend("no contentType (Text), a pixel shown literally", "<img src=//h>", ABSENT),
+  ...TEAMS_ALLOWED.map(([l, b]) => teamsChannel(l, b)),
+  ...TEAMS_ALLOWED.map(([l, b]) => teamsChat(l, b)),
+  teamsChannel("sent as text, a pixel shown literally", "<img src=//h>", "text"),
+  teamsChat("no contentType (text)", "<img src=//h>", ABSENT),
+  ...FORGE_ROWS.flatMap((build) => FORGE_ALLOWED.map(([l, b]) => build(l, b))),
 ];

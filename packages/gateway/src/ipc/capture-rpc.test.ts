@@ -30,6 +30,7 @@ import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
 import type { CaptureGateDeps } from "../mcp-sink/capture-gate.ts";
 import { CaptureAttemptLimiter, CaptureRefusalCounter } from "../mcp-sink/capture-rate-limit.ts";
 import { CaptureStore } from "../mcp-sink/capture-store.ts";
+import { PAYLOAD_MAX_BYTES } from "../mcp-sink/capture-validate.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import { createMockVault } from "../vault/mock.ts";
 import {
@@ -1548,18 +1549,39 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
         .get() as { n: number }
     ).n;
 
-  test("the nine scanned types are all proposable", () => {
+  /**
+   * A fixture whose proposal is larger than the capture payload cap: the act door rejects it as
+   * invalid before any destination check (B3w's 1,000,000-character send is one).
+   */
+  const overCap = (k: RemoteContentDoorCase): boolean =>
+    new TextEncoder().encode(
+      JSON.stringify({ actionType: typeOf(k), input: k.input, summary: "why" }),
+    ).length > PAYLOAD_MAX_BYTES;
+  const INVALID = { code: "ERR_CAPTURE_INVALID" };
+
+  test("the twenty scanned types are all proposable", () => {
     const types = new Set(REMOTE_CONTENT_REFUSED_CASES.map(typeOf));
     expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence.comment.add",
       "confluence.page.append",
       "confluence.page.create",
       "confluence.page.update",
+      "github.issue.comment.create",
+      "github.issue.create",
+      "gitlab.issue.create",
+      "gitlab.issue.note.create",
+      "gitlab.mr.note.create",
       "google_drive.file.create",
+      "linear.comment.create",
+      "linear.issue.create",
+      "linear.issue.update",
       "notion.block.append",
       "notion.page.update",
       "obsidian.note.append",
       "outlook.draft.create",
+      "outlook.mail.send",
+      "teams.message.post",
+      "teams.message.postChat",
     ]);
     for (const t of types)
       expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
@@ -1594,7 +1616,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
           refusals: new CaptureRefusalCounter(),
         },
       };
-      expect(await outcome(submit(fresh, k)), k.label).toEqual(REFUSED);
+      expect(await outcome(submit(fresh, k)), k.label).toEqual(overCap(k) ? INVALID : REFUSED);
     }
     expect(ctx.gate.store.countPendingActions(1_000)).toBe(0);
   });
@@ -1610,7 +1632,9 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
 
   /** One refused fixture of each scanned row (the last in the table): a proposal from before B3r. */
   const ONE_PER_ROW: readonly RemoteContentDoorCase[] = [
-    ...new Map(REMOTE_CONTENT_REFUSED_CASES.map((k) => [k.toolId, k] as const)).values(),
+    ...new Map(
+      REMOTE_CONTENT_REFUSED_CASES.filter((k) => !overCap(k)).map((k) => [k.toolId, k] as const),
+    ).values(),
   ];
 
   for (const k of ONE_PER_ROW) {

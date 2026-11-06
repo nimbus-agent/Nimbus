@@ -17,7 +17,8 @@ export const MESSAGING_ROWS: readonly ConnectorWriteRow[] = [
     summary: "Send a Slack direct message to {user_ids}",
     fields: [textField("text", "Message")],
   }),
-  // The connector's `postGraphMessage` defaults `contentType` to "text".
+  // The connector's `postGraphMessage` defaults `contentType` to "text". Since B3w both doors refuse
+  // a Teams HTML body (any `contentType` present but "text") that would load remote content.
   withPreview(row("teams_message_post", "teams.message.post", "mesh", 2), {
     target: "{teamId}/{channelId}",
     summary: "Post a Teams channel message to {channelId}",

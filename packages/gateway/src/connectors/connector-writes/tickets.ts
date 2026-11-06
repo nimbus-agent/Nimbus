@@ -277,6 +277,8 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectJiraTransition,
     },
   ),
+  // Since B3w (owner ruling OR-B3w-2) both doors scan the Linear description and comment body as
+  // forge Markdown: every Markdown image, and inline HTML that loads, is refused.
   withPreview(row("linear_issue_create", "linear.issue.create", "mesh", 2), {
     target: "{teamId}",
     summary: "Create a Linear issue in team {teamId}",
@@ -343,6 +345,9 @@ export const TICKETS_ROWS: readonly ConnectorWriteRow[] = [
       select: selectLinearIssueIdentity,
     },
   ),
+  // Since B3w both doors scan GitHub and GitLab issue bodies, descriptions, comments and notes as
+  // forge Markdown (every Markdown image, a raw-HTML image with an external src, a diagram fence or
+  // `::include` naming a URL are refused).
   withPreview(row("github_issue_create", "github.issue.create", "mesh", 2), {
     target: "{owner}/{repo}",
     summary: "Create a GitHub issue in {owner}/{repo}",
