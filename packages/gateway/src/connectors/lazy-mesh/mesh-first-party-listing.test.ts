@@ -153,6 +153,31 @@ describe("listFirstPartyServerTools", () => {
     expect(ensures()).toBe(1);
   });
 
+  // C3: LaunchDarkly and Flagsmith run in the phase-3 bundle, so they list through the spawner's
+  // own credential check (`phase3AddLaunchdarklyMcp` / `phase3AddFlagsmithMcp`: a token).
+  for (const [service, secret, tool] of [
+    ["launchdarkly", "launchdarkly.token", "launchdarkly_flag_toggle"],
+    ["flagsmith", "flagsmith.token", "flagsmith_feature_state_set"],
+  ] as const) {
+    test(`${service}: configured lists its phase-3 slot and ensures the bundle; unconfigured lists nothing`, async () => {
+      const slots = {
+        [LAZY_MESH.phase3Bundle]: {
+          [tool]: { description: "w", inputSchema: SCHEMA, execute: async () => ({}) },
+        },
+      };
+      const on = await build({ secrets: { [secret]: "v" }, slots });
+      const out = await on.m.listFirstPartyServerTools(service);
+      expect(Object.keys(out ?? {})).toEqual([tool]);
+      expect(on.calls).toEqual(["ensurePhase3BundleRunning"]);
+      expect(on.m.toolsGenerationFor(service)).toBeGreaterThanOrEqual(0);
+
+      const off = await build({ secrets: {}, slots });
+      expect(await off.m.listFirstPartyServerTools(service)).toBeUndefined();
+      expect(off.m.toolsGenerationFor(service)).toBe(-1);
+      expect(off.ensures()).toBe(0);
+    });
+  }
+
   test("a policy-blocked service whose credentials ARE present spawns nothing", async () => {
     const asked: string[] = [];
     const { m, ensures } = await build({

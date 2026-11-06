@@ -80,7 +80,9 @@ import { type ObsidianGrantSkip, obsidianWriteGrantPaths } from "./obsidian-writ
 import {
   phase3AddArgocdMcp,
   phase3AddBigeyeMcp,
+  phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
+  phase3AddLaunchdarklyMcp,
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
   phase3AddMonteCarloMcp,
@@ -120,6 +122,8 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   bigeye: phase3AddBigeyeMcp,
   argocd: phase3AddArgocdMcp,
   flux: phase3AddFluxMcp,
+  launchdarkly: phase3AddLaunchdarklyMcp,
+  flagsmith: phase3AddFlagsmithMcp,
   mlflow: phase3AddMlflowMcp,
 };
 
@@ -355,7 +359,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The explicit listing map: the 9 phase-3 services on the phase-3 bundle (today's spawner probe)
+   * The explicit listing map: the 11 phase-3 services on the phase-3 bundle (today's spawner probe)
    * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */
