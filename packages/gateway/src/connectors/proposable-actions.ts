@@ -28,11 +28,15 @@ export type DeniedClass =
   | "unroutable"
   /**
    * A real, routable first-party connector write (a row in `connectors/connector-writes/`, in the
-   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Since B3 the one
-   * member is `jira.issue.transition` (owner ruling OR-B2-4): the act door runs no before-read and
-   * so could not show what the write changes.
+   * I2 frozen set, D20-refused over federation) whose MCP proposal is withheld. Twelve members:
+   * `jira.issue.transition` (owner ruling OR-B2-4: the act door runs no before-read and so could
+   * not show what the write changes) and, since C1, the eleven writes of connectors 0.6.0
+   * (`github.{branch.create,pr.create,pr.update}`, `gitlab.{branch.create,mr.create,mr.update}`,
+   * `launchdarkly.flag.{toggle,rollout.set}`, `flagsmith.feature.state.set`,
+   * `jira.ops.alert.{acknowledge,close}`), untemplated and with no act-door refusals yet.
    * Unlike `unroutable`, a tool DOES resolve: the refusal is a review decision, not a routing fact,
-   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job.
+   * and moving a type out of this class into `PROPOSABLE_WRITE_TOOLS` is a later PR's job: the C2
+   * or C3 PR that templates a type (and reviews its act-door refusals) moves it there.
    */
   | "not_yet_offered"
   | "gateway_internal";
@@ -241,7 +245,22 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
     // ruling OR-B2-4: before-reads run on the model door only (B0b), so an MCP proposal would ask
     // the owner to approve a bare numeric transition id, with no From or To, on a write that can be
     // one-way.
-    ...denied("not_yet_offered", ["jira.issue.transition"]),
+    // The eleven connectors 0.6.0 writes (C1) are classified here until C2 (VCS) and C3 (flags,
+    // Jira alerts) template them and add their act-door refusals.
+    ...denied("not_yet_offered", [
+      "jira.issue.transition",
+      "github.branch.create",
+      "github.pr.create",
+      "github.pr.update",
+      "gitlab.branch.create",
+      "gitlab.mr.create",
+      "gitlab.mr.update",
+      "launchdarkly.flag.toggle",
+      "launchdarkly.flag.rollout.set",
+      "flagsmith.feature.state.set",
+      "jira.ops.alert.acknowledge",
+      "jira.ops.alert.close",
+    ]),
     ...denied("gateway_internal", [
       "data.delete",
       "data.export",

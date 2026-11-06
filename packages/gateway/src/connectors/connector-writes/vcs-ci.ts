@@ -31,6 +31,15 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   // prompts, needs a before-state and type-to-confirm, never auto-fires).
   row("github_pr_merge", "github.pr.merge", "mesh", 4),
   row("github_pr_close", "github.pr.close", "mesh", 3),
+  // Connectors 0.6.0 (spec 15.3, OR-W34-6): branch, PR and MR create/update, all wave 3. The
+  // create writes are recoverable (the branch/PR/MR can be deleted or closed), the updates are not.
+  // Untemplated and not offered in C1; C2 templates them behind new act-door refusals.
+  row("github_branch_create", "github.branch.create", "mesh", 3),
+  row("github_pr_create", "github.pr.create", "mesh", 3),
+  row("github_pr_update", "github.pr.update", "mesh", 3),
+  row("gitlab_branch_create", "gitlab.branch.create", "mesh", 3),
+  row("gitlab_mr_create", "gitlab.mr.create", "mesh", 3),
+  row("gitlab_mr_update", "gitlab.mr.update", "mesh", 3),
   row("github_branch_delete", "github.branch.delete", "mesh", 4),
   row("github_tag_create", "github.tag.create", "mesh", 4),
   row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4),

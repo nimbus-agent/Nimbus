@@ -74,12 +74,12 @@ describe("ACTION_PROPOSABILITY", () => {
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 43 proposable, 117 denied, 1 of them not_yet_offered", () => {
+  test("counts, derived: 43 proposable, 128 denied, 12 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
     expect(PROPOSABLE).toHaveLength(43);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(43);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(117);
-    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(1);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(128);
+    expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(12);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
   test("§ 6.2 borderline types stay denied", () => {
@@ -96,14 +96,28 @@ describe("ACTION_PROPOSABILITY", () => {
   });
 });
 
-test("not_yet_offered is exactly the Jira transition (B3 offered the draft and the append), a real connector-write row", () => {
+test("not_yet_offered is exactly the Jira transition plus the eleven connectors 0.6.0 writes (C1), each a real connector-write row", () => {
   const notYet = Object.entries(ACTION_PROPOSABILITY)
     .filter(([, p]) => p.kind === "denied" && p.class === "not_yet_offered")
     .map(([t]) => t)
     .sort();
   expect(notYet).toEqual(
-    // jira.issue.transition by owner ruling OR-B2-4 (no before-read on the act door).
-    ["jira.issue.transition"],
+    [
+      // jira.issue.transition by owner ruling OR-B2-4 (no before-read on the act door).
+      "jira.issue.transition",
+      // The 0.6.0 writes (C1): untemplated, no act-door refusals yet.
+      "github.branch.create",
+      "github.pr.create",
+      "github.pr.update",
+      "gitlab.branch.create",
+      "gitlab.mr.create",
+      "gitlab.mr.update",
+      "launchdarkly.flag.toggle",
+      "launchdarkly.flag.rollout.set",
+      "flagsmith.feature.state.set",
+      "jira.ops.alert.acknowledge",
+      "jira.ops.alert.close",
+    ].sort((a, b) => a.localeCompare(b)),
   );
   // Unlike `unroutable`, each resolves: a row names its tool on its own server.
   const rowTypes = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.actionType));

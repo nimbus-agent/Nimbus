@@ -91,6 +91,19 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   "outlook.draft.create",
   "discord.message.post",
   "confluence.page.append",
+  // @nimbus-dev/connectors 0.6.0 — the Wave-3 writes it added (Phase 9.7 C1). Hand-written on
+  // purpose (I2): never derived from the row table.
+  "github.branch.create",
+  "github.pr.create",
+  "github.pr.update",
+  "gitlab.branch.create",
+  "gitlab.mr.create",
+  "gitlab.mr.update",
+  "launchdarkly.flag.toggle",
+  "launchdarkly.flag.rollout.set",
+  "flagsmith.feature.state.set",
+  "jira.ops.alert.acknowledge",
+  "jira.ops.alert.close",
   // Wave 7 — files + cloud.
   "google_drive.file.create",
   "google_drive.file.move",
