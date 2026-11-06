@@ -58,6 +58,7 @@ function harness(over: Partial<RunAskParams> = {}): Harness {
       consentClientIds.push(clientId);
       return true;
     },
+    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;

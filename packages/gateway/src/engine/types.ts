@@ -13,12 +13,36 @@ export type ActionResult =
   | { status: "ok"; result: unknown }
   | { status: "rejected"; reason: string };
 
+/**
+ * A type-to-confirm request (Phase 9.7 D0a): the owner approves a Wave 4 write only by typing
+ * `confirmText` exactly. `prompt` already ends with the fixed line telling them what to type.
+ */
+export interface ConfirmedApprovalRequest {
+  prompt: string;
+  details?: Record<string, unknown> | undefined;
+  actionType?: string | undefined;
+  confirmText: string;
+}
+
+/** The owner's answer to a {@link ConfirmedApprovalRequest}: the decision and what they typed. */
+export interface ConfirmedApprovalResult {
+  approved: boolean;
+  typed: string;
+}
+
 export interface ConsentChannel {
   requestApproval(
     prompt: string,
     details?: Record<string, unknown>,
     actionType?: string,
   ): Promise<boolean>;
+  /**
+   * Collects a typed confirmation. A channel without it cannot approve a Wave 4 write: the
+   * executor denies it (`confirm: unsupported_channel`) and never falls back to
+   * `requestApproval`. The channel only carries the text; the comparison with `confirmText` is
+   * the executor's alone (static D41).
+   */
+  requestConfirmedApproval?(req: ConfirmedApprovalRequest): Promise<ConfirmedApprovalResult>;
 }
 
 export interface AuditSink {

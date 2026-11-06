@@ -1,5 +1,14 @@
 export type RemoteApprovalOutcome =
-  | { readonly kind: "answered"; readonly peerId: string; readonly approved: boolean }
+  | {
+      readonly kind: "answered";
+      readonly peerId: string;
+      readonly approved: boolean;
+      /**
+       * What the delegate typed, on a type-to-confirm request only (Phase 9.7 D0a). The executor
+       * compares it with the confirm text BEFORE this module's scope and identity checks (I20).
+       */
+      readonly typed?: string;
+    }
   | { readonly kind: "timeout" };
 
 export interface DelegatedApprovalDeps {

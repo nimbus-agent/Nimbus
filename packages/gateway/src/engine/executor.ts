@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
+import {
+  CONFIRM_ROW_MISMATCH_REASON,
+  confirmPromptLine,
+  renderConfirmText,
+} from "../connectors/connector-writes/confirm.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   buildConnectorWritePreview,
   buildConnectorWritePreviewFrom,
   type ConnectorWritePreview,
+  findConnectorWriteRow,
   renderConnectorWritePreviewLines,
 } from "../connectors/connector-writes/preview.ts";
 import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
@@ -23,9 +30,12 @@ import {
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
 import { serviceOf } from "./service-of.ts";
+import { extractToolInput } from "./tool-input.ts";
 import type {
   ActionResult,
   AuditSink,
+  ConfirmedApprovalRequest,
+  ConfirmedApprovalResult,
   ConnectorDispatcher,
   ConsentChannel,
   PlannedAction,
@@ -534,15 +544,55 @@ function auditedAction(action: PlannedAction): PlannedAction {
   return action;
 }
 
+/** What a type-to-confirm approval came to, for the audit row (never the typed text itself). */
+export type ConfirmOutcome = "matched" | "mismatched" | "unsupported_channel";
+
+/**
+ * Written by the gate's phases and read once, by the audit row. ONE mutable record passed to the
+ * phases, not a closure per arm: the gate writes the row exactly once, whichever phase ended it.
+ */
+interface GateRecord {
+  /** Defaults to the user-declined message; a phase that ends the gate for another reason overwrites it. */
+  rejectReason: string;
+  hitlRejectReason?: string;
+  confirm?: ConfirmOutcome;
+}
+
+/** The reason when the acting channel has no way to collect a typed confirmation (Wave 4). */
+export const CONFIRM_UNSUPPORTED_REASON =
+  "This channel cannot collect the typed confirmation this action requires.";
+
+/** The reason when the typed text did not equal the confirm text. */
+export const CONFIRM_MISMATCH_REASON = "The typed confirmation did not match.";
+
+/** The audit fields of a record: only the ones a phase set, so an ordinary row is unchanged. */
+function auditExtrasOf(record: GateRecord): {
+  hitlRejectReason?: string;
+  confirm?: ConfirmOutcome;
+} {
+  return {
+    ...(record.hitlRejectReason === undefined ? {} : { hitlRejectReason: record.hitlRejectReason }),
+    ...(record.confirm === undefined ? {} : { confirm: record.confirm }),
+  };
+}
+
 function auditPayload(
   action: PlannedAction,
-  extras: { hitlRejectReason?: string } | undefined,
+  extras: { hitlRejectReason?: string; confirm?: ConfirmOutcome },
 ): string {
-  const audited = auditedAction(action);
-  return redactAuditPayload(
-    extras === undefined ? { action: audited } : { action: audited, ...extras },
-  );
+  return redactAuditPayload({ action: auditedAction(action), ...extras });
 }
+
+/**
+ * The confirm phase's verdict for one HITL action: no type-to-confirm (`none`), the text the owner
+ * must type (`text`), or a refusal before anyone is asked (`refuse`).
+ */
+type ConfirmPlan =
+  | { readonly kind: "none" }
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "refuse"; readonly reason: string };
+
+const NO_CONFIRM: ConfirmPlan = Object.freeze({ kind: "none" });
 
 /**
  * Optional multi-user/delegated-HITL wiring (Slice 2). When present, the gate routes a HITL
@@ -554,6 +604,15 @@ export interface ExecutorDelegationDep {
   readonly isOperatorValid: () => boolean;
   /** Route the approval request to the delegate over federation; resolve with their answer. */
   readonly requestRemote: (actionType: string) => Promise<RemoteApprovalOutcome>;
+  /**
+   * Route a type-to-confirm request (a Wave 4 write) to the delegate, who must answer with the
+   * typed text. Absent: a Wave 4 write is never delegated and the local owner types it (I20).
+   * Nothing supplies it yet (D0c's ChatOps card will).
+   */
+  readonly requestRemoteConfirmed?: (
+    actionType: string,
+    confirmText: string,
+  ) => Promise<RemoteApprovalOutcome>;
 }
 
 /**
@@ -632,6 +691,8 @@ export class ToolExecutor {
    *  live in-scope, identity-valid answerer; otherwise fall back to the local owner prompt. */
   private async tryDelegatedApproval(
     action: PlannedAction,
+    confirm: ConfirmPlan,
+    record: GateRecord,
   ): Promise<"approved" | "rejected" | "fallback"> {
     // I42: a delegate never approves a user-MCP call — the LOCAL owner always answers it.
     if (this.delegation === undefined || isUserMcpActionType(action.type)) return "fallback";
@@ -649,6 +710,16 @@ export class ToolExecutor {
       return "fallback";
     }
     const del = this.delegation;
+    // I20 (Wave 4): a delegate's approval counts only with typed text equal to the confirm text,
+    // so without a way to ask for that text a type-to-confirm write is never delegated.
+    let ask: () => Promise<RemoteApprovalOutcome>;
+    if (confirm.kind === "text") {
+      const askConfirmed = del.requestRemoteConfirmed;
+      if (askConfirmed === undefined) return "fallback";
+      ask = () => this.askDelegateTyped(askConfirmed, action.type, confirm.text, record);
+    } else {
+      ask = () => del.requestRemote(action.type);
+    }
     const service = serviceOf(action.type);
     const now = Date.now();
     if (del.store.activeDelegateePeer(action.type, service, now) === undefined) return "fallback";
@@ -657,41 +728,136 @@ export class ToolExecutor {
         del.store.activeDelegateFor("action_type", action.type, peerId, now) ||
         del.store.activeDelegateFor("service", service, peerId, now),
       isOperatorValid: del.isOperatorValid,
-      requestRemote: () => del.requestRemote(action.type),
+      requestRemote: ask,
     });
     return outcome === "fallback_to_owner" ? "fallback" : outcome;
   }
 
-  /** Resolve a HITL action's approval: a delegated answer when one applies (I20), otherwise the
-   *  local owner consent prompt (payload shown via `consentDisplayPayload`, display only). */
-  private async resolveHitlApproval(
-    action: PlannedAction,
-    opts: ExecuteOptions | undefined,
-  ): Promise<boolean> {
-    const delegated = await this.tryDelegatedApproval(action);
-    if (delegated === "fallback") {
-      // Built once, so the prompt and the details show the same preview (one credential read).
-      // The before-state read (door executor only) runs HERE: an owner prompt is about to be shown.
-      const preview = await this.previewFor(action, opts);
-      const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
-      return this.consent.requestApproval(
-        formatConsentPrompt(action, this.previewCredentialFor, preview),
-        details,
-        action.type,
-      );
+  /**
+   * The delegate's answer. For a type-to-confirm write the delegate must have typed the confirm
+   * text: an approval without it is a decline, decided HERE (the strict comparison is the
+   * executor's alone, static D41) before `resolveDelegatedApproval` runs its scope and identity
+   * checks (I20).
+   */
+  private async askDelegateTyped(
+    askConfirmed: NonNullable<ExecutorDelegationDep["requestRemoteConfirmed"]>,
+    actionType: string,
+    confirmText: string,
+    record: GateRecord,
+  ): Promise<RemoteApprovalOutcome> {
+    const outcome = await askConfirmed(actionType, confirmText);
+    if (outcome.kind !== "answered") return outcome;
+    const typedOk = outcome.typed === confirmText;
+    if (outcome.approved) {
+      record.confirm = typedOk ? "matched" : "mismatched";
+      if (!typedOk) record.rejectReason = CONFIRM_MISMATCH_REASON;
     }
-    return delegated === "approved";
+    return { ...outcome, approved: outcome.approved && typedOk };
   }
 
   /**
-   * The typed preview for the owner's prompt. Without a before-state runner it is exactly the
+   * Resolve a HITL action's approval, as ONE ordered list of named phases (the order is the
+   * invariant; read it here, do not hunt for it):
+   *   1. `captureBeforePhase`  the model door's before-state read and the typed preview;
+   *   2. (D0b: `preparePhase`, the bound write's prepare step, goes here);
+   *   3. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
+   *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner.
+   */
+  private async resolveHitlApproval(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+    record: GateRecord,
+  ): Promise<boolean> {
+    const preview = await this.captureBeforePhase(action, opts);
+    const confirm = this.renderConfirmPhase(action);
+    if (confirm.kind === "refuse") {
+      record.rejectReason = confirm.reason;
+      record.hitlRejectReason = confirm.reason;
+      return false;
+    }
+    return this.approvalPhase(action, preview, confirm, record);
+  }
+
+  /**
+   * Phase 3. Whether this action is a Wave 4 write is decided by its ROW (found from `action.type`,
+   * never from the payload: I3) and only inside the HITL branch, so it can only make a prompt
+   * stricter. Fail closed: a Wave 4 row with no confirm target, an action whose `mcpToolId` names
+   * another tool than its type's row, and a target that cannot be rendered all refuse here, before
+   * any prompt.
+   */
+  private renderConfirmPhase(action: PlannedAction): ConfirmPlan {
+    const rows = this.beforeState?.rows ?? CONNECTOR_WRITE_ROWS;
+    const wave4 = rows.find((r) => r.wave === 4 && r.actionType === action.type);
+    if (wave4 === undefined) return NO_CONFIRM;
+    const named = action.payload?.["mcpToolId"];
+    if (typeof named === "string" && findConnectorWriteRow(action, rows) !== wave4) {
+      return { kind: "refuse", reason: CONFIRM_ROW_MISMATCH_REASON };
+    }
+    const rendered = renderConfirmText(wave4, extractToolInput(action));
+    return rendered.ok
+      ? { kind: "text", text: rendered.text }
+      : { kind: "refuse", reason: rendered.reason };
+  }
+
+  /**
+   * Phase 4. A delegated answer when one applies (I20), otherwise the local owner's prompt (payload
+   * shown via `consentDisplayPayload`, display only). A type-to-confirm prompt is the ONLY prompt
+   * a Wave 4 write ever gets: a channel that cannot collect typed text denies it.
+   */
+  private async approvalPhase(
+    action: PlannedAction,
+    preview: ConnectorWritePreview | undefined,
+    confirm: Exclude<ConfirmPlan, { kind: "refuse" }>,
+    record: GateRecord,
+  ): Promise<boolean> {
+    const delegated = await this.tryDelegatedApproval(action, confirm, record);
+    if (delegated !== "fallback") return delegated === "approved";
+    const details = consentDisplayPayload(action, this.previewCredentialFor, preview);
+    const prompt = formatConsentPrompt(action, this.previewCredentialFor, preview);
+    if (confirm.kind === "none") {
+      return this.consent.requestApproval(prompt, details, action.type);
+    }
+    return this.confirmedOwnerPrompt(
+      { prompt, details, actionType: action.type, confirmText: confirm.text },
+      record,
+    );
+  }
+
+  /**
+   * The owner types the confirm text. Approved only when the answer is an approval AND the typed
+   * text equals the confirm text exactly: no trim, no case fold (static D41: this comparison, and
+   * every call of `requestConfirmedApproval`, exist only in this file).
+   */
+  private async confirmedOwnerPrompt(
+    req: ConfirmedApprovalRequest,
+    record: GateRecord,
+  ): Promise<boolean> {
+    const channel = this.consent;
+    if (channel.requestConfirmedApproval === undefined) {
+      record.confirm = "unsupported_channel";
+      record.rejectReason = CONFIRM_UNSUPPORTED_REASON;
+      return false;
+    }
+    const answer = await channel.requestConfirmedApproval({
+      ...req,
+      prompt: `${req.prompt}\n\n${confirmPromptLine(req.confirmText)}`,
+    });
+    if (!answer.approved) return false;
+    const matched = answer.typed === req.confirmText;
+    record.confirm = matched ? "matched" : "mismatched";
+    if (!matched) record.rejectReason = CONFIRM_MISMATCH_REASON;
+    return matched;
+  }
+
+  /**
+   * Phase 1. The typed preview for the owner's prompt. Without a before-state runner it is exactly the
    * builder's. With one (the door executor), it is built over the runner's rows (production: the
    * same table) and, when the row has a `before` reader, carries the reads' outcome; each read goes
    * through THIS executor's gate and dispatcher, so it is audited and ledgered (I29). A reader's
    * guard that refused (B2a) throws {@link BeforeStateRefusedError}, which `gate()` turns into a
    * rejection before any prompt.
    */
-  private async previewFor(
+  private async captureBeforePhase(
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
   ): Promise<ConnectorWritePreview | undefined> {
@@ -723,10 +889,9 @@ export class ToolExecutor {
 
     let hitlStatus: "approved" | "rejected" | "not_required";
     // Reason for the rejected path. Defaults to the user-declined message (the other rejection
-    // sources — a consent disconnect, a before-state guard — overwrite it below), so it is always a
-    // defined string by the time the rejected branch returns it (no nullish fallback needed).
-    let rejectReason = "User declined consent gate.";
-    let auditExtras: { hitlRejectReason?: string } | undefined;
+    // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
+    // is always a defined string by the time the rejected branch returns it.
+    const record: GateRecord = { rejectReason: "User declined consent gate." };
 
     try {
       if (requiresHITL && isBeforeReadActionType(action.type)) {
@@ -734,10 +899,10 @@ export class ToolExecutor {
         // set, the user-MCP rule or a policy would gate is refused here, structurally, without
         // asking anyone; it is still audited and ledgered (blocked) below.
         hitlStatus = "rejected";
-        rejectReason = BEFORE_READ_HITL_REFUSAL;
-        auditExtras = { hitlRejectReason: BEFORE_READ_HITL_REFUSAL };
+        record.rejectReason = BEFORE_READ_HITL_REFUSAL;
+        record.hitlRejectReason = BEFORE_READ_HITL_REFUSAL;
       } else if (requiresHITL) {
-        const approved = await this.resolveHitlApproval(action, opts);
+        const approved = await this.resolveHitlApproval(action, opts, record);
         hitlStatus = approved ? "approved" : "rejected";
       } else {
         hitlStatus = "not_required";
@@ -745,14 +910,14 @@ export class ToolExecutor {
     } catch (e) {
       if (e instanceof ConsentDisconnectedError) {
         hitlStatus = "rejected";
-        rejectReason = e.message;
-        auditExtras = { hitlRejectReason: e.hitlAuditReason };
+        record.rejectReason = e.message;
+        record.hitlRejectReason = e.hitlAuditReason;
       } else if (e instanceof BeforeStateRefusedError) {
         // B2a: a before-state guard refused the write while its prompt was being built. No prompt
         // was shown; the write is audited rejected and ledgered blocked below, never dispatched.
         hitlStatus = "rejected";
-        rejectReason = e.reason;
-        auditExtras = { hitlRejectReason: e.reason };
+        record.rejectReason = e.reason;
+        record.hitlRejectReason = e.reason;
       } else {
         throw e;
       }
@@ -762,7 +927,7 @@ export class ToolExecutor {
     this.audit.recordAudit({
       actionType: action.type,
       hitlStatus,
-      actionJson: auditPayload(action, auditExtras),
+      actionJson: auditPayload(action, auditExtrasOf(record)),
       timestamp: Date.now(),
       ...(sessionId === undefined ? {} : { sessionId }),
     });
@@ -778,7 +943,7 @@ export class ToolExecutor {
     );
 
     if (hitlStatus === "rejected") {
-      return { status: "rejected", reason: rejectReason };
+      return { status: "rejected", reason: record.rejectReason };
     }
     return "proceed";
   }
@@ -808,6 +973,17 @@ export function bindConsentChannel(
         prompt,
         details,
         actionType,
+      });
+    },
+    // The acting client types the confirm text (CLI prompt, desktop popup). It only carries the
+    // text out and back: the comparison is `ToolExecutor`'s (static D41).
+    requestConfirmedApproval(req: ConfirmedApprovalRequest): Promise<ConfirmedApprovalResult> {
+      return coordinator.requestConfirmedConsent(clientId, {
+        requestId: randomUUID(),
+        prompt: req.prompt,
+        details: req.details,
+        actionType: req.actionType,
+        confirmText: req.confirmText,
       });
     },
   };

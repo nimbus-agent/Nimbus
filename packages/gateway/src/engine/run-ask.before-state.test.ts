@@ -74,6 +74,7 @@ function harness() {
       details.push(req.details as Record<string, unknown> | undefined);
       return true;
     },
+    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;

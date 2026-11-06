@@ -140,6 +140,7 @@ describe("audit payload safety (§7.8)", () => {
   test("bindConsentChannel + executor still yields clean audit JSON", async () => {
     const coordinator = {
       requestConsent: async () => true,
+      requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
       rejectAllPending: () => {
         /* noop */
       },
