@@ -1635,4 +1635,150 @@ describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
     },
     TIMING_TEST_TIMEOUT_MS,
   );
+
+  test(
+    "forge-markdown: prose, closed fences and diagram fences (allowed); open fences, `![`, includes and a long quote prefix (refused)",
+    () => {
+      const FENCE = "\x60\x60\x60";
+      const prose = (n: number): string => `text [l](https://h) \x60code\x60 Vec<T>${LF}`.repeat(n);
+      const closed = (n: number): string => `${FENCE}ts${LF}let a = 1;${LF}${FENCE}${LF}`.repeat(n);
+      const diagrams = (n: number): string =>
+        `${FENCE}mermaid${LF}graph TD; A-->B${LF}${FENCE}${LF}`.repeat(n);
+      for (const build of [prose, closed, diagrams]) {
+        expect(remoteContentIn("forge-markdown", build(3))).toBe(false);
+      }
+      expectLinear("forge-markdown", prose, 20_000);
+      expectLinear("forge-markdown", closed, 25_000);
+      expectLinear("forge-markdown", diagrams, 15_000);
+      // One non-diagram fence of many lines: fast-forwarded, never concatenated (review fix 4).
+      const bigFence = (n: number): string =>
+        `${FENCE}ts${LF}${`let a = 1;${LF}`.repeat(n)}${FENCE}`;
+      expect(remoteContentIn("forge-markdown", bigFence(3))).toBe(false);
+      expectLinear("forge-markdown", bigFence, 50_000);
+      // Every fence unclosed and no URL (allowed): each opener must not rescan to the end.
+      const openFences = (n: number): string => `${FENCE}mermaid${LF}`.repeat(n);
+      expect(remoteContentIn("forge-markdown", openFences(3))).toBe(false);
+      expectLinear("forge-markdown", openFences, 25_000);
+      const refused: readonly ((n: number) => string)[] = [
+        // Every fence unclosed (the B3r cursor case), with a URL at the very end.
+        (n) => `${`${FENCE}mermaid${LF}`.repeat(n)}//h`,
+        (n) => "![".repeat(n),
+        (n) => `${`::includ${LF}`.repeat(n)}::include`,
+        (n) => `${"> ".repeat(n)}${FENCE}mermaid${LF}//`,
+      ];
+      for (const build of refused) {
+        expect(remoteContentIn("forge-markdown", build(3), { tripwire: false })).toBe(true);
+        expectLinear("forge-markdown", build, 50_000);
+      }
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+});
+
+// ---------------------------------------------------------------------------------------------
+// B3w: forge Markdown (plan W6-W9, W12, Review Focus 3 and 4, review fixes 2, 4, 5, 6)
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w: forge-markdown", () => {
+  const FENCE = "\x60\x60\x60";
+  const fence = (lang: string, body: string, close = FENCE): string =>
+    `intro${LF}${FENCE}${lang}${LF}${body}${LF}${close}${LF}after`;
+
+  const REFUSED: readonly (readonly [string, string])[] = [
+    // Review Focus 3: Markdown images and their spellings.
+    ["an image", "![](https://h/p.gif)"],
+    ["a space before the URL", "![x]( https://h)"],
+    ["an angle-bracket URL", "![x](<https://h>)"],
+    ["a reference image", `![x][r]${LF}[r]: https://h`],
+    ["a relative upload image (W8)", "![x](/uploads/abc/x.png)"],
+    ["a relative image", "![x](x.png)"],
+    ["an entity bang", "&#33;[x](https://h)"],
+    ["a fullwidth bang", `${FULLWIDTH_BANG}[x](https://h)`],
+    ["a zero-width space after the bang (the deleted form joins it)", `!${ZWSP}[x](https://h)`],
+    ["an escaped bang (stated)", "\\![x](https://h)"],
+    ["an HTML image", `<img src="https://h">`],
+    ["a protocol-relative HTML image", "<img src=//h>"],
+    ["an upper-case HTML image", "<IMG SRC=//h>"],
+    ["a picture source", `<picture><source srcset="https://h/x.png"></picture>`],
+    ["a video", `<video src="https://h/v.mp4">`],
+    ["a video poster", "<video poster=//h>"],
+    [
+      "an absolute same-host attachment (W8)",
+      `<img src="https://github.com/user-attachments/assets/x">`,
+    ],
+    ["an image in details", "<details><summary>x</summary><img src=//h></details>"],
+    ["an SVG image", "<svg><image href=//h/></svg>"],
+    ["a style url", `<p style="background:url(//h)">`],
+    [
+      "a relative image beside a stylesheet link (no tripwire match)",
+      `<img src="/x"><link href=x.css>`,
+    ],
+    // The vault embeds Obsidian allows are images here.
+    ["a vault embed (no embeds on a forge)", "![[note]]"],
+    ["a sized vault embed", "![[img.png|200]]"],
+    // Review Focus 4: diagram fences, includes and code.
+    ["a mermaid click", fence("mermaid", `graph TD${LF}click A "https://h"`)],
+    ["a tilde Mermaid fence", `~~~Mermaid${LF}A-->B //h${LF}~~~`],
+    ["a plantuml include", fence("plantuml", "!include https://h/x.puml")],
+    ["a kroki fence", fence("kroki", "https:x")],
+    ["a vega fence with a data url", fence("vega", `{"data":{"url":"https://h/d.json"}}`)],
+    ["an unclosed mermaid fence", `${FENCE}mermaid${LF}A-->B${LF}//h`],
+    ["a mermaid fence in a quote", `> ${FENCE}mermaid${LF}> click A "https://h"${LF}> ${FENCE}`],
+    ["an include at a line start", "  ::include{file=https://h/x.md}"],
+    ["an include after a blockquote marker (review fix 2)", "> ::include{file=https://h/x}"],
+    ["an include after two blockquote markers", "> > ::include{file=x}"],
+    ["an entity-spelled include", "&#58;:include{file=x}"],
+    ["an html fence holding an image (W9, not exempt)", fence("html", "<img src=//h>")],
+    ["a code span holding an image (W9)", "see \x60![x](y)\x60"],
+    ["Rust inner attributes (stated over-refusal, W9)", fence("rust", "#![allow(dead_code)]")],
+    ["an unsettled text (review fix 6)", "&amp;amp;amp;amp;amp;"],
+  ];
+
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a link", "[link](https://h)"],
+    ["an autolink", "<https://h>"],
+    ["a bare URL", "see https://h"],
+    ["a relative upload in raw HTML (W8)", `<img src="/uploads/abc/x.png">`],
+    ["a relative image in raw HTML", `<img src="x.png">`],
+    ["a details block", "<details><summary>a</summary>b</details>"],
+    ["generics in prose", "Vec<T> and Map<K, V>"],
+    ["a ts fence with a comparison", fence("ts", "const a = b < c ? 1 : 2;")],
+    ["a task list", `- [ ] one${LF}- [x] two`],
+    ["a table", `| a | b |${LF}|---|---|${LF}| 1 | 2 |`],
+    ["a user mention", "@user"],
+    ["a mermaid diagram with no URL", fence("mermaid", "graph TD; A-->B")],
+    ["a plantuml diagram with no URL", fence("plantuml", "Alice -> Bob: hi")],
+    ["prose naming ::include mid-line", "use ::include{file=x} in a wiki page"],
+    [
+      "a godot fence holding a URL (review fix 5: not a diagram fence)",
+      fence("godot", "// https://h"),
+    ],
+    ["a snapshot fence holding a URL (review fix 5)", fence("snapshot", "// see https://h")],
+  ];
+
+  test.each(REFUSED)("refused: %s", (_label, text) => {
+    expectRefused("forge-markdown", text, true);
+  });
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("forge-markdown", text);
+  });
+
+  test("vault embeds: allowed in Obsidian, refused on a forge", () => {
+    for (const embed of ["![[note]]", "![[img.png|200]]"]) {
+      expect(remoteContentIn("obsidian-markdown", embed)).toBe(false);
+      expect(remoteContentIn("forge-markdown", embed, { tripwire: false })).toBe(true);
+    }
+  });
+
+  test("a diagram language is the first word, exactly (review fix 5)", () => {
+    expectRefused("forge-markdown", fence("mermaid extra words", "click A //h"), true);
+    expectAllowed("forge-markdown", fence("mermaidx", "click A //h"));
+    expectAllowed("obsidian-markdown", fence("mermaid-ish", "click A //h"));
+  });
+
+  test.each(DIFFERENTIALS)("tokenizer differential: %s", (_label, refused, allowed) => {
+    expectRefused("forge-markdown", refused, true);
+    expectAllowed("forge-markdown", allowed);
+  });
 });
