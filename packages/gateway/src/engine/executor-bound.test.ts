@@ -27,6 +27,7 @@ import {
   type ExecutorDelegationDep,
   type ExecutorPolicyDep,
   NO_POLICY_OVERLAY,
+  PREPARE_OUTSIDE_STEP_REASON,
   ToolExecutor,
   type WriteTable,
 } from "./executor.ts";
@@ -245,7 +246,7 @@ describe("a bound write prepares and binds on every door shape", () => {
     expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
   });
 
-  test("an ordinary (non-bound) write is dispatched as the very same action object", async () => {
+  test("an ordinary (non-bound) write is dispatched as an equal copy of the action", async () => {
     const plain = withPreview(makeRow("plain_apply", "iac.pulumi.up", "write", 3), {
       target: "{dir}",
       summary: "Up {dir}",
@@ -255,65 +256,198 @@ describe("a bound write prepares and binds on every door shape", () => {
     const action: PlannedAction = { type: "iac.pulumi.up", payload: { input: { dir: DIR } } };
     await h.exec.execute(action);
     expect(h.dispatched).toEqual([action]);
-    expect(h.dispatched[0]).toBe(action);
   });
 });
 
-describe("prepare runs before ANY approval, a delegate included (fix 1)", () => {
-  const store = {
-    activeDelegateePeer: () => "peer:bob",
-    activeDelegateFor: (_k: string, _v: string, peer: string) => peer === "peer:bob",
-  };
-
-  test("a delegate's approval of a bound write comes after the prepare read, and the write is bound", async () => {
-    let h: Harness | undefined;
-    const delegation: ExecutorDelegationDep = {
-      store,
+describe("a bound write is never delegated: the local owner sees the prepared facts (I20/I54)", () => {
+  function delegationWith(calls: string[]): ExecutorDelegationDep {
+    return {
+      store: {
+        activeDelegateePeer: () => {
+          calls.push("store");
+          return "peer:bob";
+        },
+        activeDelegateFor: () => {
+          calls.push("store");
+          return true;
+        },
+      },
       isOperatorValid: () => true,
       requestRemote: async () => {
-        h?.log.push("remote-asked");
+        calls.push("remote");
         return { kind: "answered", peerId: "peer:bob", approved: true };
       },
+      requestRemoteConfirmed: async () => {
+        calls.push("remote-confirmed");
+        return { kind: "answered", peerId: "peer:bob", approved: true, typed: CONFIRM_TEXT };
+      },
     };
-    h = harness({ delegation });
-    const r = await h.exec.execute(NESTED);
-    expect(r.status).toBe("ok");
-    expect(h.log.indexOf("dispatch:iac.write.prepare")).toBeLessThan(h.log.indexOf("remote-asked"));
+  }
+
+  for (const wave of [3, 4] as const) {
+    test(`wave ${wave}: the delegate stub is never asked; the owner's prompt shows the facts and the write is bound`, async () => {
+      const calls: string[] = [];
+      const h = harness({ row: synthBoundRow(wave), delegation: delegationWith(calls) });
+      const r = await h.exec.execute(NESTED);
+      expect(r.status).toBe("ok");
+      expect(calls).toEqual([]);
+      const owner = wave === 3 ? h.prompts : h.confirmed.map((c) => c.prompt);
+      expect(owner).toHaveLength(1);
+      expect(owner[0]).toContain("Prepared:");
+      expect(inputOf(writesOf(h)[0])["planDigest"]).toBe(DIGEST);
+    });
+  }
+
+  test("a delegate-eligible ORDINARY write is still delegated (the fallback is scoped to bound rows)", async () => {
+    const calls: string[] = [];
+    const plain = withPreview(makeRow("plain_apply", "iac.pulumi.up", "write", 3), {
+      target: "{dir}",
+      summary: "Up {dir}",
+      fields: [textField("dir")],
+    });
+    const h = harness({ extraRows: [plain], delegation: delegationWith(calls) });
+    await h.exec.execute({ type: "iac.pulumi.up", payload: { input: { dir: DIR } } });
+    expect(calls).toContain("remote");
     expect(h.prompts).toEqual([]);
-    expect(inputOf(writesOf(h)[0])["planDigest"]).toBe(DIGEST);
   });
 
-  test("a failed prepare means the delegate is never asked", async () => {
-    let asked = 0;
-    const delegation: ExecutorDelegationDep = {
-      store,
-      isOperatorValid: () => true,
-      requestRemote: async () => {
-        asked += 1;
-        return { kind: "answered", peerId: "peer:bob", approved: true };
-      },
-    };
+  test("a failed prepare means nobody is asked, the owner included", async () => {
+    const calls: string[] = [];
     const h = harness({
-      delegation,
+      delegation: delegationWith(calls),
       prepareReply: () => {
         throw new Error("down");
       },
     });
     const r = await h.exec.execute(NESTED);
     rejectedWith(r, PREPARE_REFUSALS.failed);
-    expect(asked).toBe(0);
+    expect(calls).toEqual([]);
+    expect(h.prompts).toEqual([]);
+  });
+});
+
+describe("a prepare type is the step's own read, never a caller's (D42(f))", () => {
+  const PREPARE_CALL: PlannedAction = {
+    type: "iac.write.prepare",
+    payload: { mcpToolId: "iac_synth_plan", input: { dir: DIR } },
+  };
+
+  for (const door of ["execute", "gate"] as const) {
+    test(`${door}(): refused with a fixed reason, audited, ledgered blocked, nothing dispatched`, async () => {
+      const h = harness();
+      const r =
+        door === "execute" ? await h.exec.execute(PREPARE_CALL) : await h.exec.gate(PREPARE_CALL);
+      rejectedWith(r as ActionResult, PREPARE_OUTSIDE_STEP_REASON);
+      expect(h.dispatched).toEqual([]);
+      expect(h.prompts).toEqual([]);
+      expect(h.audits).toHaveLength(1);
+      expect(h.audits[0]?.hitlStatus).toBe("rejected");
+      expect(lastAuditJson(h)["hitlRejectReason"]).toBe(PREPARE_OUTSIDE_STEP_REASON);
+      expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
+    });
+  }
+
+  test("a prepare type with no declared tool in the table is refused the same way", async () => {
+    const h = harness({ table: { rows: [synthBoundRow(3)], prepareToolIds: new Set() } });
+    rejectedWith(await h.exec.execute(PREPARE_CALL), PREPARE_OUTSIDE_STEP_REASON);
+    expect(h.dispatched).toEqual([]);
   });
 
-  test("a delegate declining leaves the write undispatched", async () => {
-    const delegation: ExecutorDelegationDep = {
-      store,
-      isOperatorValid: () => true,
-      requestRemote: async () => ({ kind: "answered", peerId: "peer:bob", approved: false }),
-    };
-    const h = harness({ delegation });
+  test("the step's own read still runs (its private scope is the only way in)", async () => {
+    const h = harness();
+    expect((await h.exec.execute(NESTED)).status).toBe("ok");
+    expect(h.dispatched[0]?.type).toBe("iac.write.prepare");
+  });
+});
+
+describe("the gate fails closed where prepared facts and a preview could part (fix 3)", () => {
+  test("prepared facts with no preview to carry them: refused as unshowable before any prompt", async () => {
+    // A row the constructors would never build: bound, with its typed preview gone.
+    const { preview: _gone, ...rest } = synthBoundRow(3);
+    const noPreview: ConnectorWriteRow = rest;
+    const h = harness({ row: noPreview });
     const r = await h.exec.execute(NESTED);
-    expect(r.status).toBe("rejected");
+    rejectedWith(r, PREPARE_REFUSALS.unshowable);
+    expect(h.prompts).toEqual([]);
     expect(writesOf(h)).toEqual([]);
+    expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
+  });
+
+  test("dispatchBoundPhase throws when a bound row has no prepared values", () => {
+    const h = harness();
+    const phase = (
+      h.exec as unknown as {
+        dispatchBoundPhase(a: PlannedAction, scope: { bind: boolean }): PlannedAction;
+      }
+    ).dispatchBoundPhase.bind(h.exec);
+    expect(() => phase(NESTED, { bind: true })).toThrow("without its prepare step");
+    // An ordinary action passes through untouched.
+    const plain: PlannedAction = { type: "iac.pulumi.up", payload: { dir: DIR } };
+    expect(phase(plain, { bind: true })).toBe(plain);
+  });
+});
+
+describe("the audit row reconciles what was bound without carrying it (fix 4)", () => {
+  test("a SHA-256 of the canonical JSON of the injected values is in the write's audit row", async () => {
+    const h = harness();
+    await h.exec.execute(NESTED);
+    const want = new Bun.CryptoHasher("sha256")
+      .update(JSON.stringify({ planDigest: DIGEST }))
+      .digest("hex");
+    const audit = lastAuditJson(h);
+    expect(audit["boundValuesSha256"]).toBe(want);
+    expect(h.audits.at(-1)?.actionJson).not.toContain(DIGEST);
+  });
+
+  test("a declined write still records the digest; an ordinary write records none", async () => {
+    const declined = harness({ approve: false });
+    await declined.exec.execute(NESTED);
+    expect(lastAuditJson(declined)["boundValuesSha256"]).toBeString();
+    const plain = withPreview(makeRow("plain_apply", "iac.pulumi.up", "write", 3), {
+      target: "{dir}",
+      summary: "Up {dir}",
+      fields: [textField("dir")],
+    });
+    const h = harness({ extraRows: [plain] });
+    await h.exec.execute({ type: "iac.pulumi.up", payload: { input: { dir: DIR } } });
+    expect(lastAuditJson(h)["boundValuesSha256"]).toBeUndefined();
+  });
+});
+
+describe("execute() works on a private copy of the action (fix 5)", () => {
+  test("mutating the caller's object while the prompt is pending changes nothing dispatched", async () => {
+    const action: PlannedAction = {
+      type: "iac.terraform.apply",
+      payload: { mcpToolId: "iac_synth_apply", input: { dir: DIR } },
+    };
+    const h = harness();
+    // Mutate from inside the consent prompt: after the checks and the prepare read, before dispatch.
+    const input = (action.payload as { input: Record<string, unknown> }).input;
+    const exec = new ToolExecutor(
+      {
+        requestApproval: async () => {
+          input["dir"] = "evil";
+          input["planDigest"] = "forged";
+          return true;
+        },
+      },
+      { recordAudit: () => undefined },
+      {
+        dispatch: async (a) => {
+          h.dispatched.push(a);
+          return a.type.endsWith(".write.prepare") ? SYNTH_REPLY : { applied: true };
+        },
+      },
+      undefined,
+      { append: () => undefined },
+      NO_POLICY_OVERLAY,
+      undefined,
+      undefined,
+      { rows: [synthBoundRow(3)], prepareToolIds: SYNTH_PREPARE_IDS },
+    );
+    const r = await exec.execute(action);
+    expect(r.status).toBe("ok");
+    expect(inputOf(writesOf(h)[0])).toEqual({ dir: DIR, planDigest: DIGEST });
   });
 });
 
@@ -535,16 +669,6 @@ describe("a bound row never reaches dispatch except through execute() (fix 1 / D
     const r = await h.exec.execute({ type: "iac.plain.apply", payload: { dir: DIR } });
     rejectedWith(r, BOUND_NOT_HITL_REASON);
     expect(h.dispatched).toEqual([]);
-  });
-
-  test("the prepare read is gated through gate() (not through execute()) and never binds", async () => {
-    // The prepare action is an ordinary type: it proceeds under the public gate.
-    const h = harness();
-    const r = await h.exec.gate({
-      type: "iac.write.prepare",
-      payload: { mcpToolId: "iac_synth_plan", input: { dir: DIR } },
-    });
-    expect(r).toBe("proceed");
   });
 });
 

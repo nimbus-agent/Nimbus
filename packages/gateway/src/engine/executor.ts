@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   CONFIRM_ROW_MISMATCH_REASON,
@@ -39,6 +39,7 @@ import {
   injectBoundFields,
   isPrepareActionType,
   PREPARE_HITL_REFUSAL,
+  PREPARE_REFUSALS,
   type PreparedWrite,
   PrepareRefusedError,
   runPrepareStep,
@@ -570,6 +571,7 @@ interface GateRecord {
   rejectReason: string;
   hitlRejectReason?: string;
   confirm?: ConfirmOutcome;
+  boundValuesSha256?: string;
 }
 
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
@@ -592,6 +594,10 @@ export const BOUND_NOT_HITL_REASON = "A bound write requires the owner's approva
 /** The reason when an action of a bound type names another tool than the bound row's own. */
 export const BOUND_ROW_MISMATCH_REASON = "The action names another tool than the bound write.";
 
+/** The reason when a prepare action type reaches a gate that is not the prepare step's own. */
+export const PREPARE_OUTSIDE_STEP_REASON =
+  "A prepare read runs only inside a bound write's prepare step.";
+
 /** The reason when the typed text did not equal the confirm text. */
 export const CONFIRM_MISMATCH_REASON = "The typed confirmation did not match.";
 
@@ -602,12 +608,16 @@ function refuseGate(record: GateRecord, reason: string): "rejected" {
   return "rejected";
 }
 
-/** The preview with the prepare step's facts, when there are any. */
+/**
+ * The preview with the prepare step's facts, when there are any. Prepared facts with no preview to
+ * carry them would let the approver answer without seeing them, so that combination is refused.
+ */
 function withPrepared(
   preview: ConnectorWritePreview | undefined,
   prepared: PreparedWrite | undefined,
 ): ConnectorWritePreview | undefined {
-  if (prepared === undefined || preview === undefined) return preview;
+  if (prepared === undefined) return preview;
+  if (preview === undefined) throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
   return {
     ...preview,
     prepared: {
@@ -618,21 +628,38 @@ function withPrepared(
   };
 }
 
+/**
+ * SHA-256 (hex) of the canonical JSON (keys sorted) of a bound write's injected values. The audit row
+ * carries this, never the values, so what was dispatched can be reconciled with the connector's own
+ * log.
+ */
+function boundValuesDigest(values: Readonly<Record<string, string>>): string {
+  const sorted = Object.fromEntries(
+    Object.keys(values)
+      .sort()
+      .map((k) => [k, values[k]]),
+  );
+  return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
+}
+
 /** The audit fields of a record: only the ones a phase set, so an ordinary row is unchanged. */
-function auditExtrasOf(record: GateRecord): {
-  hitlRejectReason?: string;
-  confirm?: ConfirmOutcome;
-} {
+function auditExtrasOf(record: GateRecord): AuditExtras {
   return {
     ...(record.hitlRejectReason === undefined ? {} : { hitlRejectReason: record.hitlRejectReason }),
     ...(record.confirm === undefined ? {} : { confirm: record.confirm }),
+    ...(record.boundValuesSha256 === undefined
+      ? {}
+      : { boundValuesSha256: record.boundValuesSha256 }),
   };
 }
 
-function auditPayload(
-  action: PlannedAction,
-  extras: { hitlRejectReason?: string; confirm?: ConfirmOutcome },
-): string {
+interface AuditExtras {
+  hitlRejectReason?: string;
+  confirm?: ConfirmOutcome;
+  boundValuesSha256?: string;
+}
+
+function auditPayload(action: PlannedAction, extras: AuditExtras): string {
   return redactAuditPayload({ action: auditedAction(action), ...extras });
 }
 
@@ -727,6 +754,8 @@ export interface WriteTable {
  */
 interface GateScope {
   readonly bind: boolean;
+  /** True only for the gate call the prepare step makes for its own read (see `preparePhase`). */
+  readonly prepareStep?: boolean;
   prepared?: PreparedWrite;
 }
 
@@ -832,6 +861,10 @@ export class ToolExecutor {
     ) {
       return "fallback";
     }
+    // I20/I54: a BOUND write's prepared facts reach only the local owner's prompt, so a delegate
+    // (who would approve without seeing them) never answers it. Found by TYPE alone (I3). This stays
+    // until a delegate channel carries the preview.
+    if (this.boundRowOf(action) !== undefined) return "fallback";
     const del = this.delegation;
     // I20 (Wave 4): a delegate's approval counts only with typed text equal to the confirm text,
     // so without a way to ask for that text a type-to-confirm write is never delegated.
@@ -893,8 +926,8 @@ export class ToolExecutor {
    *   3. `renderConfirmPhase`  the Wave 4 confirm text, or a refusal before anyone is asked;
    *   4. `approvalPhase`       a delegate (Wave 4: only with the typed text) or the local owner;
    * and after the gate, in `execute()`: `dispatchBoundPhase`, the only place bound values are
-   * injected. A delegated approval therefore can never skip the prepare, and both a delegate and
-   * the owner see the prepared facts in the preview.
+   * injected. A delegated approval therefore can never skip the prepare. The prepared facts reach
+   * only the local owner's prompt: a bound write is never delegated (`tryDelegatedApproval`).
    */
   private async resolveHitlApproval(
     action: PlannedAction,
@@ -904,6 +937,7 @@ export class ToolExecutor {
   ): Promise<boolean> {
     const captured = await this.captureBeforePhase(action, opts);
     const prepared = await this.preparePhase(action, opts, scope);
+    if (prepared !== undefined) record.boundValuesSha256 = boundValuesDigest(prepared.values);
     const preview = withPrepared(captured, prepared);
     const confirm = this.renderConfirmPhase(action);
     if (confirm.kind === "refuse") {
@@ -929,7 +963,11 @@ export class ToolExecutor {
     const row = this.boundRowOf(action);
     if (row?.bound === undefined) return undefined;
     const prepared = await runPrepareStep(
-      { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },
+      {
+        // The one gate call allowed to run a prepare type: this step's own, never a caller's.
+        gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
+        dispatch: (a) => this.connectors.dispatch(a),
+      },
       row,
       row.bound,
       action,
@@ -947,10 +985,12 @@ export class ToolExecutor {
    * gate run's own prepare step, into the tool input, with every caller-side copy stripped.
    */
   private dispatchBoundPhase(action: PlannedAction, scope: GateScope): PlannedAction {
+    if (this.boundRowOf(action) === undefined) return action;
     const prepared = scope.prepared;
-    return prepared === undefined
-      ? action
-      : injectBoundFields(action, prepared.binds, prepared.values);
+    // Fail closed: a bound row is never dispatched without its own gate run's prepared values.
+    if (prepared === undefined)
+      throw new Error("a bound write reached dispatch without its prepare step");
+    return injectBoundFields(action, prepared.binds, prepared.values);
   }
 
   /**
@@ -1105,6 +1145,10 @@ export class ToolExecutor {
         // set, the user-MCP rule or a policy would gate is refused here, structurally, without
         // asking anyone; it is still audited and ledgered (blocked) below.
         hitlStatus = refuseGate(record, BEFORE_READ_HITL_REFUSAL);
+      } else if (isPrepareActionType(action.type) && scope.prepareStep !== true) {
+        // I54: a prepare type is the step's own read, never a caller's: any door that sends one
+        // (a workflow, a plan, ChatOps) is refused here, audited and ledgered (blocked), undispatched.
+        hitlStatus = refuseGate(record, PREPARE_OUTSIDE_STEP_REASON);
       } else if (requiresHITL && isPrepareActionType(action.type)) {
         // I54: the same for a bound write's prepare read: it never raises a prompt of its own.
         hitlStatus = refuseGate(record, PREPARE_HITL_REFUSAL);
@@ -1158,7 +1202,11 @@ export class ToolExecutor {
     return "proceed";
   }
 
-  async execute(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult> {
+  async execute(planned: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult> {
+    // One private copy for the whole run (checks, prepare, prompt, injection, dispatch): the
+    // caller's object can be mutated while a prompt is pending, and what is dispatched must be
+    // what was shown.
+    const action = structuredClone(planned);
     const scope: GateScope = { bind: true };
     const gateResult = await this.gateWithin(action, opts, scope);
     if (gateResult === "proceed") {
