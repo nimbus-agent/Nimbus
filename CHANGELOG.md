@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.31.0](https://github.com/nimbus-agent/Nimbus/compare/v10.30.0...v10.31.0) (2026-11-06)
+
+
+### Features
+
+* **gateway:** sent mail, Teams and forge Markdown cannot load remote content, on both doors ([#1916](https://github.com/nimbus-agent/Nimbus/issues/1916)) ([eabe782](https://github.com/nimbus-agent/Nimbus/commit/eabe782d57807f0ca4cab23861357e4714694232))
+
 ## [10.30.0](https://github.com/nimbus-agent/Nimbus/compare/v10.29.0...v10.30.0) (2026-11-06)
 
 
