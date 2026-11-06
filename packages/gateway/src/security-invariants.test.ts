@@ -2204,7 +2204,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       type: "github.pr.merge",
       payload: { mcpToolId: "github_pr_merge", input: { owner: "a", repo: "b", pullNumber: 7 } },
     };
-    const TEXT = "github/a/b#7";
+    const TEXT = "github/merge a/b#7";
     const run = async (
       remoteConfirmed:
         | undefined
@@ -2258,7 +2258,7 @@ describe("I20 — a delegated approval is honored only from a live, identity-val
       kind: "answered",
       peerId: "peer-1",
       approved: true,
-      typed: "github/a/b#8",
+      typed: "github/merge a/b#8",
     }));
     expect(wrong.res.status).toBe("rejected");
     expect(wrong.dispatched).toEqual([]);
