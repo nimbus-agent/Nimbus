@@ -2619,7 +2619,7 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
 //     `{ bind: true }` (each once, in its own method), and `boundRefusal` tests `!scope.bind`
 //     before it calls `boundInputRefusal(`;
 // (f) a prepare action type is the step's own read: `prepareStep: true` is written once, in
-//     `preparePhase`, and `gateWithin` tests `isPrepareActionType(` together with
+//     `preparePhase`, and `runGateChecks` (the ordered checks `gateWithin` runs first) tests `isPrepareActionType(` together with
 //     `scope.prepareStep` before it reaches `resolveHitlApproval(`, so a caller's `<svc>.write.prepare`
 //     is refused whichever door sent it.
 // Comments and string literals are stripped before identifiers are matched; test files and anything
@@ -2757,12 +2757,12 @@ function d42PrepareScopePins(
   const total = [...code.matchAll(scoped)].length;
   const within = [...span(/\bprivate\s+async\s+preparePhase\s*\(/).matchAll(scoped)].length;
   if (total !== 1 || within !== 1) fail("prepareStep: true must be written once, in preparePhase");
-  const gate = span(/\bprivate\s+async\s+gateWithin\s*\(/);
+  const gate = span(/\bprivate\s+async\s+runGateChecks\s*\(/);
   const refusal = gate.search(/\bisPrepareActionType\s*\([^)]*\)\s*&&\s*scope\.prepareStep\b/);
   const hitl = gate.search(/\bthis\.resolveHitlApproval\s*\(/);
   if (refusal === -1 || hitl === -1 || refusal > hitl) {
     fail(
-      "gateWithin must refuse a prepare type unless scope.prepareStep, before resolveHitlApproval",
+      "runGateChecks must refuse a prepare type unless scope.prepareStep, before resolveHitlApproval",
     );
   }
 }

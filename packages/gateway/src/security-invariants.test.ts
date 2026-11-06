@@ -12178,11 +12178,11 @@ describe("I53 — a first-party connector write reaches the model only through t
       'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
     );
     expect(exec.match(/new BeforeStateRefusedError\(/g)).toHaveLength(1);
-    const gateAt = exec.indexOf("private async gateWithin(");
+    const gateAt = exec.indexOf("private statusOfGateThrow(");
     const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
     expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);
     expect(gateBody).toMatch(
-      /else if \(e instanceof BeforeStateRefusedError \|\| e instanceof PrepareRefusedError\) \{\s*hitlStatus = refuseGate\(record, e\.reason\);/,
+      /else if \(e instanceof BeforeStateRefusedError \|\| e instanceof PrepareRefusedError\) \{\s*return refuseGate\(record, e\.reason\);/,
     );
     // The one helper sets BOTH the caller's reason and the audit reason from the same fixed text.
     expect(exec).toMatch(

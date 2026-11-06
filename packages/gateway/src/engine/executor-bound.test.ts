@@ -399,6 +399,21 @@ describe("the audit row reconciles what was bound without carrying it (fix 4)", 
     expect(h.audits.at(-1)?.actionJson).not.toContain(DIGEST);
   });
 
+  test("the digest is the same whatever order the values were bound in (keys sorted)", async () => {
+    const binds = (order: readonly string[]) =>
+      order.map((field) => ({ field, from: () => `v-${field}` }));
+    const digestFor = async (order: readonly string[]): Promise<unknown> => {
+      const h = harness({ row: synthBoundRow(3, { ...synthBound(), binds: binds(order) }) });
+      await h.exec.execute(NESTED);
+      return lastAuditJson(h)["boundValuesSha256"];
+    };
+    const want = new Bun.CryptoHasher("sha256")
+      .update(JSON.stringify({ alpha: "v-alpha", mid: "v-mid", zeta: "v-zeta" }))
+      .digest("hex");
+    expect(await digestFor(["zeta", "alpha", "mid"])).toBe(want);
+    expect(await digestFor(["alpha", "mid", "zeta"])).toBe(want);
+  });
+
   test("a declined write still records the digest; an ordinary write records none", async () => {
     const declined = harness({ approve: false });
     await declined.exec.execute(NESTED);

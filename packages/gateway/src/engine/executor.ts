@@ -636,7 +636,7 @@ function withPrepared(
 function boundValuesDigest(values: Readonly<Record<string, string>>): string {
   const sorted = Object.fromEntries(
     Object.keys(values)
-      .sort()
+      .sort((a, b) => a.localeCompare(b))
       .map((k) => [k, values[k]]),
   );
   return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
@@ -652,6 +652,8 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
       : { boundValuesSha256: record.boundValuesSha256 }),
   };
 }
+
+type HitlStatus = "approved" | "rejected" | "not_required";
 
 interface AuditExtras {
   hitlRejectReason?: string;
@@ -1111,6 +1113,63 @@ export class ToolExecutor {
     return this.gateWithin(action, opts, { bind: false });
   }
 
+  /**
+   * Gate phase 1: the ordered checks, first match wins. The order is the design: I53 tool/type
+   * pairing, the before-read and prepare refusals, the bound-write refusal, then the prompt.
+   */
+  private async runGateChecks(
+    action: PlannedAction,
+    opts: ExecuteOptions | undefined,
+    scope: GateScope,
+    record: GateRecord,
+    requiresHITL: boolean,
+    boundRefusal: string | undefined,
+  ): Promise<HitlStatus> {
+    if (this.namesOtherTypesWrite(action)) {
+      // I53: a connector write tool runs only under its OWN action type, whatever the type's own
+      // HITL class, so a plain-approval (or no-approval) type can never carry a Wave 4 tool.
+      // Refused before any prompt on every carrier; audited and ledgered (blocked) below.
+      return refuseGate(record, TOOL_TYPE_MISMATCH_REASON);
+    } else if (requiresHITL && isBeforeReadActionType(action.type)) {
+      // Spec § 5.4: a before-state read never raises a prompt of its own. A read type the frozen
+      // set, the user-MCP rule or a policy would gate is refused here, structurally, without
+      // asking anyone; it is still audited and ledgered (blocked) below.
+      return refuseGate(record, BEFORE_READ_HITL_REFUSAL);
+    } else if (isPrepareActionType(action.type) && scope.prepareStep !== true) {
+      // I54: a prepare type is the step's own read, never a caller's: any door that sends one
+      // (a workflow, a plan, ChatOps) is refused here, audited and ledgered (blocked), undispatched.
+      return refuseGate(record, PREPARE_OUTSIDE_STEP_REASON);
+    } else if (requiresHITL && isPrepareActionType(action.type)) {
+      // I54: the same for a bound write's prepare read: it never raises a prompt of its own.
+      return refuseGate(record, PREPARE_HITL_REFUSAL);
+    } else if (boundRefusal !== undefined) {
+      // I54: a bound write that cannot enter (the public gate, a non-HITL type, another tool, a
+      // caller-supplied bound field, an oversized input): refused before any read or prompt.
+      return refuseGate(record, boundRefusal);
+    } else if (requiresHITL) {
+      const approved = await this.resolveHitlApproval(action, opts, record, scope);
+      return approved ? "approved" : "rejected";
+    } else {
+      return "not_required";
+    }
+  }
+
+  /** Gate phase 1, throw arm: what a refusal or a disconnect thrown while a prompt was built means. */
+  private statusOfGateThrow(e: unknown, record: GateRecord): HitlStatus {
+    if (e instanceof ConsentDisconnectedError) {
+      record.rejectReason = e.message;
+      record.hitlRejectReason = e.hitlAuditReason;
+      return "rejected";
+    } else if (e instanceof BeforeStateRefusedError || e instanceof PrepareRefusedError) {
+      // B2a / I54: a before-state guard or the prepare step refused the write while its prompt
+      // was being built. No prompt was shown; the write is audited rejected and ledgered blocked
+      // below, never dispatched.
+      return refuseGate(record, e.reason);
+    } else {
+      throw e;
+    }
+  }
+
   private async gateWithin(
     action: PlannedAction,
     opts: ExecuteOptions | undefined,
@@ -1127,54 +1186,26 @@ export class ToolExecutor {
       isUserMcpActionType(action.type) ||
       this.requiredByPolicy(action.type);
 
-    let hitlStatus: "approved" | "rejected" | "not_required";
     // Reason for the rejected path. Defaults to the user-declined message (the other rejection
     // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
     // is always a defined string by the time the rejected branch returns it.
     const record: GateRecord = { rejectReason: USER_DECLINED_REASON };
     const boundRefusal = this.boundRefusal(action, requiresHITL, scope);
 
+    // Phases, in order: the ordered refusal checks then the prompt (a throw maps to a status), then
+    // the audit row, then the egress row (I29), then the result.
+    let hitlStatus: HitlStatus;
     try {
-      if (this.namesOtherTypesWrite(action)) {
-        // I53: a connector write tool runs only under its OWN action type, whatever the type's own
-        // HITL class, so a plain-approval (or no-approval) type can never carry a Wave 4 tool.
-        // Refused before any prompt on every carrier; audited and ledgered (blocked) below.
-        hitlStatus = refuseGate(record, TOOL_TYPE_MISMATCH_REASON);
-      } else if (requiresHITL && isBeforeReadActionType(action.type)) {
-        // Spec § 5.4: a before-state read never raises a prompt of its own. A read type the frozen
-        // set, the user-MCP rule or a policy would gate is refused here, structurally, without
-        // asking anyone; it is still audited and ledgered (blocked) below.
-        hitlStatus = refuseGate(record, BEFORE_READ_HITL_REFUSAL);
-      } else if (isPrepareActionType(action.type) && scope.prepareStep !== true) {
-        // I54: a prepare type is the step's own read, never a caller's: any door that sends one
-        // (a workflow, a plan, ChatOps) is refused here, audited and ledgered (blocked), undispatched.
-        hitlStatus = refuseGate(record, PREPARE_OUTSIDE_STEP_REASON);
-      } else if (requiresHITL && isPrepareActionType(action.type)) {
-        // I54: the same for a bound write's prepare read: it never raises a prompt of its own.
-        hitlStatus = refuseGate(record, PREPARE_HITL_REFUSAL);
-      } else if (boundRefusal !== undefined) {
-        // I54: a bound write that cannot enter (the public gate, a non-HITL type, another tool, a
-        // caller-supplied bound field, an oversized input): refused before any read or prompt.
-        hitlStatus = refuseGate(record, boundRefusal);
-      } else if (requiresHITL) {
-        const approved = await this.resolveHitlApproval(action, opts, record, scope);
-        hitlStatus = approved ? "approved" : "rejected";
-      } else {
-        hitlStatus = "not_required";
-      }
+      hitlStatus = await this.runGateChecks(
+        action,
+        opts,
+        scope,
+        record,
+        requiresHITL,
+        boundRefusal,
+      );
     } catch (e) {
-      if (e instanceof ConsentDisconnectedError) {
-        hitlStatus = "rejected";
-        record.rejectReason = e.message;
-        record.hitlRejectReason = e.hitlAuditReason;
-      } else if (e instanceof BeforeStateRefusedError || e instanceof PrepareRefusedError) {
-        // B2a / I54: a before-state guard or the prepare step refused the write while its prompt
-        // was being built. No prompt was shown; the write is audited rejected and ledgered blocked
-        // below, never dispatched.
-        hitlStatus = refuseGate(record, e.reason);
-      } else {
-        throw e;
-      }
+      hitlStatus = this.statusOfGateThrow(e, record);
     }
 
     const sessionId = getAgentRequestSessionId();

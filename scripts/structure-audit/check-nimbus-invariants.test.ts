@@ -4434,7 +4434,7 @@ describe("D42 — a bound write is dispatched only with its own prepare step's v
     "    const gate = (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true });",
     "    return runPrepareStep(ops, row, row.bound, action, { prepareToolIds: this.prepareToolIds() });",
     "  }",
-    "  private async gateWithin(action, opts, scope) {",
+    "  private async runGateChecks(action, opts, scope) {",
     "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;",
     "    return this.resolveHitlApproval(action, opts, record, scope);",
     "  }",

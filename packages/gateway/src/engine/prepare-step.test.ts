@@ -367,9 +367,23 @@ describe("runPrepareStep", () => {
     await Promise.resolve();
     await Promise.resolve();
     t.fire();
-    await refusalOf(run);
-    fail(new Error("late"));
-    await Promise.resolve();
+    const refusal = await refusalOf(run);
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      unhandled.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      fail(new Error("late"));
+      // A rejection nobody handles is reported once the microtask queue drains and the loop turns.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+    expect(unhandled).toEqual([]);
+    // The late failure changes nothing about the answer already given.
+    expect(refusal).toBe(PREPARE_REFUSALS.timeout);
+    expect(await refusalOf(run)).toBe(PREPARE_REFUSALS.timeout);
   });
 
   test("a gate that resolves after the budget ran out never dispatches", async () => {
