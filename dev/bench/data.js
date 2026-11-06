@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793994547755,
+  "lastUpdate": 1793995201093,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "94d157eab297454bc9157c85e7740126b6743ad2",
-          "message": "docs: point the connector path at create-nimbus-connector (#1276)\n\n## Summary\n\nFollow-up to #1259. That PR documented the connector on-ramp honestly\nbut pointed contributors at the wrong tool. This measures both\ngenerators and repoints the guidance at the one that works.\n\n## What was measured\n\nI generated a throwaway connector from a JSON spec with\n`create-nimbus-connector` — published on npm at 0.13.1 — into a real\ncheckout, ran the repository's own gates against it, then deleted it.\n\nIt emits the complete connector package: `src/server.ts`, the manifest,\na per-package TypeScript config, a `package.json` byte-identical in\nshape to the real Netlify connector's, a README, and a sandbox test. The\nemitted code typechecks clean. The manifest is the real connector shape,\nincluding `hitlRequired` as an array.\n\nThe gates can see it, which is the part that matters:\n\n| Gate | `nimbus scaffold extension` | `create-nimbus-connector` |\n|---|---|---|\n| `audit:connector-entrypoints` | invisible — reports clean | ok |\n| `audit:connector-deps` | invisible — reports clean | ok |\n| `audit:connector-registry-drift` | invisible — reports clean |\ncorrectly fails, names the connector, gives the fix |\n\n`nimbus scaffold extension` emits a four-file generic extension shell\nwith no `src/server.ts`, and all three gates key off that file — so its\noutput is invisible to every one of them. They report clean, which is\nnot the same as done. That is the trap this PR removes.\n\n## What changed\n\n**`docs/CONTRIBUTING.md`** — the connector section now leads with\n`create-nimbus-connector`, states that `nimbus scaffold extension` is\nnot the tool for this and why, and reduces the manual follow-up from\nseven steps to the two that remain: adding the path to the root\n`workspaces` array, and regenerating the bundled registry. Both are\ngate-enforced, and the verification commands are listed.\n\n**Two documentation defects fixed:**\n\n- The old step 2 said the connector convention includes a `bin` entry.\nOnly 18 of 95 connectors have one, and the generator omits it — matching\nthe other 77.\n- Added a warning that in monorepo mode the generator writes relative to\nyour current directory. Running it from inside\n`packages/mcp-connectors/` nests the output at\n`packages/mcp-connectors/packages/mcp-connectors/<name>`. I hit this on\nthe first attempt.\n\n**`docs/README.md`** — the Extensions section conflated the two paths:\nit said \"writing a new connector\" and then showed the extension\nscaffold. Connectors and generic extensions are now separated, each with\nthe right tool. The contributing pointer was updated to match.\n\n## Testing\n\n- `bun run preflight:fast` — 30 gates, all pass\n- The measurement above, run against a real checkout and then reverted;\nthe tree is clean and `audit:connector-registry-drift` is back to ok\n\nDocumentation only. No product code changed.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Updated contribution guidance for creating connectors with the\nrecommended generator and JSON specifications.\n* Documented generated files, standalone mode, fixtures, repository\nrequirements, and post-generation validation steps.\n* Clarified the distinction between connector development and generic\nextension development.\n  * Added connector-specific testing and registration instructions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->",
-          "timestamp": "2026-08-20T06:51:35Z",
-          "tree_id": "15dcf04a0e1f55b876cea7844d0d26c752685764",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/94d157eab297454bc9157c85e7740126b6743ad2"
-        },
-        "date": 1787209403512,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 329.39617069999474,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.16632879999963,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 287.25864599999807,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5ce066006c2d3e8ea9665125465cce2036cc78f7",
+          "message": "chore: release main (#1928)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.36.0</summary>\n\n##\n[10.36.0](https://github.com/nimbus-agent/Nimbus/compare/v10.35.0...v10.36.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** type-to-confirm on every Wave 4 prompt, on every door\n([#1927](https://github.com/nimbus-agent/Nimbus/issues/1927))\n([15073bc](https://github.com/nimbus-agent/Nimbus/commit/15073bce79506de5cad3c890169536687278f3ee))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T19:44:18Z",
+          "tree_id": "c2a82fdefd489194e1b85d92ca9876864910cccd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5ce066006c2d3e8ea9665125465cce2036cc78f7"
+        },
+        "date": 1793995196904,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 283.0741094499977,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 281.3131718999957,
             "unit": "ms"
           }
         ]
