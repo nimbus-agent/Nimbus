@@ -11608,6 +11608,71 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(failures).toEqual([]);
   });
 
+  test("D0a: a Wave 4 tool named by mcpToolId runs only under its own action type, whatever the type's HITL class (the pairing, at the gate and at the dispatcher)", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const { createConnectorDispatcher } = await import("./connectors/registry.ts");
+    const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
+    expect(wave4.length).toBeGreaterThan(30);
+    const failures: string[] = [];
+    for (const row of wave4) {
+      const input = confirmableInput(row);
+      const other = wave4.find((r) => r.actionType !== row.actionType)?.actionType ?? "";
+      const key = `${serviceOf(row.actionType)}_${row.toolId}`;
+      for (const type of ["search.run", "pipeline.trigger", other]) {
+        for (const mcpToolId of [row.toolId, key]) {
+          let dispatched = 0;
+          let asked = 0;
+          const exec = new ToolExecutor(
+            {
+              requestApproval: async () => {
+                asked += 1;
+                return true;
+              },
+              requestConfirmedApproval: async (req: { confirmText: string }) => {
+                asked += 1;
+                return { approved: true, typed: req.confirmText };
+              },
+            },
+            { recordAudit: () => {} },
+            {
+              dispatch: async () => {
+                dispatched += 1;
+                return {};
+              },
+            },
+            undefined,
+            NULL_EGRESS_SINK,
+            NO_POLICY_OVERLAY,
+          );
+          const res = await exec.execute({ type, payload: { mcpToolId, input } });
+          if (res.status !== "rejected" || dispatched !== 0 || asked !== 0) {
+            failures.push(`${type} + ${mcpToolId}: ran or asked`);
+          }
+        }
+      }
+      // The dispatcher refuses it on its own, with the gate out of the picture.
+      let ran = 0;
+      const d = createConnectorDispatcher({
+        listTools: async () => ({
+          [key]: {
+            execute: async () => {
+              ran += 1;
+              return {};
+            },
+          },
+        }),
+      });
+      const err = await d.dispatch({ type: "search.run", payload: { mcpToolId: key, input } }).then(
+        () => "",
+        (e: unknown) => String(e),
+      );
+      if (ran !== 0 || !err.includes("ERR_WRITE_TOOL_ACTION_MISMATCH")) {
+        failures.push(`${key}: the dispatcher ran it under search.run`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
   test("D0a: a Wave 4 row is model-offerable only with a before reader AND a confirm target; the seven mail sends are never offered", async () => {
     const { isModelOfferableRow, MODEL_NEVER_OFFERED_TOOL_IDS } = await import(
       "./connectors/connector-writes/model-offerable.ts"

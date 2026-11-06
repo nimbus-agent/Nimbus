@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { listEgress } from "../egress/egress-verify.ts";
+import { TOOL_TYPE_MISMATCH_REASON } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
@@ -280,6 +281,26 @@ describe("buildChatopsBoot — full production graph", () => {
     const row = h.audits.find((a) => a.actionType === "github.pr.merge");
     expect(row?.hitlStatus).toBe("rejected");
     expect(JSON.parse(row?.actionJson ?? "{}").confirm).toBe("unsupported_channel");
+    await h.boot.service.stop();
+  });
+
+  test("write: a plain-approval type naming a Wave 4 tool is refused before any card (I53 pairing)", async () => {
+    const h = await buildHarness();
+    await h.boot.service.start();
+    h.socket.emit(
+      mention(
+        "C0",
+        "U_BOB",
+        "@nimbus run pipeline.trigger service=payment-service mcpToolId=jenkins_jenkins_build_trigger jobName=x",
+        "pair",
+      ),
+    );
+    await until(() => h.audits.some((a) => a.actionType === "pipeline.trigger"));
+    expect(h.posts.some((p) => p.text.includes("Approval needed"))).toBe(false);
+    expect(h.dispatched).toEqual([]);
+    const row = h.audits.find((a) => a.actionType === "pipeline.trigger");
+    expect(row?.hitlStatus).toBe("rejected");
+    expect(JSON.parse(row?.actionJson ?? "{}").hitlRejectReason).toBe(TOOL_TYPE_MISMATCH_REASON);
     await h.boot.service.stop();
   });
 

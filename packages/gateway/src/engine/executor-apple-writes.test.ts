@@ -1,9 +1,8 @@
-// Proves the EXISTING I2 HITL gate covers the Apple connector's four write
-// actions on the generic email/calendar dispatch path. Apple rides the same
-// action types as the five sibling email connectors (no apple-specific action
-// type, no connector-write-registry / I26 entry — see the slice design §6.2/§6.3),
-// so the only thing to prove is that those four action types are gated and that
-// the gate fires (consent BEFORE dispatch; reject ⇒ no dispatch). No prod code.
+// Proves the I2 HITL gate covers the Apple connector's four write actions. Each runs under its
+// own `apple.*` action type (the connector-write registry pairs a tool with its type, I53: an
+// `apple_*` tool under the generic `email.send` is refused), so the things to prove are that those
+// four types are gated and that the gate fires (consent BEFORE dispatch; reject => no dispatch).
+// The calendar delete is a Wave 4 write: its consent is the typed confirmation.
 import { describe, expect, test } from "bun:test";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import { HITL_REQUIRED, ToolExecutor } from "./executor.ts";
@@ -12,11 +11,19 @@ import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } fr
 // The four write actions apple's tools resolve to. `mcpToolId` carries the
 // concrete apple_* tool id (dispatch resolves by `payload.mcpToolId ?? action.type`),
 // while the executor gate keys on `action.type` alone (I3).
-const APPLE_WRITES: ReadonlyArray<{ type: string; mcpToolId: string }> = [
-  { type: "email.send", mcpToolId: "apple_mail_send" },
-  { type: "email.draft.create", mcpToolId: "apple_mail_draft_create" },
-  { type: "calendar.event.create", mcpToolId: "apple_calendar_event_create" },
-  { type: "calendar.event.delete", mcpToolId: "apple_calendar_event_delete" },
+const APPLE_WRITES: ReadonlyArray<{ type: string; mcpToolId: string; input: object }> = [
+  { type: "apple.mail.send", mcpToolId: "apple_mail_send", input: { to: "x@y.z" } },
+  { type: "apple.mail.draft.create", mcpToolId: "apple_mail_draft_create", input: { to: "x@y.z" } },
+  {
+    type: "apple.calendar.event.create",
+    mcpToolId: "apple_calendar_event_create",
+    input: { to: "x@y.z" },
+  },
+  {
+    type: "apple.calendar.event.delete",
+    mcpToolId: "apple_calendar_event_delete",
+    input: { href: "/cal/event-1.ics" },
+  },
 ];
 
 function harness(approve: boolean): {
@@ -33,6 +40,12 @@ function harness(approve: boolean): {
       order.push("consent");
       prompts.push(prompt);
       return approve;
+    },
+    // The Wave 4 delete: the typed confirmation is its consent.
+    requestConfirmedApproval: async (req) => {
+      order.push("consent");
+      prompts.push(req.prompt);
+      return { approved: approve, typed: req.confirmText };
     },
   };
   const audit: AuditSink = { recordAudit: () => {} };
@@ -52,14 +65,14 @@ function harness(approve: boolean): {
 }
 
 describe("Apple connector writes ride the existing I2 HITL gate", () => {
-  for (const { type, mcpToolId } of APPLE_WRITES) {
+  for (const { type, mcpToolId, input } of APPLE_WRITES) {
     test(`${type} is in the HITL_REQUIRED frozen set`, () => {
       expect(HITL_REQUIRED.has(type)).toBe(true);
     });
 
     test(`${type} (${mcpToolId}): consent is prompted BEFORE dispatch, then dispatches on approval`, async () => {
       const h = harness(true);
-      const res = await h.exec.execute({ type, payload: { mcpToolId, input: { to: "x@y.z" } } });
+      const res = await h.exec.execute({ type, payload: { mcpToolId, input } });
       expect(res.status).toBe("ok");
       // The consent prompt strictly precedes the connector dispatch.
       expect(h.order).toEqual(["consent", "dispatch"]);
@@ -68,7 +81,7 @@ describe("Apple connector writes ride the existing I2 HITL gate", () => {
 
     test(`${type} (${mcpToolId}): rejection returns "rejected" and NEVER dispatches`, async () => {
       const h = harness(false);
-      const res = await h.exec.execute({ type, payload: { mcpToolId, input: { to: "x@y.z" } } });
+      const res = await h.exec.execute({ type, payload: { mcpToolId, input } });
       expect(res.status).toBe("rejected");
       expect(h.order).toEqual(["consent"]);
       expect(h.dispatchCount()).toBe(0);

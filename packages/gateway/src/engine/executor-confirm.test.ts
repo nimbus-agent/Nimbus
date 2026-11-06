@@ -21,6 +21,7 @@ import {
   type ExecutorDelegationDep,
   HITL_REQUIRED,
   NO_POLICY_OVERLAY,
+  TOOL_TYPE_MISMATCH_REASON,
   ToolExecutor,
 } from "./executor.ts";
 import type {
@@ -125,14 +126,58 @@ describe("a non-Wave-4 HITL write keeps the plain prompt (a)", () => {
     expect("confirm" in auditOf(h)).toBe(false);
   });
 
-  test("a non-HITL type naming a Wave 4 tool in its payload is not made Wave 4 (I3)", async () => {
+  test("a type naming a tool that no connector-write row owns keeps its plain path (I3)", async () => {
     const h = harness({});
     const res = await h.exec.execute({
       type: "search.run",
-      payload: { mcpToolId: "github_pr_merge", input: { owner: "a", repo: "b", pullNumber: 1 } },
+      payload: { mcpToolId: "search_run", input: { q: "a" } },
     });
     expect(res.status).toBe("ok");
     expect(h.plain).toHaveLength(0);
+    expect(h.confirmed).toHaveLength(0);
+  });
+});
+
+describe("a tool runs only under its own action type (I53 pairing)", () => {
+  const INPUT = { owner: "a", repo: "b", pullNumber: 1 };
+  const spellings = ["github_pr_merge", "github_github_pr_merge"];
+
+  for (const mcpToolId of spellings) {
+    test(`a non-HITL type naming a Wave 4 tool (${mcpToolId}) is refused: nothing dispatched, audited blocked`, async () => {
+      const h = harness({});
+      const res = await h.exec.execute({
+        type: "search.run",
+        payload: { mcpToolId, input: INPUT },
+      });
+      expect(res).toEqual({ status: "rejected", reason: TOOL_TYPE_MISMATCH_REASON });
+      expect(h.dispatched).toHaveLength(0);
+      expect(h.plain).toHaveLength(0);
+      expect(h.confirmed).toHaveLength(0);
+      expect(h.audits.at(-1)?.hitlStatus).toBe("rejected");
+      expect(auditOf(h)["hitlRejectReason"]).toBe(TOOL_TYPE_MISMATCH_REASON);
+      expect(h.egress.at(-1)?.resultStatus).toBe("blocked");
+    });
+
+    test(`a HITL type with no Wave 4 row naming it (${mcpToolId}) is refused before any prompt`, async () => {
+      const h = harness({ plainAnswer: true });
+      const res = await h.exec.execute({
+        type: "pipeline.trigger",
+        payload: { mcpToolId, input: INPUT },
+      });
+      expect(res).toEqual({ status: "rejected", reason: TOOL_TYPE_MISMATCH_REASON });
+      expect(h.dispatched).toHaveLength(0);
+      expect(h.plain).toHaveLength(0);
+      expect(h.confirmed).toHaveLength(0);
+    });
+  }
+
+  test("a Wave 4 type naming another Wave 4 type's tool is refused too", async () => {
+    const h = harness({});
+    const res = await h.exec.execute({
+      type: "github.pr.merge",
+      payload: { mcpToolId: "github_branch_delete", input: INPUT },
+    });
+    expect(res).toEqual({ status: "rejected", reason: TOOL_TYPE_MISMATCH_REASON });
     expect(h.confirmed).toHaveLength(0);
   });
 });
@@ -273,6 +318,17 @@ describe("the gate fails closed before any prompt (h, i)", () => {
         mcpToolId: "github_branch_delete",
         input: { owner: "a", repo: "b", branch: "x" },
       },
+    });
+    expect(res).toEqual({ status: "rejected", reason: TOOL_TYPE_MISMATCH_REASON });
+    expect(h.confirmed).toHaveLength(0);
+    expect(h.dispatched).toHaveLength(0);
+  });
+
+  test("a Wave 4 action whose mcpToolId names no row at all is refused by the confirm phase", async () => {
+    const h = harness({});
+    const res = await h.exec.execute({
+      type: "github.pr.merge",
+      payload: { mcpToolId: "github_something_else", input: { owner: "a", repo: "b" } },
     });
     expect(res).toEqual({
       status: "rejected",

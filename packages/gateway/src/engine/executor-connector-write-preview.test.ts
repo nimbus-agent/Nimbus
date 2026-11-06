@@ -110,14 +110,14 @@ describe("the executor shows a connector write's typed preview", () => {
     expect(h.details[0]?.["toolId"]).toBe("slack_message_post");
   });
 
-  test("a mismatched mcpToolId keeps today's prompt", async () => {
+  test("a mcpToolId that is no write row keeps today's prompt", async () => {
     const h = harness(true);
     await h.exec.execute({
       type: "looker.datagroup.trigger",
-      payload: { mcpToolId: "looker_schedule_run_once", input: { datagroupId: "dg1" } },
+      payload: { mcpToolId: "looker_other_tool", input: { datagroupId: "dg1" } },
     });
     expect(h.prompts[0]).toBe(
-      'Action requires your approval\n\nType: looker.datagroup.trigger\n\nDetails: {"mcpToolId":"looker_schedule_run_once","input":{"datagroupId":"dg1"}}',
+      'Action requires your approval\n\nType: looker.datagroup.trigger\n\nDetails: {"mcpToolId":"looker_other_tool","input":{"datagroupId":"dg1"}}',
     );
     expect(h.details[0]?.["kind"]).toBeUndefined();
   });

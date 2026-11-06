@@ -9,6 +9,7 @@ import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
+import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
 import { mcpClientToolKey, meshServerForToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
 import {
@@ -152,6 +153,7 @@ export function createConnectorDispatcher(
         : mcpClientToolKey(serviceOf(action.type), toolId);
       assertUserMcpKeyMatchesActionType(action.type, resolvedKey);
       assertBeforeReadIsOwnRead(action.type, resolvedKey);
+      assertWriteKeyMatchesActionType(action.type, resolvedKey);
       const execute = tool.execute;
       if (execute === undefined) {
         throw new Error(`MCP tool "${toolId}" has no execute implementation`);
@@ -198,6 +200,25 @@ function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): voi
   if (!isReadOnlyToolId(resolvedKey) || isConnectorWriteToolId(resolvedKey)) {
     throw new Error(`ERR_BEFORE_READ_NOT_A_READ: ${shown}`);
   }
+}
+
+/**
+ * I53 at the dispatcher: a connector-write tool (a row's `toolId`, bare or as the tail of the mesh
+ * key `<server>_<tool>`) runs only under its row's OWN action type. The gate decides approval and
+ * the type-to-confirm text from the type (I3), so a Wave 4 tool riding a plain-approval type
+ * would skip the typed text; checked on the key the dispatcher actually resolved, beside
+ * {@link assertUserMcpKeyMatchesActionType}. The longest row id that ends the key wins.
+ */
+function assertWriteKeyMatchesActionType(actionType: string, resolvedKey: string): void {
+  let named: (typeof CONNECTOR_WRITE_ROWS)[number] | undefined;
+  for (const r of CONNECTOR_WRITE_ROWS) {
+    const matches = resolvedKey === r.toolId || resolvedKey.endsWith(`_${r.toolId}`);
+    if (matches && (named === undefined || r.toolId.length > named.toolId.length)) named = r;
+  }
+  if (named === undefined || named.actionType === actionType) return;
+  throw new Error(
+    `ERR_WRITE_TOOL_ACTION_MISMATCH: action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`,
+  );
 }
 
 /**

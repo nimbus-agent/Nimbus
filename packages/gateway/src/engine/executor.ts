@@ -13,6 +13,7 @@ import {
   type ConnectorWritePreview,
   findConnectorWriteRow,
   renderConnectorWritePreviewLines,
+  rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
 import type { PreviewCredentialResolver } from "../connectors/connector-writes/types.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
@@ -562,6 +563,10 @@ interface GateRecord {
 export const CONFIRM_UNSUPPORTED_REASON =
   "This channel cannot collect the typed confirmation this action requires.";
 
+/** The reason when a payload `mcpToolId` names a connector write that belongs to another action type. */
+export const TOOL_TYPE_MISMATCH_REASON =
+  "The action names a connector write tool that belongs to another action type.";
+
 /** The reason when the typed text did not equal the confirm text. */
 export const CONFIRM_MISMATCH_REASON = "The typed confirmation did not match.";
 
@@ -875,6 +880,18 @@ export class ToolExecutor {
     return { ...preview, before };
   }
 
+  /**
+   * Whether the payload's `mcpToolId` (bare or `<service>_<tool>`) names a connector-write row of
+   * ANOTHER action type. The dispatcher picks the tool from that field, not from the type (the
+   * gate consults the type only, I3), so this pairing is checked here and again at the dispatcher.
+   */
+  private namesOtherTypesWrite(action: PlannedAction): boolean {
+    const named = action.payload?.["mcpToolId"];
+    if (typeof named !== "string") return false;
+    const hit = rowNamedByToolId(named, this.beforeState?.rows ?? CONNECTOR_WRITE_ROWS);
+    return hit !== undefined && hit.actionType !== action.type;
+  }
+
   async gate(action: PlannedAction, opts?: ExecuteOptions): Promise<ActionResult | "proceed"> {
     // I2 first, the I42 user-MCP floor second, policy third, joined by OR — never by assignment,
     // and never the other way round. The frozen set and the user-MCP rule are both floors: either
@@ -894,7 +911,14 @@ export class ToolExecutor {
     const record: GateRecord = { rejectReason: "User declined consent gate." };
 
     try {
-      if (requiresHITL && isBeforeReadActionType(action.type)) {
+      if (this.namesOtherTypesWrite(action)) {
+        // I53: a connector write tool runs only under its OWN action type, whatever the type's own
+        // HITL class, so a plain-approval (or no-approval) type can never carry a Wave 4 tool.
+        // Refused before any prompt on every carrier; audited and ledgered (blocked) below.
+        hitlStatus = "rejected";
+        record.rejectReason = TOOL_TYPE_MISMATCH_REASON;
+        record.hitlRejectReason = TOOL_TYPE_MISMATCH_REASON;
+      } else if (requiresHITL && isBeforeReadActionType(action.type)) {
         // Spec § 5.4: a before-state read never raises a prompt of its own. A read type the frozen
         // set, the user-MCP rule or a policy would gate is refused here, structurally, without
         // asking anyone; it is still audited and ledgered (blocked) below.
