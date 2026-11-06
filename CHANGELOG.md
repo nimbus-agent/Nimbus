@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.30.0](https://github.com/nimbus-agent/Nimbus/compare/v10.29.0...v10.30.0) (2026-11-06)
+
+
+### Features
+
+* **gateway:** model-written drafts and pages cannot load remote content, on both doors ([#1913](https://github.com/nimbus-agent/Nimbus/issues/1913)) ([9270fae](https://github.com/nimbus-agent/Nimbus/commit/9270faeb224aa0a915c8fd72c88a4219719d77f7))
+
 ## [10.29.0](https://github.com/nimbus-agent/Nimbus/compare/v10.28.0...v10.29.0) (2026-11-05)
 
 
