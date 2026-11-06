@@ -153,12 +153,14 @@ describe("connector write rows", () => {
   });
 
   test("gdrive_file_trash is an ordinary write row since connectors 0.6.0 (no registeredAs overlay)", () => {
-    expect(connectorWriteRowByToolId("gdrive_file_trash")).toEqual({
+    const trash = connectorWriteRowByToolId("gdrive_file_trash");
+    expect(trash).toMatchObject({
       toolId: "gdrive_file_trash",
       actionType: "google_drive.file.trash",
       transport: "mesh",
       wave: 3,
     });
+    expect(trash).not.toHaveProperty("registeredAs");
     expect(CONNECTOR_WRITE_ROWS.filter((r) => r.registeredAs !== undefined)).toEqual([]);
     expect(HITL_REQUIRED.has("google_drive.file.trash")).toBe(true);
   });

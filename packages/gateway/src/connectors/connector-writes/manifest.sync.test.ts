@@ -6,6 +6,10 @@ import { stripComments } from "../../../../../scripts/structure-audit/lib.ts";
 import { CHATOPS_POST_TOOL_IDS } from "../../chatops/transport/connector-post.ts";
 import { TRIBAL_KB_WRITE_TOOL_IDS } from "../../tribal/tribal-write-gate.ts";
 import {
+  topLevelArgs,
+  withSchemaArgumentDeclarations,
+} from "../testing/connector-schema-source.ts";
+import {
   installedConnectorsPackageRoot,
   readConnectorPackageSources,
   scanWriteToolRegistrations,
@@ -20,105 +24,6 @@ const gateConfined = (id: string): boolean =>
   CHATOPS_POST_TOOL_IDS.has(id) || TRIBAL_KB_WRITE_TOOL_IDS.has(id);
 const manifestIds = new Set(CONNECTOR_WRITE_MANIFEST.map((e) => e.toolId));
 const rowIds = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
-
-/**
- * The text of `const <name> = ...;` in `code`, ended at the first `;` outside brackets, or
- * `undefined` when `code` declares no such const.
- */
-function constStatement(code: string, name: string): string | undefined {
-  const m = new RegExp(String.raw`\bconst\s+${name}\s*=`).exec(code);
-  if (m === null) return undefined;
-  let depth = 0;
-  for (let i = m.index; i < code.length; i++) {
-    const ch = code[i];
-    if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === ";" && depth === 0) return code.slice(m.index, i + 1);
-  }
-  return code.slice(m.index);
-}
-
-/** The top-level arguments of a call's `( ... )` text, split outside strings and brackets. */
-function topLevelArgs(call: string): string[] {
-  const inner = call.slice(1, -1);
-  const out: string[] = [];
-  let depth = 0;
-  let quote: string | undefined;
-  let start = 0;
-  for (let i = 0; i < inner.length; i++) {
-    const ch = inner[i];
-    if (quote !== undefined) {
-      if (ch === "\\") i++;
-      else if (ch === quote) quote = undefined;
-    } else if (ch === '"' || ch === "'" || ch === "`") quote = ch;
-    else if (ch === "(" || ch === "[" || ch === "{") depth++;
-    else if (ch === ")" || ch === "]" || ch === "}") depth--;
-    else if (ch === "," && depth === 0) {
-      out.push(inner.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-  out.push(inner.slice(start).trim());
-  return out;
-}
-
-/** An argument (or const right-hand side) that names a schema: `X` or `X.extend(...)`. */
-const SCHEMA_REF = /^([A-Za-z_$][\w$]*)\s*(?:\.extend\s*\(|$)/;
-
-/** A const statement whose value is a zod schema: `z.<...>` or `<const>.extend(...)`. */
-function schemaConstBase(statement: string): { readonly base?: string } | undefined {
-  const rhs = statement.slice(statement.indexOf("=") + 1).trim();
-  if (/^z\s*\./.test(rhs)) return {};
-  const m = /^([A-Za-z_$][\w$]*)\s*\.extend\s*\(/.exec(rhs);
-  return m?.[1] === undefined ? undefined : { base: m[1] };
-}
-
-/** The shared mail kit, whose `emailToolSchemas` the draft and send tools pass by member (B3). */
-const SHARED_EMAIL_KIT = "shared/imap-tool-kit.ts";
-
-/**
- * An argument `emailToolSchemas.<member>`: the declaration of `<member>` in the shared mail kit,
- * when that file's `emailToolSchemas` const names it. Only that one shared object is followed.
- */
-function sharedEmailSchemaDeclaration(arg: string): string | undefined {
-  const m = /^emailToolSchemas\.([A-Za-z_$][\w$]*)$/.exec(arg);
-  const member = m?.[1];
-  if (member === undefined) return undefined;
-  const kit = stripComments(sources.find((s) => s.rel === SHARED_EMAIL_KIT)?.text ?? "");
-  const table = constStatement(kit, "emailToolSchemas") ?? "";
-  if (!new RegExp(String.raw`\b${member}\b`).test(table)) return undefined;
-  const statement = constStatement(kit, member);
-  return statement !== undefined && schemaConstBase(statement) !== undefined
-    ? statement
-    : undefined;
-}
-
-/**
- * `call` plus the declaration of the local schema const it passes as an argument (`schema` or
- * `schema.extend({...})`) and that const's `.extend(` base chain, plus one shared-kit exception:
- * an argument `emailToolSchemas.<member>` is followed into `shared/imap-tool-kit.ts`
- * ({@link sharedEmailSchemaDeclaration}), where the mail draft and send tools declare their input.
- * Nothing else the call names is followed: a key that appears only in some other local const is
- * not the tool's input.
- */
-function withSchemaArgumentDeclarations(code: string, call: string): string {
-  const parts = [call];
-  const seen = new Set<string>();
-  for (const arg of topLevelArgs(call)) {
-    const shared = sharedEmailSchemaDeclaration(arg);
-    if (shared !== undefined) parts.push(shared);
-    let name = SCHEMA_REF.exec(arg)?.[1];
-    while (name !== undefined && !seen.has(name) && seen.size < 20) {
-      seen.add(name);
-      const statement = constStatement(code, name);
-      const schema = statement === undefined ? undefined : schemaConstBase(statement);
-      if (statement === undefined || schema === undefined) break;
-      parts.push(statement);
-      name = schema.base;
-    }
-  }
-  return parts.join("\n");
-}
 
 describe("connector write manifest", () => {
   test("the committed manifest is what the generator produces from the installed package", () => {
@@ -211,7 +116,7 @@ describe("connector write manifest", () => {
       // one) declares its keys in that const's statement, outside the call: follow it alone.
       const call = reg.tags.includes("forwarder")
         ? own
-        : withSchemaArgumentDeclarations(fileCode, own);
+        : withSchemaArgumentDeclarations(sources, fileCode, own);
       return templateKeys(r, extra)
         .filter((k) => !call.includes(`${k}:`))
         .map((k) => `${r.toolId}: ${k}`);
@@ -243,7 +148,7 @@ describe("connector write manifest", () => {
     ].join("\n");
     const callAt = code.indexOf('reg("t"') + 3;
     const call = code.slice(callAt, code.lastIndexOf(")") + 1);
-    const followed = withSchemaArgumentDeclarations(code, call);
+    const followed = withSchemaArgumentDeclarations(sources, code, call);
     expect(followed).toContain("body:");
     expect(followed).toContain("owner:");
     // A key present only in an unrelated local const is NOT the tool's input: it is reported.
@@ -257,6 +162,7 @@ describe("connector write manifest", () => {
     ]);
     // An inline `.extend(` of a schema const is followed too; a non-schema const is not.
     const inline = withSchemaArgumentDeclarations(
+      sources,
       code,
       '("t", baseSchema.extend({ a: 1 }), helper)',
     );

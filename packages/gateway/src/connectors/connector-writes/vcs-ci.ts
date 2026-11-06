@@ -1,5 +1,11 @@
 // packages/gateway/src/connectors/connector-writes/vcs-ci.ts
-import { beforeReplyJson, presentFields, requiredStringAt, stringAt } from "./before-select.ts";
+import {
+  beforeReplyJson,
+  excerptHead,
+  presentFields,
+  requiredStringAt,
+  stringAt,
+} from "./before-select.ts";
 import {
   type BeforeStateField,
   type ConnectorWriteRow,
@@ -26,11 +32,66 @@ export function selectGitlabMrIdentity(reply: unknown): readonly BeforeStateFiel
   ];
 }
 
+/**
+ * GitHub `github_pr_get` (before-state), for closing a pull request: `Title` (required), `State`
+ * (a merged or already closed pull request says so: closing it does nothing), `Branches`
+ * (`head -> base`), `Draft` and `Author`. Never the body (the same rule as the GitLab selector).
+ */
+export function selectGithubPrIdentity(reply: unknown): readonly BeforeStateField[] {
+  const j = beforeReplyJson(reply);
+  const title = requiredStringAt(j, ["title"]);
+  const state = stringAt(j, ["state"]);
+  const merged = typeof j === "object" && j !== null && (j as { merged?: unknown }).merged === true;
+  const head = stringAt(j, ["head", "ref"]);
+  const base = stringAt(j, ["base", "ref"]);
+  const draft = typeof j === "object" && j !== null ? (j as { draft?: unknown }).draft : undefined;
+  let shownState = state;
+  if (merged) shownState = "merged: closing it does nothing";
+  else if (state === "closed") shownState = "closed: it is already closed";
+  return [
+    { label: "Title", value: excerptHead(title) },
+    ...presentFields([
+      ["State", shownState === undefined ? undefined : excerptHead(shownState)],
+      [
+        "Branches",
+        head === undefined || base === undefined ? undefined : excerptHead(`${head} -> ${base}`),
+      ],
+      ["Draft", typeof draft === "boolean" ? (draft ? "yes" : "no") : undefined],
+      ["Author", excerptOpt(stringAt(j, ["user", "login"]))],
+    ]),
+  ];
+}
+
+function excerptOpt(v: string | undefined): string | undefined {
+  return v === undefined ? undefined : excerptHead(v);
+}
+
 export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   // Spec § 15, OR-W34-3: merges, branch delete and tag create are irreversible, so wave 4 (always
   // prompts, needs a before-state and type-to-confirm, never auto-fires).
   row("github_pr_merge", "github.pr.merge", "mesh", 4),
-  row("github_pr_close", "github.pr.close", "mesh", 3),
+  // Close without merging (PATCH `state: closed`); recoverable, the pull request can be reopened.
+  withBefore(
+    withPreview(row("github_pr_close", "github.pr.close", "mesh", 3), {
+      target: "{owner}/{repo}#{pullNumber}",
+      summary: "Close GitHub pull request {owner}/{repo}#{pullNumber} without merging",
+      fields: [
+        textField("owner"),
+        textField("repo"),
+        textField("pullNumber", "Pull request number"),
+      ],
+    }),
+    {
+      tool: "github_pr_get",
+      argKeys: ["owner", "repo", "pullNumber"],
+      args: (input) => ({
+        owner: input["owner"],
+        repo: input["repo"],
+        pullNumber: input["pullNumber"],
+      }),
+      select: selectGithubPrIdentity,
+    },
+  ),
   // Connectors 0.6.0 (spec 15.3, OR-W34-6): branch, PR and MR create/update, all wave 3. The
   // create writes are recoverable (the branch/PR/MR can be deleted or closed), the updates are not.
   // Untemplated and not offered in C1; C2 templates them behind new act-door refusals.

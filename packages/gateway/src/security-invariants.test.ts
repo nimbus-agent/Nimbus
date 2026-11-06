@@ -11684,17 +11684,21 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create and B4b's Obsidian append, all wave 2 (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2) and C1's eight wave-3 file, pull request and incident writes (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",
       "gdrive_file_create",
+      "gdrive_file_move",
+      "gdrive_file_rename",
+      "gdrive_file_trash",
       "github_issue_assignees_add",
       "github_issue_comment_create",
       "github_issue_labels_add",
       "github_issue_state_set",
+      "github_pr_close",
       "gitlab_issue_assignees_add",
       "gitlab_issue_labels_add",
       "gitlab_issue_note_create",
@@ -11710,8 +11714,26 @@ describe("I53 — a first-party connector write reaches the model only through t
       "notion_page_create",
       "notion_page_update",
       "obsidian_append_to_daily_note",
+      "onedrive_item_move",
+      "pd_incident_acknowledge",
+      "pd_incident_escalate",
+      "pd_incident_resolve",
     ]);
-    expect(withReader.filter((r) => r.wave !== 2)).toEqual([]);
+    expect(
+      withReader
+        .filter((r) => r.wave !== 2)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual([
+      "gdrive_file_move",
+      "gdrive_file_rename",
+      "gdrive_file_trash",
+      "github_pr_close",
+      "onedrive_item_move",
+      "pd_incident_acknowledge",
+      "pd_incident_escalate",
+      "pd_incident_resolve",
+    ]);
   });
 
   test("the door executor alone carries the before-state runner, as argument 8", async () => {
