@@ -13,6 +13,7 @@ import {
   row,
   textField,
   withBefore,
+  withConfirm,
   withPreview,
 } from "./types.ts";
 
@@ -242,7 +243,9 @@ function excerptOpt(v: string | undefined): string | undefined {
 export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   // Spec § 15, OR-W34-3: merges, branch delete and tag create are irreversible, so wave 4 (always
   // prompts, needs a before-state and type-to-confirm, never auto-fires).
-  row("github_pr_merge", "github.pr.merge", "mesh", 4),
+  withConfirm(row("github_pr_merge", "github.pr.merge", "mesh", 4), {
+    template: "{owner}/{repo}#{pullNumber}",
+  }),
   // Close without merging (PATCH `state: closed`); recoverable, the pull request can be reopened.
   withBefore(
     withPreview(row("github_pr_close", "github.pr.close", "mesh", 3), {
@@ -397,9 +400,15 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       ),
     },
   ),
-  row("github_branch_delete", "github.branch.delete", "mesh", 4),
-  row("github_tag_create", "github.tag.create", "mesh", 4),
-  row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4),
+  withConfirm(row("github_branch_delete", "github.branch.delete", "mesh", 4), {
+    template: "{owner}/{repo}@{branch}",
+  }),
+  withConfirm(row("github_tag_create", "github.tag.create", "mesh", 4), {
+    template: "{owner}/{repo}@{tag}",
+  }),
+  withConfirm(row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4), {
+    template: "{projectPath}!{mergeRequestIid}",
+  }),
   withBefore(
     withPreview(row("gitlab_mr_note_create", "gitlab.mr.note.create", "mesh", 2), {
       target: "{projectPath}!{mergeRequestIid}",
@@ -416,13 +425,31 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       select: selectGitlabMrIdentity,
     },
   ),
-  row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 4),
-  row("jenkins_build_trigger", "jenkins.build.trigger", "mesh", 4),
-  row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4),
-  row("gha_run_trigger", "github_actions.run.trigger", "mesh", 4),
-  row("gha_run_cancel", "github_actions.run.cancel", "mesh", 4),
-  row("circleci_pipeline_trigger", "circleci.pipeline.trigger", "mesh", 4),
-  row("circleci_job_cancel", "circleci.job.cancel", "mesh", 4),
-  row("gitlab_pipeline_retry", "gitlab.pipeline.retry", "mesh", 4),
-  row("gitlab_pipeline_cancel", "gitlab.pipeline.cancel", "mesh", 4),
+  withConfirm(row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 4), {
+    template: "{repoFull}#{pullRequestId}",
+  }),
+  withConfirm(row("jenkins_build_trigger", "jenkins.build.trigger", "mesh", 4), {
+    template: "{jobName}",
+  }),
+  withConfirm(row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4), {
+    template: "{jobName}#{buildNumber}",
+  }),
+  withConfirm(row("gha_run_trigger", "github_actions.run.trigger", "mesh", 4), {
+    template: "{owner}/{repo}:{workflowId}",
+  }),
+  withConfirm(row("gha_run_cancel", "github_actions.run.cancel", "mesh", 4), {
+    template: "{owner}/{repo}#{runId}",
+  }),
+  withConfirm(row("circleci_pipeline_trigger", "circleci.pipeline.trigger", "mesh", 4), {
+    template: "{projectSlug}",
+  }),
+  withConfirm(row("circleci_job_cancel", "circleci.job.cancel", "mesh", 4), {
+    template: "{projectSlug}#{jobNumber}",
+  }),
+  withConfirm(row("gitlab_pipeline_retry", "gitlab.pipeline.retry", "mesh", 4), {
+    template: "{projectPath}#{pipelineId}",
+  }),
+  withConfirm(row("gitlab_pipeline_cancel", "gitlab.pipeline.cancel", "mesh", 4), {
+    template: "{projectPath}#{pipelineId}",
+  }),
 ];

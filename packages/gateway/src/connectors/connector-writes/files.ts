@@ -13,6 +13,7 @@ import {
   row,
   textField,
   withBefore,
+  withConfirm,
   withPreview,
 } from "./types.ts";
 
@@ -309,5 +310,7 @@ export const FILES_ROWS: readonly ConnectorWriteRow[] = [
       select: selectOnedriveItemMove,
     },
   ),
-  row("onedrive_item_delete", "onedrive.item.delete", "mesh", 4),
+  withConfirm(row("onedrive_item_delete", "onedrive.item.delete", "mesh", 4), {
+    template: "{itemId:tail8}",
+  }),
 ];
