@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793978495175,
+  "lastUpdate": 1793980841969,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "55715b7e5989b60eef3d653fc1ba3fb56acc4faa",
-          "message": "feat(agents): a browser-viable why — agents.why answers about a pull request (#1260)\n\n## Summary\n\n`agents.why` gains a second entry point — `{ prUrl }` instead of `{ ref\n}` — so a caller holding a pull-request URL gets a *why does this change\nexist* brief **without a local checkout**. That requirement is what\npreviously made this question unreachable from a browser.\n\nThe observation the change rests on: four of `why`'s six lanes\n(`pull_request`, `ticket`, `discussion`, `driver`) already opened by\ndiscarding the file and asking `findPrForSha`. Blame was never their\nsubject — it was the *adapter* from a file line to a pull request. A\ncaller who already has the pull request does not need the adapter. So\nthis adds an entry point, not a code path: `LaneInput` carries the\nresolved PR, filled by blame on the `ref` arm and by the index on the\n`prUrl` arm, and the lanes stop knowing which ran.\n\nTwo lanes cannot answer on the new arm and say so rather than going\nquietly missing: `authorship` (line-level blame is meaningless for a\nwhole change) and `downstream` (needs a file subject — and it is the\nquestion `agents.impact` already answers).\n\n**It also fixes a live defect in `agents.impact`.** That agent\nreconstructed an item key from a URL — a GitHub-shaped regex, a service\nguessed from the hostname, and `${service}:${owner}/${repo}#${num}`.\nThat failed three independent ways on GitLab: the URL shape never\nmatched, self-hosted hosts derived a bogus service, and GitLab merge\nrequests are keyed with a **bang** (`acme/web!482`), not a hash — so\neven a corrected regex would have missed. A GitLab URL then fell through\nto a `LIKE '%url%'` scan over item titles and returned *something*,\nwhich is why the lane looked like it worked. Both agents now share one\nparse-free resolver: URL → `resolveItemByUrl` → the `pr` graph entity,\njoined on the item primary key `syncPrGraph` writes as its\n`external_id`. No regex, no host table, no per-forge id format.\n\nStep 2 of three. Step 1 is `@nimbus-dev/sdk` 1.18.0 (`WhyChangeSubject`,\noptional `WhyBrief.changeSubject`), published. Step 3 is a\nbrowser-extension lane in another repo.\n\n### Notable design points\n\n- **`changeSubject` is a tri-state**: absent = a `ref` question; `null`\n= a `prUrl` question whose subject did not resolve; a value = one that\nresolved. On the `prUrl` arm `subject` is always null — the two are\nalternatives, never both, and the gateway upholds an invariant the type\ncannot.\n- **A miss returns a brief, not an error**, following `agents.impact`'s\nexisting precedent of a null start entity rather than a failed run.\n- **No new HTTP method, no allow-list change, no scope change.** `why`\nwas already reachable at `POST /v1/agents/why`; this is params-only.\n`agents.whyPeek` stays synchronous, HTTP-excluded, and rejects `prUrl`.\n- **The disclosure is registered with the I31 contract guard.** The\n\"authorship needs a line…\" sentence lives in the brief *preamble*, which\nsynthesis may rewrite freely — so it is declared in\n`brief-disclosures.ts` and required via `requiredPhrases` under\n`changeSubject != null`, and an LLM rewrite that drops it fails closed\nto the deterministic brief. `render.ts` emits the same constant the\nguard requires, so the two cannot drift.\n\n## Related Issue\n\nCloses #\n\n## Type of Change\n\n- [x] Bug fix (non-breaking change that fixes an issue) —\n`agents.impact` on GitLab, Bitbucket, and self-hosted forges\n- [x] New feature (non-breaking change that adds functionality) — the\n`prUrl` arm\n- [ ] Breaking change (fix or feature that changes existing behaviour)\n- [ ] Refactor (no behaviour change)\n- [ ] Test improvement\n- [ ] Documentation only\n- [ ] CI / tooling\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint) — 3425 files\n- [x] All existing tests pass (`bun test`) — 19272 pass / 139 skip / 0\nfail across 1513 files\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (no OS checks in business logic) — n/a, none added\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md` … — n/a, not touched\n\n## Coverage (if engine/ or vault/ was changed)\n\n- [ ] `bun run test:coverage:engine` — n/a, `engine/` not modified\n- [ ] `bun run test:coverage:vault` — n/a, `vault/` not modified\n\n## Testing\n\n`bun run typecheck`, `bun run lint`, `bun run lint:markdown` (0 issues,\n106 files) and the full `bun run test` all green on the final tree.\n\nBeyond the suite, three things were verified by hand because a green\nsuite could not prove them:\n\n- **The `ref` arm is behaviourally unchanged**, traced lane by lane\nrather than inferred from passing tests. `subPullRequest`/`subTicket`\nreceive a `lane.pr` byte-identical to the `findPrForSha` they used to\ncompute themselves (and it now runs once instead of three times);\n`subDiscussion`'s PR half is null exactly when its `sha` was undefined;\n`subDriver`'s `occurredAt` reduces to `blame?.authorTimeMs ?? null`.\n- **The GitLab defect was reproduced before it was fixed** — the\nregression test fails against the old parsing code and asserts the exact\ndeterministic entity id, not merely non-null. A non-null id is what the\n*bug* produced too, via the title scan.\n- **The rendered brief was read end to end** against a real in-memory\nindex, not a stubbed fixture.\n\n## Notes for Reviewers\n\n**One deliberate widening worth a second opinion.** `http-route-auth.ts`\nmaps `POST /v1/agents/{agent}` to the `agents` scope and `GET\n/v1/items/resolve` to `resolve`. The `prUrl` arm means a token holding\n`agents` but not `resolve` can now POST an arbitrary URL and learn\nwhether it is indexed, plus its title, repo and number. The `agents`\nscope already returns index-derived titles via the `ref` arm, so this\nwidens an existing boundary rather than breaching a closed one — but it\nis a real widening and it should be an explicit decision rather than a\nside effect. Deliberately **not** recorded as a row in\n`docs/SECURITY-INVARIANTS.md`: those are numbered invariants owned by\nmaintainers, and asserting one is beyond this branch's remit. If the\nboundary is load-bearing, the fix is a scope check on the `prUrl` arm as\na follow-up.\n\n**Known-stale, not touched:** `docs/SECURITY-INVARIANTS.md:606,623`\nstill describe `impact.ts`'s now-deleted `HOST_TO_SERVICE` and its `??\nhostFirstSegment` fallback in present tense. The invariant's substance\n(exact host match, no fallback) still holds — only the comparison target\nis gone. Left for a maintainer since that file's rows are yours.\n\n**Bounded limits, stated rather than discovered later:** a URL more than\n`RESOLVE_MAX_TRIMMED_SEGMENTS` (3) below the canonical one misses,\nexactly as it already does for the shipped `impact` lane; and where\nGitLab's events API omits `web_url`, `canonicalUrl` falls back to a\npercent-encoded namespace, so `resolve_key` cannot match a browser URL.\nBoth are pre-existing and unchanged here.\n\n**Four defects were caught by review during development and are worth\nknowing about**, since three originated in the plan rather than the\ncode: two tests asserting non-null where an exact id was available; an\n`occurredAt` fallback that let the `ref` arm borrow the PR's timestamp\nwhen blame carried no author time; an e2e regression first misreported\nas pre-existing (a stash-based check proves a failure predates the\ncurrent edit, not the branch); and gap notes phrased for a `ref`\nquestion leaking onto the `prUrl` arm, because the two silent lanes\nreturned early *with* a `GapNote` rather than with nothing. All four are\nclosed with tests that fail against the bug.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* `why` now accepts pull-request URLs without requiring a local\ncheckout.\n* Pull-request results include relevant PR, ticket, discussion, and\ndriver context.\n* Supports GitHub, GitLab, Bitbucket, enterprise, and nested repository\nURLs.\n  * `impact` now provides more consistent pull-request resolution.\n\n* **Bug Fixes**\n* Improved handling and messaging for unresolved, ambiguous, or\nunsupported URLs.\n  * `--peek` now clearly rejects pull-request URLs.\n* Added safeguards to ensure required disclosures appear in applicable\nresults.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T07:37:35+03:00",
-          "tree_id": "34f5b9cb3f7f0e71a6ebbf8a1a19f1772495d62c",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/55715b7e5989b60eef3d653fc1ba3fb56acc4faa"
-        },
-        "date": 1787201351754,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.90288219999854,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.77370940000253,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 174.72988154999985,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7083b221178e1710d247972cb5e8bd639ccae72e",
+          "message": "chore: release main (#1926)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.35.0</summary>\n\n##\n[10.35.0](https://github.com/nimbus-agent/Nimbus/compare/v10.34.0...v10.35.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** offer the flag writes and the JSM Operations alert\nwrites, and store an optional Jira cloud id\n([#1925](https://github.com/nimbus-agent/Nimbus/issues/1925))\n([5f57ad5](https://github.com/nimbus-agent/Nimbus/commit/5f57ad5bba8aa6090bf97b5abf331a464aaefe8e))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T17:52:23+02:00",
+          "tree_id": "0f59e417b0106328b208951c5d0554f433c7088c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7083b221178e1710d247972cb5e8bd639ccae72e"
+        },
+        "date": 1793980837854,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 229.65741650000018,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 229.3791180999997,
             "unit": "ms"
           }
         ]
