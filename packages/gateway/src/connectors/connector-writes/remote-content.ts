@@ -1422,7 +1422,13 @@ const ALL_DIAGRAM_LOADER_LANGUAGES: readonly string[] = [...DIAGRAM_LOADERS.keys
 
 /** A line lower-cased with every space and TAB removed, for the loader tokens. */
 function compactLine(line: string): string {
-  return line.toLowerCase().replaceAll(/[ \t]/g, "");
+  // A character loop, not a replace call: these files never replace (markup-tokens.test.ts pin).
+  const lower = line.toLowerCase();
+  let out = "";
+  for (const ch of lower) {
+    if (ch !== " " && ch !== "\t") out += ch;
+  }
+  return out;
 }
 
 /**
