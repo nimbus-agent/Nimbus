@@ -432,13 +432,7 @@ describe("C2 selectors", () => {
       fieldMap(selectGitlabMrUpdate(reply, picked))["Draft state"];
     const draft = { ...MR, title: "Draft: Fix x", draft: true };
     const uncertain = "UNCERTAIN: the new title may or may not mark this merge request as draft";
-    for (const title of [
-      "Dra​ft: x",
-      "Draft：x",
-      "［Draft］x",
-      "Draft&#58; x",
-      "WIP: x",
-    ]) {
+    for (const title of ["Dra​ft: x", "Draft：x", "［Draft］x", "Draft&#58; x", "WIP: x"]) {
       expect(line(draft, { title }), title).toBe(uncertain);
     }
     expect(line({ ...MR, draft: false }, { title: "WIP: x" })).toBe(uncertain);
