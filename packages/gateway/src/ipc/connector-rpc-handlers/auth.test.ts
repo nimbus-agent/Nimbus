@@ -1000,6 +1000,26 @@ describe("token-only connectors (linear, circleci, pagerduty) — reading the to
     expect(writes).toEqual(["pagerduty.api_token=t"]);
   });
 
+  test("pagerduty: a stored credential retires the running slot; a refused one stops nothing", async () => {
+    let restarts = 0;
+    const mesh = {
+      restartPagerduty: () => {
+        restarts += 1;
+      },
+    } as unknown as ConnectorRpcHandlerContext["connectorMesh"];
+    const withMesh = (fields: Record<string, unknown>): ConnectorRpcHandlerContext => ({
+      ...tokenCtx("pagerduty", fields, []),
+      connectorMesh: mesh,
+    });
+    expect(
+      await refusalMessage(withMesh({ token: "t", fromEmail: "not-an-email" })),
+    ).toBeDefined();
+    expect(await refusalMessage(withMesh({}))).toBe("Missing API token for pagerduty");
+    expect(restarts).toBe(0);
+    await handleConnectorAuth(withMesh({ token: "t", fromEmail: "oncall@example.com" }));
+    expect(restarts).toBe(1);
+  });
+
   /** Service ids with a scheduler row in this test's index — a refusal must register none. */
   function loadRegisteredIds(): string[] {
     return db

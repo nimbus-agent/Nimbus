@@ -802,6 +802,8 @@ async function connectorAuthPagerduty(ctx: ConnectorRpcHandlerContext): Promise<
   if (fromEmail !== "") {
     await writeConnectorSecret(ctx.vault, "pagerduty", "from_email", fromEmail);
   }
+  // The child reads both values at spawn only: retire a running one so the next use respawns with these.
+  ctx.connectorMesh?.restartPagerduty();
   return registerAndSucceed(ctx.localIndex, "pagerduty");
 }
 

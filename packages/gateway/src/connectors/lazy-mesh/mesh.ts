@@ -1003,6 +1003,16 @@ export class LazyConnectorMesh {
   }
 
   /**
+   * Retire the PagerDuty child so the next use respawns it with the credentials now in the Vault
+   * (`PAGERDUTY_API_TOKEN` and `PAGERDUTY_FROM_EMAIL` are read at spawn only). Bumps the slot
+   * generation, so a model write offered before the change refuses "ask again". Never rejects; an
+   * in-flight call finishes on the old child first (the detach drain).
+   */
+  restartPagerduty(): void {
+    void this.detachLazyClient(LAZY_MESH.pagerduty);
+  }
+
+  /**
    * Called after the owner's Obsidian opt-in changes (enable approved, or disable). Returns
    * promptly, never waiting on an in-flight call:
    *  1. the `mesh:obsidian` slot is DETACHED at once: its client is cleared and its generation and
