@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793978113290,
+  "lastUpdate": 1793978495175,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "926fb80fd4f04515c6f92ef8aca40a0986746df4",
-          "message": "feat(prfiles): index PR changed-file paths behind an explicit coverage record (#1258)\n\n## Summary\n\nA PR's changed-file **paths** were not indexed anywhere.\n`github-sync.ts` stored\n`changed_files` as a **count** — one of four size stats — and nothing\nrecorded\nwhich files those were. So the canonical negation question, *\"PRs that\ndon't\ntouch tests\"*, was not partially answerable. It was not answerable at\nall.\n\nThis indexes those paths across GitHub, GitLab and Bitbucket, behind an\nexplicit\ncoverage record. It is sub-project **B** of the changed-file-indexing\neffort and\nthe data prerequisite for **W6-B first-class negation queries**.\n\n**The constraint the whole design is shaped around:** for a negation, a\nmissing\nrow **produces** a result rather than costing one. A PR whose file list\nwas never\nfetched matches \"no row with that path\" exactly as well as a PR that\ngenuinely\ndid not touch it. So partial coverage is not incomplete — it is\n**wrong**, in the\ndirection of a confident false positive, and the more incomplete the\nindex the\n**more** results it returns.\n\nEverything follows from that: coverage is recorded explicitly, and\nanything not\npositively verified is excluded.\n\n- **V55** adds `pr_changed_file` and `pr_files_state`, both keyed on\n`item.id`\n  with `ON DELETE CASCADE`.\n- **One row per touched path.** A rename writes TWO rows, a deletion ONE\n— so a\nPR that renamed `tests/a.ts` away still fails a \"does not touch tests/\"\nfilter.\n- **Two independent exclusion rules**: no coverage row, **and**\n`truncated = 1`.\n  A PR we hold 300 of 4,000 paths for cannot verify a negative either.\n- Three forge mappers, a bounded per-tick driver, and a `nimbus status`\n  coverage line.\n\n## Related Issue\n\nRelates to Spine S1. Sub-project B of the changed-file-indexing effort;\nbuilds on\nsub-project A, which shipped as #1255.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes — Biome, format + lint\n- [x] All existing tests pass — gateway 14308 pass / 32 skip / 0 fail;\nCLI 2406 pass / 0 fail\n- [x] New behaviour is covered by tests\n- [x] No `any` types introduced — `unknown` for external payloads\n- [x] No credentials, tokens, or secret values appear anywhere\n- [x] Platform-specific code is behind `PlatformServices`\n- [x] The HITL consent gate has not been weakened or bypassed\n\n## Testing\n\n`bun run preflight:fast` passes all gates. Full `bun test\npackages/gateway` and\n`bun test packages/cli` are green — quoted as counts, since `bun test`\ncan exit 0\nwhile reporting failures.\n\nGuards were **red-proved**, not merely observed green:\n\n- Removing the serializer field makes the new IPC-seam test fail\n  object-vs-`undefined`.\n- Reverting the selector limit drops the attempt-budget test from 1 to\n0.\n- Removing the `try`/`catch` makes the missing-tables test fail with\n  `SQLiteError: no such table: pr_files_state`.\n- Widening the rename branch makes the copy row-count assertion fail.\n\n## Notes for Reviewers\n\n**A rename chain used to abort a whole sync tick, permanently.**\nRenaming\n`a → b` while renaming `c → a` in one PR emits a duplicate path, which\nviolated\nthe primary key; the write sat outside the try, so the throw escaped the\ndriver.\nSince the selector is `modified_at DESC` over **uncovered** PRs, that PR\nwas\nre-picked first every tick forever and the backlog drained at zero\nbehind a\nsingle warn. Fixed by deduping first-wins and moving the write inside\nthe try.\n\n**A GitLab 429 could block a scheduler slot.** The pipelines step\npenalises\nwithout throwing; the pass then called `acquire()`, which sleeps out the\nfull\n`Retry-After`. Now uses `tryAcquire`, which declines instead of sleeping\n— fixed\nin the driver so all three forges are covered, not just the instance we\nfound.\n\n**The coverage metric never crossed the IPC seam.** `serializeMetrics()`\nis a\nhand-built allow-list and the new field was missing from it, so the\nstatus line\ncould never render. Nine per-task reviews missed it because the CLI test\nhand-built the payload it then asserted on, while the gateway test\nasserted the\nstruct — neither observed the serializer. There is now a test that\ncrosses it.\n\n**Two honesty notes.** `local_file_id` ships **unpopulated** — the\ncolumn, its\nFK and its `SET NULL` behaviour exist, but nothing writes it, so a\n`NULL` means\n\"not yet linked\", never \"no local file\". And coverage **grows over many\nticks**;\na low number means draining, not broken.\n\n**One trade worth a second opinion.** The status line prints on the\ndefault\n`nimbus status`, per the spec. That makes the default path always\ncollect index\nmetrics, which full-scans body and FTS sizes — noticeable on a large\nindex.\nRe-gating it behind `--verbose` is a two-line change if you prefer that.\n\n**No predicate language ships here** — no `--negate`, `--touches` or\n`--explain`.\nThose are W6-B, calling the primitive this adds.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added pull-request changed-file indexing across GitHub, GitLab, and\nBitbucket, including renamed, added, modified, and deleted paths.\n* Added bounded pagination, coverage tracking, truncation handling, and\nresilient synchronization behavior.\n* Added path-based filtering that safely excludes pull requests only\nwhen file coverage is complete.\n* Added pull-request file coverage metrics to status and diagnostic\noutput.\n\n* **Documentation**\n* Updated schema, architecture, migration, changelog, and implementation\ndocumentation for schema version 55 and changed-file indexing.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T07:04:05+03:00",
-          "tree_id": "b10129c5e63e49378cf9ed6b367a1d0058b15fa9",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/926fb80fd4f04515c6f92ef8aca40a0986746df4"
-        },
-        "date": 1787199324776,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 319.63114124999885,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 319.8861097000019,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 222.65681525000036,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5f57ad5bba8aa6090bf97b5abf331a464aaefe8e",
+          "message": "feat(gateway): offer the flag writes and the JSM Operations alert writes, and store an optional Jira cloud id (#1925)\n\nPhase 9.7 PR C3, the last Wave 3 gateway PR, which completes Project C.\nIt offers the model the LaunchDarkly and Flagsmith flag writes and the\nJira Service Management Operations alert writes, and stores an optional\nJira cloud id. The model is offered 67 writes, up from 62.\n\n## What changes\n\n**Flag writes, with the environment first in every preview:**\n- `launchdarkly_flag_toggle` shows the flag's current on/off state.\n- `launchdarkly_flag_rollout_set` lists every variation as `now X% ->\nY%`, named by variation name, then value, then id. It shows the total,\nand marks a variation the request leaves out (`NOT IN THIS REQUEST`) or\nan unknown id.\n- **A fail-closed guard** refuses the rollout before the prompt when the\nread fails, the request does not name every variation exactly once, or\nthe flag has more than 15 variations, so nothing in the before-state is\never cut.\n- `flagsmith_feature_state_set` shows the enabled change. When a value\nis given, it also shows the new value and names a type change against\nthe current one. A `null` value is refused.\n\n**JSM Operations alerts** (owner ruling OR-W34-7, the successor to\nOpsgenie):\n- `jira_ops_alert_acknowledge` and `jira_ops_alert_close` show the\nalert's current state.\n- The previews say that Atlassian runs the request asynchronously and\nthat Nimbus does not confirm it took effect. The connector's `accepted`\nand `confirmed:false` replies reach the model unchanged.\n\n**`jira.cloud_id`:**\n- Optional: `nimbus connector auth jira --cloud-id <uuid>` or\n`NIMBUS_JIRA_CLOUD_ID`.\n- It is validated before anything is stored and reaches the child only\nthrough `extensionProcessEnv` (I1). A missing, blank or malformed id\nleaves `JIRA_CLOUD_ID` out, so `tenant_info` discovery still works.\n- **It is deleted when re-auth changes the Jira site** without a new id,\nso alert writes can never go to the previous tenant.\n- Every successful Jira auth restarts the Jira child, including after a\npartial Vault-write failure. A refused auth restarts nothing.\n\n**Listing:** LaunchDarkly and Flagsmith join the phase-3 listing adders\n(11), using the spawner's own credential check. A pin test shows that no\nnetwork host changed: `api.atlassian.com` was already in the Jira\nmanifest, and I15 is unchanged.\n\n**Proposability:** all five writes stay `not_yet_offered` on the MCP act\ndoor, because it shows no before-state and flag and alert ids are\nopaque.\n\n**Counts:** 67 offerable, 75 templated, 40 before-readers, 8 guards.\nRows, types and proposability are unchanged.\n\n## Reviews and gates\n\n- **Antigravity** approved the plan in round 2, after six findings: the\nnull-safe cloud-id env, reader keys versus read schema, imports, restart\non every auth, variation label fallbacks, and the stated bounds.\n- **The adversarial review** found no rollout-guard bypass, no\nwrong-environment write and nothing that says \"done\". It did find the\ncross-tenant stale cloud id, the understated Flagsmith value change, a\ncut on large rollouts, a skipped restart, stale docs and missing tests,\nand all are fixed and red-proved.\n- **Gates:** `preflight:fast`, `typecheck:tests`, security-invariants,\nthe connectors and ipc directories (11,163 tests), the CLI connector\ntests, coverage above the floors, and `verify:docker --changed`.\n\n## Stated bounds\n\n- **Live-only facts:** LaunchDarkly's `offVariation` index versus id,\nFlagsmith's `Token` versus `Api-Key` and its experimental `__future__`\nendpoint, and unscoped-token behaviour on the JSM host. The tests use\nfakes shaped like the documented replies.\n- **Data Center:** a Data Center Jira with no stored cloud id gets\n`Before: unavailable` and a connector refusal.\n\nNo migration, no new invariant, no `!`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added model-offerable write previews for LaunchDarkly flag toggles and\nrollouts, Flagsmith feature-state updates, and Jira Service Management\nalert acknowledgment and closure.\n* Added optional Jira cloud ID support during authentication, retaining\nit when reconnecting to the same site and clearing it when the site\nchanges.\n  * Added LaunchDarkly and Flagsmith to connector listings.\n* **Documentation**\n* Updated connector guidance and status counts. These five writes remain\nunavailable for MCP proposals.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T15:14:03Z",
+          "tree_id": "74670dbe93cb6628233d1fd56d7a6dc2c69711e3",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/5f57ad5bba8aa6090bf97b5abf331a464aaefe8e"
+        },
+        "date": 1793978491868,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 190.86215695000192,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 174.72988154999985,
             "unit": "ms"
           }
         ]
