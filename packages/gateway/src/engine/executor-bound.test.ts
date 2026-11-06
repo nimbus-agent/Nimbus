@@ -413,7 +413,7 @@ describe("every prepare failure refuses with no prompt, on every shape (fix 8)",
 
 /** An executor whose rows come from the before-state runner and whose write table is ABSENT. */
 function harnessWithRunnerRows(o: HarnessOptions): Harness {
-  const base = harness({ ...o, table: undefined });
+  const base = harness({ ...o, table: "none" });
   const row = o.row ?? synthBoundRow(3);
   const exec = new ToolExecutor(
     { requestApproval: async () => true },
