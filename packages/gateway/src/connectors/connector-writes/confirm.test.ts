@@ -193,8 +193,8 @@ describe("a Windows working directory is typeable (platform equality)", () => {
     const r = withConfirm(row("iac_terraform_apply", "iac.terraform.apply", "mesh", 4), {
       template: "{workingDirectory}",
     });
-    const wd = "C:" + String.fromCharCode(92) + "infra" + String.fromCharCode(92) + "prod";
-    expect(wd).toBe("C:\\infra\\prod");
-    expect(text(r, { workingDirectory: wd })).toBe("iac/" + wd);
+    const wd = `C:${String.fromCharCode(92)}infra${String.fromCharCode(92)}prod`;
+    expect(wd).toBe("C:\\infra\\prod"); // cross-platform-ok
+    expect(text(r, { workingDirectory: wd })).toBe(`iac/${wd}`);
   });
 });
