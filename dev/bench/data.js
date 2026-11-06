@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793971700256,
+  "lastUpdate": 1793973050038,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "a07075254847f37e5c1157ad032485c01cf9aaec",
-          "message": "chore: release main (#1257)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.7.1</summary>\n\n##\n[2.7.1](https://github.com/nimbus-agent/Nimbus/compare/v2.7.0...v2.7.1)\n(2026-08-19)\n\n\n### Bug Fixes\n\n* **ownership:** stop the symbol sync wiping owner counts from the graph\n([#1255](https://github.com/nimbus-agent/Nimbus/issues/1255))\n([34a08e3](https://github.com/nimbus-agent/Nimbus/commit/34a08e3005e554e935135409ff1a64469b56d5c8))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-19T21:20:12+03:00",
-          "tree_id": "ec29741912d9b6188ce8a3e5a926d21a0d4face6",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/a07075254847f37e5c1157ad032485c01cf9aaec"
-        },
-        "date": 1787164304013,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.2772652000014,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 316.91103685000564,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 291.0197373000028,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a73ae947f760b031d6f14d307259b6d8661b9848",
+          "message": "feat(gateway): offer the GitHub and GitLab branch and PR/MR writes, refused on both doors for mentions, quick actions and remote content (#1923)\n\nPhase 9.7 PR C2, the second Wave 3 gateway PR. It makes the six GitHub\nand GitLab branch and PR/MR writes model-offerable, and the four creates\nproposable on the MCP act door. The model is offered 62 writes, up from\n56.\n\n## What changes\n\n- **Templates and before-readers** for `github_branch_create`,\n`github_pr_create`, `github_pr_update`, `gitlab_branch_create`,\n`gitlab_mr_create` and `gitlab_mr_update`. The template keys are checked\nagainst the installed 0.6.0 sources.\n- A branch create shows the sha that `fromRef` resolves to, and whether\nthe optional `expectedSha` matches.\n- A PR create reads the base only, so a fork head never makes the\nbefore-state unavailable, and says the head is not checked.\n- An update shows each field as new or unchanged, prints `RETARGETS`\nwhen the base or target branch changes, and is refused when it changes\nnothing.\n- A GitLab MR update also states the draft change: `MARKS READY`, `MARKS\nAS DRAFT` or unchanged, from GitLab's own title rule (`[Draft]`,\n`(Draft)` or `Draft:` at the start, case-insensitive, unfolded). When a\nfolded spelling such as a zero-width character or a fullwidth colon\nmakes that rule disagree with a looser reading, it says `UNCERTAIN`\nrather than \"unchanged\".\n- **Refusals on both doors**, all through the shared\n`messagingDestinationRefusal`, so the model door and the act door cannot\ndrift:\n  - broadcast mentions in the PR/MR title and body;\n- remote content in the forge-Markdown body (images, diagram loaders,\nincludes);\n- GitLab quick actions in an MR description. GitLab does not parse\ntitles.\n- **Proposability:** the four creates are proposable (47 proposable, 124\ndenied). The two updates stay `not_yet_offered`, because they cannot be\nundone and the act door shows no before-state. A branch create is\nproposable because it points at a commit already in the repository, so\nCI on it runs existing code, unlike a commit (OR-W34-6).\n\nCounts: 62 offerable, 70 templated, 35 before-readers, 7 guards, 24\nremote-content-scanned rows.\n\n## Reviews and gates\n\n- **Antigravity:** approved the plan in round 2, after nine findings:\ndeclared reader keys, base-only PR read, complete templates, fixtures,\npinned counts, selector-level tests for the dynamic lines, guard texts,\nthe id helper and the JSDoc.\n- **Adversarial review:** found no bypass on either door. It found that\nthe draft line could say \"unchanged\" when GitLab would mark the MR\nready, plus two stale doc counts and a loose test assertion. All are\nfixed and red-proved.\n- **Rebase:** onto main after C1 (#1921). The C1 doc fixes are kept: the\n`--token` in the PagerDuty example, and `status` counting approved\nwrites.\n- **Gates:** `preflight:fast`, `typecheck:tests`, security-invariants,\nthe connector-writes directory plus the capture-rpc and model-writes IPC\ntests (3,404), Istanbul coverage above the floors, and `verify:docker\n--changed`.\n\n## Docs\n\nThe five core docs, SECURITY-INVARIANTS (I53, I28 and I26), and the\nCHANGELOG.\n\nNo migration, no new invariant, no `!`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added previews for six GitHub and GitLab branch, pull-request, and\nmerge-request actions, including current-state details and changes such\nas retargeting or draft status.\n* Four create actions can now be proposed through MCP. The two update\nactions remain unavailable for MCP proposals.\n  * The model now offers 62 connector writes.\n\n* **Safety**\n* Proposals containing broadcast mentions, remote content in request\ndescriptions, or GitLab quick actions are refused.\n\n* **Documentation**\n* Updated the changelog, roadmap, and connector and command references\nwith the new actions and availability details.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T13:39:50Z",
+          "tree_id": "53e3a63ef4d6db423b1248f06f0915e48eddf433",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/a73ae947f760b031d6f14d307259b6d8661b9848"
+        },
+        "date": 1793973045679,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 293.10434234999667,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 286.4813878500048,
             "unit": "ms"
           }
         ]
