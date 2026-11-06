@@ -2571,7 +2571,7 @@ function d41OrderPin(f: FileEntry, code: string): Violation[] {
     fail(
       'the plain requestApproval call must sit once in approvalPhase, inside the if (confirm.kind === "none") block',
     );
-  const typedCalls = [...code.matchAll(/\bchannel\.requestConfirmedApproval\s*\(/g)];
+  const typedCalls = [...code.matchAll(/\.\s*requestConfirmedApproval\s*(?:\?\.)?\s*\(/g)];
   const typedAt = typedCalls[0]?.index;
   if (
     typedCalls.length !== 1 ||

@@ -18,7 +18,11 @@ export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
       // The upstream handler runs UNSET TAG when `value` is omitted.
       fields: [textField("tag"), textField("value", undefined, "(not set: the tag is REMOVED)")],
     }),
-    { template: "set tag {object}/{tag}" },
+    {
+      template: "set tag {object}/{tag}",
+      // No `value`: the connector runs UNSET TAG, so the owner types a removal, not a "set".
+      whenUnset: { field: "value", template: "remove tag {object}/{tag}" },
+    },
   ),
   withConfirm(
     withPreview(row("snowflake_comment_set", "snowflake.comment.set", "write", 4), {

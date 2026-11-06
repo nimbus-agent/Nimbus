@@ -50,6 +50,15 @@ function placeholders(r: ConnectorWriteRow): string[] {
   return parsed.segments.flatMap((s) => (s.kind === "field" ? [s.name] : []));
 }
 
+/** Every placeholder of the row's alternative template, and the optional field that selects it. */
+function altPlaceholders(r: ConnectorWriteRow): string[] {
+  const alt = r.confirm?.whenUnset;
+  if (alt === undefined) return [];
+  const parsed = parseConfirmTemplate(alt.template);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  return parsed.segments.flatMap((s) => (s.kind === "field" ? [s.name] : []));
+}
+
 describe("every wave 4 row declares a type-to-confirm target", () => {
   test("there are 39 wave 4 rows, each with a confirm template that parses", () => {
     expect(WAVE4).toHaveLength(39);
@@ -81,8 +90,13 @@ describe("each placeholder is a required top-level key of the installed tool", (
       const decl = declaration(r.toolId);
       expect(declaredInputKeys(decl).length, "schema shape recognised").toBeGreaterThan(0);
       const required = new Set(requiredInputKeys(decl));
-      for (const name of placeholders(r)) {
+      for (const name of [...placeholders(r), ...altPlaceholders(r)]) {
         expect(required.has(name), `${r.toolId}: ${name} must be required`).toBe(true);
+      }
+      const unsetField = r.confirm?.whenUnset?.field;
+      if (unsetField !== undefined) {
+        expect(declaredInputKeys(decl), `${r.toolId}: ${unsetField}`).toContain(unsetField);
+        expect(required.has(unsetField), `${r.toolId}: ${unsetField} must be optional`).toBe(false);
       }
     });
   }
@@ -92,6 +106,27 @@ describe("each placeholder is a required top-level key of the installed tool", (
     const decl = declaration("github_pr_merge");
     expect(requiredInputKeys(decl)).toEqual(["owner", "pullNumber", "repo"]);
     expect(declaredInputKeys(decl)).toContain("mergeMethod");
+  });
+});
+
+describe("snowflake_tag_set names the effect that will run", () => {
+  const tagRow = WAVE4.find((r) => r.toolId === "snowflake_tag_set");
+
+  test("with a value it sets; without one (UNSET TAG) it removes", () => {
+    if (tagRow === undefined) throw new Error("snowflake_tag_set");
+    const base = { object: "DB.S.T", tag: "pii" };
+    const withValue = renderConfirmText(tagRow, { ...base, value: "yes" });
+    const without = renderConfirmText(tagRow, base);
+    expect(withValue).toEqual({ ok: true, text: "snowflake/set tag DB.S.T/pii" });
+    expect(without).toEqual({ ok: true, text: "snowflake/remove tag DB.S.T/pii" });
+  });
+
+  test("the set text does not approve a removal", () => {
+    if (tagRow === undefined) throw new Error("snowflake_tag_set");
+    const setText = renderConfirmText(tagRow, { object: "DB.S.T", tag: "pii", value: "x" });
+    const removeText = renderConfirmText(tagRow, { object: "DB.S.T", tag: "pii" });
+    if (!setText.ok || !removeText.ok) throw new Error("render");
+    expect(setText.text).not.toBe(removeText.text);
   });
 });
 

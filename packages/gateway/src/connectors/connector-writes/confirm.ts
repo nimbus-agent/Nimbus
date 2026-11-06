@@ -154,9 +154,12 @@ function fieldText(
  */
 export function renderConfirmText(row: ConnectorWriteRow, input: unknown): ConfirmRender {
   if (row.confirm === undefined) return { ok: false, reason: CONFIRM_NO_TARGET_REASON };
-  const parsed = parseConfirmTemplate(row.confirm.template);
-  if (!parsed.ok) return refuse(`template ${parsed.reason}`);
   if (!isPlainObject(input)) return refuse("the tool input is not an object");
+  const alt = row.confirm.whenUnset;
+  const template =
+    alt !== undefined && input[alt.field] === undefined ? alt.template : row.confirm.template;
+  const parsed = parseConfirmTemplate(template);
+  if (!parsed.ok) return refuse(`template ${parsed.reason}`);
   const separators = separatorTexts(parsed.segments);
   let text = `${serviceOf(row.actionType)}/`;
   for (const seg of parsed.segments) {

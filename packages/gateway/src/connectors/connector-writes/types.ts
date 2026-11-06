@@ -56,6 +56,13 @@ export interface ConnectorWriteRow {
  */
 export interface ConfirmTemplate {
   readonly template: string;
+  /**
+   * An alternative template used when the named OPTIONAL input field is absent, for a tool whose
+   * effect changes with it (Snowflake's tag set removes the tag when `value` is omitted): the
+   * confirm text must name the effect that will run. Its placeholders obey the same rules as
+   * the main template's.
+   */
+  readonly whenUnset?: { readonly field: string; readonly template: string };
 }
 
 /** At most this many before-state fields are shown; the rest are counted, never cut. */
@@ -279,7 +286,20 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
   const secrets = new Set(
     (r.preview?.fields ?? []).filter((f) => f.kind === "secret").map((f) => f.key),
   );
-  for (const name of confirmTemplateKeys(parsed.segments)) {
+  const names = confirmTemplateKeys(parsed.segments);
+  if (confirm.whenUnset !== undefined) {
+    const alt = parseConfirmTemplate(confirm.whenUnset.template);
+    if (!alt.ok) {
+      throw new Error(`connector write confirm: row ${r.toolId} whenUnset template ${alt.reason}`);
+    }
+    names.push(...confirmTemplateKeys(alt.segments));
+    if (names.includes(confirm.whenUnset.field)) {
+      throw new Error(
+        `connector write confirm: row ${r.toolId} whenUnset field is also a placeholder`,
+      );
+    }
+  }
+  for (const name of names) {
     if (secrets.has(name) || isSensitiveFieldName(name)) {
       throw new Error(
         `connector write confirm: placeholder {${name}} names a secret-looking field (row ${r.toolId})`,

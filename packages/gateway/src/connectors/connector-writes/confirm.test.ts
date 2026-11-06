@@ -214,6 +214,26 @@ describe("withConfirm declaration checks", () => {
     expect(base.confirm).toBeUndefined();
   });
 
+  test("a whenUnset alternative is stored, parsed and held to the same rules", () => {
+    const ok = withConfirm(base, {
+      template: "set {a}",
+      whenUnset: { field: "v", template: "remove {a}" },
+    });
+    expect(ok.confirm?.whenUnset).toEqual({ field: "v", template: "remove {a}" });
+    expect(() =>
+      withConfirm(base, { template: "set {a}", whenUnset: { field: "v", template: "remove" } }),
+    ).toThrow(/whenUnset template names no placeholder/);
+    expect(() =>
+      withConfirm(base, { template: "set {a}", whenUnset: { field: "a", template: "remove {a}" } }),
+    ).toThrow(/whenUnset field is also a placeholder/);
+    expect(() =>
+      withConfirm(base, {
+        template: "set {a}",
+        whenUnset: { field: "v", template: "remove {apiToken}" },
+      }),
+    ).toThrow(/secret-looking field/);
+  });
+
   test("refuses a template with no placeholder, an unknown shape or modifier", () => {
     expect(() => withConfirm(base, { template: "fixed" })).toThrow(/names no placeholder/);
     expect(() => withConfirm(base, { template: "{a" })).toThrow(/unclosed/);
