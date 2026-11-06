@@ -40,6 +40,7 @@ import { foldAndStrip, settle, settleUrl } from "./text-normalise.ts";
 /** The body formats a scanned row's field is read as (see `REMOTE_CONTENT_SCANNED`). */
 export type RemoteContentFormat =
   | "outlook-html"
+  | "teams-html"
   | "confluence-storage"
   | "notion-blocks"
   | "notion-properties"
@@ -804,6 +805,36 @@ function outlookHtmlRemote(text: string, opts: DetectOptions): boolean {
     allowCid: true,
     tripwire: "outlook",
     refusedExtra: NO_EXTRA_ELEMENTS,
+  });
+}
+
+/**
+ * Teams refuses `<attachment>` (any case, any prefix) on top of R4 (B3w W5). In a Graph
+ * chatMessage body, `<attachment id="X"></attachment>` binds to the `attachments[]` entry with the
+ * same id, which is how cards, files and share links are carried ("the attachment's ID must be
+ * the same in the body and attachments elements": "Send chatMessage in a channel or a chat",
+ * https://learn.microsoft.com/en-us/graph/api/chatmessage-post?view=graph-rest-1.0, retrieved
+ * 2026-11-06). The connector sends no `attachments`, `hostedContents` or `mentions` (pinned by
+ * `remote-content.sync.test.ts` (g)), so a valid model message never needs one, and refusing it
+ * keeps cards out by two mechanisms.
+ */
+const TEAMS_REFUSED_ELEMENTS: ReadonlySet<string> = new Set(["attachment"]);
+
+/**
+ * Teams HTML (B3w W5): R4 in the Outlook order with NO `cid:` (Teams has no `cid:` parts) and
+ * the default tripwire, plus `<attachment>`. Inline images in a chatMessage are hosted content,
+ * referenced as `src="../hostedContents/<n>/$value"` with a matching `hostedContents[]` entry
+ * (the same Graph reference, example 6): that relative form is allowed by R2 and names nothing,
+ * because the connector sends no `hostedContents`. Whether the Teams client renders an EXTERNAL
+ * `<img src>` is not established in that reference (it notes only that "the Teams client has
+ * specific HTML restrictions"); an external `src` is refused either way, an absolute
+ * `graph.microsoft.com` URL included (the host is not exempted, B3r R2).
+ */
+function teamsHtmlRemote(text: string, opts: DetectOptions): boolean {
+  return htmlMarkupRemote(text, opts, {
+    allowCid: false,
+    tripwire: "default",
+    refusedExtra: TEAMS_REFUSED_ELEMENTS,
   });
 }
 
@@ -1576,6 +1607,8 @@ export function remoteContentIn(
     switch (format) {
       case "outlook-html":
         return outlookHtmlRemote(text, opts);
+      case "teams-html":
+        return teamsHtmlRemote(text, opts);
       case "confluence-storage":
         return confluenceStorageRemote(text, opts);
       case "notion-blocks":

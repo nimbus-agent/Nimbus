@@ -1548,3 +1548,91 @@ describe("linear time on adversarial input", () => {
     TIMING_TEST_TIMEOUT_MS,
   );
 });
+
+// ---------------------------------------------------------------------------------------------
+// B3w: Teams HTML (plan W5, Review Focus 2)
+// ---------------------------------------------------------------------------------------------
+
+describe("B3w: teams-html", () => {
+  const REFUSED: readonly (readonly [string, string])[] = [
+    ["an external image", `<img src="https://h/p.gif">`],
+    [
+      "an absolute hosted-content URL (the host is not exempted)",
+      `<img src="https://graph.microsoft.com/v1.0/chats/1/messages/2/hostedContents/3/$value">`,
+    ],
+    ["an attachment", `<attachment id="1"></attachment>`],
+    ["an upper-case attachment", "<ATTACHMENT id=1>"],
+    ["a prefixed attachment", "<x:attachment></x:attachment>"],
+    ["an attachment inside a nested view (review fix 1)", `<span <attachment id="1">>hello</span>`],
+    ["a cid image (no cid: in Teams)", `<img src="cid:x">`],
+    [
+      "Teams emoji markup copied from a message (stated over-refusal)",
+      `<img itemtype="http://schema.skype.com/Emoji" src="https://statics.teams.cdn.office.net/x.png">`,
+    ],
+    ["the nested view", "<a <img src=//h>>"],
+    ["a relative srcset", `<img srcset="a.png 1x">`],
+    ["a style url", `<p style="background:url(x)">`],
+    ["a comment holding markup", "<!-- <img src=//h> -->"],
+    ["CDATA", "<![CDATA[x]]>"],
+    ["an unclosed style", "<style>p{}"],
+  ];
+  const ALLOWED: readonly (readonly [string, string])[] = [
+    ["a relative hosted-content image (names nothing)", `<img src="../hostedContents/1/$value">`],
+    ["a paragraph", "<p>hi</p>"],
+    ["a mention tag (the broadcast rule decides it)", `<at id="0">Ann</at>`],
+    ["a link", `<a href="https://h">x</a>`],
+  ];
+
+  test.each(REFUSED)("refused: %s", (_label, text) => {
+    expectRefused("teams-html", text, true);
+  });
+
+  test.each(ALLOWED)("allowed: %s", (_label, text) => {
+    expectAllowed("teams-html", text);
+  });
+
+  test("the tripwire runs with the default kind (no cid: lookahead)", () => {
+    expect(remoteContentIn("teams-html", "write src=cid:logo in prose")).toBe(true);
+    expect(remoteContentIn("teams-html", "write src=cid:logo in prose", { tripwire: false })).toBe(
+      false,
+    );
+    expect(remoteContentIn("outlook-html", "write src=cid:logo in prose")).toBe(false);
+  });
+
+  test.each(DIFFERENTIALS)("tokenizer differential: %s", (_label, refused, allowed) => {
+    expectRefused("teams-html", refused, true);
+    expectAllowed("teams-html", allowed);
+  });
+
+  test.each(SHARED_REFUSED)("shared pair: %s", (_label, refused, allowed) => {
+    expectRefused("teams-html", refused, true);
+    expectAllowed("teams-html", allowed);
+  });
+
+  test("outlook-html and teams-html agree on every shared pair with no cid: and no attachment", () => {
+    const pairs = [...DIFFERENTIALS, ...SHARED_REFUSED].filter(
+      ([, r, a]) => !/cid:|attachment/i.test(r + a),
+    );
+    for (const [label, refused, allowed] of pairs) {
+      for (const text of [refused, allowed]) {
+        expect(remoteContentIn("teams-html", text), label).toBe(
+          remoteContentIn("outlook-html", text),
+        );
+      }
+    }
+  });
+});
+
+describe("B3w: linear time (3 s cap, 2N under 4x N, 2N under 8x N/2)", () => {
+  test(
+    "teams-html: many paragraphs (allowed), many attachments (refused), the nested-view budget",
+    () => {
+      const paragraphs = (n: number): string => "<p>a</p>".repeat(n);
+      expect(remoteContentIn("teams-html", paragraphs(3))).toBe(false);
+      expectLinear("teams-html", paragraphs, 100_000);
+      expectLinear("teams-html", (n) => "<attachment>".repeat(n), 100_000);
+      expectLinear("teams-html", (n) => `<a title="${"<b>".repeat(n)}">`, 150_000);
+    },
+    TIMING_TEST_TIMEOUT_MS,
+  );
+});
