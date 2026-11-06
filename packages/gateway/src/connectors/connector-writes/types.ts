@@ -4,6 +4,7 @@ import {
   isSensitiveFieldName,
   parseConfirmTemplate,
 } from "./confirm-template.ts";
+import { PREPARE_TOOL_IDS } from "./prepare-tools.ts";
 
 /** `write` rows have a dispatch path (the credential-aware transport); `mesh` rows are refused by
  *  the I26 predicate and run only through the executor's mesh path behind the owner's HITL gate. */
@@ -47,6 +48,12 @@ export interface ConnectorWriteRow {
    * wave 4 row, on every door. Set with {@link withConfirm}; rendered by `renderConfirmText`.
    */
   readonly confirm?: ConfirmTemplate;
+  /**
+   * A bound write (Phase 9.7 D0b, I54): the gateway runs this row's PREPARE read at the gate and
+   * injects the values it binds into the write's input; the caller never supplies them. Set with
+   * {@link withBound}. No row declares one yet.
+   */
+  readonly bound?: BoundWrite;
 }
 
 /**
@@ -63,6 +70,39 @@ export interface ConfirmTemplate {
    * the main template's.
    */
   readonly whenUnset?: { readonly field: string; readonly template: string };
+}
+
+/**
+ * One value a bound write takes from its prepare reply. `field` is a key of the write tool's input
+ * that is never owner-visible input and never caller input: the gateway injects it.
+ */
+export interface BoundField {
+  readonly field: string;
+  /** The value from the prepare reply, or `undefined` when the reply does not carry it (refuses). */
+  from(reply: unknown): string | undefined;
+}
+
+/** The prepare read of a bound write: a PREPARE tool of the row's own connector (`prepare-tools.ts`). */
+export interface PrepareRead {
+  /** The bare MCP tool id, a member of `PREPARE_TOOL_IDS`. */
+  readonly tool: string;
+  /** The write-input keys the read depends on; each must be a key the preview template names. */
+  readonly argKeys: readonly string[];
+  /** The read's input from those keys, or `undefined` when they cannot name a target. */
+  args(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined;
+  /** The labelled prepared facts shown to the owner (a plan summary, a digest). */
+  select(reply: unknown): readonly BeforeStateField[];
+  /** One timer covers the whole prepare step. */
+  readonly budgetMs: number;
+  /** The caller's write input, serialised, may not exceed this many characters. */
+  readonly maxInputBytes: number;
+  /** The prepare reply, serialised, may not exceed this many characters. */
+  readonly maxReplyBytes: number;
+}
+
+export interface BoundWrite {
+  readonly prepare: PrepareRead;
+  readonly binds: readonly BoundField[];
 }
 
 /** At most this many before-state fields are shown; the rest are counted, never cut. */
@@ -307,6 +347,56 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
     }
   }
   return Object.freeze({ ...r, confirm });
+}
+
+/** The structural problems of a bound declaration (empty when none). */
+export function boundWriteProblems(
+  r: ConnectorWriteRow,
+  bound: BoundWrite,
+  prepareToolIds: ReadonlySet<string>,
+): string[] {
+  const out: string[] = [];
+  if (r.preview === undefined) return ["needs a typed preview"];
+  const named = previewTemplateKeys(r.preview);
+  const { prepare, binds } = bound;
+  if (!prepareToolIds.has(prepare.tool)) out.push("prepare tool is not a declared prepare tool");
+  if (prepare.tool === r.toolId) out.push("prepare tool is the write tool itself");
+  for (const p of beforeReadArgKeyProblems(prepare, named)) out.push(`prepare ${p}`);
+  if (binds.length === 0) out.push("needs at least one bound field");
+  if (new Set(binds.map((b) => b.field)).size !== binds.length)
+    out.push("has a duplicate bound field");
+  for (const b of binds) {
+    if (b.field === "" || b.field === "mcpToolId")
+      out.push(`bound field ${JSON.stringify(b.field)} is not allowed`);
+    if (named.has(b.field)) out.push(`bound field ${b.field} is a key the preview names`);
+  }
+  for (const [name, n] of [
+    ["budgetMs", prepare.budgetMs],
+    ["maxInputBytes", prepare.maxInputBytes],
+    ["maxReplyBytes", prepare.maxReplyBytes],
+  ] as const) {
+    if (!Number.isInteger(n) || n <= 0) out.push(`prepare ${name} must be a positive integer`);
+  }
+  return out;
+}
+
+/**
+ * A frozen copy of `r` carrying `bound`. Throws at declaration on the first problem of
+ * {@link boundWriteProblems}. `prepareToolIds` is the test seam (default: the production set,
+ * which D42(c) says production code may never replace). That the prepare tool is not a connector
+ * write id cannot be checked here (the registry imports this table): the dispatcher refuses it at
+ * run time, and `prepare-tools.test.ts` and `rows.test.ts` pin it.
+ */
+export function withBound(
+  r: ConnectorWriteRow,
+  bound: BoundWrite,
+  prepareToolIds: ReadonlySet<string> = PREPARE_TOOL_IDS,
+): ConnectorWriteRow {
+  const problem = boundWriteProblems(r, bound, prepareToolIds)[0];
+  if (problem !== undefined) {
+    throw new Error(`connector write bound: row ${r.toolId} ${problem}`);
+  }
+  return Object.freeze({ ...r, bound });
 }
 
 export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";
