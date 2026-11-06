@@ -15,18 +15,21 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
   fieldlessWrite(
     "argocd_app_rollback",
     "argocd.app.rollback",
+    4,
     "{name}",
     "Roll back Argo CD application {name} to history id {id}",
   ),
   fieldlessWrite(
     "flux_kustomization_reconcile",
     "flux.kustomization.reconcile",
+    4,
     "{namespace}/{name}",
     "Reconcile Flux Kustomization {namespace}/{name}",
   ),
   fieldlessWrite(
     "flux_helmrelease_reconcile",
     "flux.helmrelease.reconcile",
+    4,
     "{namespace}/{name}",
     "Reconcile Flux HelmRelease {namespace}/{name}",
   ),

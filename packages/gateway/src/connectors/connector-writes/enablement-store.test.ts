@@ -81,7 +81,9 @@ describe("enablement store", () => {
     const w2 = writesEnabledBy("github", 2).map((r) => r.toolId);
     expect(w2).toContain("github_issue_create");
     expect(w2).not.toContain("github_pr_merge");
-    expect(writesEnabledBy("github", 3).map((r) => r.toolId)).toContain("github_pr_merge");
+    // OR-W34-3 (spec § 15): the merge is irreversible, so wave 4.
+    expect(writesEnabledBy("github", 3).map((r) => r.toolId)).not.toContain("github_pr_merge");
+    expect(writesEnabledBy("github", 4).map((r) => r.toolId)).toContain("github_pr_merge");
     expect(writesEnabledBy("mcp_x", 4)).toEqual([]);
   });
 });

@@ -30,7 +30,7 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 38 B1-B4b rows (posts, comments, issue writes, drafts, pages, calendar events, Drive files, the Obsidian append) are offerable", () => {
+  test("exactly the 48 rows are offerable: the 38 B1-B4b rows and the ten wave-3 refreshes and data-quality rows (C0)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -39,6 +39,16 @@ describe("isModelOfferableRow (M1)", () => {
       [
         "apple_calendar_event_create",
         "apple_mail_draft_create",
+        "bigeye_issue_acknowledge",
+        "bigeye_issue_resolve",
+        "looker_datagroup_trigger",
+        "looker_schedule_run_once",
+        "montecarlo_incident_acknowledge",
+        "montecarlo_incident_resolve",
+        "powerbi_dataflow_refresh",
+        "powerbi_dataset_refresh",
+        "tableau_datasource_refresh",
+        "tableau_workbook_refresh",
         "confluence_comment_add",
         "confluence_page_append",
         "confluence_page_create",
@@ -77,7 +87,7 @@ describe("isModelOfferableRow (M1)", () => {
         "teams_message_post_chat",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(38);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(48);
     // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);
