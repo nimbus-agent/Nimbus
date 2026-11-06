@@ -1011,9 +1011,7 @@ describe("token-only connectors (linear, circleci, pagerduty) — reading the to
       ...tokenCtx("pagerduty", fields, []),
       connectorMesh: mesh,
     });
-    expect(
-      await refusalMessage(withMesh({ token: "t", fromEmail: "not-an-email" })),
-    ).toBeDefined();
+    expect(await refusalMessage(withMesh({ token: "t", fromEmail: "not-an-email" }))).toBeDefined();
     expect(await refusalMessage(withMesh({}))).toBe("Missing API token for pagerduty");
     expect(restarts).toBe(0);
     await handleConnectorAuth(withMesh({ token: "t", fromEmail: "oncall@example.com" }));

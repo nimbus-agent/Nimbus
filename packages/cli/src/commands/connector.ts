@@ -480,8 +480,7 @@ function applyPagerdutyConnectorAuth(
   );
   // PagerDuty requires the e-mail of a valid user as the `From` header on every incident write.
   // Optional here: without it the connector reads, but acknowledge/resolve/escalate refuse.
-  const fromEmail =
-    username?.trim() || firstEnvTrimmed(["NIMBUS_PAGERDUTY_FROM_EMAIL"]);
+  const fromEmail = username?.trim() || firstEnvTrimmed(["NIMBUS_PAGERDUTY_FROM_EMAIL"]);
   if (fromEmail !== "") {
     p.fromEmail = fromEmail;
   }

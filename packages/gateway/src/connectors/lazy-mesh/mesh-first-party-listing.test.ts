@@ -9,13 +9,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import type { MCPClient } from "@mastra/mcp";
-
-import type { PlatformPaths } from "../../platform/paths.ts";
 import { serviceOf } from "../../engine/service-of.ts";
+import type { PlatformPaths } from "../../platform/paths.ts";
 import { createMockVault } from "../../vault/mock.ts";
+import { perServiceOAuthVaultKey } from "../connector-vault.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import { isModelOfferableRow } from "../connector-writes/model-offerable.ts";
-import { perServiceOAuthVaultKey } from "../connector-vault.ts";
 import { LazyDrainTracker } from "./drain.ts";
 import { LAZY_MESH } from "./keys.ts";
 import { LazyConnectorMesh } from "./mesh.ts";
@@ -391,9 +390,10 @@ describe("every model-offerable write's service can be listed", () => {
     expect(offerable.length).toBeGreaterThan(0);
     for (const r of offerable) {
       const service = serviceOf(r.actionType);
-      expect(Object.hasOwn(listing, service), `${r.toolId}: ${service} is not in the listing map`).toBe(
-        true,
-      );
+      expect(
+        Object.hasOwn(listing, service),
+        `${r.toolId}: ${service} is not in the listing map`,
+      ).toBe(true);
       // A phase-3 bundle service is checked by its spawner's own adder; every other one needs a
       // per-service predicate in service-credential.ts.
       const bundled = listing[service]?.slot === LAZY_MESH.phase3Bundle;

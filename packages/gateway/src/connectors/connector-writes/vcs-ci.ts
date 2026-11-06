@@ -69,7 +69,9 @@ function pullNumberArg(v: unknown): number | undefined {
 }
 
 /** `github_pr_get` input from a PR write: string owner and repo, a positive pull number; else no read. */
-function githubPrReadArgs(input: Readonly<Record<string, unknown>>): Record<string, unknown> | undefined {
+function githubPrReadArgs(
+  input: Readonly<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
   const owner = input["owner"];
   const repo = input["repo"];
   const pullNumber = pullNumberArg(input["pullNumber"]);

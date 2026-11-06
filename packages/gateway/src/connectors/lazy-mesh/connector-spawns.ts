@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import { MCPClient } from "@mastra/mcp";
-
-import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
 import { getValidFigmaAccessToken } from "../../auth/figma-access-token.ts";
 import {
@@ -33,6 +31,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { transitionHealth } from "../health.ts";
+import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,

@@ -525,7 +525,10 @@ describe("C1 selectors", () => {
       pullNumber: 42,
     });
     for (const bad of [0, -1, 1.5, "4x", "", "0", null, undefined, Number.NaN, {}, [42]]) {
-      expect(pr?.args({ owner: "acme", repo: "api", pullNumber: bad }), String(bad)).toBeUndefined();
+      expect(
+        pr?.args({ owner: "acme", repo: "api", pullNumber: bad }),
+        String(bad),
+      ).toBeUndefined();
     }
     for (const bad of [7, "", null, undefined, {}, ["a"]]) {
       expect(pr?.args({ owner: bad, repo: "api", pullNumber: 42 }), String(bad)).toBeUndefined();
