@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793941449835,
+  "lastUpdate": 1793950587910,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "ba316d412fb25b83d78be798e757bd64c9fdfb80",
-          "message": "feat(metrics): nimbus stats charts a metric over time (#1249)\n\nAdds `nimbus stats <metric> --service <id>`, returning a **time series**\n— one value per disjoint bucket — over the already-indexed graph. It is\nthe counterpart to `nimbus metrics dora`, which returns a single scalar\nover one window. Closes the aggregation half of Spine S1's last open\nrow; negation remains.\n\n## What ships\n\nSix metrics. Four wrap the existing DORA calculators, called once per\nbucket with the window bound to the bucket's bounds — no DORA logic is\ncopied into SQL where a second copy could drift from the original. Two\nare new counters:\n\n- `deployment-frequency`, `lead-time`, `change-failure-rate`, `mttr` —\nwrapped\n- `pr-merges` — counts `metadata.merged_at`\n- `incidents-opened` — counts `metadata.opened_at_ms`\n\nBuckets walk backward from the request time and are deliberately not\ncalendar-aligned, so the newest bucket ends exactly at \"now\" and the\nfreshest point is complete. The accepted cost: two runs on different\ndays cover different absolute spans. `--align` is a recorded follow-up.\n\nEvery metric is service-scoped through the `ServiceConfig` DORA already\nuses, so there is no new `nimbus.toml` section.\n\n## What it will not claim\n\n**An empty bucket returns `null` with a named gap, never `0`.** Zero\nincidents and no incident data are different facts, and the CLI renders\nthe difference: a null prints `—` with its reason, a real zero prints\n`0`.\n\n**A caveated value shows its caveat.** `mttr` with fewer than three\nsamples returns a real median *and* `low_sample` — the common weekly\ncase — so the gap prints on rows that carry values too, and the summary\ncounts caveated buckets separately from empty ones.\n\n**Sparse output is the expected shape, not a malfunction.** `mttr` is a\nmedian and a one-week bucket often holds one or two incidents. The CLI\nprints a summary line and, when every bucket is null, one plain sentence\nnaming the dominant gap rather than a wall of dashes.\n\n## Limits, stated rather than omitted\n\n**`pr-merges` is GitHub-only.** `connectors/github-sync.ts` is the only\nconnector writing `metadata.merged_at`; GitLab and Bitbucket write\nnothing. A service binding a non-GitHub repo gets a\n`github_only_merge_data` gap; one binding no GitHub repos gets\n`no_repos` rather than a misleading zero.\n\n**`incidents-opened` excludes incidents with no `opened_at_ms`** and\ndiscloses that through an `incidents_missing_opened_at` gap. DORA's own\ncode falls back to `synced_at` here; this feature deliberately does not,\nbecause that would place an incident in the week we happened to index it\nwhile presenting it as the week it opened.\n\n**Only the two new counters bucket on a real event timestamp.** The four\nwrapped metrics inherit DORA's `item.modified_at` predicate —\neffectively event time for the `ci_run` and `deployment` rows behind\n`deployment-frequency`, but genuine last-touch for the `pr` and\n`incident` rows the other three read — and `mttr` also inherits DORA's\n`synced_at` fallback. That is the accepted cost of calling four tested\ncalculators unchanged rather than reimplementing them with a different\ntime predicate. An earlier revision of the spec asserted the property\nfor all six; it was false and is corrected in seven places.\n\n## Built differently from the roadmap row\n\nThe roadmap asks for a \"rolling 7-day MTTR trend\". This ships\n**disjoint** buckets, not rolling windows. They are different: rolling\ngives smoother series and better per-point samples, at ~90 evaluations\ninstead of 13, with adjacent points sharing data so a reader can\nover-trust a trend. Rolling is a recorded follow-up. The roadmap's \"PR\nmerge throughput\" also implies all forges; it is GitHub-only, above.\n\n## Scope\n\nNo schema migration, no new `nimbus.toml` section, no new HTTP route, no\nnew security invariant, and no Tauri allowlist change —\n`ALLOWED_METHODS` stays at 105. `metrics.stats` appends no\n`egress_ledger` row: local SQLite reads only, no connector dispatch, no\nremote model call. The spec records the condition that would void that\nexemption.\n\nFollow-ups recorded, not built: rolling windows; `--align`; `merged_at`\nfor GitLab and Bitbucket, which would retire the GitHub-only gap; and\n`pr-opened`, blocked on connectors capturing a PR creation timestamp.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added `nimbus stats` for bucketed time-series analysis across six\nmetrics, including DORA metrics, pull-request merges, and incidents\nopened.\n* Supports service filtering, configurable time windows and bucket\nsizes, JSON output, and sparse results with gap explanations.\n* Added validation for invalid durations, metrics, services, and\noversized bucket ranges.\n\n* **Documentation**\n* Added CLI help, reference documentation, architecture details,\nchangelog entries, and roadmap updates.\n\n* **Tests**\n* Added comprehensive coverage for aggregation, rendering, validation,\nIPC handling, gaps, and empty results.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-19T11:00:33+03:00",
-          "tree_id": "9f56ba0753ea0475f776d963d3241ffe543f74c1",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/ba316d412fb25b83d78be798e757bd64c9fdfb80"
-        },
-        "date": 1787127010225,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 250.27438680000304,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 255.99250484999283,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 306.5150601999976,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "eabe782d57807f0ca4cab23861357e4714694232",
+          "message": "feat(gateway): sent mail, Teams and forge Markdown cannot load remote content, on both doors (#1916)\n\nPhase 9.7 follow-up PR B3w (owner ruling OR-B3r-3). The remote-content\nrefusal that B3r added for drafts and pages now also covers sent mail,\nTeams messages, and GitHub, GitLab and Linear Markdown, on both the\nmodel door and the MCP act door.\n\n**What is newly scanned (11 rows; 20 scanned in all):**\n- `outlook_mail_send` body, scanned as `outlook-html` unless\n`contentType` is absent or text. Owner ruling OR-B3w-1: this row is\nnever offered to the model, so it gets no template, and the act door\nkeeps its verbatim prompt.\n- Teams `teams_message_post` and `teams_message_post_chat` bodies,\nscanned as `teams-html`. This adds `<attachment>` and absolute\nhosted-content URLs, both refused inside nested views too, and `cid:`.\n- GitHub issue comment and issue create bodies, GitLab issue note, MR\nnote and issue create description, and Linear comment, issue create and\nissue update bodies, all scanned as `forge-markdown`. Linear was added\nby owner ruling OR-B3w-2.\n\n**What forge Markdown refuses:**\n- Remote Markdown images in every form: inline, reference-style,\nangle-bracket destinations, entity-spelled, and GitLab `{width=}`.\n- Raw-HTML `<img>`, `<picture>`/`<source srcset>`, `<video poster>`,\n`<object>`, and the rest of the HTML scan.\n- GitLab `::include`, including after `>` blockquote markers.\n- PlantUML, Kroki and Mermaid diagram fences that load a URL.\n- **How diagram fences are detected.** An opener is looked for on every\nline whatever the surrounding fence state, after skipping indent, `>`\nand list markers. Lines are read raw, split on every line break, and\nalso settled. A body ends only at a strict closing fence. Two review\nrounds showed that pairing fences heuristically fails open, which is why\ndetection works this way. The same fix now covers Obsidian's Mermaid\nrule from B3r.\n- **How the fence language is read.** It is the first word of the info\nstring, matched exactly, with character references decoded. So\n`&#109;ermaid` is Mermaid, and `godot` is not `dot`.\n\n**Owner-accepted over-refusal (OR-B3w-3, I53 bound 34).** Code is not\nexempt. A comment whose code contains any of the following is refused,\nand the model rephrases:\n- `![` (for example `#![allow(x)]`);\n- `url()` or `@import`;\n- `src=` followed by a URL;\n- an `<img>` snippet;\n- an unclosed `<`.\n\n**What is not established in vendor docs, and is refused either way:**\n- whether Teams renders an external `img src`;\n- whether GitLab's asset proxy is on by default;\n- whether Linear proxies images.\n\n**Tests:**\n- Every bypass from the plan's Antigravity review and from the\nadversarial and final review is a fixture through the real doors. Each\nalso runs with the tripwire off, so the structural rule alone must catch\nit.\n- The completeness check is per schema key. The schema reader follows\n`.extend` bases. Untemplated rows must be either scanned or listed as\nuntemplated sends, never both.\n- The linear-time tests use a 2N input of about 300k characters, at most\nabout 5% of the 3 s bound locally, plus 2N/N ratio checks.\n- Every security change is red-proved by mutation.\n\n**Not breaking.** This tightens what the model and MCP clients may\npropose. Every write still prompts the owner.\n\n**Docs:**\n- The five core docs: CLAUDE.md and GEMINI.md, whose I28/I53 one-liners\nare identical, plus roadmap, architecture, README and cli-reference.\n- SECURITY-INVARIANTS: I28 and I53, with bound 33 updated and new bound\n34.\n- The `nimbus-mcp-sink` skill, the CHANGELOG, and the Outlook, Teams,\nGitHub, GitLab and Linear connector pages.\n\n**Verification:**\n- `preflight:fast` passes, `typecheck:tests` passes with 0 new errors,\nand `audit:doc-refs`, `audit:status-drift`, `audit:platform-test-gaps`\nand `audit:invariants` all pass.\n- Scoped suites: 13324 pass.\n- `verify:docker --changed` (Linux): 2598 pass, 0 fail.\n- Coverage of `remote-content.ts` is 99.7% lines and 96.5% branches.\n- The whole repo ran in two halves locally because of memory. The only\nfailures were environment ones outside the diff: the toolgen helper is\nnot built, pwsh is missing, and the TUI hit a Yoga error under Bun 1.3.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Remote-content checks now cover Outlook HTML emails sent through MCP,\nnon-text Teams messages, and Markdown content submitted to GitHub,\nGitLab, and Linear. Submissions that could load remote content are\nrefused before consent is requested, including when accepting proposals\ncreated before the checks were added.\n  * Plain links remain allowed in supported Markdown content.\n\n* **Documentation**\n* Updated connector guides and product references to describe the new\nrestrictions and clarify which content is allowed.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T07:25:34Z",
+          "tree_id": "48959cbaeaaf0dd4b50e810fefa0350801204bbd",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/eabe782d57807f0ca4cab23861357e4714694232"
+        },
+        "date": 1793950583335,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.3544926499977,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 299.6986421500027,
             "unit": "ms"
           }
         ]
