@@ -10,6 +10,7 @@
 import { resolveGoogleOAuthVaultKey } from "../../auth/google-access-token.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { readConnectorSecret, sharedOAuthKey } from "../connector-vault.ts";
+import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 
 /** The spawn-context fields a predicate may read (obsidian's vault paths come from config). */
 export interface ServiceCredentialContext {
@@ -32,6 +33,15 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
   google_drive: async (vault) => (await resolveGoogleOAuthVaultKey(vault, "google_drive")) !== null,
   outlook: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),
   teams: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),
+  onedrive: async (vault) => present(await vault.get(sharedOAuthKey("microsoft"))),
+  // The model door WRITES (acknowledge, resolve, escalate), and PagerDuty needs the `From` e-mail of
+  // a valid user on every write, so both the token and a well-formed e-mail must be stored. Reads
+  // (sync) need only the token; this predicate is the write door's.
+  pagerduty: async (vault) => {
+    const token = await readConnectorSecret(vault, "pagerduty", "api_token");
+    const email = await readConnectorSecret(vault, "pagerduty", "from_email");
+    return token !== null && token.trim() !== "" && email !== null && isPagerdutyFromEmail(email);
+  },
   github: async (vault) => present(await readConnectorSecret(vault, "github", "pat")),
   gitlab: async (vault) => present(await readConnectorSecret(vault, "gitlab", "pat")),
   slack: async (vault) => present(await readConnectorSecret(vault, "slack", "oauth")),

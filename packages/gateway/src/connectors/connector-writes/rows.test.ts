@@ -111,9 +111,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("102 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(102);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(102);
+  test("113 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(113);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(113);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -152,14 +152,16 @@ describe("connector write rows", () => {
     }
   });
 
-  test("gdrive_file_trash is a read-registered write", () => {
-    expect(connectorWriteRowByToolId("gdrive_file_trash")).toEqual({
+  test("gdrive_file_trash is an ordinary write row since connectors 0.6.0 (no registeredAs overlay)", () => {
+    const trash = connectorWriteRowByToolId("gdrive_file_trash");
+    expect(trash).toMatchObject({
       toolId: "gdrive_file_trash",
       actionType: "google_drive.file.trash",
       transport: "mesh",
       wave: 3,
-      registeredAs: "read",
     });
+    expect(trash).not.toHaveProperty("registeredAs");
+    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.registeredAs !== undefined)).toEqual([]);
     expect(HITL_REQUIRED.has("google_drive.file.trash")).toBe(true);
   });
 
@@ -288,8 +290,81 @@ describe("connectors 0.4.0 writes (B-X)", () => {
   });
 });
 
+/** Wave-3 rows once the 11 writes of connectors 0.6.0 are classified (25 before). */
+const WAVE3_COUNT = 36;
+
+/**
+ * The 11 writes `@nimbus-dev/connectors` 0.6.0 added (Phase 9.7 C1), spelled out with the
+ * `mutates` string each one registers (OR-W34-6, spec 15.3). The action type is NOT always the tool
+ * id dotted, so it is spelled here and also checked against the installed source by
+ * manifest.sync.test.ts.
+ */
+const CONNECTORS_0_6_0_WRITES: ReadonlyArray<readonly [toolId: string, actionType: string]> = [
+  ["github_branch_create", "github.branch.create"],
+  ["github_pr_create", "github.pr.create"],
+  ["github_pr_update", "github.pr.update"],
+  ["gitlab_branch_create", "gitlab.branch.create"],
+  ["gitlab_mr_create", "gitlab.mr.create"],
+  ["gitlab_mr_update", "gitlab.mr.update"],
+  ["launchdarkly_flag_toggle", "launchdarkly.flag.toggle"],
+  ["launchdarkly_flag_rollout_set", "launchdarkly.flag.rollout.set"],
+  ["flagsmith_feature_state_set", "flagsmith.feature.state.set"],
+  ["jira_ops_alert_acknowledge", "jira.ops.alert.acknowledge"],
+  ["jira_ops_alert_close", "jira.ops.alert.close"],
+];
+
+describe("connectors 0.6.0 writes (C1)", () => {
+  test("each is a wave-3 mesh row with the spelled action type, in the frozen set", () => {
+    expect(CONNECTORS_0_6_0_WRITES).toHaveLength(11);
+    for (const [id, actionType] of CONNECTORS_0_6_0_WRITES) {
+      const r = connectorWriteRowByToolId(id);
+      expect(
+        r === undefined
+          ? undefined
+          : { toolId: r.toolId, actionType: r.actionType, transport: r.transport, wave: r.wave },
+        id,
+      ).toEqual({ toolId: id, actionType, transport: "mesh", wave: 3 });
+      expect(HITL_REQUIRED.has(actionType), id).toBe(true);
+      expect(isConnectorWriteToolId(id), id).toBe(true);
+    }
+  });
+
+  test("0.6.0 adds no wave-4 row: no commit tool exists in the manifest", () => {
+    const ids = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
+    expect(ids.has("github_file_commit")).toBe(false);
+    expect(ids.has("gitlab_commit_create")).toBe(false);
+    expect(CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 3)).toHaveLength(WAVE3_COUNT);
+  });
+
+  test("the namespaced form (server_tool) is a write id too", () => {
+    for (const [id] of CONNECTORS_0_6_0_WRITES) {
+      const service = id.split("_")[0] ?? "";
+      expect(isConnectorWriteToolId(`${service}_${id}`), id).toBe(true);
+    }
+  });
+
+  test("none is templated or proposable yet: all eleven are not_yet_offered", () => {
+    for (const [id, actionType] of CONNECTORS_0_6_0_WRITES) {
+      expect(connectorWriteRowByToolId(id)?.preview, id).toBeUndefined();
+      expect(ACTION_PROPOSABILITY[actionType], id).toEqual({
+        kind: "denied",
+        class: "not_yet_offered",
+      });
+    }
+    const notYet = Object.entries(ACTION_PROPOSABILITY)
+      .filter(([, e]) => e.kind === "denied" && e.class === "not_yet_offered")
+      .map(([t]) => t)
+      .sort((a, b) => a.localeCompare(b));
+    expect(notYet).toEqual(
+      [...CONNECTORS_0_6_0_WRITES.map(([, t]) => t), "jira.issue.transition"].sort((a, b) =>
+        a.localeCompare(b),
+      ),
+    );
+  });
+});
+
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall still 43 proposable, 117 denied (1 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 43 proposable, 128 denied (12 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -303,9 +378,9 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
     expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(43);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(117);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(128);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
-    ).toHaveLength(1);
+    ).toHaveLength(12);
   });
 });

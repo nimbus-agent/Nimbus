@@ -474,6 +474,7 @@ describe("B2 tripwires: every offerable GitHub/GitLab text and label field is sc
     github_issue_labels_add: [],
     github_issue_assignees_add: [],
     github_issue_state_set: [],
+    github_pr_close: [],
     gitlab_issue_note_create: ["body"],
     gitlab_mr_note_create: ["body"],
     gitlab_issue_create: ["title", "description"],

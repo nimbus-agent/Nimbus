@@ -53,6 +53,8 @@ const ALL_CONFIGURED: Record<string, string> = {
   "discord.bot_token": "b",
   "apple.icloud_email": "e",
   "apple.icloud_app_password": "p",
+  "pagerduty.api_token": "t",
+  "pagerduty.from_email": "oncall@example.com",
 };
 
 describe("isServiceCredentialConfigured", () => {
@@ -96,17 +98,37 @@ describe("isServiceCredentialConfigured", () => {
     expect(await isServiceCredentialConfigured(v4, "apple", {})).toBe(false);
   });
 
+  test("onedrive rides the shared Microsoft OAuth key, like outlook and teams", async () => {
+    const without = await vaultWith({ "github.pat": "p" });
+    expect(await isServiceCredentialConfigured(without, "onedrive", {})).toBe(false);
+    const withMs = await vaultWith({ "microsoft.oauth": EXPIRED });
+    for (const s of ["onedrive", "outlook", "teams"]) {
+      expect(await isServiceCredentialConfigured(withMs, s, {}), s).toBe(true);
+    }
+  });
+
+  test("pagerduty needs the API token AND a well-formed from_email (the model door writes)", async () => {
+    const both = await vaultWith({ "pagerduty.api_token": "t", "pagerduty.from_email": "a@b.co" });
+    expect(await isServiceCredentialConfigured(both, "pagerduty", {})).toBe(true);
+    const cases: Record<string, Record<string, string>> = {
+      "token only": { "pagerduty.api_token": "t" },
+      "email only": { "pagerduty.from_email": "a@b.co" },
+      "blank token": { "pagerduty.api_token": "  ", "pagerduty.from_email": "a@b.co" },
+      "blank email": { "pagerduty.api_token": "t", "pagerduty.from_email": "   " },
+      "no at sign": { "pagerduty.api_token": "t", "pagerduty.from_email": "ab.co" },
+      "no domain dot": { "pagerduty.api_token": "t", "pagerduty.from_email": "a@bco" },
+      "inner space": { "pagerduty.api_token": "t", "pagerduty.from_email": "a b@c.co" },
+      "two ats": { "pagerduty.api_token": "t", "pagerduty.from_email": "a@@b.co" },
+    };
+    for (const [label, secrets] of Object.entries(cases)) {
+      const vault = await vaultWith(secrets);
+      expect(await isServiceCredentialConfigured(vault, "pagerduty", {}), label).toBe(false);
+    }
+  });
+
   test("unknown services and prototype names fail closed", async () => {
     const vault = await vaultWith(ALL_CONFIGURED);
-    for (const s of [
-      "onedrive",
-      "bitbucket",
-      "argocd",
-      "",
-      "__proto__",
-      "constructor",
-      "toString",
-    ]) {
+    for (const s of ["bitbucket", "argocd", "", "__proto__", "constructor", "toString"]) {
       expect(await isServiceCredentialConfigured(vault, s, { obsidianVaultPaths: ["/v"] }), s).toBe(
         false,
       );

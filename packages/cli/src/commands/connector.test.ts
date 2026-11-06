@@ -990,6 +990,8 @@ const AUTH_ENV_KEYS: string[] = [
   "CIRCLECI_TOKEN",
   "NIMBUS_PAGERDUTY_API_TOKEN",
   "PAGERDUTY_API_TOKEN",
+  "NIMBUS_PAGERDUTY_FROM_EMAIL",
+  "PAGERDUTY_FROM_EMAIL",
   "NIMBUS_KUBECONFIG",
   "KUBECONFIG",
   "NIMBUS_AWS_ACCESS_KEY_ID",
@@ -1132,6 +1134,55 @@ describe("runConnector auth — per-applier success", () => {
       expect(out.stdout).toContain("Credential: stored in the OS vault (no OAuth scopes).");
     },
   );
+});
+
+describe("runConnector auth pagerduty — the From e-mail its writes need (C1)", () => {
+  let savedEnv: NodeJS.ProcessEnv;
+
+  beforeEach(() => {
+    out.reset();
+    savedEnv = { ...process.env };
+    for (const k of AUTH_ENV_KEYS) delete process.env[k];
+  });
+  afterEach(() => {
+    for (const k of Object.keys(process.env)) delete process.env[k];
+    Object.assign(process.env, savedEnv);
+    clearFixture();
+  });
+
+  async function sentParams(args: string[]): Promise<Record<string, unknown>> {
+    const mock = createMockIpcClient([{ ok: true, serviceId: "pagerduty", scopesGranted: [] }]);
+    setFixture({ gatewayState: { socketPath: FAKE_SOCKET_PATH }, ipcClient: mock.client });
+    await runConnector(["auth", "pagerduty", ...args]);
+    return (mock.calls[0]?.params ?? {}) as Record<string, unknown>;
+  }
+
+  it("--username is sent as fromEmail, beside the token", async () => {
+    const params = await sentParams(["--token", "k", "--username", "oncall@example.com"]);
+    expect(params["fromEmail"]).toBe("oncall@example.com");
+    expect(params["personalAccessToken"]).toBe("k");
+  });
+
+  it("falls back to NIMBUS_PAGERDUTY_FROM_EMAIL and never to the generic PAGERDUTY_FROM_EMAIL", async () => {
+    process.env["PAGERDUTY_FROM_EMAIL"] = "generic@example.com";
+    expect(Object.hasOwn(await sentParams(["--token", "k"]), "fromEmail")).toBe(false);
+    process.env["NIMBUS_PAGERDUTY_FROM_EMAIL"] = "first@example.com";
+    expect((await sentParams(["--token", "k"]))["fromEmail"]).toBe("first@example.com");
+  });
+
+  it("without an e-mail the token is still sent and no fromEmail key is", async () => {
+    const params = await sentParams(["--token", "k"]);
+    expect(params["personalAccessToken"]).toBe("k");
+    expect(Object.hasOwn(params, "fromEmail")).toBe(false);
+  });
+
+  it("`nimbus connector help` names the e-mail and says why", async () => {
+    await runConnector(["help"]);
+    expect(out.stdout).toContain("--username");
+    expect(out.stdout).toContain("NIMBUS_PAGERDUTY_FROM_EMAIL");
+    expect(out.stdout).not.toContain("/ PAGERDUTY_FROM_EMAIL");
+    expect(out.stdout).toContain("pagerduty.from_email");
+  });
 });
 
 describe("runConnector auth — per-applier primary error (env cleared)", () => {

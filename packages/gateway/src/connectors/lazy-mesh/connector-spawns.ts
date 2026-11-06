@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 
 import { MCPClient } from "@mastra/mcp";
-
 import { getValidCanvaAccessToken } from "../../auth/canva-access-token.ts";
 import { getValidFigmaAccessToken } from "../../auth/figma-access-token.ts";
 import {
@@ -32,6 +31,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
 import { transitionHealth } from "../health.ts";
+import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 import {
   manifestForFirstParty,
   manifestWithExtraNetworkHosts,
@@ -762,6 +762,23 @@ export async function ensureCircleciMcp(ctx: MeshSpawnContext): Promise<void> {
   ctx.scheduleLazyDisconnect(slotKey);
 }
 
+/**
+ * The credential variables of the PagerDuty child: the API token and, when one is stored, the `From`
+ * e-mail the connector's writes need (`PAGERDUTY_FROM_EMAIL`). An absent, blank or malformed one leaves the
+ * variable out, so the reads keep working and only a write refuses. The caller wraps this in
+ * `extensionProcessEnv` (I1), which adds the baseline and nothing else.
+ */
+export function pagerdutyEnvExtras(
+  token: string,
+  fromEmail: string | null,
+): Record<string, string> {
+  const email = fromEmail?.trim() ?? "";
+  return {
+    PAGERDUTY_API_TOKEN: token.trim(),
+    ...(isPagerdutyFromEmail(email) ? { PAGERDUTY_FROM_EMAIL: email } : {}),
+  };
+}
+
 export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   const slotKey = LAZY_MESH.pagerduty;
   ctx.clearLazyIdle(slotKey);
@@ -773,6 +790,7 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
   if (tok === null || tok.trim() === "") {
     return;
   }
+  const fromEmail = await readConnectorSecret(ctx.vault, "pagerduty", "from_email");
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
@@ -781,7 +799,7 @@ export async function ensurePagerdutyMcp(ctx: MeshSpawnContext): Promise<void> {
         pagerduty: wrap(
           {
             ...connectorSpawn("pagerduty"),
-            env: extensionProcessEnv({ PAGERDUTY_API_TOKEN: tok.trim() }),
+            env: extensionProcessEnv(pagerdutyEnvExtras(tok, fromEmail)),
           },
           "pagerduty",
           ctx,

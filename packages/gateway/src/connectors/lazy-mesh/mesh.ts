@@ -124,8 +124,9 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
 };
 
 /**
- * The wave-2 services: the slot each one's server runs in and the mesh method that ensures exactly
- * that slot, in ONE row so the two cannot drift. Their credential check is
+ * The per-service slots (the name is historical: it began as the wave-2 services, and C1 added
+ * `onedrive` and `pagerduty`): the slot each one's server runs in and the mesh method that ensures
+ * exactly that slot, in ONE row so the two cannot drift. Their credential check is
  * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
  * bundles host siblings).
  */
@@ -136,6 +137,8 @@ const WAVE2_LISTING: Readonly<
   google_drive: { slot: LAZY_MESH.googleBundle, ensure: "ensureGoogleDriveRunning" },
   outlook: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
   teams: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  onedrive: { slot: LAZY_MESH.microsoftBundle, ensure: "ensureMicrosoftBundleRunning" },
+  pagerduty: { slot: LAZY_MESH.pagerduty, ensure: "ensurePagerdutyRunning" },
   github: { slot: LAZY_MESH.github, ensure: "ensureGithubRunning" },
   gitlab: { slot: LAZY_MESH.gitlab, ensure: "ensureGitlabRunning" },
   slack: { slot: LAZY_MESH.slack, ensure: "ensureSlackRunning" },
@@ -353,7 +356,7 @@ export class LazyConnectorMesh {
 
   /**
    * The explicit listing map: the 9 phase-3 services on the phase-3 bundle (today's spawner probe)
-   * and each wave-2 service on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
+   * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */
   private buildFirstPartyListing(): Readonly<Record<string, FirstPartyListingEntry>> {
@@ -997,6 +1000,16 @@ export class LazyConnectorMesh {
       throw err;
     }
     this.obsidianRevokeFailing = false;
+  }
+
+  /**
+   * Retire the PagerDuty child so the next use respawns it with the credentials now in the Vault
+   * (`PAGERDUTY_API_TOKEN` and `PAGERDUTY_FROM_EMAIL` are read at spawn only). Bumps the slot
+   * generation, so a model write offered before the change refuses "ask again". Never rejects; an
+   * in-flight call finishes on the old child first (the detach drain).
+   */
+  restartPagerduty(): void {
+    void this.detachLazyClient(LAZY_MESH.pagerduty);
   }
 
   /**

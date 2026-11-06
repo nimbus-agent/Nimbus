@@ -429,7 +429,7 @@ describe("I26 — federated peer gate fail-closed rejects write tool ids", () =>
   });
 
   // Classified 2026-10-05: four moved to the write registrar in connectors 0.2.2, and
-  // gdrive_file_trash, which still mutates from a read registration. Each is tried BARE and in the
+  // gdrive_file_trash (a read registration until connectors 0.6.0). Each is tried BARE and in the
   // `<server>_<tool>` form a team-credentialed session actually executes (`@mastra/mcp` namespaces
   // every key) — the bare id alone was all the predicate used to match, so the executable form of
   // even a long-classified write (tableau_datasource_refresh) went through. Each case first proves
