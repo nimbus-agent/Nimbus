@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793980841969,
+  "lastUpdate": 1793994547755,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "49e70ff97d7d2be03ca7741e0736564ad6105d63",
-          "message": "chore: release main (#1275)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.8.0</summary>\n\n##\n[2.8.0](https://github.com/nimbus-agent/Nimbus/compare/v2.7.1...v2.8.0)\n(2026-08-20)\n\n\n### Features\n\n* **prfiles:** index PR changed-file paths behind an explicit coverage\nrecord ([#1258](https://github.com/nimbus-agent/Nimbus/issues/1258))\n([926fb80](https://github.com/nimbus-agent/Nimbus/commit/926fb80fd4f04515c6f92ef8aca40a0986746df4))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-20T07:38:06+03:00",
-          "tree_id": "21e6a059d92b591d6583fed3a0302a22fcc74877",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/49e70ff97d7d2be03ca7741e0736564ad6105d63"
-        },
-        "date": 1787202023631,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 311.74720254999994,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 311.3277853999956,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 229.3791180999997,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "15073bce79506de5cad3c890169536687278f3ee",
+          "message": "feat(gateway): type-to-confirm on every Wave 4 prompt, on every door (#1927)\n\nPhase 9.7 PR D0a, the first Wave 4 framework PR. A Wave 4 connector\nwrite, on every door, is approved only when the owner types its confirm\ntext (owner ruling OR-W34-4).\n\n## What changes\n\n- **Confirm targets.** All 39 Wave 4 rows declare a `confirm` template.\nThe confirm text is `<service>/<verb> <target>`, for example\n`github/merge acme/api#42`, `iac/destroy C:\\infra\\prod` or\n`kubernetes/scale web to 3`.\n- Each template names its effect, so two actions on the same target\nnever share a text.\n- Placeholders must be required, non-secret input fields; this is\nchecked against the installed 0.6.0 sources and by a sensitive-name\ncheck.\n- Opaque-id deletes confirm on the id's last 8 characters (owner ruling\nOR-W34-8).\n- The text is printable ASCII, backslash included so Windows paths work,\nand at most 200 characters.\n- A target value that would display differently from what is sent\n(leading, trailing or doubled spaces, Unicode whitespace) is refused\nbefore the prompt.\n- **The gate**, in `engine/executor.ts`, runs as named phases in order:\n`captureBeforePhase`, `renderConfirmPhase`, `approvalPhase`.\n- A Wave 4 action is approved only when `requestConfirmedApproval`\nreturns typed text exactly equal to the confirm text, with no trimming\nand no case folding.\n- A channel without that method denies; `requestApproval` is never used\nfor Wave 4.\n- A delegate counts only with matching typed text, and a path that\ncannot carry text falls back to the local owner.\n- The audit row records `confirm:\nmatched|mismatched|unsupported_channel`.\n- **Tool/type pairing**, a fix the review found. It predates this PR. A\nconnector write tool now runs only under its own action type, checked in\nthe gate before the HITL branch and again in the dispatcher. Before\nthis, `payload.mcpToolId` could name a Wave 4 tool under another HITL\ntype, for example a ChatOps `run pipeline.trigger mcpToolId=jenkins_…`,\nand run it behind a plain approval.\n- **Doors:**\n- **CLI:** asks `Type exactly <text> to approve`. `--yes` and scripted\nconsent deny Wave 4 with a fixed line.\n- **Desktop:** the popup's Approve button is enabled only on an exact\nmatch, and Enter never approves. Tauri `PendingHitl` carries\n`confirm_text`, and `ALLOWED_METHODS` is unchanged.\n  - **MCP act door:** forwards the method with its provenance prompt.\n- **ChatOps:** denies Wave 4 with a fixed reply until the modal arrives\nin D0c.\n- **Wire, additive.** `consent.request` carries `confirmText` and\n`consent.respond` takes `typed`, at most 512 characters. A client that\nnever sends `typed` is denied, which fails closed.\n- **Invariants.** The I53 and I20 amendments, and static rule D41, which\nconfines the comparison and the confirmed-approval calls to\n`engine/executor.ts` and pins the plain prompt inside the no-confirm\nbranch. Each has its enforcement tests, under the triple rule.\n\n## Reviews and gates\n\n- **Antigravity** approved the plan in round 2.\n- **The adversarial review** found the tool/type pairing hole, a\nnon-injective text, texts without the effect, a stale audit field after\na failed delegate, and a textual D41 pin. All are fixed and red-proved.\n- **Gates:** `preflight:fast`, `typecheck:tests`, security-invariants,\nthe connectors, engine, ipc, chatops, tribal, mcp-sink and federation\ndirectories, the HITL-write e2e scenarios, `bun test packages/cli\n--parallel`, the UI hitl tests and `cargo test` for the bridge, and\n`engine/executor.ts` at 100% branch coverage (189/189) over the whole\ngateway tree.\n- **`verify:docker --changed`:** its only failures are the UI vitest\nfile run under `bun test`, a harness artefact.\n\n## Docs\n\nThe five core docs, SECURITY-INVARIANTS and the CHANGELOG.\n\nNo migration, no `!`. A scripted or `--yes` run that reaches a Wave 4\nwrite now stops at that write, as the owner ruled. Nothing without a\nWave 4 write changes. Deferred, with its reason in the roadmap: the\n`@nimbus-dev/client` `typed?` field, since a client that never sends\n`typed` is denied on Wave 4, which is the safe direction.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Wave 4 connector writes require you to enter the exact confirmation\ntext shown before they can proceed.\n* The desktop approval screen displays the required text and enables\napproval only when your entry matches exactly.\n* Delegated approvals must provide the same exact text. Confirmation\ntext identifies the requested operation and target.\n* Model-offered Wave 4 writes require a preview, a before-state reader,\nand a confirmation target.\n* **Bug Fixes**\n* Connector writes are rejected if submitted under a mismatched action\ntype.\n* Channels that cannot collect typed confirmation—including ChatOps and\nscripted consent—cannot approve these writes.\n* **Documentation**\n* Updated security guidance, CLI references, and changelog details for\ntyped confirmations and expanded invariant coverage.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T19:38:25Z",
+          "tree_id": "ce5bd09f55c99e9fa292be49df104af2e6450b3f",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/15073bce79506de5cad3c890169536687278f3ee"
+        },
+        "date": 1793994543121,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 285.85851124999607,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 287.25864599999807,
             "unit": "ms"
           }
         ]
