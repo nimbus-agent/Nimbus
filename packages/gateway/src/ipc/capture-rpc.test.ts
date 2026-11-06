@@ -22,8 +22,8 @@ import {
 } from "../connectors/testing/remote-content-fixtures.ts";
 import { appendAuditEntry } from "../db/audit-chain.ts";
 import { makeEgressSink } from "../egress/egress-ledger.ts";
-import { NO_POLICY_OVERLAY } from "../engine/executor.ts";
-import type { PlannedAction } from "../engine/types.ts";
+import { NO_POLICY_OVERLAY, ToolExecutor } from "../engine/executor.ts";
+import type { ConfirmedApprovalRequest, ConsentChannel, PlannedAction } from "../engine/types.ts";
 import { openMigratedMemoryDb } from "../index/migrated-db-template.ts";
 import { formatActionConsent, formatActionProvenanceLines } from "../mcp-sink/capture-act.ts";
 import { resolveCaptureCapability } from "../mcp-sink/capture-capability.ts";
@@ -39,6 +39,7 @@ import {
   type CaptureRpcCtx,
   createActionDestinationRefusal,
   dispatchCaptureRpc,
+  provenanceConsent,
 } from "./capture-rpc.ts";
 import { type ConsentCoordinator, ConsentCoordinatorImpl } from "./consent.ts";
 import { createStreamRegistry } from "./engine-ask-stream.ts";
@@ -1869,5 +1870,92 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       expect(prompts).toHaveLength(1);
       expect(d.map((a) => a.type)).toEqual(["teams.message.post"]);
     });
+  });
+});
+
+describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", () => {
+  const MERGE: PlannedAction = {
+    type: "github.pr.merge",
+    payload: {
+      mcpToolId: "github_pr_merge",
+      input: { owner: "acme", repo: "api", pullNumber: 42 },
+    },
+  };
+  const TEXT = "github/acme/api#42";
+
+  function executorOver(inner: ConsentChannel, dispatched: PlannedAction[]): ToolExecutor {
+    return new ToolExecutor(
+      provenanceConsent(inner, "Agent-proposed action\nwhy", { actionType: "github.pr.merge" }),
+      { recordAudit: () => {} },
+      {
+        dispatch: async (a) => {
+          dispatched.push(a);
+          return { ok: true };
+        },
+      },
+      undefined,
+      { append: () => {} },
+    );
+  }
+
+  test("a Wave 4 write is approved only by typed text, with the provenance prompt plus the fixed line", async () => {
+    const seen: ConfirmedApprovalRequest[] = [];
+    const inner: ConsentChannel = {
+      requestApproval: async () => true,
+      requestConfirmedApproval: async (req) => {
+        seen.push(req);
+        return { approved: true, typed: TEXT };
+      },
+    };
+    const d: PlannedAction[] = [];
+    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("ok");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.prompt).toBe(`Agent-proposed action\nwhy\n\nTo approve, type exactly: ${TEXT}`);
+    expect(seen[0]?.details).toEqual({ actionType: "github.pr.merge" });
+    expect(seen[0]?.confirmText).toBe(TEXT);
+    expect(d).toHaveLength(1);
+  });
+
+  test("wrong text is declined, nothing dispatched", async () => {
+    const inner: ConsentChannel = {
+      requestApproval: async () => true,
+      requestConfirmedApproval: async () => ({ approved: true, typed: "github/acme/api#43" }),
+    };
+    const d: PlannedAction[] = [];
+    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("rejected");
+    expect(d).toEqual([]);
+  });
+
+  test("an inner channel without the method yields one without it: a Wave 4 write is denied, requestApproval unused", async () => {
+    const asked: string[] = [];
+    const inner: ConsentChannel = {
+      requestApproval: async (p) => {
+        asked.push(p);
+        return true;
+      },
+    };
+    const channel = provenanceConsent(inner, "p", {});
+    expect(channel.requestConfirmedApproval).toBeUndefined();
+    const d: PlannedAction[] = [];
+    expect((await executorOver(inner, d).execute(MERGE)).status).toBe("rejected");
+    expect(asked).toEqual([]);
+    expect(d).toEqual([]);
+  });
+
+  test("a plain write over the same wrapper still uses the provenance requestApproval", async () => {
+    const asked: Array<{ prompt: string; actionType: string | undefined }> = [];
+    const inner: ConsentChannel = {
+      requestApproval: async (prompt, _d, actionType) => {
+        asked.push({ prompt, actionType });
+        return true;
+      },
+      requestConfirmedApproval: async () => {
+        throw new Error("must not be called");
+      },
+    };
+    const d: PlannedAction[] = [];
+    const out = await executorOver(inner, d).execute({ type: "email.send", payload: {} });
+    expect(out.status).toBe("ok");
+    expect(asked).toEqual([{ prompt: "Agent-proposed action\nwhy", actionType: "email.send" }]);
   });
 });

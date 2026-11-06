@@ -176,4 +176,26 @@ describe("IntentRouter", () => {
     expect(replies).toEqual([]);
     expect(agentCalls).toEqual([]);
   });
+
+  test("a gated write that comes back with a message replies with that message, once (D0a)", async () => {
+    const { deps, replies } = baseDeps();
+    const r = new IntentRouter({
+      ...deps,
+      runGatedWrite: async () => ({ approved: false, message: "typed confirmation needed" }),
+    });
+    await r.handle(msg("@nimbus run deployment.rollback service=payment-service version=v1.4"));
+    expect(replies.map((x) => x.text)).toEqual(["typed confirmation needed"]);
+  });
+
+  test("a plain denial and an approval keep their fixed replies", async () => {
+    const { deps, replies } = baseDeps();
+    const denied = new IntentRouter({ ...deps, runGatedWrite: async () => ({ approved: false }) });
+    await denied.handle(
+      msg("@nimbus run deployment.rollback service=payment-service version=v1.4"),
+    );
+    expect(replies[0]?.text).toBe("❌ deployment.rollback rejected.");
+    const ok = new IntentRouter({ ...deps, runGatedWrite: async () => ({ approved: true }) });
+    await ok.handle(msg("@nimbus run deployment.rollback service=payment-service version=v1.4"));
+    expect(replies[1]?.text).toBe("✅ deployment.rollback approved & executed.");
+  });
 });

@@ -4,7 +4,7 @@ import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
 import { buildLedgeredChatPosts } from "../egress/chatops-egress.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { EgressAppendFailedError } from "../egress/model-egress.ts";
-import { HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
+import { CONFIRM_UNSUPPORTED_REASON, HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel } from "../engine/types.ts";
 import { EXTERNAL_AGENT_NAMES } from "../ipc/agents-rpc.ts";
 import type { ChatopsRpcCtx } from "../ipc/chatops-rpc.ts";
@@ -190,6 +190,10 @@ export interface ChatopsBoot {
   isSenderMapped(platform: ChatPlatform, userId: string): Promise<boolean>;
   stop(): Promise<void>;
 }
+
+/** The fixed reply when a ChatOps command reaches a Wave 4 write (type-to-confirm, Phase 9.7 D0a). */
+export const CHATOPS_CONFIRM_UNSUPPORTED_REPLY =
+  "This action needs a typed confirmation, which this channel cannot collect yet. Run it from the CLI or the desktop.";
 
 /** MCP tool results may arrive as plain JSON or as an MCP content envelope — unwrap tolerantly. */
 function unwrapToolResult(result: unknown): unknown {
@@ -439,6 +443,11 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
           async () => {
             const result = await executor.execute({ type: actionType, payload: { ...args } });
             pendingCardByChannel.delete(originatingChannelId);
+            // A Wave 4 write needs a typed confirmation this channel cannot collect: say so once,
+            // through the router's own reply (the reply dispatcher, a server-derived target: I23).
+            if (result.status === "rejected" && result.reason === CONFIRM_UNSUPPORTED_REASON) {
+              return { approved: false, message: CHATOPS_CONFIRM_UNSUPPORTED_REPLY };
+            }
             return { approved: result.status === "ok" };
           },
         ),

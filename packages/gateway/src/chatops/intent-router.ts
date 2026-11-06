@@ -21,7 +21,7 @@ export interface IntentRouterDeps {
     owner: { email: string; externalId: string },
     requesterExternalId: string,
     originatingChannelId: string,
-  ) => Promise<{ approved: boolean }>;
+  ) => Promise<{ approved: boolean; message?: string }>;
   /** Runs an `agent <name> ...` command. Truncation to a platform byte cap is the boot wiring's
    *  job (Task 9) — this router stays free of any platform-specific cap. */
   readonly runAgent: ChatopsAgentInvoker;
@@ -110,7 +110,7 @@ export class IntentRouter {
     await this.deps.reply(
       result.approved
         ? `✅ ${cmd.actionType} approved & executed.`
-        : `❌ ${cmd.actionType} rejected.`,
+        : (result.message ?? `❌ ${cmd.actionType} rejected.`),
     );
   }
 }
