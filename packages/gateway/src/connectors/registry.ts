@@ -210,6 +210,9 @@ function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): voi
  * {@link assertUserMcpKeyMatchesActionType}. The longest row id that ends the key wins.
  */
 function assertWriteKeyMatchesActionType(actionType: string, resolvedKey: string): void {
+  // A user-MCP or extension tool is pinned to its own type by assertUserMcpKeyMatchesActionType; its
+  // own name may legitimately end in a first-party row id.
+  if (isOwnerCodeServerToolKey(resolvedKey)) return;
   let named: (typeof CONNECTOR_WRITE_ROWS)[number] | undefined;
   for (const r of CONNECTOR_WRITE_ROWS) {
     const matches = resolvedKey === r.toolId || resolvedKey.endsWith(`_${r.toolId}`);

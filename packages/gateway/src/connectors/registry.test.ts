@@ -456,6 +456,39 @@ describe("createConnectorDispatcher — a connector-write tool dispatches only u
   });
 });
 
+describe("createConnectorDispatcher — an owner-code tool named like a write row id (I53)", () => {
+  test("an mcp_ or ext_ key ending in a row id dispatches under its own type; a first-party mismatch is still refused", async () => {
+    const ran: string[] = [];
+    const t = (k: string) => ({
+      async execute() {
+        ran.push(k);
+        return {};
+      },
+    });
+    const d = createConnectorDispatcher({
+      async listTools() {
+        return {
+          mcp_foo_slack_message_post: t("mcp_foo_slack_message_post"),
+          ext_bar_github_pr_merge: t("ext_bar_github_pr_merge"),
+          github_github_pr_merge: t("github_github_pr_merge"),
+        };
+      },
+    });
+    await d.dispatch({
+      type: "mcp_foo.slack_message_post",
+      payload: { mcpToolId: "mcp_foo_slack_message_post" },
+    });
+    await d.dispatch({
+      type: "ext_bar.github_pr_merge",
+      payload: { mcpToolId: "ext_bar_github_pr_merge" },
+    });
+    expect(ran).toEqual(["mcp_foo_slack_message_post", "ext_bar_github_pr_merge"]);
+    await expect(
+      d.dispatch({ type: "search.run", payload: { mcpToolId: "github_github_pr_merge" } }),
+    ).rejects.toThrow(/ERR_WRITE_TOOL_ACTION_MISMATCH/);
+  });
+});
+
 describe("createConnectorDispatcher — a before-state read dispatches only a read of its own service (spec § 5.4)", () => {
   /** Every tool a test map holds, each recording that it ran. */
   function mapOf(keys: readonly string[]) {

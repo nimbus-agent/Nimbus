@@ -39,7 +39,7 @@ describe("renderConfirmText", () => {
 
   test("a value with a single interior ASCII space renders as it is", () => {
     const r = confirmRow("{a}/{b}");
-    expect(text(r, { a: "my app", b: ["p q", "r"] })).toBe("github/my app/p q r");
+    expect(text(r, { a: "my app", b: ["p", "r"] })).toBe("github/my app/p r");
   });
 
   test("a value the normaliser would change is refused, so the text is injective in the dispatched value", () => {
@@ -149,6 +149,41 @@ describe("renderConfirmText", () => {
   test("no refusal reason carries an input value", () => {
     const r = confirmRow("{a}");
     expect(reason(r, { a: "secret\u0007value" })).not.toContain("secret");
+  });
+});
+
+describe("the confirm text is injective across adjacent fields and array elements", () => {
+  test.each([
+    ["{owner}/{repo}", { owner: "a/b", repo: "c" }],
+    ["{owner}/{repo}", { owner: "a", repo: "b/c" }],
+    ["{jobName}#{buildNumber}", { jobName: "a#1", buildNumber: 2 }],
+    ["scale {deploymentName} to {replicas}", { deploymentName: "web to 5", replicas: 3 }],
+    ["scale {deploymentName} to {replicas}", { deploymentName: "web", replicas: "3 to 4" }],
+    ["{a}/{b}", { a: ["x y"], b: "z" }],
+    ["{instanceIds}", { instanceIds: ["i-1 i-2", "i-3"] }],
+  ])("%s with %j is refused before the prompt", (template, input) => {
+    expect(reason(confirmRow(template), input)).toMatch(
+      /^confirm: field [A-Za-z]+ is not a usable value$/,
+    );
+  });
+
+  test("realistic values are still accepted, and a single placeholder keeps its charset", () => {
+    expect(text(confirmRow("{owner}/{repo}"), { owner: "acme", repo: "api" })).toBe(
+      "github/acme/api",
+    );
+    expect(text(confirmRow("scale {d} to {n}", "k8s.deployment.scale"), { d: "web", n: 3 })).toBe(
+      "k8s/scale web to 3",
+    );
+    expect(
+      text(confirmRow("deploy {p}/{r}/{s}", "gcp.run.deploy"), {
+        p: "proj",
+        r: "us-central1",
+        s: "svc",
+      }),
+    ).toBe("gcp/deploy proj/us-central1/svc");
+    expect(
+      text(confirmRow("{projectPath}", "gitlab.pipeline.cancel"), { projectPath: "grp/sub/proj" }),
+    ).toBe("gitlab/grp/sub/proj");
   });
 });
 

@@ -175,6 +175,9 @@ describe("no two Wave 4 rows of one service render the same confirm text", () =>
             const input = Object.fromEntries(Object.keys(sharedInput(a, b)).map((k) => [k, value]));
             const ta = renderConfirmText(a, input);
             const tb = renderConfirmText(b, input);
+            // A failed render is a failure, not a skip: every row must render these inputs.
+            expect(ta.ok, `${service}: ${a.toolId} renders ${JSON.stringify(value)}`).toBe(true);
+            expect(tb.ok, `${service}: ${b.toolId} renders ${JSON.stringify(value)}`).toBe(true);
             if (ta.ok && tb.ok) {
               expect(ta.text, `${service}: ${a.toolId} vs ${b.toolId}`).not.toBe(tb.text);
             }
@@ -183,6 +186,28 @@ describe("no two Wave 4 rows of one service render the same confirm text", () =>
       }
     }
     expect(pairs).toBeGreaterThan(20);
+  });
+
+  test("every multi-placeholder row refuses a value holding its own separator", () => {
+    let checked = 0;
+    for (const r of WAVE4) {
+      const parsed = parseConfirmTemplate(r.confirm?.template ?? "");
+      if (!parsed.ok) throw new Error(parsed.reason);
+      const segs = parsed.segments;
+      const names = placeholders(r);
+      segs.forEach((seg, i) => {
+        if (seg.kind !== "text" || segs[i - 1]?.kind !== "field" || segs[i + 1]?.kind !== "field")
+          return;
+        const prev = segs[i - 1];
+        if (prev?.kind !== "field") return;
+        const input = Object.fromEntries(names.map((n) => [n, "v1"]));
+        input[prev.name] = `a${seg.text}b`;
+        const out = renderConfirmText(r, input);
+        expect(out.ok, `${r.toolId}: ${prev.name} holding ${JSON.stringify(seg.text)}`).toBe(false);
+        checked++;
+      });
+    }
+    expect(checked).toBeGreaterThan(20);
   });
 
   test("a template names its effect: it starts with a literal verb", () => {
