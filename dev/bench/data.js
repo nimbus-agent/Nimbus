@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793957687450,
+  "lastUpdate": 1793958066875,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "70f15ca9ab2d0ad1ccb93acc01ab54ad3106c38f",
-          "message": "fix(ci): stop the AuditPanel vitest flake, clear the Sonar board, and make docs/README.md the only README (#1252)\n\nThree things, all reached from the red Windows \"Unit + Coverage\" job on\nrun\n32230537776.\n\n## 1. The failing test — a vitest timeout, not a logic bug\n\n`AuditPanel > renders summary and one row per fetched entry` timed out\nat the\n10s `testTimeout` with no assertion error. Neither the component nor the\ntest\nhas changed since #835, and the same file runs all 14 tests in 1863ms on\na\ngreen run of the same job.\n\n**The tell is the overshoot.** vitest reported 15222ms against a 10000ms\nbudget, so vitest's own timeout timer fired 5.2s late. A blocked event\nloop\ncannot do that — it still services its own timer on schedule — so the\nworker\nwas CPU-starved, not stuck.\n\nTwo independent corroborations:\n\n- Every RTL wait in that test is internally capped. `waitFor` and\n`findByText`\neach arm a 1s `asyncUtilTimeout`, so the body cannot legitimately\nconsume\n10s, and a genuine failure would have surfaced as an assertion error in\n  about 2s. A bare \"Test timed out\" is therefore not that test's fault.\n- Ranking per-file durations across both runs kills the \"CI was just\nslow\"\ntheory: every other vitest file in the failing run was equal to or\nFASTER\nthan in the green run, and the failing run's total was shorter — 78.89s\n  against 98.43s.\n\n`packages/ui/vitest.config.ts` gets CI-only headroom, 30s instead of\n10s,\nmatching the `--timeout 60000` the Bun half of this same job already\nruns with,\nplus `retry: 1` — the same \"retry once\" shape and rationale as the\nexisting\n\"Unit tests with coverage — macOS/Windows retry once\" step in\n`_test-suite.yml`. Local runs keep 10s and `retry: 0`, so a real hang\nstays\nloud and a newly-flaky test is visible the moment it is written.\n\nBoth switches are red-proved in both directions, and a test that fails\nBOTH\nattempts still exits 1 — this hides no genuine breakage.\n\n**Not fixed here, and worth naming:** 113 `act(...)` warnings across 13\nUI\ncomponents make first-render settling nondeterministic in general. That\nis real\ndebt, it is not what broke this run, and it is not a safe drive-by.\n\n## 2. SonarCloud — 51 code smells cleared in code\n\nTo be precise rather than let a green badge take credit: **the quality\ngate was\nalready OK before this branch.** 0 bugs, 0 vulnerabilities, 0 hotspots\nto\nreview; code smells do not move the rating off A. What this clears is\nthe 51\nopen smells, all of them in code — nothing excluded, nothing marked\nfalse-positive, no rule disabled. The API will keep reporting 51 until\nCI\nre-scans, because the newest server-side analysis predates these\ncommits.\n\nThe riskiest of those fixes was verified independently rather than taken\non\ntrust, because `markdown-sections.ts` is named in invariant I31. A\ndifferential\nharness over 441,371 strings found ZERO divergence between the old regex\nand\nthe new character scan, and the quadratic claim reproduces: a\nNON-matching\nwhitespace run costs 8ms at 5k characters and 511ms at 40k — 4x the\ninput for\n16x the time — while the scan stays flat.\n\nThat verification also caught something: the rewrite added edge arms no\ntest\nreached, dropping the file to 78.26% branch, under the 80% floor. Those\narms\nare precisely the cases the old regex only ever matched by backtracking,\nso\nthey are now five tests. The file is at 43/46 branch and 100% line; the\nthree\nremaining are unreachable `??` right-hand sides that\n`noUncheckedIndexedAccess`\nforces us to write.\n\n## 3. One README, not two\n\n`README.md` and `docs/README.md` had drifted into two divergent landing\npages.\nThe root copy is deleted and GitHub falls back to `docs/README.md` to\nrender\nthe repo home — confirmed there is no `.github/README.md` outranking it.\n\n`docs/README.md` absorbs what only the root copy carried: the one-line\ninstallers, the zero-config `nimbus init` then `nimbus why` quickstart,\nthe\naccurate GPG-manifest wording, and the \"three load-bearing words\"\nframing. It\ndrops the `v0.1.0`-era delivery dump that `CHANGELOG.md` already owns,\nand\ngains the S1 surfaces it was missing entirely — the egress ledger and\n`nimbus prove`, the fourteen agent briefs, `nimbus stats`, `--devil`,\n`[persona]`, and invariants I1 through I31.\n\nIt is also no longer exempt from markdownlint. The most-read file in the\ntree\nwas the single file skipping that gate; un-excluding it surfaced 7\nissues, all\nfixed rather than suppressed.\n\n**Two real bugs fell out of the consolidation.**\n\n`nimbus negotiate` shipped in #1166 wired into `COMMAND_HANDLERS` but\nnever\nadded to `COMMAND_NAMES`, and stayed missing for months because nothing\ncompared the two — the registry test names commands by hand, so a\ncommand\nabsent from both the registry and every hand-written list is invisible.\n`audit:readme-cli` only caught it because it validates the landing page\nagainst\nthe registry. Fixed, and the registry test now scans the dispatch table\nso it\ncannot recur.\n\n`audit:readme-cli` itself read a PATH ending in `nimbus` as a command,\nand its\n`\\s` separator let a match span a newline, so a `/tmp/nimbus` line\nfollowed by\na `less …` line became the command \"nimbus less\". Both narrowed at the\nroot,\nboth regression-tested against the old pattern.\n\n## Docs\n\n`CLAUDE.md` and `GEMINI.md` are kept mirrored, and both — along with the\nroadmap's header — now carry the Wave 6 answer-quality set: A0 on\n2026-08-16,\nA1 and A2 on 2026-08-18, `nimbus stats` on 2026-08-19, with negation\nnamed as\nthe one row still open.\n\n`docs/cli-reference.md`'s synthesis paragraph claimed the honesty guard\ncovered\n\"negotiate's seven null-lane disclaimers only; every other brief kind is\nnot\nyet covered\". I31 PR 2 made that false on 2026-08-18. It now describes\nboth\nguards as built — reserved sections withheld from the model and\nre-attached\nverbatim, and the anchor-phrase check spanning the whole interleaved\nset.\n\n## Verification\n\n`bun run preflight` passes.\n\n`audit:coverage-floor` is CI-Linux-authoritative, so it was run against\na\nDocker-Linux lcov: **0 violations, 1243 source files scanned**. The\nWindows run\nof that gate reports four, all local artifacts — `platform/linux.ts` is\nthe arm\na Linux runner covers and Windows cannot, and a connector\n`search-filter.ts`\nthat changed identity between two consecutive runs.\n\nUI suite 518/518. Gateway agents plus the audit and release scripts\n961/961.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-19T12:30:04Z",
-          "tree_id": "72a744ef1cb9437082ba4a5be1d8bc3782928206",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/70f15ca9ab2d0ad1ccb93acc01ab54ad3106c38f"
-        },
-        "date": 1787143282611,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 309.60712304999504,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 318.49092640000015,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.2647422999959,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3c041c1babb71d935ed392af3f2b5796b99e7c46",
+          "message": "chore: release main (#1919)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.32.0</summary>\n\n##\n[10.32.0](https://github.com/nimbus-agent/Nimbus/compare/v10.31.0...v10.32.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** Waves 3-4 reclassification; the model is never offered a\nmail send ([#1918](https://github.com/nimbus-agent/Nimbus/issues/1918))\n([08ab190](https://github.com/nimbus-agent/Nimbus/commit/08ab1908ee479544d519a290bdbb58a62bfe4130))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T09:31:04Z",
+          "tree_id": "e5314dc64f977208610b20ad22c7ca8a33fbd792",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/3c041c1babb71d935ed392af3f2b5796b99e7c46"
+        },
+        "date": 1793958063306,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 192.2550381000019,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 198.61592389999822,
             "unit": "ms"
           }
         ]
