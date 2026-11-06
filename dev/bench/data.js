@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793919426491,
+  "lastUpdate": 1793925362841,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "becc386cb9d114ed4bf9f292b3ce99cb7e97afa7",
-          "message": "feat(engine): nimbus ask --devil argues against the plan (#1246)\n\n`nimbus ask --devil` makes the agent argue AGAINST the plan or\nassumption in the question — the risks it runs, the edge cases it\nignores, the alternative readings of the evidence it skips — instead of\nhelping to carry it out. Second of the three Wave 6 answer-quality\nsurfaces to land after A0 unblocked them.\n\n## The hazard this row warned about was designed out, not satisfied\n\n`docs/roadmap.md` recorded, from a check against the tree during the A0\ndesign pass, that `--devil` needed two independent prompt sites \"updated\ntogether\": `engine/agent.ts`'s three Mastra `instructions:` literals,\nand `run-conversational-agent.ts`'s separate hardcoded `systemPrompt`. A\nchange at one silently no-ops on the other.\n\nNeither was touched. Both execution paths — `runViaLocalRouter` and\n`runViaAgent` — consume a prompt built by a single function,\n`buildPromptText`, and `applyDevilAdvocate` prefixes the directive to\nwhat that function returns — one site, above the router-vs-agent fork,\nso both paths carry it by construction rather than by anyone remembering\nto update two prompt strings. The sentence has exactly one definition,\n`engine/devil-advocate.ts`'s `DEVIL_ADVOCATE_DIRECTIVE` — the same\nsingle-definition discipline as `brief-disclosures.ts` in #1245.\n\n## The real two-site risk was one layer up, where the roadmap had not\nlooked\n\n`agent.invoke` and `engine.askStream` are separate IPC dispatchers that\nresolve the same `getAgentInvokeHandler`, each parsing its own params\nrecord — and `engine.askStream` is the path the desktop UI and the VS\nCode extension use. Wiring only `agent.invoke` would have shipped a flag\nthat worked in the terminal and was inert on every other surface. Both\nare wired and independently tested: breaking either leg fails only its\nown test, which is how that was verified rather than assumed.\n\n## Routing\n\n`--devil` skips intent classification and forces the conversational\npath. Plan dispatch executes a plan and has no argument to make, so\nwithout this the flag would do nothing for every query a probabilistic\nclassifier reads as an action — a subset the user cannot predict.\nForcing the route does not fabricate one: with no agent and no local\nrouter it raises the existing `GatewayAgentUnavailableError`. The\nclassifier is skipped outright rather than called and ignored, saving a\nround-trip per `--devil` turn. The conversational block became one\n`answerConversationally` helper so the classifier's route and the\n`--devil` route cannot drift apart.\n\nThe directive's closing clause is load-bearing, not politeness: a mode\nthat asks a model to argue against the user invites invented objections,\nso it must ground each objection in citable indexed evidence and say an\nobjection is unsupported rather than manufacture support for it.\n\n## Acceptance criterion replaced, not met\n\nThe Wave 6 row asked for an integration test asserting the response\n\"contains at least 3 distinct counter-arguments\". That grades model\nprose, needs a live model the suite does not have, and would be flaky\nwhere one exists. Substituted: seam tests proving the directive reaches\nthe prompt on both execution paths, is absent when the flag is off,\nsurvives the indexed-context and prior-turns transforms, and crosses\nboth dispatchers — plus the forced-routing behaviour and the no-LLM\ncase. **The counter-argument count is verified by no automated test.**\nThat is recorded as a gap in the roadmap row and the changelog, not\nquietly dropped.\n\nTwo more bounds stated rather than hidden:\n\n- A prompt-level directive carries less weight with most models than a\nsystem-level one. The router path's own `systemPrompt` is deliberately\nleft alone so there is a single application site rather than two free to\ndiverge; strengthening it later reads the same constant.\n- `gateway-main.ts` carries `devil` from the IPC context into `runAsk`\nthrough a `{...ctx}` spread. Both sides declare the field and `devil` is\nnot among the later keys that could clobber it, but no test covers that\none hop.\n\n## Verification\n\n- `bun run preflight:fast` — passed, all 29 gates.\n- `bun test packages/gateway/src packages/cli/src` — 13689 pass, 0 fail,\n30 skip.\n- Four red-proofs, each by reverting the mechanism and confirming the\nmatching test goes red: removing the injection fails BOTH path tests\ntogether; breaking only the `engine.askStream` leg fails only its own\ntest while `agent.invoke` stays green; disabling the forced-routing\nbranch fails the routing tests; and the missing module failed first,\nbefore any implementation existed.\n\n## Unrelated fix needed to get the gate green\n\n`packages/gateway/test/unit/connectors/sentry-sync.test.ts` carried a\n`lint/style/useTemplate` violation that biome **2.5.8** began flagging —\nbumped by #1238, in a file last touched by #1172. **`main` is red on\n`lint` because of it, independently of this branch.** One line, fixed\nhere so this PR's own gate can pass.\n\n## Docs\n\n`docs/cli-reference.md` gains a `--devil` section, the architecture IPC\ncontract block records the param on both methods and why it must be on\nboth, the Wave 6 A1 row and its acceptance criterion are updated with\nthe two corrections above, and `docs/CHANGELOG.md` carries a dated\nentry.\n\nNo schema change, no new IPC method, no HITL involvement, no invariant,\nno Tauri or LAN allowlist change — `devil` is a new optional param on\nmethods that already exist.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-18T18:39:43Z",
-          "tree_id": "5d4ad3b31a50f2f6e46c3dfd4916d2fc2dbb2992",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/becc386cb9d114ed4bf9f292b3ce99cb7e97afa7"
-        },
-        "date": 1787079361198,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 326.0204549000049,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 327.994664850003,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 218.5666709000001,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "9270faeb224aa0a915c8fd72c88a4219719d77f7",
+          "message": "feat(gateway): model-written drafts and pages cannot load remote content, on both doors (#1913)\n\nPhase 9.7, follow-up PR B3r (owner ruling OR-B3-2). Model-written\ndrafts, pages, Obsidian notes and HTML/SVG/Markdown Drive files can no\nlonger load remote content: no remote image, embed, stylesheet, iframe,\nfont or link prefetch. Both the model door and the MCP act door refuse\nthem; plain links stay allowed.\n\n**Scope.** These fields are scanned:\n- Outlook draft `body` when it is HTML.\n- Confluence storage on page create, update, append and comment.\n- Notion `childrenJson`/`propertiesJson`.\n- Obsidian append `content`.\n- Drive `content` when the mimeType is HTML, XHTML or SVG, or when the\nfile name ends in `.html`, `.htm`, `.xhtml`, `.svg`, `.xml`, `.mht`,\n`.mhtml` or `.md`. A markup type with a `.md` name runs both scans.\n\n**How.**\n- `remoteContentRefusal` runs once, inside the shared refusal chain. The\nmodel door and the act door (at submit and again at accept) therefore\nrefuse exactly the same inputs.\n- A structural markup tokenizer (`markup-tokens.ts`) and per-format\ndetectors (`remote-content.ts`) find remote loads. They never strip or\nrewrite: they only decide refuse or allow.\n- Anything that does not parse is refused. A source pin keeps `.replace`\nout of the detector files, with an exact allowlist for the two\nmatching-copy lines in `text-normalise.ts`.\n\n**Per format:**\n- **HTML and SVG.** Every URL-bearing attribute is checked (`src`,\n`srcset`, `poster`, `background`, `xlink:href`, SMIL `to`/`values`,\n`xml:base`, `ping`, `archive` and others). So are every `url()` and\nevery CSS load function (`image()`, `image-set()`, `cross-fade()`,\n`element()`, `@import`, `@font-face`). CSS is read with comments\nstripped BEFORE escapes are decoded. A `<style>` (or other raw-text\nelement) ends where an HTML parser ends it, so a fake closer cannot hide\nCSS. `<meta refresh>`, `<base>`, `<link>`, `<iframe>`, `<object>` and\n`<embed>` are refused. Unquoted, entity-encoded, mixed-case and\nprotocol-relative forms, and forms with whitespace or control characters\ninside the scheme, are all handled.\n- **Confluence storage.** There is a fail-closed macro ALLOWLIST (info,\nnote, tip, warning, panel, code, noformat, expand, toc, status, anchor,\nexcerpt, excerpt-include, include, details, children, pagetree) plus\n`jira`, whose `url`/`baseurl`/`server-url` and non-empty default\nparameter are refused. `ac:adf-*`, any `*:url` element and `ac:image`\nwith a remote source are refused. A parameter is treated as a URL only\nwhen it has a real scheme or starts with `//`, so a panel title such as\n\"Note: x\" is allowed.\n- **Notion.** `external.url` (and file, embed, bookmark, video, pdf,\naudio and link-preview URLs) are refused at any depth.\n- **Obsidian Markdown.** Markdown images are refused except vault embeds\n`![[...]]`. Raw HTML goes through the HTML scan. A Mermaid fence holding\na URL is refused.\n\n**Adversarial hardening.** Three adversarial or final reviews found real\nbypasses, all now fixed and tested through the real doors:\n- a fake `</style` + VT closer;\n- escaped `u\\72l(...)`;\n- `mask=\"u\\72l(...)\"` in SVG outside Drive;\n- the jira default parameter;\n- `xml:base`;\n- Mermaid image URLs;\n- `x.html` saved as `text/plain`.\n\nThey also found five quadratic paths: two regexes, the per-start-tag\nwalks, the comment reader, the Obsidian embed search and the CSS `url()`\nreader. Each is now single-pass, with a timing test that checks a\n1M-character input stays under 3 s and that the cost grows linearly (2N\nagainst N).\n\n**Owner-accepted over-refusal (stated in I53 bound 33):**\n- literal `src=\"https://`, `url()` or `@import` text anywhere except the\nConfluence `code` macro;\n- every Markdown image except `![[...]]`;\n- any non-empty `srcset`;\n- absolute URLs to the owner's own tenant;\n- an unclosed `<` followed by a letter in an Obsidian note.\n\n**Not breaking.** This tightens what the model and MCP clients may\npropose. Every write still prompts the owner.\n\n**Docs:**\n- The five core docs: CLAUDE.md and GEMINI.md (with identical I28/I53\none-liners), roadmap, architecture, README, cli-reference.\n- SECURITY-INVARIANTS: the I28 order and bounds, and I53 with bound 26\nnow closed and bound 33 added.\n- The `nimbus-mcp-sink` skill, the CHANGELOG, and the Outlook,\nConfluence, Notion, Obsidian and Drive connector pages.\n\n**Verification:**\n- `preflight:fast` passes. `typecheck:tests` passes with 0 new errors.\n`audit:doc-refs`, `audit:status-drift` and `audit:platform-test-gaps`\npass.\n- The scoped suites pass: 12492.\n- `verify:docker --changed` (Linux): 1716 pass, 0 fail.\n- 230 refused and 66 allowed fixtures run through every entry point.\nEvery security change is red-proved by mutation.\n- Coverage: `remote-content.ts` 99.6/96.9, `markup-tokens.ts` 100/100,\n`text-normalise.ts` 100/92.7.\n- A full local `--parallel` whole-repo run was not possible on this\nmachine (memory). The halves show only environment failures outside the\ndiff: the toolgen helper is not built, pwsh is missing, and Bun 1.3's\nTUI hits a Yoga init error. CI's legs are the full check.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nhttps://claude.ai/code/session_01JmSjrEwpdoFU8rCxeon9x9\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Writes containing content that could load remote images, embeds, or\nother resources are now refused for supported Outlook, Confluence,\nNotion, Obsidian, and Google Drive actions. Checks apply to\nmodel-written and MCP-proposed content, including when proposals are\naccepted.\n* Plain links remain allowed; some formats and fields are excluded from\nscanning.\n* **Documentation**\n* Connector guides, CLI references, and project documentation now\ndescribe the covered content, refusal behavior, and exceptions.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-06T00:21:50Z",
+          "tree_id": "9e1984ae03e62f42415ab7c58dee7d7872d418dc",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/9270faeb224aa0a915c8fd72c88a4219719d77f7"
+        },
+        "date": 1793925358583,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 231.73058344999953,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 236.44738024999896,
             "unit": "ms"
           }
         ]
