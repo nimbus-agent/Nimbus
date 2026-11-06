@@ -398,6 +398,97 @@ describe("meshDispatcherClient", () => {
   });
 });
 
+describe("createConnectorDispatcher — a connector-write tool dispatches only under its own action type (I53)", () => {
+  function listing(ran: string[]): McpToolListingClient {
+    const listed = (key: string) => ({
+      async execute() {
+        ran.push(key);
+        return { key };
+      },
+    });
+    return {
+      async listTools() {
+        return {
+          github_github_pr_merge: listed("github_github_pr_merge"),
+          jenkins_jenkins_build_trigger: listed("jenkins_jenkins_build_trigger"),
+          github_actions_gha_run_trigger: listed("github_actions_gha_run_trigger"),
+          github_github_pr_list: listed("github_github_pr_list"),
+        };
+      },
+    };
+  }
+
+  test("a write tool under another action type is refused in every spelling and never runs", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    for (const [type, mcpToolId] of [
+      ["pipeline.trigger", "jenkins_jenkins_build_trigger"],
+      ["jenkins.build.abort", "jenkins_build_trigger"],
+      ["search.run", "github_github_pr_merge"],
+      ["github.pr.merge", "github_actions_gha_run_trigger"],
+    ] as const) {
+      await expect(d.dispatch({ type, payload: { mcpToolId } })).rejects.toThrow(
+        /ERR_WRITE_TOOL_ACTION_MISMATCH/,
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a write tool under its own action type, and a read tool under any type, still dispatch", async () => {
+    const ran: string[] = [];
+    const d = createConnectorDispatcher(listing(ran));
+    await d.dispatch({ type: "github.pr.merge", payload: { mcpToolId: "github_github_pr_merge" } });
+    await d.dispatch({
+      type: "jenkins.build.trigger",
+      payload: { mcpToolId: "jenkins_build_trigger" },
+    });
+    await d.dispatch({
+      type: "github_actions.run.trigger",
+      payload: { mcpToolId: "github_actions_gha_run_trigger" },
+    });
+    await d.dispatch({ type: "github.pr_list", payload: { mcpToolId: "github_github_pr_list" } });
+    expect(ran).toEqual([
+      "github_github_pr_merge",
+      "jenkins_jenkins_build_trigger",
+      "github_actions_gha_run_trigger",
+      "github_github_pr_list",
+    ]);
+  });
+});
+
+describe("createConnectorDispatcher — an owner-code tool named like a write row id (I53)", () => {
+  test("an mcp_ or ext_ key ending in a row id dispatches under its own type; a first-party mismatch is still refused", async () => {
+    const ran: string[] = [];
+    const t = (k: string) => ({
+      async execute() {
+        ran.push(k);
+        return {};
+      },
+    });
+    const d = createConnectorDispatcher({
+      async listTools() {
+        return {
+          mcp_foo_slack_message_post: t("mcp_foo_slack_message_post"),
+          ext_bar_github_pr_merge: t("ext_bar_github_pr_merge"),
+          github_github_pr_merge: t("github_github_pr_merge"),
+        };
+      },
+    });
+    await d.dispatch({
+      type: "mcp_foo.slack_message_post",
+      payload: { mcpToolId: "mcp_foo_slack_message_post" },
+    });
+    await d.dispatch({
+      type: "ext_bar.github_pr_merge",
+      payload: { mcpToolId: "ext_bar_github_pr_merge" },
+    });
+    expect(ran).toEqual(["mcp_foo_slack_message_post", "ext_bar_github_pr_merge"]);
+    await expect(
+      d.dispatch({ type: "search.run", payload: { mcpToolId: "github_github_pr_merge" } }),
+    ).rejects.toThrow(/ERR_WRITE_TOOL_ACTION_MISMATCH/);
+  });
+});
+
 describe("createConnectorDispatcher — a before-state read dispatches only a read of its own service (spec § 5.4)", () => {
   /** Every tool a test map holds, each recording that it ran. */
   function mapOf(keys: readonly string[]) {

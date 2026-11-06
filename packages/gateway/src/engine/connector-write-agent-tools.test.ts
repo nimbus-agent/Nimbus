@@ -8,6 +8,7 @@ import {
   row,
   textField,
   withBefore,
+  withConfirm,
   withPreview,
 } from "../connectors/connector-writes/types.ts";
 import {
@@ -666,10 +667,14 @@ describe("a row's before reader at offer time", () => {
     args: (input: Readonly<Record<string, unknown>>) => ({ name: input["name"] }),
     select: () => [],
   };
+  // A wave 4 row is offered only with a confirm target as well (Phase 9.7 D0a).
   const withReader = (wave: 2 | 3 | 4): ConnectorWriteRow =>
-    withBefore(
-      withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
-      reader,
+    withConfirm(
+      withBefore(
+        withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
+        reader,
+      ),
+      { template: "{name}" },
     );
   type OptsExecutor = FakeExecutor & { opts: unknown[] };
   function optsExecutor(): OptsExecutor {
@@ -741,9 +746,12 @@ describe("a two-read reader at offer time, and a guard refusal at call time (B2a
     select: () => [],
   };
   const twoReadRow = (wave: 2 | 3 | 4): ConnectorWriteRow =>
-    withBefore(
-      withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
-      twoReads,
+    withConfirm(
+      withBefore(
+        withPreview(row("argocd_app_sync", "argocd.app.sync", "write", wave), SYNC_TEMPLATE),
+        twoReads,
+      ),
+      { template: "{name}" },
     );
   type OptsExecutor = FakeExecutor & { opts: unknown[] };
   function optsExecutor(result: ActionResult = { status: "ok", result: "done" }): OptsExecutor {

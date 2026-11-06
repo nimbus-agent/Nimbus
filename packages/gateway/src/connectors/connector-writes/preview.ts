@@ -157,6 +157,14 @@ function renderField(
   return renderQuoted(raw);
 }
 
+/** The row a payload `mcpToolId` names, as the bare `<toolId>` or `<service>_<toolId>`, whatever its type. */
+export function rowNamedByToolId(
+  id: string,
+  rows: readonly ConnectorWriteRow[],
+): ConnectorWriteRow | undefined {
+  return rows.find((r) => r.toolId === id || `${serviceOf(r.actionType)}_${r.toolId}` === id);
+}
+
 /** The row whose preview (and before reader) this action is shown with, or undefined. */
 export function findConnectorWriteRow(
   action: PlannedAction,
@@ -164,9 +172,7 @@ export function findConnectorWriteRow(
 ): ConnectorWriteRow | undefined {
   const id = action.payload?.["mcpToolId"];
   if (typeof id === "string") {
-    const hit = rows.find(
-      (r) => r.toolId === id || `${serviceOf(r.actionType)}_${r.toolId}` === id,
-    );
+    const hit = rowNamedByToolId(id, rows);
     return hit?.actionType === action.type ? hit : undefined;
   }
   const writes = rows.filter((r) => r.transport === "write" && r.actionType === action.type);

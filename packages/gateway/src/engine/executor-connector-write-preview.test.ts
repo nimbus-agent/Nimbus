@@ -45,20 +45,23 @@ function harness(approve: boolean, credentialFor?: PreviewCredentialResolver) {
 describe("the executor shows a connector write's typed preview", () => {
   test("a templated write prompts with the typed preview, not a Details line", async () => {
     const h = harness(true);
-    await h.exec.execute({ type: "argocd.app.sync", payload: { name: "web", revision: "abc" } });
+    await h.exec.execute({
+      type: "looker.datagroup.trigger",
+      payload: { datagroupId: "dg1", revision: "abc" },
+    });
     const prompt = h.prompts[0] ?? "";
-    expect(prompt).toContain("Target:  web");
-    expect(prompt).toContain("Sync Argo CD application web");
+    expect(prompt).toContain("Target:  dg1");
+    expect(prompt).toContain("Trigger Looker datagroup dg1");
     expect(prompt).not.toContain("Details:");
     expect(h.details[0]?.["kind"]).toBe("connector-write");
-    expect(h.details[0]?.["actionType"]).toBe("argocd.app.sync");
+    expect(h.details[0]?.["actionType"]).toBe("looker.datagroup.trigger");
   });
 
   test("the audit row stays redacted", async () => {
     const h = harness(true);
     await h.exec.execute({
-      type: "argocd.app.sync",
-      payload: { name: "web", apiToken: "s3cr3t" },
+      type: "looker.datagroup.trigger",
+      payload: { datagroupId: "dg1", apiToken: "s3cr3t" },
     });
     expect(h.audits[0]?.actionJson).not.toContain("s3cr3t");
     const prompt = h.prompts[0] ?? "";
@@ -107,21 +110,24 @@ describe("the executor shows a connector write's typed preview", () => {
     expect(h.details[0]?.["toolId"]).toBe("slack_message_post");
   });
 
-  test("a mismatched mcpToolId keeps today's prompt", async () => {
+  test("a mcpToolId that is no write row keeps today's prompt", async () => {
     const h = harness(true);
     await h.exec.execute({
-      type: "argocd.app.sync",
-      payload: { mcpToolId: "argocd_app_rollback", input: { name: "web" } },
+      type: "looker.datagroup.trigger",
+      payload: { mcpToolId: "looker_other_tool", input: { datagroupId: "dg1" } },
     });
     expect(h.prompts[0]).toBe(
-      'Action requires your approval\n\nType: argocd.app.sync\n\nDetails: {"mcpToolId":"argocd_app_rollback","input":{"name":"web"}}',
+      'Action requires your approval\n\nType: looker.datagroup.trigger\n\nDetails: {"mcpToolId":"looker_other_tool","input":{"datagroupId":"dg1"}}',
     );
     expect(h.details[0]?.["kind"]).toBeUndefined();
   });
 
   test("HITL still decided by type: a templated write with no consent approval dispatches nothing", async () => {
     const h = harness(false);
-    const res = await h.exec.execute({ type: "argocd.app.sync", payload: { name: "web" } });
+    const res = await h.exec.execute({
+      type: "looker.datagroup.trigger",
+      payload: { datagroupId: "dg1" },
+    });
     expect(res.status).toBe("rejected");
     expect(h.prompts).toHaveLength(1);
     expect(h.dispatched).toEqual([]);
@@ -143,20 +149,20 @@ describe("the executor shows a connector write's typed preview", () => {
 });
 
 describe("the preview's credential kind", () => {
-  const action = { type: "argocd.app.sync", payload: { name: "web" } };
+  const action = { type: "looker.datagroup.trigger", payload: { datagroupId: "dg1" } };
 
   test("shows the credential kind and puts it in the structured details", async () => {
     const h = harness(true, () => "team");
     await h.exec.execute(action);
-    expect(h.prompts[0]).toContain("Service: argocd\nCredential: team\nTarget:  web");
-    expect(h.details[0]?.["destination"]).toEqual({ service: "argocd", credential: "team" });
+    expect(h.prompts[0]).toContain("Service: looker\nCredential: team\nTarget:  dg1");
+    expect(h.details[0]?.["destination"]).toEqual({ service: "looker", credential: "team" });
   });
 
   test("no resolver: the prompt is unchanged byte for byte", async () => {
     const withNone = harness(true);
     await withNone.exec.execute(action);
     expect(withNone.prompts[0]).not.toContain("Credential:");
-    expect(withNone.details[0]?.["destination"]).toEqual({ service: "argocd" });
+    expect(withNone.details[0]?.["destination"]).toEqual({ service: "looker" });
   });
 
   test("a throwing or non-conforming resolver shows no credential; the gate still audits and ledgers", async () => {
@@ -170,7 +176,7 @@ describe("the preview's credential kind", () => {
       const h = harness(true, r);
       const res = await h.exec.execute(action);
       expect(res.status).toBe("ok");
-      expect(h.prompts[0]).toContain("Target:  web");
+      expect(h.prompts[0]).toContain("Target:  dg1");
       expect(h.prompts[0]).not.toContain("Credential:");
       expect(h.audits).toHaveLength(1);
       expect(h.egress).toHaveLength(1);

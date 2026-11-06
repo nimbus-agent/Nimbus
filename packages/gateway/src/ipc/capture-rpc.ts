@@ -1,3 +1,4 @@
+import { confirmPromptLine } from "../connectors/connector-writes/confirm.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
@@ -158,14 +159,32 @@ export function createActionDestinationRefusal(
  * consent channel goes only to the accepting local session. The audit row stays redacted — the
  * executor's `auditPayload` is untouched.
  */
-function provenanceConsent(
+export function provenanceConsent(
   inner: ConsentChannel,
   prompt: string,
   details: Record<string, unknown>,
 ): ConsentChannel {
-  return {
+  const base: ConsentChannel = {
     requestApproval: (_prompt, _details, actionType) =>
       inner.requestApproval(prompt, details, actionType),
+  };
+  // Type-to-confirm (Phase 9.7 D0a, static D41): the act door forwards the inner channel's
+  // confirmed prompt with ITS provenance prompt and details, plus the fixed line telling the owner
+  // what to type. The confirm text comes from the executor; this channel only carries it, and
+  // never compares it. An inner channel without the method yields one without it (Wave 4 denied).
+  const confirmed = inner.requestConfirmedApproval?.bind(inner);
+  if (confirmed === undefined) return base;
+  return {
+    ...base,
+    requestConfirmedApproval: (req) =>
+      confirmed({
+        prompt: `${prompt}
+
+${confirmPromptLine(req.confirmText)}`,
+        details,
+        actionType: req.actionType,
+        confirmText: req.confirmText,
+      }),
   };
 }
 

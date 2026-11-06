@@ -1,4 +1,9 @@
 // packages/gateway/src/connectors/connector-writes/types.ts
+import {
+  confirmTemplateKeys,
+  isSensitiveFieldName,
+  parseConfirmTemplate,
+} from "./confirm-template.ts";
 
 /** `write` rows have a dispatch path (the credential-aware transport); `mesh` rows are refused by
  *  the I26 predicate and run only through the executor's mesh path behind the owner's HITL gate. */
@@ -37,6 +42,27 @@ export interface ConnectorWriteRow {
    * refuse an empty update, and the C3 LaunchDarkly rollout, which must name every variation).
    */
   readonly before?: BeforeStateReader;
+  /**
+   * What the owner types to approve this write (Phase 9.7 D0a, spec § 15.4): required on every
+   * wave 4 row, on every door. Set with {@link withConfirm}; rendered by `renderConfirmText`.
+   */
+  readonly confirm?: ConfirmTemplate;
+}
+
+/**
+ * The type-to-confirm target of a row: `{field}` placeholders over the write input's required,
+ * non-secret fields (`{field:tail8}` for the last 8 characters of an opaque id), rendered after
+ * the service name. The confirm text is `<service>/<rendered>`.
+ */
+export interface ConfirmTemplate {
+  readonly template: string;
+  /**
+   * An alternative template used when the named OPTIONAL input field is absent, for a tool whose
+   * effect changes with it (Snowflake's tag set removes the tag when `value` is omitted): the
+   * confirm text must name the effect that will run. Its placeholders obey the same rules as
+   * the main template's.
+   */
+  readonly whenUnset?: { readonly field: string; readonly template: string };
 }
 
 /** At most this many before-state fields are shown; the rest are counted, never cut. */
@@ -243,6 +269,44 @@ export function withBefore(r: ConnectorWriteRow, before: BeforeStateReader): Con
     throw new Error(`connector write before reader: row ${r.toolId} ${guardProblem}`);
   }
   return Object.freeze({ ...r, before });
+}
+
+/**
+ * A frozen copy of `r` carrying `confirm`. Throws at declaration when the template is malformed or
+ * names no placeholder, when a placeholder is a field the row's preview marks secret, or when a
+ * placeholder's name looks like a credential (key, token, secret, password, credential, bearer,
+ * auth: by word, with or without a preview template). That a placeholder is a REQUIRED field of
+ * the tool's input schema is checked against the installed connector source by a test.
+ */
+export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): ConnectorWriteRow {
+  const parsed = parseConfirmTemplate(confirm.template);
+  if (!parsed.ok) {
+    throw new Error(`connector write confirm: row ${r.toolId} template ${parsed.reason}`);
+  }
+  const secrets = new Set(
+    (r.preview?.fields ?? []).filter((f) => f.kind === "secret").map((f) => f.key),
+  );
+  const names = confirmTemplateKeys(parsed.segments);
+  if (confirm.whenUnset !== undefined) {
+    const alt = parseConfirmTemplate(confirm.whenUnset.template);
+    if (!alt.ok) {
+      throw new Error(`connector write confirm: row ${r.toolId} whenUnset template ${alt.reason}`);
+    }
+    names.push(...confirmTemplateKeys(alt.segments));
+    if (names.includes(confirm.whenUnset.field)) {
+      throw new Error(
+        `connector write confirm: row ${r.toolId} whenUnset field is also a placeholder`,
+      );
+    }
+  }
+  for (const name of names) {
+    if (secrets.has(name) || isSensitiveFieldName(name)) {
+      throw new Error(
+        `connector write confirm: placeholder {${name}} names a secret-looking field (row ${r.toolId})`,
+      );
+    }
+  }
+  return Object.freeze({ ...r, confirm });
 }
 
 export type PreviewFieldKind = "text" | "markdown" | "list" | "secret";

@@ -291,6 +291,7 @@ function harness(
       // The owner approves the user-MCP READ the tool-reply fixture needs; the write is the test's.
       return req.actionType === writeType ? ownerAnswer : true;
     },
+    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;
@@ -410,6 +411,9 @@ function harness(
     classify: async () => ({ intent: "unknown", entities: {}, requiresHITL: false, confidence: 0 }),
     offerUserMcpTools: true,
     offerConnectorWriteTools: true,
+    // The fixture row is the real argocd.app.sync row moved to wave 2, so the door executor must see
+    // that row too (the real one is wave 4 and would need a typed confirmation).
+    ...(real === undefined ? { beforeStateRows: [fixtureRow(rowWave)] } : {}),
     delegation: activeDelegate(() => {
       delegateAsks += 1;
     }),

@@ -22,14 +22,34 @@ export interface ConsentCoordinator {
       actionType?: string | undefined;
     },
   ): Promise<boolean>;
+  /**
+   * Phase 9.7 D0a: a consent request that also asks the owner to TYPE `confirmText`. Resolves
+   * with the owner's answer and the text they typed; the coordinator never compares them
+   * (`engine/executor.ts` does, static D41).
+   */
+  requestConfirmedConsent(
+    clientId: string,
+    params: {
+      requestId: string;
+      prompt: string;
+      details?: unknown;
+      actionType?: string | undefined;
+      confirmText: string;
+    },
+  ): Promise<{ approved: boolean; typed: string }>;
   rejectAllPending(message: string, hitlAuditReason: string): void;
   pendingCount(): number;
 }
 
+/** The longest `typed` answer `consent.respond` accepts; a confirm text is at most 200 characters. */
+export const CONSENT_TYPED_MAX_LENGTH = 512;
+
 type PendingConsent = {
-  readonly resolve: (approved: boolean) => void;
+  readonly resolve: (answer: { approved: boolean; typed: string }) => void;
   readonly reject: (err: Error) => void;
   readonly clientId: string;
+  /** True for a type-to-confirm request: a missing `typed` then resolves as the empty string. */
+  readonly confirm: boolean;
 };
 
 export type ConsentSessionWriter = (notification: JsonRpcNotification) => void;
@@ -48,14 +68,51 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
       actionType?: string | undefined;
     },
   ): Promise<boolean> {
-    return new Promise<boolean>((resolve, reject) => {
+    return this.open(clientId, params, undefined, (answer) => answer.approved);
+  }
+
+  requestConfirmedConsent(
+    clientId: string,
+    params: {
+      requestId: string;
+      prompt: string;
+      details?: unknown;
+      actionType?: string | undefined;
+      confirmText: string;
+    },
+  ): Promise<{ approved: boolean; typed: string }> {
+    return this.open(clientId, params, params.confirmText, (answer) => answer);
+  }
+
+  // One promise per request (no derived `.then` chain): a derived promise rejects a tick later, and
+  // a caller that awaits several pending requests in turn would see an unhandled rejection.
+  private open<T>(
+    clientId: string,
+    params: {
+      requestId: string;
+      prompt: string;
+      details?: unknown;
+      actionType?: string | undefined;
+    },
+    confirmText: string | undefined,
+    toResult: (answer: { approved: boolean; typed: string }) => T,
+  ): Promise<T> {
+    return new Promise<T>((resolveResult, reject) => {
+      const resolve = (answer: { approved: boolean; typed: string }): void => {
+        resolveResult(toResult(answer));
+      };
       const write = this.getWriter(clientId);
       if (write === undefined) {
         reject(new ConsentDisconnectedError("No active IPC session for client"));
         return;
       }
       const { requestId, prompt, details, actionType } = params;
-      this.pending.set(requestId, { resolve, reject, clientId });
+      this.pending.set(requestId, {
+        resolve,
+        reject,
+        clientId,
+        confirm: confirmText !== undefined,
+      });
       const notif: JsonRpcNotification = {
         jsonrpc: "2.0",
         method: "consent.request",
@@ -67,6 +124,10 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
           prompt,
           ...(details === undefined ? {} : { details }),
           ...(actionType === undefined ? {} : { actionType }),
+          // The text the owner must type, on a type-to-confirm request only. NOT in the
+          // `hitl.requested` broadcast below, for the same reason `prompt` is not: it carries
+          // input values.
+          ...(confirmText === undefined ? {} : { confirmText }),
         },
       };
       write(notif);
@@ -99,12 +160,20 @@ export class ConsentCoordinatorImpl implements ConsentCoordinator {
     if (typeof o["requestId"] !== "string" || typeof o["approved"] !== "boolean") {
       return { code: -32602, message: "Invalid params" };
     }
+    const typed = o["typed"];
+    if (
+      typed !== undefined &&
+      (typeof typed !== "string" || typed.length > CONSENT_TYPED_MAX_LENGTH)
+    ) {
+      return { code: -32602, message: "Invalid params" };
+    }
     const entry = this.pending.get(o["requestId"]);
     if (entry?.clientId !== clientId) {
       return { code: -32602, message: "Unknown or foreign consent request" };
     }
     this.pending.delete(o["requestId"]);
-    entry.resolve(o["approved"]);
+    // A plain request ignores `typed`; a confirm request without one is a mismatch for the executor.
+    entry.resolve({ approved: o["approved"], typed: entry.confirm ? (typed ?? "") : "" });
     emitGatewayEvent("hitl.resolved", { requestId: o["requestId"], approved: o["approved"] });
     return null;
   }

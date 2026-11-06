@@ -11,9 +11,9 @@ export const onConnectionStateMock = vi.fn<() => Promise<() => void>>(() =>
 export const connectorListStatusMock = vi.fn<() => Promise<unknown>>();
 export const indexMetricsMock = vi.fn<() => Promise<unknown>>();
 export const auditListMock = vi.fn<(limit?: number) => Promise<unknown>>();
-export const consentRespondMock = vi.fn<(requestId: string, approved: boolean) => Promise<void>>(
-  () => Promise.resolve(),
-);
+export const consentRespondMock = vi.fn<
+  (requestId: string, approved: boolean, typed?: string) => Promise<void>
+>(() => Promise.resolve());
 
 export const profileListMock = vi.fn<() => Promise<unknown>>();
 export const profileCreateMock = vi.fn<(name: string) => Promise<unknown>>();

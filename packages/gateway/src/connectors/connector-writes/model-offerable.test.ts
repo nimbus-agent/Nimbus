@@ -25,10 +25,18 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 2, preview: template }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 3, preview: template }))).toBe(true);
   });
-  test("wave 4 needs a before reader as well", () => {
+  test("wave 4 needs a before reader and a confirm target as well", () => {
+    const confirm = { template: "{id}" };
     expect(isModelOfferableRow(row({ wave: 4, preview: template }))).toBe(false);
-    expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
-    expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
+    expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(false);
+    expect(isModelOfferableRow(row({ wave: 4, preview: template, confirm }))).toBe(false);
+    expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader, confirm }))).toBe(
+      true,
+    );
+    expect(isModelOfferableRow(row({ wave: 4, before: reader, confirm }))).toBe(false);
+  });
+  test("a wave 2 or 3 row needs no confirm target", () => {
+    expect(isModelOfferableRow(row({ wave: 3, preview: template }))).toBe(true);
   });
   test("exactly the 67 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2) and the five wave-3 flag and alert rows (C3)", () => {
     expect(

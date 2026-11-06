@@ -38,6 +38,7 @@ const stubConsent: ConsentCoordinator = {
   requestConsent(): Promise<boolean> {
     return Promise.resolve(false);
   },
+  requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
   rejectAllPending(): void {},
   pendingCount(): number {
     return 0;

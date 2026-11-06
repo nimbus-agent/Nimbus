@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import {
   ConsentCoordinatorImpl,
@@ -532,11 +533,21 @@ function hitlConfluenceRejectPayload(
 
 describe("ToolExecutor — HITL whitelist", () => {
   test("every HITL_REQUIRED action type triggers the consent channel", async () => {
+    // A Wave 4 write needs a typed confirmation, which a plain channel cannot collect: it is
+    // denied without that channel being asked (D0a; covered in executor-confirm.test.ts).
+    const wave4 = new Set(
+      CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4).map((r) => r.actionType),
+    );
     for (const actionType of HITL_REQUIRED) {
       const m = createMocks(true);
       const exec = new ToolExecutor(m.consent, m.audit, m.connectors, undefined, NULL_EGRESS_SINK);
-      await exec.execute({ type: actionType });
-      expect(m.consentCalls).toHaveLength(1);
+      const out = await exec.execute({ type: actionType });
+      if (wave4.has(actionType)) {
+        expect(m.consentCalls, actionType).toHaveLength(0);
+        expect(out.status, actionType).toBe("rejected");
+      } else {
+        expect(m.consentCalls, actionType).toHaveLength(1);
+      }
     }
   });
 

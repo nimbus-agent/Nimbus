@@ -38,11 +38,13 @@ export function HitlPopupPage(): ReactNode {
   const resolve = useNimbusStore((s) => s.resolve);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [typed, setTyped] = useState("");
 
   const head = pending[0];
   const more = pending.length > 1 ? pending.length - 1 : 0;
   const approveRef = useRef<HTMLButtonElement>(null);
   const rejectRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLInputElement>(null);
 
   // The type is the gateway's own `actionType` on `consent.request`, and nothing else: not a key of
   // the payload (the payload is the action's data) and not the prompt text (it embeds that data).
@@ -53,6 +55,11 @@ export function HitlPopupPage(): ReactNode {
   const isPackInstall = action === "pack.install";
   // A preview the gateway built for this very action: the heading is fixed, the body shows the write.
   const isConnectorWrite = isConnectorWriteDetails(head?.details, action);
+  // A Wave 4 write: the owner approves only by typing this text exactly (no trim, no case fold).
+  // The gateway judges the answer; this page only withholds the button until it matches.
+  const confirmText =
+    head?.confirmText !== undefined && head.confirmText !== "" ? head.confirmText : undefined;
+  const typedMatches = confirmText === undefined || typed === confirmText;
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —
@@ -64,6 +71,12 @@ export function HitlPopupPage(): ReactNode {
   // Leaving it where it was is the same failure one step removed.
   useEffect(() => {
     if (head === undefined) return;
+    // A confirm field takes focus whatever the action type: the owner must read and type, and
+    // Enter never approves (the Approve button is not reachable by a stray keystroke).
+    if (head.confirmText !== undefined && head.confirmText !== "") {
+      confirmRef.current?.focus();
+      return;
+    }
     // No `actionType` (an older installed gateway) means the type is unknown, and an unknown type
     // is not assumed safe: focus fails closed to Reject.
     const target =
@@ -72,6 +85,12 @@ export function HitlPopupPage(): ReactNode {
         : approveRef.current;
     target?.focus();
   }, [action, head]);
+
+  // A queued request replaces `pending[0]` without remounting: never carry typed text across.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset on the request id only
+  useEffect(() => {
+    setTyped("");
+  }, [head?.requestId]);
 
   useEffect(() => {
     if (pending.length === 0) {
@@ -88,7 +107,11 @@ export function HitlPopupPage(): ReactNode {
     setBusy(true);
     setError(null);
     try {
-      await createIpcClient().consentRespond(head.requestId, approved);
+      if (confirmText === undefined) {
+        await createIpcClient().consentRespond(head.requestId, approved);
+      } else {
+        await createIpcClient().consentRespond(head.requestId, approved, approved ? typed : "");
+      }
       resolve(head.requestId, approved);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -119,6 +142,37 @@ export function HitlPopupPage(): ReactNode {
       ) : (
         <StructuredPreview details={head.details} {...(action === undefined ? {} : { action })} />
       )}
+      {confirmText !== undefined && (
+        <div className="space-y-1">
+          <p className="text-xs text-[var(--color-fg-muted)]">
+            To approve, type exactly (case matters, no extra spaces):
+          </p>
+          <code
+            data-testid="confirm-text"
+            className="block font-mono text-xs border border-[var(--color-border)] rounded p-2 break-all"
+          >
+            {confirmText}
+          </code>
+          <label className="block text-xs text-[var(--color-fg)]" htmlFor="confirm-text-input">
+            Type the text above to enable Approve
+          </label>
+          <input
+            id="confirm-text-input"
+            ref={confirmRef}
+            type="text"
+            value={typed}
+            autoComplete="off"
+            spellCheck={false}
+            disabled={busy}
+            onChange={(e) => setTyped(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter never approves a confirm prompt.
+              if (e.key === "Enter") e.preventDefault();
+            }}
+            className="w-full font-mono text-xs border border-[var(--color-border)] rounded p-2 bg-transparent"
+          />
+        </div>
+      )}
       {error && (
         <div className="text-[var(--color-error)] text-xs" role="alert">
           {error}
@@ -138,7 +192,7 @@ export function HitlPopupPage(): ReactNode {
           ref={approveRef}
           type="button"
           className="px-3 py-1 bg-[var(--color-accent)] text-white rounded"
-          disabled={busy}
+          disabled={busy || !typedMatches}
           onClick={() => decide(true)}
         >
           Approve

@@ -61,7 +61,7 @@ const HITL_E2E_IAC_TF_DIR = mkdtempSync(join(tmpdir(), "nimbus-hitl-e2e-iac-tf-"
 const HITL_E2E_IAC_PU_DIR = mkdtempSync(join(tmpdir(), "nimbus-hitl-e2e-iac-pu-"));
 
 const HITL_WRITE_PAYLOADS: Record<string, Record<string, unknown>> = {
-  "file.create": { mcpToolId: "google_drive_gdrive_file_create", input: { name: "report.md" } },
+  "file.create": { mcpToolId: "filesystem_file_create", input: { name: "report.md" } },
   "slack.message.post": {
     mcpToolId: "slack_slack_message_post",
     input: { channel: "C123", text: "hello" },
@@ -260,6 +260,12 @@ function buildMocks(approve: boolean): {
     requestApproval(prompt: string): Promise<boolean> {
       consentCalls.push(prompt);
       return Promise.resolve(approve);
+    },
+    // A Wave 4 write (Phase 9.7 D0a) is asked through this method: the fake owner types the
+    // confirm text exactly when approving, so the gate fires once either way.
+    requestConfirmedApproval(req): Promise<{ approved: boolean; typed: string }> {
+      consentCalls.push(req.prompt);
+      return Promise.resolve({ approved: approve, typed: approve ? req.confirmText : "" });
     },
   };
 

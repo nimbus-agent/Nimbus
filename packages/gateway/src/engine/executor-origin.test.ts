@@ -182,15 +182,15 @@ describe("one typed preview per gate", () => {
       },
     );
     const r = await exec.execute({
-      type: "argocd.app.sync",
-      payload: { name: "web" },
+      type: "looker.datagroup.trigger",
+      payload: { datagroupId: "dg1" },
       origin: "model",
     });
     expect(r.status).toBe("rejected");
     expect(reads).toBe(1);
     expect(shown?.prompt).toContain("Credential: personal");
     expect(shown?.prompt).toContain(LINE);
-    expect(shown?.details?.["destination"]).toEqual({ service: "argocd", credential: "personal" });
+    expect(shown?.details?.["destination"]).toEqual({ service: "looker", credential: "personal" });
     expect(shown?.details?.["requestedBy"]).toBe("model");
   });
 });

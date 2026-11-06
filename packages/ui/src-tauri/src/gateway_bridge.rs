@@ -23,6 +23,10 @@ pub struct PendingHitl {
     /// Absent from an older gateway, hence `default`.
     #[serde(default)]
     pub action_type: Option<String>,
+    /// The text the owner must type to approve a Wave 4 connector write (Phase 9.7 D0a). Absent
+    /// for every other request and from an older gateway, hence `default`.
+    #[serde(default)]
+    pub confirm_text: Option<String>,
 }
 
 /// Build the record for a `consent.request` notification, or `None` when it lacks the two fields
@@ -38,6 +42,11 @@ fn pending_hitl_from_params(params: &Value, received_at_ms: u64) -> Option<Pendi
         action_type: params
             .get("actionType")
             .and_then(|v| v.as_str())
+            .map(String::from),
+        confirm_text: params
+            .get("confirmText")
+            .and_then(|v| v.as_str())
+            .filter(|t| !t.is_empty())
             .map(String::from),
     })
 }
@@ -499,6 +508,42 @@ mod tests {
         .expect("parses");
         let v = serde_json::to_value(&rec).expect("serializes");
         assert_eq!(v["action_type"], "extension.migrate");
+    }
+
+    #[test]
+    fn consent_request_keeps_the_confirm_text() {
+        let params = json!({
+            "requestId": "r6",
+            "prompt": "p",
+            "actionType": "github.pr.merge",
+            "confirmText": "github/acme/api#42"
+        });
+        let rec = pending_hitl_from_params(&params, 1).expect("parses");
+        assert_eq!(rec.confirm_text.as_deref(), Some("github/acme/api#42"));
+        let v = serde_json::to_value(&rec).expect("serializes");
+        assert_eq!(v["confirm_text"], "github/acme/api#42");
+    }
+
+    #[test]
+    fn consent_request_without_confirm_text_has_none() {
+        let older = json!({ "requestId": "r7", "prompt": "p" });
+        let rec = pending_hitl_from_params(&older, 1).expect("older gateway still parses");
+        assert!(rec.confirm_text.is_none());
+        let non_string = json!({ "requestId": "r8", "prompt": "p", "confirmText": 5 });
+        assert!(pending_hitl_from_params(&non_string, 1)
+            .expect("parses")
+            .confirm_text
+            .is_none());
+        let empty = json!({ "requestId": "r9", "prompt": "p", "confirmText": "" });
+        assert!(pending_hitl_from_params(&empty, 1)
+            .expect("parses")
+            .confirm_text
+            .is_none());
+        let rec: PendingHitl = serde_json::from_value(json!({
+            "request_id": "r10", "prompt": "p", "details": null, "received_at_ms": 3
+        }))
+        .expect("tolerates the field being absent");
+        assert!(rec.confirm_text.is_none());
     }
 
     #[test]

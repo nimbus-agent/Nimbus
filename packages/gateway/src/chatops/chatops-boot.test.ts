@@ -3,13 +3,19 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NULL_EGRESS_SINK } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
 import { listEgress } from "../egress/egress-verify.ts";
+import { TOOL_TYPE_MISMATCH_REASON } from "../engine/executor.ts";
 import type { PlannedAction } from "../engine/types.ts";
 import { CURRENT_SCHEMA_VERSION } from "../index/local-index.ts";
 import { runIndexedSchemaMigrations } from "../index/migrations/runner.ts";
 import type { EnforcedPolicy } from "../policy/policy-gate.ts";
 import type { ChatopsChannelBinding } from "../policy/types.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
-import { buildChatopsBoot, type ChatopsBootDeps, emailFromUserInfo } from "./chatops-boot.ts";
+import {
+  buildChatopsBoot,
+  CHATOPS_CONFIRM_UNSUPPORTED_REPLY,
+  type ChatopsBootDeps,
+  emailFromUserInfo,
+} from "./chatops-boot.ts";
 import type { RunChatopsTool } from "./chatops-tool-runner.ts";
 import type { SocketLike } from "./transport/slack-socket-adapter.ts";
 
@@ -251,6 +257,50 @@ describe("buildChatopsBoot — full production graph", () => {
     // The WIRE form: every Slack post is escaped at the ledger wrapper (`toWireText`), so the
     // reply's "&" leaves as "&amp;" — Slack renders it back as "&".
     await until(() => h.posts.some((p) => p.text.includes("approved &amp; executed")));
+    await h.boot.service.stop();
+  });
+
+  test("write: a Wave 4 action is denied with the fixed reply (no card, no dispatch): this channel cannot collect typed text", async () => {
+    const h = await buildHarness();
+    await h.boot.service.start();
+    h.socket.emit(
+      mention(
+        "C0",
+        "U_BOB",
+        "@nimbus run github.pr.merge service=payment-service owner=acme repo=api pullNumber=42",
+        "w4",
+      ),
+    );
+    await until(() => h.posts.length >= 1);
+    // Exactly one post, in the originating channel, the fixed text; no approval card.
+    expect(h.posts).toHaveLength(1);
+    expect(h.posts[0]?.channel).toBe("C0");
+    expect(h.posts[0]?.text).toBe(CHATOPS_CONFIRM_UNSUPPORTED_REPLY);
+    expect(h.posts.some((p) => p.text.includes("Approval needed"))).toBe(false);
+    expect(h.dispatched).toEqual([]);
+    const row = h.audits.find((a) => a.actionType === "github.pr.merge");
+    expect(row?.hitlStatus).toBe("rejected");
+    expect(JSON.parse(row?.actionJson ?? "{}").confirm).toBe("unsupported_channel");
+    await h.boot.service.stop();
+  });
+
+  test("write: a plain-approval type naming a Wave 4 tool is refused before any card (I53 pairing)", async () => {
+    const h = await buildHarness();
+    await h.boot.service.start();
+    h.socket.emit(
+      mention(
+        "C0",
+        "U_BOB",
+        "@nimbus run pipeline.trigger service=payment-service mcpToolId=jenkins_jenkins_build_trigger jobName=x",
+        "pair",
+      ),
+    );
+    await until(() => h.audits.some((a) => a.actionType === "pipeline.trigger"));
+    expect(h.posts.some((p) => p.text.includes("Approval needed"))).toBe(false);
+    expect(h.dispatched).toEqual([]);
+    const row = h.audits.find((a) => a.actionType === "pipeline.trigger");
+    expect(row?.hitlStatus).toBe("rejected");
+    expect(JSON.parse(row?.actionJson ?? "{}").hitlRejectReason).toBe(TOOL_TYPE_MISMATCH_REASON);
     await h.boot.service.stop();
   });
 

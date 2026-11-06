@@ -165,3 +165,30 @@ export function declaredInputKeys(declaration: string): string[] {
   }
   return [...keys].sort((a, b) => a.localeCompare(b));
 }
+
+/** An entry's modifiers that make a key not required: `.optional()`, `.default(`, `.nullish(`. */
+const NOT_REQUIRED_MODIFIERS = [".optional(", ".default(", ".nullish("] as const;
+
+/**
+ * The subset of {@link declaredInputKeys} that is REQUIRED: a key whose zod entry carries none of
+ * `.optional()`, `.default(` or `.nullish(`. Type-to-confirm may only name required keys (an
+ * optional one can be unset, and then the write has no confirm text). Same shapes read, same
+ * over-read of nested object keys: a nested optional key never makes a top-level one optional, and
+ * a nested required key may appear here, so the caller checks only keys it expects at the top level.
+ */
+export function requiredInputKeys(declaration: string): string[] {
+  const optional = new Set<string>();
+  const keys = new Set<string>();
+  for (const m of declaration.matchAll(/(?:\bz\.object|\.extend)\s*\(\s*\{/g)) {
+    const open = m.index + m[0].length - 1;
+    const close = matchingClose(declaration, open);
+    if (close < 0) continue;
+    for (const entry of topLevelArgs(`(${declaration.slice(open + 1, close)})`)) {
+      const key = /^([A-Za-z_$][\w$]*)\s*:/.exec(entry)?.[1];
+      if (key === undefined) continue;
+      keys.add(key);
+      if (NOT_REQUIRED_MODIFIERS.some((mod) => entry.includes(mod))) optional.add(key);
+    }
+  }
+  return [...keys].filter((k) => !optional.has(k)).sort((a, b) => a.localeCompare(b));
+}

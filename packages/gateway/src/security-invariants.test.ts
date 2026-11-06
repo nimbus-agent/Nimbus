@@ -24,6 +24,7 @@ import { parseRolePackManifestValue, publisherKeyFingerprint } from "@nimbus-dev
 import {
   checkAgentEmitterImportConfinement,
   checkBeforeStateRead,
+  checkConfirmComparison,
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
@@ -57,6 +58,10 @@ import {
   type ConnectorWriteContext,
   invokeConnectorWrite,
 } from "./connectors/connector-write-transport.ts";
+import {
+  confirmTemplateKeys,
+  parseConfirmTemplate,
+} from "./connectors/connector-writes/confirm-template.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connectors/connector-writes/index.ts";
 import {
   actDoorRefusal,
@@ -65,6 +70,7 @@ import {
   remoteContentScannedRows,
 } from "./connectors/connector-writes/model-write-refusals.ts";
 import { buildConnectorWritePreview } from "./connectors/connector-writes/preview.ts";
+import type { ConnectorWriteRow } from "./connectors/connector-writes/types.ts";
 import { transitionHealth } from "./connectors/health.ts";
 import {
   type LazyMeshToolMap,
@@ -2192,6 +2198,93 @@ describe("I19 — team-vault secret injection is leak-proof + fail-closed", () =
 });
 
 describe("I20 — a delegated approval is honored only from a live, identity-valid delegate", () => {
+  test("I20 (Wave 4, D0a): a delegate's approval of a type-to-confirm write counts only with typed text equal to the confirm text; a path that cannot carry text falls back to the local owner", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const MERGE = {
+      type: "github.pr.merge",
+      payload: { mcpToolId: "github_pr_merge", input: { owner: "a", repo: "b", pullNumber: 7 } },
+    };
+    const TEXT = "github/merge a/b#7";
+    const run = async (
+      remoteConfirmed:
+        | undefined
+        | (() => Promise<
+            | { kind: "answered"; peerId: string; approved: boolean; typed?: string }
+            | { kind: "timeout" }
+          >),
+    ) => {
+      let ownerTyped = 0;
+      let plainRemote = 0;
+      const dispatched: string[] = [];
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => true,
+          requestConfirmedApproval: async (req) => {
+            ownerTyped += 1;
+            return { approved: true, typed: req.confirmText };
+          },
+        },
+        { recordAudit: () => {} },
+        {
+          dispatch: async (a) => {
+            dispatched.push(a.type);
+            return {};
+          },
+        },
+        {
+          store: {
+            activeDelegateFor: (_k, _v, peer) => peer === "peer-1",
+            activeDelegateePeer: () => "peer-1",
+          },
+          isOperatorValid: () => true,
+          requestRemote: async () => {
+            plainRemote += 1;
+            return { kind: "answered", peerId: "peer-1", approved: true };
+          },
+          ...(remoteConfirmed === undefined ? {} : { requestRemoteConfirmed: remoteConfirmed }),
+        },
+        NULL_EGRESS_SINK,
+        NO_POLICY_OVERLAY,
+      );
+      const res = await exec.execute(MERGE);
+      return { res, ownerTyped, plainRemote, dispatched };
+    };
+    // No way to carry text: the plain delegate is NEVER asked and the owner types it.
+    const none = await run(undefined);
+    expect(none.plainRemote).toBe(0);
+    expect(none.ownerTyped).toBe(1);
+    // A delegate that approves without the exact text is declined.
+    const wrong = await run(async () => ({
+      kind: "answered",
+      peerId: "peer-1",
+      approved: true,
+      typed: "github/merge a/b#8",
+    }));
+    expect(wrong.res.status).toBe("rejected");
+    expect(wrong.dispatched).toEqual([]);
+    expect(wrong.ownerTyped).toBe(0);
+    const bare = await run(async () => ({ kind: "answered", peerId: "peer-1", approved: true }));
+    expect(bare.res.status).toBe("rejected");
+    // The exact text approves, through the unchanged scope and identity checks.
+    const right = await run(async () => ({
+      kind: "answered",
+      peerId: "peer-1",
+      approved: true,
+      typed: TEXT,
+    }));
+    expect(right.res.status).toBe("ok");
+    expect(right.ownerTyped).toBe(0);
+    // A non-delegate peer is not honored even with the exact text: the owner types it.
+    const forged = await run(async () => ({
+      kind: "answered",
+      peerId: "peer-eve",
+      approved: true,
+      typed: TEXT,
+    }));
+    expect(forged.ownerTyped).toBe(1);
+    expect(forged.dispatched).toEqual(["github.pr.merge"]);
+  });
+
   test("forged peer / invalid identity / timeout all fall back to the local owner", async () => {
     const { resolveDelegatedApproval } = await import("./engine/delegated-approval.ts");
     const base = { isActiveDelegate: (p: string) => p === "peer:bob", isOperatorValid: () => true };
@@ -3165,15 +3258,33 @@ interface WriteUnderTest {
   readonly action: PlannedAction;
 }
 
+/**
+ * A wave 4 row needs an input its confirm text can be rendered from (Phase 9.7 D0a), so the tests
+ * that drive every row through the executor give each placeholder a plain value. Other rows: `{}`.
+ */
+function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
+  if (row.confirm === undefined) return {};
+  const parsed = parseConfirmTemplate(row.confirm.template);
+  if (!parsed.ok) throw new Error(parsed.reason);
+  const input: Record<string, unknown> = {};
+  for (const name of confirmTemplateKeys(parsed.segments)) {
+    input[name] = name === "instanceIds" ? ["i-1"] : "x1";
+  }
+  return input;
+}
+
 /** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
 function writesUnderTest(): readonly WriteUnderTest[] {
-  const rows: WriteUnderTest[] = CONNECTOR_WRITE_ROWS.map((row) => ({
-    label: row.toolId,
-    action:
-      row.transport === "mesh"
-        ? { type: row.actionType, payload: { mcpToolId: row.toolId, input: {} } }
-        : { type: row.actionType, payload: {} },
-  }));
+  const rows: WriteUnderTest[] = CONNECTOR_WRITE_ROWS.map((row) => {
+    const input = confirmableInput(row);
+    return {
+      label: row.toolId,
+      action:
+        row.transport === "mesh"
+          ? { type: row.actionType, payload: { mcpToolId: row.toolId, input } }
+          : { type: row.actionType, payload: input },
+    };
+  });
   const confined = [
     "slack.chat.post",
     "teams.chat.post",
@@ -3793,6 +3904,11 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
           requestApproval: async () => {
             prompts += 1;
             return true;
+          },
+          // A wave 4 write is approved by typing its confirm text; this owner types it exactly.
+          requestConfirmedApproval: async (req) => {
+            prompts += 1;
+            return { approved: true, typed: req.confirmText };
           },
         },
         { recordAudit: () => {} },
@@ -11426,6 +11542,223 @@ describe("I52 — a stored run grant is equal to or narrower than its manifest, 
 });
 
 describe("I53 — a first-party connector write reaches the model only through the owner-turn door", () => {
+  test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
+    expect(wave4).toHaveLength(39);
+    const failures: string[] = [];
+    for (const row of wave4) {
+      const input = confirmableInput(row);
+      const action = {
+        type: row.actionType,
+        payload: row.transport === "mesh" ? { mcpToolId: row.toolId, input } : input,
+      };
+      const attempt = async (
+        channel: "plain" | "exact" | "wrong" | "empty",
+      ): Promise<{ status: string; dispatched: number; plainAsked: number }> => {
+        let dispatched = 0;
+        let plainAsked = 0;
+        const exec = new ToolExecutor(
+          {
+            requestApproval: async () => {
+              plainAsked += 1;
+              return true;
+            },
+            ...(channel === "plain"
+              ? {}
+              : {
+                  requestConfirmedApproval: async (req: { confirmText: string }) => ({
+                    approved: true,
+                    typed:
+                      channel === "exact"
+                        ? req.confirmText
+                        : channel === "wrong"
+                          ? `${req.confirmText} `
+                          : "",
+                  }),
+                }),
+          },
+          { recordAudit: () => {} },
+          {
+            dispatch: async () => {
+              dispatched += 1;
+              return {};
+            },
+          },
+          undefined,
+          NULL_EGRESS_SINK,
+          NO_POLICY_OVERLAY,
+        );
+        const res = await exec.execute(action);
+        return { status: res.status, dispatched, plainAsked };
+      };
+      const plain = await attempt("plain");
+      if (plain.status !== "rejected" || plain.dispatched !== 0 || plain.plainAsked !== 0) {
+        failures.push(`${row.toolId}: a plain-only channel approved or was asked`);
+      }
+      for (const bad of ["wrong", "empty"] as const) {
+        const r = await attempt(bad);
+        if (r.status !== "rejected" || r.dispatched !== 0) failures.push(`${row.toolId}: ${bad}`);
+      }
+      const exact = await attempt("exact");
+      if (exact.status !== "ok" || exact.dispatched !== 1 || exact.plainAsked !== 0) {
+        failures.push(`${row.toolId}: the exact text did not approve alone`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("D0a: a Wave 4 tool named by mcpToolId runs only under its own action type, whatever the type's HITL class (the pairing, at the gate and at the dispatcher)", async () => {
+    const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
+    const { createConnectorDispatcher } = await import("./connectors/registry.ts");
+    const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
+    expect(wave4.length).toBeGreaterThan(30);
+    const failures: string[] = [];
+    for (const row of wave4) {
+      const input = confirmableInput(row);
+      const other = wave4.find((r) => r.actionType !== row.actionType)?.actionType ?? "";
+      const key = `${serviceOf(row.actionType)}_${row.toolId}`;
+      for (const type of ["search.run", "pipeline.trigger", other]) {
+        for (const mcpToolId of [row.toolId, key]) {
+          let dispatched = 0;
+          let asked = 0;
+          const exec = new ToolExecutor(
+            {
+              requestApproval: async () => {
+                asked += 1;
+                return true;
+              },
+              requestConfirmedApproval: async (req: { confirmText: string }) => {
+                asked += 1;
+                return { approved: true, typed: req.confirmText };
+              },
+            },
+            { recordAudit: () => {} },
+            {
+              dispatch: async () => {
+                dispatched += 1;
+                return {};
+              },
+            },
+            undefined,
+            NULL_EGRESS_SINK,
+            NO_POLICY_OVERLAY,
+          );
+          const res = await exec.execute({ type, payload: { mcpToolId, input } });
+          if (res.status !== "rejected" || dispatched !== 0 || asked !== 0) {
+            failures.push(`${type} + ${mcpToolId}: ran or asked`);
+          }
+        }
+      }
+      // The dispatcher refuses it on its own, with the gate out of the picture.
+      let ran = 0;
+      const d = createConnectorDispatcher({
+        listTools: async () => ({
+          [key]: {
+            execute: async () => {
+              ran += 1;
+              return {};
+            },
+          },
+        }),
+      });
+      const err = await d.dispatch({ type: "search.run", payload: { mcpToolId: key, input } }).then(
+        () => "",
+        (e: unknown) => String(e),
+      );
+      if (ran !== 0 || !err.includes("ERR_WRITE_TOOL_ACTION_MISMATCH")) {
+        failures.push(`${key}: the dispatcher ran it under search.run`);
+      }
+    }
+    expect(failures).toEqual([]);
+  });
+
+  test("D0a: a Wave 4 row is model-offerable only with a before reader AND a confirm target; the seven mail sends are never offered", async () => {
+    const { isModelOfferableRow, MODEL_NEVER_OFFERED_TOOL_IDS } = await import(
+      "./connectors/connector-writes/model-offerable.ts"
+    );
+    const template = { target: "t", summary: "s", fields: [] };
+    const reader = {
+      tool: "x_get",
+      argKeys: ["id"],
+      args: (i: Readonly<Record<string, unknown>>) => ({ id: i["id"] }),
+      select: () => [],
+    };
+    const base = {
+      toolId: "x_y",
+      actionType: "x.y",
+      transport: "write" as const,
+      wave: 4 as const,
+      preview: template,
+    };
+    expect(isModelOfferableRow({ ...base, before: reader })).toBe(false);
+    expect(isModelOfferableRow({ ...base, confirm: { template: "{id}" } })).toBe(false);
+    expect(isModelOfferableRow({ ...base, before: reader, confirm: { template: "{id}" } })).toBe(
+      true,
+    );
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(7);
+    for (const r of CONNECTOR_WRITE_ROWS) {
+      if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();
+    }
+  });
+
+  test("D41 exists with its clauses, run() calls it, and its files are anchors", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    for (const id of [
+      "confirm-channel-confined",
+      "confirm-coordinator-confined",
+      "confirm-render-confined",
+      "confirm-comparison-confined",
+      "confirm-order-pinned",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkConfirmComparison(files)");
+    for (const anchor of [
+      "packages/gateway/src/engine/executor.ts",
+      "packages/gateway/src/ipc/capture-rpc.ts",
+      "packages/gateway/src/ipc/consent.ts",
+    ]) {
+      expect(RULE_ANCHORS).toContain(anchor);
+    }
+  });
+
+  test("the production tree has no violation of D41, and D41 rejects a rogue channel call and a rogue comparison", async () => {
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkConfirmComparison(files)).toEqual([]);
+    const rogue = [
+      ...files,
+      {
+        relPath: "packages/gateway/src/ipc/rogue.ts",
+        contents:
+          "async function f(c, text) {\n  const a = await c.requestConfirmedApproval(r);\n  return a.typed === text;\n}\n",
+      },
+    ];
+    expect(checkConfirmComparison(rogue).map((v) => v.rule)).toEqual([
+      "confirm-channel-confined",
+      "confirm-comparison-confined",
+    ]);
+  });
+
+  test("D0a: the strict comparison lives in the executor with no trim or case fold; the coordinator never judges", async () => {
+    const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
+    const at = exec.indexOf("private async confirmedOwnerPrompt(");
+    const body = exec.slice(at, exec.indexOf("\n  }\n", at));
+    expect(body).toContain("answer.typed === req.confirmText");
+    expect(body).not.toMatch(/trim|toLowerCase|toUpperCase|localeCompare|normalize/);
+    const consent = stripComments(await read("packages/gateway/src/ipc/consent.ts"));
+    expect(consent).not.toMatch(/\.typed\s*[!=]==|confirmText\s*[!=]==\s*(?!undefined)\S/);
+    // The plain channel method is unchanged: three parameters, a boolean answer.
+    const types = stripComments(await read("packages/gateway/src/engine/types.ts"));
+    expect(types).toMatch(
+      /requestApproval\(\s*prompt: string,\s*details\?: Record<string, unknown>,\s*actionType\?: string,\s*\): Promise<boolean>;/,
+    );
+  });
+
   // Wiring pins read the real sources; behaviour is driven through the REAL door builder with a
   // recording executor. The end-to-end prompt-injection proof (real runAsk, real ToolExecutor, an
   // active in-scope delegate) is `engine/connector-write-injection.test.ts`.
@@ -11825,7 +12158,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       'const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };',
     );
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
-    const previewAt = exec.indexOf("private async previewFor(");
+    const previewAt = exec.indexOf("private async captureBeforePhase(");
     const previewBody = exec.slice(previewAt, exec.indexOf("\n  }\n", previewAt));
     expect(previewBody).toContain(
       'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
@@ -11835,7 +12168,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
     expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);
     expect(gateBody).toMatch(
-      /else if \(e instanceof BeforeStateRefusedError\) \{\s*hitlStatus = "rejected";\s*rejectReason = e\.reason;\s*auditExtras = \{ hitlRejectReason: e\.reason \};/,
+      /else if \(e instanceof BeforeStateRefusedError\) \{\s*hitlStatus = "rejected";\s*record\.rejectReason = e\.reason;\s*record\.hitlRejectReason = e\.reason;/,
     );
   });
 

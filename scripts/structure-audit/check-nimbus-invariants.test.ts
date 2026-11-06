@@ -15,6 +15,7 @@ import {
   checkCaptureTableConfinement,
   checkChatopsUnwrappedPost,
   checkConfigReaderConfinement,
+  checkConfirmComparison,
   checkConnectorSpawnIsHidden,
   checkConnectorWriteConfinement,
   checkDriverImportConfinement,
@@ -4203,5 +4204,206 @@ describe("D40 — a before-state read stays a guarded read on the door's executo
     }
     expect(files.some((f) => f.relPath === BEFORE)).toBe(true);
     expect(checkBeforeStateRead(files)).toEqual([]);
+  });
+});
+
+describe("D41 — a Wave 4 write is approved only by typed text, judged only at the gate (I53, I20)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const TYPES = "packages/gateway/src/engine/types.ts";
+  const WRAPPER = "packages/gateway/src/ipc/capture-rpc.ts";
+  const CONSENT = "packages/gateway/src/ipc/consent.ts";
+  const CONFIRM = "packages/gateway/src/connectors/connector-writes/confirm.ts";
+  const OTHER = "packages/gateway/src/ipc/other.ts";
+  const EXECUTOR_GOOD = [
+    "class ToolExecutor {",
+    "  private async resolveHitlApproval(action, opts, record) {",
+    "    const preview = await this.captureBeforePhase(action, opts);",
+    "    const confirm = this.renderConfirmPhase(action);",
+    "    return this.approvalPhase(action, preview, confirm, record);",
+    "  }",
+    "  private renderConfirmPhase(action) {",
+    "    const wave4 = rows.find((r) => r.wave === 4);",
+    "    return renderConfirmText(wave4, input);",
+    "  }",
+    "  private async approvalPhase(action, preview, confirm, record) {",
+    '    if (confirm.kind === "none") {',
+    "      return this.consent.requestApproval(prompt, details, action.type);",
+    "    }",
+    "    return this.confirmedOwnerPrompt(req, record);",
+    "  }",
+    "  private async confirmedOwnerPrompt(req, record) {",
+    "    const channel = this.consent;",
+    "    const answer = await channel.requestConfirmedApproval(req);",
+    "    return answer.typed === req.confirmText;",
+    "  }",
+    "}",
+    "export function bindConsentChannel(c) {",
+    "  return { requestConfirmedApproval(req) { return c.requestConfirmedConsent(req); } };",
+    "}",
+    "",
+  ].join("\n");
+  const GOOD = [
+    file(EXECUTOR, EXECUTOR_GOOD),
+    file(TYPES, "interface ConsentChannel { requestConfirmedApproval?(req): Promise<R>; }"),
+    file(
+      WRAPPER,
+      "export function provenanceConsent(inner) {\n  const confirmed = inner.requestConfirmedApproval?.bind(inner);\n  return { requestConfirmedApproval: (req) => confirmed(req) };\n}\nfunction other() {}\n",
+    ),
+    file(
+      CONSENT,
+      "class C {\n  requestConfirmedConsent() {}\n  open(confirmText) {\n    return confirmText === undefined ? {} : { confirmText };\n  }\n}\n",
+    ),
+    file(CONFIRM, "export function renderConfirmText() {}"),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkConfirmComparison(files).map((v) => v.rule);
+  const replace = (relPath: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === relPath ? file(relPath, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkConfirmComparison(GOOD)).toEqual([]);
+  });
+
+  test("(a) FAILS on the channel method named anywhere else", () => {
+    expect(
+      rules([
+        ...GOOD,
+        file(OTHER, "async function f(c) { return c.requestConfirmedApproval(r); }"),
+      ]),
+    ).toEqual(["confirm-channel-confined"]);
+    // Inside the wrapper's file but outside provenanceConsent.
+    expect(
+      rules(
+        replace(
+          WRAPPER,
+          "export function provenanceConsent(inner) {\n  return inner;\n}\nfunction other(i) {\n  return i.requestConfirmedApproval(r);\n}\n",
+        ),
+      ),
+    ).toEqual(["confirm-channel-confined"]);
+    // Comments and test files are not scanned.
+    expect(rules([...GOOD, file(OTHER, "// requestConfirmedApproval(x)")])).toEqual([]);
+    expect(
+      rules([...GOOD, file("packages/gateway/src/ipc/x.test.ts", "c.requestConfirmedApproval(r)")]),
+    ).toEqual([]);
+  });
+
+  test("(a) FAILS on the coordinator's half named outside the executor and consent.ts", () => {
+    expect(rules([...GOOD, file(OTHER, "c.requestConfirmedConsent(a, b);")])).toEqual([
+      "confirm-coordinator-confined",
+    ]);
+    // A test-support helper is exempt (an inert stub); a production file of another name is not.
+    expect(
+      rules([
+        ...GOOD,
+        file(
+          "packages/gateway/src/engine/run-ask.test-helpers.ts",
+          "requestConfirmedConsent: async () => ({})",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(b) FAILS on renderConfirmText named anywhere but the executor and its definition", () => {
+    expect(rules([...GOOD, file(OTHER, "const t = renderConfirmText(row, input);")])).toEqual([
+      "confirm-render-confined",
+    ]);
+  });
+
+  test("(c) FAILS on a typed or confirmText comparison outside the executor, either side", () => {
+    for (const body of [
+      "if (answer.typed === confirmText) return true;",
+      "if (confirmText !== answer.typed) return false;",
+      "return req.confirmText === typedValue;",
+      "return x !== p.typed;",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["confirm-comparison-confined"]);
+    }
+    // A presence check against undefined or null is not a judgement of the text.
+    expect(
+      rules([
+        ...GOOD,
+        file(OTHER, "const a = confirmText === undefined; const b = null !== confirmText;"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(d) FAILS when the phases are reordered or one is missing", () => {
+    const swapped = EXECUTOR_GOOD.replace(
+      "    const preview = await this.captureBeforePhase(action, opts);\n    const confirm = this.renderConfirmPhase(action);\n",
+      "    const confirm = this.renderConfirmPhase(action);\n    const preview = await this.captureBeforePhase(action, opts);\n",
+    );
+    expect(rules(replace(EXECUTOR, swapped))).toEqual(["confirm-order-pinned"]);
+    const missing = EXECUTOR_GOOD.replace(
+      "    const confirm = this.renderConfirmPhase(action);\n",
+      "    const confirm = { kind: 0 };\n",
+    );
+    expect(rules(replace(EXECUTOR, missing))).toEqual(["confirm-order-pinned"]);
+  });
+
+  test("(d) FAILS when the plain prompt is reachable outside approvalPhase's none guard", () => {
+    const unguarded = EXECUTOR_GOOD.replace(
+      '    if (confirm.kind === "none") {\n      return this.consent.requestApproval(prompt, details, action.type);\n    }\n',
+      "    return this.consent.requestApproval(prompt, details, action.type);\n",
+    );
+    expect(rules(replace(EXECUTOR, unguarded))).toEqual(["confirm-order-pinned"]);
+    // A swapped branch: the plain prompt sits in a guard on another kind, or after the block.
+    const swapped = EXECUTOR_GOOD.replace(
+      'if (confirm.kind === "none") {',
+      'if (confirm.kind === "text") {',
+    );
+    expect(rules(replace(EXECUTOR, swapped))).toEqual(["confirm-order-pinned"]);
+    const after = EXECUTOR_GOOD.replace(
+      '    if (confirm.kind === "none") {\n      return this.consent.requestApproval(prompt, details, action.type);\n    }\n',
+      '    if (confirm.kind === "none") {\n      log(prompt);\n    }\n    return this.consent.requestApproval(prompt, details, action.type);\n',
+    );
+    expect(rules(replace(EXECUTOR, after))).toEqual(["confirm-order-pinned"]);
+    const second = EXECUTOR_GOOD.replace(
+      "  private async confirmedOwnerPrompt(req, record) {\n",
+      "  private async confirmedOwnerPrompt(req, record) {\n    await this.consent.requestApproval(req);\n",
+    );
+    expect(rules(replace(EXECUTOR, second))).toEqual(["confirm-order-pinned"]);
+  });
+
+  test("(c2) FAILS on a second typed call through any receiver, optional-call forms included", () => {
+    const anchor = "  private async confirmedOwnerPrompt(req, record) {\n";
+    for (const extra of [
+      "await this.consent.requestConfirmedApproval(req);",
+      "await this.consent.requestConfirmedApproval?.(req);",
+      "await this.consent\n      .requestConfirmedApproval (req);",
+    ]) {
+      const twice = EXECUTOR_GOOD.replace(anchor, `${anchor}    ${extra}\n`);
+      expect(rules(replace(EXECUTOR, twice)), extra).toEqual(["confirm-order-pinned"]);
+    }
+  });
+
+  test("(c3) FAILS on a second plain requestApproval call through any receiver", () => {
+    const phase = "  private async approvalPhase(action, preview, confirm, record) {\n";
+    for (const extra of [
+      "const channel = this.consent; await channel.requestApproval(prompt);",
+      "await this.consent.requestApproval?.(prompt);",
+      "await other\n      .requestApproval (prompt);",
+    ]) {
+      const twice = EXECUTOR_GOOD.replace(phase, `${phase}    ${extra}\n`);
+      expect(rules(replace(EXECUTOR, twice)), extra).toEqual(["confirm-order-pinned"]);
+    }
+  });
+
+  test("(d) FAILS when the typed call moves out of confirmedOwnerPrompt, or Wave 4 is not read from the row", () => {
+    const moved = EXECUTOR_GOOD.replace(
+      "  private async approvalPhase(action, preview, confirm, record) {\n",
+      "  private async approvalPhase(action, preview, confirm, record) {\n    await channel.requestConfirmedApproval(req);\n",
+    );
+    expect(rules(replace(EXECUTOR, moved))).toEqual(["confirm-order-pinned"]);
+    const noWave = EXECUTOR_GOOD.replace("r.wave === 4", "r.confirm");
+    expect(rules(replace(EXECUTOR, noWave))).toEqual(["confirm-order-pinned"]);
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(files.some((f) => f.relPath === EXECUTOR)).toBe(true);
+    expect(checkConfirmComparison(files)).toEqual([]);
   });
 });

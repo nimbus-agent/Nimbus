@@ -70,6 +70,7 @@ function harness(over: Partial<RunAskParams> = {}): Harness {
       consentClientIds.push(clientId);
       return true;
     },
+    requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
     rejectAllPending(): void {},
     pendingCount(): number {
       return 0;
@@ -127,14 +128,14 @@ function activeDelegate(): { dep: ExecutorDelegationDep; remoteAsks: string[] } 
 }
 
 const MODEL_WRITE: PlannedAction = {
-  type: "argocd.app.sync",
+  type: "looker.datagroup.trigger",
   origin: "model",
-  payload: { mcpToolId: "argocd_argocd_app_sync", input: { name: "web" } },
+  payload: { mcpToolId: "looker_looker_datagroup_trigger", input: { datagroupId: "dg1" } },
 };
 
 const NO_ORIGIN_WRITE: PlannedAction = {
-  type: "argocd.app.sync",
-  payload: { mcpToolId: "argocd_argocd_app_sync", input: { name: "web" } },
+  type: "looker.datagroup.trigger",
+  payload: { mcpToolId: "looker_looker_datagroup_trigger", input: { datagroupId: "dg1" } },
 };
 
 async function turn(h: Harness): Promise<void> {
@@ -151,7 +152,7 @@ describe("runAsk — the connector-write door executor in the request context", 
     expect((await ex.execute(MODEL_WRITE)).status).toBe("ok");
     expect(h.consentClientIds).toEqual(["owner-client-7"]);
     expect(h.egress).toHaveLength(1);
-    expect(h.dispatched).toEqual(["argocd.app.sync"]);
+    expect(h.dispatched).toEqual(["looker.datagroup.trigger"]);
     h.close();
   });
 
@@ -238,7 +239,7 @@ describe("Review Focus 2: an active in-scope delegate during an owner turn", () 
     const ex = h.seen.userMcpExecutor;
     if (ex === undefined) throw new Error("expected the user-MCP executor");
     expect((await ex.execute(NO_ORIGIN_WRITE)).status).toBe("ok");
-    expect(del.remoteAsks).toEqual(["argocd.app.sync"]);
+    expect(del.remoteAsks).toEqual(["looker.datagroup.trigger"]);
     expect(h.consentClientIds).toEqual([]);
     h.close();
   });

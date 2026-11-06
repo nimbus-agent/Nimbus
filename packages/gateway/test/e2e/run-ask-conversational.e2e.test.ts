@@ -27,6 +27,7 @@ function baseParams(
     },
     consentCoordinator: {
       requestConsent: async () => false,
+      requestConfirmedConsent: async () => ({ approved: false, typed: "" }),
       rejectAllPending: () => {
         /* noop */
       },

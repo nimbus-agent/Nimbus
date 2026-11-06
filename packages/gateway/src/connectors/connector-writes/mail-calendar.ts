@@ -5,6 +5,7 @@ import {
   type PreviewFieldTemplate,
   row,
   textField,
+  withConfirm,
   withPreview,
 } from "./types.ts";
 
@@ -123,8 +124,12 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
     ],
   }),
   // Spec § 15, OR-W34-3: the calendar deletes are irreversible, so wave 4.
-  row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 4),
-  row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 4),
+  withConfirm(row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 4), {
+    template: "delete {eventId:tail8}",
+  }),
+  withConfirm(row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 4), {
+    template: "delete {href:tail8}",
+  }),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),
   // No template, so the model is never offered it (B3w W3, owner ruling OR-B3w-1); the act door's
