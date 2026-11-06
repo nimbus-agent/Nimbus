@@ -20,7 +20,7 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
         textField("prune", undefined, "(not set: the server default, no pruning)"),
       ],
     }),
-    { template: "{name}" },
+    { template: "sync {name}" },
   ),
   withConfirm(
     fieldlessWrite(
@@ -30,7 +30,7 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
       "{name}",
       "Roll back Argo CD application {name} to history id {id}",
     ),
-    { template: "{name}@{id}" },
+    { template: "rollback {name}@{id}" },
   ),
   withConfirm(
     fieldlessWrite(
@@ -40,7 +40,7 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
       "{namespace}/{name}",
       "Reconcile Flux Kustomization {namespace}/{name}",
     ),
-    { template: "{namespace}/{name}" },
+    { template: "reconcile kustomization {namespace}/{name}" },
   ),
   withConfirm(
     fieldlessWrite(
@@ -50,7 +50,7 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
       "{namespace}/{name}",
       "Reconcile Flux HelmRelease {namespace}/{name}",
     ),
-    { template: "{namespace}/{name}" },
+    { template: "reconcile helmrelease {namespace}/{name}" },
   ),
   withConfirm(
     withPreview(row("mlflow_model_promote", "mlflow.model.promote", "write", 4), {
@@ -65,7 +65,7 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
         ),
       ],
     }),
-    { template: "{name}/v{version}" },
+    { template: "promote {name}/v{version}" },
   ),
   withConfirm(
     withPreview(row("mlflow_model_transition_stage", "mlflow.model.transition_stage", "write", 4), {
@@ -81,6 +81,6 @@ export const GITOPS_ML_ROWS: readonly ConnectorWriteRow[] = [
         ),
       ],
     }),
-    { template: "{name}/v{version}" },
+    { template: "transition {name}/v{version} to {stage}" },
   ),
 ];

@@ -1881,7 +1881,7 @@ describe("provenanceConsent: type-to-confirm on the act door (Phase 9.7 D0a)", (
       input: { owner: "acme", repo: "api", pullNumber: 42 },
     },
   };
-  const TEXT = "github/acme/api#42";
+  const TEXT = "github/merge acme/api#42";
 
   function executorOver(inner: ConsentChannel, dispatched: PlannedAction[]): ToolExecutor {
     return new ToolExecutor(

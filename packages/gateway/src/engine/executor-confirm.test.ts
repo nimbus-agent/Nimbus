@@ -31,7 +31,7 @@ import type {
   PlannedAction,
 } from "./types.ts";
 
-const TEXT = "github/acme/api#42";
+const TEXT = "github/merge acme/api#42";
 
 /** A real Wave 4 mesh row: the act door's shape (`mcpToolId` + `input`). */
 const MERGE: PlannedAction = {
@@ -200,27 +200,29 @@ describe("a Wave 4 write needs the exact typed text (b-f)", () => {
 
   test("a Windows working directory (backslashes) is typeable: the exact text approves", async () => {
     const wd = `C:${String.fromCharCode(92)}infra${String.fromCharCode(92)}prod`;
-    const h = harness({ confirmAnswer: { approved: true, typed: `iac/${wd}` } });
+    const h = harness({ confirmAnswer: { approved: true, typed: `iac/apply ${wd}` } });
     const res = await h.exec.execute({
       type: "iac.terraform.apply",
       payload: { workingDirectory: wd },
     });
     expect(res.status).toBe("ok");
-    expect(h.confirmed[0]?.confirmText).toBe(`iac/${wd}`);
+    expect(h.confirmed[0]?.confirmText).toBe(`iac/apply ${wd}`);
     expect(auditOf(h)["confirm"]).toBe("matched");
   });
 
   test("the prompt ends with the fixed line and the details still carry the preview", async () => {
-    const h = harness({ confirmAnswer: { approved: true, typed: "snowflake/DB.S.T" } });
+    const h = harness({ confirmAnswer: { approved: true, typed: "snowflake/set comment DB.S.T" } });
     await h.exec.execute(SNOWFLAKE);
     const req = h.confirmed[0];
-    expect(req?.confirmText).toBe("snowflake/DB.S.T");
-    expect(req?.prompt.endsWith("\n\nTo approve, type exactly: snowflake/DB.S.T")).toBe(true);
+    expect(req?.confirmText).toBe("snowflake/set comment DB.S.T");
+    expect(req?.prompt.endsWith("\n\nTo approve, type exactly: snowflake/set comment DB.S.T")).toBe(
+      true,
+    );
     expect(req?.details?.["kind"]).toBe("connector-write");
   });
 
   test("wrong text: rejected, never dispatched, audited confirm mismatched", async () => {
-    const h = harness({ confirmAnswer: { approved: true, typed: "github/acme/api#43" } });
+    const h = harness({ confirmAnswer: { approved: true, typed: "github/merge acme/api#43" } });
     const res = await h.exec.execute(MERGE);
     expect(res).toEqual({ status: "rejected", reason: CONFIRM_MISMATCH_REASON });
     expect(h.dispatched).toHaveLength(0);
@@ -402,7 +404,7 @@ describe("delegation (j, k) - I20", () => {
         kind: "answered",
         peerId: "peer:bob",
         approved: true,
-        typed: "github/acme/api#41",
+        typed: "github/merge acme/api#41",
       }),
     });
     const h = harness({ delegation: d.dep });

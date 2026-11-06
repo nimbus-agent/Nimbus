@@ -18,7 +18,7 @@ export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
       // The upstream handler runs UNSET TAG when `value` is omitted.
       fields: [textField("tag"), textField("value", undefined, "(not set: the tag is REMOVED)")],
     }),
-    { template: "{object}/{tag}" },
+    { template: "set tag {object}/{tag}" },
   ),
   withConfirm(
     withPreview(row("snowflake_comment_set", "snowflake.comment.set", "write", 4), {
@@ -26,7 +26,7 @@ export const WAREHOUSE_BI_ROWS: readonly ConnectorWriteRow[] = [
       summary: "Set the comment on {object}",
       fields: [textField("comment", "Comment")],
     }),
-    { template: "{object}" },
+    { template: "set comment {object}" },
   ),
   fieldlessWrite(
     "tableau_datasource_refresh",

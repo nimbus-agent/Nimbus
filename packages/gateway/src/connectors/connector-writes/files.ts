@@ -311,6 +311,6 @@ export const FILES_ROWS: readonly ConnectorWriteRow[] = [
     },
   ),
   withConfirm(row("onedrive_item_delete", "onedrive.item.delete", "mesh", 4), {
-    template: "{itemId:tail8}",
+    template: "delete {itemId:tail8}",
   }),
 ];

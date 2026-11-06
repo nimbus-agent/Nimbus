@@ -125,24 +125,71 @@ describe("rendering from a plausible input", () => {
       return out.text;
     };
     expect(text("github_pr_merge", { owner: "acme", repo: "api", pullNumber: 42 })).toBe(
-      "github/acme/api#42",
+      "github/merge acme/api#42",
     );
     expect(text("gitlab_mr_merge", { projectPath: "grp/app", mergeRequestIid: 7 })).toBe(
-      "gitlab/grp/app!7",
+      "gitlab/merge grp/app!7",
     );
     expect(text("gha_run_trigger", { owner: "acme", repo: "api", workflowId: "ci.yml" })).toBe(
-      "github_actions/acme/api:ci.yml",
+      "github_actions/trigger acme/api:ci.yml",
     );
     expect(text("aws_ec2_instance_stop", { instanceIds: ["i-0a1", "i-0b2"] })).toBe(
-      "aws/i-0a1 i-0b2",
+      "aws/stop i-0a1 i-0b2",
     );
     expect(
       text("k8s_rollout_restart", { resourceType: "deployment", name: "api", namespace: "x" }),
-    ).toBe("kubernetes/deployment/api");
-    expect(text("mlflow_model_promote", { name: "fraud", version: "4" })).toBe("mlflow/fraud/v4");
-    expect(text("argocd_app_rollback", { name: "web", id: 12 })).toBe("argocd/web@12");
-    expect(text("outlook_calendar_delete", { eventId: "AAMkAGI2THVSAAA1B2c3D4" })).toBe(
-      "outlook/A1B2c3D4",
+    ).toBe("kubernetes/restart deployment/api");
+    expect(text("mlflow_model_promote", { name: "fraud", version: "4" })).toBe(
+      "mlflow/promote fraud/v4",
     );
+    expect(text("argocd_app_rollback", { name: "web", id: 12 })).toBe("argocd/rollback web@12");
+    expect(text("outlook_calendar_delete", { eventId: "AAMkAGI2THVSAAA1B2c3D4" })).toBe(
+      "outlook/delete A1B2c3D4",
+    );
+  });
+});
+
+describe("no two Wave 4 rows of one service render the same confirm text", () => {
+  /** One value for every key a template names, so two rows differ only through their own template. */
+  function sharedInput(...rows: ConnectorWriteRow[]): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const r of rows) for (const name of placeholders(r)) out[name] = "v1";
+    return out;
+  }
+
+  test("every pair of rows in a service differs for shared values, a numeric value and an array value", () => {
+    const byService = new Map<string, ConnectorWriteRow[]>();
+    for (const r of WAVE4) {
+      const s = serviceOf(r.actionType);
+      byService.set(s, [...(byService.get(s) ?? []), r]);
+    }
+    let pairs = 0;
+    for (const [service, rows] of byService) {
+      for (let i = 0; i < rows.length; i++) {
+        for (let j = i + 1; j < rows.length; j++) {
+          const a = rows[i];
+          const b = rows[j];
+          if (a === undefined || b === undefined) continue;
+          pairs++;
+          for (const value of ["v1", 7, ["v1", "v2"]]) {
+            const input = Object.fromEntries(Object.keys(sharedInput(a, b)).map((k) => [k, value]));
+            const ta = renderConfirmText(a, input);
+            const tb = renderConfirmText(b, input);
+            if (ta.ok && tb.ok) {
+              expect(ta.text, `${service}: ${a.toolId} vs ${b.toolId}`).not.toBe(tb.text);
+            }
+          }
+        }
+      }
+    }
+    expect(pairs).toBeGreaterThan(20);
+  });
+
+  test("a template names its effect: it starts with a literal verb", () => {
+    for (const r of WAVE4) {
+      const first = parseConfirmTemplate(r.confirm?.template ?? "");
+      const seg = first.ok ? first.segments[0] : undefined;
+      expect(seg?.kind, r.toolId).toBe("text");
+    }
   });
 });

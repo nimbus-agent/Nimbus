@@ -125,10 +125,10 @@ export const MAIL_CALENDAR_ROWS: readonly ConnectorWriteRow[] = [
   }),
   // Spec § 15, OR-W34-3: the calendar deletes are irreversible, so wave 4.
   withConfirm(row("outlook_calendar_delete", "outlook.calendar.delete", "mesh", 4), {
-    template: "{eventId:tail8}",
+    template: "delete {eventId:tail8}",
   }),
   withConfirm(row("apple_calendar_event_delete", "apple.calendar.event.delete", "mesh", 4), {
-    template: "{href:tail8}",
+    template: "delete {href:tail8}",
   }),
   row("gmail_draft_send", "gmail.draft.send", "mesh", 3),
   row("gmail_message_send", "gmail.message.send", "mesh", 3),
