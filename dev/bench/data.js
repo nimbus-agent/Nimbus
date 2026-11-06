@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793925362841,
+  "lastUpdate": 1793941449835,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "10b31750e57f1b3a6469b731b0942929b7f4d7fc",
-          "message": "feat(engine): [persona] gives Nimbus a configurable voice (#1248)\n\nAdds a `[persona]` section to `nimbus.toml` with two enum knobs — `tone`\nand `voice` — that configure the voice of Nimbus's answers. Closes the\nA2 half of Spine S1's remaining answer-quality row; W6-B remains open.\n\n## What ships\n\n`tone` is one of neutral / terse / formal / casual / verbose. `voice` is\none of neutral / opinionated / collective. Both default to neutral,\nwhich is a strict no-op: a gateway with no `[persona]` section produces\na byte-identical prompt to before.\n\nConfig is read from the **profile-resolved** TOML —\n`nimbus.<profile>.toml`, falling back to the base file when no profile\nis active — and resolved per-invocation, never cached, so editing it\ntakes effect on the next query with no restart. Switching profiles still\nneeds a gateway restart, as it always has.\n\nThe directive has one definition in `engine/persona.ts` and is applied\nat three surfaces:\n\n- `nimbus ask`, at the single site above the router-vs-agent fork,\ncomposing outward around the existing `--devil` directive — persona\noutermost, devil closest to the question.\n- The fourteen built-in agent briefs, threaded on `SynthesisRunner` from\n`buildAgentSynthesisRunner`, the one factory both the socket and HTTP\nbrief paths already share.\n- **ChatOps replies.** `@nimbus <question>` routes through the same\n`runAsk`, so a configured `opinionated` or `collective` voice is visible\nto everyone in that Slack or Teams channel. This surface was found\nduring whole-branch review, after the design spec had claimed there were\nonly two. No new content and no new egress — only tone — but it is worth\nknowing before setting a non-neutral voice.\n\n## What was rejected, and why\n\nTwo of the four knobs the roadmap named do not ship, and are rejected\nrather than deferred:\n\n- `tool_caution` — Non-Negotiable #2 and invariant I2's frozen HITL set\nforbid a config knob that changes what triggers a consent prompt.\n- `confidence_threshold` — rejected on the same reasoning one layer up.\nA user-tunable dial that makes the agent hedge less is a dial that makes\nit less honest, against every S1 honesty surface: I31, the 0.86\nconfidence ceilings, \"could not be computed\" instead of zero.\n\n## D6, and why I31 needed no new guard\n\nEvery persona directive governs how something is expressed, never\nwhether content appears. `terse` means \"fewer words\", never \"leave\nthings out\". A test enforces this over the directive constants and\nred-proves the pattern in both directions — that it rejects omission\ninstructions, and that it still permits register instructions such as\n\"avoid jargon\".\n\nThat rule is what makes a terse persona safe next to I31. Reserved\nsections are built by the renderer and re-attached verbatim, never shown\nto the model; interleaved disclosures are anchor-checked and a violation\ndiscards the whole rewrite. So a terse persona cannot cost a disclosure\n— it can only raise the discard rate, meaning more briefs fall back to\ntheir deterministic render. The resolved persona now rides the synthesis\nprovenance on `briefReady`, so a `contract_violation` under `tone =\n\"terse\"` is self-describing in production.\n\n## Two adjacent bugs fixed\n\n- **`[agents] synthesis` was profile-blind.**\n`loadNimbusAgentsFromConfigDir` hardcoded `nimbus.toml`, so the setting\nwas ignored under an active profile. Now read from the profile-resolved\npath. This cuts both ways and both are documented: a profile-file\nsetting starts being honoured, and a base-file `synthesis = \"off\"` stops\napplying when the active profile file has no `[agents]` section. That\nmatches how `[llm]` and `[session]` already behave.\n- **`ProfileManager` had never been constructed in production.** It was\ndeclared in `ipc/server/options.ts` and dispatched in `dispatchers.ts`,\nand nothing ever built one — so the desktop app's routed Profiles\nsettings page, and all four already-allowlisted `profile.*` methods,\nthrew on every call. Now wired in `platform/assemble.ts`. The panel also\nrefreshes after a switch, which it never did.\n\n## The acceptance criterion was replaced, not met\n\nThe roadmap asked for an integration test toggling persona mid-session\nand asserting the response shape changes. That asks for something\nimpossible — `NIMBUS_PROFILE` is fixed when the gateway spawns — and\nsomething untestable, since grading model prose needs a live LLM the\nsuite does not have. Replaced the way A1's criterion was, with twelve\nmechanically assertable criteria covering both execution paths, both IPC\ndispatchers, the byte-identical default, composition with `--devil`,\nanchor survival under a terse rewrite, and the profile-resolved\n`[agents]` read.\n\n**Recorded gap:** nothing asserts that a terse persona's prose is\nactually terser. That grades model output, the same limitation A1\ncarries.\n\n## Scope\n\nNo schema migration, no new IPC method, no new HTTP route, no new\nsecurity invariant, and no Tauri allowlist change — `ALLOWED_METHODS`\nstays at 105. A whole-branch review also corrected roadmap drift that\nrecorded it as 106.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-19T07:18:29+03:00",
-          "tree_id": "6cabfa94995a065f370b7fb9b79e3ad1d8d62b21",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/10b31750e57f1b3a6469b731b0942929b7f4d7fc"
-        },
-        "date": 1787113797425,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.9434541499937,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 323.71516309999936,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 236.44738024999896,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "97b4c0b83780ceb6f5bff6e4a8f3f5a9205faa75",
+          "message": "chore: release main (#1914)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.30.0</summary>\n\n##\n[10.30.0](https://github.com/nimbus-agent/Nimbus/compare/v10.29.0...v10.30.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** model-written drafts and pages cannot load remote\ncontent, on both doors\n([#1913](https://github.com/nimbus-agent/Nimbus/issues/1913))\n([9270fae](https://github.com/nimbus-agent/Nimbus/commit/9270faeb224aa0a915c8fd72c88a4219719d77f7))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T06:53:18+02:00",
+          "tree_id": "ae01d68eae92957e411af80247981559bb1ee03b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/97b4c0b83780ceb6f5bff6e4a8f3f5a9205faa75"
+        },
+        "date": 1793941445367,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 304.77168174999827,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 306.5150601999976,
             "unit": "ms"
           }
         ]
