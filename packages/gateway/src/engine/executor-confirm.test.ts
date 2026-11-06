@@ -455,6 +455,21 @@ describe("delegation (j, k) - I20", () => {
     expect(h.confirmed).toHaveLength(1);
   });
 
+  test("a failed delegate attempt leaves no confirm verdict: an owner decline audits no mismatch", async () => {
+    const d = delegation({
+      requestRemoteConfirmed: async (): Promise<RemoteApprovalOutcome> => ({
+        kind: "answered",
+        peerId: "peer:mallory",
+        approved: true,
+        typed: "not the confirm text",
+      }),
+    });
+    const h = harness({ delegation: d.dep, confirmAnswer: { approved: false, typed: "" } });
+    const res = await h.exec.execute(MERGE);
+    expect(res).toEqual({ status: "rejected", reason: "User declined consent gate." });
+    expect("confirm" in auditOf(h)).toBe(false);
+  });
+
   test("an identity-invalid delegate falls back to the owner", async () => {
     const d = delegation({
       isOperatorValid: () => false,

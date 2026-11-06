@@ -559,6 +559,9 @@ interface GateRecord {
   confirm?: ConfirmOutcome;
 }
 
+/** The default reason of a rejected gate: the owner (or a delegate) said no. */
+const USER_DECLINED_REASON = "User declined consent gate.";
+
 /** The reason when the acting channel has no way to collect a typed confirmation (Wave 4). */
 export const CONFIRM_UNSUPPORTED_REASON =
   "This channel cannot collect the typed confirmation this action requires.";
@@ -735,7 +738,14 @@ export class ToolExecutor {
       isOperatorValid: del.isOperatorValid,
       requestRemote: ask,
     });
-    return outcome === "fallback_to_owner" ? "fallback" : outcome;
+    if (outcome === "fallback_to_owner") {
+      // A failed delegate attempt (forged peer, invalid identity) leaves nothing behind: its
+      // typed-text verdict must not reach the audit row of the OWNER's own answer.
+      delete record.confirm;
+      record.rejectReason = USER_DECLINED_REASON;
+      return "fallback";
+    }
+    return outcome;
   }
 
   /**
@@ -908,7 +918,7 @@ export class ToolExecutor {
     // Reason for the rejected path. Defaults to the user-declined message (the other rejection
     // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
     // is always a defined string by the time the rejected branch returns it.
-    const record: GateRecord = { rejectReason: "User declined consent gate." };
+    const record: GateRecord = { rejectReason: USER_DECLINED_REASON };
 
     try {
       if (this.namesOtherTypesWrite(action)) {
