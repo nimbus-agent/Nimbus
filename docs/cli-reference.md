@@ -2869,7 +2869,7 @@ nimbus connector auth kubernetes
 nimbus connector auth iac            # IaC CLIs (enable flag)
 
 # Observability / incident
-nimbus connector auth pagerduty      # API token; --username <email> = a PagerDuty user's e-mail, the From header of incident writes
+nimbus connector auth pagerduty      # API token; --username <email> (or env NIMBUS_PAGERDUTY_FROM_EMAIL) = a PagerDuty user's e-mail, the From header of incident writes
 nimbus connector auth grafana        # URL + API token
 nimbus connector auth sentry         # auth token + org slug + URL
 nimbus connector auth newrelic       # API key + account id

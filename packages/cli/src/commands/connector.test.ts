@@ -1163,9 +1163,9 @@ describe("runConnector auth pagerduty — the From e-mail its writes need (C1)",
     expect(params["personalAccessToken"]).toBe("k");
   });
 
-  it("falls back to NIMBUS_PAGERDUTY_FROM_EMAIL, then PAGERDUTY_FROM_EMAIL", async () => {
-    process.env["PAGERDUTY_FROM_EMAIL"] = "second@example.com";
-    expect((await sentParams(["--token", "k"]))["fromEmail"]).toBe("second@example.com");
+  it("falls back to NIMBUS_PAGERDUTY_FROM_EMAIL and never to the generic PAGERDUTY_FROM_EMAIL", async () => {
+    process.env["PAGERDUTY_FROM_EMAIL"] = "generic@example.com";
+    expect(Object.hasOwn(await sentParams(["--token", "k"]), "fromEmail")).toBe(false);
     process.env["NIMBUS_PAGERDUTY_FROM_EMAIL"] = "first@example.com";
     expect((await sentParams(["--token", "k"]))["fromEmail"]).toBe("first@example.com");
   });
@@ -1180,6 +1180,7 @@ describe("runConnector auth pagerduty — the From e-mail its writes need (C1)",
     await runConnector(["help"]);
     expect(out.stdout).toContain("--username");
     expect(out.stdout).toContain("NIMBUS_PAGERDUTY_FROM_EMAIL");
+    expect(out.stdout).not.toContain("/ PAGERDUTY_FROM_EMAIL");
     expect(out.stdout).toContain("pagerduty.from_email");
   });
 });

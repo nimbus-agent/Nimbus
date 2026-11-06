@@ -481,7 +481,7 @@ function applyPagerdutyConnectorAuth(
   // PagerDuty requires the e-mail of a valid user as the `From` header on every incident write.
   // Optional here: without it the connector reads, but acknowledge/resolve/escalate refuse.
   const fromEmail =
-    username?.trim() || firstEnvTrimmed(["NIMBUS_PAGERDUTY_FROM_EMAIL", "PAGERDUTY_FROM_EMAIL"]);
+    username?.trim() || firstEnvTrimmed(["NIMBUS_PAGERDUTY_FROM_EMAIL"]);
   if (fromEmail !== "") {
     p.fromEmail = fromEmail;
   }
@@ -1424,7 +1424,7 @@ CircleCI: --token (personal API token) or env NIMBUS_CIRCLECI_API_TOKEN / CIRCLE
   const pdAlt = "PAGERDUTY_API_TOKEN";
   console.log(
     `PagerDuty: --token (REST API token) or env ${pdEnv} / ${pdAlt} (vault key pagerduty.api_token). Indexes open incidents for search.
-  --username <email> (or env NIMBUS_PAGERDUTY_FROM_EMAIL / PAGERDUTY_FROM_EMAIL; vault key pagerduty.from_email): the e-mail of a valid PagerDuty user. PagerDuty requires it as the From header on every incident write (acknowledge, resolve, escalate); without it incidents are read and indexed but those writes are not offered to the model.`,
+  --username <email> (or env NIMBUS_PAGERDUTY_FROM_EMAIL; vault key pagerduty.from_email): the e-mail of a valid PagerDuty user. PagerDuty requires it as the From header on every incident write (acknowledge, resolve, escalate); without it incidents are read and indexed but those writes are not offered to the model.`,
   );
   console.log(`Kubernetes: --kubeconfig <path> [--context <name>] or env NIMBUS_KUBECONFIG / KUBECONFIG (vault keys kubernetes.kubeconfig, optional kubernetes.context). Indexes cluster deployments.
 
