@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.35.0](https://github.com/nimbus-agent/Nimbus/compare/v10.34.0...v10.35.0) (2026-11-06)
+
+
+### Features
+
+* **gateway:** offer the flag writes and the JSM Operations alert writes, and store an optional Jira cloud id ([#1925](https://github.com/nimbus-agent/Nimbus/issues/1925)) ([5f57ad5](https://github.com/nimbus-agent/Nimbus/commit/5f57ad5bba8aa6090bf97b5abf331a464aaefe8e))
+
 ## [10.34.0](https://github.com/nimbus-agent/Nimbus/compare/v10.33.0...v10.34.0) (2026-11-06)
 
 
