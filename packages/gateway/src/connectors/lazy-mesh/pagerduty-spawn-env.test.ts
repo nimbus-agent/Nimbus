@@ -20,6 +20,14 @@ describe("pagerdutyEnvExtras (C1: the From e-mail PagerDuty needs on every write
     }
   });
 
+  test("a stored e-mail that is not a valid From address is left out too", () => {
+    for (const email of ["nope", "a@b", "a b@c.co", "a@@b.co"]) {
+      const env = pagerdutyEnvExtras("tok", email);
+      expect(Object.hasOwn(env, "PAGERDUTY_FROM_EMAIL"), email).toBe(false);
+      expect(env["PAGERDUTY_API_TOKEN"]).toBe("tok");
+    }
+  });
+
   test("ensurePagerdutyMcp reads the Vault key pagerduty.from_email into that helper", () => {
     const src = stripComments(readFileSync(join(import.meta.dir, "connector-spawns.ts"), "utf8"));
     const body = src.slice(src.indexOf("export async function ensurePagerdutyMcp"));
