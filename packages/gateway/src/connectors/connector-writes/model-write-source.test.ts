@@ -331,14 +331,15 @@ async function realDoor(
   policy: () => EnforcedPolicy | undefined,
   kb?: TribalKbConfig,
   realExecutor?: Pick<ToolExecutor, "execute">,
+  maxWave: 2 | 3 = 2,
 ): Promise<RealDoor> {
   for (const s of REAL_SERVICES) {
     setModelWriteEnablement(
       db,
       s,
-      2,
+      maxWave,
       1,
-      offerableWritesEnabledBy(s, 2).map((r) => r.toolId),
+      offerableWritesEnabledBy(s, maxWave).map((r) => r.toolId),
     );
   }
   const src = createModelWriteToolSource({
@@ -961,7 +962,8 @@ describe("B3r: remote content is refused on the real rows through the real door"
   );
 
   test("every bypass form of both reviews is refused at the model door; nothing is executed", async () => {
-    const door = await realDoor(() => BOUND);
+    // Wave 3: the C2 pull request and merge request rows are wave 3.
+    const door = await realDoor(() => BOUND, undefined, undefined, 3);
     for (const c of REMOTE_CONTENT_REFUSED_CASES.filter(offeredToModel)) {
       expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({
         refused: REMOTE_CONTENT_REFUSAL,
@@ -971,7 +973,7 @@ describe("B3r: remote content is refused on the real rows through the real door"
   });
 
   test("every allowed form reaches the executor unchanged", async () => {
-    const door = await realDoor(() => BOUND);
+    const door = await realDoor(() => BOUND, undefined, undefined, 3);
     for (const c of REMOTE_CONTENT_ALLOWED_CASES.filter(offeredToModel)) {
       const before = door.executed.length;
       expect(await door.call(nameOf(c.toolId), { ...c.input }), c.label).toEqual({ sent: true });

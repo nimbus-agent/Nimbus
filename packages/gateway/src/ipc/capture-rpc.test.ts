@@ -858,6 +858,20 @@ const B2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
   ["linear.issue.update", { issueId: "i", title: "New" }],
 ];
 
+/** C2: the four proposable branch, pull request and merge request creates, with clean input. */
+const C2_PROPOSABLE: ReadonlyArray<[string, Record<string, unknown>]> = [
+  ["github.branch.create", { owner: "o", repo: "r", branch: "fix/x", fromRef: "main" }],
+  [
+    "github.pr.create",
+    { owner: "o", repo: "r", head: "fix/x", base: "main", title: "Fix", body: "Why", draft: true },
+  ],
+  ["gitlab.branch.create", { projectPath: "g/r", branch: "fix/x", fromRef: "main" }],
+  [
+    "gitlab.mr.create",
+    { projectPath: "g/r", sourceBranch: "fix/x", targetBranch: "main", title: "Fix" },
+  ],
+];
+
 describe("B2 act door: every proposable issue write shows its typed preview, with no before", () => {
   const PROV = {
     captureId: "cap_b2",
@@ -891,7 +905,8 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
 
   test("the B2 list is exactly the 12 proposable issue writes; the transition is withheld", () => {
     expect(B2_PROPOSABLE).toHaveLength(12);
-    for (const [t] of B2_PROPOSABLE) {
+    expect(C2_PROPOSABLE).toHaveLength(4);
+    for (const [t] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
       expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
     }
     expect(classifyActionType("jira.issue.transition", REAL_CLASSIFY)).toEqual({
@@ -900,7 +915,7 @@ describe("B2 act door: every proposable issue write shows its typed preview, wit
     });
   });
 
-  for (const [type, input] of B2_PROPOSABLE) {
+  for (const [type, input] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
     test(`${type}: provenance header, "", then the real row's typed preview`, async () => {
       const d: PlannedAction[] = [];
       const { act, prompts } = wiring(d);
@@ -1179,6 +1194,26 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
     ["gitlab.issue.create", { projectPath: "g/r", title: "Bug", description: "fix\n/close" }],
     ["gitlab.issue.create", { projectPath: "g/r", title: "Bug", labels: ["prio::high"] }],
     ["github.issue.create", { owner: "o", repo: "r", title: "cc @org/team" }],
+    // C2: the pull request and merge request creates run the same refusals.
+    ["github.pr.create", { owner: "o", repo: "r", head: "f", base: "main", title: "cc @org/team" }],
+    [
+      "github.pr.create",
+      { owner: "o", repo: "r", head: "f", base: "main", title: "T", body: "![x](https://h/p.png)" },
+    ],
+    [
+      "gitlab.mr.create",
+      {
+        projectPath: "g/r",
+        sourceBranch: "f",
+        targetBranch: "main",
+        title: "T",
+        description: "/merge",
+      },
+    ],
+    [
+      "gitlab.mr.create",
+      { projectPath: "g/r", sourceBranch: "f", targetBranch: "main", title: "@all" },
+    ],
     ["gitlab.issue.labels.add", { projectPath: "g/r", issueIid: 7, labels: ["prio::high"] }],
     [
       "gitlab.issue.labels.add",
@@ -1206,13 +1241,24 @@ describe("B2 act door: actDoorRefusal at submit and at accept (OR-B2-2, OR-B2-3)
   });
 
   // One test each: the pending-action queue is bounded, and each test gets a fresh store.
-  for (const [type, input] of [...B2_PROPOSABLE]) {
+  for (const [type, input] of [...B2_PROPOSABLE, ...C2_PROPOSABLE]) {
     test(`a clean ${type} ${JSON.stringify(input)} is queued`, async () => {
       const c = actCtx([]);
       expect(await outcome(submit(c, type, input))).toBe("queued");
       expect(c.gate.store.countPendingActions(1_000)).toBe(1);
     });
   }
+
+  test("C2: the two VCS updates are refused at submit as not proposable", async () => {
+    for (const [type, input] of [
+      ["github.pr.update", { owner: "o", repo: "r", pullNumber: 1, title: "T" }],
+      ["gitlab.mr.update", { projectPath: "g/r", mergeRequestIid: 1, title: "T" }],
+    ] as const) {
+      expect(await outcome(submit(actCtx([]), type, input)), type).toEqual({
+        code: "ERR_CAPTURE_ACTION_NOT_PROPOSABLE",
+      });
+    }
+  });
 
   test("the Jira transition is refused at submit as not proposable (OR-B2-4)", async () => {
     expect(
@@ -1524,6 +1570,13 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     return r.actionType;
   }
 
+  // The fixtures also cover the two VCS updates, which the model door offers and the act door
+  // withholds (not_yet_offered, C2): only proposable types are queued here.
+  const proposableType = (k: RemoteContentDoorCase): boolean =>
+    classifyActionType(typeOf(k), REAL_CLASSIFY).kind === "proposable";
+  const ACT_REFUSED_CASES = REMOTE_CONTENT_REFUSED_CASES.filter(proposableType);
+  const ACT_ALLOWED_CASES = REMOTE_CONTENT_ALLOWED_CASES.filter(proposableType);
+
   async function submit(c: CaptureRpcCtx, k: RemoteContentDoorCase) {
     return await dispatchCaptureRpc(
       "capture.submit",
@@ -1559,8 +1612,8 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     ).length > PAYLOAD_MAX_BYTES;
   const INVALID = { code: "ERR_CAPTURE_INVALID" };
 
-  test("the twenty scanned types are all proposable", () => {
-    const types = new Set(REMOTE_CONTENT_REFUSED_CASES.map(typeOf));
+  test("the twenty-two proposable scanned types are all proposable", () => {
+    const types = new Set(ACT_REFUSED_CASES.map(typeOf));
     expect([...types].sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence.comment.add",
       "confluence.page.append",
@@ -1568,8 +1621,10 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
       "confluence.page.update",
       "github.issue.comment.create",
       "github.issue.create",
+      "github.pr.create",
       "gitlab.issue.create",
       "gitlab.issue.note.create",
+      "gitlab.mr.create",
       "gitlab.mr.note.create",
       "google_drive.file.create",
       "linear.comment.create",
@@ -1604,7 +1659,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
   });
 
   test("every bypass form of both reviews is refused at submit; nothing is queued", async () => {
-    for (const k of REMOTE_CONTENT_REFUSED_CASES) {
+    for (const k of ACT_REFUSED_CASES) {
       // A fresh attempt limiter and refusal counter per proposal (the same store): this asserts
       // the destination refusal, not the per-client refusal rate limit that would trip first.
       const c = actCtx([]);
@@ -1622,7 +1677,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
   });
 
   // One test each: the pending-action queue is bounded, and each test gets a fresh store.
-  for (const k of REMOTE_CONTENT_ALLOWED_CASES) {
+  for (const k of ACT_ALLOWED_CASES) {
     test(`queued: ${k.label}`, async () => {
       const c = actCtx([]);
       expect(await outcome(submit(c, k))).toBe("queued");
@@ -1633,7 +1688,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
   /** One refused fixture of each scanned row (the last in the table): a proposal from before B3r. */
   const ONE_PER_ROW: readonly RemoteContentDoorCase[] = [
     ...new Map(
-      REMOTE_CONTENT_REFUSED_CASES.filter((k) => !overCap(k)).map((k) => [k.toolId, k] as const),
+      ACT_REFUSED_CASES.filter((k) => !overCap(k)).map((k) => [k.toolId, k] as const),
     ).values(),
   ];
 
@@ -1681,8 +1736,10 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     const B3W_TYPES: readonly string[] = [
       "github.issue.comment.create",
       "github.issue.create",
+      "github.pr.create",
       "gitlab.issue.create",
       "gitlab.issue.note.create",
+      "gitlab.mr.create",
       "gitlab.mr.note.create",
       "linear.comment.create",
       "linear.issue.create",
@@ -1743,7 +1800,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     });
 
     test("every new refused fixture is refused at submit (a fresh limiter and counter each)", async () => {
-      const cases = REMOTE_CONTENT_REFUSED_CASES.filter(isB3w);
+      const cases = ACT_REFUSED_CASES.filter(isB3w);
       expect(new Set(cases.map(typeOf)).size).toBe(B3W_TYPES.length);
       for (const k of cases) {
         const c = actCtx([]);
@@ -1761,7 +1818,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     });
 
     // One test each: the pending-action queue is bounded, and each test gets a fresh store.
-    for (const k of REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w)) {
+    for (const k of ACT_ALLOWED_CASES.filter(isB3w)) {
       test(`B3w queued: ${k.label}`, async () => {
         const c = actCtx([]);
         expect(await outcome(submit(c, k))).toBe("queued");
@@ -1770,9 +1827,7 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     }
 
     test("every new type has an allowed fixture", () => {
-      expect(new Set(REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w).map(typeOf)).size).toBe(
-        B3W_TYPES.length,
-      );
+      expect(new Set(ACT_ALLOWED_CASES.filter(isB3w).map(typeOf)).size).toBe(B3W_TYPES.length);
     });
 
     for (const t of B3W_TYPES) {
