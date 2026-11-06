@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793973050038,
+  "lastUpdate": 1793978113290,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "c7e7361e44fa71f3840c44cefcc369b60b88a326",
-          "message": "docs: narrow the public pitch and close the contributor on-ramp defects (#1259)\n\n## Summary\n\nNimbus has been public since April with almost no attention. This branch\ntreats that as a distribution problem rather than a product one: it\nnarrows the public pitch to a single provable claim, fixes the on-ramp\ndefects found while verifying that claim, adds one CI gate, and records\na decision that unblocks the official MCP Registry listing.\n\nEighteen of nineteen files are documentation. The single code change is\na new structure audit.\n\n## Related Issue\n\nNo tracking issue. This implements the design and plan committed in the\nfirst three commits of this branch.\n\n## Type of Change\n\n- [x] Documentation only\n- [x] CI / tooling\n\n## What changed\n\n**A new CI gate — the only code.** The bundled connector registry is\ngenerated into a committed file, and nothing diffed it against the tree.\n`test:connector-boot` structurally cannot catch a connector missing FROM\nthe registry, because it boots the connectors the registry ships. A\nstale registry therefore means a connector that exists in the tree and\ncan never be started by the shipped binary. The new audit closes that,\nwired into `package.json`, the `preflight-gates` fast tier, and\n`_test-suite.yml` beside the two existing connector audits.\n\n**Three false claims removed.** `@nimbus-dev/mcp` was described as a\npublished npm package in `CLAUDE.md`, `GEMINI.md` and the README project\ntree; it is not on npm. Separately, `nimbus scaffold extension` was\ndocumented with `--name` and `--output` flags that do not exist,\nincluding in a skill file that instructs AI assistants.\n\n**The wedge copy corrected.** The public pitch now leads with `nimbus\nwhy` and promises only what a run with no connectors configured actually\nreturns: authorship and commit provenance from local git. An earlier\ndraft promised the pull request, ticket and incident as well. Those\nthree lanes require connector syncs, so the copy now presents them as\nwhat connecting your tools adds. The design spec carries the same\ncorrection plus its reason, so the claim cannot quietly return.\n\n**Contributor on-ramp.** The per-file coverage ratchet is now documented\nalongside the command that reproduces it, with a published 72-hour\nfirst-response target and an issue-assignment convention scoped to\nhigh-traffic periods. The connector scaffold is discoverable, and its\nmanual follow-up steps are stated honestly.\n\n**Ecosystem.** Seven public satellite repositories are now linked from\nthe README. Each was verified public and its license checked against the\nGitHub API before linking.\n\n## Testing\n\n- `bun run preflight:fast` — 30 gates, all pass, including the new one\n- `bun test scripts` — 1477 pass, 27 skip, 0 fail, across 114 files\n- The new gate red-proved in both directions: clean tree exits 0; a\nprobe connector added to the tree makes it exit 1 naming that connector;\nexit 0 again once the probe is removed\n\n`test:ci` was not run locally. It is a full-tier gate and no product\ncode changed here; CI covers it.\n\n## Notes for Reviewers\n\n**The template asks for a rendered README screenshot when\n`docs/README.md` changes, and I cannot produce one.** The README changes\nare text only and were checked with markdownlint, `audit:doc-refs` and\n`audit:readme-cli`, but a human should look at the rendered first screen\nbefore merge.\n\n**Two follow-ups this branch deliberately did not do.**\n\n1. The connector scaffold does not scaffold connectors. It emits four\ngeneric files with no `src/server.ts`, so all three connector gates\nreport clean on a freshly scaffolded directory — there is nothing there\nfor them to catch. The design spec named closing this the highest-value\nengineering item in the program if the gap turned out to be real. It is\nreal. Building a generator mid-run would have been unreviewed scope\ncreep, so it is recorded rather than fixed.\n\n2. The hero animation still oversells. Its fixture renders a fully\npopulated four-lane brief in a demo labelled zero-config — the same\noverclaim this branch removed from prose. The alt text is now honest, so\ntext and image disagree, and screen-reader users get only the text.\nCorrecting it means regenerating a recorded asset, which is a different\nclass of work from editing prose.\n\n**Every review round found something, and three of the defects were\nmine:** a verification grep scoped too narrowly to catch a third\ninstance of the very claim it was checking, a plan step that instructed\nmoving a link which never existed, and the wedge overclaim above.\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Clarified onboarding, zero-configuration demos, provenance, connector\ncontributions, scaffolding, and MCP launcher publishing status.\n* Added contributor policies, coverage expectations, maintainer\nguidance, ecosystem links, and distribution-program decision records.\n* Updated messaging to highlight `nimbus why` and local Git-history\ninsights.\n\n* **Quality Improvements**\n* Added automated checks to detect mismatches between available\nconnectors and the generated registry.\n* Integrated registry validation into preflight and continuous\nintegration checks.\n* Added coverage for missing, stale, matching, and varied registry\nentries.\n\n* **Chores**\n* Updated extension scaffolding instructions to use the simplified\npositional path format.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T06:37:58+03:00",
-          "tree_id": "e2dc2e686dfc1c50e81bb978203889ae432889c4",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/c7e7361e44fa71f3840c44cefcc369b60b88a326"
-        },
-        "date": 1787197681401,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 294.73528875000085,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 294.2348862499948,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 286.4813878500048,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "142459d8641a61308458cd4ca9f237ed8a6cbdf5",
+          "message": "chore: release main (#1924)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.34.0</summary>\n\n##\n[10.34.0](https://github.com/nimbus-agent/Nimbus/compare/v10.33.0...v10.34.0)\n(2026-11-06)\n\n\n### Features\n\n* **gateway:** offer the GitHub and GitLab branch and PR/MR writes,\nrefused on both doors for mentions, quick actions and remote content\n([#1923](https://github.com/nimbus-agent/Nimbus/issues/1923))\n([a73ae94](https://github.com/nimbus-agent/Nimbus/commit/a73ae947f760b031d6f14d307259b6d8661b9848))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-06T14:59:14Z",
+          "tree_id": "2c2d1b52eb8ab9836431334c7dcea075fc418b14",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/142459d8641a61308458cd4ca9f237ed8a6cbdf5"
+        },
+        "date": 1793978109196,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 225.9792531499952,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 222.65681525000036,
             "unit": "ms"
           }
         ]
