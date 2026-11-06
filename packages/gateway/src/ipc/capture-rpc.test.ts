@@ -1674,4 +1674,145 @@ describe("B3r act door: remote content is refused at submit and at accept", () =
     await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, consent);
     expect(d.map((a) => a.type)).toEqual(["confluence.comment.add"]);
   });
+
+  // ---- B3w: sent Outlook mail, Teams HTML and forge Markdown (plan Task 4) -------------------
+
+  describe("B3w act door", () => {
+    const B3W_TYPES: readonly string[] = [
+      "github.issue.comment.create",
+      "github.issue.create",
+      "gitlab.issue.create",
+      "gitlab.issue.note.create",
+      "gitlab.mr.note.create",
+      "linear.comment.create",
+      "linear.issue.create",
+      "linear.issue.update",
+      "outlook.mail.send",
+      "teams.message.post",
+      "teams.message.postChat",
+    ];
+    const isB3w = (k: RemoteContentDoorCase): boolean => B3W_TYPES.includes(typeOf(k));
+    const SEND_TO = { to: "ann@x.com", cc: "bob@x.com", subject: "Status" };
+    const accepted = (prompts: string[]): ConsentCoordinator =>
+      ({
+        requestConsent: (_c: string, req: { prompt: string }) => {
+          prompts.push(req.prompt);
+          return Promise.resolve(true);
+        },
+      }) as unknown as ConsentCoordinator;
+
+    test("all eleven new types are proposable", () => {
+      for (const t of B3W_TYPES)
+        expect(classifyActionType(t, REAL_CLASSIFY), t).toEqual({ kind: "proposable" });
+    });
+
+    test("an HTML outlook.mail.send with a tracking pixel: refused at submit, nothing queued, one audit row", async () => {
+      const c = actCtx([]);
+      const before = submitAudits();
+      const send: RemoteContentDoorCase = {
+        label: "pixel",
+        toolId: "outlook_mail_send",
+        input: { ...SEND_TO, contentType: "html", body: `<p>hi</p><img src="https://h/p.gif">` },
+      };
+      expect(await outcome(submit(c, send))).toEqual(REFUSED);
+      expect(c.gate.store.countPendingActions(1_000)).toBe(0);
+      expect(submitAudits()).toBe(before + 1);
+    });
+
+    test("the same send as text is queued, and the verbatim prompt shows to, cc and the body", async () => {
+      const d: PlannedAction[] = [];
+      const c = actCtx(d);
+      const body = `<p>hi</p><img src="https://h/p.gif">`;
+      const send: RemoteContentDoorCase = {
+        label: "text",
+        toolId: "outlook_mail_send",
+        input: { ...SEND_TO, contentType: "text", body },
+      };
+      const sub = await submit(c, send);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+      const prompts: string[] = [];
+      const id = (sub.value as { id: string }).id;
+      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
+      expect(prompts).toHaveLength(1);
+      const prompt = prompts[0] ?? "";
+      expect(prompt).toContain('"to": "ann@x.com"');
+      expect(prompt).toContain('"cc": "bob@x.com"');
+      expect(prompt).toContain(JSON.stringify(body));
+      expect(d.map((a) => a.type)).toEqual(["outlook.mail.send"]);
+    });
+
+    test("every new refused fixture is refused at submit (a fresh limiter and counter each)", async () => {
+      const cases = REMOTE_CONTENT_REFUSED_CASES.filter(isB3w);
+      expect(new Set(cases.map(typeOf)).size).toBe(B3W_TYPES.length);
+      for (const k of cases) {
+        const c = actCtx([]);
+        const fresh: CaptureRpcCtx = {
+          ...c,
+          gate: {
+            ...c.gate,
+            limiter: new CaptureAttemptLimiter(),
+            refusals: new CaptureRefusalCounter(),
+          },
+        };
+        expect(await outcome(submit(fresh, k)), k.label).toEqual(overCap(k) ? INVALID : REFUSED);
+        expect(fresh.gate.store.countPendingActions(1_000), k.label).toBe(0);
+      }
+    });
+
+    // One test each: the pending-action queue is bounded, and each test gets a fresh store.
+    for (const k of REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w)) {
+      test(`B3w queued: ${k.label}`, async () => {
+        const c = actCtx([]);
+        expect(await outcome(submit(c, k))).toBe("queued");
+        expect(c.gate.store.countPendingActions(1_000)).toBe(1);
+      });
+    }
+
+    test("every new type has an allowed fixture", () => {
+      expect(new Set(REMOTE_CONTENT_ALLOWED_CASES.filter(isB3w).map(typeOf)).size).toBe(
+        B3W_TYPES.length,
+      );
+    });
+
+    for (const t of B3W_TYPES) {
+      test(`${t}: queued through a permissive submit, refused at the strict accept; stays proposed, nothing dispatched`, async () => {
+        const k = ONE_PER_ROW.find((x) => typeOf(x) === t);
+        if (k === undefined) throw new Error(`no refused fixture for ${t}`);
+        const permissive = actCtx([], () => undefined);
+        const sub = await submit(permissive, k);
+        if (sub.kind !== "hit") throw new Error("submit missed");
+        const id = (sub.value as { id: string }).id;
+        const d: PlannedAction[] = [];
+        const strict = actCtx(d);
+        expect(
+          await outcome(dispatchCaptureRpc("captures.accept", { id }, strict, OWNER, accepted([]))),
+        ).toEqual(REFUSED);
+        expect(strict.gate.store.get(id)?.state).toBe("proposed");
+        expect(d).toEqual([]);
+      });
+    }
+
+    test("a clean teams.message.post goes through accept to one dispatch", async () => {
+      const d: PlannedAction[] = [];
+      const c = actCtx(d);
+      const clean: RemoteContentDoorCase = {
+        label: "clean teams",
+        toolId: "teams_message_post",
+        input: {
+          teamId: "t1",
+          channelId: "19:other@thread.tacv2",
+          contentType: "html",
+          body: `<p>see <a href="https://h">the doc</a></p>`,
+        },
+      };
+      const sub = await submit(c, clean);
+      if (sub.kind !== "hit") throw new Error("submit missed");
+      const id = (sub.value as { id: string }).id;
+      const prompts: string[] = [];
+      await dispatchCaptureRpc("captures.accept", { id }, c, OWNER, accepted(prompts));
+      expect(prompts).toHaveLength(1);
+      expect(d.map((a) => a.type)).toEqual(["teams.message.post"]);
+    });
+  });
 });
