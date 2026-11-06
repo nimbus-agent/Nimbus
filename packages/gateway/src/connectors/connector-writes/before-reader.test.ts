@@ -168,7 +168,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
     expect(Object.getPrototypeOf(picked)).toBeNull();
   });
 
-  test("the rows with readers are exactly the thirty-five (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, and the four C2 branch, PR and MR rows with a reader), and every reader passes", () => {
+  test("the rows with readers are exactly the forty (seven B1 comments, nine B2 issue writes, five B3 page writes, the B4a Drive create, the B4b Obsidian append, the eight C1 file, PR and incident writes, the four C2 branch, PR and MR rows with a reader, and the five C3 flag and alert rows), and every reader passes", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined)
       .map((r) => r.toolId)
       .sort((a, b) => a.localeCompare(b));
@@ -189,6 +189,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "github_pr_close",
         "github_pr_create",
         "github_pr_update",
+        "flagsmith_feature_state_set",
         "gitlab_issue_assignees_add",
         "gitlab_issue_labels_add",
         "gitlab_issue_note_create",
@@ -198,6 +199,10 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "jira_comment_add",
         "jira_issue_transition",
         "jira_issue_update",
+        "jira_ops_alert_acknowledge",
+        "jira_ops_alert_close",
+        "launchdarkly_flag_rollout_set",
+        "launchdarkly_flag_toggle",
         "linear_comment_create",
         "linear_issue_update",
         "notion_block_append",
@@ -211,7 +216,7 @@ describe("BeforeStateReader (spec § 5.4)", () => {
         "pd_incident_resolve",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(withReader).toHaveLength(35);
+    expect(withReader).toHaveLength(40);
     for (const r of CONNECTOR_WRITE_ROWS) expect(beforeReaderProblems(r)).toEqual([]);
   });
 });
@@ -719,7 +724,7 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly seven (B2, B3, C2)", () => {
+  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly eight (B2, B3, C2, C3)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition", "gdrive_file_move", "onedrive_item_move"]);
@@ -729,6 +734,7 @@ describe("a second read (`also`) and the guard (B2a)", () => {
       "confluence_page_update",
       "github_pr_update",
       "gitlab_mr_update",
+      "launchdarkly_flag_rollout_set",
       "linear_issue_update",
       "notion_block_append",
       "notion_page_update",

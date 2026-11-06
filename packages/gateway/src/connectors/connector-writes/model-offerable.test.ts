@@ -30,7 +30,7 @@ describe("isModelOfferableRow (M1)", () => {
     expect(isModelOfferableRow(row({ wave: 4, preview: template, before: reader }))).toBe(true);
     expect(isModelOfferableRow(row({ wave: 4, before: reader }))).toBe(false);
   });
-  test("exactly the 62 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) and the six wave-3 branch, pull request and merge request rows (C2)", () => {
+  test("exactly the 67 rows are offerable: the 38 B1-B4b rows, the ten wave-3 refreshes and data-quality rows (C0) the eight wave-3 file, PR and incident rows (C1) the six wave-3 branch, pull request and merge request rows (C2) and the five wave-3 flag and alert rows (C3)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)
         .map((r) => r.toolId)
@@ -54,6 +54,7 @@ describe("isModelOfferableRow (M1)", () => {
         "confluence_page_create",
         "confluence_page_update",
         "discord_message_post",
+        "flagsmith_feature_state_set",
         "gdrive_file_create",
         "gdrive_file_move",
         "gdrive_file_rename",
@@ -81,6 +82,10 @@ describe("isModelOfferableRow (M1)", () => {
         "jira_issue_create",
         "jira_issue_transition",
         "jira_issue_update",
+        "jira_ops_alert_acknowledge",
+        "jira_ops_alert_close",
+        "launchdarkly_flag_rollout_set",
+        "launchdarkly_flag_toggle",
         "linear_comment_create",
         "linear_issue_create",
         "linear_issue_update",
@@ -101,7 +106,7 @@ describe("isModelOfferableRow (M1)", () => {
         "teams_message_post_chat",
       ].sort((a, b) => a.localeCompare(b)),
     );
-    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(62);
+    expect(CONNECTOR_WRITE_ROWS.filter(isModelOfferableRow)).toHaveLength(67);
     // Wave 4 still needs a before reader: argocd's templated wave-4 rows stay out.
     expect(offerableWritesEnabledBy("argocd", 4)).toEqual([]);
     expect(writesEnabledBy("argocd", 4)).toHaveLength(2);

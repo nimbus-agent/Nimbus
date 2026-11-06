@@ -11684,12 +11684,13 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes and C2's four wave-3 branch, pull request and merge request writes (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes (no wave-4 row has one, so none is offerable)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
     expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",
+      "flagsmith_feature_state_set",
       "gdrive_file_create",
       "gdrive_file_move",
       "gdrive_file_rename",
@@ -11711,6 +11712,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       "jira_comment_add",
       "jira_issue_transition",
       "jira_issue_update",
+      "jira_ops_alert_acknowledge",
+      "jira_ops_alert_close",
+      "launchdarkly_flag_rollout_set",
+      "launchdarkly_flag_toggle",
       "linear_comment_create",
       "linear_issue_update",
       "notion_block_append",
@@ -11729,6 +11734,7 @@ describe("I53 — a first-party connector write reaches the model only through t
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual([
+      "flagsmith_feature_state_set",
       "gdrive_file_move",
       "gdrive_file_rename",
       "gdrive_file_trash",
@@ -11737,6 +11743,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       "github_pr_create",
       "github_pr_update",
       "gitlab_mr_update",
+      "jira_ops_alert_acknowledge",
+      "jira_ops_alert_close",
+      "launchdarkly_flag_rollout_set",
+      "launchdarkly_flag_toggle",
       "onedrive_item_move",
       "pd_incident_acknowledge",
       "pd_incident_escalate",
