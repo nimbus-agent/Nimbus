@@ -27,11 +27,13 @@ export function selectGitlabMrIdentity(reply: unknown): readonly BeforeStateFiel
 }
 
 export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
-  row("github_pr_merge", "github.pr.merge", "mesh", 3),
+  // Spec § 15, OR-W34-3: merges, branch delete and tag create are irreversible, so wave 4 (always
+  // prompts, needs a before-state and type-to-confirm, never auto-fires).
+  row("github_pr_merge", "github.pr.merge", "mesh", 4),
   row("github_pr_close", "github.pr.close", "mesh", 3),
-  row("github_branch_delete", "github.branch.delete", "mesh", 3),
-  row("github_tag_create", "github.tag.create", "mesh", 3),
-  row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 3),
+  row("github_branch_delete", "github.branch.delete", "mesh", 4),
+  row("github_tag_create", "github.tag.create", "mesh", 4),
+  row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4),
   withBefore(
     withPreview(row("gitlab_mr_note_create", "gitlab.mr.note.create", "mesh", 2), {
       target: "{projectPath}!{mergeRequestIid}",
@@ -48,7 +50,7 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       select: selectGitlabMrIdentity,
     },
   ),
-  row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 3),
+  row("bitbucket_pr_merge", "bitbucket.pr.merge", "mesh", 4),
   row("jenkins_build_trigger", "jenkins.build.trigger", "mesh", 4),
   row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4),
   row("gha_run_trigger", "github_actions.run.trigger", "mesh", 4),

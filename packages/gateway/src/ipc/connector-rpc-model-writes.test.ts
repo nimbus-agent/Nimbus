@@ -323,6 +323,34 @@ describe("the approved set (V84): synthetic templated rows through the handlers'
   });
 });
 
+describe("C0: a templated send is never offered or approved (OR-W34-1)", () => {
+  const T = { target: "{to}", summary: "s", fields: [] };
+  const SEND = withPreview(row("gmail_message_send", "gmail.message.send", "mesh", 2), T);
+  const DRAFT = withPreview(row("gmail_draft_create", "gmail.draft.create", "mesh", 2), T);
+
+  test("enable lists the send as not offered and never stores it as approved", async () => {
+    const prompts: string[] = [];
+    await handleConnectorWritesEnable(
+      { service: "gmail", wave: 3 },
+      {
+        db,
+        toolExecutor: executor(true, prompts),
+        getEnforcedPolicy: () => OPEN,
+        now: () => 5,
+        rows: [SEND, DRAFT],
+      },
+    );
+    const p = prompts[0] ?? "";
+    expect(p).toContain("gmail_message_send  gmail.message.send  wave 2  (not offered yet)");
+    expect(p).toContain(
+      "gmail_draft_create  gmail.draft.create  wave 2  (new: offered after you approve)",
+    );
+    expect(getModelWriteEnablement(db, "gmail")?.approvedToolIds).toEqual(
+      new Set(["gmail_draft_create"]),
+    );
+  });
+});
+
 describe("wiring", () => {
   test("the executor the connector dispatcher builds is gate-only: NULL_EGRESS_SINK, stub dispatcher", () => {
     const src = readFileSync(join(import.meta.dir, "server", "dispatchers.ts"), "utf8");

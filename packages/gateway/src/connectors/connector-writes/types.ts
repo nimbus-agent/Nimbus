@@ -307,12 +307,16 @@ export interface ConnectorWrite {
   readonly service: string;
 }
 
-/** A wave-4 write with no input fields beyond what its target and summary already show. */
+/**
+ * A `write`-transport row with no input fields beyond what its target and summary already show.
+ * The wave is stated by every caller (spec § 15, OR-W34-3 moved eight of these to wave 3).
+ */
 export function fieldlessWrite(
   toolId: string,
   actionType: string,
+  wave: ConnectorWriteWave,
   target: string,
   summary: string,
 ): ConnectorWriteRow {
-  return withPreview(row(toolId, actionType, "write", 4), { target, summary, fields: [] });
+  return withPreview(row(toolId, actionType, "write", wave), { target, summary, fields: [] });
 }
