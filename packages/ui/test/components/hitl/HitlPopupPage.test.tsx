@@ -16,6 +16,7 @@ const storeState: {
     details?: Record<string, unknown>;
     receivedAtMs: number;
     actionType?: string;
+    confirmText?: string;
   }>;
   resolve: (id: string, ok: boolean) => void;
 } = { pending: [], resolve: vi.fn() };
@@ -323,5 +324,89 @@ describe("HitlPopupPage: connector write preview", () => {
     render(<HitlPopupPage />);
     expect(screen.getByRole("heading", { name: "Close an issue" })).toBeInTheDocument();
     expect(screen.queryByTestId("connector-write-preview")).toBeNull();
+  });
+});
+
+describe("HitlPopupPage type-to-confirm (Wave 4)", () => {
+  const TEXT = "github/acme/api#42";
+  const wave4 = (over: Record<string, unknown> = {}) => [
+    {
+      requestId: "w4",
+      prompt: `Merge?
+
+To approve, type exactly: ${TEXT}`,
+      receivedAtMs: 1,
+      actionType: "github.pr.merge",
+      confirmText: TEXT,
+      ...over,
+    },
+  ];
+
+  it("shows the text and a labelled input, focuses the input, and disables Approve", () => {
+    storeState.pending = wave4();
+    render(<HitlPopupPage />);
+    expect(screen.getByTestId("confirm-text")).toHaveTextContent(TEXT);
+    const input = screen.getByLabelText(/Type the text above/i);
+    expect(document.activeElement).toBe(input);
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+  });
+
+  it("focuses the input even for a non-destructive action type", () => {
+    storeState.pending = wave4({ actionType: "data.export" });
+    render(<HitlPopupPage />);
+    expect(document.activeElement).toBe(screen.getByLabelText(/Type the text above/i));
+  });
+
+  it("enables Approve only on an exact match (no trim, no case fold) and forwards typed", async () => {
+    storeState.pending = wave4();
+    consentRespond.mockResolvedValue(undefined);
+    render(<HitlPopupPage />);
+    const input = screen.getByLabelText(/Type the text above/i);
+    const approve = screen.getByRole("button", { name: /Approve/i });
+    for (const wrong of [`${TEXT} `, ` ${TEXT}`, TEXT.toUpperCase(), TEXT.slice(0, -1)]) {
+      fireEvent.change(input, { target: { value: wrong } });
+      expect(approve).toBeDisabled();
+    }
+    fireEvent.change(input, { target: { value: TEXT } });
+    expect(approve).toBeEnabled();
+    fireEvent.click(approve);
+    await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("w4", true, TEXT));
+  });
+
+  it("Enter in the field never approves", () => {
+    storeState.pending = wave4();
+    render(<HitlPopupPage />);
+    const input = screen.getByLabelText(/Type the text above/i);
+    fireEvent.change(input, { target: { value: TEXT } });
+    const notPrevented = fireEvent.keyDown(input, { key: "Enter" });
+    expect(notPrevented).toBe(false);
+    expect(consentRespond).not.toHaveBeenCalled();
+  });
+
+  it("Reject needs no text and sends an empty typed", async () => {
+    storeState.pending = wave4();
+    consentRespond.mockResolvedValue(undefined);
+    render(<HitlPopupPage />);
+    fireEvent.click(screen.getByRole("button", { name: /Reject/i }));
+    await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("w4", false, ""));
+  });
+
+  it("typed text does not carry over to the next queued request", () => {
+    storeState.pending = wave4();
+    const { rerender } = render(<HitlPopupPage />);
+    fireEvent.change(screen.getByLabelText(/Type the text above/i), { target: { value: TEXT } });
+    storeState.pending = wave4({ requestId: "w4b" });
+    rerender(<HitlPopupPage />);
+    expect(screen.getByLabelText(/Type the text above/i)).toHaveValue("");
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+  });
+
+  it("a request with no confirmText shows no field and behaves as before", async () => {
+    storeState.pending = [{ requestId: "plain", prompt: "p", receivedAtMs: 1 }];
+    consentRespond.mockResolvedValue(undefined);
+    render(<HitlPopupPage />);
+    expect(screen.queryByLabelText(/Type the text above/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Approve/i }));
+    await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("plain", true));
   });
 });

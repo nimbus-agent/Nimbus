@@ -19,6 +19,7 @@ interface ConsentRequestPayload {
   prompt: string;
   details?: Record<string, unknown>;
   action_type?: string | null;
+  confirm_text?: string | null;
   received_at_ms: number;
 }
 
@@ -71,6 +72,8 @@ export function RootLayout() {
       };
       if (p.details !== undefined) request.details = p.details;
       if (typeof p.action_type === "string") request.actionType = p.action_type;
+      if (typeof p.confirm_text === "string" && p.confirm_text !== "")
+        request.confirmText = p.confirm_text;
       enqueue(request);
     },
     [enqueue],
@@ -101,6 +104,8 @@ export function RootLayout() {
           };
           if (p.details !== undefined) request.details = p.details;
           if (typeof p.action_type === "string") request.actionType = p.action_type;
+          if (typeof p.confirm_text === "string" && p.confirm_text !== "")
+            request.confirmText = p.confirm_text;
           enqueue(request);
         }
       })

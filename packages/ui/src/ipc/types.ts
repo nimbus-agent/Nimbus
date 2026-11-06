@@ -87,6 +87,8 @@ export interface HitlRequest {
   details?: Record<string, unknown>;
   /** The gateway HITL action type (data.delete, extension.migrate, ...). Absent from an older gateway. */
   actionType?: string;
+  /** Wave 4 connector write: the exact text the owner must type to approve. Absent otherwise. */
+  confirmText?: string;
   receivedAtMs: number;
 }
 

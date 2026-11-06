@@ -53,7 +53,7 @@ export interface NimbusIpcClient {
   connectorListStatus(): Promise<ConnectorStatus[]>;
   indexMetrics(): Promise<IndexMetrics>;
   auditList(limit?: number): Promise<AuditEntry[]>;
-  consentRespond(requestId: string, approved: boolean): Promise<void>;
+  consentRespond(requestId: string, approved: boolean, typed?: string): Promise<void>;
   profileList(): Promise<ProfileListResult>;
   profileCreate(name: string): Promise<{ name: string }>;
   profileSwitch(name: string): Promise<{ active: string }>;
@@ -244,8 +244,12 @@ export function createIpcClient(): NimbusIpcClient {
       if (!Array.isArray(res)) throw new Error("audit.list: expected array");
       return res as AuditEntry[];
     },
-    async consentRespond(requestId: string, approved: boolean): Promise<void> {
-      await this.call<unknown>("consent.respond", { requestId, approved });
+    async consentRespond(requestId: string, approved: boolean, typed?: string): Promise<void> {
+      await this.call<unknown>("consent.respond", {
+        requestId,
+        approved,
+        ...(typed === undefined ? {} : { typed }),
+      });
       await invoke("hitl_resolved", { requestId, approved });
     },
     async profileList(): Promise<ProfileListResult> {
