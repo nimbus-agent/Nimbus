@@ -457,12 +457,21 @@ function applyLinearConnectorAuth(p: ConnectorAuthParams, token: string | undefi
   );
 }
 
-function applyGithubConnectorAuth(p: ConnectorAuthParams, token: string | undefined): void {
+function applyGithubConnectorAuth(
+  p: ConnectorAuthParams,
+  token: string | undefined,
+  apiBase: string | undefined,
+): void {
   p.personalAccessToken = requirePatFromFlagsOrEnv(
     token,
     ["NIMBUS_GITHUB_PAT"],
     "GitHub requires a PAT: nimbus connector auth github --token <pat>  (or set NIMBUS_GITHUB_PAT in the environment)",
   );
+  // A GitHub Enterprise Server base. The gateway validates it (https only, no credentials, ...)
+  // before anything is probed or stored, and a re-auth without it returns to github.com.
+  if (apiBase !== undefined) {
+    p.apiBaseUrl = apiBase;
+  }
 }
 
 function applyCircleciConnectorAuth(p: ConnectorAuthParams, token: string | undefined): void {
@@ -813,7 +822,7 @@ type ConnectorPatAuthParamApplier = (p: ConnectorAuthParams, f: ConnectorFlags) 
 
 const CONNECTOR_AUTH_PARAM_APPLIERS: Record<string, ConnectorPatAuthParamApplier> = {
   linear: (p, f) => applyLinearConnectorAuth(p, f.token),
-  github: (p, f) => applyGithubConnectorAuth(p, f.token),
+  github: (p, f) => applyGithubConnectorAuth(p, f.token, f.apiBase),
   circleci: (p, f) => applyCircleciConnectorAuth(p, f.token),
   pagerduty: (p, f) => applyPagerdutyConnectorAuth(p, f.token, f.username),
   kubernetes: (p, f) => applyKubernetesConnectorAuth(p, f.kubeconfig, f.kubeContext),
@@ -1429,6 +1438,7 @@ Env vars: NIMBUS_OAUTH_GOOGLE_CLIENT_ID, NIMBUS_OAUTH_GOOGLE_CLIENT_SECRET (Web 
   NIMBUS_OAUTH_NOTION_CLIENT_ID, NIMBUS_OAUTH_NOTION_CLIENT_SECRET
 `);
   console.log(`GitHub: use --token or env NIMBUS_GITHUB_PAT (stored as vault key github.pat). Also registers GitHub Actions sync (service id github_actions) with the same PAT.
+GitHub Enterprise Server: add --api-base https://ghe.example.com (stored as github.api_base; https only, one instance at a time, GHE.com is not supported). Re-running without --api-base returns to github.com.
 GitLab: use --token or env NIMBUS_GITLAB_PAT (gitlab.pat). Self-hosted: --api-base https://git.example.com/api/v4 (gitlab.api_base).
 Linear: use --token or env NIMBUS_LINEAR_API_KEY (linear.api_key).
 `);
