@@ -1027,6 +1027,17 @@ export class LazyConnectorMesh {
   }
 
   /**
+   * Called after EVERY `connector.auth github`, successful or not past validation. The child reads
+   * `GITHUB_PAT` and `GITHUB_API_BASE_URL` at spawn only, so a changed PAT or a changed (or
+   * removed) GitHub Enterprise Server base would otherwise keep serving the old credential and host
+   * until an idle disconnect. Both children (`github`, `github_actions`) share this one slot.
+   * Same contract as {@link LazyConnectorMesh.restartPagerduty}.
+   */
+  restartGithub(): void {
+    void this.detachLazyClient(LAZY_MESH.github);
+  }
+
+  /**
    * Called after the owner's Obsidian opt-in changes (enable approved, or disable). Returns
    * promptly, never waiting on an in-flight call:
    *  1. the `mesh:obsidian` slot is DETACHED at once: its client is cleared and its generation and
