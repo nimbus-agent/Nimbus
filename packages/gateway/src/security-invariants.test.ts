@@ -12212,11 +12212,12 @@ describe("I53 — a first-party connector write reaches the model only through t
       "engine/executor.ts",
     ]);
     const runner = stripComments(await read("packages/gateway/src/engine/before-state.ts"));
-    // The ONE construction of the refusal, from the reader's own guard reason.
+    // The ONE construction of the refusal (`refusalOf`), from the reader's own guard reason, or
+    // (D1) the fixed Wave 4 text when no guard applies to a Wave 4 row.
     expect(runner.match(/status: "refused"/g)).toHaveLength(2); // the type's field, and the value
-    expect(runner).toContain(
-      'const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };',
-    );
+    expect(runner.match(/refusalOf[(]/g)).toHaveLength(3); // the definition and its two uses
+    expect(runner).toContain("const guardReason = guarded ? reader.guard?.reason : undefined;");
+    expect(runner).toContain("const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);");
     const exec = stripComments(await read("packages/gateway/src/engine/executor.ts"));
     const previewAt = exec.indexOf("private async captureBeforePhase(");
     const previewBody = exec.slice(previewAt, exec.indexOf("\n  }\n", previewAt));

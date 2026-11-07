@@ -158,6 +158,11 @@ export interface BeforeStateRunnerOptions {
   };
 }
 
+/** The ONE construction of a refusal: a guard's reason, or {@link WAVE4_BEFORE_REFUSAL}. */
+function refusalOf(reason: string): BeforeStateRefusal {
+  return { status: "refused", reason };
+}
+
 const unavailable = (reason: BeforeStateUnavailableReason): ConnectorWriteBeforeState => ({
   status: "unavailable",
   reason,
@@ -399,7 +404,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       if (reader === undefined || row.preview === undefined) {
         // Defence in depth: such a row is never offered (`isModelOfferableRow`), but an
         // `origin: "model"` action can reach an executor through other paths.
-        return row.wave === 4 ? { status: "refused", reason: WAVE4_BEFORE_REFUSAL } : undefined;
+        return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;
       }
       const input = extractToolInput(action);
       const picked = isPlainObject(input)
@@ -415,10 +420,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       // the fixed Wave 4 text. Any other row only shows `unavailable`.
       const mustRead = guarded || row.wave === 4;
       const guardReason = guarded ? reader.guard?.reason : undefined;
-      const refusal: BeforeStateRefusal = {
-        status: "refused",
-        reason: guardReason ?? WAVE4_BEFORE_REFUSAL,
-      };
+      const refusal = refusalOf(guardReason ?? WAVE4_BEFORE_REFUSAL);
       const fail = (reason: BeforeStateUnavailableReason): BeforeStateOutcome =>
         mustRead ? refusal : unavailable(reason);
       if (opts.readerUnlisted === true || picked === undefined || !isPlainObject(input)) {
