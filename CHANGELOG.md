@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.38.0](https://github.com/nimbus-agent/Nimbus/compare/v10.37.0...v10.38.0) (2026-11-07)
+
+
+### Features
+
+* **gateway:** typed confirmation over ChatOps, a Slack modal and a Teams card input ([#1931](https://github.com/nimbus-agent/Nimbus/issues/1931)) ([091f51b](https://github.com/nimbus-agent/Nimbus/commit/091f51baab0163c2bc925a28d1138fa6239bc9c3))
+
 ## [10.37.0](https://github.com/nimbus-agent/Nimbus/compare/v10.36.0...v10.37.0) (2026-11-07)
 
 
