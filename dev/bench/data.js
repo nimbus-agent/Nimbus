@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794072819178,
+  "lastUpdate": 1794073501521,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "30e069816e4802129a134d057031987e7bd5cc67",
-          "message": "chore: extract the MCP launcher to nimbus-agent/nimbus-mcp (#1280)\n\n`packages/mcp-launcher` is now `@nimbus-dev/mcp`, published from\n[nimbus-agent/nimbus-mcp](https://github.com/nimbus-agent/nimbus-mcp)\nvia OIDC trusted\npublishing. This removes it from the monorepo and registers the new repo\nin the org sweep.\n\nBranch B of\n`docs/superpowers/specs/2026-08-19-mcp-launcher-publish-route.md`, which\nis\nthe decision doc this executes; the verified precedent it was executed\nagainst is\n`docs/superpowers/specs/2026-08-20-satellite-publish-precedent.md`.\n\n## Verified before this PR\n\n- `@nimbus-dev/mcp@0.2.0` is live, published by GitHub Actions OIDC with\nno npm token.\n`npm audit signatures` reports a verified attestation, and both\npredicate types are\npresent: the npm publish attestation and a SLSA provenance predicate\nnaming this org's\n  repo, workflow and commit.\n- `npx -y @nimbus-dev/mcp` resolves, executes the bin, and reports\ncorrectly on both the\n  found and not-found paths.\n- The release tag is `mcp-v0.2.0` and its ruleset rejects deletion —\nconfirmed by\n  attempting one.\n\n## The drift guard is not dropped, it is split\n\n`resolve-binary.test.ts` used to read `scripts/install/lib/paths.ts` as\ntext to keep the\nlauncher's install-directory fallbacks in sync with what the installer\nwrites. That\nrelative path does not survive extraction.\n\nIt is replaced by vendored constants in the satellite plus\n`scripts/structure-audit/check-launcher-installer-contract.ts` here, run\nby two jobs:\n`install-smoke.yml` at PR time (it already triggers on\n`scripts/install/**`) and\n`org-drift-sweep.yml` on a schedule. The two directions catch different\nchanges — a\nmonorepo path filter can never see a commit in another repository — so\nneither subsumes\nthe other and both are kept.\n\n## Note on scope\n\nNine monorepo sites beyond the `workspaces` and `test`-script entries\nreferenced the\npackage: the coverage instrumentation scope, the coverage-floor\ndiscovery glob and its\ntest, `build-lcov.sh`, `sonar-project.properties`, `ci-tests.ts`, two\nsites in\n`_test-suite.yml`, and the platform-branching allowlist. `exclusions.ts`\nand\n`sonar-project.properties` are joined by `check-exclusion-parity.ts` and\nhad to move\ntogether.\n\nThe allowlist entry carried a claim that was already false — that no\ncoverage-threshold\ngate covered the package — and is deleted with it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n---------\n\nCo-authored-by: Claude Opus 5 <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T18:56:54Z",
-          "tree_id": "22a1937d8f2030531bfbe4e6ab4daf4ebdc79318",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/30e069816e4802129a134d057031987e7bd5cc67"
-        },
-        "date": 1787252927548,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 336.9834725500008,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 330.13418854999907,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 195.18658255000335,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b6812305314f5d251023f1f83925247575efb1c0",
+          "message": "chore: release main (#1932)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.38.0</summary>\n\n##\n[10.38.0](https://github.com/nimbus-agent/Nimbus/compare/v10.37.0...v10.38.0)\n(2026-11-07)\n\n\n### Features\n\n* **gateway:** typed confirmation over ChatOps, a Slack modal and a\nTeams card input\n([#1931](https://github.com/nimbus-agent/Nimbus/issues/1931))\n([091f51b](https://github.com/nimbus-agent/Nimbus/commit/091f51baab0163c2bc925a28d1138fa6239bc9c3))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-07T17:34:51Z",
+          "tree_id": "b96a32f3a0818cda0165d3e9a0961628b24bc85b",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b6812305314f5d251023f1f83925247575efb1c0"
+        },
+        "date": 1794073497101,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 281.5532940000012,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 283.1514621500013,
             "unit": "ms"
           }
         ]
