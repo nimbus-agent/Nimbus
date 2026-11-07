@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794033371466,
+  "lastUpdate": 1794072819178,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "2b28065c2ded4fcc629a55e0be139cc677494693",
-          "message": "docs(specs): clip source metadata on POST /v1/clips (#1279)\n\n## Summary\n\nDesign only — no gateway code in this PR. It proposes one optional\n`source` object on `POST /v1/clips` so a web clip can carry provenance.\n\nToday `validateClipInput`\n(`packages/gateway/src/clips/clip-ingest.ts:46`) reads exactly seven\nfields and drops everything else, and `ingestClip` composes the item's\n`metadata` itself. So a clip is the **one item type in the index that\narrives with no provenance at all** — no author, no publish date, no\nsite name — while every connector-sourced item has them from its source.\nThe browser clipper already extracts `byline`, `siteName`,\n`publishedTime` and `lang` (Readability parses JSON-LD and OpenGraph for\nfree) and throws all four away, because there is nowhere on the wire to\nput them.\n\nThe proposed shape lands as `metadata.source`:\n\n```ts\nsource?: { author?: string; publishedAt?: number; siteName?: string; lang?: string; leadImage?: string }\n```\n\nTwo decisions the spec argues rather than assumes:\n\n- **`publishedAt` is epoch ms, normalised client-side.**\n`article:published_time` and JSON-LD `datePublished` carry whatever\nformat the publisher chose; parsing that on a locked ingest path where a\nparse failure costs the caller their clip is the wrong place for it. The\nvalidator checks only \"integer inside `Date`'s range\".\n- **A malformed member is dropped, not thrown.** `asString` throws\nbecause a clip without a title is not a clip; a clip with a malformed\nbyline is still a perfectly good clip, and failing it would mean one bad\n`<meta>` tag costs the user their capture. Bounds are typed by what the\nvalue *is*: prose truncates, structured values are dropped — half a URL\nis a broken link rather than a shorter one.\n\nIt also pins three things this must **not** change: clip identity\n(`externalIdFor` hashes the canonical URL and, for selections, the body\n— never metadata), `modified_at` (still `capturedAt`; letting\n`publishedAt` drive it would reorder data already in every user's\nindex), and `author_id` (byline → person resolution is its own design).\n\nTwo gates that look like they apply and do not, both checked rather than\nassumed: `packages/gateway/openapi/v1.yaml` describes the read-only data\nAPI and does not mention `/v1/clips`, and this adds a field to an\nexisting route rather than a route, so `WRITE_ROUTE_ALLOWLIST` and the\n`I30` minting rule are untouched.\n\n## Related Issue\n\nRelates to the web clipper's roadmap item 2.5. This is the **S2** slice\nof a cross-repo design; the browser slices live in\n[`nimbus-web-clipper`](https://github.com/nimbus-agent/nimbus-web-clipper).\nS1 (canonical-URL fidelity, client-only) shipped there in\nnimbus-agent/nimbus-web-clipper#67. S3 (extraction and threading) is\ndeliberately gated on this landing — shipping it earlier would put\nAuthor and Published in the extension's pre-send preview while this\nvalidator discarded them, making that preview lie about what leaves.\n\nCloses #\n\n## Type of Change\n\n- [x] Documentation only\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome — format + lint)\n- [x] All existing tests pass (`bun test`)\n- [x] New behaviour is covered by tests — n/a, design document only; the\nspec enumerates the test cases the implementation must carry, including\nthe drop-don't-throw rule and a 1965 publication date staying valid\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction — n/a\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] If this PR touches `docs/README.md` — n/a\n\nAlso verified: `bun run lint:markdown` clean, and `bun\nscripts/structure-audit/check-doc-references.ts --check` resolves 1208\nrefs across 41 docs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **Documentation**\n* Added an approved design for optional source metadata on clip\nsubmissions, including author, publication date, site name, language,\nand lead-image URL.\n* Documented validation, size limits, timestamp handling, metadata\nreplacement behavior, and privacy-preserving URL handling.\n* Added a design review covering open questions around URL lengths,\npublication dates, and language values.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T21:32:30+03:00",
-          "tree_id": "2cb02943234b9e5037ef3442156580cf0206c306",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/2b28065c2ded4fcc629a55e0be139cc677494693"
-        },
-        "date": 1787251434801,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 324.80492640000193,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 322.9368442999963,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.81737570000007,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "091f51baab0163c2bc925a28d1138fa6239bc9c3",
+          "message": "feat(gateway): typed confirmation over ChatOps, a Slack modal and a Teams card input (#1931)\n\nPhase 9.7 PR D0c: typed confirmation over ChatOps.\n\nUntil now, a Wave 4 write asked in Slack or Teams always ended in the\nfixed reply \"cannot collect typed text\". ChatOps now supplies\n`requestRemoteConfirmed`. The owner gets a confirm card, and the write\ndispatches only when the owner's typed text equals the confirm text\nexactly. The executor alone compares the two, per static D41.\n\n**Slack**\n- The card has Confirm and Reject buttons.\n- Confirm opens a modal through `views.open`, recorded as a ledgered\n`chatops.confirmModal` row under I29, with one `plain_text_input` of at\nmost 512 characters.\n- Interactive envelopes are acked first and deduplicated by envelope id.\n\n**Teams**\n- An Adaptive Card 1.4 with an `Input.Text` and Approve and Reject\nsubmits, on the existing messaging endpoint.\n- Submits are deduplicated by activity id.\n\n**Who counts**\n- Only the resource owner's answer counts. A non-owner's click, submit\nor Reject leaves the card live.\n- A channel text `approve` never approves a confirm card. A text\n`reject` from the owner rejects it.\n- Nothing between the form and the executor trims, normalises or\ncompares the typed text. A value that is not a string, or is over the\ncap, reaches the executor as the empty string and fails its comparison.\n- Identity is resolved at every step, and an unmapped user does nothing.\n\n**Owner action for Slack:** enable Interactivity in the app manifest\n(`settings.interactivity.is_enabled: true`; Socket Mode needs no request\nURL) and add the `views:write` bot scope. Until then, the Confirm click\nnever arrives and the write waits as a plain card would. Teams needs no\nchange. This is not a breaking change: a Wave 4 write in ChatOps moves\nfrom always refused to refused unless typed.\n\n**Invariants:** no new invariant and no migration. I20, I23 and I29 text\nis extended. Static D17 now also confines the `slack_views_open`\nliteral, which joins `CHATOPS_POST_TOOL_IDS` and so is refused over\nfederation under I26.\n\n**Dependency:** pins `@nimbus-dev/connectors` 0.7.0 (nimbus-mcp-servers\n#71 / #72), which adds `slack_views_open`, `slack_chat_post` `blocks`\nand `teams_chat_post` `attachments`. `audit:connector-version-skew`\nreports pinned 0.7.0, latest 0.7.0.\n\n**Docs:** CLAUDE.md, GEMINI.md, roadmap, architecture, docs/README,\ncli-reference, SECURITY-INVARIANTS, CHANGELOG, and the Slack and Teams\nconnector pages.\n\n**Gates, run locally:**\n- preflight:fast, typecheck:tests, `security-invariants.test.ts`,\n`scripts/structure-audit`, and the chatops/egress/ipc tests: 4102 pass,\n0 fail.\n- Istanbul coverage on the changed files: at least 99% of lines and\n96.7% of branches on each.\n- verify:docker --changed.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added typed confirmation for ChatOps writes in Slack and Teams.\nResource owners must enter the exact confirmation text; typing “approve”\nin chat does not authorize a write.\n* Slack confirmations use Confirm/Reject buttons and a modal, requiring\nInteractivity and the `views:write` bot scope. Teams confirmations use\nan Adaptive Card with a text field and Approve/Reject buttons, with no\nadditional configuration required.\n  * Mismatched or missing confirmation text does not approve the write.\n* **Documentation**\n* Added setup guidance and details on confirmation behavior, owner\nchecks, and failure handling.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Sonnet 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-07T17:27:42Z",
+          "tree_id": "493d5a4412f4807cabd7cf2131808011155b0f96",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/091f51baab0163c2bc925a28d1138fa6239bc9c3"
+        },
+        "date": 1794072815962,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 192.1308149000006,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 195.18658255000335,
             "unit": "ms"
           }
         ]
