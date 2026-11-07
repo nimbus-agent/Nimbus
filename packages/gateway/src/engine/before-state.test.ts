@@ -31,12 +31,12 @@ import { generateEd25519Keypair } from "../util/ed25519.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
   BEFORE_STATE_TIMEOUT_MS,
-  WAVE4_BEFORE_REFUSAL,
   type BeforeReadOps,
   type BeforeStateRunnerOptions,
   classifyBeforeStateError,
   createBeforeStateRunner,
   isBeforeReadActionType,
+  WAVE4_BEFORE_REFUSAL,
 } from "./before-state.ts";
 import { type ExecutorPolicyDep, NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
 import type { AuditSink, ConnectorDispatcher, ConsentChannel, PlannedAction } from "./types.ts";

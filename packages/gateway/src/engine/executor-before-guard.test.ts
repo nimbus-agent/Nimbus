@@ -214,6 +214,7 @@ describe("the before-state guard inside gate() (B2a)", () => {
 
 describe("a Wave 4 model write whose current state cannot be read is refused inside gate() (D1)", () => {
   /** An unguarded Wave 4 row: the generic rule, not a guard, refuses. */
+  const { guard: _guard, ...NO_GUARD_READER } = READER;
   const WAVE4_ROW: ConnectorWriteRow = withConfirm(
     withBefore(
       withPreview(row("jira_issue_update", "jira.issue.update", "mesh", 4), {
@@ -221,7 +222,7 @@ describe("a Wave 4 model write whose current state cannot be read is refused ins
         summary: "Update {issueKey}",
         fields: [{ key: "summary", label: "Summary", kind: "text" }],
       }),
-      { ...READER, guard: undefined },
+      NO_GUARD_READER,
     ),
     { template: "update {summary}" },
   );

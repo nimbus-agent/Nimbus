@@ -54,8 +54,8 @@ import {
 } from "../connectors/connector-writes/preview.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
-import type { ExecuteOptions, ToolExecutor } from "./executor.ts";
 import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
+import type { ExecuteOptions, ToolExecutor } from "./executor.ts";
 import { serviceOf } from "./service-of.ts";
 import { wrapToolDescription } from "./tool-output-envelope.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";

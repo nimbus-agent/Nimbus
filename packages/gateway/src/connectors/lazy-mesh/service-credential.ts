@@ -55,7 +55,8 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
   github: async (vault) => present(await readConnectorSecret(vault, "github", "pat")),
   gitlab: async (vault) => present(await readConnectorSecret(vault, "gitlab", "pat")),
   // GitHub Actions runs as a second server in the github slot, spawned with the SAME PAT.
-  github_actions: async (vault) => presentTrimmed(await readConnectorSecret(vault, "github", "pat")),
+  github_actions: async (vault) =>
+    presentTrimmed(await readConnectorSecret(vault, "github", "pat")),
   // The spawner needs BOTH the Bitbucket username and the app password.
   bitbucket: (vault) =>
     allPresentTrimmed([
@@ -69,7 +70,8 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
       readConnectorSecret(vault, "jenkins", "username"),
       readConnectorSecret(vault, "jenkins", "api_token"),
     ]),
-  circleci: async (vault) => presentTrimmed(await readConnectorSecret(vault, "circleci", "api_token")),
+  circleci: async (vault) =>
+    presentTrimmed(await readConnectorSecret(vault, "circleci", "api_token")),
   slack: async (vault) => present(await readConnectorSecret(vault, "slack", "oauth")),
   linear: async (vault) => present(await readConnectorSecret(vault, "linear", "api_key")),
   notion: async (vault) => present(await readConnectorSecret(vault, "notion", "oauth")),

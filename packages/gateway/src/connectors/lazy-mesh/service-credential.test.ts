@@ -160,13 +160,25 @@ describe("isServiceCredentialConfigured", () => {
 
   test("github_actions rides the GitHub PAT (it runs in the github slot) and nothing else", async () => {
     expect(
-      await isServiceCredentialConfigured(await vaultWith({ "github.pat": "p" }), "github_actions", {}),
+      await isServiceCredentialConfigured(
+        await vaultWith({ "github.pat": "p" }),
+        "github_actions",
+        {},
+      ),
     ).toBe(true);
     expect(
-      await isServiceCredentialConfigured(await vaultWith({ "github.pat": "  " }), "github_actions", {}),
+      await isServiceCredentialConfigured(
+        await vaultWith({ "github.pat": "  " }),
+        "github_actions",
+        {},
+      ),
     ).toBe(false);
     expect(
-      await isServiceCredentialConfigured(await vaultWith({ "gitlab.pat": "p" }), "github_actions", {}),
+      await isServiceCredentialConfigured(
+        await vaultWith({ "gitlab.pat": "p" }),
+        "github_actions",
+        {},
+      ),
     ).toBe(false);
   });
 

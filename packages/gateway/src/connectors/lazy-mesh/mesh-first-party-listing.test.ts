@@ -594,7 +594,16 @@ describe("toolsGenerationFor: a per-slot generation", () => {
 
   test("a mapped service is -1 until a listing confirms it; unmapped ids are always -1, never NaN", async () => {
     const { m } = await build({ secrets: { ...ARGO, ...TABLEAU, "github.pat": "p" } });
-    for (const s of ["argocd", "tableau", "github", "gmail", "bitbucket", "aws", "mcp_x", "__proto__"]) {
+    for (const s of [
+      "argocd",
+      "tableau",
+      "github",
+      "gmail",
+      "bitbucket",
+      "aws",
+      "mcp_x",
+      "__proto__",
+    ]) {
       expect(m.toolsGenerationFor(s), s).toBe(-1);
     }
   });

@@ -183,7 +183,12 @@ describe("the confirm text is injective across adjacent fields and array element
     );
     const dep = confirmRow("deploy {p}/{r}/{s} {image:tail8}", "gcp.cloud_run.deploy");
     expect(
-      text(dep, { p: "proj", r: "us-east1", s: "api", image: "gcr.io/proj/api@sha256:0123456789abcdef" }),
+      text(dep, {
+        p: "proj",
+        r: "us-east1",
+        s: "api",
+        image: "gcr.io/proj/api@sha256:0123456789abcdef",
+      }),
     ).toBe("gcp/deploy proj/us-east1/api 89abcdef");
   });
 
