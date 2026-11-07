@@ -590,15 +590,12 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
    */
   const handleSlackInteractive = async (i: SlackInteractive): Promise<void> => {
     try {
-      const idr = await mapper.resolve("slack", i.userId);
-      if (idr.kind !== "mapped") return;
-      const externalId = idr.identity.externalId;
       if (i.kind === "open") {
-        const details = presenter.resolveConfirmOpen({
-          requestId: i.requestId,
-          clickerExternalId: externalId,
-        });
+        // Opened before any identity lookup: Slack's trigger_id lives 3 s, and each connector call
+        // here is a fresh spawn. The modal shows only what the card shows; the submit is owner-only.
+        const details = presenter.resolveConfirmOpen({ requestId: i.requestId });
         if (details === undefined) return;
+        const startedMs = nowMs();
         await confirmModal(
           details.channelId,
           i.triggerId,
@@ -608,8 +605,12 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
             confirmText: details.confirmText,
           }),
         );
+        deps.log(`chatops: confirmation modal opened in ${nowMs() - startedMs} ms`);
         return;
       }
+      const idr = await mapper.resolve("slack", i.userId);
+      if (idr.kind !== "mapped") return;
+      const externalId = idr.identity.externalId;
       presenter.resolveConfirmSubmit({
         requestId: i.requestId,
         approverExternalId: externalId,

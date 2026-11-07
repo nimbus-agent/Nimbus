@@ -44,7 +44,12 @@ export interface ApprovalClick {
   readonly approved: boolean;
 }
 
-/** What a Slack Confirm click needs to open the modal: returned to the card's owner only. */
+/**
+ * What a Slack Confirm click needs to open the modal. Returned for any live confirm card, whoever
+ * clicked: the modal shows only what the card already shows in the channel, and only the owner's
+ * submit spends it. Not resolving the clicker first keeps one connector call out of Slack's
+ * 3-second `trigger_id` window.
+ */
 export interface ConfirmOpenDetails {
   readonly channelId: string;
   readonly label: string;
@@ -182,14 +187,10 @@ export class ApprovalPresenter {
     return true;
   }
 
-  /** A Slack Confirm click: the card's text and channel, for its owner only. */
-  resolveConfirmOpen(req: {
-    readonly requestId: string;
-    readonly clickerExternalId: string;
-  }): ConfirmOpenDetails | undefined {
+  /** A Slack Confirm click: the card's text and channel (see `ConfirmOpenDetails`). */
+  resolveConfirmOpen(req: { readonly requestId: string }): ConfirmOpenDetails | undefined {
     const entry = this.pending.get(req.requestId);
     if (entry?.kind !== "confirm") return undefined;
-    if (req.clickerExternalId !== entry.ownerExternalId) return undefined;
     return { channelId: entry.channelId, label: entry.label, confirmText: entry.confirmText };
   }
 

@@ -120,6 +120,8 @@ describe("teamsConfirmCard", () => {
   test("escapes every Markdown metacharacter with a backslash", () => {
     expect(escapeTeamsMarkdown("*_~`[]()#")).toBe("\\*\\_\\~\\`\\[\\]\\(\\)\\#");
     expect(escapeTeamsMarkdown("plain text 1/2")).toBe("plain text 1/2");
+    // A backslash is escaped too, so `\\*` cannot turn into an escaped backslash and live emphasis.
+    expect(escapeTeamsMarkdown("a\\*b")).toBe("a\\\\\\*b");
   });
 });
 

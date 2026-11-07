@@ -108,7 +108,7 @@ export function slackConfirmView(input: ConfirmCardInput): object {
   };
 }
 
-const TEAMS_MARKDOWN_META = /[*_~`[\]()#]/g;
+const TEAMS_MARKDOWN_META = /[\\*_~`[\]()#]/g;
 
 /** Backslash-escapes the Markdown metacharacters a Teams `TextBlock` would otherwise interpret. */
 export function escapeTeamsMarkdown(s: string): string {

@@ -334,7 +334,7 @@ describe("ChatOps typed confirmation: Slack (Phase 9.7 D0c)", () => {
     await h.boot.service.stop();
   });
 
-  test("a non-owner Confirm opens no modal; a non-owner submit and reject spend nothing; the owner then succeeds", async () => {
+  test("anyone's Confirm opens the modal; a non-owner or unmapped submit and reject spend nothing; the owner then succeeds", async () => {
     const h = await harness();
     await h.boot.service.start();
     const { requestId } = await slackCard(h);
@@ -344,13 +344,15 @@ describe("ChatOps typed confirmation: Slack (Phase 9.7 D0c)", () => {
     h.socket.emit(click("U_EVE", "nimbus_confirm_open", requestId, "n3")); // unmapped
     h.socket.emit(submitFrame("U_BOB", requestId, "anything", "n4"));
     h.socket.emit(click("U_BOB", "nimbus_confirm_reject", requestId, "n5"));
+    h.socket.emit(submitFrame("U_EVE", requestId, "anything", "n6")); // unmapped
+    await until(() => h.opens.length === 3);
     await new Promise((r) => setTimeout(r, 60));
-    expect(h.opens).toEqual([]);
     expect(h.audits.filter((a) => a.actionType === "github.pr.merge")).toEqual([]);
+    expect(h.dispatched).toEqual([]);
 
     h.socket.emit(click("U_ALICE", "nimbus_confirm_open", requestId, "o1"));
-    await until(() => h.opens.length === 1);
-    h.socket.emit(submitFrame("U_ALICE", requestId, confirmTextOf(h.opens[0]?.view), "o2"));
+    await until(() => h.opens.length === 4);
+    h.socket.emit(submitFrame("U_ALICE", requestId, confirmTextOf(h.opens[3]?.view), "o2"));
     await until(() => h.dispatched.length === 1);
     await h.boot.service.stop();
   });

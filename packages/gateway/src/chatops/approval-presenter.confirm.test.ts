@@ -105,21 +105,16 @@ describe("ApprovalPresenter: a type-to-confirm card", () => {
     await p;
   });
 
-  test("open: the owner gets the channel, label and confirm text; a non-owner and an unknown id get nothing", async () => {
+  test("open: a live confirm card gives the channel, label and confirm text; an unknown id gives nothing", async () => {
     const { presenter } = build();
     const p = request(presenter);
     const requestId = presenter.lastRequestId();
-    expect(presenter.resolveConfirmOpen({ requestId, clickerExternalId: "ext-alice" })).toEqual({
+    expect(presenter.resolveConfirmOpen({ requestId })).toEqual({
       channelId: "C_ALICE",
       label: CTX.actionLabel,
       confirmText: "github/merge acme/api#12",
     });
-    expect(
-      presenter.resolveConfirmOpen({ requestId, clickerExternalId: "ext-bob" }),
-    ).toBeUndefined();
-    expect(
-      presenter.resolveConfirmOpen({ requestId: "nope", clickerExternalId: "ext-alice" }),
-    ).toBeUndefined();
+    expect(presenter.resolveConfirmOpen({ requestId: "nope" })).toBeUndefined();
     presenter.resolveClick({ requestId, approverExternalId: "ext-alice", approved: false });
     await p;
   });
@@ -129,9 +124,7 @@ describe("ApprovalPresenter: a type-to-confirm card", () => {
     const p = runWithChatopsApprovalContext(CTX, () => presenter.requestApproval());
     const requestId = presenter.lastRequestId();
     expect(presenter.pendingKind(requestId)).toBe("plain");
-    expect(
-      presenter.resolveConfirmOpen({ requestId, clickerExternalId: "ext-alice" }),
-    ).toBeUndefined();
+    expect(presenter.resolveConfirmOpen({ requestId })).toBeUndefined();
     expect(
       presenter.resolveConfirmSubmit({
         requestId,
