@@ -73,6 +73,8 @@ const ENSURE_METHODS = [
   "ensureAppleRunning",
   "ensureObsidianRunning",
   "ensureBitbucketRunning",
+  "ensureJenkinsRunning",
+  "ensureCircleciRunning",
   "ensurePagerdutyRunning",
 ] as const;
 
@@ -205,14 +207,15 @@ describe("listFirstPartyServerTools", () => {
   });
 
   test("a service with write rows but no map entry fails closed, even inside a running bundle", async () => {
-    // bitbucket has its own slot and is not in the listing map, so a configured slot never lists it.
+    // A service outside the listing map is never listed, even with a configured slot (the map is
+    // the only way in). `datadog` has no write rows and no map entry.
     const { m, ensures } = await build({
-      secrets: { "bitbucket.username": "u" },
+      secrets: { "datadog.api_key": "u" },
       slots: {
-        [LAZY_MESH.bitbucket]: { bitbucket_bitbucket_pr_merge: { inputSchema: SCHEMA } },
+        [LAZY_MESH.bitbucket]: { datadog_datadog_pr_merge: { inputSchema: SCHEMA } },
       },
     });
-    for (const s of ["bitbucket"]) {
+    for (const s of ["datadog", "not_a_service"]) {
       expect(await m.listFirstPartyServerTools(s), s).toBeUndefined();
       expect(m.toolsGenerationFor(s), s).toBe(-1);
     }
@@ -351,6 +354,107 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
     expect(ensures()).toBe(0);
   });
 
+  // D1: the seven services the API-backed Wave 4 rows need. Each: its own slot, its own ensure,
+  // its own tool keys, a generation only after a confirming listing, and -1 when unconfigured.
+  const D1_SERVICES: ReadonlyArray<{
+    service: string;
+    secrets: Record<string, string>;
+    slot: string;
+    ensure: string;
+    tool: string;
+  }> = [
+    {
+      service: "bitbucket",
+      secrets: { "bitbucket.username": "u", "bitbucket.app_password": "p" },
+      slot: LAZY_MESH.bitbucket,
+      ensure: "ensureBitbucketRunning",
+      tool: "bitbucket_bitbucket_pr_merge",
+    },
+    {
+      service: "jenkins",
+      secrets: {
+        "jenkins.base_url": "https://ci.example.com",
+        "jenkins.username": "u",
+        "jenkins.api_token": "t",
+      },
+      slot: LAZY_MESH.jenkins,
+      ensure: "ensureJenkinsRunning",
+      tool: "jenkins_jenkins_build_trigger",
+    },
+    {
+      service: "circleci",
+      secrets: { "circleci.api_token": "t" },
+      slot: LAZY_MESH.circleci,
+      ensure: "ensureCircleciRunning",
+      tool: "circleci_circleci_job_cancel",
+    },
+    {
+      service: "github_actions",
+      secrets: { "github.pat": "p" },
+      slot: LAZY_MESH.github,
+      ensure: "ensureGithubRunning",
+      tool: "github_actions_gha_run_trigger",
+    },
+    {
+      service: "aws",
+      secrets: {
+        "aws.access_key_id": "AKIA0001",
+        "aws.secret_access_key": "SK0001",
+        "aws.default_region": "us-east-1",
+      },
+      slot: LAZY_MESH.phase3Bundle,
+      ensure: "ensurePhase3BundleRunning",
+      tool: "aws_aws_lambda_invoke",
+    },
+    {
+      service: "azure",
+      secrets: {
+        "azure.tenant_id": "t",
+        "azure.client_id": "c",
+        "azure.client_secret": "s",
+      },
+      slot: LAZY_MESH.phase3Bundle,
+      ensure: "ensurePhase3BundleRunning",
+      tool: "azure_azure_app_service_restart",
+    },
+    {
+      service: "gcp",
+      secrets: { "gcp.credentials_json_path": "/etc/gcp.json" },
+      slot: LAZY_MESH.phase3Bundle,
+      ensure: "ensurePhase3BundleRunning",
+      tool: "gcp_gcp_cloud_run_deploy",
+    },
+  ];
+
+  for (const c of D1_SERVICES) {
+    test(`${c.service} (D1): configured lists its own keys, ensures exactly its slot, and gets a generation; unconfigured is -1 with no ensure`, async () => {
+      const slots = {
+        [c.slot]: { [c.tool]: { inputSchema: SCHEMA }, foreign_x_y: { inputSchema: SCHEMA } },
+      };
+      const on = await build({ secrets: c.secrets, slots });
+      expect(on.m.toolsGenerationFor(c.service)).toBe(-1);
+      expect(Object.keys((await on.m.listFirstPartyServerTools(c.service)) ?? {})).toEqual([
+        c.tool,
+      ]);
+      expect(on.m.toolsGenerationFor(c.service)).toBeGreaterThanOrEqual(0);
+      expect(on.calls).toEqual([c.ensure]);
+      await on.m.disconnect();
+      const off = await build({ secrets: {}, slots });
+      expect(await off.m.listFirstPartyServerTools(c.service)).toBeUndefined();
+      expect(off.m.toolsGenerationFor(c.service)).toBe(-1);
+      expect(off.ensures()).toBe(0);
+    });
+  }
+
+  test("github_actions is not configured by a GitLab token or a Bitbucket login (its own check, its own slot)", async () => {
+    const { m, ensures } = await build({
+      secrets: { "gitlab.pat": "p", "bitbucket.username": "u", "bitbucket.app_password": "p" },
+      slots: { [LAZY_MESH.github]: { github_actions_gha_run_trigger: { inputSchema: SCHEMA } } },
+    });
+    expect(await m.listFirstPartyServerTools("github_actions")).toBeUndefined();
+    expect(ensures()).toBe(0);
+  });
+
   test("obsidian is configured by its vault paths, never by the Vault", async () => {
     const without = await build({ slots: { [LAZY_MESH.obsidian]: { obsidian_x: {} } } });
     expect(await without.m.listFirstPartyServerTools("obsidian")).toBeUndefined();
@@ -384,12 +488,16 @@ describe("listFirstPartyServerTools: wave-2 services on their own slots", () => 
     expect([...SERVICE_CREDENTIAL_SERVICES]).toEqual(
       [
         "apple",
+        "bitbucket",
+        "circleci",
         "confluence",
         "discord",
         "github",
+        "github_actions",
         "gitlab",
         "gmail",
         "google_drive",
+        "jenkins",
         "jira",
         "linear",
         "notion",
@@ -486,7 +594,7 @@ describe("toolsGenerationFor: a per-slot generation", () => {
 
   test("a mapped service is -1 until a listing confirms it; unmapped ids are always -1, never NaN", async () => {
     const { m } = await build({ secrets: { ...ARGO, ...TABLEAU, "github.pat": "p" } });
-    for (const s of ["argocd", "tableau", "github", "gmail", "bitbucket", "mcp_x", "__proto__"]) {
+    for (const s of ["argocd", "tableau", "github", "gmail", "bitbucket", "aws", "mcp_x", "__proto__"]) {
       expect(m.toolsGenerationFor(s), s).toBe(-1);
     }
   });

@@ -23,6 +23,16 @@ function present(v: string | null): boolean {
   return v !== null && v !== "";
 }
 
+/** Present and not blank: a value of only whitespace is not a credential. */
+function presentTrimmed(v: string | null): boolean {
+  return v !== null && v.trim() !== "";
+}
+
+async function allPresentTrimmed(reads: ReadonlyArray<Promise<string | null>>): Promise<boolean> {
+  const values = await Promise.all(reads);
+  return values.every(presentTrimmed);
+}
+
 async function allPresent(reads: ReadonlyArray<Promise<string | null>>): Promise<boolean> {
   const values = await Promise.all(reads);
   return values.every(present);
@@ -44,6 +54,22 @@ const PREDICATES: Readonly<Record<string, Predicate>> = {
   },
   github: async (vault) => present(await readConnectorSecret(vault, "github", "pat")),
   gitlab: async (vault) => present(await readConnectorSecret(vault, "gitlab", "pat")),
+  // GitHub Actions runs as a second server in the github slot, spawned with the SAME PAT.
+  github_actions: async (vault) => presentTrimmed(await readConnectorSecret(vault, "github", "pat")),
+  // The spawner needs BOTH the Bitbucket username and the app password.
+  bitbucket: (vault) =>
+    allPresentTrimmed([
+      readConnectorSecret(vault, "bitbucket", "username"),
+      readConnectorSecret(vault, "bitbucket", "app_password"),
+    ]),
+  // The Jenkins spawner needs the base URL, the username and the API token (each non-blank).
+  jenkins: (vault) =>
+    allPresentTrimmed([
+      readConnectorSecret(vault, "jenkins", "base_url"),
+      readConnectorSecret(vault, "jenkins", "username"),
+      readConnectorSecret(vault, "jenkins", "api_token"),
+    ]),
+  circleci: async (vault) => presentTrimmed(await readConnectorSecret(vault, "circleci", "api_token")),
   slack: async (vault) => present(await readConnectorSecret(vault, "slack", "oauth")),
   linear: async (vault) => present(await readConnectorSecret(vault, "linear", "api_key")),
   notion: async (vault) => present(await readConnectorSecret(vault, "notion", "oauth")),

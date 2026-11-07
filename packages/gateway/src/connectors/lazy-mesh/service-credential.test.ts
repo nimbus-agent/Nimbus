@@ -55,6 +55,12 @@ const ALL_CONFIGURED: Record<string, string> = {
   "apple.icloud_app_password": "p",
   "pagerduty.api_token": "t",
   "pagerduty.from_email": "oncall@example.com",
+  "bitbucket.username": "u",
+  "bitbucket.app_password": "p",
+  "jenkins.base_url": "https://ci.example.com",
+  "jenkins.username": "u",
+  "jenkins.api_token": "t",
+  "circleci.api_token": "t",
 };
 
 describe("isServiceCredentialConfigured", () => {
@@ -126,9 +132,47 @@ describe("isServiceCredentialConfigured", () => {
     }
   });
 
+  test("bitbucket needs the username AND the app password; jenkins needs the base URL, username AND token; circleci needs its token", async () => {
+    const need: Record<string, string[]> = {
+      bitbucket: ["bitbucket.username", "bitbucket.app_password"],
+      jenkins: ["jenkins.base_url", "jenkins.username", "jenkins.api_token"],
+      circleci: ["circleci.api_token"],
+    };
+    for (const [service, keys] of Object.entries(need)) {
+      const all = Object.fromEntries(keys.map((k) => [k, "x"]));
+      expect(await isServiceCredentialConfigured(await vaultWith(all), service, {}), service).toBe(
+        true,
+      );
+      for (const missing of keys) {
+        const some = Object.fromEntries(keys.filter((k) => k !== missing).map((k) => [k, "x"]));
+        expect(
+          await isServiceCredentialConfigured(await vaultWith(some), service, {}),
+          `${service} without ${missing}`,
+        ).toBe(false);
+        const blank = { ...all, [missing]: "   " };
+        expect(
+          await isServiceCredentialConfigured(await vaultWith(blank), service, {}),
+          `${service} blank ${missing}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  test("github_actions rides the GitHub PAT (it runs in the github slot) and nothing else", async () => {
+    expect(
+      await isServiceCredentialConfigured(await vaultWith({ "github.pat": "p" }), "github_actions", {}),
+    ).toBe(true);
+    expect(
+      await isServiceCredentialConfigured(await vaultWith({ "github.pat": "  " }), "github_actions", {}),
+    ).toBe(false);
+    expect(
+      await isServiceCredentialConfigured(await vaultWith({ "gitlab.pat": "p" }), "github_actions", {}),
+    ).toBe(false);
+  });
+
   test("unknown services and prototype names fail closed", async () => {
     const vault = await vaultWith(ALL_CONFIGURED);
-    for (const s of ["bitbucket", "argocd", "", "__proto__", "constructor", "toString"]) {
+    for (const s of ["argocd", "", "__proto__", "constructor", "toString"]) {
       expect(await isServiceCredentialConfigured(vault, s, { obsidianVaultPaths: ["/v"] }), s).toBe(
         false,
       );
