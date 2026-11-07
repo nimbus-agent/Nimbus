@@ -116,7 +116,8 @@ import {
   defaultSyncIntervalMsForService,
 } from "../connectors/connector-catalog.ts";
 import {
-  CONNECTOR_VAULT_SECRET_KEYS,
+  type CONNECTOR_VAULT_SECRET_KEYS,
+  requiredSecretKeysFor as manifestRequiredSecretKeysFor,
   TEAM_SECRET_ANYOF_GROUPS,
 } from "../connectors/connector-secrets-manifest.ts";
 import {
@@ -1440,8 +1441,7 @@ async function bootFederationIntoIpcOpts(
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           spawnAndCall: spawnTeamToolAndCall,
@@ -2626,8 +2626,7 @@ function buildTeamCredentialContexts(deps: {
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           openSession: resolveTeamListOpenSession(
@@ -2663,8 +2662,7 @@ function buildTeamCredentialContexts(deps: {
         {
           vault,
           sandboxCwd: paths.sandboxDir,
-          requiredSecretKeysFor: (service: string) =>
-            CONNECTOR_VAULT_SECRET_KEYS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
+          requiredSecretKeysFor: manifestRequiredSecretKeysFor,
           anyOfSecretGroupsFor: (service: string) =>
             TEAM_SECRET_ANYOF_GROUPS[service as keyof typeof CONNECTOR_VAULT_SECRET_KEYS],
           spawnAndCall: spawnTeamWriteAndCall,
