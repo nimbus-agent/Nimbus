@@ -237,3 +237,39 @@ describe("extension service ids are not proposable on the act door", () => {
     expect(classifyActionType("ext_foo.echo", ctx)).toEqual({ kind: "unknown" });
   });
 });
+
+test("D1: every Wave 4 row stays denied on the act door, in the class it had (nothing becomes proposable, the act door runs no before-read)", () => {
+  const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
+  expect(wave4).toHaveLength(41);
+  const classes = new Map<string, string>();
+  for (const r of wave4) {
+    const p = ACTION_PROPOSABILITY[r.actionType];
+    expect(p?.kind, r.toolId).toBe("denied");
+    expect(proposableWriteTool(r.actionType), r.toolId).toBeUndefined();
+    classes.set(r.actionType, p?.kind === "denied" ? p.class : "");
+  }
+  // The 31 with a typed preview (27 offered to the model, plus the Bitbucket merge and the three
+  // Azure and Cloud Run rows) keep the class they had before D1.
+  expect(Object.fromEntries(classes)).toMatchObject({
+    "github.pr.merge": "vcs",
+    "github.branch.delete": "vcs",
+    "github.tag.create": "vcs",
+    "gitlab.mr.merge": "vcs",
+    "bitbucket.pr.merge": "vcs",
+    "jenkins.build.trigger": "pipeline",
+    "github_actions.run.trigger": "pipeline",
+    "circleci.pipeline.trigger": "pipeline",
+    "gitlab.pipeline.cancel": "pipeline",
+    "aws.lambda.invoke": "cloud",
+    "azure.app_service.restart": "cloud",
+    "gcp.cloud_run.deploy": "cloud",
+    "argocd.app.sync": "deployment",
+    "mlflow.model.promote": "deployment",
+    "snowflake.tag.set": "data_platform",
+    "onedrive.item.delete": "file",
+    "outlook.calendar.delete": "calendar_delete",
+    "apple.calendar.event.delete": "calendar_delete",
+    "github.file.commit": "vcs",
+    "gitlab.commit.create": "vcs",
+  });
+});

@@ -11756,9 +11756,178 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(isModelOfferableRow({ ...base, before: reader, confirm: { template: "{id}" } })).toBe(
       true,
     );
-    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(7);
+    // The seven mail sends (OR-W34-1) and, since D1, the Bitbucket merge (no head precondition).
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.size).toBe(8);
+    expect(MODEL_NEVER_OFFERED_TOOL_IDS.has("bitbucket_pr_merge")).toBe(true);
     for (const r of CONNECTOR_WRITE_ROWS) {
       if (r.wave === 4) expect(r.confirm, r.toolId).toBeDefined();
+    }
+  });
+
+  test("D1 (source): isModelOfferableRow checks the never-offered set first and needs a before reader or a bound write AND a confirm target for every Wave 4 row", async () => {
+    const src = stripComments(
+      await read("packages/gateway/src/connectors/connector-writes/model-offerable.ts"),
+    );
+    const body = src.slice(src.indexOf("export function isModelOfferableRow("));
+    expect(body.indexOf("MODEL_NEVER_OFFERED_TOOL_IDS.has(row.toolId)")).toBeGreaterThan(-1);
+    expect(body.indexOf("MODEL_NEVER_OFFERED_TOOL_IDS.has(row.toolId)")).toBeLessThan(
+      body.indexOf("row.preview !== undefined"),
+    );
+    expect(body.replaceAll(/\s+/g, " ")).toContain(
+      "row.preview !== undefined && (row.wave < 4 || ((row.before !== undefined || row.bound !== undefined) && row.confirm !== undefined))",
+    );
+  });
+
+  test("D1: every model-offerable Wave 4 row has a reader the before-read dispatcher accepts (a read of its own connector), and a connector write is never one", async () => {
+    const { isModelOfferableRow } = await import(
+      "./connectors/connector-writes/model-offerable.ts"
+    );
+    const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
+    const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
+    expect(offeredWave4).toHaveLength(27);
+    for (const r of offeredWave4) {
+      expect(r.before, r.toolId).toBeDefined();
+      expect(r.confirm, r.toolId).toBeDefined();
+      const tools = [r.before?.tool, r.before?.also?.tool].filter(
+        (t): t is string => t !== undefined,
+      );
+      for (const tool of tools) {
+        // The dispatcher (`assertBeforeReadIsOwnRead`) refuses any other tool, so an `az` /
+        // `gcloud` read (code-execution class) can back no model-offered row.
+        expect(isReadOnlyToolId(tool), `${r.toolId} reads ${tool}`).toBe(true);
+        expect(isConnectorWriteToolId(tool), `${r.toolId} reads ${tool}`).toBe(false);
+      }
+    }
+    // A Wave 4 row with a preview and a confirm text but no reader is never offered.
+    for (const id of [
+      "azure_app_service_restart",
+      "azure_aks_node_pool_scale",
+      "gcp_cloud_run_deploy",
+    ]) {
+      const r = CONNECTOR_WRITE_ROWS.find((x) => x.toolId === id);
+      expect(r?.before, id).toBeUndefined();
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(false);
+    }
+  });
+
+  test("D1 (behaviour): a Wave 4 model write whose current state cannot be read is refused before any prompt, dispatches no write and is ledgered as blocked", async () => {
+    const { ToolExecutor, NO_POLICY_OVERLAY } = await import("./engine/executor.ts");
+    const { createBeforeStateRunner, WAVE4_BEFORE_REFUSAL } = await import(
+      "./engine/before-state.ts"
+    );
+    const { row, withPreview, withConfirm } = await import(
+      "./connectors/connector-writes/types.ts"
+    );
+    const { mcpClientToolKey } = await import("./connectors/lazy-mesh/tool-map.ts");
+    // A Wave 4 row with a preview and a confirm text but no reader (nothing to read).
+    const noReader = withConfirm(
+      withPreview(row("jenkins_build_abort", "jenkins.build.abort", "mesh", 4), {
+        target: "{jobName}",
+        summary: "Abort {jobName}",
+        fields: [],
+      }),
+      { template: "abort {jobName}" },
+    );
+    const cases: ReadonlyArray<{
+      readonly name: string;
+      readonly rows: readonly ConnectorWriteRow[] | undefined;
+      readonly toolId: string;
+      readonly input: Record<string, unknown>;
+      readonly reply: () => unknown;
+      readonly reason: string;
+      readonly dispatched: readonly string[];
+    }> = [
+      {
+        name: "the read fails",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "deploy" },
+        reply: () => {
+          throw new Error("down");
+        },
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: ["jenkins.before.read"],
+      },
+      {
+        name: "the reply names no job",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "deploy" },
+        reply: () => ({ content: [{ type: "text", text: "{}" }] }),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: ["jenkins.before.read"],
+      },
+      {
+        name: "the reader cannot be built from the input",
+        rows: undefined,
+        toolId: "jenkins_build_trigger",
+        input: { jobName: "" },
+        reply: () => ({}),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: [],
+      },
+      {
+        name: "the row has no reader",
+        rows: [noReader],
+        toolId: "jenkins_build_abort",
+        input: { jobName: "deploy" },
+        reply: () => ({}),
+        reason: WAVE4_BEFORE_REFUSAL,
+        dispatched: [],
+      },
+      {
+        name: "a GitHub merge names no head sha (the guard's own reason)",
+        rows: undefined,
+        toolId: "github_pr_merge",
+        input: { owner: "acme", repo: "api", pullNumber: 42 },
+        reply: () => ({
+          content: [
+            { type: "text", text: JSON.stringify({ title: "T", head: { sha: "a".repeat(40) } }) },
+          ],
+        }),
+        reason:
+          "the merge must name the pull request's current head commit as sha, and it is not that commit",
+        dispatched: ["github.before.read"],
+      },
+    ];
+    for (const c of cases) {
+      const target = CONNECTOR_WRITE_ROWS.find((r) => r.toolId === c.toolId);
+      const actionType = c.rows?.[0]?.actionType ?? target?.actionType ?? "";
+      let prompts = 0;
+      const dispatched: string[] = [];
+      const egress: string[] = [];
+      const exec = new ToolExecutor(
+        {
+          requestApproval: async () => {
+            prompts += 1;
+            return true;
+          },
+        },
+        { recordAudit: () => {} },
+        {
+          dispatch: async (a) => {
+            dispatched.push(a.type);
+            return c.reply();
+          },
+        },
+        undefined,
+        { append: (e) => void egress.push(`${e.method}:${e.resultStatus}`) },
+        NO_POLICY_OVERLAY,
+        undefined,
+        createBeforeStateRunner(c.rows === undefined ? {} : { rows: c.rows }),
+      );
+      const out = await exec.execute({
+        type: actionType,
+        origin: "model",
+        payload: {
+          mcpToolId: mcpClientToolKey(serviceOf(actionType), c.toolId),
+          input: c.input,
+        },
+      });
+      expect(out, c.name).toEqual({ status: "rejected", reason: c.reason });
+      expect(prompts, c.name).toBe(0);
+      expect(dispatched, c.name).toEqual([...c.dispatched]);
+      expect(egress[egress.length - 1], c.name).toBe(`${actionType}:blocked`);
     }
   });
 
@@ -12077,9 +12246,52 @@ describe("I53 — a first-party connector write reaches the model only through t
     expect(naming).toEqual(["engine/run-ask.ts"]);
   });
 
-  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes (no wave-4 row has one, so none is offerable)", () => {
+  test("the production rows with a before reader are B1's seven comment rows, B2's nine issue writes, B3's five page writes, B4a's Drive create, B4b's Obsidian append (all wave 2), C1's eight wave-3 file, pull request and incident writes, C2's four wave-3 branch, pull request and merge request writes and C3's five wave-3 flag and alert writes, and D1's 28 wave-4 rows (27 offered, plus the never-offered Bitbucket merge)", () => {
     const withReader = CONNECTOR_WRITE_ROWS.filter((r) => r.before !== undefined);
-    expect(withReader.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
+    const D1_WAVE4 = [
+      "apple_calendar_event_delete",
+      "argocd_app_rollback",
+      "argocd_app_sync",
+      "aws_ec2_instance_start",
+      "aws_ec2_instance_stop",
+      "aws_ecs_service_update",
+      "aws_lambda_invoke",
+      "bitbucket_pr_merge",
+      "circleci_job_cancel",
+      "circleci_pipeline_trigger",
+      "flux_helmrelease_reconcile",
+      "flux_kustomization_reconcile",
+      "gha_run_cancel",
+      "gha_run_trigger",
+      "github_branch_delete",
+      "github_pr_merge",
+      "github_tag_create",
+      "gitlab_mr_merge",
+      "gitlab_pipeline_cancel",
+      "gitlab_pipeline_retry",
+      "jenkins_build_abort",
+      "jenkins_build_trigger",
+      "mlflow_model_promote",
+      "mlflow_model_transition_stage",
+      "onedrive_item_delete",
+      "outlook_calendar_delete",
+      "snowflake_comment_set",
+      "snowflake_tag_set",
+    ];
+    expect(
+      withReader
+        .filter((r) => r.wave === 4)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual(D1_WAVE4);
+    for (const r of withReader.filter((x) => x.wave === 4))
+      expect(r.confirm, r.toolId).toBeDefined();
+    expect(
+      withReader
+        .filter((r) => r.wave !== 4)
+        .map((r) => r.toolId)
+        .sort((a, b) => a.localeCompare(b)),
+    ).toEqual([
       "confluence_comment_add",
       "confluence_page_append",
       "confluence_page_update",
@@ -12123,7 +12335,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     ]);
     expect(
       withReader
-        .filter((r) => r.wave !== 2)
+        .filter((r) => r.wave === 3)
         .map((r) => r.toolId)
         .sort((a, b) => a.localeCompare(b)),
     ).toEqual([
