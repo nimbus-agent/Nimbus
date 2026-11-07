@@ -37,11 +37,11 @@ describe("previewCredentialResolver", () => {
     expect(p && renderConnectorWritePreviewLines(p).join("\n")).not.toContain("Instance:");
   });
 
-  test("the credential pin still decides the Credential line (team)", () => {
+  test("the credential pin still decides the Credential line, and a team credential never gets the owner's host", () => {
     const resolver = previewCredentialResolver(
       { credentialFor: () => ({ credential: "team" }) },
       { githubInstance: () => "ghe.example.com" },
     );
-    expect(resolver("github")).toEqual({ credential: "team", instance: "ghe.example.com" });
+    expect(resolver("github")).toBe("team");
   });
 });

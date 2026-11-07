@@ -14,9 +14,16 @@ export type ConnectorWriteTransport = "write" | "mesh";
  * Which credential kind a write to `service` will use. Config-derived (never read from the
  * payload). Lives here, not in the executor, so the preview builder never imports the executor.
  */
-export type PreviewCredentialResolver = (
+export type PreviewCredentialResolver = ((
   service: string,
-) => "personal" | "team" | PreviewCredentialInfo;
+) => "personal" | "team" | PreviewCredentialInfo) & {
+  /**
+   * Optional async read the executor awaits BEFORE it builds a prompt, so the instance shown is the
+   * one the write will run against (read fresh, never a snapshot). It throws when that credential's
+   * instance cannot be established (present but invalid): the write is then refused, no prompt shown.
+   */
+  readonly refresh?: (service: string) => Promise<void>;
+};
 
 /**
  * The widened resolver result: the credential kind, plus the self-hosted INSTANCE host the
