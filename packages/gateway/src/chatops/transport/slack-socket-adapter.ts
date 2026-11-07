@@ -127,35 +127,47 @@ export function parseSlackInteractive(frame: unknown): SlackInteractive | undefi
   if (payload === undefined) return undefined;
   const userId = nonEmptyString(rec(payload["user"])?.["id"]);
   if (userId === undefined) return undefined;
-  if (payload["type"] === "block_actions") {
-    const actions = payload["actions"];
-    const first = Array.isArray(actions) ? rec(actions[0]) : undefined;
-    const requestId = nonEmptyString(first?.["value"]);
-    if (requestId === undefined) return undefined;
-    if (first?.["action_id"] === SLACK_CONFIRM_REJECT_ACTION) {
-      return { kind: "reject", requestId, userId };
-    }
-    if (first?.["action_id"] !== SLACK_CONFIRM_OPEN_ACTION) return undefined;
-    const triggerId = nonEmptyString(payload["trigger_id"]);
-    return triggerId === undefined ? undefined : { kind: "open", requestId, userId, triggerId };
-  }
-  if (payload["type"] === "view_submission") {
-    const view = rec(payload["view"]);
-    if (view?.["callback_id"] !== SLACK_CONFIRM_CALLBACK_ID) return undefined;
-    const requestId = nonEmptyString(view["private_metadata"]);
-    if (requestId === undefined) return undefined;
-    const values = rec(rec(view["state"])?.["values"]);
-    const input = rec(rec(values?.[SLACK_CONFIRM_BLOCK_ID])?.[SLACK_CONFIRM_INPUT_ACTION_ID]);
-    if (input === undefined) return undefined;
-    const value = input["value"];
-    return {
-      kind: "submit",
-      requestId,
-      userId,
-      ...(typeof value === "string" ? { typed: value } : {}),
-    };
-  }
+  if (payload["type"] === "block_actions") return parseBlockActions(payload, userId);
+  if (payload["type"] === "view_submission") return parseViewSubmission(payload, userId);
   return undefined;
+}
+
+/** A Confirm or Reject button click on the confirm card. */
+function parseBlockActions(
+  payload: Record<string, unknown>,
+  userId: string,
+): SlackInteractive | undefined {
+  const actions = payload["actions"];
+  const first = Array.isArray(actions) ? rec(actions[0]) : undefined;
+  const requestId = nonEmptyString(first?.["value"]);
+  if (requestId === undefined) return undefined;
+  if (first?.["action_id"] === SLACK_CONFIRM_REJECT_ACTION) {
+    return { kind: "reject", requestId, userId };
+  }
+  if (first?.["action_id"] !== SLACK_CONFIRM_OPEN_ACTION) return undefined;
+  const triggerId = nonEmptyString(payload["trigger_id"]);
+  return triggerId === undefined ? undefined : { kind: "open", requestId, userId, triggerId };
+}
+
+/** The confirm modal's submission; `typed` is passed on verbatim (static D41). */
+function parseViewSubmission(
+  payload: Record<string, unknown>,
+  userId: string,
+): SlackInteractive | undefined {
+  const view = rec(payload["view"]);
+  if (view?.["callback_id"] !== SLACK_CONFIRM_CALLBACK_ID) return undefined;
+  const requestId = nonEmptyString(view["private_metadata"]);
+  if (requestId === undefined) return undefined;
+  const values = rec(rec(view["state"])?.["values"]);
+  const input = rec(rec(values?.[SLACK_CONFIRM_BLOCK_ID])?.[SLACK_CONFIRM_INPUT_ACTION_ID]);
+  if (input === undefined) return undefined;
+  const value = input["value"];
+  return {
+    kind: "submit",
+    requestId,
+    userId,
+    ...(typeof value === "string" ? { typed: value } : {}),
+  };
 }
 
 /** A minimal WebSocket-like seam so the adapter loop is unit-testable without a real socket. */

@@ -120,7 +120,6 @@ export function teamsConfirmCard(input: ConfirmCardInput): object {
   return {
     contentType: TEAMS_ADAPTIVE_CARD_CONTENT_TYPE,
     content: {
-      $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
       type: "AdaptiveCard",
       version: "1.4",
       body: [

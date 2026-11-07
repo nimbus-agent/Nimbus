@@ -89,7 +89,6 @@ describe("teamsConfirmCard", () => {
     expect(teamsConfirmCard(INPUT)).toEqual({
       contentType: "application/vnd.microsoft.card.adaptive",
       content: {
-        $schema: "http://adaptivecards.io/schemas/adaptive-card.json",
         type: "AdaptiveCard",
         version: "1.4",
         body: [
@@ -129,7 +128,7 @@ describe("helpers", () => {
   test("clipLabel leaves a short label and clips a long one to the cap with an ellipsis", () => {
     expect(clipLabel("short")).toBe("short");
     const clipped = clipLabel("a".repeat(CONFIRM_LABEL_MAX + 10));
-    expect(clipped.length).toBe(CONFIRM_LABEL_MAX);
+    expect(clipped).toHaveLength(CONFIRM_LABEL_MAX);
     expect(clipped.endsWith("…")).toBe(true);
   });
 

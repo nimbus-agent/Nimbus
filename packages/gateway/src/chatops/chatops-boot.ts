@@ -498,52 +498,71 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     });
   };
 
+  /**
+   * A text `reject` on a type-to-confirm card, from its owner, rejects it; a text `approve`
+   * never approves and never spends the card (the typed text comes only from the form).
+   */
+  const handleConfirmCardText = async (
+    msg: ChatMessage,
+    requestId: string,
+    verdict: "approve" | "reject",
+  ): Promise<void> => {
+    const idr = await mapper.resolve(msg.platform, msg.userId);
+    if (idr.kind !== "mapped") return;
+    if (verdict === "approve") {
+      await replyDispatcher.send(
+        { kind: "originating", platform: msg.platform, channelId: msg.channelId },
+        CHATOPS_CONFIRM_USE_FORM_REPLY,
+      );
+      return;
+    }
+    const resolved = presenter.resolveClick({
+      requestId,
+      approverExternalId: idr.identity.externalId,
+      approved: false,
+    });
+    if (resolved) pendingCardByChannel.delete(msg.channelId);
+  };
+
+  /**
+   * A text verdict on a plain card. Resolve the clicker identity; an unmapped reply never spends
+   * the card. A mapped non-owner click resolves it, and the executor's I20 check refuses to honor it.
+   */
+  const handlePlainCardText = async (
+    msg: ChatMessage,
+    requestId: string,
+    verdict: "approve" | "reject",
+  ): Promise<void> => {
+    const idr = await mapper.resolve(msg.platform, msg.userId);
+    if (idr.kind !== "mapped") return;
+    pendingCardByChannel.delete(msg.channelId);
+    presenter.resolveClick({
+      requestId,
+      approverExternalId: idr.identity.externalId,
+      approved: verdict === "approve",
+    });
+  };
+
+  /** Returns true when the message was a verdict on a live card (never then routed as a command). */
+  const handleTextVerdict = async (msg: ChatMessage): Promise<boolean> => {
+    const normalized = normalizeChatText(msg.text).toLowerCase();
+    if (normalized !== "approve" && normalized !== "reject") return false;
+    const requestId = pendingCardByChannel.get(msg.channelId);
+    if (requestId === undefined) return false;
+    if (presenter.pendingKind(requestId) === "confirm") {
+      await handleConfirmCardText(msg, requestId, normalized);
+    } else {
+      await handlePlainCardText(msg, requestId, normalized);
+    }
+    return true;
+  };
+
   const handleMessageInner = async (msg: ChatMessage): Promise<void> => {
     lastPlatformByChannel.set(msg.channelId, msg.platform);
     // Slice 6c fan-out: every inbound message (addressed or ambient) flows to the tribal
     // watcher first. It swallows its own errors, so this never breaks the command path.
     if (deps.onInboundMessage !== undefined) await deps.onInboundMessage(msg);
-    const normalized = normalizeChatText(msg.text).toLowerCase();
-    if (normalized === "approve" || normalized === "reject") {
-      const requestId = pendingCardByChannel.get(msg.channelId);
-      if (requestId !== undefined && presenter.pendingKind(requestId) === "confirm") {
-        // A type-to-confirm card: a text `reject` from its owner rejects; a text `approve` never
-        // approves and never spends the card (the typed text comes only from the form).
-        const idr = await mapper.resolve(msg.platform, msg.userId);
-        if (idr.kind !== "mapped") return;
-        if (normalized === "approve") {
-          await replyDispatcher.send(
-            { kind: "originating", platform: msg.platform, channelId: msg.channelId },
-            CHATOPS_CONFIRM_USE_FORM_REPLY,
-          );
-          return;
-        }
-        if (
-          presenter.resolveClick({
-            requestId,
-            approverExternalId: idr.identity.externalId,
-            approved: false,
-          })
-        ) {
-          pendingCardByChannel.delete(msg.channelId);
-        }
-        return;
-      }
-      if (requestId !== undefined) {
-        // Resolve the clicker identity; an unmapped reply never spends the card. A mapped
-        // non-owner click resolves it, and the executor's I20 check refuses to honor it.
-        const idr = await mapper.resolve(msg.platform, msg.userId);
-        if (idr.kind === "mapped") {
-          pendingCardByChannel.delete(msg.channelId);
-          presenter.resolveClick({
-            requestId,
-            approverExternalId: idr.identity.externalId,
-            approved: normalized === "approve",
-          });
-        }
-        return; // a verdict on a live card is never routed as a command
-      }
-    }
+    if (await handleTextVerdict(msg)) return;
     // Ambient (non-addressed) messages are tribal-only — never routed as a command. Today all
     // delivered messages were @-mentions (addressedToBot=true), so this preserves behavior.
     if (!msg.addressedToBot) return;
