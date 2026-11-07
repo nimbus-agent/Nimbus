@@ -3647,6 +3647,12 @@ Store one or more secrets for a team-vault entry bound to a connector service. R
 nimbus team vault put prod-stripe stripe --secret api_key=sk_live_xxxx
 ```
 
+A `github` entry treats `github.pat` and `github.api_base` as one credential: a put that carries `github.pat` replaces the pair, so the entry's base becomes the one in this put, or github.com when the put has none (a stale GitHub Enterprise Server base is deleted), and the PAT is written last. `github.api_base` without `github.pat` is refused, as is a base that fails the same validation as `nimbus connector auth github --api-base`.
+
+```bash
+nimbus team vault put eng github --secret github.pat=ghp_xxxx --secret github.api_base=https://ghe.example.com
+```
+
 ### `nimbus team vault grant <entry> <peerId> <toolId>`
 
 Grant a paired peer permission to invoke one tool against a team-vault entry.

@@ -148,6 +148,7 @@ describe("GHES source pins", () => {
       "ipc/connector-rpc-handlers/auth.ts",
       "connectors/local-auth/detect-gh.ts",
       "connectors/local-auth/adopt-local-auth.ts",
+      "ipc/teamvault-rpc.ts",
     ]);
     const callers = SOURCES.filter((s) => s.text.includes("normaliseGithubApiBase(")).map(
       (s) => s.rel,

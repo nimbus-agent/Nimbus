@@ -181,3 +181,120 @@ describe("teamvault-rpc", () => {
     expect(vault.size).toBe(sizeBefore);
   });
 });
+
+describe("teamvault.put — a github entry's PAT and base are written as one pair", () => {
+  type Op = readonly ["set" | "delete", string];
+  function recordingCtx(db: Database, vault: Map<string, string>, ops: Op[]): TeamVaultRpcContext {
+    return {
+      db,
+      vault: {
+        set: async (k, v) => {
+          ops.push(["set", k]);
+          vault.set(k, v);
+        },
+        delete: async (k) => {
+          ops.push(["delete", k]);
+          vault.delete(k);
+        },
+      },
+      operator: "owner",
+    };
+  }
+  const freshDb = () => {
+    const db = new Database(":memory:");
+    runIndexedSchemaMigrations(db, 35);
+    return db;
+  };
+  const PAT = teamVaultKey("eng", "github.pat");
+  const BASE = teamVaultKey("eng", "github.api_base");
+
+  it("deletes the PAT, writes the normalised base, then writes the PAT last (any key order)", async () => {
+    const vault = new Map<string, string>();
+    const ops: Op[] = [];
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      {
+        entry: "eng",
+        service: "github",
+        secrets: { "github.pat": "ghp_new", "github.api_base": "HTTPS://GHE.Example.com" },
+      },
+      recordingCtx(freshDb(), vault, ops),
+    );
+    expect(ops).toEqual([
+      ["delete", PAT],
+      ["set", BASE],
+      ["set", PAT],
+    ]);
+    expect(vault.get(BASE)).toBe("https://ghe.example.com/api/v3");
+    expect(vault.get(PAT)).toBe("ghp_new");
+  });
+
+  it("a PAT put with no base DELETES a stale base, so a github.com PAT never pairs with an old GHES host", async () => {
+    const vault = new Map<string, string>([
+      [PAT, "ghp_ghes_old"],
+      [BASE, "https://ghe.example.com/api/v3"],
+    ]);
+    const ops: Op[] = [];
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      { entry: "eng", service: "github", secrets: { "github.pat": "ghp_dotcom" } },
+      recordingCtx(freshDb(), vault, ops),
+    );
+    expect(vault.has(BASE)).toBe(false);
+    expect(vault.get(PAT)).toBe("ghp_dotcom");
+    expect(ops.at(-1)).toEqual(["set", PAT]);
+  });
+
+  it("refuses a base without a PAT (it would re-point the stored PAT) and writes nothing", async () => {
+    const vault = new Map<string, string>([[PAT, "ghp_dotcom"]]);
+    const ops: Op[] = [];
+    await expect(
+      dispatchTeamVaultRpc(
+        "teamvault.put",
+        {
+          entry: "eng",
+          service: "github",
+          secrets: { "github.api_base": "https://ghe.example.com" },
+        },
+        recordingCtx(freshDb(), vault, ops),
+      ),
+    ).rejects.toThrow("github.api_base can only be set together with github.pat");
+    expect(ops).toEqual([]);
+    expect(vault.get(PAT)).toBe("ghp_dotcom");
+  });
+
+  it("refuses an invalid base before writing anything", async () => {
+    const vault = new Map<string, string>();
+    const ops: Op[] = [];
+    await expect(
+      dispatchTeamVaultRpc(
+        "teamvault.put",
+        {
+          entry: "eng",
+          service: "github",
+          secrets: { "github.pat": "ghp_x", "github.api_base": "http://ghe.example.com" },
+        },
+        recordingCtx(freshDb(), vault, ops),
+      ),
+    ).rejects.toThrow("github.api_base");
+    expect(ops).toEqual([]);
+  });
+
+  it("a non-github entry keeps the plain write (no pairing rule)", async () => {
+    const vault = new Map<string, string>();
+    const ops: Op[] = [];
+    await dispatchTeamVaultRpc(
+      "teamvault.put",
+      {
+        entry: "eng",
+        service: "gitlab",
+        secrets: { "gitlab.pat": "glpat", "gitlab.api_base": "x" },
+      },
+      recordingCtx(freshDb(), vault, ops),
+    );
+    expect(ops).toEqual([
+      ["set", teamVaultKey("eng", "gitlab.pat")],
+      ["set", teamVaultKey("eng", "gitlab.api_base")],
+    ]);
+  });
+});
