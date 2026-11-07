@@ -68,6 +68,34 @@ function policyOf(spec: SpawnSpec): SandboxPolicyJson {
   return JSON.parse(spec.env?.[SANDBOX_POLICY_ENV] ?? "{}") as SandboxPolicyJson;
 }
 
+describe("ensureGithubMcp records the instance it spawned with", () => {
+  async function recorded(entries: Record<string, string>): Promise<Array<string | null>> {
+    const seen: Array<string | null> = [];
+    await ensureGithubMcp({
+      ...spawnCtx(await vaultWith(entries)),
+      recordGithubInstance: (host) => seen.push(host),
+    });
+    return seen;
+  }
+
+  test("a GHES base records its host[:port]", async () => {
+    expect(
+      await recorded({ "github.pat": "ghp_x", "github.api_base": "https://ghe.example.com:8443" }),
+    ).toEqual(["ghe.example.com:8443"]);
+  });
+
+  test("github.com records null", async () => {
+    expect(await recorded({ "github.pat": "ghp_x" })).toEqual([null]);
+  });
+
+  test("a spawn that does not happen (invalid base, or no PAT) records nothing", async () => {
+    expect(
+      await recorded({ "github.pat": "ghp_x", "github.api_base": "http://ghe.example.com" }),
+    ).toEqual([]);
+    expect(await recorded({})).toEqual([]);
+  });
+});
+
 describe("ensureGithubMcp", () => {
   test("github child env has no GITHUB_API_BASE_URL when none is stored", async () => {
     await ensureGithubMcp(spawnCtx(await vaultWith({ "github.pat": "ghp_x" })));

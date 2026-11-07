@@ -383,6 +383,39 @@ describe("buildActDeps: the typed preview for a templated proposable row (F5)", 
     expect(details["destination"]).toEqual({ service: "jira", credential: "team" });
   });
 
+  test("the MCP act door's prompt for a GitHub write names the GHES instance after Credential", async () => {
+    const GITHUB = CONNECTOR_WRITE_ROWS.filter((r) => r.toolId === "github_issue_comment_create");
+    const prompts: string[] = [];
+    const coord = {
+      requestConsent: (_c: string, req: { prompt: string }) => {
+        prompts.push(req.prompt);
+        return Promise.resolve(true);
+      },
+    } as unknown as ConsentCoordinator;
+    const act = buildActDeps(
+      {
+        dispatcher: { dispatch: () => Promise.resolve({ ok: true }) },
+        egressSink: makeEgressSink(db),
+        audit: { recordAudit: (e) => appendAuditEntry(db, e) },
+        policyHitl: NO_POLICY_OVERLAY,
+        previewCredentialFor: () => ({ credential: "personal", instance: "ghe.example.com" }),
+        previewRows: GITHUB,
+      },
+      coord,
+      "c-cli",
+    );
+    await act.execute(
+      "github.issue.comment.create",
+      { owner: "acme", repo: "web", issueNumber: 7, body: "hello" },
+      PROV,
+    );
+    const lines = (prompts[0] ?? "").split(String.fromCharCode(10));
+    const at = lines.indexOf("Credential: personal");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toBe("Instance: ghe.example.com");
+    expect(lines[at - 1]).toBe("Service: github");
+  });
+
   test("no template: today's verbatim prompt and { actionType, input } details, exactly", async () => {
     const { act, prompts } = wiring([], []);
     const input = { projectKey: "ENG", summary: "Fix login" };

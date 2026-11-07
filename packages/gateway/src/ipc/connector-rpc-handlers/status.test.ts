@@ -7,6 +7,7 @@ import {
   handleConnectorHealthHistory,
   handleConnectorListStatus,
   handleConnectorStatus,
+  withConfiguredInstance,
 } from "./status.ts";
 
 let fixture: RpcFixture;
@@ -240,5 +241,43 @@ describe("handleConnectorHealthHistory", () => {
     } catch (e) {
       expect((e as ConnectorRpcError).rpcCode).toBe(-32602);
     }
+  });
+});
+
+describe("withConfiguredInstance", () => {
+  const PAT = "ghp_SENTINEL_status_token";
+
+  async function statusFor(serviceId: string): Promise<Record<string, unknown>> {
+    registerConnector(serviceId);
+    const ctx = buildCtx({ serviceId });
+    const hit = await withConfiguredInstance(ctx, handleConnectorStatus(ctx));
+    return hit.value as Record<string, unknown>;
+  }
+
+  test("status github shows the GHES host (host only, never the URL or the PAT)", async () => {
+    await fixture.vault.set("github.pat", PAT);
+    await fixture.vault.set("github.api_base", "https://ghe.example.com:8443/api/v3");
+    const v = await statusFor("github");
+    expect(v["instance"]).toBe("ghe.example.com:8443");
+    expect(JSON.stringify(v)).not.toContain("/api/v3");
+    expect(JSON.stringify(v)).not.toContain(PAT);
+  });
+
+  test("status github shows nothing extra without a base", async () => {
+    await fixture.vault.set("github.pat", PAT);
+    expect("instance" in (await statusFor("github"))).toBe(false);
+  });
+
+  test("a stored base that no longer validates shows no instance (never a raw value)", async () => {
+    await fixture.vault.set("github.api_base", "http://ghe.secret.example");
+    const v = await statusFor("github");
+    expect("instance" in v).toBe(false);
+    expect(JSON.stringify(v)).not.toContain("secret");
+  });
+
+  test("github_actions shares the instance; another service never gets one", async () => {
+    await fixture.vault.set("github.api_base", "https://ghe.example.com/api/v3");
+    expect((await statusFor("github_actions"))["instance"]).toBe("ghe.example.com");
+    expect("instance" in (await statusFor("slack"))).toBe(false);
   });
 });

@@ -35,7 +35,12 @@ export interface ConnectorWritePreview {
   readonly summary: string;
   readonly fields: readonly ConnectorWritePreviewField[];
   readonly otherFields: readonly { readonly key: string; readonly value: string }[];
-  readonly destination: { readonly service: string; readonly credential?: "personal" | "team" };
+  readonly destination: {
+    readonly service: string;
+    readonly credential?: "personal" | "team";
+    /** A self-hosted instance host (GitHub Enterprise Server), validated host[:port] text. */
+    readonly instance?: string;
+  };
   /** Set by the consent display only, for an `origin: "model"` action (never by the builder). */
   readonly requestedBy?: "model";
   /**
@@ -185,20 +190,37 @@ export function findConnectorWriteRow(
   return writes.length === 1 ? writes[0] : undefined;
 }
 
+/** A bare `host[:port]` as `normaliseGithubApiBase` produces it: nothing else is ever shown. */
+const INSTANCE_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/;
+
 /**
- * The credential kind the resolver names, or undefined. The resolver can never break the consent
- * gate: a throw, or anything but the exact strings "personal" / "team", leaves it unset.
+ * The credential kind and instance host the resolver names. The resolver can never break the
+ * consent gate: a throw, anything but the exact strings "personal" / "team" for the credential,
+ * or an instance that is not a plain host[:port] (a newline, control character, space, path or
+ * scheme) leaves that part unset.
  */
 function resolveCredential(
   service: string,
   credentialFor: PreviewCredentialResolver | undefined,
-): "personal" | "team" | undefined {
-  if (credentialFor === undefined) return undefined;
+): { readonly credential?: "personal" | "team"; readonly instance?: string } {
+  if (credentialFor === undefined) return {};
   try {
     const c: unknown = credentialFor(service);
-    return c === "personal" || c === "team" ? c : undefined;
+    if (c === "personal" || c === "team") return { credential: c };
+    if (typeof c !== "object" || c === null) return {};
+    const info = c as { credential?: unknown; instance?: unknown };
+    const credential =
+      info.credential === "personal" || info.credential === "team" ? info.credential : undefined;
+    const instance =
+      typeof info.instance === "string" && INSTANCE_HOST.test(info.instance)
+        ? info.instance
+        : undefined;
+    return {
+      ...(credential === undefined ? {} : { credential }),
+      ...(instance === undefined ? {} : { instance }),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -219,8 +241,12 @@ export function buildConnectorWritePreviewFrom(
     actionType: row.actionType,
     toolId: row.toolId,
   } as const;
-  const credential = resolveCredential(service, credentialFor);
-  const destination = credential === undefined ? { service } : { service, credential };
+  const { credential, instance } = resolveCredential(service, credentialFor);
+  const destination = {
+    service,
+    ...(credential === undefined ? {} : { credential }),
+    ...(instance === undefined ? {} : { instance }),
+  };
   if (!isPlainObject(rawInput)) {
     return {
       ...base,
@@ -264,6 +290,9 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
   const lines = [
     `Service: ${oneLine(p.service)}`,
     ...(p.destination.credential === undefined ? [] : [`Credential: ${p.destination.credential}`]),
+    ...(p.destination.instance === undefined
+      ? []
+      : [`Instance: ${oneLine(p.destination.instance)}`]),
     `Target:  ${oneLine(p.target)}`,
     oneLine(p.summary),
     "",

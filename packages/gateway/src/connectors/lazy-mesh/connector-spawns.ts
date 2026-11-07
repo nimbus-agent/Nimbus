@@ -309,6 +309,7 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
   // GITHUB_API_BASE_URL is set ONLY for a GHES base (the connector's own default is github.com), and
   // the GHES host joins both children's sandbox network additively (the same merge GitLab uses).
   const ghesRoot = resolved.host === null ? null : resolved.restRoot;
+  ctx.recordGithubInstance?.(resolved.host);
   const githubEnv = extensionProcessEnv(
     ghesRoot === null ? { GITHUB_PAT: pat } : { GITHUB_PAT: pat, GITHUB_API_BASE_URL: ghesRoot },
   );

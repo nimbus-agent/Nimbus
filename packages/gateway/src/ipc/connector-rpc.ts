@@ -37,6 +37,7 @@ import {
   type ModelWritesDeps,
   refuseExtensionBackedRemoval,
   resolveConnectorAddMcp,
+  withConfiguredInstance,
 } from "./connector-rpc-handlers/index.ts";
 import { asRecord, ConnectorRpcError } from "./connector-rpc-shared.ts";
 
@@ -210,7 +211,7 @@ export async function dispatchConnectorRpc(options: {
     case "connector.setInterval":
       return handleConnectorSetInterval(ctx);
     case "connector.status":
-      return handleConnectorStatus(ctx);
+      return withConfiguredInstance(ctx, handleConnectorStatus(ctx));
     case "connector.healthHistory":
       return handleConnectorHealthHistory(ctx);
     case "connector.remove": {

@@ -127,6 +127,7 @@ import { createConnectorWriteDispatcher } from "../connectors/connector-write-di
 import type { ConnectorWriteContext } from "../connectors/connector-write-transport.ts";
 import { isObsidianWriteGrantApproved } from "../connectors/connector-writes/enablement-store.ts";
 import type { TribalKbConfig } from "../connectors/connector-writes/model-write-refusals.ts";
+import { previewCredentialResolver } from "../connectors/connector-writes/preview-credential.ts";
 import { createExtensionCredentialsResolver } from "../connectors/extension-sync/extension-identity.ts";
 import { createFilesystemV2Syncable } from "../connectors/filesystem-v2-sync.ts";
 import { githubFetchOneUrlIsSupported } from "../connectors/github-sync.ts";
@@ -1068,6 +1069,9 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
     ...(filesystemSpawnGate === undefined ? {} : { filesystemSpawnGate }),
     ...(extensionSlots === undefined ? {} : { extensionSlots, extensionSpawnGate }),
   });
+  // Snapshot the GitHub Enterprise Server host now (the constructor reads no Vault key) so the first
+  // write preview, which can come before the lazy child first spawns, already names the instance.
+  void connectorMesh.primeGithubInstance();
   const pagerdutyCfg = loadNimbusPagerdutyFromConfigDir(paths.configDir);
   const workdayCfg = loadNimbusWorkdayFromConfigDir(paths.configDir);
   // Policy connector-allowlist (I22): a blocked connector must never SYNC, not just be hidden from
@@ -4690,7 +4694,7 @@ export async function assemblePlatformServices(
       audit: { recordAudit: (e) => appendAuditEntry(db, e) },
       policyHitl,
       // The typed preview's `Credential:` line reads the same pin the write itself uses (as runAsk).
-      previewCredentialFor: (s) => connectorWriteDeps.credentialFor(s).credential,
+      previewCredentialFor: previewCredentialResolver(connectorWriteDeps, connectorMesh),
     },
   };
 

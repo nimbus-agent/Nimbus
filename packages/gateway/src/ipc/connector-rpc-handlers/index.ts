@@ -27,5 +27,6 @@ export {
   handleConnectorHealthHistory,
   handleConnectorListStatus,
   handleConnectorStatus,
+  withConfiguredInstance,
 } from "./status.ts";
 export { handleConnectorUserMcpCall, handleConnectorUserMcpTools } from "./user-mcp.ts";

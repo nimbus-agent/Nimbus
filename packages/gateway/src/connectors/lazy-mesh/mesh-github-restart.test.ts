@@ -75,3 +75,50 @@ describe("restartGithub", () => {
     expect(m.getToolsEpoch()).toBe(epoch);
   });
 });
+
+describe("githubInstance (the host the preview shows)", () => {
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  }
+
+  test("is primed from the Vault, kept across a Vault change, and refreshed by restartGithub", async () => {
+    base = mkdtempSync(join(tmpdir(), "nimbus-github-instance-"));
+    const vault = createMockVault();
+    await vault.set("github.pat", "ghp_x");
+    await vault.set("github.api_base", "https://ghe.example.com/api/v3");
+    const m = new LazyConnectorMesh(makePaths(base), vault, {});
+    mesh = m;
+    await m.primeGithubInstance();
+    expect(m.githubInstance()).toBe("ghe.example.com");
+
+    // The child was spawned with the old base: the preview must not follow a fresh Vault read.
+    await vault.set("github.api_base", "https://other.example.com/api/v3");
+    expect(m.githubInstance()).toBe("ghe.example.com");
+
+    m.restartGithub();
+    await settle();
+    expect(m.githubInstance()).toBe("other.example.com");
+  });
+
+  test("github.com, an absent base and an invalid base all show no instance", async () => {
+    base = mkdtempSync(join(tmpdir(), "nimbus-github-instance-"));
+    const vault = createMockVault();
+    const m = new LazyConnectorMesh(makePaths(base), vault, {});
+    mesh = m;
+    await m.primeGithubInstance();
+    expect(m.githubInstance()).toBeUndefined();
+    await vault.set("github.api_base", "http://ghe.example.com");
+    await m.primeGithubInstance();
+    expect(m.githubInstance()).toBeUndefined();
+  });
+
+  test("a spawn's record wins over an older prime that finishes later", () => {
+    base = mkdtempSync(join(tmpdir(), "nimbus-github-instance-"));
+    const m = new LazyConnectorMesh(makePaths(base), createMockVault(), {});
+    mesh = m;
+    m.recordGithubInstance("spawned.example.com");
+    expect(m.githubInstance()).toBe("spawned.example.com");
+    m.recordGithubInstance(null);
+    expect(m.githubInstance()).toBeUndefined();
+  });
+});

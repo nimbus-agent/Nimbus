@@ -14,7 +14,20 @@ export type ConnectorWriteTransport = "write" | "mesh";
  * Which credential kind a write to `service` will use. Config-derived (never read from the
  * payload). Lives here, not in the executor, so the preview builder never imports the executor.
  */
-export type PreviewCredentialResolver = (service: string) => "personal" | "team";
+export type PreviewCredentialResolver = (
+  service: string,
+) => "personal" | "team" | PreviewCredentialInfo;
+
+/**
+ * The widened resolver result: the credential kind, plus the self-hosted INSTANCE host the
+ * service's connector is connected to (today a GitHub Enterprise Server's `host[:port]`), which the
+ * consent preview shows as an `Instance:` line. It rides inside the existing resolver so no
+ * `ToolExecutor` constructor position moves (I53 pins them).
+ */
+export interface PreviewCredentialInfo {
+  readonly credential: "personal" | "team";
+  readonly instance?: string;
+}
 
 /** The migration wave the row was classified in. */
 export type ConnectorWriteWave = 2 | 3 | 4;

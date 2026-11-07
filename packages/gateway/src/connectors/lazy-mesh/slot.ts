@@ -60,6 +60,12 @@ export interface MeshSpawnContext {
   readonly obsidianRefreshStale?: (() => void) | undefined;
   /** The sandbox ROOT (`PlatformPaths.sandboxDir`). Despite the name, not a cwd: `wrapServerSpec` derives each spawn's own leaf under it. */
   readonly sandboxCwd: string;
+  /**
+   * Called by the GitHub spawn with the GitHub Enterprise Server `host[:port]` the child was
+   * started with (`null` for github.com), so the consent preview names the instance the write
+   * will actually reach. Absent in tests that do not care.
+   */
+  readonly recordGithubInstance?: ((host: string | null) => void) | undefined;
   clearLazyIdle(key: string): void;
   getLazyClient(key: string): MCPClient | undefined;
   setLazyClient(key: string, client: MCPClient): void;

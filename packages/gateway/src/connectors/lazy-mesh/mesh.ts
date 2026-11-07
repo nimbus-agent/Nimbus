@@ -16,8 +16,10 @@ import {
 } from "../../platform/sandbox/win32-grant-revoke.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { extractMcpToolText, MCP_TOOL_RESULT_MAX_BYTES } from "../_lib/mcp-tool-result.ts";
+import { readConnectorSecret } from "../connector-vault.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connector-writes/index.ts";
 import type { ExtensionSyncRequest } from "../extension-sync/sync-response.ts";
+import { resolveGithubBase } from "../github-api-base.ts";
 import { discoverVaultsForWriteGrant } from "../obsidian-discovery.ts";
 import type { UserMcpConnectorRow } from "../user-mcp-store.ts";
 import {
@@ -205,6 +207,10 @@ export class LazyConnectorMesh {
   /** Windows only: every path ever handed a write grant and not yet revoked, persisted. */
   private readonly obsidianLedger: ObsidianGrantLedgerStore;
   private obsidianRevokeFailing = false;
+  /** The GitHub Enterprise Server host the GitHub child was (or will next be) started with. */
+  private githubInstanceHost: string | null = null;
+  /** Bumped by every spawn record, so an older {@link primeGithubInstance} read cannot overwrite it. */
+  private githubInstanceSeq = 0;
   /** Tail of the Obsidian spawn/restart queue (see {@link runObsidianSerial}). */
   private obsidianTail: Promise<void> = Promise.resolve();
 
@@ -321,6 +327,7 @@ export class LazyConnectorMesh {
       obsidianSerial: <T>(fn: () => Promise<T>) => this.runObsidianSerial(fn),
       obsidianRefreshStale: () => this.refreshStaleObsidian(),
       sandboxCwd: paths.sandboxDir,
+      recordGithubInstance: (host) => this.recordGithubInstance(host),
       clearLazyIdle: (k) => this.clearLazyIdle(k),
       getLazyClient: (k) => this.getLazyClient(k),
       setLazyClient: (k, c) => this.setLazyClient(k, c),
@@ -1035,6 +1042,38 @@ export class LazyConnectorMesh {
    */
   restartGithub(): void {
     void this.detachLazyClient(LAZY_MESH.github);
+    // The next spawn reads the Vault again; show the same instance until then.
+    void this.primeGithubInstance();
+  }
+
+  /** The GitHub Enterprise Server host[:port] the consent preview names; undefined for github.com. */
+  githubInstance(): string | undefined {
+    return this.githubInstanceHost ?? undefined;
+  }
+
+  /** Called by the GitHub spawn with the host it started the child with (`null`: github.com). */
+  recordGithubInstance(host: string | null): void {
+    this.githubInstanceSeq += 1;
+    this.githubInstanceHost = host;
+  }
+
+  /**
+   * Reads `github.api_base` once and snapshots its host, so a write previewed BEFORE the lazy child
+   * first spawns still names the instance. A spawn's own record (above) wins over an older read that
+   * finishes later; a read or validation failure shows no instance (never a raw value). Never rejects.
+   */
+  async primeGithubInstance(): Promise<void> {
+    const seq = this.githubInstanceSeq;
+    let host: string | null = null;
+    try {
+      const resolved = resolveGithubBase(
+        await readConnectorSecret(this.vault, "github", "api_base"),
+      );
+      host = resolved.ok ? resolved.host : null;
+    } catch {
+      host = null;
+    }
+    if (seq === this.githubInstanceSeq) this.githubInstanceHost = host;
   }
 
   /**

@@ -324,6 +324,85 @@ describe("buildConnectorWritePreview — credential resolver", () => {
   });
 });
 
+describe("buildConnectorWritePreview: the Instance line (GitHub Enterprise Server)", () => {
+  const comment: PlannedAction = {
+    type: "github.issue.comment.create",
+    origin: "model",
+    payload: {
+      mcpToolId: "github_issue_comment_create",
+      input: { owner: "acme", repo: "web", issueNumber: 7, body: "hello" },
+    },
+  };
+  const ghes = (): { credential: "personal"; instance: string } => ({
+    credential: "personal",
+    instance: "ghe.example.com",
+  });
+
+  test("no resolver: every existing preview is byte-identical and has no Instance line", () => {
+    const p = buildConnectorWritePreview(comment);
+    expect(p && renderConnectorWritePreviewLines(p).join("\n")).not.toContain("Instance:");
+    expect(p?.destination).toEqual({ service: "github" });
+  });
+
+  test("a string-returning resolver (today's shape) yields no Instance", () => {
+    const p = buildConnectorWritePreview(comment, () => "personal");
+    expect(p?.destination).toEqual({ service: "github", credential: "personal" });
+    expect(p && renderConnectorWritePreviewLines(p).join("\n")).not.toContain("Instance:");
+  });
+
+  test("Instance: <host> appears right after Credential, and in the typed destination", () => {
+    const p = buildConnectorWritePreview(comment, ghes);
+    expect(p?.destination).toEqual({
+      service: "github",
+      credential: "personal",
+      instance: "ghe.example.com",
+    });
+    expect(p && renderConnectorWritePreviewLines(p).slice(0, 3)).toEqual([
+      "Service: github",
+      "Credential: personal",
+      "Instance: ghe.example.com",
+    ]);
+  });
+
+  test("a host:port instance is shown as is", () => {
+    const p = buildConnectorWritePreview(comment, () => ({
+      credential: "team",
+      instance: "ghe.example.com:8443",
+    }));
+    expect(p?.destination.instance).toBe("ghe.example.com:8443");
+  });
+
+  test("a throwing resolver yields no Instance line and does not break the prompt", () => {
+    const p = buildConnectorWritePreview(comment, () => {
+      throw new Error("boom");
+    });
+    expect(p?.destination).toEqual({ service: "github" });
+  });
+
+  test("an instance with a newline, control character, space or path is dropped", () => {
+    for (const instance of [
+      "ghe.example.com\nCredential: team",
+      "ghe.example.com\u001b[2J",
+      "ghe example.com",
+      "ghe.example.com/api/v3",
+      "",
+      "https://ghe.example.com",
+    ]) {
+      const p = buildConnectorWritePreview(comment, () => ({ credential: "personal", instance }));
+      expect(p?.destination).toEqual({ service: "github", credential: "personal" });
+      expect(p && renderConnectorWritePreviewLines(p).join("\n")).not.toContain("Instance:");
+    }
+  });
+
+  test("a non-string instance is dropped", () => {
+    const p = buildConnectorWritePreview(comment, (() => ({
+      credential: "personal",
+      instance: 42,
+    })) as never);
+    expect(p?.destination).toEqual({ service: "github", credential: "personal" });
+  });
+});
+
 describe("renderConnectorWritePreviewLines: the prepared block (a bound write, I54)", () => {
   const base = (): ConnectorWritePreview => build({ name: "web", revision: "abc" });
 
