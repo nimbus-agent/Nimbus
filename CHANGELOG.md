@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.38.1](https://github.com/nimbus-agent/Nimbus/compare/v10.38.0...v10.38.1) (2026-11-07)
+
+
+### Bug Fixes
+
+* **gateway:** the Teams webhook acks before it processes, and dedupes every activity on its id ([#1933](https://github.com/nimbus-agent/Nimbus/issues/1933)) ([062cfaf](https://github.com/nimbus-agent/Nimbus/commit/062cfaff52b4ff82982daf7cd02745048496c592))
+
 ## [10.38.0](https://github.com/nimbus-agent/Nimbus/compare/v10.37.0...v10.38.0) (2026-11-07)
 
 
