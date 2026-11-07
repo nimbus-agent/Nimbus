@@ -20,6 +20,7 @@ interface Harness {
     hosts?: string;
     run?: RunCli;
     gcpKeyPath?: string | null;
+    githubApiBase?: string | null;
   }): Parameters<typeof adoptLocalAuth>[1];
 }
 
@@ -84,6 +85,7 @@ function harness(): Harness {
           };
         },
         readGcpKeyPath: async () => opts.gcpKeyPath ?? null,
+        readGithubApiBase: async () => opts.githubApiBase ?? null,
       };
     },
   };
@@ -231,14 +233,194 @@ describe("adoptLocalAuth — gh", () => {
     expect(h.authed).toEqual([]);
   });
 
-  test("only a GitHub Enterprise login → ERR_LOCAL_AUTH_UNSUPPORTED", async () => {
+  test("only a *.ghe.com login → ERR_LOCAL_AUTH_UNSUPPORTED", async () => {
     const h = harness();
     await expect(
       adoptLocalAuth(
         { source: "gh", replace: false },
-        h.deps({ hosts: "ghe.acme.example:\n    user: me\n" }),
+        h.deps({ hosts: "acme.ghe.com:\n    user: me\n" }),
       ),
     ).rejects.toThrow(/ERR_LOCAL_AUTH_UNSUPPORTED/);
+    expect(h.gated).toEqual([]);
+  });
+});
+
+const GHES_HOSTS = `${MULTI}ghe.acme.example:\n    users:\n        me:\n        other:\n    user: me\n`;
+
+describe("adoptLocalAuth — gh on GitHub Enterprise Server", () => {
+  test("host ghe.acme.example runs gh auth token --hostname for that host, never github.com", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: false },
+      h.deps({ hosts: GHES_HOSTS }),
+    );
+    const ghCalls = h.spawned.filter((a) => a[0] === "gh");
+    expect(ghCalls).toEqual([
+      ["gh", "auth", "token", "--hostname", "ghe.acme.example", "--user", "me"],
+    ]);
+    expect(JSON.stringify(ghCalls)).not.toContain("github.com");
+  });
+
+  test("a single-account GHES gets no --user", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", replace: false },
+      h.deps({ hosts: "ghe.acme.example:\n    user: me\n" }),
+    );
+    expect(h.spawned).toContainEqual(["gh", "auth", "token", "--hostname", "ghe.acme.example"]);
+  });
+
+  test("the authenticate record carries apiBaseUrl for the GHES, none for github.com", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: false },
+      h.deps({ hosts: GHES_HOSTS }),
+    );
+    expect(h.authed).toEqual([
+      { service: "github", token: TOKEN, apiBaseUrl: "https://ghe.acme.example/api/v3" },
+    ]);
+    const h2 = harness();
+    await adoptLocalAuth({ source: "gh", account: "octocat", replace: false }, h2.deps());
+    expect(h2.authed).toEqual([{ service: "github", token: TOKEN }]);
+  });
+
+  test("no host and a sole GHES login uses it; two GHES logins need one named", async () => {
+    const only = harness();
+    await adoptLocalAuth(
+      { source: "gh", replace: false },
+      only.deps({ hosts: "ghe.acme.example:\n    user: me\n" }),
+    );
+    expect(only.authed[0]?.["apiBaseUrl"]).toBe("https://ghe.acme.example/api/v3");
+    const two = harness();
+    await expect(
+      adoptLocalAuth(
+        { source: "gh", replace: false },
+        two.deps({ hosts: "ghe.a.example:\n    user: me\nghe.b.example:\n    user: me\n" }),
+      ),
+    ).rejects.toThrow(/name one/);
+    expect(two.gated).toEqual([]);
+  });
+
+  test("github.com wins when no host is named and both are listed", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", account: "octocat", replace: false },
+      h.deps({ hosts: GHES_HOSTS }),
+    );
+    expect(h.spawned).toContainEqual([
+      "gh",
+      "auth",
+      "token",
+      "--hostname",
+      "github.com",
+      "--user",
+      "octocat",
+    ]);
+  });
+
+  test("a host the finding no longer lists → ERR_LOCAL_AUTH_SOURCE_CHANGED, no gate", async () => {
+    const h = harness();
+    await expect(
+      adoptLocalAuth({ source: "gh", host: "gone.example", replace: false }, h.deps()),
+    ).rejects.toThrow(/ERR_LOCAL_AUTH_SOURCE_CHANGED/);
+    expect(h.gated).toEqual([]);
+  });
+
+  test("already configured (any instance) without replace is refused; replace proceeds", async () => {
+    const h = harness();
+    await expect(
+      adoptLocalAuth(
+        { source: "gh", host: "ghe.acme.example", account: "me", replace: false },
+        h.deps({ hosts: GHES_HOSTS, configured: true }),
+      ),
+    ).rejects.toThrow(/ERR_LOCAL_AUTH_ALREADY_CONFIGURED/);
+    expect(h.gated).toEqual([]);
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: true },
+      h.deps({ hosts: GHES_HOSTS, configured: true }),
+    );
+    expect(h.gated).toHaveLength(1);
+  });
+
+  test("the consent payload names the host, the API root and the one-instance rule", async () => {
+    const h = harness();
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: false },
+      h.deps({ hosts: GHES_HOSTS }),
+    );
+    const payload = h.gated[0]?.payload ?? {};
+    expect(payload["host"]).toBe("ghe.acme.example");
+    expect(payload["apiBase"]).toBe("https://ghe.acme.example/api/v3");
+    const summary = String(payload["summary"]);
+    expect(summary).toContain("https://ghe.acme.example/api/v3");
+    expect(summary).toContain("one instance at a time");
+    expect(JSON.stringify(h.gated)).not.toContain("SENTINEL");
+  });
+
+  test("replacing names the instance the existing credential belongs to", async () => {
+    const toDotcom = harness();
+    await adoptLocalAuth(
+      { source: "gh", account: "octocat", replace: true },
+      toDotcom.deps({ configured: true, githubApiBase: "https://old.example/api/v3" }),
+    );
+    const s1 = String(toDotcom.gated[0]?.payload?.["summary"]);
+    expect(s1).toContain("old.example");
+    expect(s1).toContain("github.com");
+    const toGhes = harness();
+    await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: true },
+      toGhes.deps({ hosts: GHES_HOSTS, configured: true }),
+    );
+    expect(String(toGhes.gated[0]?.payload?.["summary"])).toContain("github.com");
+  });
+
+  test("a denied consent spawns no gh and authenticates nothing on the GHES path", async () => {
+    const h = harness();
+    const out = await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", account: "me", replace: false },
+      h.deps({ hosts: GHES_HOSTS, gate: { status: "rejected", reason: "no" } }),
+    );
+    expect(out).toEqual({ status: "rejected", reason: "no" });
+    expect(h.spawned.filter((a) => a[0] === "gh")).toEqual([]);
+    expect(h.authed).toEqual([]);
+  });
+
+  test("a token failure never echoes stdout on the GHES path", async () => {
+    const h = harness();
+    const run: RunCli = async () => ({ ok: true, stdout: "bad SENTINEL\n", stderr: "", code: 0 });
+    const err = await adoptLocalAuth(
+      { source: "gh", host: "ghe.acme.example", replace: false },
+      h.deps({ hosts: "ghe.acme.example:\n    user: me\n", run }),
+    ).catch((e: unknown) => e);
+    expect(String(err)).toContain("ERR_LOCAL_AUTH_SOURCE_UNAVAILABLE");
+    expect(String(err)).not.toContain("SENTINEL");
+  });
+});
+
+describe("parseAdoptRequest — host", () => {
+  test("reads a lower-cased host for gh and omits it otherwise", () => {
+    expect(parseAdoptRequest({ source: "gh", host: " GHE.Acme.Example " })).toEqual({
+      source: "gh",
+      host: "ghe.acme.example",
+      replace: false,
+    });
+    expect("host" in parseAdoptRequest({ source: "gh" })).toBe(false);
+    expect(parseAdoptRequest({ source: "gh", host: "github.com" }).host).toBe("github.com");
+  });
+  test("an unusable host, or a host on another source, is refused with fixed text", () => {
+    for (const host of ["https://ghe.example.com", "a b", "x.ghe.com", "ghe.example.com/api/v3"]) {
+      let err: unknown = null;
+      try {
+        parseAdoptRequest({ source: "gh", host });
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(ConnectorRpcError);
+      expect(String((err as Error).message)).not.toContain(host);
+    }
+    expect(() => parseAdoptRequest({ source: "aws", host: "ghe.example.com" })).toThrow(
+      ConnectorRpcError,
+    );
   });
 });
 

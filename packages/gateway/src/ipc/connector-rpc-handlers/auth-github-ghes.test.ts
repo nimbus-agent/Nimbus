@@ -6,9 +6,10 @@
  */
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-
 import type { ProbeVerdict } from "../../connectors/credential-probe.ts";
 import type { LazyConnectorMesh } from "../../connectors/lazy-mesh/mesh.ts";
+import { adoptLocalAuth } from "../../connectors/local-auth/adopt-local-auth.ts";
+import type { LocalAuthHostDeps } from "../../connectors/local-auth/local-auth-host.ts";
 import { upsertIndexedItem } from "../../index/item-store.ts";
 import { LocalIndex } from "../../index/local-index.ts";
 import { setSchedulerCursor } from "../../sync/scheduler-store.ts";
@@ -263,5 +264,61 @@ describe("the github child is retired on every outcome past validation", () => {
   test("a refused (invalid) auth makes no write and so does not need to retire anything", async () => {
     await refusal(ctxFor({ apiBaseUrl: "http://ghe.example.com" }));
     expect(restarts).toBe(0);
+  });
+});
+
+describe("a gh adoption inherits the same handler: probe against the GHES base and the cursor rule", () => {
+  const TOKEN = "gho_0123456789abcdefghij0123456789";
+  const hostDeps: LocalAuthHostDeps = {
+    run: async () => ({ ok: true, stdout: `${TOKEN}\n`, stderr: "", code: 0 }),
+    which: () => true,
+    readFile: () => "ghe.example.com:\n    user: me\n",
+    exists: () => true,
+    env: {},
+    platform: "linux",
+    homeDir: "/home/u",
+  };
+
+  function adopt(host: string | undefined, hosts: string): Promise<unknown> {
+    return adoptLocalAuth(
+      { source: "gh", ...(host === undefined ? {} : { host }), replace: true },
+      {
+        detect: { host: { ...hostDeps, readFile: () => hosts }, isConfigured: async () => false },
+        gate: async () => "proceed",
+        authenticate: (rec) => handleConnectorAuth({ ...ctxFor({}), rec }),
+        readGcpKeyPath: async () => null,
+      },
+    );
+  }
+
+  test("the adoption probe goes to the GHES base (not api.github.com) and stores the base", async () => {
+    await adopt("ghe.example.com", "ghe.example.com:\n    user: me\n");
+    expect(probedCreds).toEqual([{ pat: TOKEN, api_base: GHES_ROOT }]);
+    expect(await vault.get("github.api_base")).toBe(GHES_ROOT);
+    expect(events).toEqual(["egress:github", "probe:github"]);
+  });
+
+  test("adopting a different instance clears both cursors; the same instance clears neither", async () => {
+    await vault.set("github.api_base", "https://other.example.com/api/v3");
+    seedCursors();
+    seedItem();
+    await adopt("ghe.example.com", "ghe.example.com:\n    user: me\n");
+    expect(cursorOf("github")).toBeNull();
+    expect(cursorOf("github_actions")).toBeNull();
+    expect(itemCount()).toBe(1);
+
+    seedCursors();
+    await adopt("ghe.example.com", "ghe.example.com:\n    user: me\n");
+    expect(cursorOf("github")).toBe("nimbus-ghub1:abc");
+    expect(cursorOf("github_actions")).toBe("nimbus-gha1:abc");
+  });
+
+  test("adopting github.com while a GHES is stored deletes the base and clears both cursors", async () => {
+    await vault.set("github.api_base", GHES_ROOT);
+    seedCursors();
+    await adopt(undefined, "github.com:\n    user: me\n");
+    expect(await vault.get("github.api_base")).toBeNull();
+    expect(cursorOf("github")).toBeNull();
+    expect(cursorOf("github_actions")).toBeNull();
   });
 });

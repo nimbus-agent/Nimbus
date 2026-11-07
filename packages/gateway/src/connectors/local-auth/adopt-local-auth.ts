@@ -3,7 +3,7 @@ import type { ConnectorRpcHit } from "../../ipc/connector-rpc-handlers/context.t
 import { ConnectorRpcError } from "../../ipc/connector-rpc-shared.ts";
 import type { ConnectorServiceId } from "../connector-catalog.ts";
 import { awsRegionFor } from "./detect-aws.ts";
-import { GITHUB_DOTCOM } from "./detect-gh.ts";
+import { GITHUB_DOTCOM, ghesBaseForHost } from "./detect-gh.ts";
 import { type DetectLocalAuthDeps, detectLocalAuth } from "./detect-local-auth.ts";
 import { cliEnvFor } from "./local-auth-env.ts";
 import type { LocalAuthHostDeps } from "./local-auth-host.ts";
@@ -29,6 +29,8 @@ export interface AdoptRequest {
   readonly profile?: string;
   readonly context?: string;
   readonly project?: string;
+  /** gh only: the `hosts.yml` host to adopt. Omitted means github.com. */
+  readonly host?: string;
   readonly replace: boolean;
 }
 
@@ -42,6 +44,11 @@ export interface AdoptLocalAuthDeps {
    * when none is configured.
    */
   readonly readGcpKeyPath: () => Promise<string | null>;
+  /**
+   * The stored `github.api_base`, if any, read fresh, so the gh consent prompt can say which
+   * instance an existing credential belongs to. Omitted means "none stored".
+   */
+  readonly readGithubApiBase?: () => Promise<string | null>;
 }
 
 export interface AdoptSuccess {
@@ -67,6 +74,22 @@ function optionalString(rec: Record<string, unknown>, key: string): string | und
   return typeof v === "string" && v.trim() !== "" ? v.trim() : undefined;
 }
 
+/**
+ * The optional `host` (gh only). github.com is accepted as is; any other value must be exactly a
+ * bare host the GHES validator accepts. Fixed refusal text: the value is never echoed.
+ */
+function parseAdoptHost(r: Record<string, unknown>, source: string): string | undefined {
+  const raw = optionalString(r, "host");
+  if (raw === undefined) return undefined;
+  if (source !== "gh") return fail("ERR_INVALID_PARAMS", "host applies to the gh source only");
+  const host = raw.toLowerCase();
+  if (host === GITHUB_DOTCOM) return host;
+  if (!ghesBaseForHost(host).ok) {
+    return fail("ERR_INVALID_PARAMS", "host is not a usable GitHub Enterprise Server host name");
+  }
+  return host;
+}
+
 export function parseAdoptRequest(rec: Record<string, unknown> | undefined): AdoptRequest {
   const r = rec ?? {};
   const source = r["source"];
@@ -77,12 +100,14 @@ export function parseAdoptRequest(rec: Record<string, unknown> | undefined): Ado
   const profile = optionalString(r, "profile");
   const context = optionalString(r, "context");
   const project = optionalString(r, "project");
+  const host = parseAdoptHost(r, source);
   return {
     source: source as LocalAuthSource,
     ...(account === undefined ? {} : { account }),
     ...(profile === undefined ? {} : { profile }),
     ...(context === undefined ? {} : { context }),
     ...(project === undefined ? {} : { project }),
+    ...(host === undefined ? {} : { host }),
     replace: r["replace"] === true,
   };
 }
@@ -140,12 +165,30 @@ type Target =
   | { readonly source: "kubectl"; readonly finding: KubectlFinding; readonly context: string }
   | { readonly source: "gcloud"; readonly finding: GcloudFinding; readonly project: string };
 
+/**
+ * Which `hosts.yml` login to adopt. A named host must still be listed; with none named,
+ * github.com wins, else the SOLE other login, else the owner must name one.
+ */
+function chooseGhFinding(req: AdoptRequest, gh: readonly GhFinding[]): GhFinding | undefined {
+  if (req.host !== undefined) {
+    const named = gh.find((f) => f.host.toLowerCase() === req.host);
+    return (
+      named ??
+      fail(LOCAL_AUTH_ERR.sourceChanged, "that gh host is no longer listed — run detect again")
+    );
+  }
+  const dotcom = gh.find((f) => f.host === GITHUB_DOTCOM);
+  if (dotcom !== undefined) return dotcom;
+  if (gh.length > 1)
+    return fail(LOCAL_AUTH_ERR.sourceChanged, "more than one gh host is available — name one");
+  return gh[0];
+}
+
 function resolveTarget(req: AdoptRequest, findings: readonly LocalAuthFinding[]): Target {
   switch (req.source) {
     case "gh": {
       const gh = findings.filter((f): f is GhFinding => f.source === "gh");
-      const dotcom = gh.find((f) => f.host === GITHUB_DOTCOM) ?? gh[0];
-      const f = usable(dotcom, req);
+      const f = usable(chooseGhFinding(req, gh), req);
       return {
         source: "gh",
         finding: f,
@@ -212,19 +255,32 @@ function resolveTarget(req: AdoptRequest, findings: readonly LocalAuthFinding[])
  */
 export async function consentPayload(
   t: Target,
-  deps: Pick<AdoptLocalAuthDeps, "readGcpKeyPath">,
+  deps: Pick<AdoptLocalAuthDeps, "readGcpKeyPath" | "readGithubApiBase">,
 ): Promise<Record<string, unknown>> {
   switch (t.source) {
-    case "gh":
+    case "gh": {
+      const apiBase = ghApiBaseFor(t.finding.host);
+      const stored = t.finding.alreadyConfigured
+        ? ((await deps.readGithubApiBase?.()) ?? null)
+        : null;
+      const summary =
+        `Copy the GitHub token gh uses for ${t.account} on ${t.finding.host} into the Nimbus Vault. ` +
+        (apiBase === null
+          ? ""
+          : `Nimbus will connect the GitHub connector to ${apiBase}, one instance at a time: github.com is then no longer synced. `) +
+        (t.finding.alreadyConfigured
+          ? `This replaces the GitHub credential already stored, which belongs to ${storedInstanceName(stored)}. `
+          : "") +
+        "gh's default login scopes are repo, read:org, workflow, gist — broader if you ran gh auth refresh -s. " +
+        "Nimbus keeps its own copy: a later gh auth logout does not disconnect Nimbus.";
       return {
         source: "gh",
         host: t.finding.host,
+        ...(apiBase === null ? {} : { apiBase }),
         account: t.account,
-        summary:
-          `Copy the GitHub token gh uses for ${t.account} on ${t.finding.host} into the Nimbus Vault. ` +
-          "gh's default login scopes are repo, read:org, workflow, gist — broader if you ran gh auth refresh -s. " +
-          "Nimbus keeps its own copy: a later gh auth logout does not disconnect Nimbus.",
+        summary,
       };
+    }
     case "aws":
       return {
         source: "aws",
@@ -256,11 +312,28 @@ export async function consentPayload(
   }
 }
 
+/** The API root a gh login on `host` is connected as, or `null` for github.com. */
+function ghApiBaseFor(host: string): string | null {
+  if (host === GITHUB_DOTCOM) return null;
+  const ghes = ghesBaseForHost(host);
+  return ghes.ok ? ghes.base : null;
+}
+
+/** For the consent text: which instance the stored credential belongs to (host only). */
+function storedInstanceName(storedBase: string | null): string {
+  if (storedBase === null) return "github.com";
+  try {
+    return new URL(storedBase).host;
+  } catch {
+    return "a configured GitHub Enterprise Server";
+  }
+}
+
 async function ghToken(
   host: LocalAuthHostDeps,
   t: Extract<Target, { source: "gh" }>,
 ): Promise<string> {
-  const argv = ["gh", "auth", "token", "--hostname", GITHUB_DOTCOM];
+  const argv = ["gh", "auth", "token", "--hostname", t.finding.host];
   // `--user` exists only on gh with the multi-account `users:` map; older gh rejects it.
   if (t.finding.multiAccount) argv.push("--user", t.account);
   const r = await host.run(argv, cliEnvFor("gh", host.env, { keyring: true }));
@@ -274,8 +347,14 @@ async function ghToken(
 
 async function authRecord(t: Target, host: LocalAuthHostDeps): Promise<Record<string, unknown>> {
   switch (t.source) {
-    case "gh":
-      return { service: "github", token: await ghToken(host, t) };
+    case "gh": {
+      const apiBase = ghApiBaseFor(t.finding.host);
+      return {
+        service: "github",
+        token: await ghToken(host, t),
+        ...(apiBase === null ? {} : { apiBaseUrl: apiBase }),
+      };
+    }
     case "aws": {
       const region = await awsRegionFor(host, t.profile);
       return {

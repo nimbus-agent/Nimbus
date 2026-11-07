@@ -263,6 +263,7 @@ export async function dispatchConnectorRpc(options: {
         // The token travels in-process only, inside this synthetic rec; it never crosses IPC.
         authenticate: (authRec) => handleConnectorAuth({ ...ctx, rec: authRec }),
         readGcpKeyPath: buildReadGcpKeyPath(vault),
+        readGithubApiBase: () => readConnectorSecret(vault, "github", "api_base"),
       });
       return { kind: "hit", value };
     }

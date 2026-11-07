@@ -392,3 +392,51 @@ describe("nimbus connector detect — gcloud", () => {
     expect(d.adopted).toEqual([{ source: "gcloud", project: "acme-prod", replace: true }]);
   });
 });
+
+describe("nimbus connector detect: GitHub Enterprise Server logins", () => {
+  const GHES: FindingWire = {
+    source: "gh",
+    status: "available",
+    alreadyConfigured: false,
+    host: "ghe.example.com",
+    accounts: ["me"],
+    activeAccount: "me",
+  };
+
+  test("a GHES finding is adopted with its host; github.com is adopted with none", async () => {
+    const d = deps({
+      detect: async () => [GH, GHES],
+      answers: ["", ""],
+    });
+    await runConnectorDetect(["--source", "gh"], d.deps);
+    expect(d.adopted).toEqual([
+      { source: "gh", account: "octocat", replace: false },
+      { source: "gh", account: "me", host: "ghe.example.com", replace: false },
+    ]);
+    expect(d.out.join("\n")).toContain("ghe.example.com");
+  });
+
+  test("--host restricts the walk to that gh host", async () => {
+    const d = deps({ detect: async () => [GH, GHES], answers: [""] });
+    await runConnectorDetect(["--source", "gh", "--host", "ghe.example.com"], d.deps);
+    expect(d.adopted).toEqual([
+      { source: "gh", account: "me", host: "ghe.example.com", replace: false },
+    ]);
+    const none = deps({ detect: async () => [GH, GHES] });
+    await runConnectorDetect(["--source", "gh", "--host", "github.com"], none.deps);
+    expect(none.adopted).toEqual([{ source: "gh", account: "octocat", replace: false }]);
+  });
+
+  test("--host without a value is a usage error", async () => {
+    const d = deps();
+    await expect(runConnectorDetect(["--host"], d.deps)).rejects.toThrow(/Usage/);
+  });
+
+  test("the report names the GHES instance and the one-instance rule", async () => {
+    const d = deps({ detect: async () => [GHES], answers: [""] });
+    await runConnectorDetect(["--source", "gh"], d.deps);
+    const text = d.out.join("\n");
+    expect(text).toContain("Instance: ghe.example.com");
+    expect(text).toContain("github.com is no longer synced");
+  });
+});
