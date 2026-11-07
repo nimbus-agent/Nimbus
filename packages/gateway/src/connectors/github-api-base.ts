@@ -1,0 +1,125 @@
+// packages/gateway/src/connectors/github-api-base.ts
+
+import { isLoopbackHost } from "../llm/base-url-locality.ts";
+
+/**
+ * The ONE place a GitHub Enterprise Server API base is validated and a stored one is resolved.
+ *
+ * The PAT is sent to this host on every request, and the connector itself accepts an `http:` base
+ * with no credential, path or host checks, so the gateway is the only place those rules can be
+ * enforced. Every refusal reason is fixed text that never echoes the input: the value is
+ * Vault-stored and error text reaches logs and IPC.
+ */
+
+export const GITHUB_DEFAULT_REST_ROOT = "https://api.github.com";
+export const GITHUB_DEFAULT_WEB_ORIGIN = "https://github.com";
+
+export type NormalisedGithubApiBase =
+  | { readonly ok: true; readonly base: string; readonly host: string }
+  | { readonly ok: false; readonly reason: string };
+
+const REASON_EMPTY = "the GitHub Enterprise Server URL is empty";
+const REASON_SYNTAX = "the GitHub Enterprise Server URL is not a valid URL";
+const REASON_HTTPS = "the GitHub Enterprise Server URL must use https";
+const REASON_CREDENTIALS = "the GitHub Enterprise Server URL must not contain credentials";
+const REASON_QUERY = "the GitHub Enterprise Server URL must not contain a query or fragment";
+const REASON_PATH = "the GitHub Enterprise Server URL path must be empty or /api/v3";
+const REASON_IPV6 = "an IPv6 literal is not supported as a GitHub Enterprise Server host";
+const REASON_LOCAL = "a loopback, unspecified or link-local host is not allowed";
+const REASON_SAAS = "that is the default GitHub API; omit the base to use github.com";
+const REASON_GHE_COM = "GHE.com (data residency) is not supported";
+
+// ASCII control characters and whitespace anywhere in the value.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: rejecting control characters is the point
+const CONTROL_OR_SPACE = /[\u0000- \u007f]/;
+
+function isUnspecifiedOrLinkLocal(host: string): boolean {
+  if (host === "0.0.0.0") return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
+  return m !== null && m[1] === "169" && m[2] === "254";
+}
+
+function canonicalHost(hostname: string): string {
+  let h = hostname.toLowerCase();
+  while (h.endsWith(".")) {
+    h = h.slice(0, -1);
+  }
+  return h;
+}
+
+function refuseHost(host: string): string | null {
+  if (host === "") return REASON_SYNTAX;
+  if (host.startsWith("[")) return REASON_IPV6;
+  if (isLoopbackHost(host) || isUnspecifiedOrLinkLocal(host)) return REASON_LOCAL;
+  if (host === "github.com" || host === "api.github.com") return REASON_SAAS;
+  if (host.endsWith(".ghe.com")) return REASON_GHE_COM;
+  return null;
+}
+
+/**
+ * Accepts `https://ghe.example.com[:port]` with an optional `/` or `/api/v3[/]` path and returns
+ * the canonical `https://<host>[:port]/api/v3`. The host is canonicalised (lower-cased, trailing
+ * dots stripped, IDN as punycode by the WHATWG parser) BEFORE any host refusal runs, so the
+ * refusal and the sandbox network grant see the same string.
+ */
+export function normaliseGithubApiBase(raw: string): NormalisedGithubApiBase {
+  const trimmed = raw.trim();
+  if (trimmed === "") return { ok: false, reason: REASON_EMPTY };
+  if (CONTROL_OR_SPACE.test(trimmed)) return { ok: false, reason: REASON_SYNTAX };
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return { ok: false, reason: REASON_SYNTAX };
+  }
+  if (url.protocol !== "https:") return { ok: false, reason: REASON_HTTPS };
+  if (url.username !== "" || url.password !== "") {
+    return { ok: false, reason: REASON_CREDENTIALS };
+  }
+  if (trimmed.includes("?") || trimmed.includes("#")) return { ok: false, reason: REASON_QUERY };
+  if (url.pathname !== "/" && url.pathname !== "/api/v3" && url.pathname !== "/api/v3/") {
+    return { ok: false, reason: REASON_PATH };
+  }
+  const hostname = canonicalHost(url.hostname);
+  const refusal = refuseHost(hostname);
+  if (refusal !== null) return { ok: false, reason: refusal };
+  const host = url.port === "" ? hostname : `${hostname}:${url.port}`;
+  return { ok: true, base: `https://${host}/api/v3`, host };
+}
+
+export type ResolvedGithubBase =
+  | {
+      readonly ok: true;
+      /** The REST root requests are made against (no trailing slash). */
+      readonly restRoot: string;
+      /** The origin the instance's web URLs (`html_url`) live on. */
+      readonly webOrigin: string;
+      /** The GHES `host[:port]`, or `null` for github.com. */
+      readonly host: string | null;
+    }
+  | { readonly ok: false };
+
+/**
+ * Resolves the stored `github.api_base`. ABSENT (null/undefined) means github.com. PRESENT but
+ * not valid FAILS CLOSED (`ok: false`): the PAT stored beside a GHES base is an enterprise
+ * credential, so a bad base must never fall back to api.github.com. Every consumer uses this
+ * helper; none calls `normaliseGithubApiBase` with a default of its own.
+ */
+export function resolveGithubBase(raw: string | null | undefined): ResolvedGithubBase {
+  if (raw === null || raw === undefined) {
+    return {
+      ok: true,
+      restRoot: GITHUB_DEFAULT_REST_ROOT,
+      webOrigin: GITHUB_DEFAULT_WEB_ORIGIN,
+      host: null,
+    };
+  }
+  const n = normaliseGithubApiBase(raw);
+  if (!n.ok) return { ok: false };
+  return {
+    ok: true,
+    restRoot: n.base,
+    webOrigin: `https://${n.host}`,
+    host: n.host,
+  };
+}
