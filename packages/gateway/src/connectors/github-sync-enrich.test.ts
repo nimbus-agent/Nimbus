@@ -7,7 +7,10 @@ import {
   createStubVault,
   syncTestContext,
 } from "./connector-sync-test-helpers.ts";
+import { GITHUB_DOTCOM_BASE } from "./github-api-base.ts";
 import { enrichPrDetail, selectPrEnrichCandidates } from "./github-sync.ts";
+
+const GH_ORIGIN = "https://github.com";
 
 function seedPrRow(
   db: ReturnType<typeof createMemoryIndexDb>,
@@ -23,7 +26,7 @@ function seedPrRow(
     externalId: `${repoFull}#${String(num)}`,
     title,
     bodyPreview: "",
-    url: null,
+    url: `https://github.com/${repoFull}/pull/${String(num)}`,
     canonicalUrl: null,
     modifiedAt,
     metadata: { number: num, repo: repoFull, ...extraMetadata },
@@ -56,7 +59,7 @@ describe("enrichPrDetail", () => {
         ),
       )) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 3000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 3000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(1);
     expect(titleOf(db, "acme/app#1")).toBe("Fix the retry loop");
@@ -70,7 +73,7 @@ describe("enrichPrDetail", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("nope", { status: 404 }))) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#9")).toBe("PR #9");
@@ -83,7 +86,7 @@ describe("enrichPrDetail", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("{}", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(0);
   });
@@ -106,7 +109,7 @@ describe("enrichPrDetail", () => {
       );
     }) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 20000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 20000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(10);
     expect(fetched).toHaveLength(10);
@@ -123,7 +126,9 @@ describe("enrichPrDetail", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("nope", { status: 401 }))) as unknown as typeof fetch;
 
-    await expect(enrichPrDetail(ctx, "pat", 2000, fetchImpl)).rejects.toThrow(/unauthorized/);
+    await expect(enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl)).rejects.toThrow(
+      /unauthorized/,
+    );
   });
 
   test("a rate-limited (403, no remaining) response propagates and aborts the tick", async () => {
@@ -136,7 +141,9 @@ describe("enrichPrDetail", () => {
         new Response("nope", { status: 403, headers: { "x-ratelimit-remaining": "0" } }),
       )) as unknown as typeof fetch;
 
-    await expect(enrichPrDetail(ctx, "pat", 3000, fetchImpl)).rejects.toThrow(/rate limited/);
+    await expect(enrichPrDetail(ctx, "pat", 3000, GITHUB_DOTCOM_BASE, fetchImpl)).rejects.toThrow(
+      /rate limited/,
+    );
     expect(titleOf(db, "acme/app#7")).toBe("PR #7");
   });
 
@@ -159,7 +166,7 @@ describe("enrichPrDetail", () => {
         }),
       )) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#1")).toBe("Revert of PR #1");
@@ -172,7 +179,7 @@ describe("enrichPrDetail", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("not json", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#8")).toBe("PR #8");
@@ -185,7 +192,7 @@ describe("enrichPrDetail", () => {
     const fetchImpl = (() =>
       Promise.resolve(new Response("[1,2,3]", { status: 200 }))) as unknown as typeof fetch;
 
-    const n = await enrichPrDetail(ctx, "pat", 2000, fetchImpl);
+    const n = await enrichPrDetail(ctx, "pat", 2000, GITHUB_DOTCOM_BASE, fetchImpl);
 
     expect(n).toBe(0);
     expect(titleOf(db, "acme/app#10")).toBe("PR #10");
@@ -199,6 +206,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#1",
       title: "Add rate limiter", // NOT the `PR #1` fallback
       bodyPreview: "",
@@ -207,7 +215,7 @@ describe("selectPrEnrichCandidates", () => {
       metadata: { repo: "acme/app", number: 1 }, // no additions/deletions
     });
 
-    const candidates = selectPrEnrichCandidates(db, 10);
+    const candidates = selectPrEnrichCandidates(db, 10, GH_ORIGIN);
     expect(candidates.map((c) => c.externalId)).toEqual(["acme/app#1"]);
     db.close();
   });
@@ -218,6 +226,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#1",
       title: "Add rate limiter",
       bodyPreview: "",
@@ -226,7 +235,7 @@ describe("selectPrEnrichCandidates", () => {
       metadata: { repo: "acme/app", number: 1, additions: 120, deletions: 30 },
     });
 
-    expect(selectPrEnrichCandidates(db, 10)).toEqual([]);
+    expect(selectPrEnrichCandidates(db, 10, GH_ORIGIN)).toEqual([]);
     db.close();
   });
 
@@ -236,6 +245,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#1",
       title: "PR #1 revert", // starts with the fallback prefix but is a real title
       bodyPreview: "",
@@ -244,7 +254,7 @@ describe("selectPrEnrichCandidates", () => {
       metadata: { repo: "acme/app", number: 1, additions: 5, deletions: 2 },
     });
 
-    expect(selectPrEnrichCandidates(db, 10)).toEqual([]);
+    expect(selectPrEnrichCandidates(db, 10, GH_ORIGIN)).toEqual([]);
     db.close();
   });
 
@@ -254,6 +264,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#2",
       title: "PR #2",
       bodyPreview: "",
@@ -262,7 +273,9 @@ describe("selectPrEnrichCandidates", () => {
       metadata: { repo: "acme/app", number: 2, additions: 1, deletions: 1 },
     });
 
-    expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).toEqual(["acme/app#2"]);
+    expect(selectPrEnrichCandidates(db, 10, GH_ORIGIN).map((c) => c.externalId)).toEqual([
+      "acme/app#2",
+    ]);
     db.close();
   });
 
@@ -272,6 +285,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#1",
       title: "Add rate limiter", // NOT the `PR #1` fallback, no stats -> genuine candidate
       bodyPreview: "",
@@ -282,6 +296,7 @@ describe("selectPrEnrichCandidates", () => {
     upsertIndexedItem(db, {
       service: "github",
       type: "pr",
+      url: "https://github.com/acme/app/pull/1",
       externalId: "acme/app#2",
       title: "Fine already",
       bodyPreview: "",
@@ -295,7 +310,7 @@ describe("selectPrEnrichCandidates", () => {
 
     let candidates: ReturnType<typeof selectPrEnrichCandidates> | undefined;
     expect(() => {
-      candidates = selectPrEnrichCandidates(db, 10);
+      candidates = selectPrEnrichCandidates(db, 10, GH_ORIGIN);
     }).not.toThrow();
     expect(candidates?.map((c) => c.externalId)).toContain("acme/app#1");
     db.close();
@@ -308,6 +323,7 @@ describe("selectPrEnrichCandidates", () => {
       upsertIndexedItem(db, {
         service: "github",
         type: "pr",
+        url: "https://github.com/acme/app/pull/1",
         externalId: `acme/app#${String(i)}`,
         title: `PR title ${String(i)}`,
         bodyPreview: "",
@@ -317,7 +333,7 @@ describe("selectPrEnrichCandidates", () => {
       });
     }
 
-    expect(selectPrEnrichCandidates(db, 10)).toHaveLength(10);
+    expect(selectPrEnrichCandidates(db, 10, GH_ORIGIN)).toHaveLength(10);
     db.close();
   });
 });

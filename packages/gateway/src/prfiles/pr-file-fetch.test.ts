@@ -19,15 +19,19 @@ function makeDb(): Database {
   const db = new Database(":memory:");
   db.exec("PRAGMA foreign_keys = ON");
   db.exec(`CREATE TABLE item (id TEXT PRIMARY KEY, service TEXT NOT NULL, type TEXT NOT NULL,
-    external_id TEXT NOT NULL, modified_at INTEGER NOT NULL)`);
+    external_id TEXT NOT NULL, modified_at INTEGER NOT NULL, url TEXT)`);
   db.exec(`CREATE TABLE graph_entity (id TEXT PRIMARY KEY, type TEXT NOT NULL)`);
   db.exec(PR_CHANGED_FILE_V55_SQL);
   return db;
 }
 
 function addPr(db: Database, id: string, extId: string, modified: number): void {
-  db.exec(`INSERT INTO item VALUES ('${id}','github','pr','${extId}', ${String(modified)})`);
+  db.exec(
+    `INSERT INTO item VALUES ('${id}','github','pr','${extId}', ${String(modified)}, 'https://github.com/o/r/pull/1')`,
+  );
 }
+
+const GH_SCOPE = { webOrigin: "https://github.com" } as const;
 
 const row = (path: string): ChangedFileRow => ({ path, status: "modified", counterpartPath: null });
 
@@ -37,7 +41,7 @@ describe("selectPrFileCandidates", () => {
     addPr(db, "p1", "o/r#1", 100);
     addPr(db, "p2", "o/r#2", 300);
     addPr(db, "p3", "o/r#3", 200);
-    const got = selectPrFileCandidates(db, "github", 10).map((c) => c.itemId);
+    const got = selectPrFileCandidates(db, "github", 10, GH_SCOPE).map((c) => c.itemId);
     expect(got).toEqual(["p2", "p3", "p1"]);
     db.close();
   });
@@ -53,7 +57,7 @@ describe("selectPrFileCandidates", () => {
       truncated: false,
       nowMs: 1,
     });
-    expect(selectPrFileCandidates(db, "github", 10)).toEqual([]);
+    expect(selectPrFileCandidates(db, "github", 10, GH_SCOPE)).toEqual([]);
     db.close();
   });
 
@@ -61,22 +65,78 @@ describe("selectPrFileCandidates", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     addPr(db, "p2", "o/r#2", 200);
-    expect(selectPrFileCandidates(db, "github", 1)).toHaveLength(1);
+    expect(selectPrFileCandidates(db, "github", 1, GH_SCOPE)).toHaveLength(1);
     db.close();
   });
 
   test("does not return items of another service or another type", () => {
     const db = makeDb();
-    db.exec(`INSERT INTO item VALUES ('g1','gitlab','pr','a/b!1', 100)`);
-    db.exec(`INSERT INTO item VALUES ('i1','github','issue','o/r#9', 100)`);
-    expect(selectPrFileCandidates(db, "github", 10)).toEqual([]);
+    db.exec(`INSERT INTO item VALUES ('g1','gitlab','pr','a/b!1', 100, 'https://github.com/x')`);
+    db.exec(`INSERT INTO item VALUES ('i1','github','issue','o/r#9', 100, 'https://github.com/x')`);
+    expect(selectPrFileCandidates(db, "github", 10, GH_SCOPE)).toEqual([]);
     db.close();
   });
 
   test("derives repoFull from the external id", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#42", 100);
-    expect(selectPrFileCandidates(db, "github", 10)[0]?.repoFull).toBe("o/r");
+    expect(selectPrFileCandidates(db, "github", 10, GH_SCOPE)[0]?.repoFull).toBe("o/r");
+    db.close();
+  });
+});
+
+describe("selectPrFileCandidates origin scope", () => {
+  function addPrAt(db: Database, id: string, extId: string, url: string | null): void {
+    db.query("INSERT INTO item VALUES (?, 'github', 'pr', ?, 100, ?)").run(id, extId, url);
+  }
+
+  test("keeps only rows on the scoped web origin; another instance and a NULL url are skipped", () => {
+    const db = makeDb();
+    addPrAt(db, "a", "o/old#1", "https://github.com/o/old/pull/1");
+    addPrAt(db, "b", "o/new#2", "https://ghe.example.com/o/new/pull/2");
+    addPrAt(db, "c", "o/lookalike#3", "https://ghe.example.com.evil.test/o/x/pull/3");
+    addPrAt(db, "d", "o/nourl#4", null);
+    const ghes = selectPrFileCandidates(db, "github", 10, { webOrigin: "https://ghe.example.com" });
+    expect(ghes.map((c) => c.itemId)).toEqual(["b"]);
+    const dotcom = selectPrFileCandidates(db, "github", 10, { webOrigin: "https://github.com" });
+    expect(dotcom.map((c) => c.itemId)).toEqual(["a"]);
+    db.close();
+  });
+
+  test("LIKE metacharacters in the origin match literally", () => {
+    const db = makeDb();
+    addPrAt(db, "a", "o/r#1", "https://ghe_example.com/o/r/pull/1");
+    addPrAt(db, "b", "o/r#2", "https://gheXexample.com/o/r/pull/2");
+    const got = selectPrFileCandidates(db, "github", 10, { webOrigin: "https://ghe_example.com" });
+    expect(got.map((c) => c.itemId)).toEqual(["a"]);
+    db.close();
+  });
+
+  test("the any-origin scope is refused for github and allowed for gitlab", () => {
+    const db = makeDb();
+    expect(() => selectPrFileCandidates(db, "github", 10, { anyOrigin: true })).toThrow(
+      /requires a webOrigin/,
+    );
+    db.exec(`INSERT INTO item VALUES ('g1','gitlab','pr','a/b!1', 100, NULL)`);
+    expect(selectPrFileCandidates(db, "gitlab", 10, { anyOrigin: true })).toHaveLength(1);
+    db.close();
+  });
+
+  test("runPrFilePass never fetches a page for a row from another instance", async () => {
+    const db = makeDb();
+    addPrAt(db, "a", "o/old#1", "https://github.com/o/old/pull/1");
+    addPrAt(db, "b", "o/new#2", "https://ghe.example.com/o/new/pull/2");
+    const requested: string[] = [];
+    await runPrFilePass(fakeCtx(db, []), {
+      scope: { webOrigin: "https://ghe.example.com" },
+      service: "github",
+      nowMs: 1,
+      fetchPage: (c) => {
+        requested.push(c.repoFull);
+        return Promise.resolve({ rows: [row("a.ts")], hasMore: false });
+      },
+    });
+    expect(requested).toEqual(["o/new"]);
     db.close();
   });
 });
@@ -140,6 +200,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => ({ rows: [row("src/a.ts")], hasMore: false }),
@@ -157,6 +218,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p1", "o/r#1", 200);
     addPr(db, "p2", "o/r#2", 100);
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async (c) => {
@@ -178,6 +240,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -193,6 +256,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => null,
@@ -206,6 +270,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async (_c, page) => ({
@@ -224,6 +289,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async (_c, page) => ({ rows: [row(`p${String(page)}.ts`)], hasMore: true }),
@@ -242,6 +308,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p1", "o/r#1", 100);
     const acquired: string[] = [];
     await runPrFilePass(fakeCtx(db, acquired), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       // Distinct paths per page: a real PR listing never repeats a path across pages, and a
@@ -263,6 +330,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p1", "o/r#1", 200);
     addPr(db, "p2", "o/r#2", 100);
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async (c) => {
@@ -293,6 +361,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     const rejection = runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -312,6 +381,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p3", "o/r#3", 100);
     let attempts = 0;
     const rejection = runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -332,6 +402,7 @@ describe("runPrFilePass", () => {
     const db = makeDb();
     addPr(db, "p1", "o/r#1", 100);
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -353,6 +424,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p2", "o/r#2", 100);
     let fetchPageCalls = 0;
     const n = await runPrFilePass(fakeCtxRateLimited(db), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -380,6 +452,7 @@ describe("runPrFilePass", () => {
     addPr(db, "healthy", "o/r#1", 1);
 
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async (c) =>
@@ -403,6 +476,7 @@ describe("runPrFilePass", () => {
     }
     let attempts = 0;
     const n = await runPrFilePass(fakeCtx(db, []), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => {
@@ -422,6 +496,7 @@ describe("runPrFilePass", () => {
     addPr(db, "p1", "o/r#1", 100);
     const warns: WarnRecord[] = [];
     await runPrFilePass(fakeCtx(db, [], warns), {
+      scope: GH_SCOPE,
       service: "github",
       nowMs: 5,
       fetchPage: async () => null,

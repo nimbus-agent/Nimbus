@@ -99,6 +99,17 @@ export type ResolvedGithubBase =
     }
   | { readonly ok: false };
 
+/** The usable arm of {@link ResolvedGithubBase}. */
+export type ValidGithubBase = Extract<ResolvedGithubBase, { ok: true }>;
+
+/** github.com, for callers (and tests) that need the default as a value. */
+export const GITHUB_DOTCOM_BASE: ValidGithubBase = {
+  ok: true,
+  restRoot: GITHUB_DEFAULT_REST_ROOT,
+  webOrigin: GITHUB_DEFAULT_WEB_ORIGIN,
+  host: null,
+};
+
 /**
  * Resolves the stored `github.api_base`. ABSENT (null/undefined) means github.com. PRESENT but
  * not valid FAILS CLOSED (`ok: false`): the PAT stored beside a GHES base is an enterprise

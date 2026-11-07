@@ -10,7 +10,8 @@ export const CONNECTOR_VAULT_SECRET_KEYS = {
   outlook: [],
   teams: ["teams.bot_app_id", "teams.bot_app_password"],
   slack: ["slack.oauth", "slack.bot_token", "slack.app_token"],
-  github: ["github.pat"],
+  // `github.api_base` is OPTIONAL: a GitHub Enterprise Server API root (see github-api-base.ts).
+  github: ["github.pat", "github.api_base"],
   github_actions: [],
   gitlab: ["gitlab.pat", "gitlab.api_base"],
   bitbucket: ["bitbucket.username", "bitbucket.app_password"],

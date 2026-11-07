@@ -64,7 +64,7 @@ function seedPr(
     externalId,
     title,
     bodyPreview: "",
-    url: null,
+    url: `https://github.com/${externalId.replace(/#.*/, "")}/pull/1`,
     canonicalUrl: null,
     modifiedAt: 1000,
     metadata,
@@ -288,8 +288,8 @@ describe("selectPrEnrichCandidates — malformed rows", () => {
     // a candidate rather than be read as "already enriched".
     db.run("UPDATE item SET metadata = '[1]' WHERE external_id = 'o/r#9'");
 
-    expect(selectPrEnrichCandidates(db, 10)).toEqual([
-      { externalId: "o/r#9", repoFull: "o/r", num: 9 },
+    expect(selectPrEnrichCandidates(db, 10, "https://github.com")).toEqual([
+      { externalId: "o/r#9", repoFull: "o/r", num: 9, url: "https://github.com/o/r/pull/1" },
     ]);
     db.close();
   });

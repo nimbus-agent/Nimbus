@@ -249,7 +249,7 @@ describe("github probe and a GitHub Enterprise Server base", () => {
         );
       },
     );
-    expect(verdict.kind).toBe("valid");
+    expect(verdict?.kind).toBe("valid");
     expect(urls).toEqual([
       "https://ghe.example.com/api/v3/user",
       "https://ghe.example.com/api/v3/user?x=1",

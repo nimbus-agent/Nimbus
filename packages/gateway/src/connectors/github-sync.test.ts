@@ -308,7 +308,9 @@ describeWithFetchRestore("github-sync events sync (I-3)", () => {
       },
       now,
     );
-    expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).toContain("acme/app#1");
+    expect(
+      selectPrEnrichCandidates(db, 10, "https://github.com").map((c) => c.externalId),
+    ).toContain("acme/app#1");
 
     let pullDetailCalled = false;
     globalThis.fetch = ((input: SyncTestFetchParams[0]) => {
@@ -350,7 +352,9 @@ describeWithFetchRestore("github-sync events sync (I-3)", () => {
 
     // But enrichment newly ran on this quiet tick.
     expect(pullDetailCalled).toBe(true);
-    expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).not.toContain("acme/app#1");
+    expect(
+      selectPrEnrichCandidates(db, 10, "https://github.com").map((c) => c.externalId),
+    ).not.toContain("acme/app#1");
     db.close();
   });
 });
@@ -561,7 +565,9 @@ test("I-2: an events-path upsert after enrichment preserves stats and does not r
     now,
   );
 
-  expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).not.toContain("acme/app#1");
+  expect(
+    selectPrEnrichCandidates(db, 10, "https://github.com").map((c) => c.externalId),
+  ).not.toContain("acme/app#1");
 
   // A later PullRequestEvent for the same PR — real event payloads never carry stats.
   expect(
@@ -596,7 +602,9 @@ test("I-2: an events-path upsert after enrichment preserves stats and does not r
   expect(meta["commits"]).toBe(3);
 
   // Stats survived the events-path upsert, so the PR must not re-qualify for enrichment.
-  expect(selectPrEnrichCandidates(db, 10).map((c) => c.externalId)).not.toContain("acme/app#1");
+  expect(
+    selectPrEnrichCandidates(db, 10, "https://github.com").map((c) => c.externalId),
+  ).not.toContain("acme/app#1");
   db.close();
 });
 
@@ -625,7 +633,7 @@ test("a 403 with no retry-after and remaining left is not rate limiting", () => 
 });
 
 test("pullFilesUrl requests the largest page and a page number", () => {
-  const u = pullFilesUrl("o/r", 7, 2);
+  const u = pullFilesUrl("https://api.github.com", "o/r", 7, 2);
   expect(u).toContain("/repos/o/r/pulls/7/files");
   expect(u).toContain("per_page=100");
   expect(u).toContain("page=2");

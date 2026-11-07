@@ -1,6 +1,6 @@
 import type { Database } from "bun:sqlite";
 
-import { itemPrimaryKey } from "../index/item-store.ts";
+import { itemPrimaryKey, webOriginUrlLikePattern } from "../index/item-store.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { PR_FILES_PAGE_SIZE, runPrFilePass } from "../prfiles/pr-file-fetch.ts";
 import { mapGithubPrFiles } from "../prfiles/pr-file-mapping.ts";
@@ -17,20 +17,46 @@ import {
   UnauthenticatedError,
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
+import { resolveGithubBase, type ValidGithubBase } from "./github-api-base.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { buildPrMetadata, canonicalEpochMs, normalizeGithubPrState } from "./pr-meta.ts";
+import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
 
 const SERVICE_ID = "github";
 const CURSOR_PREFIX = "nimbus-ghub1:";
-const USER_URL = "https://api.github.com/user";
 
-export function pullDetailUrl(repoFull: string, num: number): string {
-  return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}`;
+/** The resolved, VALID base of one sync/fetchOne call (the `ok: false` arm never reaches a request). */
+type GithubBase = ValidGithubBase;
+
+/**
+ * Reads the stored `github.api_base` once per sync/fetchOne call. Absent means github.com; present
+ * but invalid FAILS CLOSED (`null`, with a service-named warning that never carries the value):
+ * the stored PAT belongs to that enterprise instance and must not go to api.github.com.
+ */
+async function readGithubBase(ctx: SyncContext): Promise<GithubBase | null> {
+  const resolved = resolveGithubBase(await ctx.getSecret("api_base"));
+  if (!resolved.ok) {
+    ctx.logger.warn(
+      { service: SERVICE_ID },
+      "github: the stored api_base is not a valid GitHub Enterprise Server base; making no request",
+    );
+    return null;
+  }
+  return resolved;
 }
 
-export function pullFilesUrl(repoFull: string, num: number, page: number): string {
-  return `https://api.github.com/repos/${repoFull}/pulls/${String(num)}/files?per_page=${String(
+export function pullDetailUrl(restRoot: string, repoFull: string, num: number): string {
+  return `${restRoot}/repos/${repoFull}/pulls/${String(num)}`;
+}
+
+export function pullFilesUrl(
+  restRoot: string,
+  repoFull: string,
+  num: number,
+  page: number,
+): string {
+  return `${restRoot}/repos/${repoFull}/pulls/${String(num)}/files?per_page=${String(
     PR_FILES_PAGE_SIZE,
   )}&page=${String(page)}`;
 }
@@ -134,8 +160,8 @@ export function extractPrMetadataForIndex(
   });
 }
 
-function eventsUrlFor(login: string): string {
-  return `https://api.github.com/users/${encodeURIComponent(login)}/events?per_page=${String(GITHUB_EVENTS_PAGE_SIZE)}`;
+function eventsUrlFor(restRoot: string, login: string): string {
+  return `${restRoot}/users/${encodeURIComponent(login)}/events?per_page=${String(GITHUB_EVENTS_PAGE_SIZE)}`;
 }
 
 type GithubSyncCursorV1 = { etag: string | null; login: string | null };
@@ -573,6 +599,8 @@ export interface FallbackPrCandidate {
   readonly externalId: string;
   readonly repoFull: string;
   readonly num: number;
+  /** The row's `url`. Never null in practice: a null-url row is not selected (fail closed). */
+  readonly url: string | null;
 }
 
 const MAX_ENRICH_PER_TICK = 10;
@@ -638,11 +666,16 @@ function metadataHasStats(metadata: string): boolean {
  * cannot be proven enriched.
  */
 // lane-census: scope=pr service=github
-export function selectPrEnrichCandidates(db: Database, limit: number): FallbackPrCandidate[] {
+export function selectPrEnrichCandidates(
+  db: Database,
+  limit: number,
+  webOrigin: string,
+): FallbackPrCandidate[] {
   const rows = db
     .query(
-      `SELECT external_id, title, metadata FROM item
+      String.raw`SELECT external_id, title, metadata, url FROM item
          WHERE service = 'github' AND type = 'pr'
+           AND url LIKE ? ESCAPE '\'
            AND (
              title LIKE 'PR #%'
              OR CASE
@@ -652,7 +685,12 @@ export function selectPrEnrichCandidates(db: Database, limit: number): FallbackP
            )
          ORDER BY modified_at DESC LIMIT ?`,
     )
-    .all(limit * 3) as { external_id: string; title: string; metadata: string }[]; // over-select; JS narrows below
+    .all(webOriginUrlLikePattern(webOrigin), limit * 3) as {
+    external_id: string;
+    title: string;
+    metadata: string;
+    url: string | null;
+  }[]; // over-select; JS narrows below
   const out: FallbackPrCandidate[] = [];
   for (const r of rows) {
     const hash = r.external_id.lastIndexOf("#");
@@ -662,7 +700,7 @@ export function selectPrEnrichCandidates(db: Database, limit: number): FallbackP
     if (!Number.isFinite(num)) continue;
     const isExactFallback = r.title === `PR #${String(num)}`;
     if (!isExactFallback && metadataHasStats(r.metadata)) continue; // only matched via the LIKE over-select
-    out.push({ externalId: r.external_id, repoFull, num });
+    out.push({ externalId: r.external_id, repoFull, num, url: r.url });
     if (out.length >= limit) break;
   }
   return out;
@@ -680,14 +718,21 @@ export async function enrichPrDetail(
   ctx: SyncContext,
   pat: string,
   now: number,
+  base: GithubBase,
   fetchImpl: typeof fetch = fetch,
 ): Promise<number> {
-  const candidates = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK);
+  // Only rows from THIS instance (their `url` is on its web origin) are re-fetched: a row left
+  // over from github.com or another instance must never produce a request with this PAT.
+  const candidates = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK, base.webOrigin);
   const headers = buildGithubEventHeaders(pat, null);
   let enriched = 0;
   for (const c of candidates) {
     await ctx.rateLimiter.acquire("github"); // NOSONAR S9382: fail-fast by design - a 401 or a rate limit (both throw below) must stop the pass before the next request is sent
-    const res = await fetchImpl(pullDetailUrl(c.repoFull, c.num), { headers }); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
+    const res = await fetchSameOriginOnly(
+      pullDetailUrl(base.restRoot, c.repoFull, c.num),
+      { headers },
+      fetchImpl,
+    ); // NOSONAR S9382: fail-fast by design - this response's 401/rate-limit check decides whether the next request is sent at all
     if (res.status === 401) {
       throw new UnauthenticatedError("GitHub pull detail: unauthorized (401)");
     }
@@ -708,7 +753,7 @@ export async function enrichPrDetail(
     upsertPr(ctx, c.repoFull, pr, now);
     enriched += 1;
   }
-  const remaining = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK + 1).length;
+  const remaining = ctx.prEnrichCandidates(MAX_ENRICH_PER_TICK + 1, base.webOrigin).length;
   if (remaining > MAX_ENRICH_PER_TICK) {
     ctx.logger.info(
       { service: SERVICE_ID, enriched, remainingAtLeast: MAX_ENRICH_PER_TICK },
@@ -729,9 +774,10 @@ async function runPrDetailEnrichmentBestEffort(
   ctx: SyncContext,
   pat: string,
   now: number,
+  base: GithubBase,
 ): Promise<void> {
   try {
-    await enrichPrDetail(ctx, pat, now);
+    await enrichPrDetail(ctx, pat, now, base);
   } catch (err) {
     if (err instanceof RateLimitError) throw err; // honor backoff
     ctx.logger.warn(
@@ -747,15 +793,21 @@ async function runPrDetailEnrichmentBestEffort(
  * the 304 (unchanged) path: `enrichPrDetail`'s own docstring records that skipping the unchanged
  * path once already drained a backlog at roughly zero on a low-activity account.
  */
-async function runPrFilePassBestEffort(ctx: SyncContext, pat: string, now: number): Promise<void> {
+async function runPrFilePassBestEffort(
+  ctx: SyncContext,
+  pat: string,
+  now: number,
+  base: GithubBase,
+): Promise<void> {
   try {
     await runPrFilePass(ctx, {
       service: SERVICE_ID,
       nowMs: now,
+      scope: { webOrigin: base.webOrigin },
       fetchPage: async (c, page) => {
         const num = Number(c.externalId.slice(c.externalId.lastIndexOf("#") + 1));
         if (!Number.isFinite(num)) return null;
-        const res = await fetch(pullFilesUrl(c.repoFull, num, page), {
+        const res = await fetchSameOriginOnly(pullFilesUrl(base.restRoot, c.repoFull, num, page), {
           headers: buildGithubEventHeaders(pat, null),
         });
         if (res.status === 401) throw new UnauthenticatedError("GitHub pull files: 401");
@@ -789,9 +841,13 @@ async function runPrFilePassBestEffort(ctx: SyncContext, pat: string, now: numbe
   }
 }
 
-async function fetchAuthenticatedLogin(ctx: SyncContext, pat: string): Promise<string> {
+async function fetchAuthenticatedLogin(
+  ctx: SyncContext,
+  pat: string,
+  base: GithubBase,
+): Promise<string> {
   await ctx.rateLimiter.acquire("github");
-  const res = await fetch(USER_URL, {
+  const res = await fetchSameOriginOnly(`${base.restRoot}/user`, {
     headers: {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
@@ -825,6 +881,7 @@ async function syncGithubUserEvents(
   cursor: string | null,
   pat: string,
   t0: number,
+  base: GithubBase,
 ): Promise<SyncResult> {
   const prev = decodeCursor(cursor);
   let login = prev?.login ?? null;
@@ -832,14 +889,14 @@ async function syncGithubUserEvents(
   let bytesTransferred = 0;
 
   if (login === null) {
-    login = await fetchAuthenticatedLogin(ctx, pat);
+    login = await fetchAuthenticatedLogin(ctx, pat, base);
     ctx.logger.info({ service: SERVICE_ID, login }, "Resolved GitHub authenticated user login");
     etag = null;
   }
 
   await ctx.rateLimiter.acquire("github");
   const headers = buildGithubEventHeaders(pat, etag);
-  const res = await fetch(eventsUrlFor(login), { headers });
+  const res = await fetchSameOriginOnly(eventsUrlFor(base.restRoot, login), { headers });
   const text = await res.text();
   bytesTransferred += text.length;
 
@@ -847,8 +904,8 @@ async function syncGithubUserEvents(
     // I-3: the events feed did not change, but the enrichment backlog is independent of it —
     // run it here too so a quiet account still drains. The cursor/return shape below is
     // otherwise byte-identical to before this fix.
-    await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now());
-    await runPrFilePassBestEffort(ctx, pat, Date.now());
+    await runPrDetailEnrichmentBestEffort(ctx, pat, Date.now(), base);
+    await runPrFilePassBestEffort(ctx, pat, Date.now(), base);
     return syncPassCursorSuccess(t0, bytesTransferred, encodeCursor({ etag, login }), 0);
   }
 
@@ -886,8 +943,8 @@ async function syncGithubUserEvents(
   }
 
   // Best-effort detail enrichment for fallback-titled or stats-missing PRs (existing rows + this tick's events).
-  await runPrDetailEnrichmentBestEffort(ctx, pat, now);
-  await runPrFilePassBestEffort(ctx, pat, now);
+  await runPrDetailEnrichmentBestEffort(ctx, pat, now, base);
+  await runPrFilePassBestEffort(ctx, pat, now, base);
 
   const newEtag = res.headers.get("etag");
   const nextCursor = encodeCursor({ etag: newEtag, login });
@@ -902,6 +959,15 @@ async function syncGithubUserEvents(
  * path, so a permissive pattern here is a request-forgery surface, not a convenience.
  */
 const GITHUB_PR_URL_RE = /^https?:\/\/[^/]+\/([\w.-]{1,100})\/([\w.-]{1,100})\/pull\/(\d{1,10})$/;
+
+/** Whether `url` is an https URL on exactly `webOrigin` (scheme, host and port). */
+function urlIsOnOrigin(url: string, webOrigin: string): boolean {
+  try {
+    return new URL(url).origin === webOrigin;
+  } catch {
+    return false;
+  }
+}
 
 /** A capture that is entirely dots (`.`, `..`, `...`) is a path-traversal segment, not a name. */
 const ALL_DOTS_RE = /^\.+$/;
@@ -955,17 +1021,30 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
   if (pat === null || pat === "") {
     return { status: "not_found", reason: "no_credential" };
   }
+  const base = await readGithubBase(ctx);
+  if (base === null) {
+    // Present but invalid api_base: fail closed, no request (never api.github.com).
+    return { status: "not_found", reason: "no_credential" };
+  }
+  if (!urlIsOnOrigin(url, base.webOrigin)) {
+    // The PAT belongs to ONE instance. The orchestrator's host boundary already claims only that
+    // instance's host; this is the second, local check that a pasted URL names it.
+    return { status: "unsupported_url" };
+  }
   const repoFull = `${owner}/${repo}`;
   let res: Response;
   try {
-    res = await fetch(pullDetailUrl(repoFull, Number.parseInt(requestedNum, 10)), {
-      headers: buildGithubEventHeaders(pat, null),
-      // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled
-      // upstream response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers
-      // the body read below too — an abort mid-stream rejects `res.text()`, caught by the same
-      // handler.
-      signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS),
-    });
+    res = await fetchSameOriginOnly(
+      pullDetailUrl(base.restRoot, repoFull, Number.parseInt(requestedNum, 10)),
+      {
+        headers: buildGithubEventHeaders(pat, null),
+        // Bounds this single-item fetch so `POST /v1/items/fetch` can never hang on a stalled
+        // upstream response (see `FETCH_ONE_TIMEOUT_MS`'s doc comment in `sync/types.ts`). Covers
+        // the body read below too — an abort mid-stream rejects `res.text()`, caught by the same
+        // handler.
+        signal: AbortSignal.timeout(FETCH_ONE_TIMEOUT_MS),
+      },
+    );
   } catch {
     // A DNS/TLS/connect failure can carry the request URL in its message. Swallow it entirely
     // rather than let it propagate — mirrors gitlab-sync.ts/jenkins-sync.ts/jira-sync.ts, whose
@@ -1015,8 +1094,12 @@ export function createGithubSyncable(options: GithubSyncableOptions): Syncable {
       if (pat === null || pat === "") {
         return syncNoopResult(cursor, t0);
       }
+      const base = await readGithubBase(ctx);
+      if (base === null) {
+        return syncNoopResult(cursor, t0);
+      }
 
-      return syncGithubUserEvents(ctx, cursor, pat, t0);
+      return syncGithubUserEvents(ctx, cursor, pat, t0, base);
     },
     fetchOne: fetchOnePullRequest,
   };

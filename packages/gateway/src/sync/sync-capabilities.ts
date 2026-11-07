@@ -13,6 +13,7 @@ import {
   type ItemBodyFetchState,
   indexedItemExists,
   listDistinctMetadataValues,
+  listDistinctMetadataValuesForOrigin,
   selectItemBodyFetchState,
   selectItemMetadataJson,
   upsertIndexedItemForSync,
@@ -21,7 +22,7 @@ import { type ObsidianNoteWrite, writeObsidianVault } from "../index/obsidian-no
 import { resolvePersonForSync } from "../people/linker.ts";
 import type { PersonSyncHints } from "../people/person-types.ts";
 import { recordPrChangedFiles } from "../prfiles/pr-changed-file-store.ts";
-import { selectPrFileCandidates } from "../prfiles/pr-file-fetch.ts";
+import { type PrCandidateScope, selectPrFileCandidates } from "../prfiles/pr-file-fetch.ts";
 import { type BlameRow, pruneBlameForFile, upsertBlameLines } from "../security/blame-store.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { resolveAccessTokenForService } from "./access-token-registry.ts";
@@ -117,8 +118,21 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
    * one per connector, because the two queries were byte-identical apart from the key.
    */
   listIndexedMetadataValues(service: string, metadataKey: string): string[];
-  /** PR rows still missing enrichment. GitHub-only, and the narrowest member here. */
-  prEnrichCandidates(limit: number): FallbackPrCandidate[];
+  /**
+   * `listIndexedMetadataValues` restricted to rows whose `url` is on `webOrigin`. The ONLY way to
+   * list GitHub's repos: the unfiltered member refuses `github`, because a repo name carries no
+   * host and a row from another instance (or github.com) must never become a request.
+   */
+  listIndexedMetadataValuesForOrigin(
+    service: string,
+    metadataKey: string,
+    webOrigin: string,
+  ): string[];
+  /**
+   * PR rows still missing enrichment. GitHub-only, and the narrowest member here. `webOrigin` is
+   * REQUIRED: only rows whose `url` is on the current instance's web origin are returned.
+   */
+  prEnrichCandidates(limit: number, webOrigin: string): FallbackPrCandidate[];
   /**
    * Writes one Obsidian vault's notes and prunes the departed ones in ONE transaction. Batched
    * deliberately: a per-note capability would issue N autocommitted writes and a partial sync would
@@ -138,7 +152,11 @@ export interface SyncCapabilities<S extends ConnectorServiceId = ConnectorServic
     readonly syncedAt: number;
   }): { upserted: number; deleted: number };
   /** PR rows whose changed-file list has not been fetched yet (S1-B, V55). */
-  prFileCandidates(service: string, limit: number): ReturnType<typeof selectPrFileCandidates>;
+  prFileCandidates(
+    service: string,
+    limit: number,
+    scope: PrCandidateScope,
+  ): ReturnType<typeof selectPrFileCandidates>;
   /** Records one PR's changed files. */
   recordPrChangedFiles(input: Parameters<typeof recordPrChangedFiles>[1]): void;
   upsertBlameLines(repoRoot: string, filePath: string, rows: readonly BlameRow[]): void;
@@ -236,11 +254,21 @@ export function buildSyncCapabilities<S extends ConnectorServiceId>(
     itemExists: (itemId) => indexedItemExists(deps.db, itemId),
     itemMetadata: (itemId) => selectItemMetadataJson(deps.db, itemId),
     bodyFetchState: (itemId) => selectItemBodyFetchState(deps.db, itemId),
-    listIndexedMetadataValues: (service, key) => listDistinctMetadataValues(deps.db, service, key),
-    prEnrichCandidates: (limit) => selectPrEnrichCandidates(deps.db, limit),
+    listIndexedMetadataValues: (service, key) => {
+      if (service === "github") {
+        throw new Error(
+          "listIndexedMetadataValues refuses github: use listIndexedMetadataValuesForOrigin with the current instance's web origin.",
+        );
+      }
+      return listDistinctMetadataValues(deps.db, service, key);
+    },
+    listIndexedMetadataValuesForOrigin: (service, key, webOrigin) =>
+      listDistinctMetadataValuesForOrigin(deps.db, service, key, webOrigin),
+    prEnrichCandidates: (limit, webOrigin) => selectPrEnrichCandidates(deps.db, limit, webOrigin),
     writeObsidianVault: (input) => writeObsidianVault(deps, input),
     writeApiEndpointsForSpec: (input) => writeApiEndpointsForSpec(deps, input),
-    prFileCandidates: (service, limit) => selectPrFileCandidates(deps.db, service, limit),
+    prFileCandidates: (service, limit, scope) =>
+      selectPrFileCandidates(deps.db, service, limit, scope),
     recordPrChangedFiles: (input) => {
       recordPrChangedFiles(deps.db, input);
     },
@@ -312,6 +340,7 @@ export function unboundSyncCapabilities(): SyncCapabilities {
     itemMetadata: () => refuse("itemMetadata"),
     bodyFetchState: () => refuse("bodyFetchState"),
     listIndexedMetadataValues: () => refuse("listIndexedMetadataValues"),
+    listIndexedMetadataValuesForOrigin: () => refuse("listIndexedMetadataValuesForOrigin"),
     prEnrichCandidates: () => refuse("prEnrichCandidates"),
     writeObsidianVault: () => refuse("writeObsidianVault"),
     writeApiEndpointsForSpec: () => refuse("writeApiEndpointsForSpec"),

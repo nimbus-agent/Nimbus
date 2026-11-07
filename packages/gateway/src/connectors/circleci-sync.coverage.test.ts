@@ -35,7 +35,7 @@ afterEach(() => {
 function ctxFor(db: Database, repos: readonly string[]): SyncContext {
   return {
     ...syncTestContext(db, createStubVault({ "circleci.api_token": "tok" }), "circleci"),
-    listIndexedMetadataValues: () => [...repos],
+    listIndexedMetadataValuesForOrigin: () => [...repos],
   };
 }
 

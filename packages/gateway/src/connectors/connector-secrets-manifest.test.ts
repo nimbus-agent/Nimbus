@@ -39,7 +39,7 @@ test("workday declares only the oauth vault key", () => {
 });
 
 describe("clearConnectorVaultSecretKeys", () => {
-  test("deletes all keys for github", async () => {
+  test("deletes all keys for github, including the optional api_base", async () => {
     const deleted: string[] = [];
     const vault: NimbusVault = {
       get: mock(async () => null),
@@ -52,8 +52,8 @@ describe("clearConnectorVaultSecretKeys", () => {
       listKeys: mock(async () => []),
     };
     const keys = await clearConnectorVaultSecretKeys(vault, "github");
-    expect(keys).toEqual(["github.pat"]);
-    expect(deleted).toEqual(["github.pat"]);
+    expect(keys).toEqual(["github.pat", "github.api_base"]);
+    expect(deleted).toEqual(["github.pat", "github.api_base"]);
   });
 });
 

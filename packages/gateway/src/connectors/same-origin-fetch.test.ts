@@ -86,7 +86,7 @@ describe("fetchSameOriginOnly", () => {
       "https://ghe.example.com/api/v3/user3",
     ]);
     const hdrs = s.calls[2]?.init?.headers as Record<string, string> | undefined;
-    expect(hdrs?.Authorization).toBe("Bearer t");
+    expect(hdrs?.["Authorization"]).toBe("Bearer t");
   });
 
   test("a hop that turns cross-origin on the second redirect is refused", async () => {

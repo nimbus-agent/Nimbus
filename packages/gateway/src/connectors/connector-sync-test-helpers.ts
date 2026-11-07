@@ -69,6 +69,7 @@ export function silentSyncContextExtras(): Pick<
   | "bodyFetchState"
   | "itemMetadata"
   | "listIndexedMetadataValues"
+  | "listIndexedMetadataValuesForOrigin"
   | "prEnrichCandidates"
   | "upsertBlameLines"
   | "prFileCandidates"
