@@ -17,7 +17,9 @@ export type ConfirmTemplateParse =
   | { readonly ok: false; readonly reason: string };
 
 /**
- * A character a confirm text may hold: printable ASCII letters, digits, space and `_ - . /  : # @ !`.
+ * A character a confirm text may hold: printable ASCII letters, digits, space and `_ - . /  : # @ ! =`.
+ * `=` is allowed in a VALUE only (a real Graph event id ends in base64 padding, `...AAA=`): a template's
+ * literal text may not contain it ({@link textOk}), so no separator is ever an `=`.
  * Everything else (controls, bidi marks, non-ASCII, brackets) is refused, so what the
  * owner types is exactly what the prompt shows.
  */
@@ -35,7 +37,8 @@ export function isConfirmChar(cp: number): boolean {
     cp === 0x3a || // :
     cp === 0x23 || // #
     cp === 0x40 || // @
-    cp === 0x21 // !
+    cp === 0x21 || // !
+    cp === 0x3d // = (values only; see above)
   );
 }
 
@@ -60,7 +63,7 @@ function isFieldName(name: string): boolean {
 
 function textOk(text: string): boolean {
   for (const ch of text) {
-    if (!isConfirmChar(ch.codePointAt(0) ?? 0)) return false;
+    if (ch === "=" || !isConfirmChar(ch.codePointAt(0) ?? 0)) return false;
   }
   return true;
 }

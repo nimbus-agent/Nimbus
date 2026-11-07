@@ -71,7 +71,7 @@ function allTemplates(): string[] {
   return [...out];
 }
 
-const ALPHABET = "abcxyz019 /@#:!_.-\\";
+const ALPHABET = "abcxyz019 /@#:!_.-=\\";
 const BIASED = "abcxyz019";
 
 function randomValue(rnd: () => number, maxLen: number): string {
@@ -190,7 +190,7 @@ function allStrings(chars: readonly string[], maxLen: number): string[] {
 
 describe("brute-force oracle: no two accepted projected tuples render the same text (D1)", () => {
   // The alphabet holds every separator character the templates below use, plus a space and a slash.
-  const CHARS = ["a", "b", "x", "/", " "] as const;
+  const CHARS = ["a", "b", "x", "/", " ", "="] as const;
   const SCALARS = allStrings(CHARS, 3);
   // Longer than 8 characters, so `:tail8` projects them (and two of them share a tail).
   const LONG = ["xaaaaaaaab", "baaaaaaaab", "aaaaaaaaaab"];

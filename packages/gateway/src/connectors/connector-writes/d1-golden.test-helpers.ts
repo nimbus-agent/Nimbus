@@ -109,7 +109,7 @@ export const GOLDEN_MIN: Readonly<Record<string, readonly string[]>> = {
     '  repo: "api"',
     "  Pull request number: 42",
     "  Head commit that must match: (not set: NOT PINNED, the merge uses whatever the head is when it runs)",
-    "  Merge method: (not set: GitHub's default merge method)",
+    "  Merge method: (not set: a merge commit)",
     "  Commit title: (not set: GitHub's default title)",
   ],
   github_branch_delete: [

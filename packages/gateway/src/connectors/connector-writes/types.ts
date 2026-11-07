@@ -63,7 +63,7 @@ export interface ConnectorWriteRow {
    * (the GitHub branch create, the pull request create and update, the GitLab merge request
    * update) and the five C3 flag and alert writes (the LaunchDarkly toggle and rollout, the
    * Flagsmith state set, the two Jira Operations alert writes); the Jira transition and the two
-   * file moves take two reads, and twelve rows carry a guard (the Linear update, the four
+   * file moves take two reads, and thirteen rows carry a guard (the Linear update, the four
    * Notion/Confluence page updates and appends with the KB-child guard, the two C2 updates that
    * refuse an empty update, and the C3 LaunchDarkly rollout, which must name every variation).
    */

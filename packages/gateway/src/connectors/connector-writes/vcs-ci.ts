@@ -20,6 +20,7 @@ import {
 } from "./types.ts";
 import {
   bitbucketPrReadArgs,
+  CIRCLECI_BRANCH_AND_TAG_GUARD,
   circleciJobReadArgs,
   circleciPipelineReadArgs,
   GITHUB_MERGE_SHA_GUARD,
@@ -269,7 +270,7 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
             "Head commit that must match",
             "(not set: NOT PINNED, the merge uses whatever the head is when it runs)",
           ),
-          textField("mergeMethod", "Merge method", "(not set: GitHub's default merge method)"),
+          textField("mergeMethod", "Merge method", "(not set: a merge commit)"),
           textField("commitTitle", "Commit title", "(not set: GitHub's default title)"),
         ],
       }),
@@ -660,9 +661,11 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
       }),
       {
         tool: "circleci_pipeline_list",
-        argKeys: ["projectSlug"],
+        // `branch` and `tag` are declared for the guard, never sent to the read.
+        argKeys: ["projectSlug", "branch", "tag"],
         args: circleciPipelineReadArgs,
         select: selectCircleciLatestPipeline,
+        guard: CIRCLECI_BRANCH_AND_TAG_GUARD,
       },
     ),
     { template: "trigger {projectSlug}" },

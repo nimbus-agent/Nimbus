@@ -100,6 +100,20 @@ export const GITHUB_MERGE_SHA_GUARD: BeforeStateGuard = {
   },
 };
 
+/**
+ * The CircleCI trigger guard: the connector sends `tag` ALONE whenever a tag is set and drops
+ * `branch`, so a trigger that sets both would show a branch the pipeline never runs on. Refused,
+ * with a fixed reason, when both are set (a null counts as unset).
+ */
+export const CIRCLECI_BRANCH_AND_TAG_GUARD: BeforeStateGuard = {
+  reason: "set either branch or tag, not both: the pipeline runs on the tag alone",
+  appliesTo: (picked) => {
+    const set = (v: unknown): boolean => v !== undefined && v !== null;
+    return set(picked["branch"]) && set(picked["tag"]);
+  },
+  allows: () => false,
+};
+
 /** `github_ref_get` input for a branch delete: the branch as `heads/<branch>`, so `kind` is a branch. */
 export function githubBranchDeleteReadArgs(input: Input): Record<string, unknown> | undefined {
   const owner = nonEmptyString(input["owner"]);

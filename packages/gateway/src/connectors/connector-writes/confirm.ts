@@ -153,7 +153,7 @@ function fieldText(
 /**
  * The text the owner types to approve a Wave 4 write: `<service>/<rendered template>`. Each value
  * must already be its own normalised form (no leading, trailing or doubled space, no other whitespace: else a refusal); the whole text must be printable ASCII letters, digits,
- * space and `_ - . /  : # @ !` and 1 to {@link CONFIRM_MAX_LENGTH} characters. Anything else (an
+ * space and `_ - . /  : # @ ! =` and 1 to {@link CONFIRM_MAX_LENGTH} characters. Anything else (an
  * unset, empty, boolean, object or null value, a non-ASCII target, a long target) is a refusal,
  * never a truncation or an escape: an unspeakable target is not confirmed.
  */

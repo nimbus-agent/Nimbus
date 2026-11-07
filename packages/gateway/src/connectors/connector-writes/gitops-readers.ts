@@ -215,8 +215,9 @@ export function selectMlflowModel(
     const fields: BeforeStateField[] = [
       { label: "Model", value: excerptHead(name) },
       {
-        label: `Version ${versionText === undefined ? "(unknown)" : excerptHead(versionText)} stage now`,
-        value: excerptHead(stageNow),
+        // A fixed label: the model's version is a VALUE, never part of a label.
+        label: "Version stage now",
+        value: `${versionText === undefined ? "(unknown)" : excerptHead(versionText)}: ${excerptHead(stageNow)}`,
       },
     ];
     if (target === "Production") {
@@ -241,29 +242,100 @@ export function snowflakeMetadataReadArgs(input: Input): Record<string, unknown>
   return object === undefined ? undefined : { object };
 }
 
-/** The last dot-separated segment of an identifier, unquoted and upper-cased (Snowflake folds case). */
-function lastSegment(identifier: string): string {
-  const parts = identifier.split(".");
-  const last = parts[parts.length - 1] ?? identifier;
-  return (last.startsWith('"') && last.endsWith('"') ? last.slice(1, -1) : last).toUpperCase();
+/**
+ * A Snowflake identifier as its folded segments: an unquoted segment is upper-cased, a quoted one
+ * keeps its case and may hold dots and doubled quotes. `undefined` when it does not parse.
+ */
+function identifierSegments(identifier: string): string[] | undefined {
+  const out: string[] = [];
+  let i = 0;
+  while (i <= identifier.length) {
+    let seg = "";
+    if (identifier.charAt(i) === '"') {
+      i++;
+      for (;;) {
+        if (i >= identifier.length) return undefined;
+        const ch = identifier.charAt(i);
+        if (ch === '"') {
+          if (identifier.charAt(i + 1) === '"') {
+            seg += '"';
+            i += 2;
+            continue;
+          }
+          i++;
+          break;
+        }
+        seg += ch;
+        i++;
+      }
+    } else {
+      const dot = identifier.indexOf(".", i);
+      const end = dot === -1 ? identifier.length : dot;
+      seg = identifier.slice(i, end).toUpperCase();
+      if (seg === "" || seg.includes('"')) return undefined;
+      i = end;
+    }
+    out.push(seg);
+    if (i === identifier.length) return out;
+    if (identifier.charAt(i) !== ".") return undefined;
+    i++;
+  }
+  return undefined;
+}
+
+/** What a tag's value shows when the reply cannot be tied to the tag the write names. */
+const TAG_NOT_IDENTIFIED = "unknown (the read does not identify this tag uniquely)";
+
+/** A tag name that names a tag in a database AND a schema: database, schema, tag. */
+const FULLY_QUALIFIED = 3;
+
+/**
+ * The tag's value now. A value is shown only when the reply names the SAME fully-qualified tag
+ * (database, schema and tag, quoted case respected). A reply entry that shares only the tag's
+ * name (another schema's tag, a differently-quoted one, a bare name) is NOT this tag, so its value
+ * is never shown as this tag's: the line is {@link TAG_NOT_IDENTIFIED}. No entry sharing the name:
+ * `(not set)`.
+ */
+function tagValueNow(
+  tags: readonly unknown[],
+  wanted: string | undefined,
+): { readonly value: string | undefined; readonly unidentified: boolean } {
+  const want = wanted === undefined ? undefined : identifierSegments(wanted);
+  if (want === undefined) return { value: undefined, unidentified: wanted !== undefined };
+  const wantName = want[want.length - 1];
+  const sameName = tags.filter((t) => {
+    const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
+    return segs !== undefined && segs[segs.length - 1] === wantName;
+  });
+  if (sameName.length === 0) return { value: undefined, unidentified: false };
+  const exact = sameName.filter((t) => {
+    const segs = identifierSegments(stringAt(t, ["name"]) ?? "");
+    return (
+      segs !== undefined &&
+      segs.length === FULLY_QUALIFIED &&
+      want.length === FULLY_QUALIFIED &&
+      segs.every((x, k) => x === want[k])
+    );
+  });
+  const hit = exact.length === 1 ? exact[0] : undefined;
+  return hit === undefined
+    ? { value: undefined, unidentified: true }
+    : { value: stringAt(hit, ["value"]) ?? "(no value)", unidentified: false };
 }
 
 /**
  * Snowflake `snowflake_object_metadata_get` (before-state) for a tag set or removal: the table, the
- * tag's value now (matched case-insensitively on its last name segment; the read returns direct AND
- * inherited tags, so the value may be inherited) and every tag on the table, capped.
+ * tag's value now (shown only for the same fully-qualified tag, see {@link tagValueNow}; the read
+ * returns direct AND inherited tags, so the value may be inherited) and every tag on the table,
+ * capped.
  */
 export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly BeforeStateField[] {
   const j = beforeReplyJson(reply);
   const object = requiredStringAt(j, ["object"]);
   const tags = arrayAt(j, ["tags"]);
   if (tags === undefined) throw new Error("before reply: no tags");
-  const want = typeof picked["tag"] === "string" ? lastSegment(picked["tag"]) : undefined;
-  const hit = tags.find((t) => {
-    const n = stringAt(t, ["name"]);
-    return n !== undefined && want !== undefined && lastSegment(n) === want;
-  });
-  const value = hit === undefined ? undefined : (stringAt(hit, ["value"]) ?? "(no value)");
+  const wanted = typeof picked["tag"] === "string" ? picked["tag"] : undefined;
+  const { value, unidentified } = tagValueNow(tags, wanted);
   const all = listAt(
     {
       tags: tags.flatMap((t) => {
@@ -277,8 +349,9 @@ export function selectSnowflakeTag(reply: unknown, picked: Picked): readonly Bef
     { label: "Table", value: excerptHead(object) },
     {
       label: "Tag now",
-      value:
-        value === undefined
+      value: unidentified
+        ? TAG_NOT_IDENTIFIED
+        : value === undefined
           ? "(not set)"
           : excerptHead(
               `${value} (the read also returns tags inherited from the schema or database)`,

@@ -753,13 +753,14 @@ describe("a second read (`also`) and the guard (B2a)", () => {
     expect(beforeReaderArgKeys(READER)).toEqual(["issueKey"]);
   });
 
-  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly twelve (B2, B3, C2, C3, D1)", () => {
+  test("in production only the Jira transition and the two file moves (Drive, OneDrive) take a second read, and the rows with a guard are exactly thirteen (B2, B3, C2, C3, D1)", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.before?.also !== undefined).map((r) => r.toolId),
     ).toEqual(["jira_issue_transition", "gdrive_file_move", "onedrive_item_move"]);
     const guarded = CONNECTOR_WRITE_ROWS.filter((r) => r.before?.guard !== undefined);
     expect(guarded.map((r) => r.toolId).sort((a, b) => a.localeCompare(b))).toEqual([
       "argocd_app_rollback",
+      "circleci_pipeline_trigger",
       "confluence_page_append",
       "confluence_page_update",
       "github_pr_merge",
