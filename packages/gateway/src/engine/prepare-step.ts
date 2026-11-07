@@ -241,7 +241,8 @@ function shownFacts(
   } catch {
     return undefined;
   }
-  if (!Array.isArray(raw)) return undefined;
+  // An empty selection would let a bound write reach approval showing nothing (I54): unshowable.
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
   const all: BeforeStateField[] = [];
   for (const entry of raw as unknown[]) {
     if (!isPlainObject(entry)) return undefined;

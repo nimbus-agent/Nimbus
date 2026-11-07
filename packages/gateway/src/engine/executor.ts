@@ -629,17 +629,23 @@ function withPrepared(
 }
 
 /**
- * SHA-256 (hex) of the canonical JSON (keys sorted) of a bound write's injected values. The audit row
- * carries this, never the values, so what was dispatched can be reconciled with the connector's own
- * log.
+ * SHA-256 (hex) of a bound write's injected values, the audit row's `boundValuesSha256`. The audit
+ * row carries this, never the values, so what was dispatched can be reconciled with the connector's
+ * own log. Canonical form, for reconcilers: the JSON of an ARRAY of `[key, value]` pairs, keys in
+ * UTF-16 code-unit order (locale-independent, and no key is equal to another under it); an array
+ * rather than an object, because `JSON.stringify` orders integer-like object keys numerically.
  */
 function boundValuesDigest(values: Readonly<Record<string, string>>): string {
-  const sorted = Object.fromEntries(
-    Object.keys(values)
-      .sort((a, b) => a.localeCompare(b))
-      .map((k) => [k, values[k]]),
-  );
-  return createHash("sha256").update(JSON.stringify(sorted)).digest("hex");
+  const pairs = Object.keys(values)
+    .sort(byCodeUnit)
+    .map((k) => [k, values[k]]);
+  return createHash("sha256").update(JSON.stringify(pairs)).digest("hex");
+}
+
+/** UTF-16 code-unit order: the same on every machine, whatever its locale. Object keys are
+ * distinct, so two keys never compare equal. */
+function byCodeUnit(a: string, b: string): number {
+  return a < b ? -1 : 1;
 }
 
 /** The audit fields of a record: only the ones a phase set, so an ordinary row is unchanged. */

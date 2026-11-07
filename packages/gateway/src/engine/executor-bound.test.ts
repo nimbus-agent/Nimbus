@@ -392,7 +392,7 @@ describe("the audit row reconciles what was bound without carrying it (fix 4)", 
     const h = harness();
     await h.exec.execute(NESTED);
     const want = new Bun.CryptoHasher("sha256")
-      .update(JSON.stringify({ planDigest: DIGEST }))
+      .update(JSON.stringify([["planDigest", DIGEST]]))
       .digest("hex");
     const audit = lastAuditJson(h);
     expect(audit["boundValuesSha256"]).toBe(want);
@@ -408,10 +408,38 @@ describe("the audit row reconciles what was bound without carrying it (fix 4)", 
       return lastAuditJson(h)["boundValuesSha256"];
     };
     const want = new Bun.CryptoHasher("sha256")
-      .update(JSON.stringify({ alpha: "v-alpha", mid: "v-mid", zeta: "v-zeta" }))
+      .update(
+        JSON.stringify([
+          ["alpha", "v-alpha"],
+          ["mid", "v-mid"],
+          ["zeta", "v-zeta"],
+        ]),
+      )
       .digest("hex");
     expect(await digestFor(["zeta", "alpha", "mid"])).toBe(want);
     expect(await digestFor(["alpha", "mid", "zeta"])).toBe(want);
+  });
+
+  test("the digest orders keys by code unit, so case and integer-like keys are stable", async () => {
+    const binds = (order: readonly string[]) =>
+      order.map((field) => ({ field, from: () => `v-${field}` }));
+    const digestFor = async (order: readonly string[]): Promise<unknown> => {
+      const h = harness({ row: synthBoundRow(3, { ...synthBound(), binds: binds(order) }) });
+      await h.exec.execute(NESTED);
+      return lastAuditJson(h)["boundValuesSha256"];
+    };
+    // Code-unit order: "10" < "9" < "B" < "a"; localeCompare would put "a" before "B".
+    const want = new Bun.CryptoHasher("sha256")
+      .update(
+        JSON.stringify([
+          ["10", "v-10"],
+          ["9", "v-9"],
+          ["B", "v-B"],
+          ["a", "v-a"],
+        ]),
+      )
+      .digest("hex");
+    expect(await digestFor(["a", "B", "9", "10"])).toBe(want);
   });
 
   test("a declined write still records the digest; an ordinary write records none", async () => {

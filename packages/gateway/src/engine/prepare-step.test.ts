@@ -460,12 +460,14 @@ describe("runPrepareStep", () => {
     );
   });
 
-  test("a reply the row cannot show refuses (select throws, non-array, bad entries)", async () => {
+  test("a reply the row cannot show refuses (select throws, non-array, empty, bad entries)", async () => {
     const selects: Array<(r: unknown) => never | unknown> = [
       () => {
         throw new Error("x");
       },
       () => "nope",
+      // I54: an empty selection would reach approval showing no prepared fact.
+      () => [],
       () => [null],
       () => [{ label: 1, value: "v" }],
       () => [{ label: "l", value: 2 }],
