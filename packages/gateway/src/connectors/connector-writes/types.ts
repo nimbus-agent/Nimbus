@@ -54,8 +54,8 @@ export interface ConnectorWriteRow {
    * have one: the 28 Wave 4 rows of D1 (27 offered, plus the never-offered Bitbucket merge: the
    * merges, the branch delete and tag create, the Jenkins, GitHub Actions, CircleCI and GitLab
    * pipeline writes, the AWS Lambda, EC2 and ECS writes, the Argo CD, Flux, MLflow and Snowflake
-   * writes and the three deletes; four of them carry a guard on a head sha, a resolved commit or
-   * a history id), and the 40 from before it: the seven comment rows (B1), nine issue writes (B2),
+   * writes and the three deletes; five of them carry a guard (a head sha, a resolved commit, a history id,
+   * or the CircleCI branch-and-tag refusal), and the 40 from before it: the seven comment rows (B1), nine issue writes (B2),
    * five page writes (B3), the
    * Drive file create (B4a, its target folder), the Obsidian append (B4b, the note's end) and the
    * eight Wave 3 file, PR and incident writes (C1: Drive move, rename and trash, the OneDrive move,
