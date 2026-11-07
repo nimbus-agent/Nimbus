@@ -404,7 +404,7 @@ export function listDistinctMetadataValues(
 }
 
 /** Escapes backslash, `%` and `_` so a value is matched literally by `LIKE ? ESCAPE '\'`. */
-function escapeLikeLiteral(value: string): string {
+export function escapeLikeLiteral(value: string): string {
   return value.replace(/[\\%_]/g, String.raw`\$&`);
 }
 

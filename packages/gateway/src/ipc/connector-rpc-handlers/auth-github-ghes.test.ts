@@ -118,6 +118,38 @@ function itemCount(): number {
   ).n;
 }
 
+describe("connector.auth github: a failed write never leaves a PAT beside the wrong base", () => {
+  test("the base write throws: no PAT remains (the old one is gone too) and the child is retired", async () => {
+    await vault.set("github.pat", "ghp_old");
+    await vault.set("github.api_base", GHES_ROOT);
+    const failing: NimbusVault = {
+      ...vault,
+      get: (k) => vault.get(k),
+      set: (k, v) =>
+        k === "github.api_base" ? Promise.reject(new Error("vault down")) : vault.set(k, v),
+      delete: (k) => vault.delete(k),
+    };
+    const ctx = { ...ctxFor({ apiBaseUrl: "https://other.example.com" }), vault: failing };
+    await expect(handleConnectorAuth(ctx)).rejects.toThrow("vault down");
+    expect(await vault.get("github.pat")).toBeNull();
+    expect(restarts).toBe(1);
+  });
+
+  test("a re-auth to github.com whose base delete throws leaves no PAT", async () => {
+    await vault.set("github.api_base", GHES_ROOT);
+    const failing: NimbusVault = {
+      ...vault,
+      get: (k) => vault.get(k),
+      set: (k, v) => vault.set(k, v),
+      delete: (k) =>
+        k === "github.api_base" ? Promise.reject(new Error("vault down")) : vault.delete(k),
+    };
+    const ctx = { ...ctxFor({}), vault: failing };
+    await expect(handleConnectorAuth(ctx)).rejects.toThrow("vault down");
+    expect(await vault.get("github.pat")).toBeNull();
+  });
+});
+
 describe("connector.auth github with an api base", () => {
   test("stores github.api_base normalised and probes with the normalised base", async () => {
     await handleConnectorAuth(ctxFor({ apiBaseUrl: " HTTPS://GHE.example.com/ " }));

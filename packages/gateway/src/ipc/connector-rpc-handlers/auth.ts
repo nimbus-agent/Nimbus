@@ -285,12 +285,16 @@ async function connectorAuthGithub(ctx: ConnectorRpcHandlerContext): Promise<Con
   // write, and never reaches this.
   try {
     const previous = await readConnectorSecret(ctx.vault, "github", "api_base");
-    await writeConnectorSecret(ctx.vault, "github", "pat", token);
+    // Fail closed on a partial write: the old PAT goes FIRST and the new one is written LAST, so a
+    // throw anywhere in between leaves NO PAT. A new enterprise PAT can then never sit beside an
+    // absent (or the previous) base and be sent to the wrong host.
+    await deleteConnectorSecret(ctx.vault, "github", "pat");
     if (base === null) {
       await deleteConnectorSecret(ctx.vault, "github", "api_base");
     } else {
       await writeConnectorSecret(ctx.vault, "github", "api_base", base);
     }
+    await writeConnectorSecret(ctx.vault, "github", "pat", token);
     const now = Date.now();
     ctx.localIndex.ensureConnectorSchedulerRegistration(
       "github",
