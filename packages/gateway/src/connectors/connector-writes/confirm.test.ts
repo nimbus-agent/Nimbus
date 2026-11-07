@@ -155,16 +155,64 @@ describe("renderConfirmText", () => {
 describe("the confirm text is injective across adjacent fields and array elements", () => {
   test.each([
     ["{owner}/{repo}", { owner: "a/b", repo: "c" }],
-    ["{owner}/{repo}", { owner: "a", repo: "b/c" }],
     ["{jobName}#{buildNumber}", { jobName: "a#1", buildNumber: 2 }],
     ["scale {deploymentName} to {replicas}", { deploymentName: "web to 5", replicas: 3 }],
-    ["scale {deploymentName} to {replicas}", { deploymentName: "web", replicas: "3 to 4" }],
     ["{a}/{b}", { a: ["x y"], b: "z" }],
     ["{instanceIds}", { instanceIds: ["i-1 i-2", "i-3"] }],
   ])("%s with %j is refused before the prompt", (template, input) => {
     expect(reason(confirmRow(template), input)).toMatch(
       /^confirm: field [A-Za-z]+ is not a usable value$/,
     );
+  });
+
+  test("D1: only the separator that FOLLOWS a field constrains it, so the LAST field may hold a slash, a space or the template's own separators", () => {
+    // These two were refused before D1; the field is the last one, so nothing after it can be confused.
+    expect(text(confirmRow("{owner}/{repo}"), { owner: "a", repo: "b/c" })).toBe("github/a/b/c");
+    expect(
+      text(confirmRow("scale {d} to {replicas}", "k8s.deployment.scale"), {
+        d: "web",
+        replicas: "3 to 4",
+      }),
+    ).toBe("k8s/scale web to 3 to 4");
+  });
+
+  test("D1: a slashed branch and an image tail are accepted where they come last", () => {
+    const del = confirmRow("delete {owner}/{repo}@{branch}", "github.branch.delete");
+    expect(text(del, { owner: "acme", repo: "api", branch: "feat/x" })).toBe(
+      "github/delete acme/api@feat/x",
+    );
+    const dep = confirmRow("deploy {p}/{r}/{s} {image:tail8}", "gcp.cloud_run.deploy");
+    expect(
+      text(dep, { p: "proj", r: "us-east1", s: "api", image: "gcr.io/proj/api@sha256:0123456789abcdef" }),
+    ).toBe("gcp/deploy proj/us-east1/api 89abcdef");
+  });
+
+  test("D1: a value holding the separator that follows it is still refused", () => {
+    const del = confirmRow("delete {owner}/{repo}@{branch}", "github.branch.delete");
+    for (const input of [
+      { owner: "a/b", repo: "api", branch: "x" },
+      { owner: "acme", repo: "a@b", branch: "x" },
+    ]) {
+      expect(reason(del, input)).toMatch(/^confirm: field (owner|repo) is not a usable value$/);
+    }
+  });
+
+  test("D1: literal text AFTER the last field constrains it too (round 2), and a separator of letters only is matched as a whole text", () => {
+    const trailing = confirmRow("a {x} units");
+    expect(reason(trailing, { x: "1 2" })).toBe("confirm: field x is not a usable value");
+    expect(reason(trailing, { x: "5 units" })).toBe("confirm: field x is not a usable value");
+    expect(text(trailing, { x: "12" })).toBe("github/a 12 units");
+    // Letters only: the whole text is what is refused, not each letter.
+    const word = confirmRow("{x}ab{y}");
+    expect(reason(word, { x: "cab", y: "1" })).toBe("confirm: field x is not a usable value");
+    expect(text(word, { x: "c", y: "ab" })).toBe("github/cabab");
+  });
+
+  test("D1: the first occurrence of the separator in value+separator must be the separator itself (an overlap cannot shift the split)", () => {
+    // x = "ab" with separator "aba" would render "ababa", which reads back as x = "" then "aba".
+    const overlap = confirmRow("{x}aba{y}");
+    expect(reason(overlap, { x: "ab", y: "1" })).toBe("confirm: field x is not a usable value");
+    expect(text(overlap, { x: "xy", y: "1" })).toBe("github/xyaba1");
   });
 
   test("realistic values are still accepted, and a single placeholder keeps its charset", () => {

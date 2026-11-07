@@ -90,40 +90,39 @@ function isAlnum(ch: string): boolean {
 }
 
 /**
- * The literal text BETWEEN two placeholders of a template (its separators). A value holding one of
- * these would let two different field splits render the same text (`{owner}/{repo}` with owner
- * `a/b`), so a template with two or more placeholders refuses it. A single-placeholder template
- * has none: its value keeps the whole confirm character set.
+ * The literal text that FOLLOWS a field, or undefined when nothing does (the field ends the
+ * template). Only that text can be confused with the end of the field's value: the text before a
+ * field is known when the confirm text is read left to right, and each field ends at the FIRST
+ * occurrence of its following text (D1; round 2 of the review: trailing literal text after the
+ * last field counts too).
  */
-function separatorTexts(segments: readonly ConfirmSegment[]): string[] {
-  const out: string[] = [];
-  segments.forEach((seg, i) => {
-    if (seg.kind !== "text") return;
-    if (segments[i - 1]?.kind === "field" && segments[i + 1]?.kind === "field") out.push(seg.text);
-  });
-  return out;
+function followingText(segments: readonly ConfirmSegment[], i: number): string | undefined {
+  const next = segments[i + 1];
+  return next?.kind === "text" ? next.text : undefined;
 }
 
-/** True when a value could be mistaken for a separator: it holds a separator's whole text or any non-alphanumeric character of it. */
-function holdsSeparator(value: string, separators: readonly string[]): boolean {
-  for (const sep of separators) {
-    if (value.includes(sep)) return true;
-    for (const ch of sep) if (!isAlnum(ch) && value.includes(ch)) return true;
-  }
+/**
+ * True when a value could be mistaken for the text that follows it: it holds that text whole, or
+ * any non-alphanumeric character of it. A field with no following text is not constrained here.
+ */
+function holdsSeparator(value: string, following: string | undefined): boolean {
+  if (following === undefined) return false;
+  if (value.includes(following)) return true;
+  for (const ch of following) if (!isAlnum(ch) && value.includes(ch)) return true;
   return false;
 }
 
 /** A field's value: a scalar, or an array of scalars joined with single spaces in input order (a comma is outside the confirm character set). An array element holding a space would read as two elements: refused. */
-function valueText(v: unknown, separators: readonly string[]): string | undefined {
+function valueText(v: unknown, following: string | undefined): string | undefined {
   if (!Array.isArray(v)) {
     const t = scalarText(v);
-    return t === undefined || holdsSeparator(t, separators) ? undefined : t;
+    return t === undefined || holdsSeparator(t, following) ? undefined : t;
   }
   if (v.length === 0) return undefined;
   const parts: string[] = [];
   for (const el of v as unknown[]) {
     const t = scalarText(el);
-    if (t === undefined || t.includes(" ") || holdsSeparator(t, separators)) return undefined;
+    if (t === undefined || t.includes(" ") || holdsSeparator(t, following)) return undefined;
     parts.push(t);
   }
   return parts.join(" ");
@@ -137,12 +136,18 @@ function lastCharacters(s: string): string {
 function fieldText(
   seg: Extract<ConfirmSegment, { kind: "field" }>,
   input: Record<string, unknown>,
-  separators: readonly string[],
+  following: string | undefined,
 ): string | undefined {
   if (!Object.hasOwn(input, seg.name)) return undefined;
-  const value = valueText(input[seg.name], separators);
+  const value = valueText(input[seg.name], following);
   if (value === undefined) return undefined;
-  return seg.tail8 ? lastCharacters(value) : value;
+  const shown = seg.tail8 ? lastCharacters(value) : value;
+  // The reader splits at the FIRST occurrence of the following text, so the shown value followed
+  // by it must not read earlier (an overlap such as "ab" before "aba"). Exact, whatever the text.
+  if (following !== undefined && `${shown}${following}`.indexOf(following) !== shown.length) {
+    return undefined;
+  }
+  return shown;
 }
 
 /**
@@ -160,14 +165,13 @@ export function renderConfirmText(row: ConnectorWriteRow, input: unknown): Confi
     alt !== undefined && input[alt.field] === undefined ? alt.template : row.confirm.template;
   const parsed = parseConfirmTemplate(template);
   if (!parsed.ok) return refuse(`template ${parsed.reason}`);
-  const separators = separatorTexts(parsed.segments);
   let text = `${serviceOf(row.actionType)}/`;
-  for (const seg of parsed.segments) {
+  for (const [i, seg] of parsed.segments.entries()) {
     if (seg.kind === "text") {
       text += seg.text;
       continue;
     }
-    const value = fieldText(seg, input, separators);
+    const value = fieldText(seg, input, followingText(parsed.segments, i));
     if (value === undefined) return refuse(`field ${seg.name} is not a usable value`);
     text += value;
   }
