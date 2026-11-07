@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1793995201093,
+  "lastUpdate": 1794032738677,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "10c20cb0cbb2daaf83585ff81346acfdce7a247c",
-          "message": "feat(query): first-class negation queries that refuse rather than answer from an empty index (W6-B.1) (#1277)\n\nCloses the structured half of **W6-B**, the last open Wave 6\nanswer-quality row. Three named\nnegation predicates plus `--explain`, each on the command whose row\nshape it already matches:\n\n```bash\nnimbus query --service github --type pr         --not-touching 'tests/**'\nnimbus query --service github --type deployment --no-downstream-incident\nnimbus people list --not-reviewed --since 7d\n```\n\nNo predicate language, no `--negate`, no composition. The roadmap's own\n2026-08-16 correction\nrecorded that \"the structured index already handles negation natively\"\nis true only of raw SQL, so\nshipping `--negate` would have meant inventing a grammar — a parser, a\nprecedence design, an\nerror-message surface and an injection boundary, with no per-predicate\nplace to state the honesty\nstory each one needs. Three flags instead.\n\n## Why a negation is not a filter with a NOT in it\n\nThis is the constraint the whole design is shaped around. For a positive\nquery a missing row costs\na result. For a negation a missing row **produces** one: a PR whose file\nlist was never fetched\nsatisfies \"no row matching that path\" exactly as well as a PR that\ngenuinely never touched it, and\nthe two are identical at the SQL level. An unpopulated substrate does\nnot make a negation\nincomplete — it makes it **wrong**, and wrong in the direction that\nreads as a finding, because the\nemptier the index the MORE rows come back.\n\nFour bounds follow, all enforced rather than documented:\n\n1. **An empty substrate refuses.** Each predicate probes its own\nsubstrate before answering — any\n`pr_files_state` row; any `correlates_with` edge; any `reviewed` edge\n**within the query's own\n`--since` window**, not an all-time count, because edges that are all\nolder than the window are\nexactly the state where \"nobody reviewed\" and \"nothing synced\" are\nindistinguishable. A failed\nprobe returns `status: refused` with `reason: missing_substrate` and\nexit `1`: the human message\nto **stderr** so it cannot be piped in as rows, the `--json` document to\n**stdout** so a script\ncan parse it. *Refused* and *none matched* are opposite answers, and a\nnon-zero exit alone does\n   not separate a refusal from a crash.\n2. **All three predicates exclude and count unverifiable rows; only the\nshape differs.**\n`--not-touching` reports never-fetched and fetched-incompletely\nseparately. The other two reach\ntheir edges through an inner join to `graph_entity`, so an item or\nperson with no entity of the\nrequired type is excluded and counted as `excludedNoGraphEntity` —\ndropping them is fail-closed\nand stays, dropping them *uncounted* was the defect, and it was\nreachable:\n`syncGraphFromIndexedItem` returns without writing below `user_version <\n7`, which is why\n`regraphAllItems` exists. The gap line prints on every negation call,\n`--explain` or not.\n3. **The correlation window is fixed at two hours and no flag can widen\nit.** The edges are written\nunder a fixed `CORRELATION_WINDOW_MS` at WRITE time and\n`graph_relation.created_at` is a write\ntimestamp, not event time, so a query-time window cannot be\nreconstructed even in principle. A\n`--within 24h` flag would advertise a control that does not exist. The\nprinted number is DERIVED\nfrom the constant and pinned by a test that imports the real gateway\nvalue.\n4. **Subject-type scoping is mandatory**, checked before any IPC call\nand on whether the flag was\nSUPPLIED rather than what it parsed to, so `--not-touching ''` trips it\ntoo. Unscoped,\n`--not-touching 'tests/**'` would return every issue, message and commit\n— none of which can\ntouch a path at all — a flood of confident false positives from the\nfeature built to prevent\n   them.\n\n## Delivered as fields on existing methods\n\n`index.queryItems` and `people.list` gain optional `notTouching` /\n`noDownstreamIncident` /\n`notReviewed` / `sinceMs` / `explain` params and sibling `gaps` /\n`explain` response keys.\n`people.list` still returns a BARE ARRAY on a plain call, byte-for-byte\nas before, so no existing\ncaller breaks. A present-but-unusable param is rejected with `-32602`,\nnever treated as absent — a\ncaller who asked to negate must never silently fall through to the full\nunfiltered list.\n\nNo schema migration, no new IPC method, no new HTTP route, no new\ninvariant, `ALLOWED_METHODS`\nstays at 105, and no `egress_ledger` row is appended: all three\npredicates are local SQLite reads\nwith no connector dispatch and no remote model call.\n\n## `--explain`\n\nPrints the COMPOSED SQL that actually shaped the result — never the bare\npredicate subquery, which\nomits `unlinkedOnly` and the `LIMIT` and would answer a wider question\nif pasted into sqlite3 —\nplus its bound params and the substrate probe. It works on every `query`\n/ `people list` call, not\nonly negation ones, since the SQL is built anyway. Under `--json` it is\na field in the document and\na refusal is printed alone; either one loose alongside the rows would\nmake the output unparseable.\n\n## Verification\n\n- `bun run preflight:fast` — PASSED, all gates\n- `bun test packages/gateway` — 14420 pass, 32 skip, **0 fail** across\n1063 files\n- `bun test packages/cli` — 2447 pass, **0 fail** across 140 files\n- `bun run typecheck:tests` — 471 known errors baselined, 0 new\n- Doc gates: `lint:markdown` 0 issues; `audit:links` 0 errors on 1446\nlinks, checked on its own\nexit code; `audit:status-drift` OK; `audit:doc-refs` 1208 refs all\nresolve\n\nEvery substrate check was red-proved by deleting the check and\nconfirming the test goes red;\nrefusal tests assert the refusal document and exit status, never merely\nthat no rows came back,\nbecause an empty result passes identically when the feature is absent\nentirely.\n\n## Scope boundary\n\n**B.2 — exposing these predicates to `nimbus ask` — is not in this PR**\nand gets its own spec: tool\nspecs, which surface, prompt wiring, and the failure mode where the\nmodel picks the wrong predicate\nwhile still sounding authoritative. B.1 was its precondition either way.\nAlso out: any grammar,\ncomposing two predicates in one query, and cross-service negation, which\nwould mean relaxing the\nexisting `--service` requirement for every `query` invocation.\n\nDesign: `docs/superpowers/specs/2026-08-20-negation-queries-design.md`.\nPlan: `docs/superpowers/plans/2026-08-20-negation-queries.md`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Added structured negation queries for pull requests, deployments, and\npeople.\n* Added `--not-touching`, `--no-downstream-incident`, and\n`--not-reviewed` filters.\n* Added optional time-window filtering and `--explain` output with query\ndetails and coverage information.\n* Added fail-closed refusals when required data is unavailable,\nincluding clear exclusion and gap reporting.\n  * Preserved existing plain-array output for standard people listings.\n\n* **Documentation**\n* Updated CLI reference, changelog, roadmap, and project guidance with\nthe new query options and behavior.\n\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5 (1M context) <noreply@anthropic.com>",
-          "timestamp": "2026-08-20T14:42:00Z",
-          "tree_id": "d79f4c38fbb62eb17c1db7ce318826312b1dcfdc",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/10c20cb0cbb2daaf83585ff81346acfdce7a247c"
-        },
-        "date": 1787237603908,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 305.0259901500005,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 307.9970934000001,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 281.3131718999957,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e7ecbe8bc5d78b101f99b29d468af4325618cfa3",
+          "message": "feat(gateway): bound writes, a gate-run prepare step whose values alone reach dispatch (I54) (#1929)\n\nPhase 9.7 PR D0b, the second Wave 4 framework PR: bound writes. A write\nwhose input must come from a gate-run prepare step (a Terraform plan, a\nCloudFormation change set, a dry-run, a batch file read) is approved and\ndispatched only with the values its own prepare produced, on every door.\nNew invariant I54 and static rule D42. No real row is bound yet:\n`PREPARE_TOOL_IDS` is empty, and the framework is proven on synthetic\nrows. D2 and D1c bind the real IaC and commit rows.\n\n## What changes\n\n- **Rows** may declare `bound: { prepare, binds }`. `withBound` checks\nthe declaration: the prepare tool is in `PREPARE_TOOL_IDS` and is not\nthe write tool, the bound keys are declared, and budgets and caps are\nset.\n- **The gate** runs, in order: `captureBeforePhase`, `preparePhase`,\n`renderConfirmPhase`, `approvalPhase`, then `dispatchBoundPhase` inside\n`execute()`. The prepare always runs before any approval, and its result\nis shown in the preview (`Prepared:` in the CLI, a \"Prepared\" section on\nthe desktop) and never returned to the model.\n- **The prepare read** runs as `<service>.write.prepare` through the\nexecutor's own gate and dispatcher, so it gets its own audit row and I29\negress row. One budget timer covers it, with input and reply size caps.\nAny failure refuses the write with a fixed reason. A prepare type that\nwould need approval is refused without a prompt.\n- **Injection:** the bound keys are stripped from both the payload root\nand `payload.input`, and the gateway's values are written. A\ncaller-supplied bound key, at either level, is refused before the\nprompt.\n- **Fail-closed cases:**\n  - The public `gate()` refuses a bound row; only `execute()` binds.\n- A prepare type outside the gate's own step is refused, even from\nworkflows, `runActionsPlan` or ChatOps.\n- The dispatcher refuses a prepare tool outside the step, or one\nresolving to a write or to another service's tool.\n- A bound row whose prepared facts cannot be shown is refused, and so is\na bound dispatch with nothing prepared.\n- `execute()` runs on a clone of the action, so a caller cannot change\nthe target after the check.\n- **Delegation:** a bound row always falls back to the local owner,\nuntil a delegate channel can carry the preview.\n- **Audit:** the write's audit row carries a SHA-256 of the injected\nvalues, never the values themselves.\n- **Model door:** `isModelOfferableRow` counts `bound` like `before`. A\nWave 4 bound row whose prepare tool is not listed is not offered.\n- **Invariants:** I54 and D42 (clauses a to f), with red-proof fixtures\nand enforcement tests, under the triple rule.\n\n## Reviews and gates\n\n- Antigravity approved the plan in round 2.\n- The adversarial review found six issues, all fixed and red-proved:\n  - a delegate approving without seeing the prepared facts;\n  - prepare types reachable outside the step;\n  - two fail-open spots;\n  - no record of the injected values;\n  - mutation between the check and dispatch;\n  - D42 pin gaps.\n- **Coverage:** `engine/executor.ts` is at 232/232 branches and\n`engine/prepare-step.ts` at 66/66, over the whole `packages/gateway`\ntree. The only failures in that run were the toolgen integration tests,\nwhich need the sandbox-helper build that is absent in a fresh worktree.\n- **Other gates:** `preflight:fast`, security-invariants, and the\nconnectors, engine, ipc, chatops, tribal, mcp-sink and federation\ndirectories, plus the HITL-write e2e scenarios and the structure audits\n(14,701 tests).\n\n## Stated bound\n\nThe prepare step stops waiting at its budget, but the underlying\nconnector call can run to the dispatcher's default timeout. A per-action\ntimeout lands with the first real prepare tool, in D2.\n\nNo migration, no `!`.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\n\n<!-- This is an auto-generated comment: release notes by coderabbit.ai\n-->\n<!-- coderabbit-ai-generated:v1 -->\n\n## Summary by CodeRabbit\n\n* **New Features**\n* Connector-write flows now support preparing required values before\nconfirmation and approval. Prepared information appears separately in\nthe review preview, and approved writes use the prepared values. No\nproduction connector writes currently use this capability.\n* **Bug Fixes**\n* Bound writes are refused if preparation fails, required values are\nunavailable, or callers supply bound values directly. Approval for bound\nwrites cannot be delegated.\n<!-- end of auto-generated comment: release notes by coderabbit.ai -->\n\n---------\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-07T06:15:55Z",
+          "tree_id": "985ffb23210a9be72f893759373272fa145e4002",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/e7ecbe8bc5d78b101f99b29d468af4325618cfa3"
+        },
+        "date": 1794032733978,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 273.65692069999676,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 273.42730685000134,
             "unit": "ms"
           }
         ]
