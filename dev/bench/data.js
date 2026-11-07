@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794073501521,
+  "lastUpdate": 1794074143689,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4b60ac001c7101ea33ead481933edd5cefd3f5d8",
-          "message": "docs: record the MCP Registry listing and close the distribution blocker (#1282)\n\n`io.github.nimbus-agent/nimbus@0.2.0` went live in the official MCP\nRegistry\nyesterday. The distribution program spec still called it \"blocked —\nneeds a\npackaging decision\" in three places.\n\nThat spec exists to police claim-vs-reality drift, so it should not be\nthe last\ndocument carrying one.\n\n## What changed\n\n- **Listings table** — `blocked — needs a packaging decision` → `listed\n  2026-08-20 — io.github.nimbus-agent/nimbus@0.2.0`\n- **Verified-state bullet** — records that Branch B was chosen and\nexecuted:\n`packages/mcp-launcher` became `nimbus-agent/nimbus-mcp`, publishing via\nrelease-please + OIDC, so `NPM_TOKEN` stayed forbidden and the monorepo\nstill\n  has no `npm publish` path\n- **Next-action #1** — struck through as done, pointing at the executed\nplan and\n  the verified precedent it ran against\n- **`docs/CHANGELOG.md`** — the listing plus the CI automation\n- **`CLAUDE.md` / `GEMINI.md`** — one clause each, kept in sync: listed\nas\n  `io.github.nimbus-agent/nimbus`, republished from CI on every release\n\n## Not just a status flip\n\nTwo things bit during execution and are now recorded rather than left\nfor\nrediscovery:\n\n- **`@nimbus-dev/mcp@0.1.0` has no provenance.** npm will not configure\na trusted\npublisher until a package has one published version, so the bootstrap\nhad to be\nhand-published. The satellite's `SECURITY.md` states the exception\nrather than\n  claiming every release is attested.\n- **Interactive org-namespace publishing requires a `read:org` PAT.**\nThe\nregistry's login app is a *private* GitHub App, so it cannot be\ninstalled on the\norg and a device-flow token can never read the org role. The CLI's error\ntext\n(\"make your organization membership public\") points at the wrong\nrequirement\n  entirely — public membership is not it.\n\nThe CHANGELOG entry also records why the registry-publish job lives in\n`release.yml` rather than the tag-triggered workflow the registry's docs\nshow:\nthat shape races, because release-please pushes the tag *before* the npm\npublish\njob runs and the registry entry is metadata pointing at the package.\n\n## Verification\n\n`preflight PASSED`, `audit:doc-refs` OK, `audit:status-drift` OK,\nmarkdownlint\nclean across 130 files.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T06:15:53+03:00",
-          "tree_id": "2ca57dbf62d9453d86645c9abd1676c42bf258ef",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4b60ac001c7101ea33ead481933edd5cefd3f5d8"
-        },
-        "date": 1787282848076,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 315.1915868000011,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 313.3566588999944,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 283.1514621500013,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "asafgolombek@gmail.com",
+            "name": "Asaf",
+            "username": "asafgolombek"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "062cfaff52b4ff82982daf7cd02745048496c592",
+          "message": "fix(gateway): the Teams webhook acks before it processes, and dedupes every activity on its id (#1933)\n\nThis is the ChatOps follow-up recorded during D0c. It fixes the Teams\nwebhook, which waited for the whole approval before answering.\n\n**Problem**\n- `POST /v1/messaging/teams/events` waited on the ChatOps handler before\nit answered.\n- A write gated on the owner's approval waits for far longer than the\nroughly 15 seconds Bot Framework allows, so Microsoft redelivered the\nactivity.\n- Only confirm-card submits were deduplicated. A redelivered plain\nmessage could therefore start a second write request.\n\n**Fix**\n- The route answers `200` as soon as the Bot Framework JWT validates,\nand runs the handler afterwards.\n- A handler fault after the answer is audited as\n`messaging.teams.inbound_rejected` with reason `internal_error` and\nresult code 500, instead of being returned to Microsoft.\n- An invalid JWT is still answered `401` and never reaches the handler.\n- `TeamsWebhookAdapter` deduplicates every message and submit on its\nactivity id, using a bounded set. A message with no id was already never\nhandled.\n\n**Tests**\n- `ipc/http-write-routes-edges.test.ts`:\n  - the route answers before the handler settles;\n  - a rejecting handler is still answered and audited;\n  - a handler that throws synchronously is still answered and audited.\n- `chatops/transport/teams-webhook-adapter.test.ts`:\n  - a redelivered plain message reaches the handler once;\n  - a message with no id is never handled;\n- an activity dropped while the adapter is stopped is not marked as\nseen.\n- Each test was red-proved by reverting its fix: the route test hangs,\nand the dedupe test fails.\n\n**Gates, run locally**\n- preflight:fast, typecheck:tests, `security-invariants.test.ts`,\n`scripts/structure-audit` and verify:docker --changed.\n- Istanbul coverage: `teams-webhook-adapter.ts` 100% of lines and 98.3%\nof branches; `http-write-routes.ts` 98.0% of lines and 97.2% of\nbranches.\n\n**Invariants and docs:** no invariant change and no migration. The\nCHANGELOG entry and the cli-reference route row are updated. CLAUDE.md,\nGEMINI.md, the roadmap, architecture and docs/README are unchanged: none\nof them describe the route's ack timing.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5.5 <noreply@anthropic.com>",
+          "timestamp": "2026-11-07T17:41:19Z",
+          "tree_id": "06110d06e7bdc128db4c8446dd38d1534d0e0227",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/062cfaff52b4ff82982daf7cd02745048496c592"
+        },
+        "date": 1794074139231,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 287.8581660999962,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 293.33781344999807,
             "unit": "ms"
           }
         ]
