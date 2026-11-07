@@ -28,6 +28,7 @@ import {
   DESTINATION_REFUSAL,
   templateKeysInSchema,
 } from "./connector-write-agent-tools.ts";
+import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
 
 // ---------- fixtures ----------
@@ -819,6 +820,33 @@ describe("a two-read reader at offer time, and a guard refusal at call time (B2a
     tools = await buildConnectorWriteAgentTools(
       fakeSource([twoReadRow(2)], { argocd: listing }),
       () => declined,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      declined: DECLINED_RESULT_TEXT,
+    });
+  });
+
+  test("D1: a Wave 4 row's unread-state rejection is { refused: WAVE4_BEFORE_REFUSAL }, not declined, since no prompt happened; a lower wave never passes it back", async () => {
+    const listing = argocdListing({ [READ_KEY]: entry("Get"), [ALSO_KEY]: entry("History") });
+    const w4ex = optsExecutor({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    let tools = await buildConnectorWriteAgentTools(
+      fakeSource([{ ...twoReadRow(4), before: { ...twoReads, guard: undefined } }], {
+        argocd: listing,
+      }),
+      () => w4ex,
+      wrapSpy().wrap,
+      NONE,
+    );
+    expect(await call(tools, SYNC_NAME, { name: "web" })).toEqual({
+      refused: WAVE4_BEFORE_REFUSAL,
+    });
+    tools = await buildConnectorWriteAgentTools(
+      fakeSource([{ ...twoReadRow(3), before: { ...twoReads, guard: undefined } }], {
+        argocd: listing,
+      }),
+      () => w4ex,
       wrapSpy().wrap,
       NONE,
     );

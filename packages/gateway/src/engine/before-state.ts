@@ -22,6 +22,12 @@
  *  - never reaches the model or the write's audit row: only the selected, sanitised values reach
  *    the preview, and the write's result is the write's own reply.
  *
+ * A Wave 4 write is read-or-refuse (D1): whatever the reason the current state is not available to
+ * show (no reader or preview on the row, a reader tool unlisted, `args` failing, a timeout, a failed
+ * or policy-refused read, `select` failing), the runner returns `{ status: "refused", reason }`
+ * with {@link WAVE4_BEFORE_REFUSAL}, or the guard's own reason when a guard applies. Waves 2 and 3
+ * keep showing `unavailable (<reason>)` and still prompt.
+ *
  * A reader may carry a GUARD (B2a). When the guard applies to the write's input, the runner returns
  * `{ status: "refused", reason }` unless every read succeeded and the guard's `allows` returned
  * exactly `true`; every other path (a reader tool unlisted, `args` failing, a timeout, a failed or
@@ -67,6 +73,14 @@ export const BEFORE_STATE_TIMEOUT_MS = 5000;
 
 /** The one spelling of the read's action-type suffix (D40(a): confined to this module and the guard). */
 const BEFORE_READ_SUFFIX = ".before.read";
+
+/**
+ * The one fixed reason a Wave 4 model write is refused when the current state of its target could
+ * not be read (D1, spec 5.4 and 15.2: the prompt for an irreversible write must show the target as
+ * it is now). It names no target, no tool and no error text.
+ */
+export const WAVE4_BEFORE_REFUSAL =
+  "the current state of the target could not be read, so nothing was sent";
 
 /** The audit reason `gate()` records when it refuses a before-read that would need approval. */
 export const BEFORE_READ_HITL_REFUSAL = "policy requires approval";
@@ -380,8 +394,13 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
     async read(action, ops, opts = {}) {
       if (action.origin !== "model") return undefined;
       const row = findConnectorWriteRow(action, rows);
-      const reader = row?.before;
-      if (row === undefined || reader === undefined || row.preview === undefined) return undefined;
+      if (row === undefined) return undefined;
+      const reader = row.before;
+      if (reader === undefined || row.preview === undefined) {
+        // Defence in depth: such a row is never offered (`isModelOfferableRow`), but an
+        // `origin: "model"` action can reach an executor through other paths.
+        return row.wave === 4 ? { status: "refused", reason: WAVE4_BEFORE_REFUSAL } : undefined;
+      }
       const input = extractToolInput(action);
       const picked = isPlainObject(input)
         ? pickBeforeReaderArgs(beforeReaderArgKeys(reader), input)
@@ -392,9 +411,16 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       const ctx =
         reader.guard === undefined ? undefined : snapshotGuardContext(options.guardContext);
       const guarded = guardApplies(reader, picked, ctx);
-      const refusal: BeforeStateRefusal = { status: "refused", reason: reader.guard?.reason ?? "" };
+      // A guard that applies refuses with its own reason; a Wave 4 row without one refuses with
+      // the fixed Wave 4 text. Any other row only shows `unavailable`.
+      const mustRead = guarded || row.wave === 4;
+      const guardReason = guarded ? reader.guard?.reason : undefined;
+      const refusal: BeforeStateRefusal = {
+        status: "refused",
+        reason: guardReason ?? WAVE4_BEFORE_REFUSAL,
+      };
       const fail = (reason: BeforeStateUnavailableReason): BeforeStateOutcome =>
-        guarded ? refusal : unavailable(reason);
+        mustRead ? refusal : unavailable(reason);
       if (opts.readerUnlisted === true || picked === undefined || !isPlainObject(input)) {
         return fail("failed");
       }

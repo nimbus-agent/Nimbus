@@ -29,7 +29,8 @@
  * running a read (or, when the reader's guard applies, the write is refused before the prompt).
  *
  * Results: an `ok` result is the write's reply; a rejection whose reason is THIS row's before-state
- * guard reason (B2a, a fixed text) is `{ refused: <that reason> }`; every other rejection is
+ * guard reason (B2a, a fixed text) is `{ refused: <that reason> }`, and so is a Wave 4 rejection for
+ * an unread current state (`WAVE4_BEFORE_REFUSAL`, D1: no prompt happened); every other rejection is
  * `{ declined: DECLINED_RESULT_TEXT }`, never the reason or the payload.
  *
  * Drift is checked against the LISTED schema, while the model is shown (and validated against) the
@@ -54,6 +55,7 @@ import {
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import type { ExecuteOptions, ToolExecutor } from "./executor.ts";
+import { WAVE4_BEFORE_REFUSAL } from "./before-state.ts";
 import { serviceOf } from "./service-of.ts";
 import { wrapToolDescription } from "./tool-output-envelope.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -266,9 +268,13 @@ function buildDoorTool(
       if (result.status === "ok") return result.result;
       // A guard refusal (B2a) is the row's own fixed reason; any other denial never carries the
       // reason or the payload back to the model.
-      return result.reason === guardReason
-        ? { refused: guardReason }
-        : { declined: DECLINED_RESULT_TEXT };
+      if (result.reason === guardReason) return { refused: guardReason };
+      // D1: a Wave 4 write whose current state could not be read was refused before any prompt, so
+      // it is not "declined" by the owner: the same fixed text the executor recorded.
+      if (row.wave === 4 && result.reason === WAVE4_BEFORE_REFUSAL) {
+        return { refused: WAVE4_BEFORE_REFUSAL };
+      }
+      return { declined: DECLINED_RESULT_TEXT };
     },
   });
 }
