@@ -31,7 +31,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { isAtlassianCloudId } from "../atlassian-cloud-id.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
-import { resolveGithubBase } from "../github-api-base.ts";
+import { readGithubCredentialPair } from "../github-api-base.ts";
 import { transitionHealth } from "../health.ts";
 import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 import {
@@ -291,21 +291,25 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
     ctx.scheduleLazyDisconnect(slotKey);
     return;
   }
-  const pat = await readConnectorSecret(ctx.vault, "github", "pat");
-  if (pat === null || pat === "") {
+  const pair = await readGithubCredentialPair((k) => readConnectorSecret(ctx.vault, "github", k));
+  const pat = pair.kind === "ok" ? pair.pat : null;
+  if (pair.kind === "ok" && (pat === null || pat === "")) {
     return;
   }
   // Absent api_base = github.com. PRESENT but not valid FAILS CLOSED: the PAT stored beside a
   // GitHub Enterprise Server base is an enterprise credential, so it is never handed to a child
   // that would then talk to api.github.com. No spawn: the slot stays unconfigured.
-  const resolved = resolveGithubBase(await readConnectorSecret(ctx.vault, "github", "api_base"));
-  if (!resolved.ok) {
+  // The PAT and base are read as ONE pair (base, PAT, base again), so a re-auth landing between the
+  // reads never hands a PAT to a child that talks to the other instance; an unstable read spawns
+  // nothing this time and the next ensure retries.
+  if (pair.kind !== "ok" || pat === null) {
     ctx.logger?.warn(
       { service: "github" },
-      "github: the stored api_base is not a valid GitHub Enterprise Server base; not starting the connector",
+      "github: the stored api_base is not a valid GitHub Enterprise Server base, or changed while read; not starting the connector",
     );
     return;
   }
+  const resolved = pair.base;
   // GITHUB_API_BASE_URL is set ONLY for a GHES base (the connector's own default is github.com), and
   // the GHES host joins both children's sandbox network additively (the same merge GitLab uses).
   const ghesRoot = resolved.host === null ? null : resolved.restRoot;

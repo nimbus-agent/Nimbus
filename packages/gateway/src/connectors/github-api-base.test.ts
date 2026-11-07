@@ -4,6 +4,7 @@ import {
   GITHUB_DEFAULT_REST_ROOT,
   GITHUB_DEFAULT_WEB_ORIGIN,
   normaliseGithubApiBase,
+  readGithubCredentialPair,
   resolveGithubBase,
 } from "./github-api-base.ts";
 
@@ -163,5 +164,51 @@ describe("resolveGithubBase", () => {
     ]) {
       expect(resolveGithubBase(bad)).toEqual({ ok: false });
     }
+  });
+});
+
+describe("readGithubCredentialPair", () => {
+  function reader(bases: Array<string | null>, pat: string | null) {
+    let baseReads = 0;
+    const order: string[] = [];
+    const get = async (key: "pat" | "api_base"): Promise<string | null> => {
+      order.push(key);
+      if (key === "pat") return pat;
+      const v = bases[Math.min(baseReads, bases.length - 1)] ?? null;
+      baseReads += 1;
+      return v;
+    };
+    return { get, order };
+  }
+
+  test("reads the base, the PAT, then the base again", async () => {
+    const r = reader(["https://ghe.example.com"], "tok");
+    const pair = await readGithubCredentialPair(r.get);
+    expect(r.order).toEqual(["api_base", "pat", "api_base"]);
+    expect(pair.kind).toBe("ok");
+    if (pair.kind === "ok") {
+      expect(pair.pat).toBe("tok");
+      expect(pair.base.restRoot).toBe("https://ghe.example.com/api/v3");
+    }
+  });
+
+  test("a stable absent base is github.com", async () => {
+    const pair = await readGithubCredentialPair(reader([null], "tok").get);
+    expect(pair.kind === "ok" && pair.base.restRoot).toBe(GITHUB_DEFAULT_REST_ROOT);
+  });
+
+  test("a base that changes between the two reads is unstable (no pair)", async () => {
+    expect(
+      await readGithubCredentialPair(reader([null, "https://ghe.example.com"], "tok").get),
+    ).toEqual({ kind: "unstable" });
+    expect(
+      await readGithubCredentialPair(reader(["https://ghe.example.com", null], "tok").get),
+    ).toEqual({ kind: "unstable" });
+  });
+
+  test("a present but invalid base is invalid", async () => {
+    expect(await readGithubCredentialPair(reader(["http://x.example.com"], "tok").get)).toEqual({
+      kind: "invalid",
+    });
   });
 });

@@ -2,7 +2,7 @@ import { syncPassCursorSuccess } from "../sync/pass-cursor-sync-result.ts";
 import { type Syncable, type SyncContext, type SyncResult, syncNoopResult } from "../sync/types.ts";
 import { buildCiRunMetadata, normalizeGithubActionsConclusion } from "./ci-run-meta.ts";
 import { storedRunIsUnfinished } from "./ci-run-refresh.ts";
-import { resolveGithubBase } from "./github-api-base.ts";
+import { readGithubCredentialPair } from "./github-api-base.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
 import { asRecord, numberField, stringField } from "./unknown-record.ts";
@@ -239,21 +239,22 @@ export function createGithubActionsSyncable(options: GithubActionsSyncableOption
       const t0 = performance.now();
       await options.ensureGithubMcpRunning();
 
-      const pat = await ctx.getSharedSecret("github", "pat");
-      if (pat === null || pat.trim() === "") {
-        return syncNoopResult(cursor, t0);
-      }
-
-      // The base is a shared secret, read exactly like the PAT. Absent = github.com; present but
-      // invalid FAILS CLOSED (no request, never api.github.com).
-      const base = resolveGithubBase(await ctx.getSharedSecret("github", "api_base"));
-      if (!base.ok) {
+      // The base is a shared secret, read exactly like the PAT, as ONE consistent pair. Absent =
+      // github.com; present but invalid, or changed mid-read, FAILS CLOSED (no request, never
+      // api.github.com).
+      const pair = await readGithubCredentialPair((k) => ctx.getSharedSecret("github", k));
+      if (pair.kind !== "ok") {
         ctx.logger.warn(
           { serviceId: SERVICE_ID },
-          "github_actions sync: the stored github api_base is not valid; making no request",
+          "github_actions sync: the stored github api_base is not valid or changed mid-read; making no request",
         );
         return syncNoopResult(cursor, t0);
       }
+      const pat = pair.pat;
+      if (pat === null || pat.trim() === "") {
+        return syncNoopResult(cursor, t0);
+      }
+      const base = pair.base;
 
       // Only repositories indexed from THIS instance (their `url` is on its web origin).
       const repos = ctx.listIndexedMetadataValuesForOrigin("github", "repo", base.webOrigin);

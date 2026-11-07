@@ -51,6 +51,27 @@ function functionBody(text: string, name: string): string {
 }
 
 describe("GHES source pins", () => {
+  test("every reader of the GitHub PAT beside the base uses readGithubCredentialPair", () => {
+    for (const rel of [
+      "connectors/github-sync.ts",
+      "connectors/github-actions-sync.ts",
+      "connectors/lazy-mesh/connector-spawns.ts",
+    ]) {
+      const code = read(rel);
+      expect(code).toContain("readGithubCredentialPair(");
+      expect(code).not.toContain("resolveGithubBase(");
+    }
+    const sync = read("connectors/github-sync.ts");
+    expect(sync).not.toMatch(/getSecret\(\s*["']pat["']/);
+    const actions = read("connectors/github-actions-sync.ts");
+    expect(actions).not.toMatch(/getSharedSecret\(\s*["']github["'],\s*["']pat["']/);
+    const spawns = functionBody(
+      read("connectors/lazy-mesh/connector-spawns.ts"),
+      "ensureGithubMcp",
+    );
+    expect(spawns).not.toMatch(/readConnectorSecret\([^)]*["']github["'],\s*["']pat["']/);
+  });
+
   test("no non-test source lists GitHub repos through the UNFILTERED capability", () => {
     const offenders = SOURCES.filter((s) =>
       /listIndexedMetadataValues\(\s*["']github["']/.test(s.text),
@@ -117,7 +138,7 @@ describe("GHES source pins", () => {
 
   test("github_actions reads the base as a SHARED secret, not its own", () => {
     const text = read("connectors/github-actions-sync.ts");
-    expect(text).toContain('getSharedSecret("github", "api_base")');
+    expect(text).toContain('getSharedSecret("github", k)');
     expect(text).not.toContain('getSecret("api_base")');
   });
 

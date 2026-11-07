@@ -110,6 +110,37 @@ describe("github sync against a GitHub Enterprise Server base", () => {
     }
   });
 
+  test("a base that changes while the credential is read makes NO request (sync and fetchOne)", async () => {
+    const db = createMemoryIndexDb();
+    const { ctx } = ctxFor(db, {}, "github");
+    let baseReads = 0;
+    const racing: SyncContext = {
+      ...ctx,
+      getSecret: async (key: string) => {
+        if (key === "pat") return "pat-test";
+        baseReads += 1;
+        return baseReads % 2 === 1 ? null : GHES_BASE;
+      },
+    };
+    const syncable = createGithubSyncable(ENSURE_MCP);
+    expect((await syncable.sync(racing, null)).itemsUpserted).toBe(0);
+    expect(await syncable.fetchOne?.(racing, "https://github.com/o/r/pull/7")).toEqual({
+      status: "not_found",
+      reason: "no_credential",
+    });
+    expect(seen).toEqual([]);
+    db.close();
+  });
+
+  test("a stable pair still requests the right origin", async () => {
+    const db = createMemoryIndexDb();
+    handler = (url) => (url.endsWith("/user") ? JSON_OK({ login: "octo" }) : JSON_OK([]));
+    const { ctx } = ctxFor(db, { "github.api_base": GHES_BASE }, "github");
+    await createGithubSyncable(ENSURE_MCP).sync(ctx, null);
+    expect(seen[0]).toBe(`${GHES_BASE}/user`);
+    db.close();
+  });
+
   test("a cross-origin 302 from the instance is refused and the PAT never reaches the second host", async () => {
     const db = createMemoryIndexDb();
     handler = () =>

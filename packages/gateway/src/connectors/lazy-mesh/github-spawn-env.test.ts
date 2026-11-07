@@ -194,12 +194,12 @@ describe("ensureGithubMcp", () => {
     expect(created).toHaveLength(0);
   });
 
-  test("source: env goes through extensionProcessEnv only (I1), uses resolveGithubBase and wrapServerSpec/manifestWithConfiguredHost for both children", () => {
+  test("source: env goes through extensionProcessEnv only (I1), uses readGithubCredentialPair and wrapServerSpec/manifestWithConfiguredHost for both children", () => {
     const src = stripComments(readFileSync(join(import.meta.dir, "connector-spawns.ts"), "utf8"));
     const body = src.slice(src.indexOf("export async function ensureGithubMcp"));
     const fn = body.slice(0, body.indexOf("export async function", 10));
     expect(fn).toMatch(/const githubEnv = extensionProcessEnv\(/);
-    expect(fn).toMatch(/resolveGithubBase\(/);
+    expect(fn).toMatch(/readGithubCredentialPair\(/);
     expect(fn).not.toContain("normaliseGithubApiBase");
     expect(fn).toMatch(/manifestWithConfiguredHost\("github", ghesRoot\)/);
     expect(fn).toMatch(/manifestWithConfiguredHost\("github_actions", ghesRoot\)/);

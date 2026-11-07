@@ -17,7 +17,7 @@ import {
   UnauthenticatedError,
 } from "../sync/types.ts";
 import { fetchOneMissForResponse } from "./fetch-miss-reason.ts";
-import { resolveGithubBase, type ValidGithubBase } from "./github-api-base.ts";
+import { readGithubCredentialPair, type ValidGithubBase } from "./github-api-base.ts";
 import { decodeNimbusJsonCursorObject, encodeNimbusJsonCursor } from "./nimbus-json-cursor.ts";
 import { buildPrMetadata, canonicalEpochMs, normalizeGithubPrState } from "./pr-meta.ts";
 import { fetchSameOriginOnly } from "./same-origin-fetch.ts";
@@ -30,20 +30,27 @@ const CURSOR_PREFIX = "nimbus-ghub1:";
 type GithubBase = ValidGithubBase;
 
 /**
- * Reads the stored `github.api_base` once per sync/fetchOne call. Absent means github.com; present
- * but invalid FAILS CLOSED (`null`, with a service-named warning that never carries the value):
- * the stored PAT belongs to that enterprise instance and must not go to api.github.com.
+ * Reads the stored PAT and `github.api_base` as ONE consistent pair (`readGithubCredentialPair`:
+ * base, PAT, base again). Absent base means github.com; a present but invalid base, or a base that
+ * changed mid-read (a re-auth landed), FAILS CLOSED (`null`, with a service-named warning that never
+ * carries the value): the stored PAT belongs to that instance and must not go anywhere else. A
+ * missing or empty PAT is also `null` (unconfigured), without a warning.
  */
-async function readGithubBase(ctx: SyncContext): Promise<GithubBase | null> {
-  const resolved = resolveGithubBase(await ctx.getSecret("api_base"));
-  if (!resolved.ok) {
+async function readGithubPair(
+  ctx: SyncContext,
+): Promise<{ readonly pat: string; readonly base: GithubBase } | null> {
+  const pair = await readGithubCredentialPair((k) => ctx.getSecret(k));
+  if (pair.kind !== "ok") {
     ctx.logger.warn(
       { service: SERVICE_ID },
-      "github: the stored api_base is not a valid GitHub Enterprise Server base; making no request",
+      pair.kind === "invalid"
+        ? "github: the stored api_base is not a valid GitHub Enterprise Server base; making no request"
+        : "github: the stored api_base changed while the credential was read; making no request this pass",
     );
     return null;
   }
-  return resolved;
+  if (pair.pat === null || pair.pat === "") return null;
+  return { pat: pair.pat, base: pair.base };
 }
 
 export function pullDetailUrl(restRoot: string, repoFull: string, num: number): string {
@@ -1017,15 +1024,12 @@ async function fetchOnePullRequest(ctx: SyncContext, url: string): Promise<Fetch
     return { status: "unsupported_url" };
   }
   const { owner, repo, num: requestedNum } = parsedUrl;
-  const pat = await ctx.getSecret("pat");
-  if (pat === null || pat === "") {
+  const pair = await readGithubPair(ctx);
+  if (pair === null) {
+    // No PAT, an invalid api_base, or an unstable pair: fail closed, no request (never api.github.com).
     return { status: "not_found", reason: "no_credential" };
   }
-  const base = await readGithubBase(ctx);
-  if (base === null) {
-    // Present but invalid api_base: fail closed, no request (never api.github.com).
-    return { status: "not_found", reason: "no_credential" };
-  }
+  const { pat, base } = pair;
   if (!urlIsOnOrigin(url, base.webOrigin)) {
     // The PAT belongs to ONE instance. The orchestrator's host boundary already claims only that
     // instance's host; this is the second, local check that a pasted URL names it.
@@ -1090,16 +1094,12 @@ export function createGithubSyncable(options: GithubSyncableOptions): Syncable {
     async sync(ctx: SyncContext, cursor: string | null): Promise<SyncResult> {
       const t0 = performance.now();
       await options.ensureGithubMcpRunning();
-      const pat = await ctx.getSecret("pat");
-      if (pat === null || pat === "") {
-        return syncNoopResult(cursor, t0);
-      }
-      const base = await readGithubBase(ctx);
-      if (base === null) {
+      const pair = await readGithubPair(ctx);
+      if (pair === null) {
         return syncNoopResult(cursor, t0);
       }
 
-      return syncGithubUserEvents(ctx, cursor, pat, t0, base);
+      return syncGithubUserEvents(ctx, cursor, pair.pat, t0, pair.base);
     },
     fetchOne: fetchOnePullRequest,
   };

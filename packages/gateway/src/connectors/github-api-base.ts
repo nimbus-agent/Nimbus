@@ -142,3 +142,40 @@ export function resolveGithubBase(raw: string | null | undefined): ResolvedGithu
     host: n.host,
   };
 }
+
+export type GithubCredentialPair =
+  | {
+      readonly kind: "ok";
+      /** The stored PAT, or `null` when none is stored (the caller treats that as unconfigured). */
+      readonly pat: string | null;
+      readonly base: ValidGithubBase;
+    }
+  /** The stored base is present but invalid (fail closed; never api.github.com). */
+  | { readonly kind: "invalid" }
+  /** The stored base changed while the pair was being read; make no request this pass. */
+  | { readonly kind: "unstable" };
+
+/**
+ * The ONE reader of a GitHub credential PAIR (`github.pat` + `github.api_base`). Every reader that
+ * sends the PAT somewhere (sync, fetchOne, github-actions sync, the connector spawn) uses it.
+ *
+ * Why the order is base, PAT, base again: a re-auth (`connectorAuthGithub`) deletes the PAT, writes
+ * the new base, and writes the new PAT LAST. So a NEW PAT can only be observed once the new base is
+ * already stored. If a reader sees the same base string before and after reading the PAT, no
+ * re-auth finished between the two base reads, and the PAT it holds therefore belongs to that base
+ * (an old PAT is read only while the old base is still stored; a new one only after the new base).
+ * If the two base reads differ, a re-auth landed in the window and the pair may be mismatched, so
+ * the result is `unstable`: the reader makes no request this pass and the next pass retries.
+ * `getSecret` is called with `"api_base"` and `"pat"`; an empty-string value is passed through.
+ */
+export async function readGithubCredentialPair(
+  getSecret: (key: "pat" | "api_base") => Promise<string | null | undefined>,
+): Promise<GithubCredentialPair> {
+  const baseBefore = (await getSecret("api_base")) ?? null;
+  const pat = (await getSecret("pat")) ?? null;
+  const baseAfter = (await getSecret("api_base")) ?? null;
+  if (baseBefore !== baseAfter) return { kind: "unstable" };
+  const base = resolveGithubBase(baseBefore);
+  if (!base.ok) return { kind: "invalid" };
+  return { kind: "ok", pat, base };
+}
