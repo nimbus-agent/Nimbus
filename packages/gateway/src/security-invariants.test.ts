@@ -12437,6 +12437,10 @@ describe("I53 — a first-party connector write reaches the model only through t
       'if (before.status === "refused") throw new BeforeStateRefusedError(before.reason);',
     );
     expect(exec.match(/new BeforeStateRefusedError\(/g)).toHaveLength(1);
+    // D1: a Wave 4 model write whose preview is absent is refused by the runner module's own
+    // helper (the error is constructed there), before any read or prompt.
+    expect(previewBody).toContain("throwIfWave4WithoutPreview(action, this.rows());");
+    expect(runner).toContain("export function throwIfWave4WithoutPreview(");
     const gateAt = exec.indexOf("private statusOfGateThrow(");
     const gateBody = exec.slice(gateAt, exec.indexOf("\n  }\n", gateAt));
     expect(exec.match(/instanceof BeforeStateRefusedError/g)).toHaveLength(1);

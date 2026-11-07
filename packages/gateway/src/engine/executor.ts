@@ -31,6 +31,7 @@ import {
   BeforeStateRefusedError,
   type BeforeStateRunner,
   isBeforeReadActionType,
+  throwIfWave4WithoutPreview,
 } from "./before-state.ts";
 import { type RemoteApprovalOutcome, resolveDelegatedApproval } from "./delegated-approval.ts";
 import type { DelegationReader } from "./delegation-store.ts";
@@ -1108,7 +1109,10 @@ export class ToolExecutor {
     const runner = this.beforeState;
     const preview = buildConnectorWritePreviewFrom(action, this.rows(), this.previewCredentialFor);
     if (runner === undefined) return preview;
-    if (preview === undefined) return undefined;
+    if (preview === undefined) {
+      throwIfWave4WithoutPreview(action, this.rows());
+      return undefined;
+    }
     const before = await runner.read(
       action,
       { gate: (a) => this.gate(a), dispatch: (a) => this.connectors.dispatch(a) },

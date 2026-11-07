@@ -53,6 +53,16 @@ describe("parseConfirmTemplate", () => {
     }
   });
 
+  test("refuses two adjacent placeholders (the text would not be injective), with or without a modifier", () => {
+    for (const t of ["x {a}{b}", "{a}{b}", "{a:tail8}{b}", "{a}{b:tail8} y"]) {
+      expect(parseConfirmTemplate(t), t).toEqual({
+        ok: false,
+        reason: "has two adjacent placeholders",
+      });
+    }
+    expect(parseConfirmTemplate("{a}/{b}").ok).toBe(true);
+  });
+
   test("refuses literal text outside the confirm character set", () => {
     const r = parseConfirmTemplate("{a}é");
     expect(r.ok).toBe(false);

@@ -250,3 +250,40 @@ describe("a Wave 4 model write whose current state cannot be read is refused ins
     expect(rec.dispatched.map((x) => x.type)).toEqual(["jira.before.read"]);
   });
 });
+
+describe("a Wave 4 model write with no typed preview is refused inside gate() (D1)", () => {
+  const NO_PREVIEW_ROW: ConnectorWriteRow = withConfirm(
+    row("github_file_commit", "github.file.commit", "mesh", 4),
+    {
+      template: "commit {owner}/{repo}",
+    },
+  );
+  const COMMIT = (model: boolean): PlannedAction => ({
+    type: "github.file.commit",
+    ...(model ? { origin: "model" as const } : {}),
+    payload: { mcpToolId: "github_file_commit", input: { owner: "o", repo: "r" } },
+  });
+
+  test("origin model: no prompt, audited rejection, blocked egress row, nothing dispatched", async () => {
+    const { exec, rec, egress } = harness({ rows: [NO_PREVIEW_ROW] });
+    expect(await exec.execute(COMMIT(true))).toEqual({
+      status: "rejected",
+      reason: WAVE4_BEFORE_REFUSAL,
+    });
+    expect(rec.prompts).toEqual([]);
+    expect(rec.dispatched).toEqual([]);
+    expect(rec.audits.map((a) => [a.actionType, a.hitlStatus])).toEqual([
+      ["github.file.commit", "rejected"],
+    ]);
+    expect(egress()).toEqual([
+      { method: "github.file.commit", result_status: "blocked", hitl_status: "rejected" },
+    ]);
+  });
+
+  test("a non-model origin is unchanged: not refused with the Wave 4 reason", async () => {
+    const { exec, rec } = harness({ rows: [NO_PREVIEW_ROW] });
+    const out = await exec.execute(COMMIT(false));
+    expect(out).not.toEqual({ status: "rejected", reason: WAVE4_BEFORE_REFUSAL });
+    expect(rec.dispatched.map((a) => a.type)).not.toContain("github.before.read");
+  });
+});

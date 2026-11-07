@@ -176,3 +176,85 @@ describe("the confirm text is injective over the projected field values (D1)", (
     expect(a.ok && b.ok && a.text === b.text).toBe(true);
   });
 });
+
+/** Every string of length 1 to `maxLen` over `chars`. */
+function allStrings(chars: readonly string[], maxLen: number): string[] {
+  let layer: string[] = [""];
+  const out: string[] = [];
+  for (let n = 0; n < maxLen; n++) {
+    layer = layer.flatMap((s) => chars.map((c) => s + c));
+    out.push(...layer);
+  }
+  return out;
+}
+
+describe("brute-force oracle: no two accepted projected tuples render the same text (D1)", () => {
+  // The alphabet holds every separator character the templates below use, plus a space and a slash.
+  const CHARS = ["a", "b", "x", "/", " "] as const;
+  const SCALARS = allStrings(CHARS, 3);
+  // Longer than 8 characters, so `:tail8` projects them (and two of them share a tail).
+  const LONG = ["xaaaaaaaab", "baaaaaaaab", "aaaaaaaaaab"];
+  const ELEMENTS = allStrings(["a", "b", "x", "/"], 2);
+  const ARRAYS: string[][] = [
+    ...ELEMENTS.map((e) => [e]),
+    ...ELEMENTS.flatMap((e) => ELEMENTS.map((f) => [e, f])),
+  ];
+
+  /** Renders every (first, second) pair; returns how many were accepted. Fails on a collision. */
+  function sweep(template: string, firsts: readonly unknown[], seconds: readonly string[]): number {
+    const parsed = parseConfirmTemplate(template);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const [f1, f2] = parsed.segments.filter(
+      (s): s is Extract<ConfirmSegment, { kind: "field" }> => s.kind === "field",
+    );
+    if (f1 === undefined || f2 === undefined) throw new Error("two fields expected");
+    const r = syntheticRow(template);
+    const seen = new Map<string, string>();
+    let accepted = 0;
+    for (const first of firsts) {
+      for (const second of seconds) {
+        const out = renderConfirmText(r, { [f1.name]: first, [f2.name]: second });
+        if (!out.ok) continue;
+        accepted++;
+        const shown1 = Array.isArray(first)
+          ? (first as string[]).join(" ")
+          : projected(f1, first as string);
+        const tuple = JSON.stringify([shown1, projected(f2, second)]);
+        const earlier = seen.get(out.text);
+        if (earlier !== undefined && earlier !== tuple) {
+          throw new Error(`${template}: ${earlier} and ${tuple} both render ${out.text}`);
+        }
+        seen.set(out.text, tuple);
+      }
+    }
+    return accepted;
+  }
+
+  for (const template of ["{a}ab{b}", "{a}a{b}", "{a}x{b}", "{a}aba{b}", "{a}/{b}"]) {
+    test(`${template}: scalar values`, () => {
+      expect(sweep(template, SCALARS, SCALARS)).toBeGreaterThan(100);
+    });
+  }
+
+  test("{a:tail8}x{b}: a tail8 field followed by a literal", () => {
+    expect(sweep("{a:tail8}x{b}", [...SCALARS, ...LONG], [...SCALARS, ...LONG])).toBeGreaterThan(
+      100,
+    );
+  });
+
+  test("{a:tail8}aba{b}: a tail8 field followed by an overlapping literal", () => {
+    expect(sweep("{a:tail8}aba{b}", [...SCALARS, ...LONG], SCALARS)).toBeGreaterThan(100);
+  });
+
+  test("{a}x{b}: an array field followed by a literal", () => {
+    expect(sweep("{a}x{b}", ARRAYS, SCALARS)).toBeGreaterThan(100);
+  });
+
+  test("{a}aba{b}: an array field followed by an overlapping literal", () => {
+    expect(sweep("{a}aba{b}", ARRAYS, SCALARS)).toBeGreaterThan(100);
+  });
+
+  test("adjacent fields never reach the oracle: the template does not parse", () => {
+    expect(parseConfirmTemplate("{a}{b}").ok).toBe(false);
+  });
+});

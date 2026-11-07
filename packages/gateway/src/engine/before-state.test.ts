@@ -2018,6 +2018,38 @@ describe("Wave 4: an unread current state refuses the write (D1, fail closed)", 
     }
   });
 
+  test("select showing nothing (no field, or only blank values): a Wave 4 row is refused, a Wave 2 row keeps its empty state", async () => {
+    const empty: BeforeStateReader["select"][] = [
+      () => [],
+      () => [{ label: "Summary", value: "" }],
+      () => [
+        { label: "Summary", value: "  " },
+        { label: "Status", value: "" },
+      ],
+    ];
+    for (const select of empty) {
+      const w4 = createBeforeStateRunner({ rows: [rowWith({ ...READER, select }, 4)] });
+      expect(await w4.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+      const w2 = createBeforeStateRunner({ rows: [rowWith({ ...READER, select }, 2)] });
+      expect((await w2.read(WRITE, opsReturning(ok)))?.status).toBe("ok");
+    }
+    const some = createBeforeStateRunner({
+      rows: [
+        rowWith(
+          {
+            ...READER,
+            select: () => [
+              { label: "A", value: "" },
+              { label: "B", value: "x" },
+            ],
+          },
+          4,
+        ),
+      ],
+    });
+    expect((await some.read(WRITE, opsReturning(ok)))?.status).toBe("ok");
+  });
+
   test("a read that times out: refused", async () => {
     const clock = fakeClock();
     const runner = createBeforeStateRunner({ rows: [rowWith(READER, 4)], timers: clock.timers });

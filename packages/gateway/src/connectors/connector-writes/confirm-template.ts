@@ -115,7 +115,7 @@ function scanSegments(
 /**
  * Parses `{field}` / `{field:tail8}` placeholders between literal text. Refuses a template with no
  * placeholder, an unclosed or stray brace, a nested brace, a name that is not an identifier, an
- * unknown modifier, and literal text outside {@link isConfirmChar}.
+ * unknown modifier, two adjacent placeholders, and literal text outside {@link isConfirmChar}.
  */
 export function parseConfirmTemplate(template: string): ConfirmTemplateParse {
   const scanned = scanSegments(template);
@@ -123,6 +123,13 @@ export function parseConfirmTemplate(template: string): ConfirmTemplateParse {
   const { segments } = scanned;
   if (!segments.some((s) => s.kind === "field"))
     return { ok: false, reason: "names no placeholder" };
+  for (let i = 1; i < segments.length; i++) {
+    // Two fields with no literal between them make the text non-injective: ("ab","c") and
+    // ("a","bc") would render the same.
+    if (segments[i]?.kind === "field" && segments[i - 1]?.kind === "field") {
+      return { ok: false, reason: "has two adjacent placeholders" };
+    }
+  }
   for (const s of segments) {
     if (s.kind === "text" && !textOk(s.text)) {
       return { ok: false, reason: "has literal text outside the confirm character set" };

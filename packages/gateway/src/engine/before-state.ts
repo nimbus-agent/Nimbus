@@ -129,6 +129,21 @@ export class BeforeStateRefusedError extends Error {
   }
 }
 
+/**
+ * D1: an `origin: "model"` action of a Wave 4 type whose typed preview could not be built has no
+ * before-state to show, so it is refused like any other unread Wave 4 target, before any prompt,
+ * with {@link WAVE4_BEFORE_REFUSAL}. The row is found from `action.type` alone (I3). Called by
+ * `ToolExecutor` only when its preview is absent; any other action passes through.
+ */
+export function throwIfWave4WithoutPreview(
+  action: PlannedAction,
+  rows: readonly ConnectorWriteRow[],
+): void {
+  if (action.origin === "model" && rows.some((r) => r.wave === 4 && r.actionType === action.type)) {
+    throw new BeforeStateRefusedError(WAVE4_BEFORE_REFUSAL);
+  }
+}
+
 export interface BeforeStateRunner {
   /** The rows the door executor previews with (production: the write table). */
   readonly rows: readonly ConnectorWriteRow[];
@@ -186,10 +201,12 @@ interface Replies {
 
 /**
  * The reader's fields, sanitised and capped; `undefined` when `select` throws or returns anything
- * but an array of `{ label: string, value: string }`. Values are never cut; fields past the cap are
+ * but an array of `{ label: string, value: string }`, and, for a Wave 4 row, when no field has a
+ * non-blank value. Values are never cut; fields past the cap are
  * counted.
  */
 function selectFields(
+  row: ConnectorWriteRow,
   reader: BeforeStateReader,
   replies: Replies,
 ): ConnectorWriteBeforeState | undefined {
@@ -207,6 +224,9 @@ function selectFields(
     if (typeof label !== "string" || typeof value !== "string") return undefined;
     fields.push({ label: sanitisePreviewText(label), value: sanitisePreviewText(value) });
   }
+  // D1: a Wave 4 prompt must show the target as it is now, so a selection that shows nothing (no
+  // field, or only blank values) counts as a failed read, which a Wave 4 row turns into a refusal.
+  if (row.wave === 4 && fields.every((f) => f.value.trim() === "")) return undefined;
   const shown = fields.slice(0, BEFORE_STATE_MAX_FIELDS);
   const notShown = fields.length - shown.length;
   return notShown > 0 ? { status: "ok", fields: shown, notShown } : { status: "ok", fields: shown };
@@ -442,7 +462,7 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       if (outcome.kind === "unavailable") return fail(outcome.reason);
       const replies: Replies = { reply: outcome.reply, alsoReply: outcome.alsoReply, picked };
       if (guarded && !guardAllows(reader, replies, ctx)) return refusal;
-      return selectFields(reader, replies) ?? fail("failed");
+      return selectFields(row, reader, replies) ?? fail("failed");
     },
   };
 }
