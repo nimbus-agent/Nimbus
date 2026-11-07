@@ -111,9 +111,9 @@ const REFUSED_BEFORE_A1: readonly string[] = [
 ];
 
 describe("connector write rows", () => {
-  test("113 rows, unique tool ids", () => {
-    expect(CONNECTOR_WRITE_ROWS).toHaveLength(113);
-    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(113);
+  test("115 rows, unique tool ids", () => {
+    expect(CONNECTOR_WRITE_ROWS).toHaveLength(115);
+    expect(new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId)).size).toBe(115);
   });
 
   test("every row's action type is in the HITL frozen set", () => {
@@ -329,10 +329,27 @@ describe("connectors 0.6.0 writes (C1)", () => {
     }
   });
 
-  test("0.6.0 adds no wave-4 row: no commit tool exists in the manifest", () => {
-    const ids = new Set(CONNECTOR_WRITE_ROWS.map((r) => r.toolId));
-    expect(ids.has("github_file_commit")).toBe(false);
-    expect(ids.has("gitlab_commit_create")).toBe(false);
+  test("the two commit writes are wave-4 mesh rows, confirm-only, never model-offered, act door denied (vcs)", () => {
+    for (const [id, actionType] of [
+      ["github_file_commit", "github.file.commit"],
+      ["gitlab_commit_create", "gitlab.commit.create"],
+    ] as const) {
+      const r = connectorWriteRowByToolId(id);
+      expect(r?.actionType, id).toBe(actionType);
+      expect(r?.transport, id).toBe("mesh");
+      expect(r?.wave, id).toBe(4);
+      expect(r?.preview, id).toBeUndefined();
+      expect(r?.bound, id).toBeUndefined();
+      expect(r?.before, id).toBeUndefined();
+      expect(r?.confirm, id).toBeDefined();
+      expect(HITL_REQUIRED.has(actionType), id).toBe(true);
+      expect(isConnectorWriteToolId(id), id).toBe(true);
+      expect(isConnectorWriteToolId(`${id.split("_")[0]}_${id}`), id).toBe(true);
+      expect(r !== undefined && isModelOfferableRow(r), id).toBe(false);
+      const p = ACTION_PROPOSABILITY[actionType];
+      expect(p?.kind, id).toBe("denied");
+      expect(p?.kind === "denied" ? p.class : undefined, id).toBe("vcs");
+    }
     expect(CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 3)).toHaveLength(WAVE3_COUNT);
   });
 
@@ -383,7 +400,7 @@ describe("connectors 0.6.0 writes (C1)", () => {
 });
 
 describe("the B4a rows on the act door (plan Task A4)", () => {
-  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 124 denied (8 not_yet_offered)", () => {
+  test("the calendar and Drive creates are templated and proposable; overall 47 proposable, 126 denied (8 not_yet_offered)", () => {
     for (const id of [
       "outlook_calendar_create",
       "apple_calendar_event_create",
@@ -397,7 +414,7 @@ describe("the B4a rows on the act door (plan Task A4)", () => {
     }
     const entries = Object.values(ACTION_PROPOSABILITY);
     expect(entries.filter((e) => e.kind === "proposable")).toHaveLength(47);
-    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(124);
+    expect(entries.filter((e) => e.kind === "denied")).toHaveLength(126);
     expect(
       entries.filter((e) => e.kind === "denied" && e.class === "not_yet_offered"),
     ).toHaveLength(8);

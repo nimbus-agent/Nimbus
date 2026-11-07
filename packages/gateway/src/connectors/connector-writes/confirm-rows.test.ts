@@ -60,12 +60,22 @@ function altPlaceholders(r: ConnectorWriteRow): string[] {
 }
 
 describe("every wave 4 row declares a type-to-confirm target", () => {
-  test("there are 39 wave 4 rows, each with a confirm template that parses", () => {
-    expect(WAVE4).toHaveLength(39);
+  test("there are 41 wave 4 rows, each with a confirm template that parses", () => {
+    expect(WAVE4).toHaveLength(41);
     for (const r of WAVE4) {
       expect(r.confirm, r.toolId).toBeDefined();
       expect(parseConfirmTemplate(r.confirm?.template ?? "").ok, r.toolId).toBe(true);
     }
+  });
+
+  test("the two commit writes confirm on commit {owner}/{repo}@{branch} and commit {projectPath}@{branch}", () => {
+    const byId = new Map(WAVE4.map((r) => [r.toolId, r]));
+    expect(byId.get("github_file_commit")?.confirm?.template).toBe(
+      "commit {owner}/{repo}@{branch}",
+    );
+    expect(byId.get("gitlab_commit_create")?.confirm?.template).toBe(
+      "commit {projectPath}@{branch}",
+    );
   });
 
   test("no wave 2 or 3 row carries one (the control is wave 4's)", () => {

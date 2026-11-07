@@ -164,6 +164,8 @@ export const ACTION_PROPOSABILITY: Readonly<Record<string, Proposability>> = Obj
       "github.tag.create",
       "bitbucket.pr.merge",
       "gitlab.mr.merge",
+      "github.file.commit",
+      "gitlab.commit.create",
     ]),
     ...denied("pipeline", [
       "pipeline.trigger",

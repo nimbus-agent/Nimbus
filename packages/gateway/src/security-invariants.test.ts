@@ -3455,7 +3455,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
   });
 
   test("every connector write row is HITL-gated via its action type (local path)", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(113);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(115);
     expect(CONNECTOR_WRITE_ROWS.filter((r) => !HITL_REQUIRED.has(r.actionType))).toEqual([]);
   });
 
@@ -4067,7 +4067,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
   });
 
   test("the coverage set is the whole table", () => {
-    expect(CONNECTOR_WRITE_ROWS.length).toBe(113);
+    expect(CONNECTOR_WRITE_ROWS.length).toBe(115);
     expect(writesUnderTest().length).toBe(CONNECTOR_WRITE_ROWS.length + 4);
   });
 
@@ -11605,7 +11605,7 @@ describe("I53 — a first-party connector write reaches the model only through t
   test("D0a: every Wave 4 write on every door reaches dispatch only after an exact type-to-confirm match at the executor gate", async () => {
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4);
-    expect(wave4).toHaveLength(39);
+    expect(wave4).toHaveLength(41);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);

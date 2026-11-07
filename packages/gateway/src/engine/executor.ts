@@ -157,6 +157,9 @@ const HITL_REQUIRED_BACKING = new Set<string>([
   // Wave 3 — repos + CI.
   "bitbucket.pr.merge",
   "gitlab.mr.merge",
+  // Wave 4 — multi-file commits (classified, never offered; D1c adds their bound preview).
+  "github.file.commit",
+  "gitlab.commit.create",
   "pipeline.trigger",
   "pipeline.cancel",
   "pipeline.rerun",

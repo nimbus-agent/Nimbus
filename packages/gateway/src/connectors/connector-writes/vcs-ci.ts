@@ -409,6 +409,15 @@ export const VCS_CI_ROWS: readonly ConnectorWriteRow[] = [
   withConfirm(row("gitlab_mr_merge", "gitlab.mr.merge", "mesh", 4), {
     template: "merge {projectPath}!{mergeRequestIid}",
   }),
+  // The multi-file commit writes (connectors 0.8, Project D). Classified here with a confirm
+  // template only: no preview, bound or reader, so neither is ever offered to the model and the
+  // act door denies both (class vcs). D1c brings the `diff` preview and the bound prepare step.
+  withConfirm(row("github_file_commit", "github.file.commit", "mesh", 4), {
+    template: "commit {owner}/{repo}@{branch}",
+  }),
+  withConfirm(row("gitlab_commit_create", "gitlab.commit.create", "mesh", 4), {
+    template: "commit {projectPath}@{branch}",
+  }),
   withBefore(
     withPreview(row("gitlab_mr_note_create", "gitlab.mr.note.create", "mesh", 2), {
       target: "{projectPath}!{mergeRequestIid}",

@@ -78,11 +78,11 @@ describe("ACTION_PROPOSABILITY", () => {
       .sort();
     expect(got).toEqual(PROPOSABLE);
   });
-  test("counts, derived: 47 proposable, 124 denied, 8 of them not_yet_offered", () => {
+  test("counts, derived: 47 proposable, 126 denied, 8 of them not_yet_offered", () => {
     const all = Object.values(ACTION_PROPOSABILITY);
     expect(PROPOSABLE).toHaveLength(47);
     expect(all.filter((p) => p.kind === "proposable")).toHaveLength(47);
-    expect(all.filter((p) => p.kind === "denied")).toHaveLength(124);
+    expect(all.filter((p) => p.kind === "denied")).toHaveLength(126);
     expect(all.filter((p) => p.kind === "denied" && p.class === "not_yet_offered")).toHaveLength(8);
     expect(all).toHaveLength(HITL_REQUIRED.size);
   });
