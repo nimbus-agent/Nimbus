@@ -321,7 +321,33 @@ describe("POST /v1/messaging/teams/events — verifier and handler faults", () =
     ]);
   });
 
-  test("an activity handler that throws is 500 internal_error, audited", async () => {
+  test("the route acks 200 before the activity handler settles (Bot Framework's 15 s window)", async () => {
+    let settle: (() => void) | undefined;
+    let started = false;
+    const ctx = baseCtx({
+      messaging: {
+        teamsBotAppId: "app-1",
+        validateBotJwt: async () => true,
+        onActivity: () => {
+          started = true;
+          return new Promise<void>((r) => {
+            settle = r;
+          });
+        },
+      },
+    });
+    const res = await dispatchWriteRoute(
+      post("/v1/messaging/teams/events", JSON.stringify({ type: "message" }), "anything"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true });
+    await Bun.sleep(0);
+    expect(started).toBe(true);
+    settle?.();
+  });
+
+  test("an activity handler that throws after the ack is audited as internal_error", async () => {
     const ctx = baseCtx({
       messaging: {
         teamsBotAppId: "app-1",
@@ -333,8 +359,29 @@ describe("POST /v1/messaging/teams/events — verifier and handler faults", () =
       post("/v1/messaging/teams/events", JSON.stringify({ type: "message" }), "anything"),
       ctx,
     );
-    expect(res.status).toBe(500);
-    expect(await res.json()).toEqual({ error: "internal_error" });
+    expect(res.status).toBe(200);
+    await Bun.sleep(0);
+    expect(rejections(ctx.writeDb, "messaging.teams.inbound_rejected")).toEqual([
+      { result_code: 500, reason: "internal_error" },
+    ]);
+  });
+
+  test("an activity handler that throws synchronously is still acked and audited", async () => {
+    const ctx = baseCtx({
+      messaging: {
+        teamsBotAppId: "app-1",
+        validateBotJwt: async () => true,
+        onActivity: () => {
+          throw new Error("sync crash");
+        },
+      },
+    });
+    const res = await dispatchWriteRoute(
+      post("/v1/messaging/teams/events", JSON.stringify({ type: "message" }), "anything"),
+      ctx,
+    );
+    expect(res.status).toBe(200);
+    await Bun.sleep(0);
     expect(rejections(ctx.writeDb, "messaging.teams.inbound_rejected")).toEqual([
       { result_code: 500, reason: "internal_error" },
     ]);
