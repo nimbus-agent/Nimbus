@@ -332,6 +332,7 @@ import type { ShareRecord } from "../share/share-store.ts";
 import { getShareRecord } from "../share/share-store.ts";
 import { sourceMappingFor } from "../sources/source-mapping.ts";
 import {
+  configuredForgeHosts,
   deriveFetchHostMap,
   type FetchableService,
   serviceForHost,
@@ -935,7 +936,10 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
   const ownershipRefresher = ownershipCfg.enabled
     ? createOwnershipRefresher({
         debounceMs: ownershipCfg.debounceMs,
-        runPass: () => {
+        runPass: async () => {
+          // A GitHub Enterprise Server clone only becomes a `repo` entity (and so a forge
+          // coordinate `resolve-file` can find) once its host is known; read fresh per pass.
+          const extraForgeHosts = await configuredForgeHosts(vault);
           const roots = gitAwareRootPaths(
             loadNimbusFilesystemRootsFromConfigDir(paths.configDir),
             loadRegisteredRoots(paths.configDir),
@@ -958,6 +962,7 @@ async function createSchedulerWithMesh(opts: SchedulerWithMeshOpts): Promise<{
             roots,
             config: ownershipCfg,
             serviceRepoUrns,
+            extraForgeHosts,
           });
         },
         onError: (err) => {

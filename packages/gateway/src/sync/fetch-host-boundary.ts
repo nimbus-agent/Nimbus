@@ -163,6 +163,25 @@ function hostOf(raw: string): string | null {
 }
 
 /**
+ * Git-remote hosts (lower-cased hostname, NO port: a remote URL's port is the clone port, not the
+ * web one) that the owner's configuration adds to the built-in SaaS table in
+ * `ownership/repo-remote.ts`, each mapped to a service id. Today only a configured GitHub
+ * Enterprise Server, and only while github is configured with a valid `github.api_base`; a
+ * missing PAT or an invalid base contributes nothing. One instance at a time, so the mapping
+ * carries no host: the repo entity it produces is `github:<owner>/<name>` like github.com's.
+ */
+export async function configuredForgeHosts(
+  vault: NimbusVault,
+): Promise<ReadonlyMap<string, string>> {
+  const hosts = new Map<string, string>();
+  const config = await resolveServiceConfig(vault, "github");
+  if (config.configured && config.selfHostedHost !== null) {
+    hosts.set(new URL(`https://${config.selfHostedHost}`).hostname.toLowerCase(), "github");
+  }
+  return hosts;
+}
+
+/**
  * Whether `service` is actually configured in the Vault right now, and — if so — which host (if
  * any) its self-hosted origin secret resolves to.
  *

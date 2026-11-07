@@ -781,7 +781,9 @@ function githubIssueContextItemsForRepo(
   // excluded every pull request — and on the audited index `github`/`issue` held ZERO rows, so
   // the path contributed nothing at all while 16 PRs sat unreachable.
   const like = `${repoSlug}#%`;
-  const urlLike = `%github.com/${repoSlug}/%`;
+  // Host-agnostic on purpose: the service filter below already restricts to `github` rows, and a
+  // gateway serves github.com OR one GitHub Enterprise Server, so a GHES `html_url` must match too.
+  const urlLike = `%/${repoSlug}/%`;
   const rows = localIndex
     .getDatabase()
     .query(

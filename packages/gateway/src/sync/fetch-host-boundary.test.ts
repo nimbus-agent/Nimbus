@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { deriveFetchHostMap, SAAS_HOSTS, serviceForHost } from "./fetch-host-boundary.ts";
+import {
+  configuredForgeHosts,
+  deriveFetchHostMap,
+  SAAS_HOSTS,
+  serviceForHost,
+} from "./fetch-host-boundary.ts";
 
 /** `readConnectorSecret` calls `vault.get("<service>.<key>")` — so the fake keys on the FULL key. */
 function fakeVault(secrets: Record<string, string>) {
@@ -302,6 +307,30 @@ describe("fetch-host-boundary", () => {
         }),
       );
       expect(serviceForHost(map, "ghe.example.com")).toBeNull();
+    });
+  });
+
+  describe("configuredForgeHosts", () => {
+    test("maps the GHES hostname (port stripped) to github", async () => {
+      const m = await configuredForgeHosts(
+        fakeVault({ "github.pat": "t", "github.api_base": "https://GHE.example.com:8443" }),
+      );
+      expect([...m]).toEqual([["ghe.example.com", "github"]]);
+    });
+
+    test("is empty without a base, with an invalid base, or without the PAT", async () => {
+      expect((await configuredForgeHosts(fakeVault({ "github.pat": "t" }))).size).toBe(0);
+      expect(
+        (
+          await configuredForgeHosts(
+            fakeVault({ "github.pat": "t", "github.api_base": "http://ghe.example.com" }),
+          )
+        ).size,
+      ).toBe(0);
+      expect(
+        (await configuredForgeHosts(fakeVault({ "github.api_base": "https://ghe.example.com" })))
+          .size,
+      ).toBe(0);
     });
   });
 });
