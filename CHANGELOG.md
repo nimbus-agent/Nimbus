@@ -2,6 +2,13 @@
 
 All notable changes to the `nimbus` core (headless Gateway + CLI binary + first-party MCP connectors) are documented in this file. release-please appends new entries between this header and the most recent version below when a release PR merges.
 
+## [10.37.0](https://github.com/nimbus-agent/Nimbus/compare/v10.36.0...v10.37.0) (2026-11-07)
+
+
+### Features
+
+* **gateway:** bound writes, a gate-run prepare step whose values alone reach dispatch (I54) ([#1929](https://github.com/nimbus-agent/Nimbus/issues/1929)) ([e7ecbe8](https://github.com/nimbus-agent/Nimbus/commit/e7ecbe8bc5d78b101f99b29d468af4325618cfa3))
+
 ## [10.36.0](https://github.com/nimbus-agent/Nimbus/compare/v10.35.0...v10.36.0) (2026-11-06)
 
 
