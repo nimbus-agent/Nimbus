@@ -50,8 +50,13 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
     why: "fixed `aws athena` list/get calls; every caller value is an isSafeCliArg-guarded flag value (aws → native .exe)",
   },
   aws: {
-    reads: ["aws_ecs_service_list", "aws_lambda_list"],
-    why: "fixed `aws` subcommands; the one caller value (`--cluster`) is a flag value (aws → native .exe)",
+    reads: [
+      "aws_ec2_instance_get",
+      "aws_ecs_service_get",
+      "aws_ecs_service_list",
+      "aws_lambda_list",
+    ],
+    why: "fixed `aws` subcommands; the caller values (`--cluster`, `--services`, `--instance-ids`) are flag values, the instance id additionally matching `^i-[0-9a-f]{8,17}$` (aws → native .exe)",
   },
   azure: {
     reads: [],
@@ -78,8 +83,8 @@ const REVIEWED_PROCESS_CONNECTORS: Readonly<
     why: "every tool hands terraform or pulumi a caller-named directory, which evaluates its code",
   },
   kubernetes: {
-    reads: ["k8s_deployment_list", "k8s_event_list", "k8s_pod_list"],
-    why: "fixed `kubectl get <resource>`; the one caller value is the `-n` flag's value (kubectl → native .exe)",
+    reads: ["k8s_deployment_get", "k8s_deployment_list", "k8s_event_list", "k8s_pod_list"],
+    why: "fixed `kubectl get <resource>`; the caller values are the `-n` flag's value and, for `k8s_deployment_get`, one isSafeCliArg-guarded name positional (kubectl → native .exe)",
   },
   sagemaker: {
     reads: ["sagemaker_get", "sagemaker_list", "sagemaker_search"],
