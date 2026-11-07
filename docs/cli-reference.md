@@ -2845,7 +2845,7 @@ nimbus connector auth outlook
 nimbus connector auth teams
 
 # Source control / project tracking / knowledge
-nimbus connector auth github         # PAT prompt — stored in OS keystore
+nimbus connector auth github         # PAT prompt — stored in OS keystore; --api-base <url> = one GitHub Enterprise Server (below)
 nimbus connector auth gitlab         # PAT (+ optional self-hosted api_base)
 nimbus connector auth bitbucket      # username + app password
 nimbus connector auth linear         # API key
@@ -2887,6 +2887,8 @@ nimbus connector auth figma          # OAuth (+ non-secret team id)
 # Meetings
 nimbus connector auth zoom           # OAuth 3-legged PKCE — opens browser
 ```
+
+**GitHub Enterprise Server.** `nimbus connector auth github --token <pat> --api-base https://ghe.example.com` connects the GitHub connector (and GitHub Actions, which shares its credential) to one self-hosted instance, stored as the Vault key `github.api_base`. The value is checked before anything is sent or stored, and the same checks apply to a base typed here and to one adopted from `gh`: it must be `https` (a plain-`http` instance is refused), carry no user, password, query or fragment, have no path other than empty or `/api/v3` (the stored form is always `https://<host>[:port]/api/v3`), and name a host that is not `github.com` or `api.github.com`, not a `*.ghe.com` host (GHE.com with data residency has a separate API host and is **not supported**), not an IPv6 literal, and not a loopback (`localhost` and `*.localhost`, `127.0.0.0/8`), unspecified (`0.0.0.0/8`) or link-local (`169.254.0.0/16`) address. Private addresses (RFC 1918) are allowed, since a corporate appliance behind a VPN is the main use. A literal check cannot stop DNS rebinding (a public name that resolves to a loopback address); the token only ever goes to the host you typed, and the connector's sandbox grants network to that host alone (plus the github.com hosts, which the connector never sends the instance's token to). **One instance at a time:** a gateway talks to github.com OR to one Enterprise Server, never both, so connecting one stops syncing the other. Re-running `connector auth github` without `--api-base` returns to github.com, and any change of instance clears the GitHub and GitHub Actions sync cursors (it never deletes what is already indexed: those items stay until you run `nimbus connector remove github`). A successful `connector auth github` also restarts the running GitHub connector process, so a changed token or instance takes effect at once and a model write offered before the change asks again. Every request the gateway makes with the token follows only same-origin redirects (at most three); a redirect to another host or to `http` is refused. The egress ledger records a call as `github` whether it goes to github.com or to the Enterprise Server; `nimbus connector status github` names the instance, and the consent prompt of a GitHub write names it as an `Instance:` line.
 
 **Credential reuse — no separate `connector auth` needed.** `github_actions` reuses the `github` credential (there is no `gitlab_ci` service — GitLab CI data comes from the `gitlab` connector, which you authenticate directly); `google_meet` rides the `google` OAuth; and the metadata-only **BigQuery / Athena / CloudWatch / SageMaker / Cloud Logging / Vertex AI** connectors reuse your `aws` / `gcp` credentials. Authenticate the underlying provider and these light up automatically.
 
@@ -3005,11 +3007,18 @@ shape, is refused rather than stored.
 
 Detection is local: it reads gh's `hosts.yml`, runs `aws configure list-profiles` and
 `kubectl config …`, and runs `gcloud config list --format json`; none of these makes a network
-request. Adopting gh sends ONE request — the token check to `api.github.com/user` — recorded in
+request. Adopting gh sends ONE request — the token check to `api.github.com/user` (to `<instance>/api/v3/user` for a GitHub Enterprise Server login) — recorded in
 the egress ledger (`nimbus prove`); adopting gcloud makes none (`connector.auth gcp`'s gcloud arm
-only writes Vault keys, so there is nothing to probe and no egress row for it). GitHub Enterprise
-hosts are listed but not offered (the GitHub connector has no `api_base` yet). Refused under
-`--demo`.
+only writes Vault keys, so there is nothing to probe and no egress row for it). A GitHub Enterprise
+Server login in `hosts.yml` is offered like github.com's, when its host name passes the same checks as
+`connector auth github --api-base` (a `*.ghe.com` host, or a name with a path, scheme or space, is listed
+as unsupported): adopting it runs `gh auth token --hostname <host>`, stores the token and
+`github.api_base` together through the one `connector.auth` handler (so the check is made against that
+instance before anything is stored), and the approval prompt names the host, the API root, the
+one-instance rule and, when a GitHub credential is already stored, which instance it belongs to.
+`--host <name>` narrows the walk to one `gh` host (`nimbus connector detect --source gh --host
+ghe.example.com`); any GitHub login already configured needs `--replace`, and adopting github.com
+while an Enterprise Server is stored removes `github.api_base`. Refused under `--demo`.
 
 **`--json` is unstable** in this release: it prints the gateway's findings array as-is and may
 change shape.
@@ -3041,7 +3050,7 @@ nimbus connector status github
 nimbus connector status github --stats   # Attach the 15 most recent sync-telemetry rows
 ```
 
-Output is always JSON; `--stats` is the only flag read. Each telemetry row carries `startedAt`, `durationMs`, `itemsUpserted`, `itemsDeleted`, `bytesTransferred`, `hadMore`, `errorMsg` and `itemsDropped` — items an extension's sync returned but the gateway refused to write (an undeclared type, a malformed or an oversized item), which is 0 for every built-in connector.
+Output is always JSON; `--stats` is the only flag read. For `github` and `github_actions`, a row gains `instance` (the Enterprise Server `host[:port]`, never a URL or a credential) while a valid `github.api_base` is stored; it is absent for github.com. Each telemetry row carries `startedAt`, `durationMs`, `itemsUpserted`, `itemsDeleted`, `bytesTransferred`, `hadMore`, `errorMsg` and `itemsDropped` — items an extension's sync returned but the gateway refused to write (an undeclared type, a malformed or an oversized item), which is 0 for every built-in connector.
 
 ---
 

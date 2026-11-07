@@ -20,6 +20,10 @@ The GitHub Actions connector reuses the same Vault key as the [GitHub connector]
 nimbus connector auth github
 ```
 
+## GitHub Enterprise Server
+
+GitHub Actions follows the GitHub connector's instance: `nimbus connector auth github --api-base https://ghe.example.com` points both at one Enterprise Server (one instance at a time, https only, GHE.com not supported; see [the GitHub page](/connectors/github/#github-enterprise-server)). Runs are requested from `https://<instance>/api/v3`, and only repositories indexed from that instance are asked about. Job logs that your instance stores on a separate blob host may fail to download, because the sandbox lists only the instance and the github.com hosts (plus `*.blob.core.windows.net`).
+
 ## Read tools (no HITL)
 
 | Tool | Purpose |
