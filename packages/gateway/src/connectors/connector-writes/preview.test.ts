@@ -324,6 +324,40 @@ describe("buildConnectorWritePreview — credential resolver", () => {
   });
 });
 
+describe("renderConnectorWritePreviewLines: the prepared block (a bound write, I54)", () => {
+  const base = (): ConnectorWritePreview => build({ name: "web", revision: "abc" });
+
+  test("no prepared: no Prepared block", () => {
+    expect(renderConnectorWritePreviewLines(base()).join("\n")).not.toContain("Prepared");
+  });
+
+  test("ok: a Prepared: block after the new values and after any Before block, one line each", () => {
+    const p: ConnectorWritePreview = {
+      ...base(),
+      before: { status: "ok", fields: [{ label: "Old", value: "o" }] },
+      prepared: {
+        status: "ok",
+        fields: [{ label: "Plan", value: "3 to add\nmore" }],
+        notShown: 2,
+      },
+    };
+    const lines = renderConnectorWritePreviewLines(p);
+    expect(lines.slice(-4)).toEqual([
+      "",
+      "Prepared:",
+      String.raw`  Plan: 3 to add\nmore`,
+      "  (2 more fields not shown)",
+    ]);
+    expect(lines.indexOf("Before:")).toBeLessThan(lines.indexOf("Prepared:"));
+    for (const l of lines) expect(l).not.toContain("\n");
+  });
+
+  test("ok with no fields says so", () => {
+    const p: ConnectorWritePreview = { ...base(), prepared: { status: "ok", fields: [] } };
+    expect(renderConnectorWritePreviewLines(p).slice(-1)).toEqual(["Prepared: (no fields)"]);
+  });
+});
+
 describe("renderConnectorWritePreviewLines: the before-state block (spec § 5.4)", () => {
   const base = (): ConnectorWritePreview => build({ name: "web", revision: "abc" });
 

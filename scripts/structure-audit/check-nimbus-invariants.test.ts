@@ -9,6 +9,7 @@ import {
   checkAgentEmitterImportConfinement,
   checkAgentProvenanceWriters,
   checkBeforeStateRead,
+  checkBoundWrites,
   checkBrokeredFetchLiteralConfinement,
   checkCaptureGateCallers,
   checkCaptureGateImporters,
@@ -4405,5 +4406,260 @@ describe("D41 — a Wave 4 write is approved only by typed text, judged only at 
     }
     expect(files.some((f) => f.relPath === EXECUTOR)).toBe(true);
     expect(checkConfirmComparison(files)).toEqual([]);
+  });
+});
+
+describe("D42 — a bound write is dispatched only with its own prepare step's values (I54)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const STEP = "packages/gateway/src/engine/prepare-step.ts";
+  const REGISTRY = "packages/gateway/src/connectors/registry.ts";
+  const TOOLS = "packages/gateway/src/connectors/connector-writes/prepare-tools.ts";
+  const TYPES = "packages/gateway/src/connectors/connector-writes/types.ts";
+  const OTHER = "packages/gateway/src/ipc/other.ts";
+  const EXECUTOR_GOOD = [
+    "class ToolExecutor {",
+    "  constructor(a, b, c, d, e, f, g, h, private readonly writeTable) {}",
+    "  private boundRefusal(action, requiresHITL, scope) {",
+    "    if (!scope.bind) return 1;",
+    "    return boundInputRefusal(row.bound, action);",
+    "  }",
+    "  private async resolveHitlApproval(action, opts, record, scope) {",
+    "    const captured = await this.captureBeforePhase(action, opts);",
+    "    const prepared = await this.preparePhase(action, opts, scope);",
+    "    const confirm = this.renderConfirmPhase(action);",
+    "    return this.approvalPhase(action, preview, confirm, record);",
+    "  }",
+    "  private async preparePhase(action, opts, scope) {",
+    "    const gate = (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true });",
+    "    return runPrepareStep(ops, row, row.bound, action, { prepareToolIds: this.prepareToolIds() });",
+    "  }",
+    "  private async runGateChecks(action, opts, scope) {",
+    "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;",
+    "    return this.resolveHitlApproval(action, opts, record, scope);",
+    "  }",
+    "  private dispatchBoundPhase(action, scope) {",
+    "    return injectBoundFields(action, binds, values);",
+    "  }",
+    "  async gate(action, opts) {",
+    "    return this.gateWithin(action, opts, { bind: false });",
+    "  }",
+    "  async execute(action, opts) {",
+    "    const scope = { bind: true };",
+    "    const gateResult = await this.gateWithin(action, opts, scope);",
+    "    const toDispatch = this.dispatchBoundPhase(action, scope);",
+    "    return this.connectors.dispatch(toDispatch);",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  const TOOLS_GOOD =
+    "export const PREPARE_TOOL_IDS = Object.freeze({\n  add(_id: string): never { throw 1; },\n  delete(_id: string): never { throw 1; },\n  clear(): never { throw 1; },\n});\nexport function isPrepareToolId() {}\n";
+  const REGISTRY_GOOD =
+    "import { isPrepareActionType } from './x'; import { isPrepareToolId, PREPARE_TOOL_IDS } from './y'; function f(prepareToolIds) { return prepareToolIds; }";
+  const GOOD = [
+    file(EXECUTOR, EXECUTOR_GOOD),
+    file(
+      STEP,
+      'const S = ".write.prepare"; export function runPrepareStep() {} export function injectBoundFields() {} export function isPrepareActionType() {}',
+    ),
+    file(REGISTRY, REGISTRY_GOOD),
+    file(TOOLS, TOOLS_GOOD),
+    file(
+      TYPES,
+      "import { PREPARE_TOOL_IDS } from './p'; export function withBound(r, b, prepareToolIds = PREPARE_TOOL_IDS) {}",
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkBoundWrites(files).map((v) => v.rule);
+  const replace = (relPath: string, contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === relPath ? file(relPath, contents) : f));
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkBoundWrites(GOOD)).toEqual([]);
+  });
+
+  test("(a) FAILS on the .write.prepare literal outside the prepare step", () => {
+    expect(rules([...GOOD, file(OTHER, 'const t = "iac.write.prepare";')])).toEqual([
+      "bound-prepare-literal-confined",
+    ]);
+    expect(rules([...GOOD, file(OTHER, "// the .write.prepare type")])).toEqual([]);
+    expect(
+      rules([...GOOD, file("packages/gateway/src/ipc/x.test.ts", 'x(".write.prepare")')]),
+    ).toEqual([]);
+  });
+
+  test("(a) FAILS on a bound-write name outside its files", () => {
+    for (const body of [
+      "injectBoundFields(a, b, c);",
+      "await runPrepareStep(o, r, b, a, p);",
+      "isPrepareActionType(t);",
+      "isPrepareToolId(k);",
+      "PREPARE_TOOL_IDS.has(k);",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["bound-name-confined"]);
+    }
+    // The registry may name the action-type guard but not the injection.
+    expect(rules(replace(REGISTRY, `${REGISTRY_GOOD} injectBoundFields();`))).toEqual([
+      "bound-name-confined",
+    ]);
+  });
+
+  test("(b) FAILS when the prepare phase is missing, moved after the confirm text, or reordered", () => {
+    const missing = EXECUTOR_GOOD.replace(
+      "    const prepared = await this.preparePhase(action, opts, scope);\n",
+      "",
+    );
+    expect(rules(replace(EXECUTOR, missing))).toContain("bound-order-pinned");
+    const after = EXECUTOR_GOOD.replace(
+      "    const prepared = await this.preparePhase(action, opts, scope);\n    const confirm = this.renderConfirmPhase(action);\n",
+      "    const confirm = this.renderConfirmPhase(action);\n    const prepared = await this.preparePhase(action, opts, scope);\n",
+    );
+    expect(rules(replace(EXECUTOR, after))).toContain("bound-order-pinned");
+  });
+
+  test("(b) FAILS on a second or misplaced injection or prepare call, and on a reordered execute", () => {
+    const extraInject = EXECUTOR_GOOD.replace(
+      "    const confirm = this.renderConfirmPhase(action);\n",
+      "    const confirm = this.renderConfirmPhase(action);\n    injectBoundFields(action, b, v);\n",
+    );
+    expect(rules(replace(EXECUTOR, extraInject))).toContain("bound-order-pinned");
+    const extraPrepare = EXECUTOR_GOOD.replace(
+      "  private dispatchBoundPhase(action, scope) {\n",
+      "  private dispatchBoundPhase(action, scope) {\n    runPrepareStep();\n",
+    );
+    expect(rules(replace(EXECUTOR, extraPrepare))).toContain("bound-order-pinned");
+    const swapped = EXECUTOR_GOOD.replace(
+      "    const toDispatch = this.dispatchBoundPhase(action, scope);\n    return this.connectors.dispatch(toDispatch);\n",
+      "    this.connectors.dispatch(action);\n    const toDispatch = this.dispatchBoundPhase(action, scope);\n",
+    );
+    expect(rules(replace(EXECUTOR, swapped))).toContain("bound-order-pinned");
+  });
+
+  test("(c) FAILS when production passes the write table or the prepare-tool seam", () => {
+    expect(
+      rules([...GOOD, file(OTHER, "const e = new ToolExecutor(a, b, c, d, e, f, g, h, table);")]),
+    ).toContain("bound-seam-not-production");
+    expect(
+      rules([...GOOD, file(OTHER, "const e = new ToolExecutor(a, b, c, d, e, f, g, h);")]),
+    ).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        file(OTHER, "const e = new ToolExecutor(a, b, fn(1, 2, 3), d, e, f, g, [1, 2, 3, 4]);"),
+      ]),
+    ).toEqual([]);
+    expect(
+      rules([...GOOD, file(OTHER, "createConnectorDispatcher(client, { prepareToolIds: ids });")]),
+    ).toContain("bound-seam-not-production");
+    expect(rules([...GOOD, file(OTHER, "withBound(row, bound, ids);")])).toContain(
+      "bound-seam-not-production",
+    );
+    expect(rules([...GOOD, file(OTHER, "withBound(row, bound);")])).toEqual([]);
+    // A test-support file is exempt.
+    expect(
+      rules([
+        ...GOOD,
+        file("packages/gateway/src/engine/x.test-helpers.ts", "withBound(r, b, ids); writeTable;"),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(c) FAILS on the seam names in any other production file", () => {
+    expect(
+      rules([...GOOD, file(OTHER, "const writeTable = { rows: [], prepareToolIds: s };")]),
+    ).toEqual(["bound-name-confined", "bound-name-confined"]);
+  });
+
+  test("(d) FAILS when PREPARE_TOOL_IDS is no longer frozen or is mutated", () => {
+    const frozen = (contents: string): boolean =>
+      rules(replace(TOOLS, contents)).includes("bound-prepare-set-frozen");
+    expect(frozen(TOOLS_GOOD.replace("Object.freeze(", "Object.assign("))).toBe(true);
+    expect(frozen(TOOLS_GOOD.replace("clear(): never", "clear(): void"))).toBe(true);
+    expect(frozen(TOOLS_GOOD.replace("add(_id: string): never", "add(_id: string): void"))).toBe(
+      true,
+    );
+    expect(
+      frozen(TOOLS_GOOD.replace("delete(_id: string): never", "delete(_id: string): void")),
+    ).toBe(true);
+    expect(
+      rules([...GOOD, file(OTHER, 'PREPARE_TOOL_IDS.add("x");')]).includes(
+        "bound-prepare-set-frozen",
+      ),
+    ).toBe(true);
+    expect(rules(replace(EXECUTOR, `${EXECUTOR_GOOD} PREPARE_TOOL_IDS.delete("x");`))).toContain(
+      "bound-prepare-set-frozen",
+    );
+  });
+
+  test("(f) FAILS when a caller's prepare type is no longer refused outside the step", () => {
+    const noRefusal = EXECUTOR_GOOD.replace(
+      "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n",
+      "",
+    );
+    expect(rules(replace(EXECUTOR, noRefusal))).toContain("bound-order-pinned");
+    const late = EXECUTOR_GOOD.replace(
+      "    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n    return this.resolveHitlApproval(action, opts, record, scope);\n",
+      "    const r = this.resolveHitlApproval(action, opts, record, scope);\n    if (isPrepareActionType(action.type) && scope.prepareStep !== true) return 1;\n    return r;\n",
+    );
+    expect(rules(replace(EXECUTOR, late))).toContain("bound-order-pinned");
+    const elsewhere = EXECUTOR_GOOD.replace(
+      "  async gate(action, opts) {\n",
+      "  async gate(action, opts) {\n    const s = { prepareStep: true };\n",
+    );
+    expect(rules(replace(EXECUTOR, elsewhere))).toContain("bound-order-pinned");
+    const gone = EXECUTOR_GOOD.replace("{ bind: false, prepareStep: true }", "{ bind: false }");
+    expect(rules(replace(EXECUTOR, gone))).toContain("bound-order-pinned");
+  });
+
+  test("a test-helpers file is exempt only while no production file imports it", () => {
+    const helper = file(
+      "packages/gateway/src/engine/fixtures.test-helpers.ts",
+      "withBound(r, b, ids); writeTable;",
+    );
+    expect(rules([...GOOD, helper])).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        helper,
+        file(OTHER, 'import { x } from "../engine/fixtures.test-helpers.ts";'),
+      ]),
+    ).toContain("bound-seam-not-production");
+    // A test importing it keeps the exemption.
+    expect(
+      rules([
+        ...GOOD,
+        helper,
+        file(
+          "packages/gateway/src/ipc/y.test.ts",
+          'import { x } from "../engine/fixtures.test-helpers.ts";',
+        ),
+      ]),
+    ).toEqual([]);
+  });
+
+  test("(e) FAILS when the public gate could bind", () => {
+    const publicBinds = EXECUTOR_GOOD.replace("{ bind: false }", "{ bind: true }");
+    expect(rules(replace(EXECUTOR, publicBinds))).toContain("bound-public-gate-refuses");
+    const noGuard = EXECUTOR_GOOD.replace("    if (!scope.bind) return 1;\n", "");
+    expect(rules(replace(EXECUTOR, noGuard))).toContain("bound-public-gate-refuses");
+    const late = EXECUTOR_GOOD.replace(
+      "    if (!scope.bind) return 1;\n    return boundInputRefusal(row.bound, action);\n",
+      "    const r = boundInputRefusal(row.bound, action);\n    if (!scope.bind) return 1;\n    return r;\n",
+    );
+    expect(rules(replace(EXECUTOR, late))).toContain("bound-public-gate-refuses");
+    const twice = EXECUTOR_GOOD.replace(
+      "    const scope = { bind: true };\n",
+      "    const scope = { bind: true };\n    const other = { bind: true };\n",
+    );
+    expect(rules(replace(EXECUTOR, twice))).toContain("bound-public-gate-refuses");
+  });
+
+  test("is green on the repo", async () => {
+    const files: FileEntry[] = [];
+    for await (const f of iterateSourceFiles()) {
+      files.push({ relPath: f.relPath, contents: f.contents });
+    }
+    expect(files.some((f) => f.relPath === EXECUTOR)).toBe(true);
+    expect(checkBoundWrites(files)).toEqual([]);
   });
 });

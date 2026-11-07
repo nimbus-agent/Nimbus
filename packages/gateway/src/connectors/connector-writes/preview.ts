@@ -43,6 +43,12 @@ export interface ConnectorWritePreview {
    * (`engine/before-state.ts`), never by the builder.
    */
   readonly before?: ConnectorWriteBeforeState;
+  /**
+   * What a bound write's prepare step produced (a plan's summary, a digest), set only by the
+   * executor's `preparePhase` (I54), never by the builder. The owner (and any delegate) sees it
+   * before approving; the model never does.
+   */
+  readonly prepared?: ConnectorWriteBeforeState;
 }
 
 /**
@@ -267,7 +273,8 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
     lines.push("Other fields:");
     for (const f of p.otherFields) lines.push(`  ${oneLine(f.key)}: ${oneLine(f.value)}`);
   }
-  if (p.before !== undefined) lines.push("", ...beforeLines(p.before));
+  if (p.before !== undefined) lines.push("", ...stateLines("Before", p.before));
+  if (p.prepared !== undefined) lines.push("", ...stateLines("Prepared", p.prepared));
   return lines;
 }
 
@@ -275,12 +282,12 @@ export function renderConnectorWritePreviewLines(p: ConnectorWritePreview): stri
  * The target's current state, after the new values (spec § 5.4). Labels and values were sanitised
  * by the runner and are never cut; a dropped field is counted on a final line.
  */
-function beforeLines(b: ConnectorWriteBeforeState): string[] {
-  if (b.status === "unavailable") return [`Before: unavailable (${b.reason})`];
+function stateLines(title: string, b: ConnectorWriteBeforeState): string[] {
+  if (b.status === "unavailable") return [`${title}: unavailable (${b.reason})`];
   const notShown = b.notShown ?? 0;
-  if (b.fields.length === 0 && notShown === 0) return ["Before: (no fields)"];
+  if (b.fields.length === 0 && notShown === 0) return [`${title}: (no fields)`];
   const out = [
-    "Before:",
+    `${title}:`,
     ...b.fields.map(
       (f) => `  ${f.label === "" ? "(empty label)" : oneLine(f.label)}: ${oneLine(f.value)}`,
     ),

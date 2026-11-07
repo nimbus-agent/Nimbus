@@ -183,7 +183,8 @@ export function ConnectorWritePreview({
           <Rows rows={others} />
         </section>
       )}
-      <BeforeState raw={details["before"]} />
+      <BeforeState raw={details["before"]} title="Before" testId="connector-write-before" />
+      <BeforeState raw={details["prepared"]} title="Prepared" testId="connector-write-prepared" />
       <ProposedBy details={details} />
     </div>
   );
@@ -227,15 +228,24 @@ function readBefore(raw: unknown): BeforeView | undefined {
 
 /**
  * The target's current state, read by the gateway just before this prompt (spec § 5.4), shown
- * after the new values. Every string is the gateway's sanitised text, rendered as a text node;
+ * after the new values; also the facts a bound write's prepare step produced (I54, titled
+ * "Prepared"). Every string is the gateway's sanitised text, rendered as a text node;
  * an unreadable state is one fixed reason, never error text.
  */
-function BeforeState({ raw }: { readonly raw: unknown }): ReactNode {
+function BeforeState({
+  raw,
+  title,
+  testId,
+}: {
+  readonly raw: unknown;
+  readonly title: string;
+  readonly testId: string;
+}): ReactNode {
   const view = readBefore(raw);
   if (view === undefined) return null;
   return (
-    <section data-testid="connector-write-before" className="flex flex-col gap-1">
-      <h3 className="text-sm font-semibold">Before</h3>
+    <section data-testid={testId} className="flex flex-col gap-1">
+      <h3 className="text-sm font-semibold">{title}</h3>
       {view.status === "unavailable" && (
         <p className="text-sm text-[var(--color-fg-muted)]">unavailable ({view.reason})</p>
       )}

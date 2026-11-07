@@ -554,3 +554,89 @@ describe("createConnectorDispatcher — a before-state read dispatches only a re
     expect(ran).toEqual(["jira_jira_issue_update"]);
   });
 });
+
+describe("createConnectorDispatcher — a prepare tool runs only inside the prepare step, and only its own service's (I54)", () => {
+  const IDS = new Set(["synth_plan"]);
+  function mapOf(keys: readonly string[]) {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { from: k };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client, { prepareToolIds: IDS }), ran };
+  }
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: { dir: "prod" } },
+  });
+
+  test("the control: a prepare tool of its own service dispatches under its prepare type", async () => {
+    const { d, ran } = mapOf(["iac_synth_plan"]);
+    await expect(d.dispatch(call("iac.write.prepare", "iac_synth_plan"))).resolves.toEqual({
+      from: "iac_synth_plan",
+    });
+    expect(ran).toEqual(["iac_synth_plan"]);
+  });
+
+  test("a prepare tool under any other action type is ERR_PREPARE_OUTSIDE_STEP and runs nothing", async () => {
+    const { d, ran } = mapOf(["iac_synth_plan"]);
+    for (const type of ["iac.terraform.apply", "search.run", "iac.plan"]) {
+      await expect(d.dispatch(call(type, "iac_synth_plan"))).rejects.toThrow(
+        `ERR_PREPARE_OUTSIDE_STEP: action type ${JSON.stringify(type)} may not dispatch tool "iac_synth_plan"`,
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a prepare type resolving to ANOTHER service's tool is ERR_PREPARE_SERVICE_MISMATCH", async () => {
+    const { d, ran } = mapOf(["github_github_issue_get", "github_synth_plan"]);
+    await expect(d.dispatch(call("iac.write.prepare", "github_github_issue_get"))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    await expect(d.dispatch(call("iac.write.prepare", "github_synth_plan"))).rejects.toThrow(
+      "ERR_PREPARE_SERVICE_MISMATCH",
+    );
+    expect(ran).toEqual([]);
+  });
+
+  test("a prepare type resolving to a read, a write, or an undeclared tool is ERR_PREPARE_NOT_A_PREPARE_TOOL", async () => {
+    const { d, ran } = mapOf(["iac_iac_terraform_plan", "iac_iac_terraform_apply", "iac_other"]);
+    for (const key of ["iac_iac_terraform_plan", "iac_iac_terraform_apply", "iac_other"]) {
+      await expect(d.dispatch(call("iac.write.prepare", key))).rejects.toThrow(
+        "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+      );
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("a prepare type naming a connector WRITE that is also (wrongly) declared as a prepare tool is refused", async () => {
+    const client: McpToolListingClient = {
+      listTools: async () => ({ iac_iac_terraform_apply: { execute: async () => "ran" } }),
+    };
+    const d = createConnectorDispatcher(client, {
+      prepareToolIds: new Set(["iac_terraform_apply"]),
+    });
+    await expect(d.dispatch(call("iac.write.prepare", "iac_iac_terraform_apply"))).rejects.toThrow(
+      "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+    );
+  });
+
+  test("with the production (empty) set, ordinary types are untouched", async () => {
+    const client: McpToolListingClient = {
+      listTools: async () => ({ jira_jira_issue_update: { execute: async () => "ok" } }),
+    };
+    const d = createConnectorDispatcher(client);
+    await expect(d.dispatch(call("jira.issue.update", "jira_jira_issue_update"))).resolves.toBe(
+      "ok",
+    );
+    await expect(d.dispatch(call("jira.write.prepare", "jira_jira_issue_update"))).rejects.toThrow(
+      "ERR_PREPARE_NOT_A_PREPARE_TOOL",
+    );
+  });
+});

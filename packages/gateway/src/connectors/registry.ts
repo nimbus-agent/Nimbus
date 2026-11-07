@@ -1,6 +1,7 @@
 import pino from "pino";
 
 import { isBeforeReadActionType } from "../engine/before-state.ts";
+import { isPrepareActionType } from "../engine/prepare-step.ts";
 import { serviceOf } from "../engine/service-of.ts";
 import { extractToolInput } from "../engine/tool-input.ts";
 import type { ConnectorDispatcher, PlannedAction } from "../engine/types.ts";
@@ -10,6 +11,7 @@ import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
+import { isPrepareToolId, PREPARE_TOOL_IDS } from "./connector-writes/prepare-tools.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
 import { mcpClientToolKey, meshServerForToolKey, resolveServerTool } from "./lazy-mesh/tool-map.ts";
 import {
@@ -94,8 +96,14 @@ export const MAX_TOOL_RESULT_BYTES = MCP_TOOL_RESULT_MAX_BYTES;
 
 export function createConnectorDispatcher(
   client: McpToolListingClient,
-  options?: { toolTimeoutMs?: number; maxResultBytes?: number },
+  options?: {
+    toolTimeoutMs?: number;
+    maxResultBytes?: number;
+    /** Test seam for the declared prepare tools; static rule D42(c) forbids production code to pass it. */
+    prepareToolIds?: ReadonlySet<string>;
+  },
 ): ConnectorDispatcher {
+  const prepareToolIds = options?.prepareToolIds ?? PREPARE_TOOL_IDS;
   const toolTimeoutMs = options?.toolTimeoutMs ?? DEFAULT_TOOL_TIMEOUT_MS;
   const maxResultBytes = options?.maxResultBytes ?? MAX_TOOL_RESULT_BYTES;
   let toolsPromise: ReturnType<McpToolListingClient["listTools"]> | undefined;
@@ -153,6 +161,7 @@ export function createConnectorDispatcher(
         : mcpClientToolKey(serviceOf(action.type), toolId);
       assertUserMcpKeyMatchesActionType(action.type, resolvedKey);
       assertBeforeReadIsOwnRead(action.type, resolvedKey);
+      assertPrepareIsOwnPrepare(action.type, resolvedKey, prepareToolIds);
       assertWriteKeyMatchesActionType(action.type, resolvedKey);
       const execute = tool.execute;
       if (execute === undefined) {
@@ -199,6 +208,34 @@ function assertBeforeReadIsOwnRead(actionType: string, resolvedKey: string): voi
   }
   if (!isReadOnlyToolId(resolvedKey) || isConnectorWriteToolId(resolvedKey)) {
     throw new Error(`ERR_BEFORE_READ_NOT_A_READ: ${shown}`);
+  }
+}
+
+/**
+ * I54 at the dispatcher: a prepare tool (a member of `PREPARE_TOOL_IDS`) runs only inside the
+ * executor's prepare step, and that step's `<service>.write.prepare` type resolves only to a
+ * prepare tool of that SAME service. Checked on the key the dispatcher actually resolved, before
+ * the tool is called: a prepare tool under any other action type is `ERR_PREPARE_OUTSIDE_STEP`;
+ * a prepare type that resolves to another connector's tool is `ERR_PREPARE_SERVICE_MISMATCH`
+ * (so its I29 egress row can never be misattributed), and one that resolves to anything that is
+ * not a declared prepare tool, or to a connector write, is `ERR_PREPARE_NOT_A_PREPARE_TOOL`.
+ */
+function assertPrepareIsOwnPrepare(
+  actionType: string,
+  resolvedKey: string,
+  prepareToolIds: ReadonlySet<string>,
+): void {
+  const isPrepare = isPrepareToolId(resolvedKey, prepareToolIds);
+  const shown = `action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`;
+  if (!isPrepareActionType(actionType)) {
+    if (isPrepare) throw new Error(`ERR_PREPARE_OUTSIDE_STEP: ${shown}`);
+    return;
+  }
+  if (meshServerForToolKey(resolvedKey) !== serviceOf(actionType)) {
+    throw new Error(`ERR_PREPARE_SERVICE_MISMATCH: ${shown}`);
+  }
+  if (!isPrepare || isConnectorWriteToolId(resolvedKey)) {
+    throw new Error(`ERR_PREPARE_NOT_A_PREPARE_TOOL: ${shown}`);
   }
 }
 
