@@ -113,4 +113,32 @@ describe("fetchSameOriginOnly", () => {
     expect(err).toBeInstanceOf(RedirectRefusedError);
     expect(String((err as Error).message)).not.toContain("ghe.example.com");
   });
+
+  test("the body of a followed 3xx is cancelled before the next hop", async () => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(c) {
+        c.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const first = new Response(body, { status: 302, headers: { location: "/next" } });
+    const s = scripted([first, new Response("ok")]);
+    await fetchSameOriginOnly(START, {}, s.fetchImpl);
+    expect(cancelled).toBe(true);
+  });
+
+  test("a body cancel that throws never masks the flow", async () => {
+    const first = redirect(302, "/next");
+    Object.defineProperty(first, "body", {
+      get: () => ({
+        cancel: () => Promise.reject(new Error("boom")),
+      }),
+    });
+    const s = scripted([first, new Response("ok")]);
+    const res = await fetchSameOriginOnly(START, {}, s.fetchImpl);
+    expect(await res.text()).toBe("ok");
+  });
 });

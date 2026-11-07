@@ -34,9 +34,15 @@ const REASON_GHE_COM = "GHE.com (data residency) is not supported";
 const CONTROL_OR_SPACE = /[\u0000- \u007f]/;
 
 function isUnspecifiedOrLinkLocal(host: string): boolean {
-  if (host === "0.0.0.0") return true;
   const m = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(host);
-  return m !== null && m[1] === "169" && m[2] === "254";
+  if (m === null) return false;
+  // 0.0.0.0/8 ("this network", incl. 0.0.0.0) and 169.254.0.0/16 (link-local, cloud metadata).
+  return Number.parseInt(m[1] ?? "", 10) === 0 || (m[1] === "169" && m[2] === "254");
+}
+
+/** `localhost` and any `*.localhost` name (RFC 6761: always loopback). */
+function isLocalhostName(host: string): boolean {
+  return host === "localhost" || host.endsWith(".localhost");
 }
 
 function canonicalHost(hostname: string): string {
@@ -50,7 +56,9 @@ function canonicalHost(hostname: string): string {
 function refuseHost(host: string): string | null {
   if (host === "") return REASON_SYNTAX;
   if (host.startsWith("[")) return REASON_IPV6;
-  if (isLoopbackHost(host) || isUnspecifiedOrLinkLocal(host)) return REASON_LOCAL;
+  if (isLoopbackHost(host) || isLocalhostName(host) || isUnspecifiedOrLinkLocal(host)) {
+    return REASON_LOCAL;
+  }
   if (host === "github.com" || host === "api.github.com") return REASON_SAAS;
   if (host.endsWith(".ghe.com")) return REASON_GHE_COM;
   return null;

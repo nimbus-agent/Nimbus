@@ -53,6 +53,12 @@ export async function fetchSameOriginOnly(
     if (next.origin !== origin) {
       throw new RedirectRefusedError();
     }
+    // Release the followed 3xx's connection before the next hop; a cancel error never masks the flow.
+    try {
+      await res.body?.cancel();
+    } catch {
+      // ignored: the redirect body is discarded either way
+    }
     current = next.toString();
   }
   throw new RedirectRefusedError();

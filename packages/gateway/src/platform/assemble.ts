@@ -3061,8 +3061,9 @@ export function bootChatopsAgentInvoker(deps: {
  * service's own self-hosted origin secret — but ONLY when that origin is itself `http:`.
  *
  * Mirrors `sync/fetch-host-boundary.ts`'s module-private `selfHostedOriginSecret` vault-key mapping
- * (`gitlab` → `api_base`, `jenkins`/`jira` → `base_url`; `github`/`bitbucket` have no self-hosted
- * variant) rather than importing it — that helper is private by design, and this is the one other
+ * (`gitlab` → `api_base`, `jenkins`/`jira` → `base_url`; `bitbucket` has no self-hosted
+ * variant, and `github`'s `api_base` is https-only so it never carries an `http:` exception)
+ * rather than importing it — that helper is private by design, and this is the one other
  * call site that needs the same mapping. `sync/fetch-host-boundary.ts` is on the "do not modify"
  * list for this task, so a short, obviously-mirrored switch here is the alternative to changing
  * that module's public surface.
@@ -3071,7 +3072,8 @@ export function bootChatopsAgentInvoker(deps: {
  * against `parsed.origin`, which is always scheme+host+port with no trailing slash and a lowercase
  * host — a raw Vault value with a trailing slash or an uppercase host would never match, silently
  * breaking the exception for an otherwise-legitimate self-hosted `http:` service. Returns `null`
- * for a SaaS-only service, an absent/blank secret, an unparseable one, or one configured over
+ * for a SaaS-only service, for `github` (its `github.api_base` must be https, so the GitHub
+ * targeted-fetch `http:` path is never opened even for a GitHub Enterprise Server), an absent/blank secret, an unparseable one, or one configured over
  * anything but `http:`.
  */
 export async function httpOriginFor(
