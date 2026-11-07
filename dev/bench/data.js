@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794074143689,
+  "lastUpdate": 1794078529389,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "4363e11386c673c9f94cda71350d8db518e58d76",
-          "message": "docs: link nimbus-mcp, correct the MCP tool count, reframe the Actions listing (#1283)\n\nFollow-on from the MCP Registry listing. Two of the three changes\ncorrect claims\nthat were already wrong.\n\n## The README understated the MCP surface by twelve tools\n\nLine 58 — the \"README MCP statement\" the distribution spec tracks as\n`done\n(#979)` — said `nimbus mcp-server --stdio` exposes **six read-only\ntools**.\n\nCounted from `packages/cli/src/mcp/`:\n\n- `INDEX_TOOL_SPECS` = **7** — `searchIndex`, `getConnectorStatus`,\n  `getRecentIncidents`, `getRecentPullRequests`, `getRecentDeployments`,\n  `getDoraMetrics`, `peekWhy`\n- `AGENT_TOOL_SPECS` = **11** — `explainWhy`, `getCatchup`,\n`findExpert`,\n`assessImpact`, `findConflicts`, `findDecisions`, `getGlossary`,\n`findOwners`,\n  `checkResourceUsage`, `getPeerContext`, `getTeamHuddle`\n\n18 total. `peekWhy` was added after the statement was written, and the\nagent\ntools were never in it. This is the most-read file, and it was\nunderstating the\nproduct on the day those tools became reachable from every MCP client.\nAlso adds\n`npx -y @nimbus-dev/mcp`, now the actual install path.\n\n## \"Wake the satellites\" was stale when written\n\n`awesome-nimbus`, `nimbus-raycast` and `create-nimbus-connector` were\nalready\ncross-linked by #1276. The real gap was `nimbus-mcp`, which did not\nexist yet.\nAdded — the satellite table is now eight rows.\n\n## \"List the first-party GitHub Actions\" cannot be done as described\n\nThe Actions Marketplace requires `action.yml` at the repository\n**root**. Both\nactions live at `packages/github-actions/<name>/action.yml` and there is\nno root\n`action.yml`, so GitHub cannot list them from a monorepo subdirectory at\nall.\n\nIt was never a listing task — it is the same extract-or-accept decision\nthe\nlauncher faced. Reframed as such and pointed at the launcher extraction\nas the\ncost model, with the asymmetry noted: that extraction cost six org\nenumeration\nsites, a full scaffold and a severed cross-repo guard, for a package\nwith far\nstronger distribution upside than a CI action nobody searches the\nMarketplace\nfor. Consuming them by path works today and needs no listing.\n\n## Not touched\n\n`CLAUDE.md`'s I29 text carries the same stale \"six read-only index\ntools\". Left\nalone deliberately — a parallel session is editing that file — so it\nwants\nfolding into their PR or a later one.\n\n## Verification\n\n`preflight PASSED`; `audit:doc-refs`, `audit:status-drift`,\n`audit:readme-cli`\nall OK; markdownlint clean across 130 files.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-authored-by: Claude Opus 5 <noreply@anthropic.com>",
-          "timestamp": "2026-08-21T06:38:08+03:00",
-          "tree_id": "052e8fbba72d0469f0443c1422df17e5f0daf545",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/4363e11386c673c9f94cda71350d8db518e58d76"
-        },
-        "date": 1787284191558,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 327.4037084499996,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 326.6463150000076,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 293.33781344999807,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7350b29e28c6142015e20b330a619e49038ac276",
+          "message": "chore: release main (#1934)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.38.1</summary>\n\n##\n[10.38.1](https://github.com/nimbus-agent/Nimbus/compare/v10.38.0...v10.38.1)\n(2026-11-07)\n\n\n### Bug Fixes\n\n* **gateway:** the Teams webhook acks before it processes, and dedupes\nevery activity on its id\n([#1933](https://github.com/nimbus-agent/Nimbus/issues/1933))\n([062cfaf](https://github.com/nimbus-agent/Nimbus/commit/062cfaff52b4ff82982daf7cd02745048496c592))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-07T20:58:21+02:00",
+          "tree_id": "956bbe929965bbbbb9ecf0a0f947fecf618d4f9a",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/7350b29e28c6142015e20b330a619e49038ac276"
+        },
+        "date": 1794078525444,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 303.6008176999985,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 304.01061409999636,
             "unit": "ms"
           }
         ]
