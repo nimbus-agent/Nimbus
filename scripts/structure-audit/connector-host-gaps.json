@@ -75,6 +75,12 @@
       "host": "docs.gitlab.com",
       "kind": "not called",
       "reason": "Connectors 0.6.0: a documentation link in a tool description and a code comment, never fetched."
+    },
+    {
+      "connector": "github",
+      "host": "docs.github.com",
+      "kind": "not called",
+      "reason": "Connectors 0.8.0: documentation links in the github_pr_merge tool description and a code comment on github_commit_get, never fetched."
     }
   ],
   "knownUnreachable": [
@@ -154,19 +160,19 @@
     },
     "aws": {
       "reaches": "aws CLI to ecs, lambda and ec2 at <region>.amazonaws.com; sts for an assume-role profile.",
-      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared.",
+      "decision": "Every tool is a regional call and the fixed list named none of them, so the connector would have failed outright. Regional hosts are added at spawn from aws.default_region. With no region stored they are Linux wildcards on amazonaws.com and amazonaws.com.cn; macOS enforces only ports, so 443 reaches them there. Local auth adoption stores the profile's region when it has one, so this needs a profile with no region or a hand-set profile. The fixed list's iam, s3, ec2 and cloudfront hosts are not called by any tool; left in place and reported. An SSO profile's portal.sso.<sso_region> hosts are never declared. Connectors 0.8.0 (D-X PR1): aws_ec2_instance_get runs aws ec2 describe-instances --instance-ids <id>, the same regional EC2 host as start/stop-instances; no new host.",
       "covers": {
         "env": [],
-        "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ecs", "lambda"],
+        "cli": ["aws", "aws ec2", "aws ecs", "aws lambda", "ec2", "ecs", "lambda"],
         "dynamicUrls": []
       }
     },
     "azure": {
       "reaches": "az CLI to management.azure.com; login.microsoftonline.com for tokens.",
-      "decision": "Both are declared. az webapp and az aks nodepool are ARM calls. az telemetry to other hosts is out of process and does not fail the command. Not run against a live tenant.",
+      "decision": "Both are declared. az webapp and az aks nodepool are ARM calls. az telemetry to other hosts is out of process and does not fail the command. Not run against a live tenant. Connectors 0.8.0 (D-X PR1): azure_aks_node_pool_get runs az aks nodepool show, an ARM call to management.azure.com; no new host. \"count\" is a field name in that read's projection list (AKS_NODE_POOL_KEYS), not a command.",
       "covers": {
         "env": [],
-        "cli": ["az", "az aks", "az webapp", "webapp"],
+        "cli": ["aks", "az", "az aks", "az webapp", "count", "webapp"],
         "dynamicUrls": []
       }
     },
@@ -298,10 +304,17 @@
     },
     "gcp": {
       "reaches": "gcloud run to run.googleapis.com and <region>-run.googleapis.com; gcloud container to container.googleapis.com; oauth2.googleapis.com; kubectl to a GKE endpoint.",
-      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. A Cloud Run call naming another region, or any call with no stored region, is a Linux wildcard (*-run.googleapis.com); macOS enforces only ports, so 443 reaches it there. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared. The GKE endpoint is in knownUnreachable.",
+      "decision": "run, container and serviceusage added to the fixed list, and the stored region's Cloud Run host at spawn. A Cloud Run call naming another region, or any call with no stored region, is a Linux wildcard (*-run.googleapis.com); macOS enforces only ports, so 443 reaches it there. Cloud Run's reference says v1 requires locational endpoints; gcloud is not installed here, so no live run confirmed the exact hosts. serviceusage rests on recalled gcloud run deploy behaviour, not on a source read here. Workload-identity credentials would also need sts.googleapis.com, not declared. The GKE endpoint is in knownUnreachable. Connectors 0.8.0 (D-X PR1): gcp_gke_workload_get runs gcloud container clusters get-credentials into a private kubeconfig and then kubectl get deployment, the same GKE endpoint kubectl rollout uses (knownUnreachable); no new host.",
       "covers": {
         "env": [],
-        "cli": ["gcloud", "gcloud container", "gcloud run", "kubectl rollout", "run"],
+        "cli": [
+          "gcloud",
+          "gcloud container",
+          "gcloud run",
+          "kubectl get",
+          "kubectl rollout",
+          "run"
+        ],
         "dynamicUrls": []
       }
     },
