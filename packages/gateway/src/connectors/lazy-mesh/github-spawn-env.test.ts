@@ -61,7 +61,16 @@ async function vaultWith(entries: Record<string, string>): Promise<NimbusVault> 
 
 function servers(): Record<string, SpawnSpec> {
   expect(created).toHaveLength(1);
-  return (created[0] as unknown as { serverConfigs: Record<string, SpawnSpec> }).serverConfigs;
+  // The real MCPClient keeps its specs on `serverConfigs`; the process-global canonical mock that
+  // other files install (`mock.module("@mastra/mcp")`, shared in a --no-isolate run) keeps them on
+  // `servers`. Read whichever is present so this file is correct in both process shapes.
+  const c = created[0] as unknown as {
+    serverConfigs?: Record<string, SpawnSpec>;
+    servers?: Record<string, SpawnSpec>;
+  };
+  const specs = c.serverConfigs ?? c.servers;
+  if (specs === undefined) throw new Error("the spawned MCP client exposes no server specs");
+  return specs;
 }
 
 function policyOf(spec: SpawnSpec): SandboxPolicyJson {

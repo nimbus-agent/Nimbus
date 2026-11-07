@@ -300,7 +300,7 @@ describe("the github child is retired on every outcome past validation", () => {
 });
 
 describe("a gh adoption inherits the same handler: probe against the GHES base and the cursor rule", () => {
-  const TOKEN = "gho_0123456789abcdefghij0123456789";
+  const TOKEN = "nimbus_SENTINEL_not_a_real_token_0123456789";
   const hostDeps: LocalAuthHostDeps = {
     run: async () => ({ ok: true, stdout: `${TOKEN}\n`, stderr: "", code: 0 }),
     which: () => true,

@@ -49,8 +49,14 @@ async function teamRun(entries: Record<string, string>): Promise<{
           };
           await ensureGithubMcp(ctx);
           for (const c of created) {
-            const cfgs = (c as unknown as { serverConfigs: Record<string, SpawnSpec> })
-              .serverConfigs;
+            // Real MCPClient: `serverConfigs`; the shared canonical mock (--no-isolate runs): `servers`.
+            const cc = c as unknown as {
+              serverConfigs?: Record<string, SpawnSpec>;
+              servers?: Record<string, SpawnSpec>;
+            };
+            const cfgs = cc.serverConfigs ?? cc.servers;
+            if (cfgs === undefined)
+              throw new Error("the spawned MCP client exposes no server specs");
             spawnedEnvs.push(cfgs["github"]?.env);
           }
           return { ok: true };
