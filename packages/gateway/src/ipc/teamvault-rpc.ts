@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { CONNECTOR_VAULT_SECRET_KEYS } from "../connectors/connector-secrets-manifest.ts";
 import { normaliseGithubApiBase } from "../connectors/github-api-base.ts";
 import { teamVaultKey } from "../teamvault/team-vault-keys.ts";
 import { TeamVaultStore } from "../teamvault/team-vault-store.ts";
@@ -37,8 +38,8 @@ function str(r: Record<string, unknown>, k: string): string {
   return v;
 }
 
-const GITHUB_PAT_KEY = "github.pat";
-const GITHUB_API_BASE_KEY = "github.api_base";
+// The two halves of a github credential, named by the secrets manifest (static D11).
+const [GITHUB_PAT_KEY, GITHUB_API_BASE_KEY] = CONNECTOR_VAULT_SECRET_KEYS.github;
 
 /**
  * A github team entry's PAT and its `github.api_base` are one credential: the PAT is only ever
