@@ -31,6 +31,7 @@ import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
 import { stripTrailingSlashes } from "../../string/strip-trailing-slashes.ts";
 import { isAtlassianCloudId } from "../atlassian-cloud-id.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
+import { resolveGithubBase } from "../github-api-base.ts";
 import { transitionHealth } from "../health.ts";
 import { isPagerdutyFromEmail } from "../pagerduty-from-email.ts";
 import {
@@ -294,26 +295,43 @@ export async function ensureGithubMcp(ctx: MeshSpawnContext): Promise<void> {
   if (pat === null || pat === "") {
     return;
   }
+  // Absent api_base = github.com. PRESENT but not valid FAILS CLOSED: the PAT stored beside a
+  // GitHub Enterprise Server base is an enterprise credential, so it is never handed to a child
+  // that would then talk to api.github.com. No spawn: the slot stays unconfigured.
+  const resolved = resolveGithubBase(await readConnectorSecret(ctx.vault, "github", "api_base"));
+  if (!resolved.ok) {
+    ctx.logger?.warn(
+      { service: "github" },
+      "github: the stored api_base is not a valid GitHub Enterprise Server base; not starting the connector",
+    );
+    return;
+  }
+  // GITHUB_API_BASE_URL is set ONLY for a GHES base (the connector's own default is github.com), and
+  // the GHES host joins both children's sandbox network additively (the same merge GitLab uses).
+  const ghesRoot = resolved.host === null ? null : resolved.restRoot;
+  const githubEnv = extensionProcessEnv(
+    ghesRoot === null ? { GITHUB_PAT: pat } : { GITHUB_PAT: pat, GITHUB_API_BASE_URL: ghesRoot },
+  );
   ctx.setLazyClient(
     slotKey,
     new MCPClient({
       id: `nimbus-github-${randomUUID()}`,
       servers: {
-        github: wrap(
+        github: wrapServerSpec(
           {
             ...connectorSpawn("github"),
-            env: extensionProcessEnv({ GITHUB_PAT: pat }),
+            env: githubEnv,
           },
-          "github",
-          ctx,
+          manifestWithConfiguredHost("github", ghesRoot),
+          ctx.sandboxCwd,
         ),
-        github_actions: wrap(
+        github_actions: wrapServerSpec(
           {
             ...connectorSpawn("github-actions"),
-            env: extensionProcessEnv({ GITHUB_PAT: pat }),
+            env: githubEnv,
           },
-          "github_actions",
-          ctx,
+          manifestWithConfiguredHost("github_actions", ghesRoot),
+          ctx.sandboxCwd,
         ),
       },
     }),
