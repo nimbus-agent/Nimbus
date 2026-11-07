@@ -4418,7 +4418,7 @@ The raw-row reads — `/v1/items`, `/v1/items/:id`, `/v1/people`, `/v1/people/:i
 | `POST /v1/deployments` | Record a deployment annotation (bearer `http_api.deployment_token`) |
 | `POST /scim/v2/Users`, `PATCH /scim/v2/Users/{id}`, `DELETE /scim/v2/Users/{id}` | SCIM v2 provisioning (bearer `identity.scim.bearer`) |
 | `PUT /v1/admin/policy` | Admin-console org-policy write (admin bearer; signed with the Vault-only anchor key) |
-| `POST /v1/messaging/teams/events` | ChatOps Teams inbound (Bot Framework JWT validated in-route) |
+| `POST /v1/messaging/teams/events` | ChatOps Teams inbound (Bot Framework JWT validated in-route; acked `200` before the activity is processed, redeliveries deduped on the activity id) |
 | `POST /v1/clips`, `POST /v1/clips/pair/confirm` | Web-clipper ingest and pairing confirm (invariant `I30`) |
 | `POST /v1/briefs`, `POST /v1/briefs/{id}/sources`, `POST /v1/briefs/{id}/run`, `POST /v1/briefs/{id}/save` | Research-brief create / feed source / synthesize / save (labeled clipper token) |
 | `POST /v1/agents/{agent}` | Run a built-in agent and return its brief (labeled clipper token, `agents` scope) |

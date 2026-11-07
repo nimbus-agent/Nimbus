@@ -72,7 +72,7 @@ export class TeamsWebhookAdapter implements ChatTransport {
   readonly platform = "teams" as const;
   private handler?: (m: ChatMessage) => Promise<void>;
   private confirmHandler?: (s: TeamsConfirmSubmit) => Promise<void>;
-  private readonly seenSubmits = new BoundedDedupeSet();
+  private readonly seenActivities = new BoundedDedupeSet();
   private running = false;
 
   onMessage(handler: (m: ChatMessage) => Promise<void>): void {
@@ -102,15 +102,16 @@ export class TeamsWebhookAdapter implements ChatTransport {
   async onActivity(activity: unknown): Promise<void> {
     if (!this.running) return;
     const submit = parseTeamsConfirmSubmit(activity);
+    const msg = submit === undefined ? normalizeTeamsActivity(activity) : undefined;
+    if (submit === undefined && msg === undefined) return;
+    // Deduped on the activity id: Bot Framework redelivers an activity it did not see acked, and a
+    // redelivered message or submit must not reach its handler twice (a second write request).
+    const id = (activity as Record<string, unknown>)["id"];
+    if (typeof id === "string" && id !== "" && !this.seenActivities.add(id)) return;
     if (submit !== undefined) {
-      // Deduped on the activity id: a redelivered submit must not reach the handler twice.
-      const id = (activity as Record<string, unknown>)["id"];
-      if (typeof id === "string" && !this.seenSubmits.add(id)) return;
       if (this.confirmHandler !== undefined) await this.confirmHandler(submit);
       return;
     }
-    const msg = normalizeTeamsActivity(activity);
-    if (msg === undefined) return;
-    if (this.handler !== undefined) await this.handler(msg);
+    if (msg !== undefined && this.handler !== undefined) await this.handler(msg);
   }
 }
