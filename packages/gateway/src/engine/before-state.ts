@@ -422,6 +422,11 @@ export function createBeforeStateRunner(options: BeforeStateRunnerOptions = {}):
       if (row === undefined) return undefined;
       const reader = row.before;
       if (reader === undefined || row.preview === undefined) {
+        // A bound row's prepare step (I54) is its current state, as `isModelOfferableRow` says
+        // (`before || bound`): with a preview, it is the executor's prepare phase that reads.
+        if (reader === undefined && row.preview !== undefined && row.bound !== undefined) {
+          return undefined;
+        }
         // Defence in depth: such a row is never offered (`isModelOfferableRow`), but an
         // `origin: "model"` action can reach an executor through other paths.
         return row.wave === 4 ? refusalOf(WAVE4_BEFORE_REFUSAL) : undefined;

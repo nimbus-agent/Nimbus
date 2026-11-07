@@ -3521,7 +3521,7 @@ describe("I26 — every connector write row is confined to the local I2 path; fe
     const { WINDOWS_CLI_ARG_INJECTION_TOOL_IDS, isConnectorCodeExecutionToolId } = await import(
       "./connectors/connector-code-execution-tool-ids.ts"
     );
-    expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.size).toBeGreaterThanOrEqual(8);
+    expect(WINDOWS_CLI_ARG_INJECTION_TOOL_IDS.size).toBe(10);
     for (const id of WINDOWS_CLI_ARG_INJECTION_TOOL_IDS) {
       expect(isConnectorCodeExecutionToolId(id), id).toBe(true);
       expect(isConnectorCodeExecutionToolId(`azure_${id}`), id).toBe(true);
@@ -11672,7 +11672,7 @@ describe("I53 — a first-party connector write reaches the model only through t
     const { NO_POLICY_OVERLAY, ToolExecutor } = await import("./engine/executor.ts");
     const { createConnectorDispatcher } = await import("./connectors/registry.ts");
     const wave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && r.transport === "mesh");
-    expect(wave4.length).toBeGreaterThan(30);
+    expect(wave4.length).toBe(33);
     const failures: string[] = [];
     for (const row of wave4) {
       const input = confirmableInput(row);

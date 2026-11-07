@@ -136,8 +136,8 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
 };
 
 /**
- * The per-service slots (the name is historical: it began as the wave-2 services, and C1 added
- * `onedrive` and `pagerduty`): the slot each one's server runs in and the mesh method that ensures
+ * The per-service slots (the name is historical: it began as the wave-2 services; C1 added
+ * `onedrive` and `pagerduty`, and D1 `bitbucket`, `jenkins`, `circleci` and `github_actions`): the slot each one's server runs in and the mesh method that ensures
  * exactly that slot, in ONE row so the two cannot drift. Their credential check is
  * {@link isServiceCredentialConfigured} (per SERVICE, never per slot: the Google and Microsoft
  * bundles host siblings).

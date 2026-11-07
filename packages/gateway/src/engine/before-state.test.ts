@@ -1940,6 +1940,24 @@ describe("Wave 4: an unread current state refuses the write (D1, fail closed)", 
     }
   });
 
+  test("a Wave 4 BOUND row with a preview and no reader is not refused here: its prepare step is the state", async () => {
+    // `isModelOfferableRow` offers a Wave 4 row with `before` OR `bound`; the runner must agree, or
+    // a bound-only row would be listed and then refused on every call.
+    const { before: _b, ...noReader } = rowWith(READER, 4);
+    const bound = {
+      ...noReader,
+      bound: { prepare: {} as never, binds: [] },
+    } as unknown as ConnectorWriteRow;
+    const seen: PlannedAction[] = [];
+    const runner = createBeforeStateRunner({ rows: [bound] });
+    expect(await runner.read(WRITE, opsReturning(ok, seen))).toBeUndefined();
+    expect(seen).toEqual([]);
+    // Without a preview it is still refused, bound or not.
+    const { preview: _p, ...boundNoPreview } = bound;
+    const r2 = createBeforeStateRunner({ rows: [boundNoPreview as ConnectorWriteRow] });
+    expect(await r2.read(WRITE, opsReturning(ok))).toEqual(W4_REFUSED);
+  });
+
   test("a Wave 3 row with no reader is still not read at all", async () => {
     const { before: _b, ...noReader } = rowWith(READER, 3);
     const runner = createBeforeStateRunner({ rows: [noReader as ConnectorWriteRow] });
