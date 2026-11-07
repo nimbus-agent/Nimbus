@@ -1,3 +1,10 @@
+import {
+  SLACK_CONFIRM_BLOCK_ID,
+  SLACK_CONFIRM_CALLBACK_ID,
+  SLACK_CONFIRM_INPUT_ACTION_ID,
+  SLACK_CONFIRM_OPEN_ACTION,
+  SLACK_CONFIRM_REJECT_ACTION,
+} from "../confirm-card.ts";
 import type { ChatMessage } from "../types.ts";
 import type { ChatTransport } from "./transport.ts";
 
@@ -80,6 +87,89 @@ export class SlackEventNormalizer {
   }
 }
 
+/** An interactive Slack envelope the typed-confirmation flow cares about (Phase 9.7 D0c). */
+export type SlackInteractive =
+  | {
+      readonly kind: "open";
+      readonly requestId: string;
+      readonly userId: string;
+      readonly triggerId: string;
+    }
+  | { readonly kind: "reject"; readonly requestId: string; readonly userId: string }
+  | {
+      readonly kind: "submit";
+      readonly requestId: string;
+      readonly userId: string;
+      /** Verbatim from the input block; absent when the payload carried no string value. */
+      readonly typed?: string;
+    };
+
+function rec(v: unknown): Record<string, unknown> | undefined {
+  return v !== null && typeof v === "object" && !Array.isArray(v)
+    ? (v as Record<string, unknown>)
+    : undefined;
+}
+
+function nonEmptyString(v: unknown): string | undefined {
+  return typeof v === "string" && v !== "" ? v : undefined;
+}
+
+/**
+ * Pure parse of a Socket Mode `interactive` envelope into the three confirm events; `undefined` for
+ * anything else or for a frame with a missing or mistyped field. The user id is the connection-
+ * authenticated `payload.user.id`, never text. `typed` is read from the input block's `value` and
+ * passed on verbatim: nothing here trims, normalises or compares it (static D41).
+ */
+export function parseSlackInteractive(frame: unknown): SlackInteractive | undefined {
+  const f = rec(frame);
+  if (f?.["type"] !== "interactive") return undefined;
+  const payload = rec(f["payload"]);
+  if (payload === undefined) return undefined;
+  const userId = nonEmptyString(rec(payload["user"])?.["id"]);
+  if (userId === undefined) return undefined;
+  if (payload["type"] === "block_actions") return parseBlockActions(payload, userId);
+  if (payload["type"] === "view_submission") return parseViewSubmission(payload, userId);
+  return undefined;
+}
+
+/** A Confirm or Reject button click on the confirm card. */
+function parseBlockActions(
+  payload: Record<string, unknown>,
+  userId: string,
+): SlackInteractive | undefined {
+  const actions = payload["actions"];
+  const first = Array.isArray(actions) ? rec(actions[0]) : undefined;
+  const requestId = nonEmptyString(first?.["value"]);
+  if (requestId === undefined) return undefined;
+  if (first?.["action_id"] === SLACK_CONFIRM_REJECT_ACTION) {
+    return { kind: "reject", requestId, userId };
+  }
+  if (first?.["action_id"] !== SLACK_CONFIRM_OPEN_ACTION) return undefined;
+  const triggerId = nonEmptyString(payload["trigger_id"]);
+  return triggerId === undefined ? undefined : { kind: "open", requestId, userId, triggerId };
+}
+
+/** The confirm modal's submission; `typed` is passed on verbatim (static D41). */
+function parseViewSubmission(
+  payload: Record<string, unknown>,
+  userId: string,
+): SlackInteractive | undefined {
+  const view = rec(payload["view"]);
+  if (view?.["callback_id"] !== SLACK_CONFIRM_CALLBACK_ID) return undefined;
+  const requestId = nonEmptyString(view["private_metadata"]);
+  if (requestId === undefined) return undefined;
+  const values = rec(rec(view["state"])?.["values"]);
+  const input = rec(rec(values?.[SLACK_CONFIRM_BLOCK_ID])?.[SLACK_CONFIRM_INPUT_ACTION_ID]);
+  if (input === undefined) return undefined;
+  const value = input["value"];
+  return {
+    kind: "submit",
+    requestId,
+    userId,
+    ...(typeof value === "string" ? { typed: value } : {}),
+  };
+}
+
 /** A minimal WebSocket-like seam so the adapter loop is unit-testable without a real socket. */
 export interface SocketLike {
   onMessage(cb: (raw: string) => void): void;
@@ -107,6 +197,7 @@ export class SlackSocketAdapter implements ChatTransport {
   private readonly dedupe = new BoundedDedupeSet();
   private readonly normalizer = new SlackEventNormalizer();
   private handler?: (m: ChatMessage) => Promise<void>;
+  private interactiveHandler?: (i: SlackInteractive) => Promise<void>;
   private socket: SocketLike | undefined;
   private stopped = false;
   private attempt = 0;
@@ -115,6 +206,11 @@ export class SlackSocketAdapter implements ChatTransport {
 
   onMessage(handler: (m: ChatMessage) => Promise<void>): void {
     this.handler = handler;
+  }
+
+  /** Wire the typed-confirmation handler (Phase 9.7 D0c) before start(). */
+  onInteractive(handler: (i: SlackInteractive) => Promise<void>): void {
+    this.interactiveHandler = handler;
   }
 
   connected(): boolean {
@@ -164,6 +260,14 @@ export class SlackSocketAdapter implements ChatTransport {
       if (typeof envelopeId === "string") {
         socket.send(JSON.stringify({ envelope_id: envelopeId }));
       }
+    }
+    const interactive = parseSlackInteractive(frame);
+    if (interactive !== undefined) {
+      // Deduped by envelope id (a distinct key prefix): Slack redelivers an unacked envelope.
+      const envelopeId = (frame as Record<string, unknown>)["envelope_id"];
+      if (typeof envelopeId === "string" && !this.dedupe.add(`interactive ${envelopeId}`)) return;
+      if (this.interactiveHandler !== undefined) await this.interactiveHandler(interactive);
+      return;
     }
     const msg = this.normalizer.normalize(frame);
     if (msg === undefined) return;

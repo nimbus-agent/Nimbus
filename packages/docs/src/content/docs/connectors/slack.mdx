@@ -42,6 +42,13 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 | `slack_message_post` | Post a message to a channel. |
 | `slack_message_post_dm` | Open or find a DM with user id(s) and send a message. |
 
+## ChatOps bot: typed confirmation
+
+If you run the [ChatOps bot](/user-guide/connectors/), a write that needs a typed confirmation (for example a pull request merge) shows a card in the channel. **Confirm** opens a modal where the resource owner types the confirm text exactly; only that text approves, and typing `approve` in the channel does not. For this to work, the Slack app needs:
+
+- **Interactivity** turned on (Socket Mode needs no request URL, only the toggle; in an App Manifest, `settings.interactivity.is_enabled: true`). Without it the Confirm click never reaches Nimbus and the write waits.
+- The bot scope **`views:write`** (`oauth_config.scopes.bot`), which opens the modal. Without it Nimbus logs `missing_scope` and the card stays live.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

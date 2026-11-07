@@ -454,7 +454,8 @@ export function checkPolicyTomlImportInvariant(files: readonly FileEntry[]): Vio
   return out;
 }
 
-// D17 (I23) — the connector operational-post tools (`slack_chat_post` / `teams_chat_post`) may be
+// D17 (I23) — the connector operational-post tools (`slack_chat_post` / `teams_chat_post` and, since
+// Phase 9.7 D0c, the typed-confirmation modal opener `slack_views_open`) may be
 // referenced ONLY from `packages/gateway/src/chatops/reply-dispatcher.ts` and
 // `packages/gateway/src/chatops/transport/`. Any other module posting directly would bypass the
 // bounded-destination reply surface (I23) and could launder the HITL-gated `*.message.post` action.
@@ -466,7 +467,7 @@ const CHATOPS_POST_ALLOWED_PREFIXES = [
   "packages/gateway/src/chatops/reply-dispatcher.ts",
   "packages/gateway/src/chatops/transport/",
 ];
-const CHATOPS_POST_RE = /\b(?:slack_chat_post|teams_chat_post)\b/;
+const CHATOPS_POST_RE = /\b(?:slack_chat_post|teams_chat_post|slack_views_open)\b/;
 
 export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): Violation[] {
   const out: Violation[] = [];
@@ -508,8 +509,16 @@ export function checkChatopsReplySurfaceInvariant(files: readonly FileEntry[]): 
 // which had already closed its own parens earlier in the same statement, so the raw call "paired"
 // with a wrapper it sat entirely outside of. Direct containment closes this: a raw call is safe
 // only when its offset falls strictly inside SOME wrapper's own balanced parenthesis span.
-const UNWRAPPED_POST_RE = /\bbuildConnectorPost\s*\(/g;
-const WRAPPER_RE = /\bbuildLedgeredChatPosts\s*\(/g;
+//
+// Phase 9.7 D0c adds a second pair under the same rule: `buildConnectorViewsOpen(...)` (the raw
+// `views.open` call for the confirmation modal) may be CALLED only inside
+// `buildLedgeredConfirmModal(...)`. Each raw call is matched to ITS OWN wrapper, so a modal opener
+// inside `buildLedgeredChatPosts(...)` (or a post inside `buildLedgeredConfirmModal(...)`) is still
+// unwrapped for the ledger row it needs.
+const RAW_WRAPPER_PAIRS: readonly { readonly raw: RegExp; readonly wrapper: RegExp }[] = [
+  { raw: /\bbuildConnectorPost\s*\(/g, wrapper: /\bbuildLedgeredChatPosts\s*\(/g },
+  { raw: /\bbuildConnectorViewsOpen\s*\(/g, wrapper: /\bbuildLedgeredConfirmModal\s*\(/g },
+];
 
 /** Byte offset -> 1-based line, so a per-offset finding can name a line. */
 function lineOfOffset(text: string, offset: number): number {
@@ -524,9 +533,9 @@ function lineOfOffset(text: string, offset: number): number {
  * STRIPPED text (comments + string/template bodies already blanked to spaces, length-preserving),
  * so a stray `(`/`)` inside a blanked string or comment can never desync the depth count.
  */
-function wrapperSpans(stmt: string): { open: number; close: number }[] {
+function wrapperSpans(stmt: string, wrapper: RegExp): { open: number; close: number }[] {
   const spans: { open: number; close: number }[] = [];
-  const re = new RegExp(WRAPPER_RE.source, "g");
+  const re = new RegExp(wrapper.source, "g");
   for (let m = re.exec(stmt); m !== null; m = re.exec(stmt)) {
     const open = m.index + m[0].length - 1; // offset of the call's own "(" (the match ends in it)
     let depth = 1;
@@ -571,21 +580,23 @@ export function checkChatopsUnwrappedPost(files: readonly FileEntry[]): Violatio
     // statement. Splitting keeps offsets recoverable by accumulating the consumed length.
     let base = 0;
     for (const stmt of stripped.split(";")) {
-      const spans = wrapperSpans(stmt);
-      for (const m of stmt.matchAll(UNWRAPPED_POST_RE)) {
-        const post = m.index ?? 0;
-        // Safe ONLY when directly contained in SOME wrapper's own argument list — not merely
-        // preceded by a wrapper opening earlier in the statement (see the D17 comment above).
-        const contained = spans.some((s) => post > s.open && post < s.close);
-        if (!contained) {
-          const off = base + post;
-          const line = lineOfOffset(stripped, off);
-          out.push({
-            rule: "D17-chatops-unwrapped-post",
-            file: f.relPath,
-            line,
-            snippet: (original[line - 1] ?? "").trim(),
-          });
+      for (const pair of RAW_WRAPPER_PAIRS) {
+        const spans = wrapperSpans(stmt, pair.wrapper);
+        for (const m of stmt.matchAll(pair.raw)) {
+          const post = m.index ?? 0;
+          // Safe ONLY when directly contained in the argument list of ITS OWN wrapper — not merely
+          // preceded by a wrapper opening earlier in the statement (see the D17 comment above).
+          const contained = spans.some((s) => post > s.open && post < s.close);
+          if (!contained) {
+            const off = base + post;
+            const line = lineOfOffset(stripped, off);
+            out.push({
+              rule: "D17-chatops-unwrapped-post",
+              file: f.relPath,
+              line,
+              snippet: (original[line - 1] ?? "").trim(),
+            });
+          }
         }
       }
       base += stmt.length + 1; // + the `;` that split consumed
@@ -4009,7 +4020,7 @@ async function run(): Promise<void> {
     const v = checkChatopsUnwrappedPost(files);
     for (const e of v) {
       console.error(
-        `::error file=${e.file},line=${e.line}::D17 buildConnectorPost called without buildLedgeredChatPosts — bypasses the I29 chatops egress ledger: ${e.snippet}`,
+        `::error file=${e.file},line=${e.line}::D17 buildConnectorPost/buildConnectorViewsOpen called without its ledgered wrapper (buildLedgeredChatPosts/buildLedgeredConfirmModal) — bypasses the I29 chatops egress ledger: ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

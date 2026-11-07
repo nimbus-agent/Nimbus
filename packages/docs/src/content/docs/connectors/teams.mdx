@@ -41,6 +41,10 @@ Every tool below requires interactive consent through the Gateway HITL gate befo
 
 **Remote content in a model-written message is refused.** When the model (or an MCP client's proposal) posts a channel or chat message with `contentType` set to anything other than `text`, Nimbus reads the body as HTML and refuses it, before it asks you, if showing the message would load remote content: an external image (including Teams emoji or sticker markup copied from another message; use the emoji character instead), a CSS `url(` or `@import`, a `<link>`, `<iframe>` or `<base>`, an `<attachment>` card, an SVG image or `srcset`. A message sent as text is never scanned, and plain links (`<a href>`) are allowed and shown to you verbatim. The refusal is the same fixed message every time and repeats nothing from the message.
 
+## ChatOps bot: typed confirmation
+
+If you run the ChatOps bot, a write that needs a typed confirmation (for example a pull request merge) arrives as an Adaptive Card with a text field and **Approve** and **Reject** buttons. The resource owner types the confirm text shown on the card exactly; only that text approves, and typing `approve` in the conversation does not. No extra Teams app setting is needed: the card's submit reaches the same messaging endpoint as your messages.
+
 ## See also
 
 - [Connectors overview](/connectors/overview/)

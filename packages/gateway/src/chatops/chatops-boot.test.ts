@@ -260,7 +260,7 @@ describe("buildChatopsBoot — full production graph", () => {
     await h.boot.service.stop();
   });
 
-  test("write: a Wave 4 action is denied with the fixed reply (no card, no dispatch): this channel cannot collect typed text", async () => {
+  test("write: a Wave 4 action posts a type-to-confirm card (blocks + the typed-text line), dispatches nothing until the form answers (Phase 9.7 D0c)", async () => {
     const h = await buildHarness();
     await h.boot.service.start();
     h.socket.emit(
@@ -272,15 +272,12 @@ describe("buildChatopsBoot — full production graph", () => {
       ),
     );
     await until(() => h.posts.length >= 1);
-    // Exactly one post, in the originating channel, the fixed text; no approval card.
     expect(h.posts).toHaveLength(1);
     expect(h.posts[0]?.channel).toBe("C0");
-    expect(h.posts[0]?.text).toBe(CHATOPS_CONFIRM_UNSUPPORTED_REPLY);
-    expect(h.posts.some((p) => p.text.includes("Approval needed"))).toBe(false);
+    expect(h.posts[0]?.text).toContain("To approve, type exactly: github/merge acme/api#42");
+    expect(h.posts[0]?.text).not.toBe(CHATOPS_CONFIRM_UNSUPPORTED_REPLY);
     expect(h.dispatched).toEqual([]);
-    const row = h.audits.find((a) => a.actionType === "github.pr.merge");
-    expect(row?.hitlStatus).toBe("rejected");
-    expect(JSON.parse(row?.actionJson ?? "{}").confirm).toBe("unsupported_channel");
+    expect(h.audits.some((a) => a.actionType === "github.pr.merge")).toBe(false);
     await h.boot.service.stop();
   });
 
