@@ -30,6 +30,8 @@ nimbus connector auth github --token <pat> --api-base https://ghe.example.com
 
 A `gh` login on that host works too: `nimbus connector detect --source gh --host ghe.example.com`. Nimbus stores the instance as `github.api_base` and checks the token against it before saving anything.
 
+- **Team credentials.** A team-vault entry for GitHub may carry its own optional `github.api_base` (leave it out for github.com). The team token is sent only to the host its own entry names, and a write's approval prompt shows that entry's instance, not yours. A team base that is present but invalid stops the write before any prompt.
+- **Same name on two hosts.** With an Enterprise Server connected, a github.com checkout and an Enterprise repository with the same owner/name are one repository in the graph (ownership links only; no credential is affected).
 - **One instance at a time.** A gateway talks to github.com or to one Enterprise Server, not both; connecting one stops syncing the other, and items already indexed from the previous instance stay until you run `nimbus connector remove github`. Re-run `connector auth github` without `--api-base` to go back to github.com.
 - **https only.** The URL may be `https://host`, with an optional port and an optional `/api/v3`. A plain-`http` instance, a URL with a user, password, query or fragment, or any other path is refused, and so are `github.com` and `api.github.com` (omit the flag for those).
 - **GHE.com is not supported.** GitHub Enterprise Cloud with data residency (`*.ghe.com`) uses a separate API host and is refused.
