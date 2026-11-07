@@ -14,6 +14,7 @@ import {
   checkCaptureGateCallers,
   checkCaptureGateImporters,
   checkCaptureTableConfinement,
+  checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
   checkConfigReaderConfinement,
   checkConfirmComparison,
@@ -1805,6 +1806,81 @@ describe("D17-chatops-unwrapped-post — buildConnectorPost may only appear as a
       },
     ]);
     expect(v).toEqual([]);
+  });
+});
+
+describe("D17 (Phase 9.7 D0c) — the confirmation modal opener", () => {
+  const boot = "packages/gateway/src/chatops/chatops-boot.ts";
+
+  test("D17 rejects the slack_views_open literal outside the transport", () => {
+    const v = checkChatopsReplySurfaceInvariant([
+      { relPath: boot, contents: 'await runTool("slack", "slack_views_open", { view });\n' },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-reply-surface"]);
+  });
+
+  test("D17 allows the slack_views_open literal inside the transport", () => {
+    const v = checkChatopsReplySurfaceInvariant([
+      {
+        relPath: "packages/gateway/src/chatops/transport/connector-post.ts",
+        contents: 'const SLACK_VIEWS_OPEN = "slack_views_open";\n',
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("D17 rejects a buildConnectorViewsOpen call bound to a name", () => {
+    const v = checkChatopsUnwrappedPost([
+      { relPath: boot, contents: "const open = buildConnectorViewsOpen(runTool);\n" },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-unwrapped-post"]);
+  });
+
+  test("D17 accepts buildConnectorViewsOpen inline in buildLedgeredConfirmModal", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: boot,
+        contents:
+          "const posts = buildLedgeredChatPosts(db, buildConnectorPost(runTool, fn), salt);\n" +
+          "const modal = buildLedgeredConfirmModal(db, buildConnectorViewsOpen(runTool), salt);\n",
+      },
+    ]);
+    expect(v).toEqual([]);
+  });
+
+  test("D17 rejects a modal opener wrapped by the chat-post ledger (the wrong wrapper)", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: boot,
+        contents:
+          "const posts = buildLedgeredChatPosts(db, buildConnectorViewsOpen(runTool), salt);\n",
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-unwrapped-post"]);
+  });
+
+  test("D17 rejects a chat post wrapped by the modal ledger (the wrong wrapper)", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: boot,
+        contents:
+          "const modal = buildLedgeredConfirmModal(db, buildConnectorPost(runTool, fn), salt);\n",
+      },
+    ]);
+    expect(v.map((x) => x.rule)).toEqual(["D17-chatops-unwrapped-post"]);
+  });
+
+  test("D17 catches an unwrapped modal opener in a file that also has a wrapped one", () => {
+    const v = checkChatopsUnwrappedPost([
+      {
+        relPath: boot,
+        contents:
+          "const modal = buildLedgeredConfirmModal(db, buildConnectorViewsOpen(runTool), salt);\n" +
+          "const sneaky = buildConnectorViewsOpen(runTool);\n",
+      },
+    ]);
+    expect(v.length).toBe(1);
+    expect(v[0]?.line).toBe(2);
   });
 });
 

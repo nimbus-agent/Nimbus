@@ -1,7 +1,7 @@
 import type { Database } from "bun:sqlite";
 import type { ChatopsAgentInvoker } from "../agent-runs/agent-chatops-invoke.ts";
 import type { NimbusChatopsToml } from "../config/nimbus-toml.ts";
-import { buildLedgeredChatPosts } from "../egress/chatops-egress.ts";
+import { buildLedgeredChatPosts, buildLedgeredConfirmModal } from "../egress/chatops-egress.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { EgressAppendFailedError } from "../egress/model-egress.ts";
 import { CONFIRM_UNSUPPORTED_REASON, HITL_REQUIRED, ToolExecutor } from "../engine/executor.ts";
@@ -24,13 +24,18 @@ import {
 import { ChatopsService } from "./chatops-service.ts";
 import type { RunChatopsTool } from "./chatops-tool-runner.ts";
 import { normalizeChatText, parseCommand } from "./command-parser.ts";
+import { slackConfirmView } from "./confirm-card.ts";
 import { ChatopsIdentityMapper, type ScimMatch } from "./identity-mapper.ts";
 import { IntentRouter } from "./intent-router.ts";
 import { ReplyDispatcher } from "./reply-dispatcher.ts";
 import { bunSocketFactory } from "./transport/bun-socket.ts";
-import { buildConnectorPost } from "./transport/connector-post.ts";
-import { SlackSocketAdapter, type SocketLike } from "./transport/slack-socket-adapter.ts";
-import { TeamsWebhookAdapter } from "./transport/teams-webhook-adapter.ts";
+import { buildConnectorPost, buildConnectorViewsOpen } from "./transport/connector-post.ts";
+import {
+  type SlackInteractive,
+  SlackSocketAdapter,
+  type SocketLike,
+} from "./transport/slack-socket-adapter.ts";
+import { type TeamsConfirmSubmit, TeamsWebhookAdapter } from "./transport/teams-webhook-adapter.ts";
 import type { ChatTransport } from "./transport/transport.ts";
 import type { ChatMessage, ChatPlatform, ReplyTarget } from "./types.ts";
 
@@ -195,6 +200,10 @@ export interface ChatopsBoot {
 export const CHATOPS_CONFIRM_UNSUPPORTED_REPLY =
   "This action needs a typed confirmation, which this channel cannot collect yet. Run it from the CLI or the desktop.";
 
+/** The fixed reply to a text `approve` on a type-to-confirm card (Phase 9.7 D0c). */
+export const CHATOPS_CONFIRM_USE_FORM_REPLY =
+  "This action needs the typed confirmation: use the Confirm button on the card.";
+
 /** MCP tool results may arrive as plain JSON or as an MCP content envelope — unwrap tolerantly. */
 function unwrapToolResult(result: unknown): unknown {
   if (result === null || typeof result !== "object") return result;
@@ -276,6 +285,13 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     ),
     channelSalt,
   );
+  // I29: the typed-confirmation modal open is ledgered (`chatops.confirmModal`) before it leaves.
+  // The raw `views.open` call is passed INLINE, never bound to a name (static D17).
+  const confirmModal = buildLedgeredConfirmModal(
+    deps.db,
+    buildConnectorViewsOpen(runTool),
+    channelSalt,
+  );
 
   // Shared by both operational (non-HITL) reply dispatchers below -- I23 names
   // `ReplyDispatcher.send` as the SOLE post path for this class of post; an agent brief is
@@ -301,13 +317,16 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
   const pushedBriefDispatcher = new ReplyDispatcher({ post: posts.pushedBrief, notifyChannelsFor });
 
   const presenter: ApprovalPresenter = new ApprovalPresenter({
-    post: async (channelId, text) => {
+    post: async (channelId, text, card) => {
       // `requestApproval` registers the pending resolver and sets lastRequestId BEFORE posting,
       // so recording the live card here is race-free (see the resolve-race note in the presenter).
       const requestId = presenter.lastRequestId();
       pendingCardByChannel.set(channelId, requestId);
       try {
-        await posts.approvalCard(lastPlatformByChannel.get(channelId) ?? "slack", channelId, text);
+        const platform = lastPlatformByChannel.get(channelId) ?? "slack";
+        await (card === undefined
+          ? posts.approvalCard(platform, channelId, text)
+          : posts.approvalCard(platform, channelId, text, card));
       } catch (err) {
         // The append-before-post ledger (I29 `chatops` class) failed, so nothing was posted — the
         // owner never saw a card. The pending entry must not outlive that failure, or a later
@@ -322,6 +341,7 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     // No DM surface in scope (design §3.1): the card lands in the server-derived originating
     // channel; only the owner's identity-valid click is honored (I20).
     ownerChannelFor: () => getChatopsApprovalContext()?.originatingChannelId,
+    platformFor: (channelId) => lastPlatformByChannel.get(channelId),
   });
 
   const mapper = new ChatopsIdentityMapper({
@@ -380,6 +400,10 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
         return identity.isOperatorValid(scim.issuer);
       },
       requestRemote: () => presenter.requestApproval(),
+      // Phase 9.7 D0c: a Wave 4 write's typed text arrives from a Slack modal or a Teams card
+      // input; the executor alone compares it (D41).
+      requestRemoteConfirmed: (_actionType, confirmText) =>
+        presenter.requestTypedApproval(confirmText),
     },
     // I29: a chatops-approved write dispatches a real connector action — an outbound event — so the
     // executor carries the egress sink (append-before-dispatch). `egressSink` is a REQUIRED dep
@@ -482,6 +506,29 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     const normalized = normalizeChatText(msg.text).toLowerCase();
     if (normalized === "approve" || normalized === "reject") {
       const requestId = pendingCardByChannel.get(msg.channelId);
+      if (requestId !== undefined && presenter.pendingKind(requestId) === "confirm") {
+        // A type-to-confirm card: a text `reject` from its owner rejects; a text `approve` never
+        // approves and never spends the card (the typed text comes only from the form).
+        const idr = await mapper.resolve(msg.platform, msg.userId);
+        if (idr.kind !== "mapped") return;
+        if (normalized === "approve") {
+          await replyDispatcher.send(
+            { kind: "originating", platform: msg.platform, channelId: msg.channelId },
+            CHATOPS_CONFIRM_USE_FORM_REPLY,
+          );
+          return;
+        }
+        if (
+          presenter.resolveClick({
+            requestId,
+            approverExternalId: idr.identity.externalId,
+            approved: false,
+          })
+        ) {
+          pendingCardByChannel.delete(msg.channelId);
+        }
+        return;
+      }
       if (requestId !== undefined) {
         // Resolve the clicker identity; an unmapped reply never spends the card. A mapped
         // non-owner click resolves it, and the executor's I20 check refuses to honor it.
@@ -536,28 +583,89 @@ export async function buildChatopsBoot(deps: ChatopsBootDeps): Promise<ChatopsBo
     }
   };
 
+  /**
+   * Typed-confirmation interactions (Phase 9.7 D0c). An interactive frame has no reply surface, so
+   * every failure is contained here and logged, never rethrown: the card stays live and the owner
+   * can try again. The identity is resolved at every step; nothing here reads the typed text.
+   */
+  const handleSlackInteractive = async (i: SlackInteractive): Promise<void> => {
+    try {
+      const idr = await mapper.resolve("slack", i.userId);
+      if (idr.kind !== "mapped") return;
+      const externalId = idr.identity.externalId;
+      if (i.kind === "open") {
+        const details = presenter.resolveConfirmOpen({
+          requestId: i.requestId,
+          clickerExternalId: externalId,
+        });
+        if (details === undefined) return;
+        await confirmModal(
+          details.channelId,
+          i.triggerId,
+          slackConfirmView({
+            requestId: i.requestId,
+            label: details.label,
+            confirmText: details.confirmText,
+          }),
+        );
+        return;
+      }
+      presenter.resolveConfirmSubmit({
+        requestId: i.requestId,
+        approverExternalId: externalId,
+        approved: i.kind === "submit",
+        typed: i.kind === "submit" ? i.typed : undefined,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logError(
+        {
+          interaction: i.kind,
+          reason: message.includes("missing_scope") ? "missing_scope" : "failed",
+          err,
+        },
+        "chatops: Slack confirmation interaction failed — the card stays live",
+      );
+    }
+  };
+  const handleTeamsConfirmSubmit = async (s: TeamsConfirmSubmit): Promise<void> => {
+    try {
+      const idr = await mapper.resolve("teams", s.userId);
+      if (idr.kind !== "mapped") return;
+      presenter.resolveConfirmSubmit({
+        requestId: s.requestId,
+        approverExternalId: idr.identity.externalId,
+        approved: s.approved,
+        typed: s.typed,
+      });
+    } catch (err) {
+      logError({ interaction: "teams-submit", err }, "chatops: Teams confirmation submit failed");
+    }
+  };
+
   const transports: ChatTransport[] = [];
   if (cfg.slackEnabled) {
-    transports.push(
-      new SlackSocketAdapter({
-        openSocket: async () => {
-          const r = asRecord(unwrapToolResult(await runTool("slack", "slack_socket_open", {})));
-          const url = r?.["url"];
-          if (typeof url !== "string" || url === "") {
-            throw new Error("chatops: slack_socket_open returned no socket url");
-          }
-          return { url };
-        },
-        socketFactory: deps.socketFactory ?? bunSocketFactory,
-        ...(deps.scheduleReconnect === undefined
-          ? {}
-          : { scheduleReconnect: deps.scheduleReconnect }),
-      }),
-    );
+    const slackAdapter = new SlackSocketAdapter({
+      openSocket: async () => {
+        const r = asRecord(unwrapToolResult(await runTool("slack", "slack_socket_open", {})));
+        const url = r?.["url"];
+        if (typeof url !== "string" || url === "") {
+          throw new Error("chatops: slack_socket_open returned no socket url");
+        }
+        return { url };
+      },
+      socketFactory: deps.socketFactory ?? bunSocketFactory,
+      ...(deps.scheduleReconnect === undefined
+        ? {}
+        : { scheduleReconnect: deps.scheduleReconnect }),
+    });
+    slackAdapter.onInteractive(handleSlackInteractive);
+    transports.push(slackAdapter);
   }
   let teamsAdapter: TeamsWebhookAdapter | undefined;
   if (cfg.teamsEnabled) {
     teamsAdapter = new TeamsWebhookAdapter();
+    teamsAdapter.onConfirmSubmit(handleTeamsConfirmSubmit);
     transports.push(teamsAdapter);
   }
 

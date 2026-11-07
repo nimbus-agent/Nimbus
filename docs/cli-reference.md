@@ -3873,6 +3873,8 @@ nimbus policy refetch
 
 A bidirectional Slack/Teams `@nimbus` bot (Phase 6 Slice 5). Read queries are answered from the shared index; structured write commands (`@nimbus run <action> service=<svc> …`) route to the resolved resource owner's HITL approval before executing — the bot never bypasses the consent gate (invariant `I23` bounds the operational reply surface). Disabled by default; enable via the `[chatops]` section in `nimbus.toml`. Channel↔namespace bindings and resource→owner ownership live in the signed org policy (`[policy.chatops.*]`). The subcommands are local/CLI-only (forbidden over the LAN wire); only `chatops.status` is exposed to the desktop UI.
 
+**Wave 4 writes in chat (Phase 9.7 D0c).** A write that needs a typed confirmation (for example `github.pr.merge`) posts a confirm card to the originating channel instead of a plain Approve/Reject card. In Slack the card has **Confirm** and **Reject** buttons; **Confirm** opens a modal asking for the confirm text exactly (shown on the card, for example `github/merge acme/api#42`). In Teams the card has a text field with **Approve** and **Reject**. Only the resource owner's answer counts, and only an exact match approves; typing `approve` in the channel does not. The Slack app needs **Interactivity** enabled (App Manifest `settings.interactivity.is_enabled: true`; Socket Mode needs no request URL) and the `views:write` bot scope. There is no new command or flag.
+
 ### `nimbus chatops status`
 
 Show whether ChatOps is enabled and, per platform, whether the transport is connected and how many policy-bound channels it serves. Default subcommand (`nimbus chatops` with no argument).

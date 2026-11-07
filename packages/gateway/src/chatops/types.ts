@@ -62,3 +62,15 @@ export type RefusalReason =
   | "not_authorized"
   | "unknown_agent"
   | "bad_agent_params";
+
+/**
+ * The interactive part of an approval card (Phase 9.7 D0c). Built by `confirm-card.ts` from fixed
+ * templates, never from caller data; the post adapter forwards each field verbatim as the
+ * connector's `blocks` / `attachments` argument.
+ */
+export interface ChatCard {
+  /** Slack Block Kit blocks (the post tool's `blocks` argument). */
+  readonly slackBlocks?: readonly object[];
+  /** One Teams attachment, `{contentType: "application/vnd.microsoft.card.adaptive", content}`. */
+  readonly teamsAttachment?: object;
+}

@@ -2,7 +2,7 @@ import type { Database } from "bun:sqlite";
 
 import { hashChannelId } from "../chatops/channel-salt.ts";
 import { toWireText } from "../chatops/escape-outbound.ts";
-import type { ChatPlatform } from "../chatops/types.ts";
+import type { ChatCard, ChatPlatform } from "../chatops/types.ts";
 import { appendEgressEntry } from "./egress-ledger.ts";
 import { redactEgressSummary } from "./egress-record.ts";
 import { EgressAppendFailedError } from "./model-egress.ts";
@@ -10,7 +10,22 @@ import { EgressAppendFailedError } from "./model-egress.ts";
 /** Which consumer is posting. Bound at CONSTRUCTION, never passed per call. */
 export type ChatPostKind = "reply" | "approvalCard" | "agentBrief" | "pushedBrief";
 
-export type ChatPost = (platform: ChatPlatform, channelId: string, text: string) => Promise<void>;
+export type ChatPost = (
+  platform: ChatPlatform,
+  channelId: string,
+  text: string,
+  card?: ChatCard,
+) => Promise<void>;
+
+/** The unledgered `views.open` call (`chatops/transport/connector-post.ts`). */
+export type RawConfirmModalOpen = (triggerId: string, view: object) => Promise<void>;
+
+/** The ledgered modal open: the channel only names the ledger row's hashed source. */
+export type ConfirmModalOpen = (
+  channelId: string,
+  triggerId: string,
+  view: object,
+) => Promise<void>;
 
 const METHOD_FOR: Readonly<Record<ChatPostKind, string>> = Object.freeze({
   reply: "chatops.reply",
@@ -49,7 +64,7 @@ export function buildLedgeredChatPosts(
   now: () => number = Date.now,
 ): Readonly<Record<ChatPostKind, ChatPost>> {
   const wrap = (kind: ChatPostKind): ChatPost => {
-    return async (platform, channelId, text): Promise<void> => {
+    return async (platform, channelId, text, card): Promise<void> => {
       // Escaped HERE, before the append: the row must count the bytes that actually leave, and
       // this is the one decorator every post passes through (D17).
       const wire = toWireText(platform, text);
@@ -64,7 +79,11 @@ export function buildLedgeredChatPosts(
           method: METHOD_FOR[kind],
           // Byte length only. Never the text — the ledger proves what left, it does not keep a
           // second copy of it.
-          payloadSummary: redactEgressSummary({ bytes: Buffer.byteLength(wire, "utf8") }),
+          payloadSummary: redactEgressSummary({
+            bytes:
+              Buffer.byteLength(wire, "utf8") +
+              (card === undefined ? 0 : Buffer.byteLength(JSON.stringify(card), "utf8")),
+          }),
           hitlStatus: "not_required",
           resultStatus: "authorized",
         });
@@ -79,7 +98,9 @@ export function buildLedgeredChatPosts(
           chatopsChannelId: channelId,
         });
       }
-      await raw(platform, channelId, wire);
+      await (card === undefined
+        ? raw(platform, channelId, wire)
+        : raw(platform, channelId, wire, card));
     };
   };
 
@@ -89,4 +110,40 @@ export function buildLedgeredChatPosts(
     agentBrief: wrap("agentBrief"),
     pushedBrief: wrap("pushedBrief"),
   });
+}
+
+/**
+ * The I29 `chatops`-class appender for the typed-confirmation modal open (Phase 9.7 D0c): one row
+ * (`chatops.confirmModal`, destination `slack`, the salted hash of the card's channel, the serialised
+ * view's byte length) BEFORE the `views.open` call, and a failed append aborts the open. The caller
+ * passes `buildConnectorViewsOpen(...)` DIRECTLY as `raw`, never bound to a name (static D17).
+ */
+export function buildLedgeredConfirmModal(
+  db: Database,
+  raw: RawConfirmModalOpen,
+  saltB64: string,
+  now: () => number = Date.now,
+): ConfirmModalOpen {
+  return async (channelId, triggerId, view): Promise<void> => {
+    try {
+      appendEgressEntry(db, {
+        timestamp: now(),
+        sourceType: "chatops",
+        sourceId: hashChannelId(saltB64, channelId),
+        destination: "slack",
+        method: "chatops.confirmModal",
+        payloadSummary: redactEgressSummary({
+          bytes: Buffer.byteLength(JSON.stringify(view), "utf8"),
+        }),
+        hitlStatus: "not_required",
+        resultStatus: "authorized",
+      });
+    } catch (err) {
+      throw new EgressAppendFailedError(err, {
+        chatopsPostKind: "confirmModal",
+        chatopsChannelId: channelId,
+      });
+    }
+    await raw(triggerId, view);
+  };
 }

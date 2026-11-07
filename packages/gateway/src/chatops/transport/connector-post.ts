@@ -1,8 +1,9 @@
 import type { RunChatopsTool } from "../chatops-tool-runner.ts";
-import type { ChatPlatform } from "../types.ts";
+import type { ChatCard, ChatPlatform } from "../types.ts";
 
 const SLACK_CHAT_POST = "slack_chat_post";
 const TEAMS_CHAT_POST = "teams_chat_post";
+const SLACK_VIEWS_OPEN = "slack_views_open";
 
 /**
  * The operational-post tool ids, for the I26 write predicate (`connectors/connector-write-registry.ts`).
@@ -13,6 +14,7 @@ const TEAMS_CHAT_POST = "teams_chat_post";
 export const CHATOPS_POST_TOOL_IDS: ReadonlySet<string> = new Set([
   SLACK_CHAT_POST,
   TEAMS_CHAT_POST,
+  SLACK_VIEWS_OPEN,
 ]);
 
 /**
@@ -27,18 +29,41 @@ export const CHATOPS_POST_TOOL_IDS: ReadonlySet<string> = new Set([
 export function buildConnectorPost(
   runTool: RunChatopsTool,
   serviceUrlFor: (conversationId: string) => string | undefined,
-): (platform: ChatPlatform, channelId: string, text: string) => Promise<void> {
-  return async (platform, channelId, text) => {
+): (platform: ChatPlatform, channelId: string, text: string, card?: ChatCard) => Promise<void> {
+  return async (platform, channelId, text, card) => {
     if (platform === "slack") {
-      await runTool("slack", SLACK_CHAT_POST, { channel: channelId, text });
+      await runTool("slack", SLACK_CHAT_POST, {
+        channel: channelId,
+        text,
+        ...(card?.slackBlocks === undefined ? {} : { blocks: card.slackBlocks }),
+      });
       return;
     }
     const serviceUrl = serviceUrlFor(channelId);
     await runTool(
       "teams",
       TEAMS_CHAT_POST,
-      { conversationId: channelId, text },
+      {
+        conversationId: channelId,
+        text,
+        ...(card?.teamsAttachment === undefined ? {} : { attachments: [card.teamsAttachment] }),
+      },
       serviceUrl === undefined ? undefined : { serviceUrl },
     );
+  };
+}
+
+/**
+ * The production `views.open` dependency for a typed-confirmation modal (Phase 9.7 D0c): the Slack
+ * `slack_views_open` tool, opened with the one-time `trigger_id` of a Confirm click. Like
+ * `buildConnectorPost`, this is an UNLEDGERED function: it may be called only as the argument of
+ * `egress/chatops-egress.ts`'s `buildLedgeredConfirmModal` (static D17). The view is built by
+ * `confirm-card.ts` from a fixed template, never from caller data.
+ */
+export function buildConnectorViewsOpen(
+  runTool: RunChatopsTool,
+): (triggerId: string, view: object) => Promise<void> {
+  return async (triggerId, view) => {
+    await runTool("slack", SLACK_VIEWS_OPEN, { trigger_id: triggerId, view });
   };
 }
