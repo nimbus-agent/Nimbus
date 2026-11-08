@@ -9,6 +9,8 @@
 // target: the gateway never guesses what to delete. Pure; imports nothing from the executor.
 import { createHash } from "node:crypto";
 
+import { isPlainStackName } from "../connectors/connector-writes/iac-limits.ts";
+
 /** The one thing the discard step may remove: this stack's change set with this ARN. */
 export interface CfnOrphan {
   readonly stackName: string;
@@ -35,7 +37,7 @@ export function deriveCfnOrphan(input: unknown, reply: unknown): CfnOrphan | und
   const name = field(reply, "changeSetName");
   const id = field(reply, "changeSetId");
   if (
-    typeof stackName !== "string" ||
+    !isPlainStackName(stackName) ||
     typeof templateBody !== "string" ||
     replyStack !== stackName ||
     typeof name !== "string" ||

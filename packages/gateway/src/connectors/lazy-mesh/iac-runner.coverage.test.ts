@@ -291,6 +291,47 @@ describe("the CloudFormation call", () => {
     expect([...none.children, ...noBin.children, ...noCred.children]).toEqual([]);
   });
 
+  describe("a change-set discard names only a change set this gateway could have created (review 8)", () => {
+    const SHA = "a".repeat(64);
+    const arn = (region: string, name = `nimbus-${SHA}-0123456789ab`): string =>
+      `arn:aws:cloudformation:${region}:123456789012:changeSet/${name}/00000000-0000-0000-0000-000000000000`;
+    const discard = (r: IacRunner, over: Record<string, unknown>): Promise<unknown> =>
+      r.execute("iac_cloudformation_changeset_discard", {
+        stackName: "prod",
+        changeSetId: arn("us-east-1"),
+        ...over,
+      });
+
+    test("the run's own region, a nimbus-<sha>-<hex> name and a plain stack: dispatched", async () => {
+      const { r, children } = make(granted, await awsVault("us-east-1"));
+      expect(await discard(r, {})).toEqual({ content: [] });
+      expect(children).toHaveLength(1);
+    });
+
+    test.each([
+      ["another region", { changeSetId: arn("eu-west-1") }],
+      ["a name without the nimbus hash form", { changeSetId: arn("us-east-1", "someones-own") }],
+      ["a short hash", { changeSetId: arn("us-east-1", "nimbus-abc-0123456789ab") }],
+      ["a stack name that is not a plain stack name", { stackName: "arn:aws:cloudformation:x" }],
+      ["no stack name", { stackName: undefined }],
+      ["a non-string id", { changeSetId: 7 }],
+    ] as Array<[string, Record<string, unknown>]>)(
+      "%s is refused before any child",
+      async (_n, over) => {
+        const { r, children } = make(granted, await awsVault("us-east-1"));
+        await expect(discard(r, over)).rejects.toThrow("not one this gateway created");
+        expect(children).toEqual([]);
+      },
+    );
+
+    test("with no stored region the first granted region is the run's", async () => {
+      const { r, children } = make(granted, await awsVault(null));
+      await expect(discard(r, {})).rejects.toThrow("not one this gateway created");
+      expect(await discard(r, { changeSetId: arn("eu-west-1") })).toEqual({ content: [] });
+      expect(children).toHaveLength(1);
+    });
+  });
+
   test("the execute input need not be an object", async () => {
     const { r } = make(granted, await awsVault("us-east-1"));
     expect(await r.execute("iac_cloudformation_deploy", "nope")).toEqual({ content: [] });

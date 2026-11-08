@@ -103,6 +103,11 @@ const UNSHOWABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}]/u;
 const STACK_NAME = /^[A-Za-z][A-Za-z0-9-]*$/;
 const WINDOWS_DRIVE = /^[A-Za-z]:[\\/]/;
 
+/** Is `s` a plain CloudFormation stack name (the grammar the deploy input hook applies)? */
+export function isPlainStackName(s: unknown): s is string {
+  return typeof s === "string" && s.length <= IAC_LIMITS.maxStackNameChars && STACK_NAME.test(s);
+}
+
 function isRecord(v: unknown): v is Record<string, unknown> {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
   const proto: unknown = Object.getPrototypeOf(v);
@@ -195,13 +200,7 @@ export function cfnInputRefusal(input: Readonly<Record<string, unknown>>): strin
   if (!isRecord(input)) return IAC_INPUT_REFUSALS.inputInvalid;
   if (!onlyKeys(input, CFN_INPUT_KEYS)) return IAC_INPUT_REFUSALS.fieldNotTaken;
   const stack = Object.hasOwn(input, "stackName") ? input["stackName"] : undefined;
-  if (
-    typeof stack !== "string" ||
-    stack.length > IAC_LIMITS.maxStackNameChars ||
-    !STACK_NAME.test(stack)
-  ) {
-    return IAC_INPUT_REFUSALS.stackNameInvalid;
-  }
+  if (!isPlainStackName(stack)) return IAC_INPUT_REFUSALS.stackNameInvalid;
   const template = templateRefusal(
     Object.hasOwn(input, "templateBody") ? input["templateBody"] : undefined,
   );

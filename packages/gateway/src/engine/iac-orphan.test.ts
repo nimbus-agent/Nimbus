@@ -20,6 +20,20 @@ describe("deriveCfnOrphan", () => {
     ["no template", [{ stackName: "prod" }, REPLY]],
     ["a non-string template", [{ stackName: "prod", templateBody: 3 }, REPLY]],
     ["a non-string stack", [{ stackName: 3, templateBody: TEMPLATE }, REPLY]],
+    [
+      "a stack name that is not a plain stack name",
+      [
+        { ...INPUT, stackName: "a/b" },
+        { ...REPLY, stackName: "a/b" },
+      ],
+    ],
+    [
+      "an over-long stack name",
+      [
+        { ...INPUT, stackName: `a${"b".repeat(128)}` },
+        { ...REPLY, stackName: `a${"b".repeat(128)}` },
+      ],
+    ],
     ["another stack in the reply", [INPUT, { ...REPLY, stackName: "other" }]],
     ["no name", [INPUT, { ...REPLY, changeSetName: undefined }]],
     ["no id", [INPUT, { ...REPLY, changeSetId: 4 }]],

@@ -51,7 +51,12 @@ import {
   type IacPathDeps,
   workdirsOverlap,
 } from "../connector-writes/iac-grants.ts";
-import { IAC_PREFLIGHT_REFUSALS, IAC_TOOL_TIMEOUTS_MS } from "../connector-writes/iac-limits.ts";
+import {
+  IAC_DISCARD,
+  IAC_PREFLIGHT_REFUSALS,
+  IAC_TOOL_TIMEOUTS_MS,
+  isPlainStackName,
+} from "../connector-writes/iac-limits.ts";
 import { manifestForFirstParty } from "./first-party-manifests.ts";
 import { connectorSpawn } from "./keys.ts";
 import { loadAwsCreds } from "./phase3-shared.ts";
@@ -88,6 +93,7 @@ export const IAC_RUNNER_REFUSALS = Object.freeze({
   badPlanFile: "iac: the plan file is not in this gateway's approved plan directory",
   noBinary: "iac: the required command line tool was not found",
   noCredential: IAC_PREFLIGHT_REFUSALS.noCloudCredential,
+  notOurChangeSet: "iac: that change set is not one this gateway created",
   stopping: "iac: the gateway is stopping",
 });
 
@@ -961,6 +967,9 @@ export class IacRunner implements IacHost {
     const creds = await loadAwsCreds(this.deps.vault);
     if (!creds.ok) throw new Error(IAC_RUNNER_REFUSALS.noCredential);
     const region = creds.region !== "" ? creds.region : (grants.regions[0] ?? "");
+    if (toolId === IAC_DISCARD.toolId && !isOurChangeSet(args, region)) {
+      throw new Error(IAC_RUNNER_REFUSALS.notOurChangeSet);
+    }
     const callId = this.hex(8);
     const scratchDir = join(this.iacRoot, "scratch", callId);
     mkdirSync(scratchDir, { recursive: true, mode: 0o700 });
@@ -1208,6 +1217,21 @@ export class IacRunner implements IacHost {
       }
     });
   }
+}
+
+const OUR_CHANGE_SET_ARN =
+  /^arn:aws[a-z-]*:cloudformation:([a-z0-9-]+):\d{12}:changeSet\/nimbus-[0-9a-f]{64}-[0-9a-f]{12}\/[0-9a-f-]{36}$/;
+
+/**
+ * A discard may only name a change set this gateway could have created: a plain stack name, an ARN
+ * whose name has the `nimbus-<template sha256>-<12 hex>` form the prepare step gives, in the region
+ * this run's credential uses. Anything else (another region, someone else's change set) never
+ * reaches a child, whoever asked.
+ */
+function isOurChangeSet(args: Record<string, unknown>, region: string): boolean {
+  const id = args["changeSetId"];
+  if (region === "" || !isPlainStackName(args["stackName"]) || typeof id !== "string") return false;
+  return OUR_CHANGE_SET_ARN.exec(id)?.[1] === region;
 }
 
 /** `<cache>/iac-runs`, a sibling of the sandbox root: never `dataDir` (the filesystem MCP writes there). */
