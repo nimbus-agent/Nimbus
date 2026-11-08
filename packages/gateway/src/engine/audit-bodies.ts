@@ -26,18 +26,10 @@ export function carriesTemplateText(type: string): boolean {
   return service === "iac" && write === "write" && prepare === "prepare" && rest.length === 0;
 }
 
-/**
- * `payload` with its `templateBody` (at `payload.input` when the action carries one, else at the
- * root) replaced by `templateBytes` and `templateSha256` (or `templateMalformed: true` when it is
- * not text, so a value the gate is about to refuse is not recorded either). `undefined` when there
- * is no `templateBody` key.
- */
-export function omitTemplateText(
-  payload: Readonly<Record<string, unknown>>,
+/** `holder` with its `templateBody` replaced by its size and hash, or `undefined` when it has none. */
+function summariseHolder(
+  holder: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> | undefined {
-  const nested = payload["input"];
-  const inInput = Object.hasOwn(payload, "input") && isPlainObject(nested);
-  const holder: Readonly<Record<string, unknown>> = inInput ? nested : payload;
   if (!Object.hasOwn(holder, "templateBody")) return undefined;
   const { templateBody, ...rest } = holder;
   const summary: Record<string, unknown> =
@@ -47,7 +39,27 @@ export function omitTemplateText(
           templateSha256: createHash("sha256").update(templateBody, "utf8").digest("hex"),
         }
       : { templateMalformed: true };
-  return inInput ? { ...payload, input: { ...rest, ...summary } } : { ...rest, ...summary };
+  return { ...rest, ...summary };
+}
+
+/**
+ * `payload` with every `templateBody` replaced by `templateBytes` and `templateSha256` (or
+ * `templateMalformed: true` when it is not text, so a value the gate is about to refuse is not
+ * recorded either): the one at `payload.input` AND the one at the payload root. The tool input is
+ * the nested one when `input` is present (`extractToolInput` ignores the root then), so a root-level
+ * `templateBody` beside it is accepted by the gate and would otherwise reach the record. `undefined`
+ * when neither level has a `templateBody` key.
+ */
+export function omitTemplateText(
+  payload: Readonly<Record<string, unknown>>,
+): Record<string, unknown> | undefined {
+  const nested = payload["input"];
+  const input = Object.hasOwn(payload, "input") && isPlainObject(nested) ? nested : undefined;
+  const nestedOut = input === undefined ? undefined : summariseHolder(input);
+  const rootOut = summariseHolder(payload);
+  if (nestedOut === undefined && rootOut === undefined) return undefined;
+  const base = rootOut ?? { ...payload };
+  return nestedOut === undefined ? base : { ...base, input: nestedOut };
 }
 
 /**

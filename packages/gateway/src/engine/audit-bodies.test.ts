@@ -114,3 +114,38 @@ describe("withoutTemplateText: only the deploy write and the iac prepare read", 
     expect(withoutTemplateText(noBody)).toBe(noBody);
   });
 });
+
+describe("omitTemplateText strips BOTH levels (adversarial review of batch 2)", () => {
+  test("a root-level templateBody beside a nested input never reaches the record", () => {
+    const payload = {
+      mcpToolId: "t",
+      templateBody: TEMPLATE,
+      input: { stackName: "s", templateBody: TEMPLATE },
+    };
+    const out = omitTemplateText(payload);
+    expect(JSON.stringify(out)).not.toContain("Bucket");
+    expect(out).toEqual({
+      mcpToolId: "t",
+      templateBytes: BYTES,
+      templateSha256: SHA,
+      input: { stackName: "s", templateBytes: BYTES, templateSha256: SHA },
+    });
+  });
+
+  test("a root-level templateBody beside an input that carries none is still stripped", () => {
+    const out = omitTemplateText({ templateBody: TEMPLATE, input: { stackName: "s" } });
+    expect(out).toEqual({
+      templateBytes: BYTES,
+      templateSha256: SHA,
+      input: { stackName: "s" },
+    });
+  });
+
+  test("withoutTemplateText applies it to the audit and the ledger form of a deploy", () => {
+    const action = {
+      type: "iac.cloudformation.deploy",
+      payload: { templateBody: TEMPLATE, input: { stackName: "s" } },
+    };
+    expect(JSON.stringify(withoutTemplateText(action))).not.toContain("Bucket");
+  });
+});
