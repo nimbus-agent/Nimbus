@@ -778,3 +778,49 @@ describe("a multi-file commit prompt on the typed-confirm path (D1c)", () => {
     ]);
   });
 });
+
+describe("a plan-bound write prompt on the typed-confirm path (D2)", () => {
+  const CONFIRM = "iac/apply /srv/infra/prod";
+  const FOOTER = "End of plan: 2 changes (0 deletes, 1 replaces)";
+
+  test("the plan prompt (counts first, ONE footer, then the typed line) is written once, verbatim", async () => {
+    const prompt = [
+      "Service: iac",
+      "Target:  /srv/infra/prod",
+      "",
+      "Deletes: 0, Replaces: 1, Creates: 1, Updates: 0",
+      "Terraform 1.9.5",
+      `Plan SHA-256: ${"a".repeat(64)}`,
+      "[replace: delete, create] aws_instance.web (aws_instance, registry.terraform.io/hashicorp/aws)",
+      "[create] aws_s3_bucket.new (aws_s3_bucket, registry.terraform.io/hashicorp/aws)",
+      FOOTER,
+      "",
+      `To approve, type exactly: ${CONFIRM}`,
+    ].join("\n");
+    const { client, fire, calls } = makeMultiClient();
+    const writes: string[] = [];
+    const o = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((c: unknown) => {
+      writes.push(String(c));
+      return true;
+    }) as typeof process.stdout.write;
+    try {
+      registerConsentPromptHandler(
+        client,
+        async () => {
+          throw new Error("the yes/no prompt must not be used");
+        },
+        async () => CONFIRM,
+      );
+      await fire("consent.request", { requestId: "p1", prompt, confirmText: CONFIRM });
+    } finally {
+      process.stdout.write = o;
+    }
+    const shown = writes.filter((w) => w.includes("Deletes: 0, Replaces: 1"));
+    expect(shown).toEqual([`${prompt}\n`]);
+    expect(prompt.split("\n").filter((l) => l.startsWith("End of "))).toHaveLength(1);
+    expect(calls).toEqual([
+      { method: "consent.respond", params: { requestId: "p1", approved: true, typed: CONFIRM } },
+    ]);
+  });
+});

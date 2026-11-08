@@ -16,6 +16,7 @@ import {
   type ConnectorWritePreview,
   findConnectorWriteRow,
   isPlainObject,
+  type PreviewPlan,
   renderConnectorWritePreviewLines,
   rowNamedByToolId,
 } from "../connectors/connector-writes/preview.ts";
@@ -387,8 +388,13 @@ export function consentDisplayPayload(
 ): Record<string, unknown> | undefined {
   // A connector write with a preview template is shown as the gateway-built typed preview. No
   // user-MCP type has a row, so this cannot shadow the verbatim user-MCP display below.
-  const typed = preview ?? buildConnectorWritePreview(action, credentialFor);
-  if (typed !== undefined) {
+  const built = preview ?? buildConnectorWritePreview(action, credentialFor);
+  if (built !== undefined) {
+    // The structured copy of a plan carries its lines and digest, not the joined text: the desktop
+    // renders the lines and the audit keeps the digest, so the plan crosses the IPC line twice
+    // (the prompt and these lines), not three times.
+    const typed: ConnectorWritePreview =
+      built.plan === undefined ? built : { ...built, plan: structuredPlan(built.plan) };
     if (action.origin !== "model") return typed as unknown as Record<string, unknown>;
     const withOrigin: ConnectorWritePreview = { ...typed, requestedBy: "model" };
     return withOrigin as unknown as Record<string, unknown>;
@@ -396,6 +402,12 @@ export function consentDisplayPayload(
   const shown = shownPayload(action);
   if (action.origin !== "model") return shown;
   return { ...shown, requestedBy: "model" };
+}
+
+/** A plan without its joined `text` (see {@link consentDisplayPayload}). */
+function structuredPlan(plan: PreviewPlan): PreviewPlan {
+  const { text: _joined, ...rest } = plan;
+  return rest as PreviewPlan;
 }
 
 /** The non-preview display payload, without the origin (the CLI prints that on its own line). */

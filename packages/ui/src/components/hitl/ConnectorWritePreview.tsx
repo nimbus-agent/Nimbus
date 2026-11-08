@@ -186,6 +186,7 @@ export function ConnectorWritePreview({
       <BeforeState raw={details["before"]} title="Before" testId="connector-write-before" />
       <BeforeState raw={details["prepared"]} title="Prepared" testId="connector-write-prepared" />
       <DiffView raw={details["diff"]} />
+      <PlanView raw={details["plan"]} />
       <ProposedBy details={details} />
     </div>
   );
@@ -442,6 +443,86 @@ function DiffView({ raw }: { readonly raw: unknown }): ReactNode {
       <p className="text-xs text-[var(--color-fg-muted)]">
         End of diff: {n} {n === 1 ? "file" : "files"}, +{diff.additions} -{diff.deletions}
       </p>
+    </section>
+  );
+}
+
+// ---- The gateway's rendered plan of a plan-bound IaC write (D2, I54) ---------------------------------
+
+interface PlanViewModel {
+  /** The plan exactly as the gateway rendered it; its last line is the one footer. */
+  readonly lines: readonly string[];
+  readonly sha256: string | undefined;
+}
+
+/** `undefined` when `raw` is not a well-formed gateway plan (a non-empty list of strings). */
+function readPlan(raw: unknown): PlanViewModel | undefined {
+  const p = asRecord(raw);
+  const lines = p["lines"];
+  if (!Array.isArray(lines) || lines.length === 0) return undefined;
+  if (!(lines as unknown[]).every((l) => typeof l === "string")) return undefined;
+  const sha = p["sha256"];
+  if (sha !== undefined && typeof sha !== "string") return undefined;
+  return { lines: lines as string[], sha256: sha };
+}
+
+/**
+ * The write types whose approval is bound to a plan or change set the gateway renders (D2). For
+ * these a MISSING plan is as unapprovable as an unreadable one: the owner would be typing a
+ * confirmation for a change the screen never showed.
+ */
+const PLAN_REQUIRED_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "iac.terraform.apply",
+  "iac.terraform.destroy",
+  "iac.cloudformation.deploy",
+]);
+
+/**
+ * Whether the details carry a `plan` the view cannot read, or (for a plan-bound write type) no
+ * plan at all. The popup then keeps Approve disabled.
+ */
+export function isPlanMalformed(
+  details: Record<string, unknown> | undefined,
+  actionType?: string,
+): boolean {
+  const required = actionType !== undefined && PLAN_REQUIRED_ACTION_TYPES.has(actionType);
+  if (details === undefined || !Object.hasOwn(details, "plan")) return required;
+  return readPlan(details["plan"]) === undefined;
+}
+
+/**
+ * The plan, shown in FULL: ONE `<pre>` text node (no per-line elements, no collapse, never cut)
+ * inside a bounded scroll box. The gateway's own footer is the last line, so none is added here.
+ * Text nodes only (I8). Malformed input is an error and nothing else.
+ */
+function PlanView({ raw }: { readonly raw: unknown }): ReactNode {
+  if (raw === undefined) return null;
+  const plan = readPlan(raw);
+  if (plan === undefined) {
+    return (
+      <p
+        data-testid="connector-write-plan-error"
+        role="alert"
+        className="text-sm text-[var(--color-error)]"
+      >
+        The plan could not be displayed in full, so it cannot be approved here. Reject it.
+      </p>
+    );
+  }
+  return (
+    <section data-testid="connector-write-plan" className="flex flex-col gap-1">
+      <h3 className="text-sm font-semibold">Plan</h3>
+      {plan.sha256 !== undefined && (
+        <p className="text-xs text-[var(--color-fg-muted)] break-all">SHA-256: {plan.sha256}</p>
+      )}
+      <div className="max-h-96 overflow-auto rounded border border-[var(--color-border)] p-2">
+        <pre
+          data-testid="connector-write-plan-text"
+          className="whitespace-pre-wrap break-words font-mono text-xs"
+        >
+          {plan.lines.join("\n")}
+        </pre>
+      </div>
     </section>
   );
 }
