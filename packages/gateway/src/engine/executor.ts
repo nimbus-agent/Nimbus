@@ -1477,7 +1477,7 @@ export class ToolExecutor {
     const action = structuredClone(planned);
     const scope: GateScope = { bind: true };
     // True from the moment the write is handed to the dispatcher: after that, nothing is discarded.
-    let dispatched = false;
+    let dispatched: boolean | undefined;
     try {
       const gateResult = await this.gateWithin(action, opts, scope);
       if (gateResult === "proceed") {
@@ -1488,7 +1488,7 @@ export class ToolExecutor {
       }
       return gateResult;
     } finally {
-      await this.finishScope(action, scope, dispatched);
+      await this.finishScope(action, scope, dispatched === true);
     }
   }
 

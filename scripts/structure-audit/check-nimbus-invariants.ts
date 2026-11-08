@@ -2970,6 +2970,40 @@ const D43_NAME_ALLOWED: readonly string[] = [
   D42_EXECUTOR,
 ];
 const D43_CONSTANT_RE = /\bIAC_DISCARD\b/g;
+// Clause (d) (the iac connector's per-run spawns): only `lazy-mesh/iac-runner.ts` builds an iac
+// `ServerSpec`, and only through `wrapIacServerSpec` (defined in `wrap-server-spec.ts`); the policy
+// flag `iacProfile` and the seccomp program that answers `pidfd_send_signal` with ENOSYS (OR-D2-5)
+// are named only by the policy wire, the wrapper, the Linux runner and the wrap function.
+const D43_SPAWN_BASE = "packages/gateway/src/";
+const D43_RUNNER = `${D43_BASE}lazy-mesh/iac-runner.ts`;
+const D43_WRAP = `${D43_BASE}lazy-mesh/wrap-server-spec.ts`;
+const D43_SPAWN_RULES: ReadonlyArray<{
+  readonly re: RegExp;
+  readonly allowed: readonly string[];
+  /** Match against comment-stripped source with strings kept (a string spelling is a spelling). */
+  readonly keepStrings: boolean;
+}> = [
+  { re: /\bwrapIacServerSpec\b/g, allowed: [D43_WRAP, D43_RUNNER], keepStrings: false },
+  {
+    re: /\biacProfile\b/g,
+    allowed: [
+      D43_WRAP,
+      `${D43_SPAWN_BASE}platform/sandbox/sandbox-policy.ts`,
+      `${D43_SPAWN_BASE}platform/sandbox/sandbox-wrapper.ts`,
+      `${D43_SPAWN_BASE}platform/sandbox/linux.ts`,
+    ],
+    keepStrings: true,
+  },
+  {
+    re: /\b(?:buildIacSeccompFilter|IAC_ENOSYS_SYSCALLS)\b/g,
+    allowed: [
+      `${D43_SPAWN_BASE}platform/sandbox/seccomp-filter.ts`,
+      `${D43_SPAWN_BASE}platform/sandbox/linux.ts`,
+    ],
+    keepStrings: false,
+  },
+  { re: /com\.nimbus\.iac-/g, allowed: [D43_RUNNER], keepStrings: true },
+];
 const D43_CONSTANT_ALLOWED: readonly string[] = [
   `${D43_BASE}connector-writes/iac-limits.ts`,
   D42_EXECUTOR,
@@ -3003,19 +3037,24 @@ export function checkIacDiscard(files: readonly FileEntry[]): Violation[] {
       }
     }
     if (!D43_CONSTANT_ALLOWED.includes(f.relPath)) {
-      for (const m of code.matchAll(D43_CONSTANT_RE)) {
-        add(f, "discard-name-confined", code, m.index);
+      for (const m of commentFree.matchAll(D43_CONSTANT_RE)) {
+        add(f, "discard-name-confined", commentFree, m.index);
       }
     }
+    for (const rule of D43_SPAWN_RULES) {
+      if (rule.allowed.includes(f.relPath)) continue;
+      const src = rule.keepStrings ? commentFree : code;
+      for (const m of src.matchAll(rule.re)) add(f, "iac-spawn-confined", src, m.index);
+    }
     if (f.relPath === D42_EXECUTOR) {
-      for (const v of d43ExecutorPins(f, code)) out.push(v);
+      for (const v of d43ExecutorPins(f, code, commentFree)) out.push(v);
     }
   }
   return out;
 }
 
 /** Clause (b): the discard happens only at the end of a run that never dispatched, in a private scope. */
-function d43ExecutorPins(f: FileEntry, code: string): Violation[] {
+function d43ExecutorPins(f: FileEntry, code: string, commentFree: string): Violation[] {
   const out: Violation[] = [];
   const fail = (what: string): void => {
     out.push({ rule: "discard-order-pinned", file: f.relPath, line: 1, snippet: what });
@@ -3029,6 +3068,24 @@ function d43ExecutorPins(f: FileEntry, code: string): Violation[] {
   const scopeKey = /\bdiscardStep\s*:/g;
   if (count(code, scopeKey) !== 1 || count(discarding, scopeKey) !== 1) {
     fail("discardStep: must be written once, in discardUnusedChangeSet");
+  }
+  // The scope member may be WRITTEN in no other form: shorthand, a member assignment, `Object.assign`
+  // or a computed/quoted key would each set it without the `discardStep:` this rule counts.
+  for (const re of [
+    /[{,]\s*discardStep\s*[,}]/,
+    /\.discardStep\s*=(?!=)/,
+    /\bObject\s*\.\s*(?:assign|defineProperty|fromEntries)\b[^;]*discardStep/,
+    /\[\s*["'`]discardStep["'`]\s*\]/,
+    /["'`]discardStep["'`]\s*:/,
+  ]) {
+    if (re.test(commentFree)) fail(`discardStep set by a form the rule does not count: ${re.source}`);
+  }
+  // `dispatched` only ever becomes true, once: a reset would let a discard follow a dispatch.
+  if (
+    count(code, /\bdispatched\s*=\s*false\b/g) !== 0 ||
+    count(code, /\bdispatched\s*=\s*true\b/g) !== 1
+  ) {
+    fail("dispatched must never be assigned false and assigned true exactly once");
   }
   const finish = span(/\bprivate\s+async\s+finishScope\s*\(/);
   const caller = /\bthis\.discardUnusedChangeSet\s*\(/g;

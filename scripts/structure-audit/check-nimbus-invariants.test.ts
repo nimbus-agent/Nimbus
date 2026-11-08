@@ -4925,7 +4925,7 @@ describe("D43 — the unused change set is discarded only by the executor's own 
     "    }",
     "  }",
     "  async execute(planned, opts) {",
-    "    let dispatched = false;",
+    "    let dispatched: boolean | undefined;",
     "    try {",
     "      dispatched = true;",
     "      return await this.connectors.dispatch(x);",
@@ -5017,5 +5017,53 @@ describe("D43 — the unused change set is discarded only by the executor's own 
     expect(
       rules(swap(EXECUTOR_GOOD.replace("isDiscardOf(action, scope.discardStep)", "true"))),
     ).toEqual(["discard-order-pinned"]);
+  });
+
+  test("(b) FAILS on every other way of writing the discard scope", () => {
+    for (const body of [
+      "  private async z1(discardStep) { await this.gateWithin(d, u, { bind: false, discardStep }); }",
+      "  private async z2(s) { s.discardStep = t; }",
+      "  private async z3(s) { Object.assign(s, { discardStep: t }); }",
+      '  private async z4(s) { s["discardStep"] = t; }',
+      '  private async z5() { await this.gateWithin(d, u, { "discardStep": t }); }',
+    ]) {
+      expect(rules(swap(before("  private async finishScope", body))), body).toContain(
+        "discard-order-pinned",
+      );
+    }
+  });
+
+  test("(b) FAILS when dispatched is ever reset to false or set true a second time", () => {
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("    } finally {", "      dispatched = false;\n    } finally {"))),
+    ).toContain("discard-order-pinned");
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("    } finally {", "      dispatched = true;\n    } finally {"))),
+    ).toContain("discard-order-pinned");
+  });
+
+  test("(c) FAILS on IAC_DISCARD spelled as a string key, in either stripped form", () => {
+    for (const body of [
+      'const k = limits["IAC_DISCARD"];',
+      "const k = limits[`IAC_DISCARD`];",
+      "const k = IAC_DISCARD;",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["discard-name-confined"]);
+    }
+  });
+
+  test("(d) FAILS when another file builds an iac spawn, the profile flag or the ENOSYS program", () => {
+    const RUNNER = "packages/gateway/src/connectors/lazy-mesh/iac-runner.ts";
+    expect(rules([...GOOD, file(RUNNER, "wrapIacServerSpec(a, b, c); const i = 'com.nimbus.iac-plan';")])).toEqual([]);
+    for (const body of [
+      "wrapIacServerSpec(a, b, c);",
+      "const p = { iacProfile: true };",
+      "buildIacSeccompFilter();",
+      "import { IAC_ENOSYS_SYSCALLS } from './x';",
+      "const id = 'com.nimbus.iac-plan.abc';",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["iac-spawn-confined"]);
+    }
+    expect(rules([...GOOD, file(OTHER, "// wrapIacServerSpec iacProfile")])).toEqual([]);
   });
 });
