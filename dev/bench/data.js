@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794117809813,
+  "lastUpdate": 1794119760722,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
-            "name": "nimbus-release-bot[bot]",
-            "username": "nimbus-release-bot[bot]"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "7eb443d4a2dc1ea904a48226360935b431d7d7fb",
-          "message": "chore: release main (#1284)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>2.10.0</summary>\n\n##\n[2.10.0](https://github.com/nimbus-agent/Nimbus/compare/v2.9.0...v2.10.0)\n(2026-08-21)\n\n\n### Features\n\n* **engine:** negation predicates reach nimbus ask and MCP clients,\nrefusing rather than guessing (W6-B.2)\n([#1281](https://github.com/nimbus-agent/Nimbus/issues/1281))\n([5ce7505](https://github.com/nimbus-agent/Nimbus/commit/5ce7505be84d5cc3e5c0f36e96dae6872c1102b0))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
-          "timestamp": "2026-08-21T07:39:19+03:00",
-          "tree_id": "72719675e04794fb3bd81ba26ef2cd6a8d51daf5",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/7eb443d4a2dc1ea904a48226360935b431d7d7fb"
-        },
-        "date": 1787288046387,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 306.98354485000016,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 308.9438149500005,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 233.49719175000064,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "945d45998e53c29c4a66c0943a1c792f88f1e758",
+          "message": "chore: release main (#1939)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.39.0</summary>\n\n##\n[10.39.0](https://github.com/nimbus-agent/Nimbus/compare/v10.38.1...v10.39.0)\n(2026-11-08)\n\n\n### Features\n\n* **gateway:** one GitHub Enterprise Server instance through\ngithub.api_base\n([#1936](https://github.com/nimbus-agent/Nimbus/issues/1936))\n([7686d74](https://github.com/nimbus-agent/Nimbus/commit/7686d74e52bee5b67f4d3161db705a1bcdbd2133))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-08T08:24:57+02:00",
+          "tree_id": "3625e2eb02e1d5d050e7d56b079acd0fc29c682c",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/945d45998e53c29c4a66c0943a1c792f88f1e758"
+        },
+        "date": 1794119756187,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 295.7561565999957,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 310.11826375000675,
             "unit": "ms"
           }
         ]
