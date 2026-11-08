@@ -8,6 +8,7 @@ import { serviceOf } from "../../engine/service-of.ts";
 import { wrapToolOutput } from "../../engine/tool-output-envelope.ts";
 import { EXTENSION_SERVICE_ID_PATTERN } from "../../extensions/extension-service-id.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
+import { processEnvGet } from "../../platform/env-access.ts";
 import type { PlatformPaths } from "../../platform/paths.ts";
 import { extensionStageRootFor, sandboxCwdFor } from "../../platform/sandbox/sandbox-cwd.ts";
 import {
@@ -69,7 +70,7 @@ import {
   type IacHost,
   IacRunner,
   type IacRunnerDeps,
-  iacRootFor,
+  iacProtectedRootsFor,
   routeIacTools,
 } from "./iac-runner.ts";
 import {
@@ -381,7 +382,7 @@ export class LazyConnectorMesh {
       homeDir: homedir(),
       tmpDir: tmpdir(),
       // Nimbus's own folders: no approved Terraform directory may overlap them.
-      protectedRoots: [...userMcpProtectedRootsFor(paths), paths.extensionsDir, iacRootFor(paths)],
+      protectedRoots: iacProtectedRootsFor(paths, platform, processEnvGet("XDG_RUNTIME_DIR")),
     };
     this.iacRunner = new IacRunner({
       paths,

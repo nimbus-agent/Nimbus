@@ -293,3 +293,34 @@ describe("the real filesystem", () => {
     expect(gateWorkdir(link, g, real)).toBeUndefined();
   });
 });
+
+describe("gateWorkdir repeats the path rules of approval (review item 10)", () => {
+  const dirs = [...POSIX_DIRS, "/home/me/infra/other", "/home/me/infra/envs/deep"];
+  const deps = fake(
+    "linux",
+    dirs,
+    {},
+    { protectedRoots: ["/home/me/.config/nimbus", "/home/me/infra/envs"] },
+  );
+
+  test("a directory that is, contains or is inside a protected root is refused", () => {
+    const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: ["/home/me/infra"] };
+    expect(gateWorkdir("/home/me/infra/other", g, deps)).toBe("/home/me/infra/other");
+    expect(gateWorkdir("/home/me/infra/envs", g, deps)).toBeUndefined(); // is
+    expect(gateWorkdir("/home/me/infra/envs/deep", g, deps)).toBeUndefined(); // inside
+    expect(gateWorkdir("/home/me/infra", g, deps)).toBeUndefined(); // contains
+  });
+
+  test("a .terraform folder is refused at the gate too, even inside a grant", () => {
+    const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: ["/home/me/infra"] };
+    expect(gateWorkdir("/home/me/infra/.terraform", g, deps)).toBeUndefined();
+  });
+
+  test("a filesystem root, and a folder that holds home or temp, are refused whatever was stored", () => {
+    const plain = fake("linux", dirs);
+    for (const stale of ["/", "/home", "/home/me", "/tmp"]) {
+      const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: [stale] };
+      expect(gateWorkdir(stale, g, plain)).toBeUndefined();
+    }
+  });
+});

@@ -29,6 +29,7 @@ import {
   type IacRunnerDeps,
   iacChildFromProcess,
   iacProfileId,
+  iacProtectedRootsFor,
   iacRootFor,
   installTreeReads,
   isSystemOwnedDir,
@@ -1071,5 +1072,37 @@ describe("a child a previous gateway left (review item 7, boot sweep)", () => {
     // FakeChild has no pid: nothing is recorded for it
     child.exit(0);
     run.release();
+  });
+});
+
+describe("the folders an approved Terraform directory may not overlap (review item 10)", () => {
+  const p = {
+    dataDir: "/d/data",
+    configDir: "/d/config",
+    sandboxDir: "/d/cache/nimbus/sandbox",
+    extensionsDir: "/d/ext",
+    tempDir: "/tmp/nimbus",
+  };
+
+  test("data, config, extensions, the temp folder, the whole cache root and the iac root", () => {
+    const roots = iacProtectedRootsFor(p, "darwin", "/run/user/1");
+    for (const r of [
+      "/d/data",
+      "/d/config",
+      "/d/cache/nimbus/sandbox",
+      "/d/ext",
+      "/tmp/nimbus",
+      "/d/cache/nimbus",
+      iacRootFor(p),
+    ]) {
+      expect(roots).toContain(r);
+    }
+    expect(roots).not.toContain("/run/user/1"); // the runtime directory is a Linux fact
+  });
+
+  test("on Linux the runtime directory (the gateway's socket) is protected when it is set", () => {
+    expect(iacProtectedRootsFor(p, "linux", "/run/user/1")).toContain("/run/user/1");
+    expect(iacProtectedRootsFor(p, "linux", undefined)).not.toContain("/run/user/1");
+    expect(iacProtectedRootsFor(p, "linux", "")).not.toContain("");
   });
 });

@@ -150,6 +150,29 @@ function holds(platform: NodeJS.Platform, p: string, other: string): boolean {
 }
 
 /**
+ * Where a canonical directory may sit, ONE rule for approval and the gate: not a filesystem root,
+ * not a folder that is or holds home or temp, not overlapping (is, contains or inside) a protected
+ * root, and not a `.terraform` folder or inside one. A grant stored before a root was protected is
+ * therefore refused at the gate too.
+ */
+function workdirPlacementRefusal(canonical: string, deps: IacPathDeps): string | undefined {
+  if (isRootOf(canonical, deps.platform)) return IAC_WORKDIR_REFUSALS.root;
+  if (
+    holds(deps.platform, canonical, deps.homeDir) ||
+    holds(deps.platform, canonical, deps.tmpDir)
+  ) {
+    return IAC_WORKDIR_REFUSALS.root;
+  }
+  if (
+    findProtectedOverlap(canonical, deps.protectedRoots, deps.platform, deps.realpath) !== undefined
+  ) {
+    return IAC_WORKDIR_REFUSALS.protected;
+  }
+  if (hasTerraformSegment(canonical, deps.platform)) return IAC_WORKDIR_REFUSALS.terraformDir;
+  return undefined;
+}
+
+/**
  * At approval time: the canonical form of the typed directory, or why it cannot be approved. The
  * order is cheapest-first and every reason is a fixed sentence the enable error shows.
  */
@@ -171,19 +194,8 @@ export function approveWorkdir(
   if (!deps.isDirectory(canonical)) return no(IAC_WORKDIR_REFUSALS.notADirectory);
   if (canonical.length > IAC_LIMITS.maxWorkdirChars) return no(IAC_WORKDIR_REFUSALS.tooLong);
   if (!typeable(canonical)) return no(IAC_WORKDIR_REFUSALS.notTypeable);
-  if (isRootOf(canonical, deps.platform)) return no(IAC_WORKDIR_REFUSALS.root);
-  if (
-    holds(deps.platform, canonical, deps.homeDir) ||
-    holds(deps.platform, canonical, deps.tmpDir)
-  ) {
-    return no(IAC_WORKDIR_REFUSALS.root);
-  }
-  if (
-    findProtectedOverlap(canonical, deps.protectedRoots, deps.platform, deps.realpath) !== undefined
-  ) {
-    return no(IAC_WORKDIR_REFUSALS.protected);
-  }
-  if (hasTerraformSegment(canonical, deps.platform)) return no(IAC_WORKDIR_REFUSALS.terraformDir);
+  const placement = workdirPlacementRefusal(canonical, deps);
+  if (placement !== undefined) return no(placement);
   if (terraformInputRefusal({ workingDirectory: canonical }) !== undefined) {
     return no(IAC_WORKDIR_REFUSALS.shape);
   }
@@ -214,6 +226,7 @@ export function gateWorkdir(
     return undefined;
   }
   if (canonical !== input || !deps.isDirectory(canonical)) return undefined;
+  if (workdirPlacementRefusal(canonical, deps) !== undefined) return undefined;
   const insensitive = deps.platform === "win32" || deps.platform === "darwin";
   const norm = (p: string): string => (insensitive ? p.toLowerCase() : p);
   const api = pathApiFor(deps.platform);

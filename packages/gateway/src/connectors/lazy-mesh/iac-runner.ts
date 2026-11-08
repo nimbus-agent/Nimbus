@@ -1234,6 +1234,29 @@ function isOurChangeSet(args: Record<string, unknown>, region: string): boolean 
   return OUR_CHANGE_SET_ARN.exec(id)?.[1] === region;
 }
 
+/**
+ * The folders no approved Terraform directory may overlap (is, contain or sit inside): Nimbus's data,
+ * config and sandbox directories, the extensions directory, the WHOLE cache root the sandbox and the
+ * iac root live under, the temp directory Nimbus uses (`$TMP/nimbus`), the iac root itself and, on
+ * Linux, the runtime directory (`XDG_RUNTIME_DIR`, which holds the gateway's socket).
+ */
+export function iacProtectedRootsFor(
+  paths: Pick<PlatformPaths, "dataDir" | "configDir" | "sandboxDir" | "extensionsDir" | "tempDir">,
+  platform: NodeJS.Platform,
+  runtimeDir: string | undefined,
+): readonly string[] {
+  return [
+    paths.dataDir,
+    paths.configDir,
+    paths.sandboxDir,
+    paths.extensionsDir,
+    paths.tempDir,
+    dirname(paths.sandboxDir),
+    iacRootFor(paths),
+    ...(platform === "linux" && runtimeDir !== undefined && runtimeDir !== "" ? [runtimeDir] : []),
+  ];
+}
+
 /** `<cache>/iac-runs`, a sibling of the sandbox root: never `dataDir` (the filesystem MCP writes there). */
 export function iacRootFor(paths: Pick<PlatformPaths, "sandboxDir">): string {
   return join(dirname(paths.sandboxDir), "iac-runs");
