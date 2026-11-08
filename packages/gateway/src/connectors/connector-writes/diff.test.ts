@@ -186,13 +186,13 @@ describe("renderUnifiedDiff: states and hunks", () => {
     };
     // real U+202E vs the literal text \u{202E}
     expect(text("\u202e")).toBe("\\u{202E}");
-    expect(text("\\u{202E}")).toBe("\\\\u{202E}");
+    expect(text("\\u{202E}")).toBe("\\\\u{202E}"); // cross-platform-ok: an escape sequence, not a path
     // real tab vs literal \t and vs literal \u{0009}
     expect(text("\t")).not.toBe(text("\\t"));
     expect(text("\t")).not.toBe(text("\\u{0009}"));
     // real CR vs literal \u{000D}
     expect(text("\r")).toBe("\\u{000D}");
-    expect(text("\\u{000D}")).toBe("\\\\u{000D}");
+    expect(text("\\u{000D}")).toBe("\\\\u{000D}"); // cross-platform-ok: an escape sequence, not a path
     // a backslash alone is doubled, and the mapping has no collisions over a mixed set
     expect(text("a\\b")).toBe("a\\\\b");
     const samples = ["\t", "\\t", "\r", "\\r", "\\u{000D}", "\\", "\\\\", "\u202e", "\\u{202E}"];
@@ -241,7 +241,18 @@ describe("renderUnifiedDiff: states and hunks", () => {
   });
 
   test("every unsafe class is escaped in paths, modes and lines", () => {
-    const unsafe = ["\u001b[31m", "\u0007", "\u009b", "\u007f", "\u202e", "\u2066", "\u200b", "\ufeff", " ", "\u{e0041}"];
+    const unsafe = [
+      "\u001b[31m",
+      "\u0007",
+      "\u009b",
+      "\u007f",
+      "\u202e",
+      "\u2066",
+      "\u200b",
+      "\ufeff",
+      " ",
+      "\u{e0041}",
+    ];
     for (const u of unsafe) {
       const { diff } = render([f(`p${u}q`, `o${u}\n`, `n${u}\n`, `m${u}`)]);
       const text = diffTextLines(diff).join("\n");
