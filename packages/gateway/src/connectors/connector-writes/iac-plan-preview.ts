@@ -37,14 +37,8 @@ export interface PlanPreviewCounts {
   readonly read: number;
 }
 
-/** The rendered plan: structured lines, the joined text and its digest. */
-export interface PlanPreview {
-  readonly terraformVersion: string;
-  readonly counts: PlanPreviewCounts;
-  /** Creates + updates + deletes + replaces (a replace counts once). */
-  readonly changeCount: number;
-  /** Deletes + replaces: every change that destroys something. */
-  readonly deleteCount: number;
+/** Rendered text the gateway built: its lines, the joined text and the digest of that text. */
+export interface RenderedText {
   readonly lines: readonly string[];
   /** `lines` joined by a newline. */
   readonly text: string;
@@ -52,6 +46,16 @@ export interface PlanPreview {
   readonly bytes: number;
   /** SHA-256 of `text`. */
   readonly sha256: string;
+}
+
+/** The rendered plan: structured lines, the joined text and its digest. */
+export interface PlanPreview extends RenderedText {
+  readonly terraformVersion: string;
+  readonly counts: PlanPreviewCounts;
+  /** Creates + updates + deletes + replaces (a replace counts once). */
+  readonly changeCount: number;
+  /** Deletes + replaces: every change that destroys something. */
+  readonly deleteCount: number;
 }
 
 export type PlanPreviewOutcome =
@@ -90,8 +94,19 @@ function own(o: Obj, key: string): unknown {
   return Object.hasOwn(o, key) ? o[key] : undefined;
 }
 
+/** The text, byte count and digest of `lines` (joined by a newline). */
+export function renderedText(lines: readonly string[]): RenderedText {
+  const text = lines.join("\n");
+  return {
+    lines,
+    text,
+    bytes: Buffer.byteLength(text, "utf8"),
+    sha256: createHash("sha256").update(text).digest("hex"),
+  };
+}
+
 /** One line of text for a name: escaped injectively, newline included. */
-function esc(s: string): string {
+export function escapeOneLine(s: string): string {
   return escapeDiffText(s).replaceAll("\n", String.raw`\u{000A}`);
 }
 
@@ -163,7 +178,7 @@ function showValue(
   if (typeof value === "string") {
     if (value.length > maxValueChars)
       return `(string of ${String(value.length)} characters, not shown)`;
-    return `"${esc(value).replaceAll('"', String.raw`\"`)}"`;
+    return `"${escapeOneLine(value).replaceAll('"', String.raw`\"`)}"`;
   }
   if (Array.isArray(value)) return `(list, ${String(value.length)} items)`;
   if (isObj(value)) return `(object, ${String(Object.keys(value).length)} keys)`;
@@ -278,12 +293,12 @@ function actionText(rc: ResourceChange): string {
 }
 
 function addChange(lines: Lines, rc: ResourceChange, maxValueChars: number): void {
-  const address = esc(requireString(rc.entry, "address"));
-  const type = esc(requireString(rc.entry, "type"));
-  const provider = esc(requireString(rc.entry, "provider_name"));
+  const address = escapeOneLine(requireString(rc.entry, "address"));
+  const type = escapeOneLine(requireString(rc.entry, "type"));
+  const provider = escapeOneLine(requireString(rc.entry, "provider_name"));
   lines.add(`[${actionText(rc)}] ${address} (${type}, ${provider})`);
   const reason = own(rc.entry, "action_reason");
-  if (typeof reason === "string") lines.add(`    reason: ${esc(reason)}`);
+  if (typeof reason === "string") lines.add(`    reason: ${escapeOneLine(reason)}`);
   if (rc.label !== "update" && rc.label !== "replace") return;
   const { change } = rc;
   const before = own(change, "before");
@@ -303,7 +318,7 @@ function addChange(lines: Lines, rc: ResourceChange, maxValueChars: number): voi
       markerOf(own(change, "after_unknown"), k),
       maxValueChars,
     );
-    lines.add(`    ${esc(k)}: ${left} -> ${right}`);
+    lines.add(`    ${escapeOneLine(k)}: ${left} -> ${right}`);
   }
 }
 
@@ -315,7 +330,7 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
   if (own(plan, "errored") === true || own(plan, "applyable") === false) {
     throw new Refusal("unshowable");
   }
-  const version = esc(requireString(plan, "terraform_version"));
+  const version = escapeOneLine(requireString(plan, "terraform_version"));
   const changes = readResourceChanges(plan, limits.maxChanges);
   const outputs = readOutputChanges(plan, limits.maxChanges);
   const counts = tally(changes);
@@ -332,7 +347,7 @@ function build(plan: Obj, planSha256: string, limits: PlanPreviewLimits): PlanPr
   for (const rc of changes) addChange(lines, rc, limits.maxValueChars);
   if (outputs.length > 0) {
     lines.add("Outputs:");
-    for (const o of outputs) lines.add(`  ${esc(o.name)}: ${o.label}`);
+    for (const o of outputs) lines.add(`  ${escapeOneLine(o.name)}: ${o.label}`);
   }
   lines.add(`End of plan: ${String(changeCount)} changes (${String(deleteCount)} deletes)`);
 

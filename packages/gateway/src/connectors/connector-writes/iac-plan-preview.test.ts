@@ -277,10 +277,16 @@ describe("renderPlanPreview: injective escaping (the D1c escapeDiffText approach
   const BS = String.fromCharCode(92);
 
   test("bidi, zero-width and control characters in an address are escaped, never printed", () => {
-    const p = render(plan([change(`aws_x.a‮b​c\u0007d\u001B[31m`, ["delete"], { before: {} })]));
+    const p = render(
+      plan([change(`aws_x.a\u202Eb\u200Bc\u0007d\u001B[31m`, ["delete"], { before: {} })]),
+    );
     expect(p.text).toContain("aws_x.a\\u{202E}b\\u{200B}c\\u{0007}d\\u{001B}[31m");
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the point of the assertion
-    expect(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f​-‏‪-‮⁦-⁩]/u.test(p.text)).toBe(false);
+    expect(
+      /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069]/u.test(
+        p.text,
+      ),
+    ).toBe(false);
   });
 
   test("a newline in a name cannot start a fake line", () => {
@@ -290,7 +296,7 @@ describe("renderPlanPreview: injective escaping (the D1c escapeDiffText approach
   });
 
   test("a literal backslash is doubled, so a typed escape cannot pass for a real one", () => {
-    const real = render(plan([change("a‮b", ["create"])]));
+    const real = render(plan([change("a\u202Eb", ["create"])]));
     const typed = render(plan([change(`a${BS}u{202E}b`, ["create"])]));
     expect(typed.text).not.toBe(real.text);
     expect(typed.text).toContain(`a${BS}${BS}u{202E}b`);
@@ -305,7 +311,7 @@ describe("renderPlanPreview: injective escaping (the D1c escapeDiffText approach
   });
 
   test("two different names never render the same text (spot injectivity over a small alphabet)", () => {
-    const alphabet = ["a", BS, "\n", "\t", "‮", '"', "u", "{", "}", "0"];
+    const alphabet = ["a", BS, "\n", "\t", "\u202E", '"', "u", "{", "}", "0"];
     const seen = new Map<string, string>();
     const build = (n: number, prefix: string): string[] =>
       n === 0 ? [prefix] : alphabet.flatMap((c) => build(n - 1, prefix + c));
@@ -319,8 +325,8 @@ describe("renderPlanPreview: injective escaping (the D1c escapeDiffText approach
 
   test("the version, type and provider are escaped too", () => {
     const p = render(
-      plan([change("a.b", ["create"], { type: "t‮", provider_name: "p​" })], {
-        terraform_version: "1.9‮",
+      plan([change("a.b", ["create"], { type: "t\u202E", provider_name: "p\u200B" })], {
+        terraform_version: "1.9\u202E",
       }),
     );
     expect(p.text).toContain("Terraform 1.9\\u{202E}");
@@ -499,7 +505,7 @@ describe("renderPlanPreview: costs linear, not quadratic, time", () => {
       repeats: 3,
       perSizeCeilingMs: 3000,
       makeCall: (n) => {
-        const p = plan([change(`\\‮\n`.repeat(Math.ceil(n / 3)).slice(0, n), ["create"])]);
+        const p = plan([change(`\\\u202E\n`.repeat(Math.ceil(n / 3)).slice(0, n), ["create"])]);
         return () => {
           expect(renderPlanPreview(p, SHA, bigLimits).ok).toBe(true);
         };
