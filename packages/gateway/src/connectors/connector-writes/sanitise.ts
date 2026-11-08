@@ -48,3 +48,29 @@ export function sanitisePreviewText(s: string): string {
   }
   return out;
 }
+
+/**
+ * Characters {@link escapeDiffText} always escapes: every control (Cc), format (Cf: bidi, zero-width,
+ * soft hyphen, the tag block, interlinear annotation, ...), line and paragraph separator (Zl, Zp),
+ * surrogate (Cs), the variation selectors and supplement, and the blank-looking letters (combining
+ * grapheme joiner, Hangul fillers, braille blank), and the backslash itself. One linear pass.
+ * Built from a string so the source holds escapes, never the invisible characters themselves.
+ */
+const DIFF_ESCAPED =
+  /[\\\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}\u034F\u115F\u1160\u3164\uFFA0\u2800\uFE00-\uFE0F\u{E0100}-\u{E01EF}]/gu;
+
+/**
+ * The diff's text escaper (D1c). Unlike {@link sanitisePreviewText} it is INJECTIVE: a literal
+ * backslash is shown `\\`, so a real character shown `\u{XXXX}` (a tab is `\u{0009}`, a CR
+ * `\u{000D}`) can never look like the same characters typed literally, and it escapes every
+ * invisible or format character, not the shorter list of the field previews. Only LF is kept (a
+ * diff line never holds one).
+ */
+export function escapeDiffText(s: string): string {
+  return s.replace(DIFF_ESCAPED, (ch) => {
+    if (ch === "\n") return ch;
+    if (ch === "\\") return "\\\\";
+    const c = ch.codePointAt(0) ?? 0;
+    return String.raw`\u{${c.toString(16).toUpperCase().padStart(4, "0")}}`;
+  });
+}

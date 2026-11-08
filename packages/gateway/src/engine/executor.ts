@@ -26,7 +26,7 @@ import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
-import { omitFileText } from "./audit-files.ts";
+import { commitFilesDigest, withoutFileText } from "./audit-files.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
   BeforeStateRefusedError,
@@ -562,8 +562,7 @@ function auditedAction(action: PlannedAction): PlannedAction {
   // The rendered plan repeats `plan`, which the row keeps.
   if (hasPlanText(action)) return { ...action, payload: omitPlanText(action.payload) };
   // A multi-file write keeps its file count and size, never the file text (D1c).
-  const withoutFileText = omitFileText(action.payload);
-  return withoutFileText === undefined ? action : { ...action, payload: withoutFileText };
+  return withoutFileText(action);
 }
 
 /** What a type-to-confirm approval came to, for the audit row (never the typed text itself). */
@@ -581,6 +580,8 @@ interface GateRecord {
   boundValuesSha256?: string;
   /** SHA-256 of the rendered diff the approver was shown (a bound write with a diff, D1c). */
   diffSha256?: string;
+  /** SHA-256 of the exact files a commit write dispatches (length-prefixed, in order, D1c). */
+  filesSha256?: string | undefined;
 }
 
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
@@ -667,6 +668,7 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
       ? {}
       : { boundValuesSha256: record.boundValuesSha256 }),
     ...(record.diffSha256 === undefined ? {} : { diffSha256: record.diffSha256 }),
+    ...(record.filesSha256 === undefined ? {} : { filesSha256: record.filesSha256 }),
   };
 }
 
@@ -677,6 +679,7 @@ interface AuditExtras {
   confirm?: ConfirmOutcome;
   boundValuesSha256?: string;
   diffSha256?: string;
+  filesSha256?: string;
 }
 
 /**
@@ -684,10 +687,11 @@ interface AuditExtras {
  * action (a 5000-character commit message) must never push them out of the row.
  */
 function auditPayload(action: PlannedAction, extras: AuditExtras): string {
-  const { boundValuesSha256, diffSha256, ...rest } = extras;
+  const { boundValuesSha256, diffSha256, filesSha256, ...rest } = extras;
   return redactAuditPayload({
     ...(boundValuesSha256 === undefined ? {} : { boundValuesSha256 }),
     ...(diffSha256 === undefined ? {} : { diffSha256 }),
+    ...(filesSha256 === undefined ? {} : { filesSha256 }),
     action: auditedAction(action),
     ...rest,
   });
@@ -968,7 +972,11 @@ export class ToolExecutor {
     const captured = await this.captureBeforePhase(action, opts);
     const prepared = await this.preparePhase(action, opts, scope);
     if (prepared !== undefined) record.boundValuesSha256 = boundValuesDigest(prepared.values);
-    if (prepared?.diff !== undefined) record.diffSha256 = prepared.diff.sha256;
+    if (prepared?.diff !== undefined) {
+      record.diffSha256 = prepared.diff.sha256;
+      // The prepare step proved the list well-formed before it rendered a diff.
+      record.filesSha256 = commitFilesDigest(action.payload);
+    }
     const preview = withPrepared(captured, prepared);
     const confirm = this.renderConfirmPhase(action);
     if (confirm.kind === "refuse") {
@@ -1269,7 +1277,8 @@ export class ToolExecutor {
 
     this.egressSink.append(
       buildEgressEntry({
-        action,
+        // The ledger's payload summary never holds the text of a commit's files either (D1c).
+        action: withoutFileText(action),
         hitlStatus,
         resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
         sessionId,

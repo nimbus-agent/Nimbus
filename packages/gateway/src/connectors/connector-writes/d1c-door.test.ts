@@ -252,7 +252,8 @@ describe("D1c through the real door", () => {
         expect(d.dispatched.map((a) => isPrepareActionType(a.type))).toEqual([true, false]);
         const w = writes(d)[0];
         expect(w?.origin).toBe("model");
-        const sent = (w?.payload as { input: Record<string, unknown> })["input"];
+        expect(w).toBeDefined();
+        const sent = ((w as PlannedAction).payload as { input: Record<string, unknown> }).input;
         expect(sent["expectedHeadSha"]).toBe(HEAD);
         expect(sent["message"]).toBe("Update a");
         expect(d.plain).toEqual([]);

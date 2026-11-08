@@ -13,7 +13,7 @@
 // A diff over the byte cap is REFUSED, never truncated.
 
 import { createHash } from "node:crypto";
-import { sanitisePreviewText } from "./sanitise.ts";
+import { escapeDiffText } from "./sanitise.ts";
 
 /** The default byte cap of the rendered, sanitised diff text (`commit-limits.ts` pins it equal). */
 export const DIFF_DEFAULT_MAX_BYTES = 65_536;
@@ -253,7 +253,7 @@ function buildHunks(edits: readonly Edit[]): DiffHunk[] {
     let newLines = 0;
     for (let i = from; i <= to; i++) {
       const e = edits[i] as Edit;
-      lines.push({ op: e.op, text: sanitisePreviewText(e.line.text) });
+      lines.push({ op: e.op, text: escapeDiffText(e.line.text) });
       if (e.op !== "+") oldLines++;
       if (e.op !== "-") newLines++;
       if (!e.line.eol) lines.push({ op: "\\", text: "No newline at end of file" });
@@ -311,8 +311,8 @@ export function renderUnifiedDiff(
     const isNew = file.oldContent === undefined;
     const before = splitLines(file.oldContent ?? "");
     const after = splitLines(file.newContent);
-    const path = sanitisePreviewText(file.path);
-    const mode = file.mode === undefined ? {} : { mode: sanitisePreviewText(file.mode) };
+    const path = escapeDiffText(file.path);
+    const mode = file.mode === undefined ? {} : { mode: escapeDiffText(file.mode) };
     if (!isNew && file.oldContent === file.newContent) {
       return { path, state: "unchanged", ...mode, additions: 0, deletions: 0, hunks: [] };
     }

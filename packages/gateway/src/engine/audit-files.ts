@@ -1,35 +1,106 @@
 // packages/gateway/src/engine/audit-files.ts
-// What a write's audit row records of a `files: [{path, content}]` input (Phase 9.7 D1c): the count
-// and the total content size, never the file text. The audit payload is capped at 4096 characters
-// (`audit/format-audit-payload.ts`), so a 32 KiB commit would be cut mid-file, and file text can hold
-// anything (the credential patterns the redactor knows are not all of them). What was approved is
-// reconciled by the row's `diffSha256` instead, not by storing the diff.
+// What the audit row and the egress ledger record of a `files: [{path, content}]` input (Phase 9.7
+// D1c): the count and the total content size, never the file text. The audit payload is capped at
+// 4096 characters (`audit/format-audit-payload.ts`), so a 32 KiB commit would be cut mid-file, and
+// file text can hold anything (the credential patterns the redactor knows are not all of them).
+// What was approved is reconciled by the row's `diffSha256` and `filesSha256` instead, not by
+// storing the diff or the files.
+import { createHash } from "node:crypto";
 import { isPlainObject } from "../connectors/connector-writes/preview.ts";
+import type { PlannedAction } from "./types.ts";
+
+/**
+ * The action types whose `files` list is file TEXT: the two multi-file commit writes and their
+ * prepare reads (`<service>.write.prepare`). Any other action keeps its audit detail (a user-MCP
+ * tool's own `files` argument, I42, is not rewritten). A test pins this set to the bound rows.
+ */
+export const COMMIT_FILE_ACTION_TYPES: ReadonlySet<string> = new Set([
+  "github.file.commit",
+  "gitlab.commit.create",
+  "github.write.prepare",
+  "gitlab.write.prepare",
+]);
 
 const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
 
+function isFilePair(f: unknown): f is { path: string; content: string } {
+  return isPlainObject(f) && typeof f["path"] === "string" && typeof f["content"] === "string";
+}
+
+/** Where the action's `files` live: `payload.input` when it is an object, else the payload root. */
+function holderOf(payload: Readonly<Record<string, unknown>>): {
+  holder: Readonly<Record<string, unknown>>;
+  inInput: boolean;
+} {
+  const nested = payload["input"];
+  const inInput = Object.hasOwn(payload, "input") && isPlainObject(nested);
+  return { holder: inInput ? nested : payload, inInput };
+}
+
 /**
- * `payload` with its `files` list (at `payload.input` when the action carries one, else at the
- * root) replaced by `{ count, contentBytes }`, or `undefined` when there is no such list: a list
- * whose every entry is an object holding a string `path` and a string `content`.
+ * `payload` with its `files` value (at `payload.input` when the action carries one, else at the
+ * root) replaced by a summary: `{ count, contentBytes }` for a well-formed list (every entry an
+ * object holding a string `path` and a string `content`), or `{ count, malformed: true }` for
+ * anything else, so the text of a list the gate is about to refuse is never recorded either.
+ * `undefined` when there is no `files` key.
  */
 export function omitFileText(
   payload: Readonly<Record<string, unknown>>,
 ): Record<string, unknown> | undefined {
-  const nested = payload["input"];
-  const inInput = Object.hasOwn(payload, "input") && isPlainObject(nested);
-  const holder: Readonly<Record<string, unknown>> = inInput ? nested : payload;
-  const files = holder["files"];
-  if (!Array.isArray(files) || files.length === 0) return undefined;
-  let bytes = 0;
-  for (const f of files as unknown[]) {
-    if (!isPlainObject(f) || typeof f["path"] !== "string" || typeof f["content"] !== "string") {
-      return undefined;
-    }
-    bytes += utf8Length(f["content"]);
+  const { holder, inInput } = holderOf(payload);
+  if (!Object.hasOwn(holder, "files")) return undefined;
+  const files: unknown = holder["files"];
+  let summary: Record<string, unknown>;
+  if (Array.isArray(files) && (files as unknown[]).every(isFilePair)) {
+    const pairs = files as Array<{ content: string }>;
+    summary = {
+      count: pairs.length,
+      contentBytes: pairs.reduce((n, f) => n + utf8Length(f.content), 0),
+    };
+  } else {
+    summary = { count: Array.isArray(files) ? files.length : 0, malformed: true };
   }
-  const summary = { count: files.length, contentBytes: bytes };
   return inInput
     ? { ...payload, input: { ...holder, files: summary } }
     : { ...payload, files: summary };
+}
+
+/**
+ * `action` with its file text omitted when it is one of the commit action types; every other
+ * action (and a commit action without `files`) is returned as it is. The ONE rewrite the audit row
+ * and the egress ledger both use.
+ */
+export function withoutFileText(action: PlannedAction): PlannedAction {
+  if (action.payload === undefined || !COMMIT_FILE_ACTION_TYPES.has(action.type)) return action;
+  const omitted = omitFileText(action.payload);
+  return omitted === undefined ? action : { ...action, payload: omitted };
+}
+
+/** An 8-byte big-endian length, so concatenated fields cannot be shifted into one another. */
+function lengthPrefix(n: number): Buffer {
+  const b = Buffer.alloc(8);
+  b.writeBigUInt64BE(BigInt(n));
+  return b;
+}
+
+/**
+ * SHA-256 (hex) over the EXACT files a commit write dispatches, in dispatch order: for each file,
+ * the 8-byte length and the UTF-8 bytes of its path, then of its content. `undefined` when the
+ * action carries no well-formed `files` list. The audit row's `filesSha256`, so what was sent can
+ * be reconciled with the connector's own log without storing the text.
+ */
+export function commitFilesDigest(
+  payload: Readonly<Record<string, unknown>> | undefined,
+): string | undefined {
+  if (payload === undefined) return undefined;
+  const files: unknown = holderOf(payload).holder["files"];
+  if (!Array.isArray(files) || !(files as unknown[]).every(isFilePair)) return undefined;
+  const hash = createHash("sha256");
+  for (const f of files as Array<{ path: string; content: string }>) {
+    for (const text of [f.path, f.content]) {
+      const bytes = Buffer.from(text, "utf8");
+      hash.update(lengthPrefix(bytes.length)).update(bytes);
+    }
+  }
+  return hash.digest("hex");
 }

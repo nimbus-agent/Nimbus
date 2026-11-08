@@ -44,7 +44,7 @@ const PREPARE_SUFFIX = ".write.prepare";
 export const PREPARE_HITL_REFUSAL = "policy requires approval";
 
 /** `<service>.write.prepare`: the step's action type, so `serviceOf` names the connector (I29). */
-function prepareActionType(service: string): string {
+export function prepareActionType(service: string): string {
   return `${service}${PREPARE_SUFFIX}`;
 }
 

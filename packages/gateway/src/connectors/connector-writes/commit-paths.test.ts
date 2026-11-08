@@ -6,6 +6,7 @@ import { describe, expect, test } from "bun:test";
 import { SECRET_PATTERNS } from "../../security/secret-patterns.ts";
 import { COMMIT_INPUT_REFUSALS } from "./commit-limits.ts";
 import {
+  COMMIT_BIDI_REFUSAL,
   COMMIT_CREDENTIAL_REFUSAL,
   COMMIT_PATH_REFUSAL,
   COMMIT_REFUSED_BASENAMES,
@@ -224,5 +225,28 @@ describe("credential-looking content", () => {
   test("a path refusal wins over a credential (checked first), and neither is built from the input", () => {
     const both = withFiles({ path: "CODEOWNERS", content: SAMPLES["aws_access_key"] ?? "" });
     expect(commitModelRefusal(GH, both)).toBe(COMMIT_PATH_REFUSAL);
+  });
+});
+
+describe("bidirectional controls in new content (Trojan Source)", () => {
+  const points = [
+    0x061c, 0x200e, 0x200f, 0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2066, 0x2067, 0x2068, 0x2069,
+  ];
+  test.each(points)("U+%i is refused on both rows, whichever file holds it", (cp) => {
+    const ch = String.fromCodePoint(cp);
+    for (const tool of [GH, GL]) {
+      const input = withFiles(
+        { path: "a.ts", content: "fine\n" },
+        { path: "b.ts", content: `if (x) {${ch}}\n` },
+      );
+      expect(commitModelRefusal(tool, input)).toBe(COMMIT_BIDI_REFUSAL);
+    }
+  });
+
+  test("the literal text of an escape is not a bidi control, and the refusal names nothing", () => {
+    expect(
+      commitModelRefusal(GH, withFiles({ path: "a.md", content: String.raw`\u{202E}` })),
+    ).toBeUndefined();
+    expect(COMMIT_BIDI_REFUSAL).not.toContain("202");
   });
 });

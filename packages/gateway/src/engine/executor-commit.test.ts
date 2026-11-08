@@ -5,6 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
+import { commitFilesDigest } from "./audit-files.ts";
 import {
   BOUND_VIA_GATE_REASON,
   CONFIRM_MISMATCH_REASON,
@@ -365,11 +366,37 @@ for (const which of ["github", "gitlab"] as const) {
       // the row hit it, so the digests must already be in the row's first characters.
       expect(new TextEncoder().encode(json).length).toBeLessThanOrEqual(4096 + 15);
       expect(json.startsWith('{"boundValuesSha256":"')).toBe(true);
-      expect(json.slice(0, 200)).toMatch(
-        /"boundValuesSha256":"[0-9a-f]{64}","diffSha256":"[0-9a-f]{64}","action":/,
+      expect(json.slice(0, 400)).toMatch(
+        /"boundValuesSha256":"[0-9a-f]{64}","diffSha256":"[0-9a-f]{64}","filesSha256":"[0-9a-f]{64}","action":/,
       );
       expect(last?.actionJson).not.toContain("line of text");
       expect(last?.actionJson).not.toContain(HEAD);
+      // filesSha256 covers the EXACT files dispatched, in order, length-prefixed.
+      const sent = inputOf(writesOf(h)[0])["files"] as Array<{ path: string; content: string }>;
+      expect(json).toContain(`"filesSha256":"${commitFilesDigest({ files: sent })}"`);
+    });
+
+    test("neither the ledger rows nor the audit rows hold file text, for the prepare read and the write", async () => {
+      const secret = "UNIQUE-FILE-TEXT-MARKER";
+      const files = [{ path: "src/a.ts", content: `const x = "${secret}";\n` }];
+      const reply = {
+        headSha: HEAD,
+        files: [
+          which === "github"
+            ? { path: "src/a.ts", exists: true, mode: "100644", oldContent: "old\n" }
+            : { path: "src/a.ts", exists: true, executable: false, oldContent: "old\n" },
+        ],
+      };
+      const h = harness({ which, prepareReply: () => reply });
+      const r = await h.exec.execute(actionOf(which, { ...ROWS[which].input, files }));
+      expect(r.status).toBe("ok");
+      // two ledger rows: the prepare read and the write
+      expect(h.egress.map((e) => e.method)).toEqual([`${which}.write.prepare`, ROWS[which].type]);
+      for (const e of h.egress) {
+        expect(e.payloadSummary, e.method).not.toContain(secret);
+        expect(e.payloadSummary, e.method).toContain('"contentBytes"');
+      }
+      for (const a of h.audits) expect(a.actionJson, a.actionType).not.toContain(secret);
     });
   });
 }

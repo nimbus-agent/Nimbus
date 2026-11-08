@@ -174,7 +174,7 @@ describe("the prompt lines carry the diff last, with a footer", () => {
     expect(renderConnectorWritePreviewLines(base).join("\n")).not.toContain("End of diff");
   });
 
-  test("a tab inside a line shows as \\t, and no line holds a raw control character", () => {
+  test("a tab inside a line shows as \\u{0009}, and no line holds a raw control character", () => {
     const diff = diffOf([
       {
         path: "p\u001b[2Jq",
@@ -187,7 +187,7 @@ describe("the prompt lines carry the diff last, with a footer", () => {
       // biome-ignore lint/suspicious/noControlCharactersInRegex: asserting their absence
       expect(l).not.toMatch(/[\u0000-\u001f\u007f-\u009f‮]/);
     }
-    expect(lines.join("\n")).toContain("+a\\tb\\u{000D}");
+    expect(lines.join("\n")).toContain("+a\\u{0009}b\\u{000D}");
     expect(lines.at(-1)).toBe("End of diff: 1 file, +2 -0");
   });
 });

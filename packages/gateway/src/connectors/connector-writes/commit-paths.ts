@@ -15,6 +15,12 @@ export const COMMIT_PATH_REFUSAL =
 export const COMMIT_CREDENTIAL_REFUSAL =
   "the model cannot commit text that looks like a credential; remove it and use the platform's secret store";
 
+export const COMMIT_BIDI_REFUSAL =
+  "the model cannot commit text with a bidirectional control character (it can make code read differently from what it does)";
+
+/** Trojan Source: U+061C, U+200E, U+200F, U+202A-202E, U+2066-2069. The owner's own doors show it escaped. */
+const BIDI_CONTROL = /\p{Bidi_Control}/u;
+
 /** The two multi-file commit writes (the only rows these refusals apply to). */
 export const COMMIT_WRITE_TOOL_IDS: ReadonlySet<string> = new Set([
   "github_file_commit",
@@ -107,6 +113,8 @@ export function commitModelRefusal(
   const paths = pairs.map((f) => f.path).filter((p): p is string => typeof p === "string");
   if (!paths.every(isSafeCommitPathGateway)) return COMMIT_INPUT_REFUSALS.pathUnsafe;
   if (paths.some(isRefusedCommitPath)) return COMMIT_PATH_REFUSAL;
+  const contents = pairs.map((f) => f.content).filter((c): c is string => typeof c === "string");
+  if (contents.some((c) => BIDI_CONTROL.test(c))) return COMMIT_BIDI_REFUSAL;
   const credential = pairs.some(
     (f) => typeof f.content === "string" && looksLikeCredential(f.content),
   );

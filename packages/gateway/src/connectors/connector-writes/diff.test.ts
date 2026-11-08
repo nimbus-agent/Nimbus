@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { type DiffInputFile, diffTextLines, type PreviewDiff, renderUnifiedDiff } from "./diff.ts";
-import { sanitisePreviewText } from "./sanitise.ts";
+import { escapeDiffText } from "./sanitise.ts";
 
 function render(files: DiffInputFile[], opts?: Parameters<typeof renderUnifiedDiff>[1]) {
   const r = renderUnifiedDiff(files, opts);
@@ -174,9 +174,70 @@ describe("renderUnifiedDiff: states and hunks", () => {
     expect(diffTextLines(diff).join("\n")).not.toContain("\r");
   });
 
-  test("tabs are kept in the data (the line renderer shows them as \\t)", () => {
+  test("a tab is escaped like every other control (U+0009), never kept raw", () => {
     const { diff } = render([f("a", undefined, "a\tb\n")]);
-    expect(diff.files[0]?.hunks[0]?.lines[0]?.text).toBe("a\tb");
+    expect(diff.files[0]?.hunks[0]?.lines[0]?.text).toBe("a\\u{0009}b");
+  });
+
+  test("the escaping is injective: a real character and its typed-out escape render differently", () => {
+    const text = (content: string) => {
+      const { diff } = render([f("a", undefined, `${content}\n`)]);
+      return diff.files[0]?.hunks[0]?.lines[0]?.text;
+    };
+    // real U+202E vs the literal text \u{202E}
+    expect(text("‮")).toBe("\\u{202E}");
+    expect(text("\\u{202E}")).toBe("\\\\u{202E}");
+    // real tab vs literal \t and vs literal \u{0009}
+    expect(text("\t")).not.toBe(text("\\t"));
+    expect(text("\t")).not.toBe(text("\\u{0009}"));
+    // real CR vs literal \u{000D}
+    expect(text("\r")).toBe("\\u{000D}");
+    expect(text("\\u{000D}")).toBe("\\\\u{000D}");
+    // a backslash alone is doubled, and the mapping has no collisions over a mixed set
+    expect(text("a\\b")).toBe("a\\\\b");
+    const samples = ["\t", "\\t", "\r", "\\r", "\\u{000D}", "\\", "\\\\", "‮", "\\u{202E}"];
+    expect(new Set(samples.map(text)).size).toBe(samples.length);
+  });
+
+  test("every invisible or format character is escaped, in lines, paths and modes", () => {
+    const hidden = [
+      "­", // soft hyphen (Cf)
+      "؀",
+      "؅",
+      "۝",
+      "܏",
+      "￹",
+      "￻",
+      "\u{1d173}",
+      "\u{1d17a}",
+      " ",
+      " ",
+      "​",
+      "‍",
+      "⁠",
+      "﻿",
+      "︀",
+      "️",
+      "\u{e0100}",
+      "\u{e01ef}",
+      "͏",
+      "ᅟ",
+      "ᅠ",
+      "ㅤ",
+      "ﾠ",
+      "⠀",
+      "\u0000",
+      "\u001b",
+      "\u007f",
+      "\u0085",
+      "\u009f",
+    ];
+    for (const ch of hidden) {
+      const { diff } = render([f(`p${ch}q`, `o${ch}\n`, `n${ch}\n`, `m${ch}`)]);
+      const out = diffTextLines(diff).join("\n");
+      expect(out.includes(ch), `U+${ch.codePointAt(0)?.toString(16)}`).toBe(false);
+      expect(out).toContain("\\u{");
+    }
   });
 
   test("every unsafe class is escaped in paths, modes and lines", () => {
@@ -186,8 +247,8 @@ describe("renderUnifiedDiff: states and hunks", () => {
       const text = diffTextLines(diff).join("\n");
       expect(text).not.toContain(u);
       expect(text).toContain("\\u{");
-      expect(diff.files[0]?.path).toBe(sanitisePreviewText(`p${u}q`));
-      expect(diff.files[0]?.mode).toBe(sanitisePreviewText(`m${u}`));
+      expect(diff.files[0]?.path).toBe(escapeDiffText(`p${u}q`));
+      expect(diff.files[0]?.mode).toBe(escapeDiffText(`m${u}`));
     }
   });
 
@@ -246,9 +307,9 @@ describe("renderUnifiedDiff: the property (apply the hunks, get the new text)", 
       const { diff } = render([f("p", oldText, newText)]);
       const file = diff.files[0];
       if (file === undefined) throw new Error("no file");
-      const got = applyHunks(sanitisePreviewText(oldText), file);
+      const got = applyHunks(escapeDiffText(oldText), file);
       expect(got, `case ${String(i)}: ${JSON.stringify([oldText, newText])}`).toBe(
-        sanitisePreviewText(newText),
+        escapeDiffText(newText),
       );
       const c = counts(file);
       expect(file.additions).toBe(c.add);
@@ -264,7 +325,7 @@ describe("renderUnifiedDiff: the property (apply the hunks, get the new text)", 
       const { diff } = render([f("p", undefined, text)]);
       const file = diff.files[0];
       if (file === undefined) throw new Error("no file");
-      expect(applyHunks("", file)).toBe(sanitisePreviewText(text));
+      expect(applyHunks("", file)).toBe(escapeDiffText(text));
     }
   });
 });
