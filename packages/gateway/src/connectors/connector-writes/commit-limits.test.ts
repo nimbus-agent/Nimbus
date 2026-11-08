@@ -35,7 +35,11 @@ describe("COMMIT_LIMITS", () => {
     // A reply carries up to 32 KiB of old content per the cap, escaped at worst twice.
     expect(COMMIT_LIMITS.maxReplyChars).toBeGreaterThan(COMMIT_LIMITS.maxOldContentBytes * 2);
     // The diff travels twice in consent.request (prompt and details) and each frame is < 1 MiB.
-    expect(COMMIT_LIMITS.maxDiffBytes * 2 * 2 + 64 * 1024).toBeLessThan(1024 * 1024);
+    // (the structured copy is up to ~24 bytes per 2-byte diff line: ipc/consent-diff-frame.test.ts
+    // measures the real worst case, about 785 KB)
+    expect(
+      (COMMIT_LIMITS.maxDiffBytes / 2) * 24 + COMMIT_LIMITS.maxDiffBytes * 2 + 64 * 1024,
+    ).toBeLessThan(1024 * 1024);
     expect(COMMIT_LIMITS.maxDiffBytes).toBeGreaterThan(COMMIT_LIMITS.maxNewContentBytes);
   });
 });

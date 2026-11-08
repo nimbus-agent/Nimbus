@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { createIpcClient } from "../../ipc/client";
 import { useNimbusStore } from "../../store";
-import { isConnectorWriteDetails } from "./ConnectorWritePreview";
+import { isConnectorWriteDetails, isDiffMalformed } from "./ConnectorWritePreview";
 import { StructuredPreview } from "./StructuredPreview";
 
 const DESTRUCTIVE_PATTERNS: readonly RegExp[] = [
@@ -59,7 +59,9 @@ export function HitlPopupPage(): ReactNode {
   // The gateway judges the answer; this page only withholds the button until it matches.
   const confirmText =
     head?.confirmText !== undefined && head.confirmText !== "" ? head.confirmText : undefined;
-  const typedMatches = confirmText === undefined || typed === confirmText;
+  // A `diff` the page cannot read keeps Approve disabled whatever is typed (D1c).
+  const typedMatches =
+    (confirmText === undefined || typed === confirmText) && !isDiffMalformed(head?.details);
 
   // Focus is placed imperatively, keyed on the action, NOT via the `autoFocus` attribute. React
   // honours `autoFocus` only at mount, and this popup does not remount between queued requests —

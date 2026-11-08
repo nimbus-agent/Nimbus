@@ -163,6 +163,13 @@ for (const which of ["github", "gitlab"] as const) {
       expect(h.prompts[0]).toContain("End of diff: 2 files, +2 -1");
       expect(h.prompts[0]).toContain(`Branch head: ${HEAD}`);
       expect(h.confirmed[0]?.confirmText).toBe(ROWS[which].confirm);
+      // The diff is the LAST section: its footer, a blank line, then the fixed typed-confirm line.
+      const tail = (h.prompts[0] ?? "").trimEnd().split("\n").slice(-3);
+      expect(tail).toEqual([
+        "End of diff: 2 files, +2 -1",
+        "",
+        `To approve, type exactly: ${ROWS[which].confirm}`,
+      ]);
     });
 
     test("a prepare read is audited and ledgered BEFORE the write's own rows (I29), as <service>.write.prepare", async () => {
