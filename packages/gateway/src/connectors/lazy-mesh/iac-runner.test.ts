@@ -709,3 +709,114 @@ describe("the live count is taken before the first await (review item 6)", () =>
     expect((await r.preflight("iac_terraform_apply", { workingDirectory: work })).ok).toBe(true);
   });
 });
+
+describe("the Windows ledger keeps one entry per live profile (review item 1)", () => {
+  const second = join(root, "work-two");
+  mkdirSync(second, { recursive: true });
+  const two = (): Partial<IacRunnerDeps> => ({
+    grants: () => ({ ...GRANTS, workdirs: [work, second] }),
+    timeoutsMs: { iac_terraform_plan: 5_000, iac_terraform_apply: 5_000 },
+  });
+
+  function ledgerOf(initial: IacLedgerEntry[]): IacGrantLedger & { entries: IacLedgerEntry[] } {
+    const l = {
+      entries: initial,
+      load: () => l.entries,
+      save: (e: readonly IacLedgerEntry[]) => {
+        l.entries = [...e];
+      },
+    };
+    return l;
+  }
+
+  test("a second spawn leaves the still-running first spawn's entry and ACEs alone", async () => {
+    const log: string[] = [];
+    const ledger = ledgerOf([{ id: "stale.crash", paths: ["/gone"] }]);
+    const { r, children } = runner("hang", {
+      ...two(),
+      platform: "win32",
+      ledger,
+      revokerFor: (id) => ({
+        active: true,
+        revoke: async () => {
+          log.push(id);
+        },
+      }),
+    });
+    const a = await r.preflight("iac_terraform_apply", { workingDirectory: work });
+    const b = await r.preflight("iac_terraform_apply", { workingDirectory: second });
+    if (!a.ok || !b.ok) throw new Error("preflight refused");
+    const first = r.execute("iac_terraform_plan", { workingDirectory: work });
+    first.catch(() => undefined);
+    await new Promise((res) => setTimeout(res, 30));
+    const firstId = ledger.entries.find((e) => e.id !== "stale.crash")?.id;
+    expect(firstId).toBeDefined();
+    expect(ledger.entries.map((e) => e.id)).not.toContain("stale.crash"); // revoked and dropped
+    log.length = 0;
+    const secondCall = r.execute("iac_terraform_plan", { workingDirectory: second });
+    secondCall.catch(() => undefined);
+    await new Promise((res) => setTimeout(res, 30));
+    // The first child is alive: its entry is untouched and was never revoked.
+    expect(log).not.toContain(firstId as string);
+    expect(ledger.entries).toHaveLength(2);
+    expect(ledger.entries.map((e) => e.id)).toContain(firstId as string);
+    // Once a child is gone its own entry is revoked and removed, and only its own.
+    (children[0] as FakeChild).exit(0);
+    await new Promise((res) => setTimeout(res, 30));
+    expect(ledger.entries.map((e) => e.id)).not.toContain(firstId as string);
+    expect(ledger.entries).toHaveLength(1);
+    (children[1] as FakeChild).exit(0);
+    await new Promise((res) => setTimeout(res, 30));
+    expect(ledger.entries).toEqual([]);
+    a.release();
+    b.release();
+  });
+
+  test("an entry whose revoke failed is not running: the next spawn retries it", async () => {
+    let fail = true;
+    const ledger = ledgerOf([]);
+    const { r, children } = runner("answer", {
+      platform: "win32",
+      ledger,
+      revokerFor: () => ({
+        active: true,
+        revoke: async () => {
+          if (fail) throw new Error("helper failed");
+        },
+      }),
+    });
+    const run = await openRun(r);
+    await r.execute("iac_terraform_plan", PLAN_INPUT);
+    await new Promise((res) => setTimeout(res, 30));
+    expect(ledger.entries).toHaveLength(1); // its release failed: kept
+    fail = false;
+    await r.execute("iac_terraform_plan", PLAN_INPUT); // revokes the leftover, then records its own
+    await new Promise((res) => setTimeout(res, 30));
+    expect(ledger.entries).toEqual([]);
+    expect(children).toHaveLength(2);
+    run.release();
+  });
+
+  test("a spawn that throws after the grants were recorded releases them", async () => {
+    const log: string[] = [];
+    const ledger = ledgerOf([]);
+    const { r } = runner("answer", {
+      platform: "win32",
+      ledger,
+      revokerFor: (id) => ({
+        active: true,
+        revoke: async () => {
+          log.push(id);
+        },
+      }),
+      spawnChild: () => {
+        throw new Error("no sandbox");
+      },
+    });
+    const run = await openRun(r);
+    await expect(r.execute("iac_terraform_plan", PLAN_INPUT)).rejects.toThrow("no sandbox");
+    expect(ledger.entries).toEqual([]);
+    expect(log.length).toBeGreaterThan(0);
+    run.release();
+  });
+});

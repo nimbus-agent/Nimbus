@@ -554,6 +554,8 @@ export class IacRunner implements IacHost {
   private swept = false;
   private realApproved: string | undefined;
   private ledgerTail: Promise<void> = Promise.resolve();
+  /** Profile ids whose child THIS process started and has not yet seen exit and release. */
+  private readonly runningProfiles = new Set<string>();
   private readonly hex: (bytes: number) => string;
   private readonly removeTree: (p: string) => void;
 
@@ -822,8 +824,10 @@ export class IacRunner implements IacHost {
       ...manifest.permissions.filesystem.write,
     ]);
     let child: IacChild | undefined;
+    let prepared = false;
     try {
       await this.prepareGrants(manifest.id, paths);
+      prepared = true;
       // I1: the child's environment is extensionProcessEnv plus exactly the named variables.
       const wrapped = wrapIacServerSpec(
         {
@@ -835,6 +839,8 @@ export class IacRunner implements IacHost {
       );
       child = (this.deps.spawnChild ?? spawnIacChild)(wrapped);
     } catch (e) {
+      // A spawn that failed after its grants were recorded releases them like a child that exited.
+      if (prepared) await this.afterExit(manifest.id, paths);
       this.safeRemove(cwd);
       onExited();
       throw e;
@@ -935,18 +941,29 @@ export class IacRunner implements IacHost {
   }
 
   /**
-   * Windows only. Every earlier entry in the ledger is revoked FIRST (an ACE outlives its child; a
-   * failure refuses the spawn, fail closed), then this spawn's paths are recorded BEFORE it can be
-   * granted anything. The helper's DACL rewrites are serialised behind this one chain.
+   * Windows only. The ledger holds ONE entry per profile id. Entries whose child this process is
+   * not running (a crash, an earlier boot, a release that failed) are revoked FIRST (an ACE outlives
+   * its child; a failure refuses the spawn, fail closed, and the stale entry stays); an entry of a
+   * child that is still running is left alone, so a sibling mid-apply keeps its grants. Then this
+   * spawn's paths are recorded BEFORE it can be granted anything. The helper's DACL rewrites are
+   * serialised behind this one chain.
    */
   private prepareGrants(profileId: string, paths: readonly string[]): Promise<void> {
     if (!this.revoker(profileId).active) return Promise.resolve();
     const ledger =
       this.deps.ledger ?? fileIacGrantLedger(iacGrantLedgerFile(this.deps.paths.configDir));
     return this.serial(async () => {
-      const stale = ledger.load();
-      for (const e of stale) await this.revoker(e.id).revoke(e.paths);
-      ledger.save([{ id: profileId, paths }]);
+      const entries = ledger.load();
+      const keep: IacLedgerEntry[] = [];
+      for (const e of entries) {
+        if (this.runningProfiles.has(e.id)) {
+          keep.push(e);
+          continue;
+        }
+        await this.revoker(e.id).revoke(e.paths);
+      }
+      ledger.save([...keep, { id: profileId, paths }]);
+      this.runningProfiles.add(profileId);
     });
   }
 
@@ -957,6 +974,9 @@ export class IacRunner implements IacHost {
     const ledger =
       this.deps.ledger ?? fileIacGrantLedger(iacGrantLedgerFile(this.deps.paths.configDir));
     return this.serial(async () => {
+      // The child is gone whether or not the release below succeeds: a kept entry is retried by the
+      // next spawn, which treats any entry it is not running as stale.
+      this.runningProfiles.delete(profileId);
       try {
         await revoker.revoke(paths);
         ledger.save(ledger.load().filter((e) => e.id !== profileId));
