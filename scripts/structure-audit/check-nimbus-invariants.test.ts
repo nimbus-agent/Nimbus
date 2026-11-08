@@ -9,6 +9,7 @@ import {
   checkAgentEmitterImportConfinement,
   checkAgentProvenanceWriters,
   checkBeforeStateRead,
+  checkBoundCapabilities,
   checkBoundWrites,
   checkBrokeredFetchLiteralConfinement,
   checkCaptureGateCallers,
@@ -30,6 +31,7 @@ import {
   checkFleetClientKindConfinement,
   checkForwardShareConfinement,
   checkGeneratedManifestConfinement,
+  checkIacDiscard,
   checkListenerRegistryConfinement,
   checkMediaGrantStoreConfinement,
   checkMigrationConfinement,
@@ -4821,5 +4823,199 @@ const d = renderUnifiedDiff(files);
     }
     expect(files.some((f) => f.relPath === EXECUTOR)).toBe(true);
     expect(checkBoundWrites(files)).toEqual([]);
+  });
+});
+
+describe("D42(h) — the bound IaC capabilities are reached only from the preflight and prepare phases (I54)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const REGISTRY = "packages/gateway/src/connectors/registry.ts";
+  const TYPES = "packages/gateway/src/engine/types.ts";
+  const OTHER = "packages/gateway/src/ipc/other.ts";
+  const EXECUTOR_GOOD = [
+    "class ToolExecutor {",
+    "  private async preflightPhase(action, record, scope) {",
+    "    const capabilities = this.connectors.boundWriteCapabilities;",
+    "    return capabilities.preflight(id, input);",
+    "  }",
+    "  private async preparePhase(action, opts, scope) {",
+    "    const capabilities = this.connectors.boundWriteCapabilities;",
+    "    return { settle: (id, ctx) => capabilities.settle(id, ctx) };",
+    "  }",
+    "  private other() {}",
+    "}",
+    "",
+  ].join("\n");
+  const GOOD = [
+    file(EXECUTOR, EXECUTOR_GOOD),
+    file(TYPES, "export interface ConnectorDispatcher { readonly boundWriteCapabilities?: X; }"),
+    file(
+      REGISTRY,
+      "const caps: BoundWriteCapabilities = { a }; const d = { boundWriteCapabilities: caps };",
+    ),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkBoundCapabilities(files).map((v) => v.rule);
+  const swap = (contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === EXECUTOR ? file(EXECUTOR, contents) : f));
+  const otherBody = (body: string): string => EXECUTOR_GOOD.replace("private other() {}", body);
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkBoundCapabilities(GOOD)).toEqual([]);
+  });
+
+  test("(h1) FAILS on the member named, or a capability built, outside the registry", () => {
+    expect(rules([...GOOD, file(OTHER, "d.boundWriteCapabilities;")])).toEqual([
+      "bound-capability-confined",
+    ]);
+    for (const body of [
+      "const c: BoundWriteCapabilities = { settle, preflight };",
+      "function f(): BoundWriteCapabilities { return x; }",
+      "class C implements BoundWriteCapabilities {}",
+      "const c = {} as BoundWriteCapabilities;",
+      "const c = {} satisfies BoundWriteCapabilities;",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["bound-capability-confined"]);
+    }
+    // A comment, a string and a test file are not code.
+    expect(
+      rules([
+        ...GOOD,
+        file(OTHER, '// boundWriteCapabilities\nconst s = "boundWriteCapabilities";'),
+      ]),
+    ).toEqual([]);
+    expect(
+      rules([...GOOD, file("packages/gateway/src/ipc/x.test.ts", "d.boundWriteCapabilities;")]),
+    ).toEqual([]);
+  });
+
+  test("(h2) FAILS when another method of the executor reads the member or calls a capability", () => {
+    for (const body of [
+      "private other() { return this.connectors.boundWriteCapabilities; }",
+      "private other() { c.settle(1); }",
+      "private other() { c.preflight(1); }",
+    ]) {
+      expect(rules(swap(otherBody(body))), body).toContain("bound-capability-calls");
+    }
+  });
+
+  test("(h2) FAILS when the settle or the preflight left its phase", () => {
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("capabilities.settle(id, ctx)", "undefined"))),
+    ).toContain("bound-capability-calls");
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("capabilities.preflight(id, input)", "true"))),
+    ).toContain("bound-capability-calls");
+  });
+});
+
+describe("D43 — the unused change set is discarded only by the executor's own step, never after a dispatch (I2 exception)", () => {
+  const file = (relPath: string, contents: string): FileEntry => ({ relPath, contents });
+  const EXECUTOR = "packages/gateway/src/engine/executor.ts";
+  const LIMITS = "packages/gateway/src/connectors/connector-writes/iac-limits.ts";
+  const REGISTRY = "packages/gateway/src/connectors/registry.ts";
+  const OTHER = "packages/gateway/src/ipc/other.ts";
+  const EXECUTOR_GOOD = [
+    "class ToolExecutor {",
+    "  private async runGateChecks(action, opts, scope, record, requiresHITL) {",
+    "    if (requiresHITL && scope.discardStep !== undefined) {",
+    "      if (!isDiscardOf(action, scope.discardStep)) return 1;",
+    "      return 2;",
+    "    } else if (requiresHITL) {",
+    "      return this.resolveHitlApproval(action);",
+    "    }",
+    "  }",
+    "  async execute(planned, opts) {",
+    "    let dispatched = false;",
+    "    try {",
+    "      dispatched = true;",
+    "      return await this.connectors.dispatch(x);",
+    "    } finally {",
+    "      await this.finishScope(action, scope, dispatched);",
+    "    }",
+    "  }",
+    "  private async finishScope(action, scope, dispatched) {",
+    "    if (!dispatched) await this.discardUnusedChangeSet(action, scope);",
+    "  }",
+    "  private async discardUnusedChangeSet(action, scope) {",
+    "    await this.gateWithin(d, undefined, { bind: false, discardStep: target });",
+    "  }",
+    "}",
+    "",
+  ].join("\n");
+  const GOOD = [
+    file(EXECUTOR, EXECUTOR_GOOD),
+    file(LIMITS, 'export const IAC_DISCARD = { toolId: "iac_cloudformation_changeset_discard" };'),
+    file(REGISTRY, "import { IAC_DISCARD } from './x'; const k = IAC_DISCARD.toolId;"),
+  ];
+  const rules = (files: FileEntry[]): string[] => checkIacDiscard(files).map((v) => v.rule);
+  const swap = (contents: string): FileEntry[] =>
+    GOOD.map((f) => (f.relPath === EXECUTOR ? file(EXECUTOR, contents) : f));
+  const before = (anchor: string, extra: string): string =>
+    EXECUTOR_GOOD.replace(anchor, `${extra}\n${anchor}`);
+
+  test("the control: the allowed shape is clean", () => {
+    expect(checkIacDiscard(GOOD)).toEqual([]);
+  });
+
+  test("(a) FAILS when the discard scope is named outside the executor", () => {
+    expect(rules([...GOOD, file(OTHER, "gate(a, undefined, { discardStep: t });")])).toEqual([
+      "discard-step-confined",
+    ]);
+    expect(rules([...GOOD, file(OTHER, "// discardStep")])).toEqual([]);
+  });
+
+  test("(c) FAILS on the tool id, the action type or the constant named outside its files", () => {
+    for (const body of [
+      'const t = "iac_cloudformation_changeset_discard";',
+      'const t = "iac.cloudformation.changeset.discard";',
+      'const t = "iac_iac_cloudformation_changeset_discard";',
+      "IAC_DISCARD.toolId;",
+    ]) {
+      expect(rules([...GOOD, file(OTHER, body)]), body).toEqual(["discard-name-confined"]);
+    }
+    expect(rules([...GOOD, file(OTHER, "// iac_cloudformation_changeset_discard")])).toEqual([]);
+  });
+
+  test("(b) FAILS when the discard is reachable after a dispatch (dispatched set after it)", () => {
+    const late = EXECUTOR_GOOD.replace(
+      "      dispatched = true;\n      return await this.connectors.dispatch(x);",
+      "      const r = await this.connectors.dispatch(x);\n      dispatched = true;\n      return r;",
+    );
+    expect(rules(swap(late))).toEqual(["discard-order-pinned"]);
+  });
+
+  test("(b) FAILS when the discard no longer depends on !dispatched, or is called a second time", () => {
+    expect(rules(swap(EXECUTOR_GOOD.replace("if (!dispatched) await", "await")))).toEqual([
+      "discard-order-pinned",
+    ]);
+    expect(
+      rules(
+        swap(
+          before(
+            "  private async finishScope",
+            "  private async x() { await this.discardUnusedChangeSet(a, s); }",
+          ),
+        ),
+      ),
+    ).toEqual(["discard-order-pinned"]);
+  });
+
+  test("(b) FAILS when a second place writes the discard scope or the gate branch lost its guard", () => {
+    expect(
+      rules(
+        swap(
+          before(
+            "  private async finishScope",
+            "  private async y() { await this.gateWithin(d, u, { discardStep: t }); }",
+          ),
+        ),
+      ),
+    ).toEqual(["discard-order-pinned"]);
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("requiresHITL && scope.discardStep !== undefined", "true"))),
+    ).toEqual(["discard-order-pinned"]);
+    expect(
+      rules(swap(EXECUTOR_GOOD.replace("isDiscardOf(action, scope.discardStep)", "true"))),
+    ).toEqual(["discard-order-pinned"]);
   });
 });

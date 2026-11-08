@@ -12,6 +12,7 @@ import {
 } from "../connectors/connector-writes/bound-fixtures.test-helpers.ts";
 import type { ConnectorWriteRow } from "../connectors/connector-writes/types.ts";
 import type { EgressEntry } from "../egress/egress-record.ts";
+import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import type {
   BoundWriteCapabilities,
   PreflightOutcome,
@@ -88,6 +89,8 @@ interface HarnessOptions {
   /** `undefined` = the dispatcher carries no capabilities at all. */
   readonly caps?: CapOptions | "none";
   readonly writeThrows?: boolean;
+  /** The typed prompt never answers: it throws this (an approval timeout, a disconnect). */
+  readonly promptThrows?: Error;
   readonly prepareReply?: () => unknown;
 }
 
@@ -150,6 +153,7 @@ function harness(o: HarnessOptions = {}): Harness {
             log.push("prompt:confirmed");
             prompts.push(req.prompt);
             details.push(req.details);
+            if (o.promptThrows !== undefined) throw o.promptThrows;
             return { approved: o.approve ?? true, typed: o.typed ?? CONFIRM_TEXT };
           },
         };
@@ -329,6 +333,28 @@ describe("the lock the preflight took is freed on every exit path (D2)", () => {
     });
     rejectedWith(await h.exec.execute(ACTION), PREPARE_REFUSALS.failed);
     expect(h.log.filter((l) => l === "release")).toHaveLength(1);
+  });
+
+  test("an approval that times out (the prompt throws) frees the lock and runs the cleanup; the error reaches the caller", async () => {
+    const h = harness({ promptThrows: new Error("approval timed out") });
+    await expect(h.exec.execute(ACTION)).rejects.toThrow("approval timed out");
+    expect(h.log.filter((l) => l === "release")).toHaveLength(1);
+    expect(h.log.filter((l) => l === "cleanup")).toHaveLength(1);
+    expect(writes(h)).toEqual([]);
+  });
+
+  test("an owner who disconnects mid-prompt is a rejection, and the lock is freed", async () => {
+    const h = harness({ promptThrows: new ConsentDisconnectedError() });
+    expect((await h.exec.execute(ACTION)).status).toBe("rejected");
+    expect(h.log.filter((l) => l === "release")).toHaveLength(1);
+  });
+
+  test("two runs in turn on the same capability each take and free the lock once", async () => {
+    const h = harness();
+    await h.exec.execute(ACTION);
+    await h.exec.execute(ACTION);
+    expect(h.log.filter((l) => l === "release")).toHaveLength(2);
+    expect(h.log.filter((l) => l.startsWith("preflight:"))).toHaveLength(2);
   });
 
   test("a dispatch that throws still frees the lock, and the error reaches the caller", async () => {

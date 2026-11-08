@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import pino from "pino";
 import { redactAuditPayload } from "../audit/format-audit-payload.ts";
 import {
   CONFIRM_ROW_MISMATCH_REASON,
@@ -6,6 +7,7 @@ import {
   renderConfirmText,
 } from "../connectors/connector-writes/confirm.ts";
 import { enableWritesPromptLines } from "../connectors/connector-writes/enable-prompt.ts";
+import { IAC_DISCARD } from "../connectors/connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { PREPARE_TOOL_IDS } from "../connectors/connector-writes/prepare-tools.ts";
 import {
@@ -20,6 +22,7 @@ import type {
   ConnectorWriteRow,
   PreviewCredentialResolver,
 } from "../connectors/connector-writes/types.ts";
+import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import { isOwnerCodeServerServiceId } from "../connectors/owner-code-server.ts";
 import type { EgressSink } from "../egress/egress-ledger.ts";
 import { buildEgressEntry } from "../egress/egress-record.ts";
@@ -59,6 +62,11 @@ import type {
   ConsentChannel,
   PlannedAction,
 } from "./types.ts";
+
+const executorLog = pino({
+  name: "executor",
+  level: process.env["NIMBUS_LOG_LEVEL"] ?? "info",
+});
 
 const HITL_REQUIRED_BACKING = new Set<string>([
   "file.delete",
@@ -587,6 +595,8 @@ interface GateRecord {
   diffSha256?: string;
   /** SHA-256 of the exact files a commit write dispatches (length-prefixed, in order, D1c). */
   filesSha256?: string | undefined;
+  /** Set only on the gateway's own discard of an unused change set (D2, static D43). */
+  discard?: "unused_changeset";
 }
 
 /** The default reason of a rejected gate: the owner (or a delegate) said no. */
@@ -601,6 +611,10 @@ export const PREFLIGHT_NO_CONFIRM_REASON = "preflight: the write has no typed co
 
 /** The preflight capability threw: the write is refused, not skipped (fail closed). */
 export const PREFLIGHT_FAILED_REASON = "preflight: the approved-directory check failed";
+
+/** A gate run in a discard scope was handed an action that is not that scope's own discard (D43). */
+export const DISCARD_MISMATCH_REASON =
+  "The action is not the discard of the change set this run created.";
 
 /** The reason when a payload `mcpToolId` names a connector write that belongs to another action type. */
 export const TOOL_TYPE_MISMATCH_REASON =
@@ -681,6 +695,7 @@ function auditExtrasOf(record: GateRecord): AuditExtras {
       : { boundValuesSha256: record.boundValuesSha256 }),
     ...(record.diffSha256 === undefined ? {} : { diffSha256: record.diffSha256 }),
     ...(record.filesSha256 === undefined ? {} : { filesSha256: record.filesSha256 }),
+    ...(record.discard === undefined ? {} : { discard: record.discard }),
   };
 }
 
@@ -692,6 +707,7 @@ interface AuditExtras {
   boundValuesSha256?: string;
   diffSha256?: string;
   filesSha256?: string;
+  discard?: "unused_changeset";
 }
 
 /**
@@ -805,6 +821,39 @@ interface GateScope {
   prepared?: PreparedWrite;
   /** Written by `preflightPhase` (D2): frees the per-workdir lock; `execute()` calls it when the run ends. */
   release?: () => void;
+  /**
+   * Static D43: set by `discardUnusedChangeSet` alone, for the ONE change set this same gate run's
+   * settle bound. Under it the discard action of exactly that stack and id needs no prompt (I2's one
+   * stated exception); any other action in the scope is refused.
+   */
+  readonly discardStep?: DiscardTarget;
+}
+
+/** The change set a discard scope may remove: the stack it belongs to and the id the settler bound. */
+interface DiscardTarget {
+  readonly stackName: string;
+  readonly changeSetId: string;
+}
+
+/**
+ * Whether `action` is, key for key, the discard of `target`: the discard type, the discard tool,
+ * exactly the two input keys, equal to the target's. Nothing else rides along (static D43).
+ */
+function isDiscardOf(action: PlannedAction, target: DiscardTarget): boolean {
+  if (action.type !== IAC_DISCARD.actionType) return false;
+  const payload = action.payload;
+  if (payload === undefined || Object.keys(payload).sort().join(",") !== "input,mcpToolId") {
+    return false;
+  }
+  if (payload["mcpToolId"] !== mcpClientToolKey("iac", IAC_DISCARD.toolId)) return false;
+  const input = payload["input"];
+  if (typeof input !== "object" || input === null) return false;
+  const given = input as Record<string, unknown>;
+  return (
+    Object.keys(given).sort().join(",") === "changeSetId,stackName" &&
+    given["stackName"] === target.stackName &&
+    given["changeSetId"] === target.changeSetId
+  );
 }
 
 export class ToolExecutor {
@@ -1285,6 +1334,15 @@ export class ToolExecutor {
       // I54: a bound write that cannot enter (the public gate, a non-HITL type, another tool, a
       // caller-supplied bound field, an oversized input): refused before any read or prompt.
       return refuseGate(record, boundRefusal);
+    } else if (requiresHITL && scope.discardStep !== undefined) {
+      // Static D43: the one HITL type that runs without a prompt, and only as the gateway's own
+      // cleanup of the change set THIS run created (the scope names it); anything else in the scope
+      // is refused. Audited `not_required` with its own marker, ledgered, never shown to a model.
+      if (!isDiscardOf(action, scope.discardStep)) {
+        return refuseGate(record, DISCARD_MISMATCH_REASON);
+      }
+      record.discard = "unused_changeset";
+      return "not_required";
     } else if (requiresHITL) {
       const approved = await this.resolveHitlApproval(action, opts, record, scope);
       return approved ? "approved" : "rejected";
@@ -1379,32 +1437,82 @@ export class ToolExecutor {
     // what was shown.
     const action = structuredClone(planned);
     const scope: GateScope = { bind: true };
+    // True from the moment the write is handed to the dispatcher: after that, nothing is discarded.
+    let dispatched = false;
     try {
       const gateResult = await this.gateWithin(action, opts, scope);
       if (gateResult === "proceed") {
         const toDispatch = this.dispatchBoundPhase(action, scope);
+        dispatched = true;
         const result = await this.connectors.dispatch(toDispatch);
         return { status: "ok", result };
       }
       return gateResult;
     } finally {
-      await this.finishScope(scope);
+      await this.finishScope(action, scope, dispatched);
     }
   }
 
   /**
    * The end of a bound run, on every path (approved, declined, refused, thrown, timed out): what a
-   * settle left on disk is removed (a plan secret does not linger), then the lock the preflight took
-   * is freed. A cleanup that fails is best effort (the gateway sweeps its run directory at boot).
+   * settle left on disk is removed (a plan secret does not linger); a change set that was made and
+   * never dispatched is discarded (D43); then the lock the preflight took is freed. A cleanup that
+   * fails is best effort (the gateway sweeps its run directory at boot).
    */
-  private async finishScope(scope: GateScope): Promise<void> {
+  private async finishScope(
+    action: PlannedAction,
+    scope: GateScope,
+    dispatched: boolean,
+  ): Promise<void> {
     try {
-      await scope.prepared?.cleanup?.();
-    } catch {
-      // Best effort: a plan left behind is swept at the next gateway boot.
+      try {
+        await scope.prepared?.cleanup?.();
+      } catch {
+        // Best effort: a plan left behind is swept at the next gateway boot.
+      }
+      if (!dispatched) await this.discardUnusedChangeSet(action, scope);
     } finally {
       scope.release?.();
     }
+  }
+
+  /**
+   * Static D43. When a CloudFormation deploy ended without its write being dispatched (the owner
+   * declined, mistyped, timed out, or something threw first) and this run's settle bound a change
+   * set, remove that change set: it exists only because this run made it. The target is the id the
+   * SETTLER bound and the stack the caller's input named (which the settler cross-checked), so a
+   * run with no settled change set has nothing to discard. The discard goes through this executor's
+   * own gate in a discard scope (no prompt, its own audit and egress rows) and its dispatch is
+   * pinned by the dispatcher to the discard tool alone. A failure is logged and changes nothing.
+   */
+  private async discardUnusedChangeSet(action: PlannedAction, scope: GateScope): Promise<void> {
+    const target = this.discardTargetOf(action, scope);
+    if (target === undefined) return;
+    const discard: PlannedAction = {
+      type: IAC_DISCARD.actionType,
+      payload: {
+        mcpToolId: mcpClientToolKey("iac", IAC_DISCARD.toolId),
+        input: { stackName: target.stackName, changeSetId: target.changeSetId },
+      },
+    };
+    try {
+      const gated = await this.gateWithin(discard, undefined, { bind: false, discardStep: target });
+      if (gated === "proceed") await this.connectors.dispatch(discard);
+    } catch (e) {
+      executorLog.warn(
+        { err: e instanceof Error ? e.message : "unknown" },
+        "the unused CloudFormation change set could not be discarded; remove it in the AWS console",
+      );
+    }
+  }
+
+  /** The change set a finished run may discard, or `undefined` when it holds no settled one. */
+  private discardTargetOf(action: PlannedAction, scope: GateScope): DiscardTarget | undefined {
+    if (this.boundRowOf(action)?.bound?.prepare.settle !== "iac-cfn") return undefined;
+    const changeSetId = scope.prepared?.values["changeSetId"];
+    const stackName = (extractToolInput(action) as Record<string, unknown>)["stackName"];
+    if (typeof changeSetId !== "string" || typeof stackName !== "string") return undefined;
+    return { stackName, changeSetId };
   }
 }
 

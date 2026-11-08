@@ -2870,6 +2870,195 @@ function d42ExecutorPins(f: FileEntry, code: string): Violation[] {
   return out;
 }
 
+// ---- D42(h) (the bound IaC capabilities, I54, Phase 9.7 D2) --------------------------------------
+// The runtime capabilities of a bound IaC row (its settle step and its preflight) reach the gate only
+// through the dispatcher's `boundWriteCapabilities` member (the production `ToolExecutor` keeps its
+// constructor, D42(c)). Two pins keep that the only way in:
+// (h1) the member `boundWriteCapabilities` is named only by `engine/executor.ts` (the reader),
+//      `engine/types.ts` (the interface member) and `connectors/registry.ts` (the one place the
+//      production dispatcher sets it), and a `BoundWriteCapabilities` VALUE is built (a typed
+//      initialiser, a return type, `implements`, `as`/`satisfies`) only in `connectors/registry.ts`;
+// (h2) in the executor the member is read exactly twice, once in `preflightPhase` and once in
+//      `preparePhase`, `.preflight(` is called only in the first and `.settle(` only in the second,
+//      so no other phase or method can reach a capability.
+// Comments and string literals are stripped; test files are not scanned. STATED BOUND, as D42: a
+// dynamically composed name or an alias evades a text scan; the behavioural tests are authoritative.
+const D42H_PROP_RE = /\bboundWriteCapabilities\b/g;
+const D42H_TYPES = "packages/gateway/src/engine/types.ts";
+const D42H_PROP_ALLOWED: readonly string[] = [D42_EXECUTOR, D42H_TYPES, D42_REGISTRY];
+const D42H_BUILD_RE =
+  /:\s*BoundWriteCapabilities(?:\s*\|\s*undefined)?\s*(?:=|\{)|\bimplements\s+BoundWriteCapabilities\b|\b(?:as|satisfies)\s+BoundWriteCapabilities\b/g;
+
+export function checkBoundCapabilities(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const code = stripStringLiterals(stripComments(f.contents));
+    if (!D42H_PROP_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D42H_PROP_RE))
+        add(f, "bound-capability-confined", code, m.index);
+    }
+    if (f.relPath !== D42_REGISTRY) {
+      for (const m of code.matchAll(D42H_BUILD_RE))
+        add(f, "bound-capability-confined", code, m.index);
+    }
+    if (f.relPath !== D42_EXECUTOR) continue;
+    const span = (sig: RegExp): string => {
+      const s = d41Span(code, sig, "\n  }\n");
+      return s === undefined ? "" : code.slice(s[0], s[1]);
+    };
+    const preflight = span(/\bprivate\s+async\s+preflightPhase\s*\(/);
+    const prepare = span(/\bprivate\s+async\s+preparePhase\s*\(/);
+    const reads = (src: string): number => [...src.matchAll(D42H_PROP_RE)].length;
+    const calls = (src: string, name: string): number =>
+      [...src.matchAll(new RegExp(`\\.${name}\\s*\\(`, "g"))].length;
+    const fail = (what: string): void => {
+      out.push({ rule: "bound-capability-calls", file: f.relPath, line: 1, snippet: what });
+    };
+    if (reads(code) !== 2 || reads(preflight) !== 1 || reads(prepare) !== 1) {
+      fail("boundWriteCapabilities must be read once in preflightPhase and once in preparePhase");
+    }
+    if (calls(code, "preflight") !== 1 || calls(preflight, "preflight") !== 1) {
+      fail("a capability's preflight must be called once, in preflightPhase");
+    }
+    if (calls(code, "settle") !== 1 || calls(prepare, "settle") !== 1) {
+      fail("a capability's settle must be called once, in preparePhase");
+    }
+  }
+  return out;
+}
+
+// ---- D43 (the gateway-internal discard of an unused change set, I2's one stated exception) -------
+// A CloudFormation deploy's prepare step CREATES a change set. When the owner then declines, mistypes
+// or times out, the gateway removes what it made. `iac_cloudformation_changeset_discard` is a connector
+// WRITE and its action type is in I2's frozen set, so the public gate still prompts for it; the only
+// way it runs without a prompt is the executor's own `discardUnusedChangeSet`, in a private gate scope
+// that names the one change set the same run's settle bound. Three clauses keep that exemption narrow:
+// (a) `discardStep` (the scope member) is named only by `engine/executor.ts`;
+// (b) in the executor: `discardStep:` is written once, in `discardUnusedChangeSet`; that method is
+//     called once, in `finishScope`, under `if (!dispatched)`; `execute` sets `dispatched = true`
+//     BEFORE `this.connectors.dispatch(` (so a dispatch error is never followed by a discard) and
+//     calls `finishScope(` in its `finally`; and `runGateChecks` reaches the no-prompt branch only
+//     under `scope.discardStep !== undefined`, after `isDiscardOf(` and before
+//     `this.resolveHitlApproval(`;
+// (c) the tool id, the action type and the `IAC_DISCARD` constant are named only by the row table
+//     (`cloud-infra.ts`, `iac-limits.ts`), the executor (frozen set, the discard step), the registry
+//     (the dispatcher pin), `proposable-actions.ts`, `manifest.generated.ts`, the model-offerable
+//     never-offered table and the iac runner's routing table.
+// Clause (d) of the plan (only `lazy-mesh/iac-runner.ts` builds an iac `ServerSpec`, through
+// `wrapServerSpec`) is added with the runner itself. Comments are stripped (strings kept for (c));
+// test files are not scanned. The behaviour is pinned by `engine/executor-iac-discard.test.ts`.
+const D43_BASE = "packages/gateway/src/connectors/";
+const D43_NAME_RE = /iac_cloudformation_changeset_discard|iac\.cloudformation\.changeset\.discard/g;
+const D43_NAME_ALLOWED: readonly string[] = [
+  `${D43_BASE}connector-writes/cloud-infra.ts`,
+  `${D43_BASE}connector-writes/iac-limits.ts`,
+  `${D43_BASE}connector-writes/manifest.generated.ts`,
+  `${D43_BASE}connector-writes/model-offerable.ts`,
+  `${D43_BASE}proposable-actions.ts`,
+  `${D43_BASE}lazy-mesh/iac-runner.ts`,
+  D42_EXECUTOR,
+];
+const D43_CONSTANT_RE = /\bIAC_DISCARD\b/g;
+const D43_CONSTANT_ALLOWED: readonly string[] = [
+  `${D43_BASE}connector-writes/iac-limits.ts`,
+  D42_EXECUTOR,
+  D42_REGISTRY,
+];
+
+export function checkIacDiscard(files: readonly FileEntry[]): Violation[] {
+  const out: Violation[] = [];
+  const add = (f: FileEntry, rule: string, src: string, index: number | undefined): void => {
+    const line = src.slice(0, index).split("\n").length;
+    out.push({
+      rule,
+      file: f.relPath,
+      line,
+      snippet: (f.contents.split("\n")[line - 1] ?? "").trim(),
+    });
+  };
+  for (const f of files) {
+    if (f.relPath.endsWith(".test.ts")) continue;
+    if (!f.relPath.startsWith("packages/gateway/src/")) continue;
+    const commentFree = stripComments(f.contents);
+    const code = stripStringLiterals(commentFree);
+    if (f.relPath !== D42_EXECUTOR) {
+      for (const m of code.matchAll(/\bdiscardStep\b/g)) {
+        add(f, "discard-step-confined", code, m.index);
+      }
+    }
+    if (!D43_NAME_ALLOWED.includes(f.relPath)) {
+      for (const m of commentFree.matchAll(D43_NAME_RE)) {
+        add(f, "discard-name-confined", commentFree, m.index);
+      }
+    }
+    if (!D43_CONSTANT_ALLOWED.includes(f.relPath)) {
+      for (const m of code.matchAll(D43_CONSTANT_RE)) {
+        add(f, "discard-name-confined", code, m.index);
+      }
+    }
+    if (f.relPath === D42_EXECUTOR) {
+      for (const v of d43ExecutorPins(f, code)) out.push(v);
+    }
+  }
+  return out;
+}
+
+/** Clause (b): the discard happens only at the end of a run that never dispatched, in a private scope. */
+function d43ExecutorPins(f: FileEntry, code: string): Violation[] {
+  const out: Violation[] = [];
+  const fail = (what: string): void => {
+    out.push({ rule: "discard-order-pinned", file: f.relPath, line: 1, snippet: what });
+  };
+  const span = (sig: RegExp): string => {
+    const s = d41Span(code, sig, "\n  }\n");
+    return s === undefined ? "" : code.slice(s[0], s[1]);
+  };
+  const count = (src: string, re: RegExp): number => [...src.matchAll(re)].length;
+  const discarding = span(/\bprivate\s+async\s+discardUnusedChangeSet\s*\(/);
+  const scopeKey = /\bdiscardStep\s*:/g;
+  if (count(code, scopeKey) !== 1 || count(discarding, scopeKey) !== 1) {
+    fail("discardStep: must be written once, in discardUnusedChangeSet");
+  }
+  const finish = span(/\bprivate\s+async\s+finishScope\s*\(/);
+  const caller = /\bthis\.discardUnusedChangeSet\s*\(/g;
+  if (
+    count(code, caller) !== 1 ||
+    !/\bif\s*\(\s*!dispatched\s*\)\s*await\s+this\.discardUnusedChangeSet\s*\(/.test(finish)
+  ) {
+    fail("discardUnusedChangeSet must be called once, in finishScope, under if (!dispatched)");
+  }
+  const exec = span(/\basync\s+execute\s*\(/);
+  const set = exec.search(/\bdispatched\s*=\s*true\b/);
+  const send = exec.indexOf("this.connectors.dispatch(");
+  const fin = exec.search(/\bfinally\s*\{[^}]*this\.finishScope\s*\(/);
+  if (set === -1 || send === -1 || fin === -1 || !(set < send && send < fin)) {
+    fail(
+      "execute must set dispatched = true before connectors.dispatch, and call finishScope in finally",
+    );
+  }
+  const checks = span(/\bprivate\s+async\s+runGateChecks\s*\(/);
+  const branch = checks.search(/\brequiresHITL\s*&&\s*scope\.discardStep\s*!==\s*undefined\b/);
+  const verify = checks.search(/\bisDiscardOf\s*\(/);
+  const prompt = checks.search(/\bthis\.resolveHitlApproval\s*\(/);
+  if (branch === -1 || verify === -1 || prompt === -1 || !(branch < verify && verify < prompt)) {
+    fail(
+      "runGateChecks must reach the no-prompt discard only under scope.discardStep, after isDiscardOf, before resolveHitlApproval",
+    );
+  }
+  return out;
+}
+
 // ---- D36 (role-pack layer writers, I47) ----------------------------------------------------------
 // A role-pack layer changes the owner's effective config, so I47 lets `packs/pack-install.ts` write
 // one only after the LOCAL owner approved `pack.install` over the pack's exact `defaults` text. The
@@ -4338,7 +4527,7 @@ async function run(): Promise<void> {
     if (v.length > 0) exit = 1;
   }
   if (mode === "binary-only" || mode === "all") {
-    const v = checkBoundWrites(files);
+    const v = [...checkBoundWrites(files), ...checkBoundCapabilities(files)];
     const D42_CLAUSE: Readonly<Record<string, string>> = {
       "bound-prepare-literal-confined":
         "(a) the .write.prepare action-type literal outside engine/prepare-step.ts",
@@ -4351,10 +4540,23 @@ async function run(): Promise<void> {
       "bound-prepare-set-frozen": "(d) PREPARE_TOOL_IDS is mutable or mutated",
       "bound-public-gate-refuses":
         "(e) the public gate() could bind, or boundRefusal no longer refuses it first",
+      "bound-capability-confined":
+        "(h) the bound-write capabilities are named or built outside connectors/registry.ts and the executor",
+      "bound-capability-calls":
+        "(h) a bound-write capability is read or called outside the preflight and prepare phases",
     };
     for (const e of v) {
       console.error(
         `::error file=${e.file},line=${e.line}::D42${D42_CLAUSE[e.rule] ?? ""} — a bound write could be dispatched with values its own gate-run prepare step did not produce, or a caller could supply them (I54): ${e.snippet}`,
+      );
+    }
+    if (v.length > 0) exit = 1;
+  }
+  if (mode === "binary-only" || mode === "all") {
+    const v = checkIacDiscard(files);
+    for (const e of v) {
+      console.error(
+        `::error file=${e.file},line=${e.line}::D43 (${e.rule}) the gateway-internal discard of an unused change set is named or reachable outside the executor's discard step — a change set could be deleted without the owner's approval, or after a dispatch (I2 exception): ${e.snippet}`,
       );
     }
     if (v.length > 0) exit = 1;

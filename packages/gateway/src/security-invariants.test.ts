@@ -24,6 +24,7 @@ import { parseRolePackManifestValue, publisherKeyFingerprint } from "@nimbus-dev
 import {
   checkAgentEmitterImportConfinement,
   checkBeforeStateRead,
+  checkBoundCapabilities,
   checkBoundWrites,
   checkChatopsReplySurfaceInvariant,
   checkChatopsUnwrappedPost,
@@ -31,6 +32,7 @@ import {
   checkEgressChokepointConfinement,
   checkEmbeddingConstructorConfinement,
   checkEvalConfinement,
+  checkIacDiscard,
   checkModelWriteDoor,
   checkWrapServerSpecInvariant,
   RULE_ANCHORS,
@@ -12939,6 +12941,39 @@ describe("I54 — a bound connector write is dispatched only with the values its
     expect(new Set(checkBoundWrites(rogue).map((v) => v.rule))).toEqual(
       new Set(["bound-seam-not-production", "bound-name-confined", "bound-prepare-set-frozen"]),
     );
+  });
+
+  test("D43 and D42(h) exist, run() calls them, the production tree is clean and a rogue file is rejected", async () => {
+    const audit = await read("scripts/structure-audit/check-nimbus-invariants.ts");
+    const runAt = audit.indexOf("async function run(");
+    expect(audit.slice(runAt)).toContain("checkIacDiscard(files)");
+    expect(audit.slice(runAt)).toContain("checkBoundCapabilities(files)");
+    for (const id of [
+      "discard-step-confined",
+      "discard-name-confined",
+      "discard-order-pinned",
+      "bound-capability-confined",
+      "bound-capability-calls",
+    ]) {
+      expect(audit).toContain(id);
+    }
+    const files = (await readDirFiles("packages/gateway/src")).map((f) => ({
+      relPath: `packages/gateway/src/${f.rel}`,
+      contents: f.contents,
+    }));
+    expect(checkIacDiscard(files)).toEqual([]);
+    expect(checkBoundCapabilities(files)).toEqual([]);
+    const rogue = {
+      relPath: "packages/gateway/src/ipc/rogue.ts",
+      contents:
+        'gate(a, undefined, { discardStep: t });\nconst k = "iac_cloudformation_changeset_discard";\nd.boundWriteCapabilities;\n',
+    };
+    expect(new Set(checkIacDiscard([...files, rogue]).map((v) => v.rule))).toEqual(
+      new Set(["discard-step-confined", "discard-name-confined"]),
+    );
+    expect(checkBoundCapabilities([...files, rogue]).map((v) => v.rule)).toEqual([
+      "bound-capability-confined",
+    ]);
   });
 
   test("the prepare set is exactly the seven declared tools, frozen; the bound production rows name members of it (D1c, D2)", () => {

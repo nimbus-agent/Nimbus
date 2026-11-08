@@ -210,3 +210,13 @@ export function cfnInputRefusal(input: Readonly<Record<string, unknown>>): strin
     Object.hasOwn(input, "capabilities") ? input["capabilities"] : undefined,
   );
 }
+
+/**
+ * The CloudFormation change-set discard (a connector WRITE, fix 19), named once. Only the executor's
+ * own cleanup of a change set the same gate run created may call it without a prompt (static D43),
+ * and the dispatcher pins the action type to this tool alone.
+ */
+export const IAC_DISCARD = Object.freeze({
+  toolId: "iac_cloudformation_changeset_discard",
+  actionType: "iac.cloudformation.changeset.discard",
+});

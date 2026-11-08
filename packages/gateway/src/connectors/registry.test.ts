@@ -866,3 +866,57 @@ describe("the dispatcher race of the iac tools (D2)", () => {
     ).toBe(5000);
   });
 });
+
+describe("the change-set discard type resolves only to its own tool (D2, static D43)", () => {
+  const DISCARD_TYPE = "iac.cloudformation.changeset.discard";
+  const KEY = "iac_iac_cloudformation_changeset_discard";
+  const listing = (keys: readonly string[]) => {
+    const ran: string[] = [];
+    const tools: Record<string, { execute: (input: unknown) => Promise<unknown> }> = {};
+    for (const k of keys) {
+      tools[k] = {
+        execute: async () => {
+          ran.push(k);
+          return { ok: true };
+        },
+      };
+    }
+    const client: McpToolListingClient = { listTools: async () => tools };
+    return { d: createConnectorDispatcher(client), ran };
+  };
+  const call = (type: string, mcpToolId: string): PlannedAction => ({
+    type,
+    payload: { mcpToolId, input: {} },
+  });
+
+  test("the control: the discard type runs the discard tool, as the mesh key or bare", async () => {
+    const { d, ran } = listing([KEY]);
+    await d.dispatch(call(DISCARD_TYPE, KEY));
+    await d.dispatch(call(DISCARD_TYPE, "iac_cloudformation_changeset_discard"));
+    expect(ran).toEqual([KEY, KEY]);
+  });
+
+  test("the discard type never reaches a read, a prepare, another write or another server's tool", async () => {
+    const keys = [
+      "iac_iac_cloudformation_stack_get",
+      "iac_iac_cloudformation_changeset_create",
+      "iac_iac_cloudformation_deploy",
+      "iac_iac_terraform_apply",
+      "github_github_issue_get",
+      "github_iac_cloudformation_changeset_discard",
+    ];
+    const { d, ran } = listing(keys);
+    for (const key of keys) {
+      await expect(d.dispatch(call(DISCARD_TYPE, key))).rejects.toThrow(/^ERR_/);
+    }
+    expect(ran).toEqual([]);
+  });
+
+  test("the discard tool under any other action type is refused (the write pin), and runs nothing", async () => {
+    const { d, ran } = listing([KEY]);
+    for (const type of ["iac.cloudformation.deploy", "iac.write.prepare", "search.run"]) {
+      await expect(d.dispatch(call(type, KEY))).rejects.toThrow(/^ERR_/);
+    }
+    expect(ran).toEqual([]);
+  });
+});

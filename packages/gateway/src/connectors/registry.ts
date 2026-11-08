@@ -10,7 +10,7 @@ import { isReadOnlyToolId } from "../share/read-tool-registry.ts";
 import type { NimbusVault } from "../vault/nimbus-vault.ts";
 import { MCP_TOOL_RESULT_MAX_BYTES } from "./_lib/mcp-tool-result.ts";
 import { isConnectorWriteToolId } from "./connector-write-registry.ts";
-import { IAC_TOOL_TIMEOUTS_MS } from "./connector-writes/iac-limits.ts";
+import { IAC_DISCARD, IAC_TOOL_TIMEOUTS_MS } from "./connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "./connector-writes/index.ts";
 import { isPrepareToolId, PREPARE_TOOL_IDS } from "./connector-writes/prepare-tools.ts";
 import { createLazyConnectorMesh, type LazyConnectorMesh } from "./lazy-mesh/index.ts";
@@ -177,6 +177,7 @@ export function createConnectorDispatcher(
       assertBeforeReadIsOwnRead(action.type, resolvedKey);
       assertPrepareIsOwnPrepare(action.type, resolvedKey, prepareToolIds);
       assertWriteKeyMatchesActionType(action.type, resolvedKey);
+      assertDiscardIsOwnDiscard(action.type, resolvedKey);
       const execute = tool.execute;
       if (execute === undefined) {
         throw new Error(`MCP tool "${toolId}" has no execute implementation`);
@@ -252,6 +253,26 @@ function assertPrepareIsOwnPrepare(
   if (!isPrepare || isConnectorWriteToolId(resolvedKey)) {
     throw new Error(`ERR_PREPARE_NOT_A_PREPARE_TOOL: ${shown}`);
   }
+}
+
+/**
+ * Static D43 at the dispatcher: the change-set discard type (the one HITL type the gateway's own
+ * cleanup runs without a prompt) resolves ONLY to the iac server's discard tool, so that
+ * exemption can never be spent on a read, a prepare, another write or another connector's tool.
+ * Checked on the key the dispatcher actually resolved, before the tool is called; the reverse
+ * direction (the discard tool under another type) is {@link assertWriteKeyMatchesActionType}.
+ */
+function assertDiscardIsOwnDiscard(actionType: string, resolvedKey: string): void {
+  if (actionType !== IAC_DISCARD.actionType) return;
+  if (
+    resolvedKey === IAC_DISCARD.toolId ||
+    resolvedKey === mcpClientToolKey("iac", IAC_DISCARD.toolId)
+  ) {
+    return;
+  }
+  throw new Error(
+    `ERR_DISCARD_NOT_OWN_DISCARD: action type ${JSON.stringify(actionType)} may not dispatch tool ${JSON.stringify(resolvedKey)}`,
+  );
 }
 
 /**
