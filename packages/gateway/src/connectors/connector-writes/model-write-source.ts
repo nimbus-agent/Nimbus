@@ -13,6 +13,7 @@ import {
   listModelWriteEnablement,
   type ModelWriteEnablement,
 } from "./enablement-store.ts";
+import { getIacGrants } from "./iac-grants.ts";
 import { CONNECTOR_WRITE_ROWS } from "./index.ts";
 import { isModelOfferableRow } from "./model-offerable.ts";
 import { isConnectorWriteModelAccessEnabled } from "./model-write-capability.ts";
@@ -40,7 +41,9 @@ export interface ModelWriteSourceDeps {
   readonly getTribalKbConfig?: () => TribalKbConfig | undefined;
   /**
    * The canonical working directories the owner approved for the iac connector (D2), read per
-   * call. Absent, empty or a throw: the Terraform apply is not offered (no directory to pick).
+   * call. Absent: the stored V85 workdir grants, read fresh on every call (never cached past an
+   * `enable` or `disable`; `gateway-main` passes nothing). Empty or a throw: the Terraform apply
+   * is not offered (no directory to pick).
    */
   readonly approvedWorkdirs?: () => readonly string[];
 }
@@ -71,7 +74,9 @@ function offeredUnder(e: ModelWriteEnablement | undefined, row: ConnectorWriteRo
 /** The approved working directories, or none (fail closed on a throw). */
 function workdirsOf(deps: ModelWriteSourceDeps): readonly string[] {
   try {
-    return deps.approvedWorkdirs?.() ?? [];
+    return deps.approvedWorkdirs === undefined
+      ? getIacGrants(deps.db).workdirs
+      : deps.approvedWorkdirs();
   } catch {
     return [];
   }
