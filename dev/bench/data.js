@@ -1,42 +1,8 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794160727585,
+  "lastUpdate": 1794161299701,
   "repoUrl": "https://github.com/nimbus-agent/Nimbus",
   "entries": {
     "Benchmark": [
-      {
-        "commit": {
-          "author": {
-            "email": "asafgolombek@gmail.com",
-            "name": "Asaf",
-            "username": "asafgolombek"
-          },
-          "committer": {
-            "email": "noreply@github.com",
-            "name": "GitHub",
-            "username": "web-flow"
-          },
-          "distinct": true,
-          "id": "5587c84e55eff015ea508a423fb7365e14ce94f9",
-          "message": "feat(security): I32 — clip source metadata is whitelist-constructed, so a page cannot deny ingestion of its own clip (#1288)\n\n## Summary\n\nRegisters the clip `source` whitelist as invariant **I32**, closing the\nTRIPLE RULE gap CodeRabbit flagged on #1285.\n\nThe defense shipped in #1285 with production wiring and a behavioural\ntest, but no entry in `docs/SECURITY-INVARIANTS.md` and no assertion in\n`security-invariants.test.ts` — which is exactly the \"defined but never\nwired looks identical to one that works\" shape the rule exists to\nprevent. All three artefacts land here in one commit.\n\n**What it protects.** `validateClipInput` rebuilds `ClipSource` from\nexactly five named fields rather than passing the caller's object\nthrough. That is load-bearing rather than tidy because `ingestClip`\nstores `source` unfiltered *by design* and `upsertIndexedItem` throws\nabove `RAW_META_MAX_BYTES` (65,536). Without the whitelist, a page that\nput enough under an unrecognised sibling key would make **its own clip\nun-ingestable** — the page being captured denying the user the capture.\n\n## Severity is stated, not inflated\n\nThis is the file's **first bounds/resource-limit invariant**; every\nother entry is a consent, authentication, egress or integrity gate. I\nargued against registering it on #1285 for exactly that reason, and the\nowner decided otherwise — so it is registered with its scope written\ndown rather than left for an auditor to infer:\n\n> a hostile page can block ingestion of **only its own clip**. It reads\nno data, crosses no trust boundary, escalates nothing, affects no other\nitem, and persists nothing.\n\nThe section says so explicitly and tells an auditor to calibrate against\nI27/I30 accordingly.\n\n## The enforcement tests were verified by mutation, not assumed\n\nFive tests. To confirm they are a real regression detector rather than\ndecoration, I reintroduced the passthrough (`...o` into the\nconstruction) and re-ran: **two fail** — the static check and the\nbehavioural fence — then restored and confirmed green.\n\nThey assert the call and its behaviour, not an imported helper name, per\nthe path instruction. One is worth calling out:\n\n- **the counterfactual test** asserts that the payload the whitelist\nwithheld *genuinely exceeds* `RAW_META_MAX_BYTES`. Without it, a junk\nblob under the ceiling would satisfy the shape assertion while proving\nnothing about the denial — which is precisely what the original 60 KB\nfixture did (60,112 bytes against 65,536). That is now the last entry in\nthe anti-pattern list.\n- **`upsertIndexedItem` really does throw** is asserted end-to-end\nrather than taken on trust, so removing the 64 KB guard fails this\nsuite.\n\n## One weak edge, documented rather than papered over\n\n`ClipInput`'s types do not encode the length limits — `leadImage` is\njust `string`. The single-chokepoint design therefore rests on\n`ingestClip` having exactly one production caller\n(`ipc/http-server.ts:772`, which validates inline). The invariant says\nthis plainly and commits the next person: if a second caller is added,\nit either routes through `validateClipInput` or I32 grows a `D`-rule\nconfining `ingestClip`'s callers, in that same commit.\n\n## Related Issue\n\nFollow-up to #1285 (2.5 S2). No issue number.\n\n## Type of Change\n\n- [x] New feature (non-breaking change that adds functionality)\n\n## Non-Negotiables Checklist\n\n- [x] `bun run typecheck` passes with zero errors\n- [x] `bun run lint` passes (Biome)\n- [x] All existing tests pass (`bun test packages/gateway` — 14,513 pass\n/ 32 skip / **0 fail**, up from 14,508)\n- [x] New behaviour is covered by tests (+5, mutation-verified)\n- [x] No `any` types introduced — `unknown` is used for external data\n- [x] No credentials, tokens, or secret values appear in logs, IPC\nmessages, config, or test fixtures\n- [x] Platform-specific code is behind the `PlatformServices`\nabstraction (n/a)\n- [x] The HITL consent gate has not been weakened, bypassed, or made\nconfigurable\n- [x] Does not touch `docs/README.md`\n\n## Testing\n\n`bun test packages/gateway` — 14,513 pass / 32 skip / 0 fail. `bun run\nlint:markdown` — 138 files, 0 issues. `check-doc-references.ts --check`\n— 1,211 refs, all resolve. `check-coderabbit-config.test.ts` — 5 pass\n(its \"every cited invariant exists\" check is a superset test, so I32\ndoes not need a citation in `.coderabbit.yaml`).\n\n**No production code changed** — `clip-ingest.ts` is untouched; the\nwiring it describes already shipped.\n\n## Notes for Reviewers\n\nFollowing the file's own four-step process rather than only the three\nCodeRabbit named: the worked example advances to `I33` (it previously\nsaid I32 was the next free number), and step 4 — the compact summaries\nin `CLAUDE.md` and `GEMINI.md` — is done, including the `I1–I27,\nI29–I31` → `I29–I32` range and the \"Invariants through I32\" ceiling.\n\nThe historical \"Migration log (2026-05-28)\" table was deliberately\n**not** touched: it is a reverse-lookup for comments migrated out of\nsource files in a one-time cleanup, not a live registry.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
-          "timestamp": "2026-08-21T10:07:35+03:00",
-          "tree_id": "0b73b38e9c43beb7bd1533ace1cd4a88eb21e40a",
-          "url": "https://github.com/nimbus-agent/Nimbus/commit/5587c84e55eff015ea508a423fb7365e14ce94f9"
-        },
-        "date": 1787296849652,
-        "tool": "customSmallerIsBetter",
-        "benches": [
-          {
-            "name": "S11-a p95",
-            "value": 304.9313067999985,
-            "unit": "ms"
-          },
-          {
-            "name": "S11-b p95",
-            "value": 304.6626124500064,
-            "unit": "ms"
-          }
-        ]
-      },
       {
         "commit": {
           "author": {
@@ -16999,6 +16965,40 @@ window.BENCHMARK_DATA = {
           {
             "name": "S11-b p95",
             "value": 177.31661019999956,
+            "unit": "ms"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "306811640+nimbus-release-bot[bot]@users.noreply.github.com",
+            "name": "nimbus-release-bot[bot]",
+            "username": "nimbus-release-bot[bot]"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "b70372899406180f8289d5ce1248753db11cd81f",
+          "message": "chore: release main (#1944)\n\n:robot: I have created a release *beep* *boop*\n---\n\n\n<details><summary>10.41.0</summary>\n\n##\n[10.41.0](https://github.com/nimbus-agent/Nimbus/compare/v10.40.0...v10.41.0)\n(2026-11-08)\n\n\n### Features\n\n* **gateway:** the model can propose a GitHub or GitLab commit, approved\nover a full gateway-rendered diff with a bound head\n([#1943](https://github.com/nimbus-agent/Nimbus/issues/1943))\n([4dbe6ab](https://github.com/nimbus-agent/Nimbus/commit/4dbe6ab5cf46282cf7deed06df2eecb626c594b7))\n</details>\n\n---\nThis PR was generated with [Release\nPlease](https://github.com/googleapis/release-please). See\n[documentation](https://github.com/googleapis/release-please#release-please).\n\nCo-authored-by: nimbus-release-bot[bot] <306811640+nimbus-release-bot[bot]@users.noreply.github.com>",
+          "timestamp": "2026-11-08T18:00:27Z",
+          "tree_id": "62f5cb9a7665ed84b3ee014d62f4cc794a9cdfb6",
+          "url": "https://github.com/nimbus-agent/Nimbus/commit/b70372899406180f8289d5ce1248753db11cd81f"
+        },
+        "date": 1794161295651,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "S11-a p95",
+            "value": 218.07653050000152,
+            "unit": "ms"
+          },
+          {
+            "name": "S11-b p95",
+            "value": 217.26204404999515,
             "unit": "ms"
           }
         ]
