@@ -105,12 +105,20 @@ describe("withBound", () => {
 });
 
 describe("the production table (D0b mechanism, D1c rows)", () => {
-  test("the bound production rows are exactly the two multi-file commits", () => {
+  test("the bound production rows are the two multi-file commits and the three plan-bound iac writes", () => {
     expect(
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
         .sort(),
-    ).toEqual(["github_file_commit", "gitlab_commit_create"]);
+    ).toEqual(
+      [
+        "github_file_commit",
+        "gitlab_commit_create",
+        "iac_cloudformation_deploy",
+        "iac_terraform_apply",
+        "iac_terraform_destroy",
+      ].sort(),
+    );
   });
 
   test("no production row's tool id is a prepare tool (the classes stay apart)", () => {

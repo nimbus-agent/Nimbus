@@ -1,4 +1,5 @@
 // packages/gateway/src/connectors/connector-writes/cloud-infra.ts
+
 import {
   ec2InstanceReadArgs,
   ecsServiceReadArgs,
@@ -7,13 +8,16 @@ import {
   selectEcsService,
   selectLambdaFunction,
 } from "./cloud-readers.ts";
+import { CFN_DEPLOY_BOUND, TERRAFORM_APPLY_BOUND, TERRAFORM_DESTROY_BOUND } from "./iac-bound.ts";
 import {
   type ConnectorWriteRow,
   row,
   textField,
   withBefore,
+  withBound,
   withConfirm,
   withPreview,
+  withRefusal,
 } from "./types.ts";
 
 /** The EC2 stop and start differ only in their words and in which state is "already". */
@@ -145,19 +149,61 @@ export const CLOUD_INFRA_ROWS: readonly ConnectorWriteRow[] = [
   withConfirm(row("k8s_pod_delete", "kubernetes.pod.delete", "mesh", 4), {
     template: "delete {podName}",
   }),
-  // D2's.
-  withConfirm(row("iac_terraform_apply", "iac.terraform.apply", "mesh", 4), {
-    template: "apply {workingDirectory}",
-  }),
-  withConfirm(row("iac_terraform_destroy", "iac.terraform.destroy", "mesh", 4), {
-    template: "destroy {workingDirectory}",
-  }),
-  withConfirm(row("iac_cloudformation_deploy", "iac.cloudformation.deploy", "mesh", 4), {
-    template: "deploy {stackName}",
-  }),
-  withConfirm(row("iac_pulumi_up", "iac.pulumi.up", "mesh", 4), {
-    template: "up {workingDirectory}",
-  }),
+  // D2: the three plan-bound IaC writes (`iac-bound.ts`). Each is BOUND to the identity of the plan
+  // or change set its prepare tool made, as the GATEWAY settled it (a saved plan moved, hashed and
+  // rendered by `terraform show -json` in a child with no network and no credential; a change set
+  // cross-checked against the input), and shows the owner that rendering in full or is refused.
+  // `planFile`, `planSha256` and `changeSetId` are the gateway's: the preview never names them. The
+  // act door denies all three (class iac): its consent display has no plan.
+  withConfirm(
+    withBound(
+      withPreview(row("iac_terraform_apply", "iac.terraform.apply", "mesh", 4), {
+        target: "{workingDirectory}",
+        summary:
+          "Apply the saved Terraform plan for {workingDirectory} (the plan below, pinned by its hash)",
+        fields: [textField("workingDirectory", "Working directory")],
+      }),
+      TERRAFORM_APPLY_BOUND,
+    ),
+    { template: "apply {workingDirectory}" },
+  ),
+  withConfirm(
+    withBound(
+      withPreview(row("iac_terraform_destroy", "iac.terraform.destroy", "mesh", 4), {
+        target: "{workingDirectory}",
+        summary:
+          "DESTROY: apply the saved Terraform destroy plan for {workingDirectory} (the plan below, pinned by its hash)",
+        fields: [textField("workingDirectory", "Working directory")],
+      }),
+      TERRAFORM_DESTROY_BOUND,
+    ),
+    { template: "destroy {workingDirectory}" },
+  ),
+  withConfirm(
+    withBound(
+      withPreview(row("iac_cloudformation_deploy", "iac.cloudformation.deploy", "mesh", 4), {
+        target: "{stackName}",
+        summary:
+          "Execute the CloudFormation change set made for stack {stackName} and exactly this template",
+        fields: [
+          textField("stackName", "Stack"),
+          textField("capabilities", "Capabilities", "(none)"),
+          textField("templateBody", "Template"),
+        ],
+      }),
+      CFN_DEPLOY_BOUND,
+    ),
+    { template: "deploy {stackName}" },
+  ),
+  // Refused on every door before any prompt (D2, OR-W34-2): Pulumi saved update plans are
+  // documented as experimental, so there is no plan an apply could be bound to. The connector
+  // rejects it too, but only AFTER the prompt; the gate refuses first.
+  withRefusal(
+    withConfirm(row("iac_pulumi_up", "iac.pulumi.up", "mesh", 4), {
+      template: "up {workingDirectory}",
+    }),
+    "iac.pulumi.up: refused (saved update plans are experimental, OR-W34-2)",
+  ),
   // Connectors 0.9.0. The change-set discard is a WRITE (connector fix 19) that only the gateway's
   // own cleanup of a change set it created would ever call; until then it is an owner-typed,
   // never-offered row. `k8s_manifest_apply` is D3's: classified so the build stays green, with

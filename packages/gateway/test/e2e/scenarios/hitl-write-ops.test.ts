@@ -292,6 +292,20 @@ function buildMocks(approve: boolean): {
   };
 }
 
+/**
+ * The writes whose gate is not "one prompt, one dispatch" since D2: the three plan-bound iac writes
+ * run a preflight, a prepare step and a settle step first and need the production dispatcher's
+ * capabilities, and the Pulumi apply is refused before any prompt. They are covered through the
+ * production table by `src/engine/executor-iac-rows.test.ts`; they stay in the frozen-set check.
+ */
+const OWN_GATE_TESTS: ReadonlySet<string> = new Set([
+  "iac.terraform.apply",
+  "iac.terraform.destroy",
+  "iac.cloudformation.deploy",
+  "iac.pulumi.up",
+]);
+const PLAIN_GATE_ACTIONS = Q2_WRITE_ACTIONS.filter((t) => !OWN_GATE_TESTS.has(t));
+
 describe("HITL_REQUIRED covers every Q2 write action", () => {
   test("all Q2 write action types are in the frozen HITL_REQUIRED set", () => {
     for (const actionType of Q2_WRITE_ACTIONS) {
@@ -301,7 +315,7 @@ describe("HITL_REQUIRED covers every Q2 write action", () => {
 });
 
 describe("ToolExecutor — consent gate fires before dispatch (approved)", () => {
-  for (const actionType of Q2_WRITE_ACTIONS) {
+  for (const actionType of PLAIN_GATE_ACTIONS) {
     test(`${actionType}: consent requested once, dispatch called once`, async () => {
       const { consentCalls, dispatchCalls, executor } = buildMocks(true);
       const action: PlannedAction = { type: actionType, payload: payloadFor(actionType) };
@@ -317,7 +331,7 @@ describe("ToolExecutor — consent gate fires before dispatch (approved)", () =>
 });
 
 describe("ToolExecutor — consent gate fires before dispatch (rejected)", () => {
-  for (const actionType of Q2_WRITE_ACTIONS) {
+  for (const actionType of PLAIN_GATE_ACTIONS) {
     test(`${actionType}: consent requested once, dispatch NOT called`, async () => {
       const { consentCalls, dispatchCalls, executor } = buildMocks(false);
       const action: PlannedAction = { type: actionType, payload: payloadFor(actionType) };

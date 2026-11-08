@@ -77,9 +77,17 @@ export interface ConnectorWriteRow {
   /**
    * A bound write (Phase 9.7 D0b, I54): the gateway runs this row's PREPARE read at the gate and
    * injects the values it binds into the write's input; the caller never supplies them. Set with
-   * {@link withBound}. Two rows declare one (D1c): the GitHub and GitLab multi-file commits.
+   * {@link withBound}. Five rows declare one: the GitHub and GitLab multi-file commits (D1c) and
+   * the Terraform apply, Terraform destroy and CloudFormation deploy (D2).
    */
   readonly bound?: BoundWrite;
+  /**
+   * D2: a fixed reason the gate refuses this write with on EVERY door, before any capture, prepare
+   * or prompt (nothing is shown, nobody is asked, the connector is never called). Set with
+   * {@link withRefusal}; found by action TYPE only (I3). The Pulumi apply carries one: saved update
+   * plans are experimental, so there is nothing an apply could be bound to.
+   */
+  readonly refuse?: string;
 }
 
 /**
@@ -429,6 +437,24 @@ export function withConfirm(r: ConnectorWriteRow, confirm: ConfirmTemplate): Con
     }
   }
   return Object.freeze({ ...r, confirm });
+}
+
+/**
+ * A frozen copy of `r` that the gate refuses with `reason` on every door (D2). Throws at declaration
+ * unless the row is a Wave 4 row with no preview, reader or bound prepare step (a refused write has
+ * nothing to show or read), and the reason is a non-empty single line.
+ */
+export function withRefusal(r: ConnectorWriteRow, reason: string): ConnectorWriteRow {
+  if (r.wave !== 4) throw new Error(`connector write refusal: row ${r.toolId} is not Wave 4`);
+  if (r.preview !== undefined || r.before !== undefined || r.bound !== undefined) {
+    throw new Error(
+      `connector write refusal: row ${r.toolId} has a preview, reader or prepare step`,
+    );
+  }
+  if (reason.trim() === "" || reason.includes("\n") || reason.includes("\r")) {
+    throw new Error(`connector write refusal: row ${r.toolId} reason must be one non-empty line`);
+  }
+  return Object.freeze({ ...r, refuse: reason });
 }
 
 /** The structural problems of a bound declaration's settle, settle tool and preflight tags (D2). */

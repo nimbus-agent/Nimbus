@@ -26,6 +26,7 @@ import { buildEgressEntry } from "../egress/egress-record.ts";
 import type { ConsentCoordinator } from "../ipc/consent.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import { getAgentRequestSessionId } from "./agent-request-context.ts";
+import { withoutTemplateText } from "./audit-bodies.ts";
 import { commitFilesDigest, withoutFileText } from "./audit-files.ts";
 import {
   BEFORE_READ_HITL_REFUSAL,
@@ -564,8 +565,9 @@ function auditedAction(action: PlannedAction): PlannedAction {
   if (action.type === "pack.install") return { ...action, payload: omitPromptText(action.payload) };
   // The rendered plan repeats `plan`, which the row keeps.
   if (hasPlanText(action)) return { ...action, payload: omitPlanText(action.payload) };
-  // A multi-file write keeps its file count and size, never the file text (D1c).
-  return withoutFileText(action);
+  // A multi-file write keeps its file count and size, never the file text (D1c); a CloudFormation
+  // write its template's size and hash, never the template (D2).
+  return withoutTemplateText(withoutFileText(action));
 }
 
 /** What a type-to-confirm approval came to, for the audit row (never the typed text itself). */
@@ -844,6 +846,16 @@ export class ToolExecutor {
    */
   private boundRowOf(action: PlannedAction): ConnectorWriteRow | undefined {
     return this.rows().find((r) => r.bound !== undefined && r.actionType === action.type);
+  }
+
+  /**
+   * D2: the fixed reason a row refuses its writes with on EVERY door (`ConnectorWriteRow.refuse`),
+   * found by action TYPE alone (I3, so the payload can neither lift nor trigger it). It ends the
+   * gate before any capture, prepare or prompt: the refused write is audited rejected and ledgered
+   * blocked, and never dispatched.
+   */
+  private rowRefusal(action: PlannedAction): string | undefined {
+    return this.rows().find((r) => r.refuse !== undefined && r.actionType === action.type)?.refuse;
   }
 
   /**
@@ -1317,7 +1329,7 @@ export class ToolExecutor {
     // sources — a consent disconnect, a before-state guard, a confirm refusal — overwrite it), so it
     // is always a defined string by the time the rejected branch returns it.
     const record: GateRecord = { rejectReason: USER_DECLINED_REASON };
-    const boundRefusal = this.boundRefusal(action, requiresHITL, scope);
+    const boundRefusal = this.rowRefusal(action) ?? this.boundRefusal(action, requiresHITL, scope);
 
     // Phases, in order: the ordered refusal checks then the prompt (a throw maps to a status), then
     // the audit row, then the egress row (I29), then the result.
@@ -1347,7 +1359,7 @@ export class ToolExecutor {
     this.egressSink.append(
       buildEgressEntry({
         // The ledger's payload summary never holds the text of a commit's files either (D1c).
-        action: withoutFileText(action),
+        action: withoutTemplateText(withoutFileText(action)),
         hitlStatus,
         resultStatus: hitlStatus === "rejected" ? "blocked" : "authorized",
         sessionId,

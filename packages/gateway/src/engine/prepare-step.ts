@@ -22,6 +22,7 @@
  * both levels before it writes the gateway's own values.
  */
 
+import { beforeReplyJson } from "../connectors/connector-writes/before-select.ts";
 import { type PreviewDiff, renderUnifiedDiff } from "../connectors/connector-writes/diff.ts";
 import { IAC_LIMITS } from "../connectors/connector-writes/iac-limits.ts";
 import {
@@ -385,6 +386,19 @@ async function settledPrepare(
   };
 }
 
+/**
+ * A settler reads the reply as JSON, whatever the dispatcher handed back: an MCP `CallToolResult`
+ * (its first text part, under the 4 MiB cap) is unwrapped, a plain object is used as is, and
+ * anything else is refused as unshowable. The settler never sees the envelope.
+ */
+function replyJson(reply: unknown): unknown {
+  try {
+    return beforeReplyJson(reply);
+  } catch {
+    throw new PrepareRefusedError(PREPARE_REFUSALS.unshowable);
+  }
+}
+
 const REAL_TIMERS: Timers = {
   set: (fn, ms) => setTimeout(fn, ms),
   clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
@@ -452,12 +466,17 @@ export async function runPrepareStep(
               timers,
             );
             if ("refusal" in shown) throw new PrepareRefusedError(shown.refusal);
-            return shown.reply;
+            return replyJson(shown.reply);
           };
     return settledPrepare(ops.settle.bind(ops), {
       row,
       bound,
-      context: { settle, input, reply: got.reply, ...(showPlan === undefined ? {} : { showPlan }) },
+      context: {
+        settle,
+        input,
+        reply: replyJson(got.reply),
+        ...(showPlan === undefined ? {} : { showPlan }),
+      },
     });
   }
   const diff = preparedDiff(bound, input, got.reply);

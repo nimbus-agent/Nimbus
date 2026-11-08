@@ -3297,10 +3297,13 @@ function confirmableInput(row: ConnectorWriteRow): Record<string, unknown> {
     input[name] = name === "instanceIds" ? ["i-1"] : "x1";
   }
   // A multi-file commit (D1c) must also pass its row's input check: one small new file.
-  if (row.bound?.prepare.inputRefusal !== undefined) {
+  if (row.bound?.prepare.inputRefusal !== undefined && row.bound.prepare.settle === undefined) {
     input["message"] = "m";
     input["files"] = [{ path: "a.txt", content: "x" }];
   }
+  // A plan-bound IaC row (D2) passes its own input check too: an absolute directory, a template.
+  if (row.bound?.prepare.settle === "iac-terraform") input["workingDirectory"] = "/srv/x1";
+  if (row.bound?.prepare.settle === "iac-cfn") input["templateBody"] = "Resources: {}";
   return input;
 }
 
@@ -3313,12 +3316,45 @@ function censusPrepareReply(
   input: Record<string, unknown>,
 ): unknown {
   if (row?.bound === undefined) return undefined;
+  // A settled row (D2) takes its values from the settler, not from this reply.
+  if (row.bound.prepare.settle !== undefined) return {};
   const files = (input["files"] as Array<{ path: string }>).map((f) => ({
     path: f.path,
     exists: false,
     mode: "100644",
   }));
   return { headSha: "a".repeat(40), files };
+}
+
+/**
+ * The capabilities a settled bound row (D2) needs on its dispatcher: a preflight that accepts and a
+ * settler that binds a placeholder for each of the row's bound fields (the production settlers are
+ * tested on their own). `undefined` for every other row, so they run on a dispatcher without them.
+ */
+function censusCapabilities(row: ConnectorWriteRow | undefined):
+  | {
+      boundWriteCapabilities: {
+        preflight: () => Promise<{ ok: true; release: () => void }>;
+        settle: () => Promise<{
+          values: Record<string, string>;
+          fields: Array<{ label: string; value: string }>;
+          cleanup: () => Promise<void>;
+        }>;
+      };
+    }
+  | Record<string, never> {
+  if (row?.bound?.prepare.settle === undefined) return {};
+  const fields = row.bound.binds.map((b) => b.field);
+  return {
+    boundWriteCapabilities: {
+      preflight: async () => ({ ok: true, release: () => undefined }),
+      settle: async () => ({
+        values: Object.fromEntries(fields.map((f) => [f, `settled-${f}`])),
+        fields: [{ label: "Plan", value: "settled" }],
+        cleanup: async () => undefined,
+      }),
+    },
+  };
 }
 
 /** Every row (built the way its door builds it, ruling E2) plus the four gate-confined writes. */
@@ -4093,12 +4129,25 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
             rowsAtDispatch = egressRows(db).length;
             return {};
           },
+          ...censusCapabilities(boundRow),
         },
         undefined,
         makeEgressSink(db),
       );
       await exec.execute(action);
       const rows = egressRows(db);
+      // A row the gate refuses itself (D2: the Pulumi apply) asks nobody and dispatches nothing,
+      // but is still ledgered, blocked.
+      if (
+        CONNECTOR_WRITE_ROWS.some((r) => r.actionType === action.type && r.refuse !== undefined)
+      ) {
+        if (prompts !== 0 || dispatches !== 0) failures.push(`${label}: a refused row ran`);
+        if (rows.length !== 1 || rows[0]?.resultStatus !== "blocked") {
+          failures.push(`${label}: a refused row is not one blocked row`);
+        }
+        db.close();
+        continue;
+      }
       if (prompts !== 1) failures.push(`${label}: consent asked ${prompts} times`);
       if (dispatches !== 1) failures.push(`${label}: dispatched ${dispatches} times`);
       if (rowsAtDispatch !== rowsExpected) {
@@ -4146,6 +4195,7 @@ describe("I29 — egress-ledger completeness over the executor chokepoint", () =
             dispatches += 1;
             return {};
           },
+          ...censusCapabilities(boundRow),
         },
         undefined,
         makeEgressSink(db),
@@ -11745,6 +11795,7 @@ describe("I53 — a first-party connector write reaches the model only through t
       };
       // A bound row (D1c) is prepared first; the fake connector answers that read.
       const prepared = censusPrepareReply(row, input);
+      const refusedByRow = row.refuse !== undefined;
       const attempt = async (
         channel: "plain" | "exact" | "wrong" | "empty",
       ): Promise<{ status: string; dispatched: number; plainAsked: number }> => {
@@ -11777,6 +11828,7 @@ describe("I53 — a first-party connector write reaches the model only through t
               dispatched += 1;
               return {};
             },
+            ...censusCapabilities(row),
           },
           undefined,
           NULL_EGRESS_SINK,
@@ -11785,6 +11837,17 @@ describe("I53 — a first-party connector write reaches the model only through t
         const res = await exec.execute(action);
         return { status: res.status, dispatched, plainAsked };
       };
+      // A row the gate refuses itself (D2: the Pulumi apply) is refused on every channel, exact
+      // text included, and nobody is asked.
+      if (refusedByRow) {
+        for (const channel of ["plain", "exact", "wrong", "empty"] as const) {
+          const r = await attempt(channel);
+          if (r.status !== "rejected" || r.dispatched !== 0 || r.plainAsked !== 0) {
+            failures.push(`${row.toolId}: a row-refused write ran on the ${channel} channel`);
+          }
+        }
+        continue;
+      }
       const plain = await attempt("plain");
       if (plain.status !== "rejected" || plain.dispatched !== 0 || plain.plainAsked !== 0) {
         failures.push(`${row.toolId}: a plain-only channel approved or was asked`);
@@ -11919,11 +11982,14 @@ describe("I53 — a first-party connector write reaches the model only through t
     );
     const { isReadOnlyToolId } = await import("./share/read-tool-registry.ts");
     const offeredWave4 = CONNECTOR_WRITE_ROWS.filter((r) => r.wave === 4 && isModelOfferableRow(r));
-    // 27 through a before-state (D1) and the two bound multi-file commits (D1c) through a prepare step.
-    expect(offeredWave4).toHaveLength(29);
+    // 27 through a before-state (D1), the two bound multi-file commits (D1c) and the Terraform apply
+    // and CloudFormation deploy (D2) through a prepare step; the destroy is bound but never offered.
+    expect(offeredWave4).toHaveLength(31);
     expect(offeredWave4.filter((r) => r.bound !== undefined).map((r) => r.toolId)).toEqual([
       "github_file_commit",
       "gitlab_commit_create",
+      "iac_terraform_apply",
+      "iac_cloudformation_deploy",
     ]);
     for (const r of offeredWave4.filter((x) => x.bound === undefined)) {
       expect(r.before, r.toolId).toBeDefined();
@@ -12880,7 +12946,15 @@ describe("I54 — a bound connector write is dispatched only with the values its
       CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined)
         .map((r) => r.toolId)
         .sort(),
-    ).toEqual(["github_file_commit", "gitlab_commit_create"]);
+    ).toEqual(
+      [
+        "github_file_commit",
+        "gitlab_commit_create",
+        "iac_cloudformation_deploy",
+        "iac_terraform_apply",
+        "iac_terraform_destroy",
+      ].sort(),
+    );
     expect([...PREPARE_TOOL_IDS].sort()).toEqual([
       "github_commit_prepare",
       "gitlab_commit_prepare",

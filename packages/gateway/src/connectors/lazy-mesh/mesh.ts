@@ -87,6 +87,7 @@ import {
   phase3AddFlagsmithMcp,
   phase3AddFluxMcp,
   phase3AddGcpMcp,
+  phase3AddIacMcp,
   phase3AddLaunchdarklyMcp,
   phase3AddLookerMcp,
   phase3AddMlflowMcp,
@@ -133,6 +134,10 @@ const PHASE3_LISTING_ADDERS: Readonly<Record<string, Phase3ServerAdder>> = {
   aws: phase3AddAwsMcp,
   azure: phase3AddAzureMcp,
   gcp: phase3AddGcpMcp,
+  // D2: the iac server, LISTED in its no-network bundle slot so the model door can read the write
+  // and prepare tools' schemas; the plan, show, apply and CloudFormation children run in their own
+  // per-call profiles, never in this slot.
+  iac: phase3AddIacMcp,
 };
 
 /**
@@ -377,7 +382,7 @@ export class LazyConnectorMesh {
   }
 
   /**
-   * The explicit listing map: the 14 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp) (today's spawner probe)
+   * The explicit listing map: the 15 phase-3 services on the phase-3 bundle (the 11 of C1 plus aws, azure and gcp, and iac for D2) (today's spawner probe)
    * and each per-service-slot service (`WAVE2_LISTING`) on its own slot. Each `ensure` calls the mesh's own `ensure*Running`
    * method at call time (a test seam), and names exactly that service's slot.
    */

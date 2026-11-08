@@ -742,6 +742,8 @@ describe("PREPARE_REFUSALS (D2)", () => {
 });
 
 describe("runPrepareStep: the settle step (D2, I54)", () => {
+  // A right-to-left override, built from its code point so no literal one sits in this file.
+  const BIDI = String.fromCharCode(0x202e);
   const SHOW = "synth_show";
   const IDS: ReadonlySet<string> = new Set([SYNTH_PREPARE_TOOL, SHOW]);
   const bindOf = (field: string) => ({
@@ -822,6 +824,54 @@ describe("runPrepareStep: the settle step (D2, I54)", () => {
     expect(cleaned).toBe(1);
   });
 
+  test("a settler reads JSON: an MCP result envelope is unwrapped, a malformed one is unshowable", async () => {
+    const seen: unknown[] = [];
+    const wrapped = {
+      content: [{ type: "text", text: JSON.stringify({ changeSetId: "arn-from-text" }) }],
+    };
+    const ok = opsOf(
+      {
+        settle: async (_id, ctx) => {
+          seen.push(ctx.reply);
+          return settled();
+        },
+      },
+      wrapped,
+    );
+    await runPrepareStep(ok.ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS });
+    expect(seen).toEqual([{ changeSetId: "arn-from-text" }]);
+    for (const bad of [
+      "just text",
+      { content: [{ type: "text", text: "not json" }] },
+      { content: [{ type: "text", text: "x" }], isError: true },
+    ]) {
+      const { ops } = opsOf({ settle: async () => settled() }, bad);
+      expect(
+        await refusalOf(runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS })),
+      ).toBe(PREPARE_REFUSALS.unshowable);
+    }
+  });
+
+  test("the show reply is unwrapped the same way, and a malformed one refuses the settle", async () => {
+    const shown: unknown[] = [];
+    const wrapped = (text: string) => ({ content: [{ type: "text", text }] });
+    let replyToShow: unknown = wrapped(JSON.stringify({ planJson: "{}", planSha256: "h" }));
+    const { ops } = opsOf({
+      dispatch: async (a) =>
+        String(a.payload?.["mcpToolId"]).endsWith(SHOW) ? replyToShow : SYNTH_REPLY,
+      settle: async (_id, ctx) => {
+        shown.push(await ctx.showPlan?.({ workingDirectory: "/w", planFile: "/p" }));
+        return settled({ values: { planFile: "/p", planSha256: "h" } });
+      },
+    });
+    await runPrepareStep(ops, ROW, tfBound(), ACTION, { prepareToolIds: IDS });
+    expect(shown).toEqual([{ planJson: "{}", planSha256: "h" }]);
+    replyToShow = "garbage";
+    expect(
+      await refusalOf(runPrepareStep(ops, ROW, tfBound(), ACTION, { prepareToolIds: IDS })),
+    ).toBe(PREPARE_REFUSALS.unshowable);
+  });
+
   test("a settled result without a plan has none", async () => {
     const { plan: _plan, ...noPlan } = settled();
     const { ops } = opsOf({ settle: async () => noPlan });
@@ -832,12 +882,12 @@ describe("runPrepareStep: the settle step (D2, I54)", () => {
   test("settled facts are sanitised and capped, the overflow counted with the settler own", async () => {
     const many = Array.from({ length: BEFORE_STATE_MAX_FIELDS + 2 }, (_, i) => ({
       label: `L${String(i)}`,
-      value: i === 0 ? "a‮b" : "v",
+      value: i === 0 ? `a${BIDI}b` : "v",
     }));
     const { ops } = opsOf({ settle: async () => settled({ fields: many, notShown: 3 }) });
     const out = await runPrepareStep(ops, ROW, cfnBound(), ACTION, { prepareToolIds: IDS });
     expect(out.fields).toHaveLength(BEFORE_STATE_MAX_FIELDS);
-    expect(out.fields[0]?.value).not.toContain("‮");
+    expect(out.fields[0]?.value).not.toContain(BIDI);
     expect(out.notShown).toBe(5);
   });
 
