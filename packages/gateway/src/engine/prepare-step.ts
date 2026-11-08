@@ -40,6 +40,7 @@ import {
 } from "../connectors/connector-writes/types.ts";
 import { mcpClientToolKey } from "../connectors/lazy-mesh/tool-map.ts";
 import type { SettleContext, SettledWrite } from "./bound-write-capabilities.ts";
+import { type CfnOrphan, deriveCfnOrphan } from "./iac-orphan.ts";
 import { serviceOf } from "./service-of.ts";
 import { extractToolInput } from "./tool-input.ts";
 import type { ActionResult, PlannedAction } from "./types.ts";
@@ -84,6 +85,12 @@ export const PREPARE_REFUSALS = Object.freeze({
 export class PrepareRefusedError extends Error {
   override readonly name = "PrepareRefusedError";
   readonly reason: string;
+  /**
+   * A CloudFormation change set the prepare child created before this refusal, derived and validated
+   * by the gateway from the reply (`deriveCfnOrphan`); the executor discards it. Absent whenever the
+   * gateway cannot prove one exists.
+   */
+  orphan?: CfnOrphan | undefined;
   constructor(reason: string) {
     super(reason);
     this.reason = reason;
@@ -446,6 +453,43 @@ export async function runPrepareStep(
     timers,
   );
   if ("refusal" in got) throw new PrepareRefusedError(got.refusal);
+  try {
+    return await afterReply(ops, { row, bound, action, opts, input, got, service, timers });
+  } catch (e) {
+    // The connector answered, so a CloudFormation change set may exist even though this refusal means
+    // no settled value will: name it for the executor's discard, when (and only when) it can be proven.
+    if (e instanceof PrepareRefusedError && settle === "iac-cfn") {
+      e.orphan = deriveCfnOrphan(input, safeReplyJson(got.reply));
+    }
+    throw e;
+  }
+}
+
+/** {@link replyJson} for a reader that must not throw: `undefined` when the reply cannot be read. */
+function safeReplyJson(reply: unknown): unknown {
+  try {
+    return replyJson(reply);
+  } catch {
+    return undefined;
+  }
+}
+
+interface AfterReply {
+  readonly row: ConnectorWriteRow;
+  readonly bound: BoundWrite;
+  readonly action: PlannedAction;
+  readonly opts: PrepareStepOptions;
+  readonly input: Record<string, unknown>;
+  readonly got: { readonly reply: unknown };
+  readonly service: string;
+  readonly timers: Timers;
+}
+
+/** Everything after the prepare child answered: the size cap, then the settle or the plain binds. */
+async function afterReply(ops: PrepareOps, a: AfterReply): Promise<PreparedWrite> {
+  const { row, bound, opts, input, got, service, timers } = a;
+  const { prepare } = bound;
+  const { settle, settleTool } = prepare;
   if (serialisedLength(got.reply) > prepare.maxReplyBytes) {
     throw new PrepareRefusedError(PREPARE_REFUSALS.replyTooLarge);
   }

@@ -380,6 +380,27 @@ describe("the gateway-resolved working directory is the one every child and the 
     expect(h.prompts[0]).not.toContain(WD);
   });
 
+  test.each([
+    ["a non-ASCII character", "/mnt/café/infra"],
+    ["a device form", "\\?C:infra"],
+    ["a parent segment", "/mnt/real/../infra"],
+    ["more than 180 characters", `/${"a".repeat(200)}`],
+    ["a relative path", "infra/prod"],
+  ])(
+    "a resolved path with %s is refused BEFORE the plan child runs (same refusal on the pinned path)",
+    async (_n, bad) => {
+      const h = harness({ resolved: bad });
+      const r = await h.exec.execute(structuredClone(TF_APPLY));
+      expect(r.status).not.toBe("ok");
+      expect(h.dispatched).toEqual([]);
+      expect(h.prompts).toEqual([]);
+      expect(h.confirmed).toEqual([]);
+      // the lock the preflight took is still freed
+      expect(h.log).toContain("release");
+      expect(h.log.some((l) => l.startsWith("settle"))).toBe(false);
+    },
+  );
+
   test("a flat payload is pinned too", async () => {
     const h = harness({ resolved: REAL });
     const flat: PlannedAction = {

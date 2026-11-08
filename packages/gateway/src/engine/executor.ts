@@ -842,7 +842,22 @@ interface GateScope {
    * stated exception); any other action in the scope is refused.
    */
   readonly discardStep?: DiscardTarget;
+  /**
+   * Written by `preparePhase` when the prepare step refused AFTER the connector may have created a
+   * change set, and the gateway could prove which (`deriveCfnOrphan`). `finishScope` discards it
+   * exactly as it would a settled one, and only if the write was never dispatched.
+   */
+  orphan?: DiscardTarget;
 }
+
+/**
+ * The refusals that can follow a CloudFormation change set the connector created without the gateway
+ * having seen the reply that names it (the budget ran out, the child failed after creating it).
+ */
+const UNPROVEN_ORPHAN_REASONS: ReadonlySet<string> = new Set([
+  PREPARE_REFUSALS.timeout,
+  PREPARE_REFUSALS.failed,
+]);
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
 function pinWorkingDirectory(action: PlannedAction, directory: string): void {
@@ -1145,6 +1160,14 @@ export class ToolExecutor {
       // caller's string (it is this run's own clone: only `execute()` reaches a bound row).
       pinWorkingDirectory(action, outcome.workingDirectory);
       scope.workingDirectory = outcome.workingDirectory;
+      // The pinned path is a different string from the one checked above (a link was followed): it
+      // gets the same two refusals NOW, before the plan child exists, not after it ran.
+      const shape = row.bound.prepare.inputRefusal?.(
+        extractToolInput(action) as Record<string, unknown>,
+      );
+      if (shape !== undefined) return refuse(shape);
+      const pinned = this.renderConfirmPhase(action);
+      if (pinned.kind === "refuse") return refuse(pinned.reason);
     }
     return true;
   }
@@ -1164,28 +1187,57 @@ export class ToolExecutor {
     const row = this.boundRowOf(action);
     if (row?.bound === undefined) return undefined;
     const capabilities = this.connectors.boundWriteCapabilities;
-    const prepared = await runPrepareStep(
-      {
-        // The one gate call allowed to run a prepare type: this step's own, never a caller's.
-        gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
-        dispatch: (a) => this.connectors.dispatch(a),
-        ...(capabilities === undefined
-          ? {}
-          : { settle: (id: string, ctx: SettleContext) => capabilities.settle(id, ctx) }),
-      },
-      row,
-      row.bound,
-      action,
-      {
-        prepareToolIds: this.prepareToolIds(),
-        toolUnlisted: opts?.prepareToolUnlisted === true,
-        ...(scope.workingDirectory === undefined
-          ? {}
-          : { workingDirectory: scope.workingDirectory }),
-      },
-    );
+    let prepared: PreparedWrite;
+    try {
+      prepared = await runPrepareStep(
+        {
+          // The one gate call allowed to run a prepare type: this step's own, never a caller's.
+          gate: (a) => this.gateWithin(a, undefined, { bind: false, prepareStep: true }),
+          dispatch: (a) => this.connectors.dispatch(a),
+          ...(capabilities === undefined
+            ? {}
+            : { settle: (id: string, ctx: SettleContext) => capabilities.settle(id, ctx) }),
+        },
+        row,
+        row.bound,
+        action,
+        {
+          prepareToolIds: this.prepareToolIds(),
+          toolUnlisted: opts?.prepareToolUnlisted === true,
+          ...(scope.workingDirectory === undefined
+            ? {}
+            : { workingDirectory: scope.workingDirectory }),
+        },
+      );
+    } catch (e) {
+      this.noteOrphan(action, scope, row, e);
+      throw e;
+    }
     scope.prepared = prepared;
     return prepared;
+  }
+
+  /**
+   * A refused prepare step of a CloudFormation row may have left a change set the connector made.
+   * Keep the one the gateway can prove (its name carries the SHA-256 of THIS template, its stack is
+   * the caller's, its ARN names it) for the discard; otherwise do not guess, and say so once with
+   * the fixed pointer when the refusal is one that can follow a created change set.
+   */
+  private noteOrphan(
+    action: PlannedAction,
+    scope: GateScope,
+    row: ConnectorWriteRow,
+    e: unknown,
+  ): void {
+    if (row.bound?.prepare.settle !== "iac-cfn" || !(e instanceof PrepareRefusedError)) return;
+    if (e.orphan !== undefined) {
+      scope.orphan = e.orphan;
+    } else if (UNPROVEN_ORPHAN_REASONS.has(e.reason)) {
+      executorLog.warn(
+        { actionType: action.type },
+        "a CloudFormation change set may have been left by a prepare step that did not finish; remove it in the AWS console",
+      );
+    }
   }
 
   /**
@@ -1550,7 +1602,7 @@ export class ToolExecutor {
     if (this.boundRowOf(action)?.bound?.prepare.settle !== "iac-cfn") return undefined;
     const changeSetId = scope.prepared?.values["changeSetId"];
     const stackName = (extractToolInput(action) as Record<string, unknown>)["stackName"];
-    if (typeof changeSetId !== "string" || typeof stackName !== "string") return undefined;
+    if (typeof changeSetId !== "string" || typeof stackName !== "string") return scope.orphan;
     return { stackName, changeSetId };
   }
 }

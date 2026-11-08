@@ -8,6 +8,7 @@
 //  - it exists only for a scope that holds a settled change set, for exactly that stack and id;
 //  - a failing discard changes nothing in the result; the public `gate()` still prompts for it.
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { IAC_DISCARD } from "../connectors/connector-writes/iac-limits.ts";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import { PREPARE_TOOL_IDS } from "../connectors/connector-writes/prepare-tools.ts";
@@ -16,6 +17,7 @@ import type { EgressEntry } from "../egress/egress-record.ts";
 import { ConsentDisconnectedError } from "../ipc/consent.ts";
 import type { BoundWriteCapabilities, SettledWrite } from "./bound-write-capabilities.ts";
 import { NO_POLICY_OVERLAY, ToolExecutor } from "./executor.ts";
+import { PREPARE_REFUSALS, PrepareRefusedError } from "./prepare-step.ts";
 import type {
   ActionResult,
   ConfirmedApprovalRequest,
@@ -61,6 +63,10 @@ interface Options {
   readonly egressThrowsOnDiscard?: boolean;
   readonly settleValues?: Record<string, string>;
   readonly settleThrows?: boolean;
+  /** Settle refuses with a fixed prepare reason (e.g. the plan is too large to show). */
+  readonly settleRefuses?: string;
+  /** What the prepare child answers; a function may throw (a failed child). */
+  readonly prepareReply?: () => unknown;
   readonly noCaps?: boolean;
   readonly table?: readonly ConnectorWriteRow[];
 }
@@ -77,6 +83,7 @@ function harness(o: Options = {}) {
         preflight: async () => ({ ok: true, release: () => void log.push("release") }),
         settle: async (): Promise<SettledWrite> => {
           if (o.settleThrows === true) throw new Error("boom");
+          if (o.settleRefuses !== undefined) throw new PrepareRefusedError(o.settleRefuses);
           return {
             values: o.settleValues ?? { changeSetId: ARN },
             fields: [{ label: "Stack", value: "prod-stack" }],
@@ -117,7 +124,9 @@ function harness(o: Options = {}) {
       dispatch: async (a) => {
         dispatched.push(a);
         log.push(`dispatch:${a.type}`);
-        if (a.type.endsWith(".write.prepare")) return { changeSetId: "arn:forged" };
+        if (a.type.endsWith(".write.prepare")) {
+          return o.prepareReply === undefined ? { changeSetId: "arn:forged" } : o.prepareReply();
+        }
         if (a.type === IAC_DISCARD.actionType && o.discardThrows !== undefined) {
           if (o.discardThrows === "non-error") throw "delete-change-set failed";
           throw new Error("delete-change-set failed");
@@ -377,5 +386,100 @@ describe("the discard scope is a closed door (D43)", () => {
     const r = await h.exec.execute(structuredClone(DISCARD));
     expect(r.status).toBe("ok");
     expect(h.confirmed).toHaveLength(1);
+  });
+});
+
+describe("a change set the prepare child made but the gate then refused (D2 review, D43)", () => {
+  const TEMPLATE = (CFN_DEPLOY.payload?.["input"] as { templateBody: string }).templateBody;
+  const SHA = createHash("sha256").update(TEMPLATE, "utf8").digest("hex");
+  const NAME = `nimbus-${SHA}-0123456789ab`;
+  const GOOD_ARN = `arn:aws:cloudformation:eu-west-1:123456789012:changeSet/${NAME}/00000000-0000-0000-0000-000000000000`;
+  const reply = (over: Record<string, unknown> = {}) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          stackName: "prod-stack",
+          changeSetName: NAME,
+          changeSetId: GOOD_ARN,
+          ...over,
+        }),
+      },
+    ],
+  });
+  const refusedAfterCreate = (over: Record<string, unknown> = {}) =>
+    harness({
+      prepareReply: () => reply(over),
+      settleRefuses: PREPARE_REFUSALS.diffTooLarge,
+    });
+
+  test("settle refuses (too large to show) after a valid reply: the change set is discarded, exactly", async () => {
+    const h = refusedAfterCreate();
+    rejected(await h.exec.execute(CFN_DEPLOY));
+    const discards = discardsOf(h.dispatched);
+    expect(discards).toHaveLength(1);
+    expect(discards[0]).toEqual({
+      type: IAC_DISCARD.actionType,
+      payload: {
+        mcpToolId: DISCARD_KEY,
+        input: { stackName: "prod-stack", changeSetId: GOOD_ARN },
+      },
+    });
+    // The owner was never asked, and the write never went out.
+    expect(h.confirmed).toEqual([]);
+    expect(h.dispatched.some((a) => a.type === "iac.cloudformation.deploy")).toBe(false);
+    expect(h.log.at(-1)).toBe("release");
+  });
+
+  test.each([
+    ["another stack", { stackName: "other-stack" }],
+    [
+      "a name that does not carry this template's hash",
+      { changeSetName: `nimbus-${"0".repeat(64)}-0123456789ab` },
+    ],
+    [
+      "an ARN whose name segment differs",
+      { changeSetId: GOOD_ARN.replace(NAME, `nimbus-${SHA}-ffffffffffff`) },
+    ],
+    ["an ARN that is not a change set ARN", { changeSetId: "arn:aws:s3:::bucket" }],
+    ["no change set id", { changeSetId: undefined }],
+  ])(
+    "a reply with %s names no target: nothing is discarded (the gateway does not guess)",
+    async (_n, over) => {
+      const h = refusedAfterCreate(over);
+      rejected(await h.exec.execute(CFN_DEPLOY));
+      expect(discardsOf(h.dispatched)).toEqual([]);
+    },
+  );
+
+  test("a reply that is too large is refused and its change set discarded too", async () => {
+    const h = harness({ prepareReply: () => reply({ padding: "x".repeat(300_000) }) });
+    rejected(await h.exec.execute(CFN_DEPLOY));
+    expect(discardsOf(h.dispatched)).toHaveLength(1);
+  });
+
+  test("a prepare child that failed (no reply) discards nothing and says where to look", async () => {
+    const h = harness({
+      prepareReply: () => {
+        throw new Error("child died");
+      },
+    });
+    rejected(await h.exec.execute(CFN_DEPLOY));
+    expect(discardsOf(h.dispatched)).toEqual([]);
+  });
+
+  test("a refusal that cannot follow a created change set is silent", async () => {
+    const h = harness({ settleRefuses: PREPARE_REFUSALS.unbound, prepareReply: () => ({}) });
+    rejected(await h.exec.execute(CFN_DEPLOY));
+    expect(discardsOf(h.dispatched)).toEqual([]);
+  });
+
+  test("a Terraform row has no change set to discard whatever its prepare says", async () => {
+    const h = harness({
+      settleRefuses: PREPARE_REFUSALS.diffTooLarge,
+      prepareReply: () => reply(),
+    });
+    await h.exec.execute(TF_APPLY);
+    expect(discardsOf(h.dispatched)).toEqual([]);
   });
 });

@@ -275,6 +275,15 @@ describe("preflightPhase: a row with the iac tag refuses before any child exists
     expect(h.log).not.toContain("release");
   });
 
+  test("a pinned directory on a row with no input hook still goes on to the prepare read", async () => {
+    const h = harness({
+      caps: { preflight: () => ({ ok: true, release: () => undefined, workingDirectory: DIR }) },
+    });
+    const r = await h.exec.execute(ACTION);
+    expect(r.status).toBe("ok");
+    expect(h.dispatched.length).toBeGreaterThan(0);
+  });
+
   test("a capability that throws refuses with the fixed reason, never its text", async () => {
     const h = harness({
       caps: {
