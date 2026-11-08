@@ -31,7 +31,6 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
-
 import type { PreflightOutcome } from "../../engine/bound-write-capabilities.ts";
 import type { ExtensionManifest } from "../../extensions/manifest.ts";
 import { extensionProcessEnv } from "../../extensions/spawn-env.ts";
@@ -40,6 +39,7 @@ import {
   type AppContainerGrantRevoker,
   appContainerGrantRevokerFor,
 } from "../../platform/sandbox/win32-grant-revoke.ts";
+import { isSameOrInside, pathApiFor, pathsOverlap } from "../../util/path-overlap.ts";
 import type { NimbusVault } from "../../vault/nimbus-vault.ts";
 import { gcloudKeyFileEnv, loadGcpAuthFromVault } from "../_lib/gcp-auth.ts";
 import { readConnectorSecret } from "../connector-vault.ts";
@@ -229,18 +229,76 @@ export function isSystemOwnedDir(p: string, platform: NodeJS.Platform): boolean 
   return roots.some((r) => p === r || p.startsWith(`${r}/`));
 }
 
+/** The folders an install directory must not be, hold or sit in: where the gateway reads them from. */
+export interface InstallReadEnv {
+  readonly homeDir: string;
+  readonly tmpDir: string;
+  readonly protectedRoots: readonly string[];
+}
+
+/** Directory names that are shared or personal, never "an install of one tool". */
+const SHARED_DIR_NAMES: ReadonlySet<string> = new Set([
+  "bin",
+  "sbin",
+  "downloads",
+  "desktop",
+  "documents",
+  "tmp",
+  "temp",
+]);
+/** A path segment under which a read grant would expose credentials or personal state. */
+const SENSITIVE_SEGMENTS: ReadonlySet<string> = new Set([
+  ".ssh",
+  ".aws",
+  ".gnupg",
+  ".azure",
+  ".kube",
+]);
+
 /**
- * The CLI's install tree to read: POSIX only (a Windows grant on a tree under `C:\Program Files`
- * fails in the helper and the image loads without one), and never a system-owned tree (bubblewrap
- * and the sandbox profile already carry `/usr`).
+ * Is `tree` a directory dedicated to one tool's install, safe to hand to a networked, credentialed
+ * child as a read grant? Not a root; deep enough to be a product directory (three segments); not a
+ * shared or personal folder, a dotfile folder or one under a credential folder; not home or temp or
+ * a folder that holds them; and not overlapping a Nimbus folder in either direction.
  */
-export function installTreeReads(
+function isVettedInstallRoot(
+  tree: string,
+  env: InstallReadEnv,
+  platform: NodeJS.Platform,
+): boolean {
+  const api = pathApiFor(platform);
+  const segments = tree.split(api.sep).filter((s) => s !== "");
+  if (segments.length < 3) return false;
+  const last = (segments.at(-1) ?? "").toLowerCase();
+  if (SHARED_DIR_NAMES.has(last) || last.startsWith(".")) return false;
+  if (segments.some((s) => SENSITIVE_SEGMENTS.has(s.toLowerCase()))) return false;
+  if (isSameOrInside(platform, env.homeDir, tree) || isSameOrInside(platform, env.tmpDir, tree)) {
+    return false;
+  }
+  return !env.protectedRoots.some((r) => pathsOverlap(platform, tree, r));
+}
+
+/**
+ * What the CLI child may READ of its own install, POSIX only (a Windows grant on a tree under
+ * `C:\Program Files` fails in the helper and the image loads without one) and never for a
+ * system-owned binary (bubblewrap and the sandbox profile already carry `/usr`). Terraform is one
+ * static binary: the FILE alone is granted, never its directory, so a binary left in the home
+ * directory, `~/Downloads` or `~/.local/bin` exposes nothing else to a child that has the network
+ * and a cloud credential. The `aws` CLI needs its install directory as well; it gets it only when
+ * that directory is a vetted install root (see {@link isVettedInstallRoot}), else only the file
+ * (the call then fails, which is the safe direction).
+ */
+export function installReads(
   binaryRealPath: string | undefined,
   platform: NodeJS.Platform,
+  tool: "terraform" | "aws",
+  env: InstallReadEnv,
 ): string[] {
   if (binaryRealPath === undefined || platform === "win32") return [];
   const tree = dirname(binaryRealPath);
-  return isSystemOwnedDir(tree, platform) ? [] : [tree];
+  if (isSystemOwnedDir(tree, platform)) return [];
+  if (tool === "terraform" || !isVettedInstallRoot(tree, env, platform)) return [binaryRealPath];
+  return [binaryRealPath, tree];
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -963,7 +1021,7 @@ export class IacRunner implements IacHost {
       clouds: kind === "show" ? [] : this.deps.grants().clouds,
       net: kind === "show" ? [] : this.deps.grants().net,
       installTrees: [
-        ...installTreeReads(terraform, this.deps.platform),
+        ...installReads(terraform, this.deps.platform, "terraform", this.deps.pathDeps),
         ...(this.deps.extraReadPaths ?? []),
       ],
       credentialFiles,
@@ -997,7 +1055,7 @@ export class IacRunner implements IacHost {
       region,
       net: [],
       installTrees: [
-        ...installTreeReads(aws, this.deps.platform),
+        ...installReads(aws, this.deps.platform, "aws", this.deps.pathDeps),
         ...(this.deps.extraReadPaths ?? []),
       ],
     });

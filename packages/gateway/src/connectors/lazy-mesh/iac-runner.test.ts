@@ -32,7 +32,7 @@ import {
   iacProfileId,
   iacProtectedRootsFor,
   iacRootFor,
-  installTreeReads,
+  installReads,
   isSystemOwnedDir,
   routeIacTools,
 } from "./iac-runner.ts";
@@ -142,11 +142,61 @@ describe("buildIacProfile — the per-profile grants", () => {
     expect(p.manifest.permissions.network).toEqual([]);
   });
 
-  test("install trees: POSIX non-system only, never on Windows", () => {
-    expect(installTreeReads("/opt/tf/terraform", "linux")).toEqual(["/opt/tf"]);
-    expect(installTreeReads("/usr/local/bin/terraform", "linux")).toEqual([]);
-    expect(installTreeReads("C:\\Tools\\terraform.exe", "win32")).toEqual([]);
-    expect(installTreeReads(undefined, "linux")).toEqual([]);
+  describe("what the CLI is granted to read (review item 3)", () => {
+    const env = {
+      homeDir: "/home/me",
+      tmpDir: "/tmp",
+      protectedRoots: ["/home/me/.config/nimbus", "/home/me/.cache/nimbus"],
+    };
+
+    test("terraform is a single binary: the FILE only, never its directory", () => {
+      expect(installReads("/opt/tf/terraform", "linux", "terraform", env)).toEqual([
+        "/opt/tf/terraform",
+      ]);
+      // a binary sitting in home, Downloads or a personal bin does not expose that directory
+      for (const bin of [
+        "/home/me/terraform",
+        "/home/me/Downloads/terraform",
+        "/home/me/bin/terraform",
+        "/home/me/.local/bin/terraform",
+      ]) {
+        expect(installReads(bin, "linux", "terraform", env)).toEqual([bin]);
+      }
+    });
+
+    test("the aws CLI also gets its own install directory, when it is a vetted one", () => {
+      const dist = "/opt/aws-cli/v2/2.15.0/dist";
+      expect(installReads(`${dist}/aws`, "linux", "aws", env)).toEqual([`${dist}/aws`, dist]);
+      const userDist = "/home/me/aws-cli/v2/2.15.0/dist";
+      expect(installReads(`${userDist}/aws`, "darwin", "aws", env)).toContain(userDist);
+    });
+
+    test.each([
+      ["home itself", "/home/me/aws"],
+      ["a directory that holds home", "/home/aws"],
+      ["a personal bin", "/home/me/bin/aws"],
+      ["Downloads", "/home/me/Downloads/aws"],
+      ["a hidden dotfile directory", "/home/me/.local/bin/aws"],
+      ["a credentials directory", "/home/me/.aws/cli/dist/aws"],
+      ["temp", "/tmp/aws"],
+      ["a directory that holds temp", "/aws"],
+      ["inside a protected root", "/home/me/.config/nimbus/x/y/aws"],
+      ["a directory that holds a protected root", "/home/me/.config/aws"],
+      ["a shallow shared directory", "/opt/aws"],
+      ["a bin directory", "/opt/vendor/tools/bin/aws"],
+    ])("the aws CLI's directory is NOT granted when it is %s (the file still is)", (_n, bin) => {
+      expect(installReads(bin, "linux", "aws", env)).toEqual([bin]);
+    });
+
+    test("system-owned binaries, Windows and an unknown binary get nothing", () => {
+      expect(installReads("/usr/local/bin/terraform", "linux", "terraform", env)).toEqual([]);
+      expect(installReads("/usr/bin/aws", "darwin", "aws", env)).toEqual([]);
+      expect(installReads("C:\\Tools\\terraform.exe", "win32", "terraform", env)).toEqual([]);
+      expect(installReads(undefined, "linux", "terraform", env)).toEqual([]);
+    });
+  });
+
+  test("system-owned directories", () => {
     expect(isSystemOwnedDir("/usr/bin", "darwin")).toBe(true);
     expect(isSystemOwnedDir("/opt/homebrew/bin", "darwin")).toBe(false);
   });
