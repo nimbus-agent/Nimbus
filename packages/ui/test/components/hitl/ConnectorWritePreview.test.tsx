@@ -523,6 +523,17 @@ describe("ConnectorWritePreview: the gateway's plan (D2)", () => {
       { lines: [] },
       { lines: ["ok", 7] },
       plan({ sha256: 7 }),
+      plan({ sha256: "b".repeat(63) }),
+      plan({ sha256: "B".repeat(64) }),
+      plan({ sha256: undefined }),
+      plan({ changeCount: -1 }),
+      plan({ changeCount: "2" }),
+      plan({ deleteCount: 1.5 }),
+      plan({ bytes: "200" }),
+      // a plan cut before its footer is not a whole plan
+      plan({ lines: ["Deletes: 0, Replaces: 1, Creates: 1, Updates: 0", "Terraform 1.9.5"] }),
+      plan({ lines: ["End of plan: 1 changes", "one more line after the footer"] }),
+      plan({ lines: ["Unrelated: End of plan: 2 changes"] }),
     ]) {
       const { unmount } = render(<ConnectorWritePreview details={iac(bad)} />);
       expect(screen.getByTestId("connector-write-plan-error")).toBeInTheDocument();
@@ -535,5 +546,36 @@ describe("ConnectorWritePreview: the gateway's plan (D2)", () => {
     render(<ConnectorWritePreview details={details()} />);
     expect(screen.queryByTestId("connector-write-plan")).toBeNull();
     expect(screen.queryByTestId("connector-write-plan-error")).toBeNull();
+  });
+});
+
+describe("ConnectorWritePreview: a plan-bound write is never collapsed (D2 review)", () => {
+  const template = `Resources:
+  Fn:
+    UserData: ${"A".repeat(5_000)}
+    Hidden: PAYLOAD-AT-THE-END`;
+  const deploy = (type: string) =>
+    details({
+      actionType: type,
+      service: "iac",
+      fields: [{ label: "Template", kind: "text", value: template }],
+    });
+
+  it.each(["iac.cloudformation.deploy", "iac.terraform.apply", "iac.terraform.destroy"])(
+    "%s shows a long field in full in a bounded scroll box, with no Show full button",
+    (type) => {
+      render(<ConnectorWritePreview details={deploy(type)} />);
+      const pre = screen.getByTestId("connector-write-full-value");
+      expect(pre.textContent).toBe(template);
+      expect(pre.textContent).toContain("PAYLOAD-AT-THE-END");
+      expect(pre.parentElement?.className).toContain("overflow-auto");
+      expect(screen.queryByRole("button", { name: /Show full/i })).toBeNull();
+    },
+  );
+
+  it("another write type still collapses a long value (the plan-bound rule is not global)", () => {
+    render(<ConnectorWritePreview details={deploy("github.issue.create")} />);
+    expect(screen.queryByTestId("connector-write-full-value")).toBeNull();
+    expect(screen.getByRole("button", { name: /Show full/i })).toBeInTheDocument();
   });
 });

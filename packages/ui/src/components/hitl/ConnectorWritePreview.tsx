@@ -48,6 +48,10 @@ function asRecord(v: unknown): Record<string, unknown> {
     : {};
 }
 
+function asString(v: unknown): string | undefined {
+  return typeof v === "string" ? v : undefined;
+}
+
 function text(v: unknown): string | undefined {
   return typeof v === "string" && v !== "" ? v : undefined;
 }
@@ -112,7 +116,21 @@ function LongText({ value }: { readonly value: string }): ReactNode {
   );
 }
 
-function RowValue({ row }: { readonly row: Row }): ReactNode {
+function RowValue({ row, full }: { readonly row: Row; readonly full: boolean }): ReactNode {
+  // A plan-bound write's values (the CloudFormation template above all) are never collapsed: the
+  // owner must be able to read every character they are about to approve, in a bounded scroll box.
+  if (full) {
+    return (
+      <div className="max-h-96 overflow-auto rounded border border-[var(--color-border)] p-2">
+        <pre
+          data-testid="connector-write-full-value"
+          className="whitespace-pre-wrap break-words font-mono text-xs"
+        >
+          {row.value}
+        </pre>
+      </div>
+    );
+  }
   // Markdown is shown as plain preformatted text (ruling P2): no HTML, images or links are rendered.
   if (row.kind === "markdown") {
     return (
@@ -128,14 +146,20 @@ function RowValue({ row }: { readonly row: Row }): ReactNode {
   );
 }
 
-function Rows({ rows }: { readonly rows: readonly Row[] }): ReactNode {
+function Rows({
+  rows,
+  full = false,
+}: {
+  readonly rows: readonly Row[];
+  readonly full?: boolean;
+}): ReactNode {
   return (
     <dl className="grid grid-cols-[120px_1fr] gap-x-3 gap-y-1 text-sm">
       {rows.map((r) => (
         <div key={r.id} className="contents">
           <dt className="text-[var(--color-fg-muted)] break-words">{r.label}</dt>
           <dd className="text-[var(--color-fg)] break-words">
-            <RowValue row={r} />
+            <RowValue row={r} full={full} />
           </dd>
         </div>
       ))}
@@ -176,7 +200,9 @@ export function ConnectorWritePreview({
         <p className="text-sm whitespace-pre-wrap break-words">{summary}</p>
       )}
       {header.length > 0 && <Rows rows={header} />}
-      {fields.length > 0 && <Rows rows={fields} />}
+      {fields.length > 0 && (
+        <Rows rows={fields} full={isPlanBoundAction(asString(details["actionType"]))} />
+      )}
       {others.length > 0 && (
         <section data-testid="connector-write-other-fields" className="flex flex-col gap-1">
           <h3 className="text-sm font-semibold">Other fields</h3>
@@ -455,14 +481,31 @@ interface PlanViewModel {
   readonly sha256: string | undefined;
 }
 
-/** `undefined` when `raw` is not a well-formed gateway plan (a non-empty list of strings). */
+/** The footer the gateway's renderers end a plan (Terraform) or a change set (CloudFormation) with. */
+const PLAN_FOOTERS: readonly string[] = ["End of plan:", "End of change set:"];
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+function optionalCount(v: unknown): boolean {
+  return v === undefined || (typeof v === "number" && Number.isInteger(v) && v >= 0);
+}
+
+/**
+ * `undefined` unless `raw` is a plan exactly as the gateway builds it: a non-empty list of strings
+ * whose LAST line is the renderer's footer (so a cut plan is never taken for a whole one), a
+ * 64-character lower-case hex SHA-256, and numeric counts wherever the type has them. A plan that
+ * misses any of that is malformed and Approve stays disabled.
+ */
 function readPlan(raw: unknown): PlanViewModel | undefined {
   const p = asRecord(raw);
   const lines = p["lines"];
   if (!Array.isArray(lines) || lines.length === 0) return undefined;
   if (!(lines as unknown[]).every((l) => typeof l === "string")) return undefined;
   const sha = p["sha256"];
-  if (sha !== undefined && typeof sha !== "string") return undefined;
+  if (typeof sha !== "string" || !SHA256_HEX.test(sha)) return undefined;
+  if (!optionalCount(p["changeCount"]) || !optionalCount(p["deleteCount"])) return undefined;
+  if (!optionalCount(p["bytes"])) return undefined;
+  const last = (lines as string[])[lines.length - 1] as string;
+  if (!PLAN_FOOTERS.some((footer) => last.startsWith(footer))) return undefined;
   return { lines: lines as string[], sha256: sha };
 }
 
@@ -476,6 +519,11 @@ const PLAN_REQUIRED_ACTION_TYPES: ReadonlySet<string> = new Set([
   "iac.terraform.destroy",
   "iac.cloudformation.deploy",
 ]);
+
+/** Is this a plan-bound IaC write type (its approval must show a plan and carry a typed confirm)? */
+export function isPlanBoundAction(actionType: string | undefined): boolean {
+  return actionType !== undefined && PLAN_REQUIRED_ACTION_TYPES.has(actionType);
+}
 
 /**
  * Whether the details carry a `plan` the view cannot read, or (for a plan-bound write type) no

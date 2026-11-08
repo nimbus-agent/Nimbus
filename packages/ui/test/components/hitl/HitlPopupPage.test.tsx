@@ -556,4 +556,23 @@ describe("HitlPopupPage with a plan-bound write (D2)", () => {
     fireEvent.click(screen.getByRole("button", { name: /Reject/i }));
     await waitFor(() => expect(consentRespond).toHaveBeenCalledWith("p1", false, ""));
   });
+
+  it.each(["iac.terraform.apply", "iac.terraform.destroy", "iac.cloudformation.deploy"])(
+    "%s with a good plan but NO confirm text is never treated as matched",
+    (type) => {
+      const [req] = apply(type, "x", goodPlan);
+      const { confirmText: _dropped, ...noConfirm } = req as typeof req;
+      storeState.pending = [noConfirm as never];
+      render(<HitlPopupPage />);
+      expect(screen.getByRole("button", { name: /Approve/i })).toBeDisabled();
+    },
+  );
+
+  it("a non-plan write with no confirm text is still approvable (the rule is for plan-bound types only)", () => {
+    const [req] = apply("github.issue.create", "x");
+    const { confirmText: _dropped, ...noConfirm } = req as typeof req;
+    storeState.pending = [noConfirm as never];
+    render(<HitlPopupPage />);
+    expect(screen.getByRole("button", { name: /Approve/i })).toBeEnabled();
+  });
 });
