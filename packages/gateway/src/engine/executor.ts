@@ -846,11 +846,12 @@ interface GateScope {
 
 /** Writes `directory` as the working directory of the action's tool input (nested or flat). */
 function pinWorkingDirectory(action: PlannedAction, directory: string): void {
-  const payload = action.payload ?? {};
+  const payload: Record<string, unknown> = { ...action.payload };
   const nested = payload["input"];
-  const holder = Object.hasOwn(payload, "input") && isPlainObject(nested) ? nested : payload;
-  holder["workingDirectory"] = directory;
-  action.payload = payload;
+  action.payload =
+    Object.hasOwn(payload, "input") && isPlainObject(nested)
+      ? { ...payload, input: { ...nested, workingDirectory: directory } }
+      : { ...payload, workingDirectory: directory };
 }
 
 /** The change set a discard scope may remove: the stack it belongs to and the id the settler bound. */

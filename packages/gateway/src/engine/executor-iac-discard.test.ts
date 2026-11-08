@@ -57,7 +57,7 @@ type Consent = "typed" | "mismatch" | "decline" | "throws" | "disconnects" | "pl
 interface Options {
   readonly consent?: Consent;
   readonly writeThrows?: boolean;
-  readonly discardThrows?: boolean;
+  readonly discardThrows?: boolean | "non-error";
   readonly egressThrowsOnDiscard?: boolean;
   readonly settleValues?: Record<string, string>;
   readonly settleThrows?: boolean;
@@ -118,7 +118,8 @@ function harness(o: Options = {}) {
         dispatched.push(a);
         log.push(`dispatch:${a.type}`);
         if (a.type.endsWith(".write.prepare")) return { changeSetId: "arn:forged" };
-        if (a.type === IAC_DISCARD.actionType && o.discardThrows === true) {
+        if (a.type === IAC_DISCARD.actionType && o.discardThrows !== undefined) {
+          if (o.discardThrows === "non-error") throw "delete-change-set failed";
           throw new Error("delete-change-set failed");
         }
         if (a.type === "iac.cloudformation.deploy" && o.writeThrows === true) {
@@ -201,6 +202,12 @@ describe("the discard of an unused change set runs after a rejection (D2, D43)",
     const h = harness({ consent: "decline", egressThrowsOnDiscard: true });
     rejected(await h.exec.execute(CFN_DEPLOY));
     expect(discardsOf(h.dispatched)).toEqual([]);
+  });
+
+  test("a discard that throws something that is not an Error is logged the same way", async () => {
+    const h = harness({ consent: "decline", discardThrows: "non-error" });
+    expect((await h.exec.execute(CFN_DEPLOY)).status).toBe("rejected");
+    expect(h.log.at(-1)).toBe("release");
   });
 
   test("a discard that fails changes nothing: the rejection is the result and the lock is freed", async () => {
@@ -304,11 +311,26 @@ describe("the discard scope is a closed door (D43)", () => {
         ...DISCARD,
         payload: { mcpToolId: DISCARD_KEY, input: { stackName: "other", changeSetId: ARN } },
       },
-      { type: "iac.terraform.destroy", payload: DISCARD.payload as Record<string, unknown> },
+      // Another HITL type that is not a bound row (a bound one is refused earlier, by the bind rule).
+      {
+        type: "kubernetes.pod.delete",
+        payload: {
+          mcpToolId: "k8s_pod_delete",
+          input: { stackName: "prod-stack", changeSetId: ARN },
+        },
+      },
       {
         ...DISCARD,
         payload: {
           mcpToolId: "iac_iac_terraform_apply",
+          input: { stackName: "prod-stack", changeSetId: ARN },
+        },
+      },
+      {
+        ...DISCARD,
+        // A tool that is no connector write at all (a read): the pairing check passes it on.
+        payload: {
+          mcpToolId: "iac_iac_cloudformation_stack_get",
           input: { stackName: "prod-stack", changeSetId: ARN },
         },
       },
@@ -331,6 +353,9 @@ describe("the discard scope is a closed door (D43)", () => {
         ...DISCARD,
         payload: { mcpToolId: DISCARD_KEY, stackName: "prod-stack", changeSetId: ARN },
       },
+      { type: IAC_DISCARD.actionType },
+      { ...DISCARD, payload: { mcpToolId: DISCARD_KEY, input: "prod-stack" } },
+      { ...DISCARD, payload: { mcpToolId: DISCARD_KEY, input: null } },
     ];
     for (const v of variants) {
       const r = await gateAs(h, v);
