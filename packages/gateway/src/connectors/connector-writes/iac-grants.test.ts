@@ -234,7 +234,7 @@ describe("gateWorkdir — the caller's string must be its own canonical form", (
   test("a case variant is refused on a case-insensitive system (it is not canonical)", () => {
     const w = fake("win32", ["C:\\Users\\me\\infra"]);
     const g: IacGrants = { ...EMPTY_IAC_GRANTS, workdirs: ["C:\\Users\\me\\infra"] };
-    expect(gateWorkdir("C:\\Users\\me\\infra", g, w)).toBe("C:\\Users\\me\\infra");
+    expect(gateWorkdir("C:\\Users\\me\\infra", g, w)).toBe("C:\\Users\\me\\infra"); // cross-platform-ok
     expect(gateWorkdir("c:\\users\\me\\INFRA", g, w)).toBeUndefined();
   });
 

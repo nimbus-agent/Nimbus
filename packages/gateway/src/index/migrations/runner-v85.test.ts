@@ -42,7 +42,10 @@ describe("V85 migration — the iac approved-directory grants", () => {
       expect(() => ins("workdir", "/a")).toThrow();
       expect(() => ins("secret", "x")).toThrow();
       expect(() =>
-        dbRun(db, "INSERT INTO connector_write_iac_grant (kind, value, approved_at) VALUES ('net', NULL, 1)"),
+        dbRun(
+          db,
+          "INSERT INTO connector_write_iac_grant (kind, value, approved_at) VALUES ('net', NULL, 1)",
+        ),
       ).toThrow();
     } finally {
       db.close();

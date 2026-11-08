@@ -19,7 +19,6 @@ import {
   isSafeIacRegion,
   isValidIacExtraHost,
 } from "../../connectors/connector-writes/iac-clouds.ts";
-import { iacWildcardHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import {
   approveWorkdir,
   getIacGrants,
@@ -36,6 +35,7 @@ import type {
   ConnectorWriteRow,
   ConnectorWriteWave,
 } from "../../connectors/connector-writes/types.ts";
+import { iacWildcardHosts } from "../../connectors/lazy-mesh/first-party-manifests.ts";
 import type { ToolExecutor } from "../../engine/executor.ts";
 import type { EnforcedPolicy } from "../../policy/policy-gate.ts";
 import { ConnectorRpcError } from "../connector-rpc-shared.ts";

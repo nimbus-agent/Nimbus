@@ -390,7 +390,7 @@ describe("the discard scope is a closed door (D43)", () => {
 });
 
 describe("a change set the prepare child made but the gate then refused (D2 review, D43)", () => {
-  const TEMPLATE = (CFN_DEPLOY.payload?.["input"] as { templateBody: string }).templateBody;
+  const TEMPLATE = ((CFN_DEPLOY.payload ?? {})["input"] as { templateBody: string }).templateBody;
   const SHA = createHash("sha256").update(TEMPLATE, "utf8").digest("hex");
   const NAME = `nimbus-${SHA}-0123456789ab`;
   const GOOD_ARN = `arn:aws:cloudformation:eu-west-1:123456789012:changeSet/${NAME}/00000000-0000-0000-0000-000000000000`;

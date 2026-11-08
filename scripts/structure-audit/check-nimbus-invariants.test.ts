@@ -5035,10 +5035,16 @@ describe("D43 — the unused change set is discarded only by the executor's own 
 
   test("(b) FAILS when dispatched is ever reset to false or set true a second time", () => {
     expect(
-      rules(swap(EXECUTOR_GOOD.replace("    } finally {", "      dispatched = false;\n    } finally {"))),
+      rules(
+        swap(
+          EXECUTOR_GOOD.replace("    } finally {", "      dispatched = false;\n    } finally {"),
+        ),
+      ),
     ).toContain("discard-order-pinned");
     expect(
-      rules(swap(EXECUTOR_GOOD.replace("    } finally {", "      dispatched = true;\n    } finally {"))),
+      rules(
+        swap(EXECUTOR_GOOD.replace("    } finally {", "      dispatched = true;\n    } finally {")),
+      ),
     ).toContain("discard-order-pinned");
   });
 
@@ -5054,7 +5060,12 @@ describe("D43 — the unused change set is discarded only by the executor's own 
 
   test("(d) FAILS when another file builds an iac spawn, the profile flag or the ENOSYS program", () => {
     const RUNNER = "packages/gateway/src/connectors/lazy-mesh/iac-runner.ts";
-    expect(rules([...GOOD, file(RUNNER, "wrapIacServerSpec(a, b, c); const i = 'com.nimbus.iac-plan';")])).toEqual([]);
+    expect(
+      rules([
+        ...GOOD,
+        file(RUNNER, "wrapIacServerSpec(a, b, c); const i = 'com.nimbus.iac-plan';"),
+      ]),
+    ).toEqual([]);
     for (const body of [
       "wrapIacServerSpec(a, b, c);",
       "const p = { iacProfile: true };",
