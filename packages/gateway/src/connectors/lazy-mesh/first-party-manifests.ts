@@ -621,7 +621,45 @@ export const FIRST_PARTY_WILDCARD_HOSTS: Readonly<Record<string, readonly string
   athena: awsWildcards("athena", "sts"),
   cloudwatch: awsWildcards("logs", "sts"),
   sagemaker: awsWildcards("api.sagemaker", "sts"),
+  // The iac connector's Terraform children (D2): the services a typical AWS configuration calls,
+  // and the Azure and GCP endpoints that carry a per-account or per-service label. Selected by the
+  // clouds the owner granted (`iacWildcardHosts`). UNVERIFIED completeness: no credentialed plan was
+  // run; a host missing here is refused on Linux and the owner adds it with `--net`.
+  iac_aws: [
+    ...awsWildcards(
+      "ec2",
+      "sts",
+      "kms",
+      "logs",
+      "rds",
+      "sns",
+      "sqs",
+      "ssm",
+      "ecs",
+      "ecr",
+      "eks",
+      "lambda",
+      "dynamodb",
+      "autoscaling",
+      "elasticloadbalancing",
+      "secretsmanager",
+      "apigateway",
+      "events",
+      "cloudwatch",
+      "monitoring",
+    ),
+    "*.s3.amazonaws.com",
+  ],
+  iac_azure: ["*.blob.core.windows.net", "*.vault.azure.net"],
+  iac_gcp: ["*.googleapis.com"],
 };
+
+/** The wildcard patterns of the iac Terraform children for the clouds the owner granted. */
+export function iacWildcardHosts(clouds: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const c of clouds) out.push(...(FIRST_PARTY_WILDCARD_HOSTS[`iac_${c}`] ?? []));
+  return [...new Set(out)];
+}
 
 /**
  * Where a connector's CLI really lives, when that is outside what every sandbox binds. Microsoft's
@@ -651,9 +689,15 @@ export function withInstalledCliTrees(
   };
 }
 
-export function manifestForFirstParty(serviceId: string): ExtensionManifest {
+export function manifestForFirstParty(
+  serviceId: string,
+  extraWildcardKeys: readonly string[] = [],
+): ExtensionManifest {
   const known = FIRST_PARTY_MANIFESTS[serviceId];
-  const wildcards = FIRST_PARTY_WILDCARD_HOSTS[serviceId];
+  const own = FIRST_PARTY_WILDCARD_HOSTS[serviceId];
+  const extra = extraWildcardKeys.flatMap((k) => FIRST_PARTY_WILDCARD_HOSTS[k] ?? []);
+  const wildcards =
+    own === undefined && extra.length === 0 ? undefined : [...(own ?? []), ...extra];
   // The only place `firstPartyPolicy` and `firstPartyWildcardHosts` are set, including for the
   // default-deny fallback: this code wrote the manifest, so its entries get the first-party address
   // rules, and only this table can name a wildcard.
