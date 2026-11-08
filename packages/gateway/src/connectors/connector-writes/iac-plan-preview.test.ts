@@ -281,8 +281,8 @@ describe("renderPlanPreview: injective escaping (the D1c escapeDiffText approach
       plan([change(`aws_x.a\u202Eb\u200Bc\u0007d\u001B[31m`, ["delete"], { before: {} })]),
     );
     expect(p.text).toContain("aws_x.a\\u{202E}b\\u{200B}c\\u{0007}d\\u{001B}[31m");
-    // biome-ignore lint/suspicious/noControlCharactersInRegex: the point of the assertion
     expect(
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: the point of the assertion
       /[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200B-\u200F\u202A-\u202E\u2066-\u2069]/u.test(
         p.text,
       ),
