@@ -4,12 +4,12 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { CONNECTOR_WRITE_ROWS } from "../connectors/connector-writes/index.ts";
 import {
-  COMMIT_FILE_ACTION_TYPES,
+  COMMIT_WRITE_ACTION_TYPES,
+  carriesFileText,
   commitFilesDigest,
   omitFileText,
   withoutFileText,
 } from "./audit-files.ts";
-import { prepareActionType } from "./prepare-step.ts";
 import { serviceOf } from "./service-of.ts";
 
 const FILES = [
@@ -68,16 +68,31 @@ describe("omitFileText", () => {
 });
 
 describe("withoutFileText: only the commit action types and their prepare reads", () => {
-  test("the set equals the bound rows' types and their prepare types", () => {
+  const PREPARE_TYPES = ["github.write.prepare", "gitlab.write.prepare"];
+
+  test("the recognised types are exactly the bound rows' types and their prepare reads", () => {
     const bound = CONNECTOR_WRITE_ROWS.filter((r) => r.bound !== undefined);
-    const expected = new Set(
-      bound.flatMap((r) => [r.actionType, prepareActionType(serviceOf(r.actionType))]),
+    expect([...COMMIT_WRITE_ACTION_TYPES].sort()).toEqual(bound.map((r) => r.actionType).sort());
+    expect(bound.map((r) => `${serviceOf(r.actionType)}.write.prepare`).sort()).toEqual(
+      PREPARE_TYPES,
     );
-    expect([...COMMIT_FILE_ACTION_TYPES].sort()).toEqual([...expected].sort());
+    for (const type of [...COMMIT_WRITE_ACTION_TYPES, ...PREPARE_TYPES]) {
+      expect(carriesFileText(type), type).toBe(true);
+    }
+    for (const type of [
+      "slack.write.prepare",
+      "github.write.prepare.x",
+      "github.write",
+      "github",
+      "",
+      "mcp_files.tool.run",
+    ]) {
+      expect(carriesFileText(type), type).toBe(false);
+    }
   });
 
   test("the write and the prepare read lose their file text, nested", () => {
-    for (const type of COMMIT_FILE_ACTION_TYPES) {
+    for (const type of [...COMMIT_WRITE_ACTION_TYPES, ...PREPARE_TYPES]) {
       const out = withoutFileText({ type, payload: { mcpToolId: "t", input: { files: FILES } } });
       expect(JSON.stringify(out), type).not.toContain("héllo");
       expect(JSON.stringify(out), type).toContain('"contentBytes":7');

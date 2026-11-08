@@ -10,16 +10,30 @@ import { isPlainObject } from "../connectors/connector-writes/preview.ts";
 import type { PlannedAction } from "./types.ts";
 
 /**
- * The action types whose `files` list is file TEXT: the two multi-file commit writes and their
- * prepare reads (`<service>.write.prepare`). Any other action keeps its audit detail (a user-MCP
- * tool's own `files` argument, I42, is not rewritten). A test pins this set to the bound rows.
+ * The action types whose `files` list is file TEXT: the two multi-file commit writes and the
+ * prepare reads of their two services (`<service>.write.prepare`, recognised by its segments so
+ * this module names no prepare action-type literal, D42(a)). Any other action keeps its audit
+ * detail (a user-MCP tool's own `files` argument, I42, is not rewritten). A test pins this to the
+ * bound rows.
  */
-export const COMMIT_FILE_ACTION_TYPES: ReadonlySet<string> = new Set([
+export const COMMIT_WRITE_ACTION_TYPES: ReadonlySet<string> = new Set([
   "github.file.commit",
   "gitlab.commit.create",
-  "github.write.prepare",
-  "gitlab.write.prepare",
 ]);
+const COMMIT_SERVICES: ReadonlySet<string> = new Set(["github", "gitlab"]);
+
+/** Whether `type` is a commit write or the prepare read of a commit service. */
+export function carriesFileText(type: string): boolean {
+  if (COMMIT_WRITE_ACTION_TYPES.has(type)) return true;
+  const [service, write, prepare, ...rest] = type.split(".");
+  return (
+    service !== undefined &&
+    COMMIT_SERVICES.has(service) &&
+    write === "write" &&
+    prepare === "prepare" &&
+    rest.length === 0
+  );
+}
 
 const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
 
@@ -71,7 +85,7 @@ export function omitFileText(
  * and the egress ledger both use.
  */
 export function withoutFileText(action: PlannedAction): PlannedAction {
-  if (action.payload === undefined || !COMMIT_FILE_ACTION_TYPES.has(action.type)) return action;
+  if (action.payload === undefined || !carriesFileText(action.type)) return action;
   const omitted = omitFileText(action.payload);
   return omitted === undefined ? action : { ...action, payload: omitted };
 }

@@ -71,6 +71,10 @@ import {
   synthBoundRow,
 } from "./connectors/connector-writes/bound-fixtures.test-helpers.ts";
 import {
+  COMMIT_CREDENTIAL_REFUSAL,
+  COMMIT_PATH_REFUSAL,
+} from "./connectors/connector-writes/commit-paths.ts";
+import {
   confirmTemplateKeys,
   parseConfirmTemplate,
 } from "./connectors/connector-writes/confirm-template.ts";
@@ -90,6 +94,7 @@ import {
   mcpClientToolKey,
   resolveServerTool,
 } from "./connectors/lazy-mesh/tool-map.ts";
+import { ACTION_PROPOSABILITY } from "./connectors/proposable-actions.ts";
 import { createConnectorDispatcher } from "./connectors/registry.ts";
 import { egressSourceTypeForClientKind } from "./egress/egress-bearing-kinds.ts";
 import { COVERAGE_CLASSES, THIS_BINARY_COVERAGE } from "./egress/egress-coverage.ts";
@@ -12726,6 +12731,60 @@ describe("I53 / I28 - B3w: sent mail, Teams and forge Markdown cannot load remot
         { chatops: undefined, kb: undefined },
       ),
     ).toBe(REMOTE_CONTENT_REFUSAL);
+  });
+});
+
+describe("I53 / I54 - D1c: a commit the model proposes is refused for a CI, hook or credential path and never carries the bound head", () => {
+  const SRC = join(import.meta.dir, "connectors", "connector-writes");
+  const COMMIT_FILES = [{ path: ".github/workflows/ci.yml", content: "on: push\n" }];
+
+  test("modelWriteRefusal calls commitModelRefusal after the messaging check; actDoorRefusal never does", async () => {
+    const src = stripComments(await readFile(join(SRC, "model-write-refusals.ts"), "utf8"));
+    const model = src.slice(src.indexOf("export function modelWriteRefusal("));
+    expect(model).toMatch(
+      /messagingDestinationRefusal\([\s\S]*commitModelRefusal\(toolId, input\)[\s\S]*knowledgeBaseRefusal\(/,
+    );
+    const act = src.slice(
+      src.indexOf("export function actDoorRefusal("),
+      src.indexOf("function knowledgeBaseRefusal("),
+    );
+    expect(act).not.toContain("commitModelRefusal");
+  });
+
+  test("behaviour: a workflow path, a CODEOWNERS file and a credential are refused on the model door, and not on the act door", () => {
+    const model = (files: unknown) =>
+      modelWriteRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files },
+        { chatops: undefined, kb: undefined },
+      );
+    expect(model(COMMIT_FILES)).toBe(COMMIT_PATH_REFUSAL);
+    expect(model([{ path: "docs/CODEOWNERS", content: "x" }])).toBe(COMMIT_PATH_REFUSAL);
+    const token = `gh${"p_"}${"a".repeat(36)}`;
+    expect(model([{ path: "a.ts", content: token }])).toBe(COMMIT_CREDENTIAL_REFUSAL);
+    expect(model([{ path: "a.ts", content: "ok" }])).toBeUndefined();
+    expect(
+      actDoorRefusal(
+        "github_file_commit",
+        { owner: "o", repo: "r", branch: "b", message: "m", files: COMMIT_FILES },
+        { chatops: undefined, kb: undefined, kbUnreadable: false },
+      ),
+    ).toBeUndefined();
+  });
+
+  test("the offered schema drops the bound head: the door strips every bound field from the listing", async () => {
+    const src = stripComments(
+      await readFile(join(import.meta.dir, "engine", "connector-write-agent-tools.ts"), "utf8"),
+    );
+    expect(src).toMatch(
+      /offeredInputSchema\(\s*entry\["inputSchema"\],[\s\S]{0,120}binds\.map\(\(b\) => b\.field\)/,
+    );
+  });
+
+  test("no bound row is proposable on the MCP act door (provenanceConsent shows no diff)", () => {
+    for (const r of CONNECTOR_WRITE_ROWS.filter((row) => row.bound !== undefined)) {
+      expect(ACTION_PROPOSABILITY[r.actionType]?.kind, r.actionType).toBe("denied");
+    }
   });
 });
 
